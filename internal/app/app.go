@@ -65,7 +65,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
-	fmt.Fprintln(w, "  switch    Inspect the ordered sessionizer candidates")
+	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
 	fmt.Fprintln(w, "  help      Show bootstrap help")
 	fmt.Fprintln(w, "  version   Print the current version")
 }

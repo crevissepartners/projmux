@@ -28,7 +28,7 @@
 ## Maintained Test List
 - `make fmt`: repository formatting for Go, shell snippets, and generated docs where applicable.
 - `make fix`: safe automatic fixes such as `go fix` and repository-approved cleanup steps.
-- `make test`: fast unit coverage for app-layer current, pin, and switch commands, candidate rendering, session identity, candidate discovery, sanitization, config path derivation, and pure state rules.
+- `make test`: fast unit coverage for app-layer current, kill, pin, and switch commands, switch row rendering, session identity, candidate discovery, config path derivation, and pure state rules.
 - `make test-integration`: tmux-facing integration coverage and state/config IO coverage.
 - `make test-e2e`: real workflow coverage for session creation, switching, preview, and cleanup.
 
