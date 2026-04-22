@@ -670,7 +670,92 @@ func TestClientDisplayPopupRunsTmuxDisplayPopup(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"display-popup", "-E", "exec 'projmux' 'session-popup' 'preview' 'dev'"}},
+		{name: "tmux", args: []string{"display-popup", "-E", "-w", "80%", "-h", "80%", "exec 'projmux' 'session-popup' 'preview' 'dev'"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("unexpected calls %#v", runner.calls)
+	}
+}
+
+func TestBuildDisplayPopupArgsAppliesDefaults(t *testing.T) {
+	t.Parallel()
+
+	args, err := BuildDisplayPopupArgs("printf hello", PopupOptions{})
+	if err != nil {
+		t.Fatalf("BuildDisplayPopupArgs returned error: %v", err)
+	}
+
+	want := []string{"display-popup", "-E", "-w", "80%", "-h", "80%", "printf hello"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("BuildDisplayPopupArgs = %#v, want %#v", args, want)
+	}
+}
+
+func TestBuildDisplayPopupArgsMapsExplicitOptions(t *testing.T) {
+	t.Parallel()
+
+	args, err := BuildDisplayPopupArgs("printf hello", PopupOptions{
+		Width:         "70%",
+		Height:        "20",
+		Title:         "proj popup",
+		CloseBehavior: PopupKeepOpen,
+	})
+	if err != nil {
+		t.Fatalf("BuildDisplayPopupArgs returned error: %v", err)
+	}
+
+	want := []string{"display-popup", "-w", "70%", "-h", "20", "-T", "proj popup", "printf hello"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("BuildDisplayPopupArgs = %#v, want %#v", args, want)
+	}
+}
+
+func TestBuildDisplayPopupArgsRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		command string
+		options PopupOptions
+		want    error
+	}{
+		{name: "missing command", command: " ", want: errPopupCommandRequired},
+		{name: "invalid close behavior", command: "printf hi", options: PopupOptions{CloseBehavior: PopupCloseBehavior("later")}, want: errPopupCloseBehaviorInvalid},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := BuildDisplayPopupArgs(tt.command, tt.options)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("BuildDisplayPopupArgs error = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestClientDisplayPopupWithOptionsRunsTmuxDisplayPopup(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{}},
+	}
+	client := NewClient(runner)
+
+	err := client.DisplayPopupWithOptions(context.Background(), "printf hello", PopupOptions{
+		Width:         "60%",
+		Height:        "18",
+		Title:         "proj popup",
+		CloseBehavior: PopupKeepOpen,
+	})
+	if err != nil {
+		t.Fatalf("DisplayPopupWithOptions returned error: %v", err)
+	}
+
+	want := []commandCall{
+		{name: "tmux", args: []string{"display-popup", "-w", "60%", "-h", "18", "-T", "proj popup", "printf hello"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)

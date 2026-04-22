@@ -82,7 +82,12 @@ func TestAppRunSessionPopupCyclePane(t *testing.T) {
 		},
 	}
 	inventory := &stubPreviewInventory{
+		windows: []corepreview.Window{
+			{Index: "2", Active: true},
+			{Index: "3"},
+		},
 		panes: []corepreview.Pane{
+			{WindowIndex: "2", Index: "4", Active: true},
 			{WindowIndex: "3", Index: "7", Active: true},
 			{WindowIndex: "3", Index: "8"},
 		},
@@ -103,6 +108,9 @@ func TestAppRunSessionPopupCyclePane(t *testing.T) {
 	if got, want := inventory.sessionPanesSession, "dev"; got != want {
 		t.Fatalf("SessionPanes session = %q, want %q", got, want)
 	}
+	if got, want := inventory.sessionWindowsSession, "dev"; got != want {
+		t.Fatalf("SessionWindows session = %q, want %q", got, want)
+	}
 	if got, want := store.cyclePaneSession, "dev"; got != want {
 		t.Fatalf("cycle pane session = %q, want %q", got, want)
 	}
@@ -112,8 +120,17 @@ func TestAppRunSessionPopupCyclePane(t *testing.T) {
 	if got, want := store.cyclePanePanes, inventory.panes; !equalPreviewPanes(got, want) {
 		t.Fatalf("cycle pane panes = %#v, want %#v", got, want)
 	}
-	if got, want := stdout.String(), "dev\t3\t8\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	const wantOutput = "" +
+		"session: dev\n" +
+		"selected: window=3 pane=8\n" +
+		"windows:\n" +
+		"    2\n" +
+		"  * 3\n" +
+		"panes:\n" +
+		"    7\n" +
+		"  * 8\n"
+	if got := stdout.String(); got != wantOutput {
+		t.Fatalf("stdout = %q, want %q", got, wantOutput)
 	}
 }
 
@@ -169,8 +186,16 @@ func TestAppRunSessionPopupCycleWindow(t *testing.T) {
 	if got, want := store.cycleWindowPanes, inventory.panes; !equalPreviewPanes(got, want) {
 		t.Fatalf("cycle window panes = %#v, want %#v", got, want)
 	}
-	if got, want := stdout.String(), "dev\t4\t0\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	const wantOutput = "" +
+		"session: dev\n" +
+		"selected: window=4 pane=0\n" +
+		"windows:\n" +
+		"    3\n" +
+		"  * 4\n" +
+		"panes:\n" +
+		"  * 0\n"
+	if got := stdout.String(); got != wantOutput {
+		t.Fatalf("stdout = %q, want %q", got, wantOutput)
 	}
 }
 

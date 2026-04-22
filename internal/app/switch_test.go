@@ -30,9 +30,9 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 			pinStore: func() (switchPinStore, error) {
 				return stubSwitchPinStore{list: []string{"/pins/app"}}, nil
 			},
-			runner: switchRunnerFunc(func(options intfzf.Options) (string, error) {
+			runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 				gotRunnerOptions = options
-				return "/home/tester/dotfiles", nil
+				return intfzf.Result{Value: "/home/tester/dotfiles"}, nil
 			}),
 			sessions:   executor,
 			identity:   stubSwitchIdentityResolver{name: "dotfiles"},
@@ -84,6 +84,9 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotRunnerOptions.UI, switchUIPopup; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
+	if got, want := gotRunnerOptions.ExpectKeys, []string{switchTagExpectKey}; !equalStrings(got, want) {
+		t.Fatalf("runner expect keys = %q, want %q", got, want)
+	}
 	if got, want := gotRunnerOptions.Candidates, []string{"/home/tester", "/home/tester/dotfiles"}; !equalStrings(got, want) {
 		t.Fatalf("runner candidates = %q, want %q", got, want)
 	}
@@ -113,9 +116,9 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (string, error) {
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 			gotRunnerOptions = options
-			return "/tmp/app", nil
+			return intfzf.Result{Value: "/tmp/app"}, nil
 		}),
 		sessions:   &capturingSwitchSessionExecutor{},
 		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
@@ -150,9 +153,9 @@ func TestSwitchCommandMarksExistingSessionsInRows(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (string, error) {
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 			gotRunnerOptions = options
-			return "", nil
+			return intfzf.Result{}, nil
 		}),
 		sessions: &capturingSwitchSessionExecutor{
 			exists: map[string]bool{"tmp-app": true},
@@ -206,7 +209,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	t.Chdir(fixture.path("managed/work-a/nested"))
 
 	cmd := newSwitchCommand()
-	fakeRunner := &capturingSwitchRunner{selection: fixture.path("managed/work-a")}
+	fakeRunner := &capturingSwitchRunner{result: intfzf.Result{Value: fixture.path("managed/work-a")}}
 	fakeExecutor := &capturingSwitchSessionExecutor{}
 	cmd.runner = fakeRunner
 	cmd.sessions = fakeExecutor
@@ -287,7 +290,7 @@ func TestSwitchCommandRejectsInvalidUsage(t *testing.T) {
 			err := (&switchCommand{
 				discover:   func(candidates.Inputs) ([]string, error) { return nil, nil },
 				pinStore:   func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
-				runner:     switchRunnerFunc(func(intfzf.Options) (string, error) { return "", nil }),
+				runner:     switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
 				sessions:   &capturingSwitchSessionExecutor{},
 				identity:   stubSwitchIdentityResolver{name: "tmp"},
 				validate:   func(string) error { return nil },
@@ -335,7 +338,7 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &switchCommand{
 				homeDir:  func() (string, error) { return "/home/tester", nil },
 				pinStore: func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
-				runner:   switchRunnerFunc(func(intfzf.Options) (string, error) { return "", nil }),
+				runner:   switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
 				workingDir: func() (string, error) {
 					return "", errors.New("no cwd")
 				},
@@ -350,8 +353,8 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 				pinStore:   func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
 				workingDir: func() (string, error) { return "/tmp", nil },
 				identity:   stubSwitchIdentityResolver{name: "tmp-app"},
-				runner: switchRunnerFunc(func(intfzf.Options) (string, error) {
-					return "", errors.New("fzf exploded")
+				runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+					return intfzf.Result{}, errors.New("fzf exploded")
 				}),
 			},
 			want: "run switch picker",
@@ -363,7 +366,7 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 				homeDir:     func() (string, error) { return "/home/tester", nil },
 				pinStore:    func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
 				workingDir:  func() (string, error) { return "/tmp", nil },
-				runner:      switchRunnerFunc(func(intfzf.Options) (string, error) { return "/tmp/app", nil }),
+				runner:      switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{Value: "/tmp/app"}, nil }),
 				validate:    func(string) error { return nil },
 				identityErr: errors.New("missing home"),
 			},
@@ -376,7 +379,7 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 				homeDir:    func() (string, error) { return "/home/tester", nil },
 				pinStore:   func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
 				workingDir: func() (string, error) { return "/tmp", nil },
-				runner:     switchRunnerFunc(func(intfzf.Options) (string, error) { return "/tmp/app", nil }),
+				runner:     switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{Value: "/tmp/app"}, nil }),
 				identity:   stubSwitchIdentityResolver{name: "tmp-app"},
 				validate:   func(string) error { return nil },
 				sessions: &capturingSwitchSessionExecutor{
@@ -408,7 +411,7 @@ func TestSwitchCommandAllowsEmptySelection(t *testing.T) {
 	cmd := &switchCommand{
 		discover:   func(candidates.Inputs) ([]string, error) { return []string{"/tmp/a"}, nil },
 		pinStore:   func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
-		runner:     switchRunnerFunc(func(intfzf.Options) (string, error) { return "", nil }),
+		runner:     switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
 		sessions:   &capturingSwitchSessionExecutor{},
 		identity:   stubSwitchIdentityResolver{name: "tmp-a"},
 		validate:   func(string) error { return nil },
@@ -464,6 +467,51 @@ func TestSwitchCommandToggleTagUsesCurrentSnappedCandidate(t *testing.T) {
 	}
 	if got := stderr.String(); got != "" {
 		t.Fatalf("stderr = %q, want empty", got)
+	}
+}
+
+func TestSwitchCommandPickerAltTRoutesToTagToggle(t *testing.T) {
+	t.Parallel()
+
+	var gotRunnerOptions intfzf.Options
+	store := &capturingSwitchTagStore{tagged: true}
+	executor := &capturingSwitchSessionExecutor{}
+
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+		tagStore: func() (switchTagStore, error) { return store, nil },
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			gotRunnerOptions = options
+			return intfzf.Result{Key: switchTagExpectKey, Value: "/tmp/app"}, nil
+		}),
+		sessions:   executor,
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := gotRunnerOptions.ExpectKeys, []string{switchTagExpectKey}; !equalStrings(got, want) {
+		t.Fatalf("runner expect keys = %q, want %q", got, want)
+	}
+	if got, want := store.calls, []string{"/tmp/app"}; !equalStrings(got, want) {
+		t.Fatalf("Toggle() calls = %q, want %q", got, want)
+	}
+	if got := executor.ensureSessionName; got != "" {
+		t.Fatalf("EnsureSession called unexpectedly: %q", got)
+	}
+	if got := executor.openSessionName; got != "" {
+		t.Fatalf("OpenSession called unexpectedly: %q", got)
+	}
+	if got, want := stdout.String(), "tagged: /tmp/app\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 
@@ -540,21 +588,21 @@ func TestSwitchCommandToggleTagRejectsInvalidUsage(t *testing.T) {
 	}
 }
 
-type switchRunnerFunc func(options intfzf.Options) (string, error)
+type switchRunnerFunc func(options intfzf.Options) (intfzf.Result, error)
 
-func (f switchRunnerFunc) Run(options intfzf.Options) (string, error) {
+func (f switchRunnerFunc) Run(options intfzf.Options) (intfzf.Result, error) {
 	return f(options)
 }
 
 type capturingSwitchRunner struct {
-	last      intfzf.Options
-	selection string
-	err       error
+	last   intfzf.Options
+	result intfzf.Result
+	err    error
 }
 
-func (r *capturingSwitchRunner) Run(options intfzf.Options) (string, error) {
+func (r *capturingSwitchRunner) Run(options intfzf.Options) (intfzf.Result, error) {
 	r.last = options
-	return r.selection, r.err
+	return r.result, r.err
 }
 
 type stubSwitchIdentityResolver struct {

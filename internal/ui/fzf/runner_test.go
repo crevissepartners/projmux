@@ -38,8 +38,8 @@ func TestRunnerRunInvokesFZFWithCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got != "/tmp/project-b" {
-		t.Fatalf("Run() = %q, want /tmp/project-b", got)
+	if got != (Result{Value: "/tmp/project-b"}) {
+		t.Fatalf("Run() = %#v, want /tmp/project-b", got)
 	}
 	if got, want := fake.stdin.String(), "/tmp/project-a\t/tmp/project-a\n/tmp/project-b\t/tmp/project-b"; got != want {
 		t.Fatalf("stdin = %q, want %q", got, want)
@@ -65,11 +65,41 @@ func TestRunnerRunReturnsHiddenEntryValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got != "/home/tester/dotfiles" {
-		t.Fatalf("Run() = %q, want hidden value", got)
+	if got != (Result{Value: "/home/tester/dotfiles"}) {
+		t.Fatalf("Run() = %#v, want hidden value", got)
 	}
 	if got, want := fake.stdin.String(), "dotfiles  [existing]  /home/tester/dotfiles\t/home/tester/dotfiles"; got != want {
 		t.Fatalf("stdin = %q, want %q", got, want)
+	}
+}
+
+func TestRunnerRunReturnsExpectedKeyAndHiddenValue(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommand{stdout: "alt-t\ndotfiles  [existing]  /home/tester/dotfiles\t/home/tester/dotfiles\n"}
+
+	r := &runner{
+		lookupPath: func(string) (string, error) { return "/usr/bin/fzf", nil },
+		newCommand: func(name string, args ...string) command {
+			if got, want := args, []string{"--prompt", "projmux popup> ", "--delimiter", "\t", "--with-nth", "1", "--expect", "alt-t"}; !equalStrings(got, want) {
+				t.Fatalf("command args = %q, want %q", got, want)
+			}
+			return fake
+		},
+	}
+
+	got, err := r.Run(Options{
+		UI:         "popup",
+		ExpectKeys: []string{"alt-t"},
+		Entries: []Entry{
+			{Label: "dotfiles  [existing]  /home/tester/dotfiles", Value: "/home/tester/dotfiles"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got != (Result{Key: "alt-t", Value: "/home/tester/dotfiles"}) {
+		t.Fatalf("Run() = %#v, want key+value result", got)
 	}
 }
 

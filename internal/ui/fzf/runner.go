@@ -14,6 +14,7 @@ type Options struct {
 	UI         string
 	Candidates []string
 	Entries    []Entry
+	ExpectKeys []string
 }
 
 type Entry struct {
@@ -21,8 +22,13 @@ type Entry struct {
 	Value string
 }
 
+type Result struct {
+	Key   string
+	Value string
+}
+
 type Runner interface {
-	Run(options Options) (string, error)
+	Run(options Options) (Result, error)
 }
 
 type command interface {
@@ -46,36 +52,40 @@ func NewRunner() Runner {
 	}
 }
 
-func (r *runner) Run(options Options) (string, error) {
+func (r *runner) Run(options Options) (Result, error) {
 	if r == nil {
-		return "", fmt.Errorf("fzf runner is not configured")
+		return Result{}, fmt.Errorf("fzf runner is not configured")
 	}
 
 	path, err := r.lookupPath(binaryName)
 	if err != nil {
-		return "", fmt.Errorf("fzf is not available: %w", err)
+		return Result{}, fmt.Errorf("fzf is not available: %w", err)
 	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	cmd := r.newCommand(path, runnerArgs(options.UI)...)
+	cmd := r.newCommand(path, runnerArgs(options.UI, options.ExpectKeys)...)
 	cmd.SetStdin(strings.NewReader(strings.Join(renderedEntries(options), "\n")))
 	cmd.SetStdout(&stdout)
 	cmd.SetStderr(&stderr)
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
-			return "", fmt.Errorf("run fzf: %w", err)
+			return Result{}, fmt.Errorf("run fzf: %w", err)
 		}
-		return "", fmt.Errorf("run fzf: %w: %s", err, msg)
+		return Result{}, fmt.Errorf("run fzf: %w: %s", err, msg)
 	}
 
-	return selectedValue(trimTrailingNewlines(stdout.String())), nil
+	return selectedResult(trimTrailingNewlines(stdout.String()), len(options.ExpectKeys) != 0), nil
 }
 
-func runnerArgs(ui string) []string {
-	return []string{"--prompt", fmt.Sprintf("projmux %s> ", ui), "--delimiter", "\t", "--with-nth", "1"}
+func runnerArgs(ui string, expectKeys []string) []string {
+	args := []string{"--prompt", fmt.Sprintf("projmux %s> ", ui), "--delimiter", "\t", "--with-nth", "1"}
+	if len(expectKeys) != 0 {
+		args = append(args, "--expect", strings.Join(expectKeys, ","))
+	}
+	return args
 }
 
 func trimTrailingNewlines(s string) string {
@@ -96,6 +106,22 @@ func renderedEntries(options Options) []string {
 		lines = append(lines, candidate+"\t"+candidate)
 	}
 	return lines
+}
+
+func selectedResult(selection string, hasExpectKeys bool) Result {
+	if !hasExpectKeys {
+		return Result{Value: selectedValue(selection)}
+	}
+
+	key, selected, ok := strings.Cut(selection, "\n")
+	if !ok {
+		return Result{Key: strings.TrimSpace(key)}
+	}
+
+	return Result{
+		Key:   strings.TrimSpace(key),
+		Value: selectedValue(selected),
+	}
 }
 
 func selectedValue(selection string) string {

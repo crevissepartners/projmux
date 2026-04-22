@@ -17,6 +17,7 @@ var (
 	errSessionNameRequired        = errors.New("tmux session name is required")
 	errSessionCWDRequired         = errors.New("tmux session cwd is required")
 	errPopupCommandRequired       = errors.New("tmux popup command is required")
+	errPopupCloseBehaviorInvalid  = errors.New("tmux popup close behavior is invalid")
 	errSessionActivityInvalid     = errors.New("tmux session activity is invalid")
 	errWindowIndexInvalid         = errors.New("tmux window index is invalid")
 	errPaneIndexInvalid           = errors.New("tmux pane index is invalid")
@@ -68,6 +69,20 @@ type Pane struct {
 type WindowPane struct {
 	Index  int
 	Active bool
+}
+
+type PopupCloseBehavior string
+
+const (
+	PopupCloseOnExit PopupCloseBehavior = "close-on-exit"
+	PopupKeepOpen    PopupCloseBehavior = "keep-open"
+)
+
+type PopupOptions struct {
+	Width         string
+	Height        string
+	Title         string
+	CloseBehavior PopupCloseBehavior
 }
 
 // NewClient builds a tmux client over the provided runner.
@@ -260,16 +275,50 @@ func (c *Client) KillSession(ctx context.Context, sessionName string) error {
 
 // DisplayPopup opens a tmux popup and executes the provided shell command.
 func (c *Client) DisplayPopup(ctx context.Context, command string) error {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return errPopupCommandRequired
+	return c.DisplayPopupWithOptions(ctx, command, PopupOptions{})
+}
+
+// DisplayPopupWithOptions opens a tmux popup and executes the provided shell command.
+func (c *Client) DisplayPopupWithOptions(ctx context.Context, command string, options PopupOptions) error {
+	args, err := BuildDisplayPopupArgs(command, options)
+	if err != nil {
+		return err
 	}
 
-	if _, err := c.runner.Run(ctx, "tmux", "display-popup", "-E", command); err != nil {
+	if _, err := c.runner.Run(ctx, "tmux", args...); err != nil {
 		return fmt.Errorf("display tmux popup: %w", err)
 	}
 
 	return nil
+}
+
+// BuildDisplayPopupArgs maps structured popup options to tmux display-popup args.
+func BuildDisplayPopupArgs(command string, options PopupOptions) ([]string, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil, errPopupCommandRequired
+	}
+
+	resolved, err := resolvePopupOptions(options)
+	if err != nil {
+		return nil, err
+	}
+
+	args := []string{"display-popup"}
+	if resolved.CloseBehavior == PopupCloseOnExit {
+		args = append(args, "-E")
+	}
+	if resolved.Width != "" {
+		args = append(args, "-w", resolved.Width)
+	}
+	if resolved.Height != "" {
+		args = append(args, "-h", resolved.Height)
+	}
+	if resolved.Title != "" {
+		args = append(args, "-T", resolved.Title)
+	}
+	args = append(args, command)
+	return args, nil
 }
 
 // InsideSession reports whether the caller is already running inside tmux.
@@ -331,6 +380,32 @@ func shellQuote(value string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
+func resolvePopupOptions(options PopupOptions) (PopupOptions, error) {
+	resolved := PopupOptions{
+		Width:         strings.TrimSpace(options.Width),
+		Height:        strings.TrimSpace(options.Height),
+		Title:         strings.TrimSpace(options.Title),
+		CloseBehavior: options.CloseBehavior,
+	}
+
+	if resolved.Width == "" {
+		resolved.Width = "80%"
+	}
+	if resolved.Height == "" {
+		resolved.Height = "80%"
+	}
+	if resolved.CloseBehavior == "" {
+		resolved.CloseBehavior = PopupCloseOnExit
+	}
+
+	switch resolved.CloseBehavior {
+	case PopupCloseOnExit, PopupKeepOpen:
+		return resolved, nil
+	default:
+		return PopupOptions{}, errPopupCloseBehaviorInvalid
+	}
 }
 
 type recentSession struct {

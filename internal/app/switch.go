@@ -23,6 +23,7 @@ const (
 	switchUIFlag             = "ui"
 	switchUIPopup            = "popup"
 	switchUISidebar          = "sidebar"
+	switchTagExpectKey       = "alt-t"
 	managedRootsEnvVar       = "PROJMUX_MANAGED_ROOTS"
 	legacyManagedRootsEnvVar = "TMUX_SESSIONIZER_ROOTS"
 	repoRootEnvVar           = "RP"
@@ -43,7 +44,7 @@ type switchTagStore interface {
 type switchTagStoreFactory func() (switchTagStore, error)
 
 type switchRunner interface {
-	Run(options intfzf.Options) (string, error)
+	Run(options intfzf.Options) (intfzf.Result, error)
 }
 
 type switchSessionExecutor interface {
@@ -73,6 +74,7 @@ type switchPlan struct {
 	UI          string
 	Candidates  []string
 	Rows        []intfzf.Entry
+	Action      string
 	Selection   string
 	SessionName string
 }
@@ -150,7 +152,7 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if err := c.execute(context.Background(), plan); err != nil {
+	if err := c.execute(context.Background(), plan, stdout); err != nil {
 		return err
 	}
 
@@ -484,10 +486,12 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 	}
 	plan.Rows = rows
 
-	selection, err := c.runPicker(plan)
+	result, err := c.runPicker(plan)
 	if err != nil {
 		return switchPlan{}, err
 	}
+	plan.Action = strings.TrimSpace(result.Key)
+	selection := result.Value
 	selection = cleanOptionalPath(selection)
 	plan.Selection = selection
 	if selection == "" {
@@ -501,18 +505,37 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 		return switchPlan{}, err
 	}
 
-	sessionName, err := c.identity.SessionIdentityForPath(selection)
-	if err != nil {
-		return switchPlan{}, fmt.Errorf("resolve session identity: %w", err)
+	if plan.Action != switchTagExpectKey {
+		sessionName, err := c.identity.SessionIdentityForPath(selection)
+		if err != nil {
+			return switchPlan{}, fmt.Errorf("resolve session identity: %w", err)
+		}
+		plan.SessionName = sessionName
 	}
-	plan.SessionName = sessionName
 
 	return plan, nil
 }
 
-func (c *switchCommand) execute(ctx context.Context, plan switchPlan) error {
+func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.Writer) error {
 	if plan.Selection == "" {
 		return nil
+	}
+	if plan.Action == switchTagExpectKey {
+		store, err := c.loadTagStore()
+		if err != nil {
+			return err
+		}
+
+		tagged, err := store.Toggle(plan.Selection)
+		if err != nil {
+			return fmt.Errorf("toggle switch tag: %w", err)
+		}
+		if tagged {
+			_, err = fmt.Fprintf(stdout, "tagged: %s\n", plan.Selection)
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "untagged: %s\n", plan.Selection)
+		return err
 	}
 	if plan.SessionName == "" {
 		return fmt.Errorf("switch command requires a target session")
@@ -531,21 +554,22 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan) error {
 	return nil
 }
 
-func (c *switchCommand) runPicker(plan switchPlan) (string, error) {
+func (c *switchCommand) runPicker(plan switchPlan) (intfzf.Result, error) {
 	if c.runner == nil {
-		return "", fmt.Errorf("switch runner is not configured")
+		return intfzf.Result{}, fmt.Errorf("switch runner is not configured")
 	}
 
-	selection, err := c.runner.Run(intfzf.Options{
+	result, err := c.runner.Run(intfzf.Options{
 		UI:         plan.UI,
 		Candidates: plan.Candidates,
 		Entries:    plan.Rows,
+		ExpectKeys: []string{switchTagExpectKey},
 	})
 	if err != nil {
-		return "", fmt.Errorf("run switch picker: %w", err)
+		return intfzf.Result{}, fmt.Errorf("run switch picker: %w", err)
 	}
 
-	return selection, nil
+	return result, nil
 }
 
 func (c *switchCommand) renderRows(ctx context.Context, candidatePaths []string) ([]intfzf.Entry, error) {
@@ -622,4 +646,7 @@ func printSwitchUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Options:")
 	fmt.Fprintln(w, "  --ui string   Candidate surface to prepare (popup or sidebar) (default \"popup\")")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Picker Actions:")
+	fmt.Fprintln(w, "  alt-t         Toggle a tag on the focused candidate and exit")
 }
