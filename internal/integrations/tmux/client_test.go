@@ -204,6 +204,202 @@ func TestClientRecentSessionsRejectsEmptySessionNames(t *testing.T) {
 	}
 }
 
+func TestClientListSessionWindowsParsesRows(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("0\t1\n2\t0\n"), nil
+	}))
+
+	windows, err := client.ListSessionWindows(context.Background(), "dotfiles")
+	if err != nil {
+		t.Fatalf("ListSessionWindows returned error: %v", err)
+	}
+
+	want := []Window{
+		{Index: 0, Active: true},
+		{Index: 2, Active: false},
+	}
+	if !reflect.DeepEqual(windows, want) {
+		t.Fatalf("ListSessionWindows = %#v, want %#v", windows, want)
+	}
+}
+
+func TestClientListSessionWindowsRequiresSessionName(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("runner should not be called")
+		return nil, nil
+	}))
+
+	_, err := client.ListSessionWindows(context.Background(), " ")
+	if !errors.Is(err, errSessionNameRequired) {
+		t.Fatalf("ListSessionWindows error = %v, want %v", err, errSessionNameRequired)
+	}
+}
+
+func TestClientListSessionWindowsRejectsMalformedRows(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("0"), nil
+	}))
+
+	_, err := client.ListSessionWindows(context.Background(), "dotfiles")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "malformed row") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClientListSessionWindowsRejectsInvalidWindowIndex(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("oops\t1"), nil
+	}))
+
+	_, err := client.ListSessionWindows(context.Background(), "dotfiles")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errWindowIndexInvalid) {
+		t.Fatalf("ListSessionWindows error = %v, want %v", err, errWindowIndexInvalid)
+	}
+}
+
+func TestClientListAllPanesParsesRows(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("dotfiles\t0\t1\t1\nhome\t2\t0\t0\n"), nil
+	}))
+
+	panes, err := client.ListAllPanes(context.Background())
+	if err != nil {
+		t.Fatalf("ListAllPanes returned error: %v", err)
+	}
+
+	want := []Pane{
+		{SessionName: "dotfiles", WindowIndex: 0, PaneIndex: 1, Active: true},
+		{SessionName: "home", WindowIndex: 2, PaneIndex: 0, Active: false},
+	}
+	if !reflect.DeepEqual(panes, want) {
+		t.Fatalf("ListAllPanes = %#v, want %#v", panes, want)
+	}
+}
+
+func TestClientListAllPanesRejectsEmptySessionNames(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte(" \t0\t1\t1"), nil
+	}))
+
+	_, err := client.ListAllPanes(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errSessionNameRequired) {
+		t.Fatalf("ListAllPanes error = %v, want %v", err, errSessionNameRequired)
+	}
+}
+
+func TestClientListAllPanesRejectsInvalidPaneIndex(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("dotfiles\t0\toops\t1"), nil
+	}))
+
+	_, err := client.ListAllPanes(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errPaneIndexInvalid) {
+		t.Fatalf("ListAllPanes error = %v, want %v", err, errPaneIndexInvalid)
+	}
+}
+
+func TestClientListAllPanesRejectsInvalidActiveFlag(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("dotfiles\t0\t1\tmaybe"), nil
+	}))
+
+	_, err := client.ListAllPanes(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errActiveFlagInvalid) {
+		t.Fatalf("ListAllPanes error = %v, want %v", err, errActiveFlagInvalid)
+	}
+}
+
+func TestClientListWindowPanesParsesRows(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{output: []byte("0\t1\n3\t0\n")}},
+	}
+	client := NewClient(runner)
+
+	panes, err := client.ListWindowPanes(context.Background(), "dotfiles", 2)
+	if err != nil {
+		t.Fatalf("ListWindowPanes returned error: %v", err)
+	}
+
+	want := []WindowPane{
+		{Index: 0, Active: true},
+		{Index: 3, Active: false},
+	}
+	if !reflect.DeepEqual(panes, want) {
+		t.Fatalf("ListWindowPanes = %#v, want %#v", panes, want)
+	}
+
+	wantCalls := []commandCall{
+		{name: "tmux", args: []string{"list-panes", "-t", "dotfiles:2", "-F", "#{pane_index}\t#{?pane_active,1,0}"}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("unexpected calls %#v", runner.calls)
+	}
+}
+
+func TestClientListWindowPanesRejectsInvalidWindowIndexArgument(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("runner should not be called")
+		return nil, nil
+	}))
+
+	_, err := client.ListWindowPanes(context.Background(), "dotfiles", -1)
+	if !errors.Is(err, errWindowIndexInvalid) {
+		t.Fatalf("ListWindowPanes error = %v, want %v", err, errWindowIndexInvalid)
+	}
+}
+
+func TestClientListWindowPanesRejectsInvalidPaneIndex(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("oops\t1"), nil
+	}))
+
+	_, err := client.ListWindowPanes(context.Background(), "dotfiles", 2)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errPaneIndexInvalid) {
+		t.Fatalf("ListWindowPanes error = %v, want %v", err, errPaneIndexInvalid)
+	}
+}
+
 func TestClientEnsureSessionCreatesMissingSession(t *testing.T) {
 	t.Parallel()
 

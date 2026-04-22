@@ -17,6 +17,7 @@ type App struct {
 	current  *currentCommand
 	kill     *killCommand
 	pin      *pinCommand
+	preview  *previewCommand
 	switcher *switchCommand
 }
 
@@ -26,6 +27,7 @@ func New() *App {
 		current:  newCurrentCommand(),
 		kill:     newKillCommand(),
 		pin:      newPinCommand(),
+		preview:  newPreviewCommand(),
 		switcher: newSwitchCommand(),
 	}
 }
@@ -44,6 +46,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.kill.Run(args[1:], stdout, stderr)
 	case "pin":
 		return a.pin.Run(args[1:], stdout, stderr)
+	case "preview":
+		return a.preview.Run(args[1:], stdout, stderr)
 	case "switch":
 		return a.switcher.Run(args[1:], stdout, stderr)
 	case "version", "--version", "-version":
@@ -65,6 +69,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
+	fmt.Fprintln(w, "  preview   Cycle persisted tmux preview selection")
 	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
 	fmt.Fprintln(w, "  help      Show bootstrap help")
 	fmt.Fprintln(w, "  version   Print the current version")

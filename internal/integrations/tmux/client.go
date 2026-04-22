@@ -17,6 +17,9 @@ var (
 	errSessionNameRequired        = errors.New("tmux session name is required")
 	errSessionCWDRequired         = errors.New("tmux session cwd is required")
 	errSessionActivityInvalid     = errors.New("tmux session activity is invalid")
+	errWindowIndexInvalid         = errors.New("tmux window index is invalid")
+	errPaneIndexInvalid           = errors.New("tmux pane index is invalid")
+	errActiveFlagInvalid          = errors.New("tmux active flag is invalid")
 )
 
 type commandRunner interface {
@@ -44,6 +47,26 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 type Client struct {
 	runner    commandRunner
 	lookupEnv func(string) string
+}
+
+// Window describes a tmux window inventory row for a session.
+type Window struct {
+	Index  int
+	Active bool
+}
+
+// Pane describes a tmux pane inventory row.
+type Pane struct {
+	SessionName string
+	WindowIndex int
+	PaneIndex   int
+	Active      bool
+}
+
+// WindowPane describes a tmux pane inventory row scoped to a single window.
+type WindowPane struct {
+	Index  int
+	Active bool
 }
 
 // NewClient builds a tmux client over the provided runner.
@@ -96,6 +119,63 @@ func (c *Client) RecentSessions(ctx context.Context) ([]string, error) {
 	}
 
 	return parseRecentSessions(output)
+}
+
+// ListSessionWindows lists the windows in a tmux session with active hints.
+func (c *Client) ListSessionWindows(ctx context.Context, sessionName string) ([]Window, error) {
+	if strings.TrimSpace(sessionName) == "" {
+		return nil, errSessionNameRequired
+	}
+
+	output, err := c.runner.Run(ctx, "tmux", "list-windows", "-t", sessionName, "-F", "#{window_index}\t#{?window_active,1,0}")
+	if err != nil {
+		return nil, fmt.Errorf("list tmux windows for session %q: %w", sessionName, err)
+	}
+
+	windows, err := parseSessionWindows(output)
+	if err != nil {
+		return nil, fmt.Errorf("list tmux windows for session %q: %w", sessionName, err)
+	}
+
+	return windows, nil
+}
+
+// ListAllPanes lists tmux panes across all sessions with active hints.
+func (c *Client) ListAllPanes(ctx context.Context) ([]Pane, error) {
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-a", "-F", "#{session_name}\t#{window_index}\t#{pane_index}\t#{?pane_active,1,0}")
+	if err != nil {
+		return nil, fmt.Errorf("list tmux panes: %w", err)
+	}
+
+	panes, err := parseAllPanes(output)
+	if err != nil {
+		return nil, fmt.Errorf("list tmux panes: %w", err)
+	}
+
+	return panes, nil
+}
+
+// ListWindowPanes lists panes for a tmux session window with active hints.
+func (c *Client) ListWindowPanes(ctx context.Context, sessionName string, windowIndex int) ([]WindowPane, error) {
+	if strings.TrimSpace(sessionName) == "" {
+		return nil, errSessionNameRequired
+	}
+	if windowIndex < 0 {
+		return nil, errWindowIndexInvalid
+	}
+
+	target := fmt.Sprintf("%s:%d", sessionName, windowIndex)
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-t", target, "-F", "#{pane_index}\t#{?pane_active,1,0}")
+	if err != nil {
+		return nil, fmt.Errorf("list tmux panes for session %q window %d: %w", sessionName, windowIndex, err)
+	}
+
+	panes, err := parseWindowPanes(output)
+	if err != nil {
+		return nil, fmt.Errorf("list tmux panes for session %q window %d: %w", sessionName, windowIndex, err)
+	}
+
+	return panes, nil
 }
 
 // EnsureSession creates the target session when it is missing.
@@ -259,4 +339,131 @@ func parseRecentSessions(output []byte) ([]string, error) {
 	}
 
 	return names, nil
+}
+
+func parseSessionWindows(output []byte) ([]Window, error) {
+	if strings.TrimSpace(string(output)) == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(string(output), "\n")
+	windows := make([]Window, 0, len(lines))
+	for _, rawLine := range lines {
+		if strings.TrimSpace(rawLine) == "" {
+			continue
+		}
+
+		fields := strings.Split(rawLine, "\t")
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("parse tmux windows: malformed row %q", rawLine)
+		}
+
+		index, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+		if err != nil {
+			return nil, errWindowIndexInvalid
+		}
+		active, err := parseActiveFlag(fields[1])
+		if err != nil {
+			return nil, err
+		}
+
+		windows = append(windows, Window{
+			Index:  index,
+			Active: active,
+		})
+	}
+
+	return windows, nil
+}
+
+func parseAllPanes(output []byte) ([]Pane, error) {
+	if strings.TrimSpace(string(output)) == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(string(output), "\n")
+	panes := make([]Pane, 0, len(lines))
+	for _, rawLine := range lines {
+		if strings.TrimSpace(rawLine) == "" {
+			continue
+		}
+
+		fields := strings.Split(rawLine, "\t")
+		if len(fields) != 4 {
+			return nil, fmt.Errorf("parse tmux panes: malformed row %q", rawLine)
+		}
+
+		sessionName := strings.TrimSpace(fields[0])
+		if sessionName == "" {
+			return nil, errSessionNameRequired
+		}
+
+		windowIndex, err := strconv.Atoi(strings.TrimSpace(fields[1]))
+		if err != nil {
+			return nil, errWindowIndexInvalid
+		}
+		paneIndex, err := strconv.Atoi(strings.TrimSpace(fields[2]))
+		if err != nil {
+			return nil, errPaneIndexInvalid
+		}
+		active, err := parseActiveFlag(fields[3])
+		if err != nil {
+			return nil, err
+		}
+
+		panes = append(panes, Pane{
+			SessionName: sessionName,
+			WindowIndex: windowIndex,
+			PaneIndex:   paneIndex,
+			Active:      active,
+		})
+	}
+
+	return panes, nil
+}
+
+func parseWindowPanes(output []byte) ([]WindowPane, error) {
+	if strings.TrimSpace(string(output)) == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(string(output), "\n")
+	panes := make([]WindowPane, 0, len(lines))
+	for _, rawLine := range lines {
+		if strings.TrimSpace(rawLine) == "" {
+			continue
+		}
+
+		fields := strings.Split(rawLine, "\t")
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("parse tmux window panes: malformed row %q", rawLine)
+		}
+
+		index, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+		if err != nil {
+			return nil, errPaneIndexInvalid
+		}
+		active, err := parseActiveFlag(fields[1])
+		if err != nil {
+			return nil, err
+		}
+
+		panes = append(panes, WindowPane{
+			Index:  index,
+			Active: active,
+		})
+	}
+
+	return panes, nil
+}
+
+func parseActiveFlag(raw string) (bool, error) {
+	switch strings.TrimSpace(raw) {
+	case "0":
+		return false, nil
+	case "1":
+		return true, nil
+	default:
+		return false, errActiveFlagInvalid
+	}
 }
