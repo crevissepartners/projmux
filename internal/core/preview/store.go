@@ -15,6 +15,13 @@ type Store struct {
 	file state.LinesFile
 }
 
+// CycleResult reports the cursor chosen by a persisted cycle operation.
+type CycleResult struct {
+	Cursor   Cursor
+	Selected bool
+	Changed  bool
+}
+
 // NewStore builds a preview state store for the provided file path.
 func NewStore(path string) Store {
 	return Store{file: state.NewLinesFile(path)}
@@ -75,6 +82,27 @@ func (s Store) ReadPaneIndex(sessionName string) (string, bool, error) {
 	return "", false, nil
 }
 
+// ReadSelection returns the full stored selection row for a session.
+func (s Store) ReadSelection(sessionName string) (Selection, bool, error) {
+	sessionName, err := validateSessionName(sessionName)
+	if err != nil {
+		return Selection{}, false, err
+	}
+
+	rows, err := s.load()
+	if err != nil {
+		return Selection{}, false, err
+	}
+
+	for _, row := range rows {
+		if row.SessionName == sessionName {
+			return row, true, nil
+		}
+	}
+
+	return Selection{}, false, nil
+}
+
 // WriteSelection updates the selection row for a session while preserving
 // unrelated rows.
 func (s Store) WriteSelection(sessionName, windowIndex, paneIndex string) error {
@@ -110,11 +138,64 @@ func (s Store) WriteSelection(sessionName, windowIndex, paneIndex string) error 
 	return s.file.Write(lines)
 }
 
+// CyclePaneSelection loads a session's stored selection, applies pane cycling,
+// and persists the resulting cursor when it changes.
+func (s Store) CyclePaneSelection(sessionName string, windows []Window, panes []Pane, direction Direction) (CycleResult, error) {
+	return s.cycleSelection(sessionName, windows, panes, direction, cyclePane)
+}
+
+// CycleWindowSelection loads a session's stored selection, applies window
+// cycling, and persists the resulting cursor when it changes.
+func (s Store) CycleWindowSelection(sessionName string, windows []Window, panes []Pane, direction Direction) (CycleResult, error) {
+	return s.cycleSelection(sessionName, windows, panes, direction, cycleWindow)
+}
+
 // Selection captures the stored preview target for a session.
 type Selection struct {
 	SessionName string
 	WindowIndex string
 	PaneIndex   string
+}
+
+type cycleFunc func(CycleInputs, Direction) (Cursor, bool, error)
+
+func (s Store) cycleSelection(
+	sessionName string,
+	windows []Window,
+	panes []Pane,
+	direction Direction,
+	cycle cycleFunc,
+) (CycleResult, error) {
+	selection, found, err := s.ReadSelection(sessionName)
+	if err != nil {
+		return CycleResult{}, err
+	}
+
+	cursor, ok, err := cycle(CycleInputs{
+		StoredWindowIndex: selection.WindowIndex,
+		StoredPaneIndex:   selection.PaneIndex,
+		Windows:           windows,
+		Panes:             panes,
+	}, direction)
+	if err != nil {
+		return CycleResult{}, err
+	}
+	if !ok {
+		return CycleResult{}, nil
+	}
+
+	changed := !found || selection.WindowIndex != cursor.WindowIndex || selection.PaneIndex != cursor.PaneIndex
+	if changed {
+		if err := s.WriteSelection(sessionName, cursor.WindowIndex, cursor.PaneIndex); err != nil {
+			return CycleResult{}, err
+		}
+	}
+
+	return CycleResult{
+		Cursor:   cursor,
+		Selected: true,
+		Changed:  changed,
+	}, nil
 }
 
 func (s Store) load() ([]Selection, error) {
