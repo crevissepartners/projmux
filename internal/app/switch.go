@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/es5h/projmux/internal/config"
 	"github.com/es5h/projmux/internal/core/candidates"
 	"github.com/es5h/projmux/internal/core/pins"
+	coretags "github.com/es5h/projmux/internal/core/tags"
 	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
 	intfzf "github.com/es5h/projmux/internal/ui/fzf"
 	intrender "github.com/es5h/projmux/internal/ui/render"
@@ -34,6 +36,12 @@ type switchPinStore interface {
 
 type switchPinStoreFactory func() (switchPinStore, error)
 
+type switchTagStore interface {
+	Toggle(name string) (bool, error)
+}
+
+type switchTagStoreFactory func() (switchTagStore, error)
+
 type switchRunner interface {
 	Run(options intfzf.Options) (string, error)
 }
@@ -50,6 +58,7 @@ type switchSessionInspector interface {
 type switchCommand struct {
 	discover    candidateDiscoverer
 	pinStore    switchPinStoreFactory
+	tagStore    switchTagStoreFactory
 	runner      switchRunner
 	sessions    switchSessionExecutor
 	identity    sessionIdentityResolver
@@ -75,6 +84,7 @@ func newSwitchCommand() *switchCommand {
 	return &switchCommand{
 		discover:    candidates.Discover,
 		pinStore:    newDefaultSwitchPinStore,
+		tagStore:    newDefaultSwitchTagStore,
 		runner:      intfzf.NewRunner(),
 		sessions:    client,
 		identity:    identity,
@@ -96,9 +106,25 @@ func newDefaultSwitchPinStore() (switchPinStore, error) {
 	return store, nil
 }
 
+func newDefaultSwitchTagStore() (switchTagStore, error) {
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return nil, err
+	}
+
+	return coretags.NewDefaultStore(paths), nil
+}
+
 // Run resolves the first sessionizer candidate list and opens the first
 // interactive picker surface.
 func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "toggle-tag":
+			return c.runToggleTag(args[1:], stdout, stderr)
+		}
+	}
+
 	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
@@ -132,17 +158,59 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *switchCommand) plan(ui string) (switchPlan, error) {
+	inputs, err := c.candidateInputs("")
+	if err != nil {
+		return switchPlan{}, err
+	}
+
+	return c.planFromInputs(ui, inputs)
+}
+
+func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("switch toggle-tag", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printSwitchUsage(stderr)
+	}
+
+	if err := fs.Parse(args); err != nil {
+		printSwitchUsage(stderr)
+		return err
+	}
+	if fs.NArg() > 1 {
+		printSwitchUsage(stderr)
+		return fmt.Errorf("switch toggle-tag accepts at most 1 [path] argument")
+	}
+
+	target, err := c.resolveToggleTagTarget(fs.Args())
+	if err != nil {
+		if strings.Contains(err.Error(), "switch toggle-tag requires") {
+			printSwitchUsage(stderr)
+		}
+		return err
+	}
+
+	store, err := c.loadTagStore()
+	if err != nil {
+		return err
+	}
+
+	tagged, err := store.Toggle(target)
+	if err != nil {
+		return fmt.Errorf("toggle switch candidate tag: %w", err)
+	}
+
+	if tagged {
+		_, err = fmt.Fprintf(stdout, "tagged: %s\n", target)
+		return err
+	}
+
+	_, err = fmt.Fprintf(stdout, "untagged: %s\n", target)
+	return err
+}
+
+func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (switchPlan, error) {
 	homeDir, err := c.resolveHomeDir()
-	if err != nil {
-		return switchPlan{}, err
-	}
-
-	pins, err := c.loadPins()
-	if err != nil {
-		return switchPlan{}, err
-	}
-
-	currentPath, err := c.resolveWorkingDir()
 	if err != nil {
 		return switchPlan{}, err
 	}
@@ -151,13 +219,11 @@ func (c *switchCommand) plan(ui string) (switchPlan, error) {
 		return switchPlan{}, fmt.Errorf("switch candidate discovery is not configured")
 	}
 
-	paths, err := c.discover(candidates.Inputs{
-		HomeDir:      homeDir,
-		RepoRoot:     cleanOptionalPath(c.env(repoRootEnvVar)),
-		ManagedRoots: switchManagedRootsFromEnv(c.lookupEnv),
-		Pins:         pins,
-		CurrentPath:  currentPath,
-	})
+	if inputs.HomeDir == "" {
+		inputs.HomeDir = homeDir
+	}
+
+	paths, err := c.discover(inputs)
 	if err != nil {
 		return switchPlan{}, fmt.Errorf("discover switch candidates: %w", err)
 	}
@@ -168,6 +234,33 @@ func (c *switchCommand) plan(ui string) (switchPlan, error) {
 	}
 
 	return c.completePlan(plan)
+}
+
+func (c *switchCommand) candidateInputs(currentPath string) (candidates.Inputs, error) {
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return candidates.Inputs{}, err
+	}
+
+	pins, err := c.loadPins()
+	if err != nil {
+		return candidates.Inputs{}, err
+	}
+
+	if currentPath == "" {
+		currentPath, err = c.resolveWorkingDir()
+		if err != nil {
+			return candidates.Inputs{}, err
+		}
+	}
+
+	return candidates.Inputs{
+		HomeDir:      homeDir,
+		RepoRoot:     cleanOptionalPath(c.env(repoRootEnvVar)),
+		ManagedRoots: switchManagedRootsFromEnv(c.lookupEnv),
+		Pins:         pins,
+		CurrentPath:  currentPath,
+	}, nil
 }
 
 func (c *switchCommand) resolveHomeDir() (string, error) {
@@ -217,6 +310,87 @@ func (c *switchCommand) resolveWorkingDir() (string, error) {
 	return filepath.Clean(path), nil
 }
 
+func (c *switchCommand) resolveToggleTagTarget(args []string) (string, error) {
+	inputPath, err := c.resolveToggleTagInput(args)
+	if err != nil {
+		return "", err
+	}
+
+	inputs, err := c.candidateInputs(inputPath)
+	if err != nil {
+		return "", err
+	}
+	if c.discover == nil {
+		return "", fmt.Errorf("switch candidate discovery is not configured")
+	}
+
+	candidatePaths, err := c.discover(inputs)
+	if err != nil {
+		return "", fmt.Errorf("discover switch candidates: %w", err)
+	}
+
+	target := bestSwitchCandidateMatch(inputPath, candidatePaths)
+	if target == "" {
+		return "", fmt.Errorf("resolve switch tag target: no switch candidate matched %q", inputPath)
+	}
+
+	return target, nil
+}
+
+func (c *switchCommand) resolveToggleTagInput(args []string) (string, error) {
+	var path string
+
+	switch len(args) {
+	case 0:
+		var err error
+		path, err = c.resolveWorkingDir()
+		if err != nil {
+			return "", err
+		}
+	case 1:
+		if strings.TrimSpace(args[0]) == "" {
+			return "", errors.New("switch toggle-tag requires a non-empty [path] argument")
+		}
+		path = args[0]
+	default:
+		return "", fmt.Errorf("switch toggle-tag accepts at most 1 [path] argument")
+	}
+
+	if !filepath.IsAbs(path) {
+		workingDir, err := c.resolveWorkingDir()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(workingDir, path)
+	}
+	path = filepath.Clean(path)
+
+	if c.validate == nil {
+		return "", fmt.Errorf("switch directory validator is not configured")
+	}
+	if err := c.validate(path); err != nil {
+		return "", fmt.Errorf("validate switch tag path %q: %w", path, err)
+	}
+
+	return path, nil
+}
+
+func (c *switchCommand) loadTagStore() (switchTagStore, error) {
+	if c.tagStore == nil {
+		return nil, errors.New("configure switch tag store: tag store is not configured")
+	}
+
+	store, err := c.tagStore()
+	if err != nil {
+		return nil, fmt.Errorf("configure switch tag store: %w", err)
+	}
+	if store == nil {
+		return nil, errors.New("configure switch tag store: tag store is not configured")
+	}
+
+	return store, nil
+}
+
 func (c *switchCommand) env(name string) string {
 	if c.lookupEnv == nil {
 		return ""
@@ -260,6 +434,28 @@ func cleanOptionalPath(path string) string {
 		return ""
 	}
 	return filepath.Clean(path)
+}
+
+func bestSwitchCandidateMatch(path string, candidatePaths []string) string {
+	cleanPath := filepath.Clean(path)
+	best := ""
+
+	for _, candidatePath := range candidatePaths {
+		candidatePath = filepath.Clean(candidatePath)
+		if candidatePath == cleanPath {
+			return candidatePath
+		}
+
+		prefix := candidatePath + string(filepath.Separator)
+		if !strings.HasPrefix(cleanPath, prefix) {
+			continue
+		}
+		if len(candidatePath) > len(best) {
+			best = candidatePath
+		}
+	}
+
+	return best
 }
 
 func validateSwitchUI(ui string) error {
@@ -420,7 +616,9 @@ func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePat
 }
 
 func printSwitchUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: projmux switch [--ui=popup|sidebar]")
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  projmux switch [--ui=popup|sidebar]")
+	fmt.Fprintln(w, "  projmux switch toggle-tag [path]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Options:")
 	fmt.Fprintln(w, "  --ui string   Candidate surface to prepare (popup or sidebar) (default \"popup\")")

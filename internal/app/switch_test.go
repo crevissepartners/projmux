@@ -425,6 +425,121 @@ func TestSwitchCommandAllowsEmptySelection(t *testing.T) {
 	}
 }
 
+func TestSwitchCommandToggleTagUsesCurrentSnappedCandidate(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSwitchFixture(t)
+	fixture.mkdir("home/dotfiles")
+	fixture.mkdir("managed/work-a/nested")
+
+	store := &capturingSwitchTagStore{tagged: true}
+	cmd := &switchCommand{
+		discover: candidates.Discover,
+		pinStore: func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+		tagStore: func() (switchTagStore, error) { return store, nil },
+		validate: validateDirectory,
+		homeDir:  func() (string, error) { return fixture.path("home"), nil },
+		workingDir: func() (string, error) {
+			return fixture.path("managed/work-a/nested"), nil
+		},
+		lookupEnv: func(name string) string {
+			if name == managedRootsEnvVar {
+				return fixture.path("managed")
+			}
+			return ""
+		},
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := cmd.Run([]string{"toggle-tag"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := store.calls, []string{fixture.path("managed/work-a")}; !equalStrings(got, want) {
+		t.Fatalf("Toggle() calls = %q, want %q", got, want)
+	}
+	if got, want := stdout.String(), "tagged: "+fixture.path("managed/work-a")+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stderr = %q, want empty", got)
+	}
+}
+
+func TestSwitchCommandToggleTagSnapsExplicitPathToCandidate(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSwitchFixture(t)
+	fixture.mkdir("home/dotfiles")
+	fixture.mkdir("managed/work-a/nested/deeper")
+
+	store := &capturingSwitchTagStore{tagged: false}
+	cmd := &switchCommand{
+		discover: candidates.Discover,
+		pinStore: func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+		tagStore: func() (switchTagStore, error) { return store, nil },
+		validate: validateDirectory,
+		homeDir:  func() (string, error) { return fixture.path("home"), nil },
+		workingDir: func() (string, error) {
+			return fixture.path("home"), nil
+		},
+		lookupEnv: func(name string) string {
+			if name == managedRootsEnvVar {
+				return fixture.path("managed")
+			}
+			return ""
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"toggle-tag", fixture.path("managed/work-a/nested/deeper")}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := store.calls, []string{fixture.path("managed/work-a")}; !equalStrings(got, want) {
+		t.Fatalf("Toggle() calls = %q, want %q", got, want)
+	}
+	if got, want := stdout.String(), "untagged: "+fixture.path("managed/work-a")+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandToggleTagRejectsInvalidUsage(t *testing.T) {
+	t.Parallel()
+
+	cmd := &switchCommand{
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "too many args", args: []string{"toggle-tag", "/tmp/a", "/tmp/b"}, want: "switch toggle-tag accepts at most 1 [path] argument"},
+		{name: "blank arg", args: []string{"toggle-tag", "   "}, want: "switch toggle-tag requires a non-empty [path] argument"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var stderr bytes.Buffer
+			err := cmd.Run(tt.args, &bytes.Buffer{}, &stderr)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want substring %q", err, tt.want)
+			}
+			if !strings.Contains(stderr.String(), "Usage:") {
+				t.Fatalf("stderr = %q, want usage text", stderr.String())
+			}
+		})
+	}
+}
+
 type switchRunnerFunc func(options intfzf.Options) (string, error)
 
 func (f switchRunnerFunc) Run(options intfzf.Options) (string, error) {
@@ -495,6 +610,20 @@ func (s stubSwitchPinStore) List() ([]string, error) {
 		return nil, s.err
 	}
 	return append([]string(nil), s.list...), nil
+}
+
+type capturingSwitchTagStore struct {
+	calls  []string
+	tagged bool
+	err    error
+}
+
+func (s *capturingSwitchTagStore) Toggle(name string) (bool, error) {
+	s.calls = append(s.calls, name)
+	if s.err != nil {
+		return false, s.err
+	}
+	return s.tagged, nil
 }
 
 func equalStrings(got, want []string) bool {

@@ -16,6 +16,7 @@ var (
 	errCurrentSessionUnavailable  = errors.New("tmux current session is unavailable")
 	errSessionNameRequired        = errors.New("tmux session name is required")
 	errSessionCWDRequired         = errors.New("tmux session cwd is required")
+	errPopupCommandRequired       = errors.New("tmux popup command is required")
 	errSessionActivityInvalid     = errors.New("tmux session activity is invalid")
 	errWindowIndexInvalid         = errors.New("tmux window index is invalid")
 	errPaneIndexInvalid           = errors.New("tmux pane index is invalid")
@@ -257,6 +258,20 @@ func (c *Client) KillSession(ctx context.Context, sessionName string) error {
 	return nil
 }
 
+// DisplayPopup opens a tmux popup and executes the provided shell command.
+func (c *Client) DisplayPopup(ctx context.Context, command string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return errPopupCommandRequired
+	}
+
+	if _, err := c.runner.Run(ctx, "tmux", "display-popup", "-E", command); err != nil {
+		return fmt.Errorf("display tmux popup: %w", err)
+	}
+
+	return nil
+}
+
 // InsideSession reports whether the caller is already running inside tmux.
 func (c *Client) InsideSession() bool {
 	if c.lookupEnv == nil {
@@ -284,6 +299,38 @@ func isExitCode(err error, code int) bool {
 	}
 
 	return exitErr.ExitCode() == code
+}
+
+// BuildPopupPreviewCommand builds the shell command used inside a tmux popup
+// for the existing `projmux session-popup preview <session>` flow.
+func BuildPopupPreviewCommand(binaryPath, sessionName string) (string, error) {
+	binaryPath = strings.TrimSpace(binaryPath)
+	if binaryPath == "" {
+		return "", errors.New("popup preview binary path is required")
+	}
+
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		return "", errSessionNameRequired
+	}
+
+	return buildExecCommand(binaryPath, "session-popup", "preview", sessionName), nil
+}
+
+func buildExecCommand(binaryPath string, args ...string) string {
+	quoted := make([]string, 0, len(args)+2)
+	quoted = append(quoted, "exec", shellQuote(binaryPath))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 type recentSession struct {

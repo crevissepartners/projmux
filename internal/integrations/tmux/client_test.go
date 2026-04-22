@@ -656,6 +656,83 @@ func TestClientKillSessionWrapsRunnerError(t *testing.T) {
 	}
 }
 
+func TestClientDisplayPopupRunsTmuxDisplayPopup(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{}},
+	}
+	client := NewClient(runner)
+
+	if err := client.DisplayPopup(context.Background(), "exec 'projmux' 'session-popup' 'preview' 'dev'"); err != nil {
+		t.Fatalf("DisplayPopup returned error: %v", err)
+	}
+
+	want := []commandCall{
+		{name: "tmux", args: []string{"display-popup", "-E", "exec 'projmux' 'session-popup' 'preview' 'dev'"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("unexpected calls %#v", runner.calls)
+	}
+}
+
+func TestClientDisplayPopupRequiresCommand(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("runner should not be called")
+		return nil, nil
+	}))
+
+	err := client.DisplayPopup(context.Background(), "  ")
+	if !errors.Is(err, errPopupCommandRequired) {
+		t.Fatalf("DisplayPopup error = %v, want %v", err, errPopupCommandRequired)
+	}
+}
+
+func TestClientDisplayPopupWrapsRunnerError(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("tmux failed")
+	}))
+
+	err := client.DisplayPopup(context.Background(), "exec 'projmux' 'session-popup' 'preview' 'dev'")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "display tmux popup") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildPopupPreviewCommandQuotesBinaryPathAndSession(t *testing.T) {
+	t.Parallel()
+
+	command, err := BuildPopupPreviewCommand("/tmp/projmux's bin", "team's/dev")
+	if err != nil {
+		t.Fatalf("BuildPopupPreviewCommand returned error: %v", err)
+	}
+
+	const want = "exec '/tmp/projmux'\\''s bin' 'session-popup' 'preview' 'team'\\''s/dev'"
+	if command != want {
+		t.Fatalf("command = %q, want %q", command, want)
+	}
+}
+
+func TestBuildPopupPreviewCommandRequiresInputs(t *testing.T) {
+	t.Parallel()
+
+	if _, err := BuildPopupPreviewCommand(" ", "dev"); err == nil || !strings.Contains(err.Error(), "binary path is required") {
+		t.Fatalf("unexpected error for binary path: %v", err)
+	}
+
+	if _, err := BuildPopupPreviewCommand("/tmp/projmux", " "); !errors.Is(err, errSessionNameRequired) {
+		t.Fatalf("unexpected error for session name: %v", err)
+	}
+}
+
 func TestClientEnsureSessionRequiresCWD(t *testing.T) {
 	t.Parallel()
 

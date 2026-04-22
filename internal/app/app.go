@@ -21,6 +21,7 @@ type App struct {
 	sessionPopup *sessionPopupCommand
 	switcher     *switchCommand
 	tag          *tagCommand
+	tmux         *tmuxCommand
 }
 
 // New builds the default application graph.
@@ -33,6 +34,7 @@ func New() *App {
 		sessionPopup: newSessionPopupCommand(),
 		switcher:     newSwitchCommand(),
 		tag:          newTagCommand(),
+		tmux:         newTmuxCommand(),
 	}
 }
 
@@ -58,6 +60,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.switcher.Run(args[1:], stdout, stderr)
 	case "tag":
 		return a.tag.Run(args[1:], stdout, stderr)
+	case "tmux":
+		return a.tmux.Run(args[1:], stdout, stderr)
 	case "version", "--version", "-version":
 		_, err := fmt.Fprintf(stdout, "projmux %s\n", version.String())
 		return err
@@ -81,6 +85,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")
 	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
 	fmt.Fprintln(w, "  tag       Manage tagged tmux sessions")
+	fmt.Fprintln(w, "  tmux      Open tmux popup entry helpers")
 	fmt.Fprintln(w, "  help      Show bootstrap help")
 	fmt.Fprintln(w, "  version   Print the current version")
 }
