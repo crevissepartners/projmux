@@ -87,6 +87,12 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotRunnerOptions.Candidates, []string{"/home/tester", "/home/tester/dotfiles"}; !equalStrings(got, want) {
 		t.Fatalf("runner candidates = %q, want %q", got, want)
 	}
+	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
+		{Label: "dotfiles  [new]  /home/tester", Value: "/home/tester"},
+		{Label: "dotfiles  [new]  /home/tester/dotfiles", Value: "/home/tester/dotfiles"},
+	}; !equalEntries(got, want) {
+		t.Fatalf("runner entries = %#v, want %#v", got, want)
+	}
 	if got, want := executor.ensureSessionName, "dotfiles"; got != want {
 		t.Fatalf("ensure session = %q, want %q", got, want)
 	}
@@ -127,6 +133,44 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	}
 	if got, want := gotRunnerOptions.UI, switchUISidebar; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
+	}
+	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
+		{Label: "tmp-app  [new]  /tmp/app", Value: "/tmp/app"},
+	}; !equalEntries(got, want) {
+		t.Fatalf("runner entries = %#v, want %#v", got, want)
+	}
+}
+
+func TestSwitchCommandMarksExistingSessionsInRows(t *testing.T) {
+	t.Parallel()
+
+	var gotRunnerOptions intfzf.Options
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+		runner: switchRunnerFunc(func(options intfzf.Options) (string, error) {
+			gotRunnerOptions = options
+			return "", nil
+		}),
+		sessions: &capturingSwitchSessionExecutor{
+			exists: map[string]bool{"tmp-app": true},
+		},
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
+		{Label: "tmp-app  [existing]  /tmp/app", Value: "/tmp/app"},
+	}; !equalEntries(got, want) {
+		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
 }
 
@@ -189,6 +233,17 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	}
 	if got := fakeRunner.last.Candidates; !equalStrings(got, wantCandidates) {
 		t.Fatalf("runner candidates = %q, want %q", got, wantCandidates)
+	}
+	wantEntries := []intfzf.Entry{
+		{Label: "home  [new]  " + fixture.path("home"), Value: fixture.path("home")},
+		{Label: "dotfiles  [new]  " + fixture.path("home/dotfiles"), Value: fixture.path("home/dotfiles")},
+		{Label: "pins-app  [new]  " + fixture.path("pins/app"), Value: fixture.path("pins/app")},
+		{Label: "managed-work-a  [new]  " + fixture.path("managed/work-a"), Value: fixture.path("managed/work-a")},
+		{Label: "rp-repo-a  [new]  " + fixture.path("rp/repo-a"), Value: fixture.path("rp/repo-a")},
+		{Label: "managed-work-b  [new]  " + fixture.path("managed/work-b"), Value: fixture.path("managed/work-b")},
+	}
+	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
+		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
 	}
 	if got, want := fakeRunner.last.UI, switchUISidebar; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
@@ -294,6 +349,7 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 				homeDir:    func() (string, error) { return "/home/tester", nil },
 				pinStore:   func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
 				workingDir: func() (string, error) { return "/tmp", nil },
+				identity:   stubSwitchIdentityResolver{name: "tmp-app"},
 				runner: switchRunnerFunc(func(intfzf.Options) (string, error) {
 					return "", errors.New("fzf exploded")
 				}),
@@ -402,8 +458,10 @@ type capturingSwitchSessionExecutor struct {
 	ensureSessionName string
 	ensureCWD         string
 	openSessionName   string
+	exists            map[string]bool
 	ensureErr         error
 	openErr           error
+	existsErr         error
 }
 
 func (e *capturingSwitchSessionExecutor) EnsureSession(_ context.Context, sessionName, cwd string) error {
@@ -415,6 +473,16 @@ func (e *capturingSwitchSessionExecutor) EnsureSession(_ context.Context, sessio
 func (e *capturingSwitchSessionExecutor) OpenSession(_ context.Context, sessionName string) error {
 	e.openSessionName = sessionName
 	return e.openErr
+}
+
+func (e *capturingSwitchSessionExecutor) SessionExists(_ context.Context, sessionName string) (bool, error) {
+	if e.existsErr != nil {
+		return false, e.existsErr
+	}
+	if e.exists == nil {
+		return false, nil
+	}
+	return e.exists[sessionName], nil
 }
 
 type stubSwitchPinStore struct {
@@ -430,6 +498,18 @@ func (s stubSwitchPinStore) List() ([]string, error) {
 }
 
 func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalEntries(got, want []intfzf.Entry) bool {
 	if len(got) != len(want) {
 		return false
 	}

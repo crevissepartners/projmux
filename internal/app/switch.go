@@ -14,6 +14,7 @@ import (
 	"github.com/es5h/projmux/internal/core/pins"
 	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
 	intfzf "github.com/es5h/projmux/internal/ui/fzf"
+	intrender "github.com/es5h/projmux/internal/ui/render"
 )
 
 const (
@@ -42,6 +43,10 @@ type switchSessionExecutor interface {
 	OpenSession(ctx context.Context, sessionName string) error
 }
 
+type switchSessionInspector interface {
+	SessionExists(ctx context.Context, sessionName string) (bool, error)
+}
+
 type switchCommand struct {
 	discover    candidateDiscoverer
 	pinStore    switchPinStoreFactory
@@ -58,6 +63,7 @@ type switchCommand struct {
 type switchPlan struct {
 	UI          string
 	Candidates  []string
+	Rows        []intfzf.Entry
 	Selection   string
 	SessionName string
 }
@@ -269,6 +275,18 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 	if c.runner == nil {
 		return switchPlan{}, fmt.Errorf("switch picker is not configured")
 	}
+	if c.identityErr != nil {
+		return switchPlan{}, fmt.Errorf("configure session identity resolver: %w", c.identityErr)
+	}
+	if c.identity == nil {
+		return switchPlan{}, fmt.Errorf("switch session identity resolver is not configured")
+	}
+
+	rows, err := c.renderRows(context.Background(), plan.Candidates)
+	if err != nil {
+		return switchPlan{}, err
+	}
+	plan.Rows = rows
 
 	selection, err := c.runPicker(plan)
 	if err != nil {
@@ -285,13 +303,6 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 	}
 	if err := c.validate(selection); err != nil {
 		return switchPlan{}, err
-	}
-
-	if c.identityErr != nil {
-		return switchPlan{}, fmt.Errorf("configure session identity resolver: %w", c.identityErr)
-	}
-	if c.identity == nil {
-		return switchPlan{}, fmt.Errorf("switch session identity resolver is not configured")
 	}
 
 	sessionName, err := c.identity.SessionIdentityForPath(selection)
@@ -332,12 +343,80 @@ func (c *switchCommand) runPicker(plan switchPlan) (string, error) {
 	selection, err := c.runner.Run(intfzf.Options{
 		UI:         plan.UI,
 		Candidates: plan.Candidates,
+		Entries:    plan.Rows,
 	})
 	if err != nil {
 		return "", fmt.Errorf("run switch picker: %w", err)
 	}
 
 	return selection, nil
+}
+
+func (c *switchCommand) renderRows(ctx context.Context, candidatePaths []string) ([]intfzf.Entry, error) {
+	renderCandidates := make([]intrender.SwitchCandidate, 0, len(candidatePaths))
+	existingBySession, err := c.lookupExistingSessions(ctx, candidatePaths)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, candidatePath := range candidatePaths {
+		sessionName, err := c.identity.SessionIdentityForPath(candidatePath)
+		if err != nil {
+			return nil, fmt.Errorf("render switch rows: resolve session identity for %q: %w", candidatePath, err)
+		}
+
+		modeLabel := ""
+		if exists, ok := existingBySession[sessionName]; ok {
+			if exists {
+				modeLabel = "existing"
+			} else {
+				modeLabel = "new"
+			}
+		}
+
+		renderCandidates = append(renderCandidates, intrender.SwitchCandidate{
+			Path:        candidatePath,
+			SessionName: sessionName,
+			ModeLabel:   modeLabel,
+		})
+	}
+
+	rows := intrender.BuildSwitchRows(renderCandidates)
+	entries := make([]intfzf.Entry, 0, len(rows))
+	for _, row := range rows {
+		entries = append(entries, intfzf.Entry{
+			Label: row.Label,
+			Value: row.Value,
+		})
+	}
+
+	return entries, nil
+}
+
+func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePaths []string) (map[string]bool, error) {
+	inspector, ok := c.sessions.(switchSessionInspector)
+	if !ok || inspector == nil {
+		return nil, nil
+	}
+
+	existingBySession := make(map[string]bool)
+	for _, candidatePath := range candidatePaths {
+		sessionName, err := c.identity.SessionIdentityForPath(candidatePath)
+		if err != nil {
+			return nil, fmt.Errorf("check existing switch sessions: resolve session identity for %q: %w", candidatePath, err)
+		}
+		if _, seen := existingBySession[sessionName]; seen {
+			continue
+		}
+
+		exists, err := inspector.SessionExists(ctx, sessionName)
+		if err != nil {
+			return nil, fmt.Errorf("check existing switch sessions for %q: %w", sessionName, err)
+		}
+		existingBySession[sessionName] = exists
+	}
+
+	return existingBySession, nil
 }
 
 func printSwitchUsage(w io.Writer) {

@@ -122,6 +122,15 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 	return nil
 }
 
+// SessionExists reports whether the named tmux session already exists.
+func (c *Client) SessionExists(ctx context.Context, sessionName string) (bool, error) {
+	if strings.TrimSpace(sessionName) == "" {
+		return false, errSessionNameRequired
+	}
+
+	return c.sessionExists(ctx, sessionName)
+}
+
 // OpenSession switches the current client when already inside tmux and attaches otherwise.
 func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 	if strings.TrimSpace(sessionName) == "" {

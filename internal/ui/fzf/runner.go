@@ -13,6 +13,12 @@ const binaryName = "fzf"
 type Options struct {
 	UI         string
 	Candidates []string
+	Entries    []Entry
+}
+
+type Entry struct {
+	Label string
+	Value string
 }
 
 type Runner interface {
@@ -54,7 +60,7 @@ func (r *runner) Run(options Options) (string, error) {
 	var stderr bytes.Buffer
 
 	cmd := r.newCommand(path, runnerArgs(options.UI)...)
-	cmd.SetStdin(strings.NewReader(strings.Join(options.Candidates, "\n")))
+	cmd.SetStdin(strings.NewReader(strings.Join(renderedEntries(options), "\n")))
 	cmd.SetStdout(&stdout)
 	cmd.SetStderr(&stderr)
 	if err := cmd.Run(); err != nil {
@@ -65,15 +71,39 @@ func (r *runner) Run(options Options) (string, error) {
 		return "", fmt.Errorf("run fzf: %w: %s", err, msg)
 	}
 
-	return trimTrailingNewlines(stdout.String()), nil
+	return selectedValue(trimTrailingNewlines(stdout.String())), nil
 }
 
 func runnerArgs(ui string) []string {
-	return []string{"--prompt", fmt.Sprintf("projmux %s> ", ui)}
+	return []string{"--prompt", fmt.Sprintf("projmux %s> ", ui), "--delimiter", "\t", "--with-nth", "1"}
 }
 
 func trimTrailingNewlines(s string) string {
 	return strings.TrimRight(s, "\r\n")
+}
+
+func renderedEntries(options Options) []string {
+	if len(options.Entries) != 0 {
+		lines := make([]string, 0, len(options.Entries))
+		for _, entry := range options.Entries {
+			lines = append(lines, entry.Label+"\t"+entry.Value)
+		}
+		return lines
+	}
+
+	lines := make([]string, 0, len(options.Candidates))
+	for _, candidate := range options.Candidates {
+		lines = append(lines, candidate+"\t"+candidate)
+	}
+	return lines
+}
+
+func selectedValue(selection string) string {
+	_, value, ok := strings.Cut(selection, "\t")
+	if !ok {
+		return selection
+	}
+	return value
 }
 
 type execCommand struct {

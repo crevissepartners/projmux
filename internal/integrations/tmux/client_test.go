@@ -266,6 +266,42 @@ func TestClientEnsureSessionWrapsLookupError(t *testing.T) {
 	}
 }
 
+func TestClientSessionExistsReturnsTrueWhenSessionExists(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{}},
+	}
+	client := NewClient(runner)
+
+	exists, err := client.SessionExists(context.Background(), "dotfiles")
+	if err != nil {
+		t.Fatalf("SessionExists returned error: %v", err)
+	}
+	if !exists {
+		t.Fatal("SessionExists = false, want true")
+	}
+}
+
+func TestClientSessionExistsReturnsFalseWhenSessionIsMissing(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{err: exitError(t, 1)}},
+	}
+	client := NewClient(runner)
+
+	exists, err := client.SessionExists(context.Background(), "dotfiles")
+	if err != nil {
+		t.Fatalf("SessionExists returned error: %v", err)
+	}
+	if exists {
+		t.Fatal("SessionExists = true, want false")
+	}
+}
+
 func TestClientOpenSessionSwitchesInsideTmux(t *testing.T) {
 	t.Parallel()
 
