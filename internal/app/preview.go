@@ -17,6 +17,7 @@ import (
 type previewStore interface {
 	CyclePaneSelection(sessionName string, windows []corepreview.Window, panes []corepreview.Pane, direction corepreview.Direction) (corepreview.CycleResult, error)
 	CycleWindowSelection(sessionName string, windows []corepreview.Window, panes []corepreview.Pane, direction corepreview.Direction) (corepreview.CycleResult, error)
+	WriteSelection(sessionName, windowIndex, paneIndex string) error
 }
 
 type previewInventory interface {
@@ -74,6 +75,8 @@ func (c *previewCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runCyclePane(fs.Args()[1:], stdout, stderr)
 	case "cycle-window":
 		return c.runCycleWindow(fs.Args()[1:], stdout, stderr)
+	case "select":
+		return c.runSelect(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printPreviewUsage(stdout)
 		return nil
@@ -252,4 +255,5 @@ func printPreviewUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux preview cycle-pane <session> <next|prev>")
 	fmt.Fprintln(w, "  projmux preview cycle-window <session> <next|prev>")
+	fmt.Fprintln(w, "  projmux preview select <session> <window> [pane]")
 }

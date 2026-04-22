@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/es5h/projmux/internal/config"
 	"github.com/es5h/projmux/internal/state"
 )
 
@@ -18,6 +19,11 @@ type Store struct {
 // NewStore builds a tag store for the provided file path.
 func NewStore(path string) Store {
 	return Store{file: state.NewLinesFile(path)}
+}
+
+// NewDefaultStore builds a tag store from resolved projmux paths.
+func NewDefaultStore(paths config.Paths) Store {
+	return NewStore(paths.TagFile())
 }
 
 // Path returns the file path used by this store.

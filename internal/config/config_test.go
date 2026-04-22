@@ -27,6 +27,15 @@ func TestPathsPinFile(t *testing.T) {
 	}
 }
 
+func TestPathsTagFile(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{ConfigDir: "/tmp/config/projmux"}
+	if got, want := paths.TagFile(), filepath.Join(paths.ConfigDir, TagsFileName); got != want {
+		t.Fatalf("TagFile() = %q, want %q", got, want)
+	}
+}
+
 func TestPathsPreviewStateFile(t *testing.T) {
 	t.Parallel()
 

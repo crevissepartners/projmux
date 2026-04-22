@@ -47,33 +47,58 @@ func TestAppRunKillTaggedExecutesOrchestrator(t *testing.T) {
 	}
 }
 
+func TestAppRunKillTaggedLoadsTargetsFromTagStore(t *testing.T) {
+	t.Parallel()
+
+	exec := &recordingTaggedKillExecutor{}
+	app := &App{
+		kill: &killCommand{
+			current: currentSessionResolverFunc(func(context.Context) (string, error) {
+				return "work-a", nil
+			}),
+			recent: recentSessionsResolverFunc(func(context.Context) ([]string, error) {
+				return []string{"work-b", "home"}, nil
+			}),
+			exec:     exec,
+			homeDir:  func() (string, error) { return "/home/tester", nil },
+			tagStore: staticKillTagStore{items: []string{" work-a ", "work-b", "work-a"}},
+		},
+	}
+
+	if err := app.Run([]string{"kill", "tagged"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := exec.inputs.KillTargets, []string{"work-a", "work-b"}; !equalStrings(got, want) {
+		t.Fatalf("kill targets = %q, want %q", got, want)
+	}
+}
+
 func TestKillCommandRejectsInvalidUsage(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		args []string
-		want string
+		name      string
+		args      []string
+		want      string
+		wantUsage bool
 	}{
 		{
-			name: "missing subcommand",
-			args: nil,
-			want: "kill requires a subcommand",
+			name:      "missing subcommand",
+			args:      nil,
+			want:      "kill requires a subcommand",
+			wantUsage: true,
 		},
 		{
-			name: "unknown subcommand",
-			args: []string{"nope"},
-			want: "unknown kill subcommand: nope",
+			name:      "unknown subcommand",
+			args:      []string{"nope"},
+			want:      "unknown kill subcommand: nope",
+			wantUsage: true,
 		},
 		{
 			name: "missing tagged targets",
 			args: []string{"tagged"},
-			want: "kill tagged requires at least 1 <session> argument",
-		},
-		{
-			name: "blank tagged target",
-			args: []string{"tagged", "  "},
-			want: "kill tagged requires non-empty <session> arguments",
+			want: "configure kill tag store: tag store is not configured",
 		},
 	}
 
@@ -89,10 +114,26 @@ func TestKillCommandRejectsInvalidUsage(t *testing.T) {
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want substring %q", err, tt.want)
 			}
-			if !strings.Contains(stderr.String(), "Usage:") {
+			if tt.wantUsage && !strings.Contains(stderr.String(), "Usage:") {
 				t.Fatalf("stderr = %q, want usage text", stderr.String())
 			}
 		})
+	}
+}
+
+func TestKillCommandRunTaggedRejectsBlankPositionalTarget(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	err := (&killCommand{}).Run([]string{"tagged", "  "}, &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "kill tagged requires non-empty tagged sessions") {
+		t.Fatalf("error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Usage:") {
+		t.Fatalf("stderr = %q, want usage text", stderr.String())
 	}
 }
 
@@ -159,13 +200,39 @@ func TestKillCommandPropagatesSetupErrors(t *testing.T) {
 			},
 			want: "kill tagged sessions",
 		},
+		{
+			name: "tag store paths",
+			cmd: &killCommand{
+				storeErr: errors.New("no home"),
+			},
+			want: "configure kill tag store",
+		},
+		{
+			name: "tag store read",
+			cmd: &killCommand{
+				tagStore: staticKillTagStore{err: errors.New("read failed")},
+			},
+			want: "load kill tags",
+		},
+		{
+			name: "tag store empty",
+			cmd: &killCommand{
+				tagStore: staticKillTagStore{},
+			},
+			want: "load kill tags: kill tagged requires at least 1 tagged session",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tt.cmd.Run([]string{"tagged", "work"}, &bytes.Buffer{}, &bytes.Buffer{})
+			args := []string{"tagged", "work"}
+			if strings.Contains(tt.name, "tag store") {
+				args = []string{"tagged"}
+			}
+
+			err := tt.cmd.Run(args, &bytes.Buffer{}, &bytes.Buffer{})
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -200,4 +267,16 @@ func (r *recordingTaggedKillExecutor) Execute(_ context.Context, inputs lifecycl
 		return lifecycle.TaggedKillResult{}, r.err
 	}
 	return r.result, nil
+}
+
+type staticKillTagStore struct {
+	items []string
+	err   error
+}
+
+func (s staticKillTagStore) List() ([]string, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.items, nil
 }

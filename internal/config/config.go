@@ -10,6 +10,7 @@ import (
 const (
 	AppName              = "projmux"
 	PinsFileName         = "pins"
+	TagsFileName         = "tags"
 	PreviewStateFileName = "preview-state"
 )
 
@@ -40,6 +41,11 @@ func DefaultPaths(configHome, stateHome string) Paths {
 // PinFile returns the default file used for persistent pin state.
 func (p Paths) PinFile() string {
 	return filepath.Join(p.ConfigDir, PinsFileName)
+}
+
+// TagFile returns the default file used for persistent tagged-session state.
+func (p Paths) TagFile() string {
+	return filepath.Join(p.ConfigDir, TagsFileName)
 }
 
 // PreviewStateFile returns the default file used for persistent preview state.

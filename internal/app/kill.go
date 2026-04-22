@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/es5h/projmux/internal/config"
 	"github.com/es5h/projmux/internal/core/lifecycle"
 	coresessions "github.com/es5h/projmux/internal/core/sessions"
+	"github.com/es5h/projmux/internal/core/tags"
 	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
 )
 
@@ -27,22 +29,37 @@ type taggedKillExecutor interface {
 	Execute(ctx context.Context, inputs lifecycle.TaggedKillInputs) (lifecycle.TaggedKillResult, error)
 }
 
+type killTagStore interface {
+	List() ([]string, error)
+}
+
 type killCommand struct {
-	current killCurrentSessionResolver
-	recent  killRecentSessionsResolver
-	exec    taggedKillExecutor
-	homeDir func() (string, error)
+	current  killCurrentSessionResolver
+	recent   killRecentSessionsResolver
+	exec     taggedKillExecutor
+	homeDir  func() (string, error)
+	tagStore killTagStore
+	storeErr error
 }
 
 func newKillCommand() *killCommand {
 	client := inttmux.NewClient(inttmux.ExecRunner{})
 
-	return &killCommand{
+	cmd := &killCommand{
 		current: client,
 		recent:  client,
 		exec:    lifecycle.NewTaggedKiller(client, client),
 		homeDir: os.UserHomeDir,
 	}
+
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		cmd.storeErr = fmt.Errorf("resolve default config paths: %w", err)
+		return cmd
+	}
+
+	cmd.tagStore = tags.NewDefaultStore(paths)
+	return cmd
 }
 
 // Run manages kill subcommands.
@@ -71,7 +88,7 @@ func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *killCommand) runTagged(args []string, _ io.Writer, stderr io.Writer) error {
-	targets, err := normalizeTaggedArgs(args, stderr)
+	targets, err := c.resolveTaggedTargets(args, stderr)
 	if err != nil {
 		return err
 	}
@@ -90,6 +107,29 @@ func (c *killCommand) runTagged(args []string, _ io.Writer, stderr io.Writer) er
 	}
 
 	return nil
+}
+
+func (c *killCommand) resolveTaggedTargets(args []string, stderr io.Writer) ([]string, error) {
+	if len(args) != 0 {
+		return normalizeTaggedItems("kill tagged", args, stderr)
+	}
+
+	store, err := c.requireTagStore()
+	if err != nil {
+		return nil, err
+	}
+
+	targets, err := store.List()
+	if err != nil {
+		return nil, fmt.Errorf("load kill tags: %w", err)
+	}
+
+	targets, err = normalizeTaggedItems("kill tagged", targets, stderr)
+	if err != nil {
+		return nil, fmt.Errorf("load kill tags: %w", err)
+	}
+
+	return targets, nil
 }
 
 func (c *killCommand) taggedInputs(ctx context.Context, targets []string) (lifecycle.TaggedKillInputs, error) {
@@ -156,10 +196,19 @@ func (c *killCommand) resolveHomeSession() (string, error) {
 	return coresessions.NewNamer(cleanHome).SessionName(cleanHome), nil
 }
 
-func normalizeTaggedArgs(args []string, stderr io.Writer) ([]string, error) {
+func (c *killCommand) requireTagStore() (killTagStore, error) {
+	if c.storeErr != nil {
+		return nil, fmt.Errorf("configure kill tag store: %w", c.storeErr)
+	}
+	if c.tagStore == nil {
+		return nil, errors.New("configure kill tag store: tag store is not configured")
+	}
+	return c.tagStore, nil
+}
+
+func normalizeTaggedItems(command string, args []string, stderr io.Writer) ([]string, error) {
 	if len(args) == 0 {
-		printKillUsage(stderr)
-		return nil, fmt.Errorf("kill tagged requires at least 1 <session> argument")
+		return nil, fmt.Errorf("%s requires at least 1 tagged session", command)
 	}
 
 	targets := make([]string, 0, len(args))
@@ -168,7 +217,7 @@ func normalizeTaggedArgs(args []string, stderr io.Writer) ([]string, error) {
 		target := strings.TrimSpace(arg)
 		if target == "" {
 			printKillUsage(stderr)
-			return nil, fmt.Errorf("kill tagged requires non-empty <session> arguments")
+			return nil, fmt.Errorf("%s requires non-empty tagged sessions", command)
 		}
 		if _, ok := seen[target]; ok {
 			continue
@@ -183,5 +232,6 @@ func normalizeTaggedArgs(args []string, stderr io.Writer) ([]string, error) {
 
 func printKillUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  projmux kill tagged")
 	fmt.Fprintln(w, "  projmux kill tagged <session>...")
 }

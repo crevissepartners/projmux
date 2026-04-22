@@ -243,6 +243,11 @@ type stubPreviewStore struct {
 	cycleWindowDirection corepreview.Direction
 	cycleWindowResult    corepreview.CycleResult
 	cycleWindowErr       error
+
+	writeSession     string
+	writeWindowIndex string
+	writePaneIndex   string
+	writeErr         error
 }
 
 func (s *stubPreviewStore) CyclePaneSelection(sessionName string, windows []corepreview.Window, panes []corepreview.Pane, direction corepreview.Direction) (corepreview.CycleResult, error) {
@@ -265,6 +270,13 @@ func (s *stubPreviewStore) CycleWindowSelection(sessionName string, windows []co
 		return corepreview.CycleResult{}, s.cycleWindowErr
 	}
 	return s.cycleWindowResult, nil
+}
+
+func (s *stubPreviewStore) WriteSelection(sessionName, windowIndex, paneIndex string) error {
+	s.writeSession = sessionName
+	s.writeWindowIndex = windowIndex
+	s.writePaneIndex = paneIndex
+	return s.writeErr
 }
 
 type stubPreviewInventory struct {
