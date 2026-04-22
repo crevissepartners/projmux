@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
+	coresessions "github.com/es5h/projmux/internal/core/sessions"
 	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
 )
 
-// sessionIdentityResolver is intentionally narrow until the sessions package exists.
-// TODO: replace this with the concrete internal/core/sessions dependency.
 type sessionIdentityResolver interface {
 	SessionIdentityForPath(path string) (string, error)
 }
@@ -23,6 +23,7 @@ type currentPathResolver interface {
 type currentCommand struct {
 	currentPath currentPathResolver
 	identity    sessionIdentityResolver
+	identityErr error
 	validate    func(path string) error
 }
 
@@ -32,13 +33,17 @@ type currentPlan struct {
 }
 
 func newCurrentCommand() *currentCommand {
+	identity, err := newDefaultCurrentIdentityResolver()
+
 	return &currentCommand{
 		currentPath: inttmux.NewClient(inttmux.ExecRunner{}),
+		identity:    identity,
+		identityErr: err,
 		validate:    validateDirectory,
 	}
 }
 
-// Run resolves the current tmux pane path and prints the next migration step.
+// Run resolves the current tmux pane path and its target session identity.
 func (c *currentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("current", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -73,6 +78,10 @@ func (c *currentCommand) plan(ctx context.Context) (currentPlan, error) {
 		CurrentPath: path,
 	}
 
+	if c.identityErr != nil {
+		return currentPlan{}, fmt.Errorf("configure session identity resolver: %w", c.identityErr)
+	}
+
 	if c.identity == nil {
 		return plan, nil
 	}
@@ -84,6 +93,25 @@ func (c *currentCommand) plan(ctx context.Context) (currentPlan, error) {
 
 	plan.SessionName = sessionName
 	return plan, nil
+}
+
+type currentIdentityResolver struct {
+	namer coresessions.Namer
+}
+
+func newDefaultCurrentIdentityResolver() (sessionIdentityResolver, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	return currentIdentityResolver{
+		namer: coresessions.NewNamer(homeDir),
+	}, nil
+}
+
+func (r currentIdentityResolver) SessionIdentityForPath(path string) (string, error) {
+	return r.namer.SessionName(filepath.Clean(path)), nil
 }
 
 func printCurrentPlan(w io.Writer, plan currentPlan) {

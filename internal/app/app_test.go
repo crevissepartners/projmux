@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	coresessions "github.com/es5h/projmux/internal/core/sessions"
 )
 
 func TestAppRunCurrentWithoutSessionIdentity(t *testing.T) {
@@ -58,6 +60,44 @@ func TestAppRunCurrentWithSessionIdentity(t *testing.T) {
 	got := stdout.String()
 	if !strings.Contains(got, "target session: dotfiles") {
 		t.Fatalf("stdout missing target session:\n%s", got)
+	}
+}
+
+func TestCurrentCommandPlanUsesSessionNamer(t *testing.T) {
+	t.Parallel()
+
+	cmd := &currentCommand{
+		currentPath: staticCurrentPath("/home/tester/worktrees/projmux"),
+		identity: currentIdentityResolver{
+			namer: coresessions.NewNamer("/home/tester"),
+		},
+		validate: func(string) error { return nil },
+	}
+
+	plan, err := cmd.plan(context.Background())
+	if err != nil {
+		t.Fatalf("plan returned error: %v", err)
+	}
+	if plan.SessionName != "worktrees-projmux" {
+		t.Fatalf("unexpected session name %q", plan.SessionName)
+	}
+}
+
+func TestCurrentCommandPlanPropagatesIdentitySetupError(t *testing.T) {
+	t.Parallel()
+
+	cmd := &currentCommand{
+		currentPath: staticCurrentPath("/tmp/projmux"),
+		identityErr: errors.New("no home directory"),
+		validate:    func(string) error { return nil },
+	}
+
+	_, err := cmd.plan(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "configure session identity resolver") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
