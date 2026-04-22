@@ -5,61 +5,53 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 
 	coresessions "github.com/es5h/projmux/internal/core/sessions"
 )
 
-func TestAppRunCurrentWithoutSessionIdentity(t *testing.T) {
+func TestAppRunCurrentEnsuresAndOpensDerivedSession(t *testing.T) {
 	t.Parallel()
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
+	executor := &recordingCurrentSessionExecutor{}
 
 	app := &App{
 		current: &currentCommand{
 			currentPath: staticCurrentPath("/tmp/projmux"),
-			validate:    func(string) error { return nil },
-		},
-	}
-
-	if err := app.Run([]string{"current"}, &stdout, &stderr); err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	got := stdout.String()
-	if !strings.Contains(got, "current pane path: /tmp/projmux") {
-		t.Fatalf("stdout missing current path:\n%s", got)
-	}
-	if !strings.Contains(got, "TODO: wire internal/core/sessions before switch/create is implemented") {
-		t.Fatalf("stdout missing TODO note:\n%s", got)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("expected empty stderr, got %q", stderr.String())
-	}
-}
-
-func TestAppRunCurrentWithSessionIdentity(t *testing.T) {
-	t.Parallel()
-
-	var stdout bytes.Buffer
-
-	app := &App{
-		current: &currentCommand{
-			currentPath: staticCurrentPath("/tmp/projmux"),
+			sessions:    executor,
 			identity:    staticIdentity("dotfiles"),
 			validate:    func(string) error { return nil },
 		},
 	}
 
-	if err := app.Run([]string{"current"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"current"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
+	if executor.ensureSessionName != "dotfiles" || executor.ensureCWD != "/tmp/projmux" {
+		t.Fatalf("EnsureSession called with %q %q", executor.ensureSessionName, executor.ensureCWD)
+	}
+	if executor.openSessionName != "dotfiles" {
+		t.Fatalf("OpenSession called with %q", executor.openSessionName)
+	}
+}
 
-	got := stdout.String()
-	if !strings.Contains(got, "target session: dotfiles") {
-		t.Fatalf("stdout missing target session:\n%s", got)
+func TestAppRunCurrentRequiresSessionIdentity(t *testing.T) {
+	t.Parallel()
+
+	app := &App{
+		current: &currentCommand{
+			currentPath: staticCurrentPath("/tmp/projmux"),
+			sessions:    &recordingCurrentSessionExecutor{},
+			validate:    func(string) error { return nil },
+		},
+	}
+
+	err := app.Run([]string{"current"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "current command requires a target session" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -96,7 +88,7 @@ func TestCurrentCommandPlanPropagatesIdentitySetupError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "configure session identity resolver") {
+	if !contains(err.Error(), "configure session identity resolver") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -117,7 +109,7 @@ func TestAppRunCurrentPropagatesResolverError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "tmux unavailable") {
+	if !contains(err.Error(), "tmux unavailable") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -136,7 +128,7 @@ func TestAppRunCurrentRejectsPositionalArgs(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "does not accept positional arguments") {
+	if !contains(err.Error(), "does not accept positional arguments") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -153,7 +145,7 @@ func TestCurrentCommandPlanRejectsMissingDirectory(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "stat current pane path") {
+	if !contains(err.Error(), "stat current pane path") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -178,7 +170,53 @@ func TestCurrentCommandPlanRejectsFilePath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "current pane path is not a directory") {
+	if !contains(err.Error(), "current pane path is not a directory") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAppRunCurrentPropagatesEnsureSessionError(t *testing.T) {
+	t.Parallel()
+
+	app := &App{
+		current: &currentCommand{
+			currentPath: staticCurrentPath("/tmp/projmux"),
+			sessions: &recordingCurrentSessionExecutor{
+				ensureErr: errors.New("create failed"),
+			},
+			identity: staticIdentity("dotfiles"),
+			validate: func(string) error { return nil },
+		},
+	}
+
+	err := app.Run([]string{"current"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !contains(err.Error(), "ensure tmux session") || !contains(err.Error(), "create failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAppRunCurrentPropagatesOpenSessionError(t *testing.T) {
+	t.Parallel()
+
+	app := &App{
+		current: &currentCommand{
+			currentPath: staticCurrentPath("/tmp/projmux"),
+			sessions: &recordingCurrentSessionExecutor{
+				openErr: errors.New("attach failed"),
+			},
+			identity: staticIdentity("dotfiles"),
+			validate: func(string) error { return nil },
+		},
+	}
+
+	err := app.Run([]string{"current"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !contains(err.Error(), "open tmux session") || !contains(err.Error(), "attach failed") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -199,4 +237,27 @@ type staticIdentity string
 
 func (s staticIdentity) SessionIdentityForPath(string) (string, error) {
 	return string(s), nil
+}
+
+type recordingCurrentSessionExecutor struct {
+	ensureSessionName string
+	ensureCWD         string
+	openSessionName   string
+	ensureErr         error
+	openErr           error
+}
+
+func (r *recordingCurrentSessionExecutor) EnsureSession(_ context.Context, sessionName, cwd string) error {
+	r.ensureSessionName = sessionName
+	r.ensureCWD = cwd
+	return r.ensureErr
+}
+
+func (r *recordingCurrentSessionExecutor) OpenSession(_ context.Context, sessionName string) error {
+	r.openSessionName = sessionName
+	return r.openErr
+}
+
+func contains(haystack, needle string) bool {
+	return bytes.Contains([]byte(haystack), []byte(needle))
 }
