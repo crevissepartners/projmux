@@ -11,6 +11,7 @@ import (
 	"github.com/es5h/projmux/internal/config"
 	"github.com/es5h/projmux/internal/core/candidates"
 	"github.com/es5h/projmux/internal/core/pins"
+	intfzf "github.com/es5h/projmux/internal/ui/fzf"
 )
 
 const (
@@ -30,9 +31,14 @@ type switchPinStore interface {
 
 type switchPinStoreFactory func() (switchPinStore, error)
 
+type switchRunner interface {
+	Run(options intfzf.Options) (string, error)
+}
+
 type switchCommand struct {
 	discover   candidateDiscoverer
 	pinStore   switchPinStoreFactory
+	runner     switchRunner
 	homeDir    func() (string, error)
 	workingDir func() (string, error)
 	lookupEnv  func(string) string
@@ -47,6 +53,7 @@ func newSwitchCommand() *switchCommand {
 	return &switchCommand{
 		discover:   candidates.Discover,
 		pinStore:   newDefaultSwitchPinStore,
+		runner:     intfzf.NewRunner(),
 		homeDir:    os.UserHomeDir,
 		workingDir: os.Getwd,
 		lookupEnv:  os.Getenv,
@@ -63,8 +70,8 @@ func newDefaultSwitchPinStore() (switchPinStore, error) {
 	return store, nil
 }
 
-// Run resolves the first sessionizer candidate list and prints it in a simple
-// inspectable text form.
+// Run resolves the first sessionizer candidate list and opens the first
+// interactive picker surface.
 func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -91,7 +98,7 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	return renderSwitchPlan(stdout, plan)
+	return c.runPicker(plan, stdout)
 }
 
 func (c *switchCommand) plan(ui string) (switchPlan, error) {
@@ -232,18 +239,25 @@ func validateSwitchUI(ui string) error {
 	}
 }
 
-func renderSwitchPlan(w io.Writer, plan switchPlan) error {
-	if _, err := fmt.Fprintf(w, "ui: %s\n", plan.UI); err != nil {
-		return err
+func (c *switchCommand) runPicker(plan switchPlan, stdout io.Writer) error {
+	if c.runner == nil {
+		return fmt.Errorf("switch runner is not configured")
 	}
 
-	for i, candidate := range plan.Candidates {
-		if _, err := fmt.Fprintf(w, "%d: %s\n", i+1, candidate); err != nil {
-			return err
-		}
+	selection, err := c.runner.Run(intfzf.Options{
+		UI:         plan.UI,
+		Candidates: plan.Candidates,
+	})
+	if err != nil {
+		return fmt.Errorf("run switch picker: %w", err)
 	}
 
-	return nil
+	if selection == "" {
+		return nil
+	}
+
+	_, err = fmt.Fprintln(stdout, selection)
+	return err
 }
 
 func printSwitchUsage(w io.Writer) {
