@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/es5h/projmux/internal/config"
 	"github.com/es5h/projmux/internal/state"
 )
 
@@ -18,6 +19,11 @@ type Store struct {
 // NewStore builds a pin store for the provided file path.
 func NewStore(path string) Store {
 	return Store{file: state.NewLinesFile(path)}
+}
+
+// NewDefaultStore builds a pin store from resolved projmux paths.
+func NewDefaultStore(paths config.Paths) Store {
+	return NewStore(paths.PinFile())
 }
 
 // Path returns the file path used by this store.

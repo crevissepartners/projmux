@@ -6,7 +6,20 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/es5h/projmux/internal/config"
 )
+
+func TestNewDefaultStoreUsesConfigPinFile(t *testing.T) {
+	t.Parallel()
+
+	paths := config.DefaultPaths("/tmp/config-home", "/tmp/state-home")
+	store := NewDefaultStore(paths)
+
+	if got, want := store.Path(), paths.PinFile(); got != want {
+		t.Fatalf("Path() = %q, want %q", got, want)
+	}
+}
 
 func TestStoreListMissingFile(t *testing.T) {
 	t.Parallel()
