@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
+	"strconv"
 	"strings"
 )
 
 var (
 	errCurrentPanePathUnavailable = errors.New("tmux current pane path is unavailable")
+	errCurrentSessionUnavailable  = errors.New("tmux current session is unavailable")
 	errSessionNameRequired        = errors.New("tmux session name is required")
 	errSessionCWDRequired         = errors.New("tmux session cwd is required")
+	errSessionActivityInvalid     = errors.New("tmux session activity is invalid")
 )
 
 type commandRunner interface {
@@ -69,6 +73,31 @@ func (c *Client) CurrentPanePath(ctx context.Context) (string, error) {
 	return path, nil
 }
 
+// CurrentSessionName returns the current tmux session name for the active client.
+func (c *Client) CurrentSessionName(ctx context.Context) (string, error) {
+	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-F", "#{session_name}")
+	if err != nil {
+		return "", fmt.Errorf("resolve current tmux session: %w", err)
+	}
+
+	sessionName := strings.TrimSpace(string(output))
+	if sessionName == "" {
+		return "", errCurrentSessionUnavailable
+	}
+
+	return sessionName, nil
+}
+
+// RecentSessions lists tmux session names ordered by most-recent activity first.
+func (c *Client) RecentSessions(ctx context.Context) ([]string, error) {
+	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_activity}\t#{session_name}")
+	if err != nil {
+		return nil, fmt.Errorf("list recent tmux sessions: %w", err)
+	}
+
+	return parseRecentSessions(output)
+}
+
 // EnsureSession creates the target session when it is missing.
 func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) error {
 	if strings.TrimSpace(sessionName) == "" {
@@ -113,6 +142,32 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 	return nil
 }
 
+// SwitchClient switches the active tmux client to the target session.
+func (c *Client) SwitchClient(ctx context.Context, sessionName string) error {
+	if strings.TrimSpace(sessionName) == "" {
+		return errSessionNameRequired
+	}
+
+	if _, err := c.runner.Run(ctx, "tmux", "switch-client", "-t", sessionName); err != nil {
+		return fmt.Errorf("switch tmux client to session %q: %w", sessionName, err)
+	}
+
+	return nil
+}
+
+// KillSession terminates the named tmux session.
+func (c *Client) KillSession(ctx context.Context, sessionName string) error {
+	if strings.TrimSpace(sessionName) == "" {
+		return errSessionNameRequired
+	}
+
+	if _, err := c.runner.Run(ctx, "tmux", "kill-session", "-t", sessionName); err != nil {
+		return fmt.Errorf("kill tmux session %q: %w", sessionName, err)
+	}
+
+	return nil
+}
+
 // InsideSession reports whether the caller is already running inside tmux.
 func (c *Client) InsideSession() bool {
 	if c.lookupEnv == nil {
@@ -140,4 +195,59 @@ func isExitCode(err error, code int) bool {
 	}
 
 	return exitErr.ExitCode() == code
+}
+
+type recentSession struct {
+	name     string
+	activity int64
+	order    int
+}
+
+func parseRecentSessions(output []byte) ([]string, error) {
+	if strings.TrimSpace(string(output)) == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(string(output), "\n")
+	sessions := make([]recentSession, 0, len(lines))
+	for index, rawLine := range lines {
+		if strings.TrimSpace(rawLine) == "" {
+			continue
+		}
+
+		fields := strings.SplitN(rawLine, "\t", 2)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("parse recent tmux sessions: malformed row %q", rawLine)
+		}
+
+		activity, err := strconv.ParseInt(strings.TrimSpace(fields[0]), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse recent tmux sessions for %q: %w", strings.TrimSpace(fields[1]), errSessionActivityInvalid)
+		}
+
+		sessionName := strings.TrimSpace(fields[1])
+		if sessionName == "" {
+			return nil, fmt.Errorf("parse recent tmux sessions: %w", errSessionNameRequired)
+		}
+
+		sessions = append(sessions, recentSession{
+			name:     sessionName,
+			activity: activity,
+			order:    index,
+		})
+	}
+
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if sessions[i].activity == sessions[j].activity {
+			return sessions[i].order < sessions[j].order
+		}
+		return sessions[i].activity > sessions[j].activity
+	})
+
+	names := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		names = append(names, session.name)
+	}
+
+	return names, nil
 }
