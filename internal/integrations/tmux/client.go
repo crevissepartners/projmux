@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/es5h/projmux/internal/core/lifecycle"
 )
 
 var (
@@ -20,6 +22,8 @@ var (
 	errPopupCloseBehaviorInvalid  = errors.New("tmux popup close behavior is invalid")
 	errWindowIndexRequired        = errors.New("tmux window index is required when pane index is set")
 	errSessionActivityInvalid     = errors.New("tmux session activity is invalid")
+	errSessionAttachedInvalid     = errors.New("tmux session attached flag is invalid")
+	errSessionEphemeralInvalid    = errors.New("tmux session ephemeral flag is invalid")
 	errWindowIndexInvalid         = errors.New("tmux window index is invalid")
 	errPaneIndexInvalid           = errors.New("tmux pane index is invalid")
 	errActiveFlagInvalid          = errors.New("tmux active flag is invalid")
@@ -136,6 +140,22 @@ func (c *Client) RecentSessions(ctx context.Context) ([]string, error) {
 	}
 
 	return parseRecentSessions(output)
+}
+
+// ListEphemeralSessions lists tmux sessions with the lifecycle metadata needed
+// for auto-attach reuse and stale-session pruning decisions.
+func (c *Client) ListEphemeralSessions(ctx context.Context) ([]lifecycle.SessionInventory, error) {
+	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_name}\t#{session_attached}\t#{session_last_attached}\t#{@dotfiles_ephemeral}")
+	if err != nil {
+		return nil, fmt.Errorf("list ephemeral tmux sessions: %w", err)
+	}
+
+	sessions, err := parseEphemeralSessions(output)
+	if err != nil {
+		return nil, fmt.Errorf("list ephemeral tmux sessions: %w", err)
+	}
+
+	return sessions, nil
 }
 
 // ListSessionWindows lists the windows in a tmux session with active hints.
@@ -383,6 +403,60 @@ func isExitCode(err error, code int) bool {
 	}
 
 	return exitErr.ExitCode() == code
+}
+
+func parseEphemeralSessions(output []byte) ([]lifecycle.SessionInventory, error) {
+	trimmed := strings.TrimSpace(string(output))
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	sessions := make([]lifecycle.SessionInventory, 0, len(lines))
+	for _, line := range lines {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 4 {
+			return nil, fmt.Errorf("parse ephemeral tmux sessions: malformed row %q", line)
+		}
+
+		name := strings.TrimSpace(fields[0])
+		if name == "" {
+			return nil, errSessionNameRequired
+		}
+
+		attached, err := parseBinaryFlag(fields[1], errSessionAttachedInvalid)
+		if err != nil {
+			return nil, err
+		}
+		lastAttached, err := strconv.ParseInt(strings.TrimSpace(fields[2]), 10, 64)
+		if err != nil {
+			return nil, errSessionActivityInvalid
+		}
+		ephemeral, err := parseBinaryFlag(fields[3], errSessionEphemeralInvalid)
+		if err != nil {
+			return nil, err
+		}
+
+		sessions = append(sessions, lifecycle.SessionInventory{
+			Name:         name,
+			Attached:     attached,
+			LastAttached: lastAttached,
+			Ephemeral:    ephemeral,
+		})
+	}
+
+	return sessions, nil
+}
+
+func parseBinaryFlag(value string, invalid error) (bool, error) {
+	switch strings.TrimSpace(value) {
+	case "0":
+		return false, nil
+	case "1":
+		return true, nil
+	default:
+		return false, invalid
+	}
 }
 
 // BuildPopupPreviewCommand builds the shell command used inside a tmux popup

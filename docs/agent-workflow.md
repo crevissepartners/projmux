@@ -28,9 +28,9 @@
 ## Maintained Test List
 - `make fmt`: repository formatting for Go, shell snippets, and generated docs where applicable.
 - `make fix`: safe automatic fixes such as `go fix` and repository-approved cleanup steps.
-- `make test`: fast unit coverage for app-layer current, kill, pin, preview, sessions, session-popup preview/open commands, switch, tag, and tmux helper commands, preview select writes, popup render output after cycling, switch picker tag actions and loop behavior, switch/popup/session rendering, session identity, candidate discovery, config path derivation, popup preview read-models, and pure state rules including preview and tag stores.
-- `make test-integration`: tmux-facing integration coverage, preview inventory parsing, and state/config IO coverage including default tag path wiring.
-- `make test-e2e`: real workflow coverage for session creation, switching, preview cycling/selection, popup preview, tag flows, and cleanup.
+- `make test`: fast unit coverage for app-layer attach/current/kill/pin/preview/prune/sessions/session-popup commands, switch, tag, and tmux helper commands, preview select writes, popup render output after cycling, switch picker tag actions and loop behavior, switch/popup/session rendering, session identity, candidate discovery, config path derivation, popup preview read-models, and pure state rules including preview, tag, and lifecycle stores.
+- `make test-integration`: tmux-facing integration coverage, preview inventory parsing, lifecycle session inventory parsing, and state/config IO coverage including default tag path wiring.
+- `make test-e2e`: real workflow coverage for session creation, switching, preview cycling/selection, popup preview, tag flows, attach/prune flows, and cleanup.
 
 ## When To Update This List
 - A feature moves between unit, integration, and e2e coverage levels.

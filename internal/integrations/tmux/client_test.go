@@ -188,6 +188,86 @@ func TestClientRecentSessionsRejectsInvalidActivity(t *testing.T) {
 	}
 }
 
+func TestClientListEphemeralSessionsParsesRows(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("ephemeral\t0\t42\t1\nhome\t1\t99\t0\n"), nil
+	}))
+
+	got, err := client.ListEphemeralSessions(context.Background())
+	if err != nil {
+		t.Fatalf("ListEphemeralSessions() error = %v", err)
+	}
+
+	if want := []string{"ephemeral", "home"}; !reflect.DeepEqual([]string{got[0].Name, got[1].Name}, want) {
+		t.Fatalf("ListEphemeralSessions() names = %#v, want %#v", []string{got[0].Name, got[1].Name}, want)
+	}
+	if !got[0].Ephemeral || got[0].Attached {
+		t.Fatalf("first session = %#v, want unattached ephemeral", got[0])
+	}
+	if got[1].Ephemeral || !got[1].Attached {
+		t.Fatalf("second session = %#v, want attached non-ephemeral", got[1])
+	}
+}
+
+func TestClientListEphemeralSessionsRejectsMalformedRows(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("broken"), nil
+	}))
+
+	_, err := client.ListEphemeralSessions(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "malformed row") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClientListEphemeralSessionsRejectsInvalidFlags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		row    string
+		target error
+	}{
+		{
+			name:   "attached",
+			row:    "ephemeral\tyes\t42\t1",
+			target: errSessionAttachedInvalid,
+		},
+		{
+			name:   "ephemeral",
+			row:    "ephemeral\t0\t42\tyes",
+			target: errSessionEphemeralInvalid,
+		},
+		{
+			name:   "activity",
+			row:    "ephemeral\t0\toops\t1",
+			target: errSessionActivityInvalid,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+				return []byte(tt.row), nil
+			}))
+
+			_, err := client.ListEphemeralSessions(context.Background())
+			if !errors.Is(err, tt.target) {
+				t.Fatalf("ListEphemeralSessions() error = %v, want %v", err, tt.target)
+			}
+		})
+	}
+}
+
 func TestClientRecentSessionsRejectsEmptySessionNames(t *testing.T) {
 	t.Parallel()
 

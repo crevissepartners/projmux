@@ -18,7 +18,7 @@
 - `projmux create <dir>`
 - `projmux kill <session>`
 - `projmux kill tagged`
-- `projmux prune-ephemeral`
+- `projmux prune ephemeral`
 - `projmux attach auto`
 
 ### Pins and config

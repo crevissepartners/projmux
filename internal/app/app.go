@@ -14,10 +14,12 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 // App wires the CLI entrypoints to concrete command handlers.
 type App struct {
+	attach       *attachCommand
 	current      *currentCommand
 	kill         *killCommand
 	pin          *pinCommand
 	preview      *previewCommand
+	prune        *pruneCommand
 	sessions     *sessionsCommand
 	sessionPopup *sessionPopupCommand
 	switcher     *switchCommand
@@ -28,10 +30,12 @@ type App struct {
 // New builds the default application graph.
 func New() *App {
 	return &App{
+		attach:       newAttachCommand(),
 		current:      newCurrentCommand(),
 		kill:         newKillCommand(),
 		pin:          newPinCommand(),
 		preview:      newPreviewCommand(),
+		prune:        newPruneCommand(),
 		sessions:     newSessionsCommand(),
 		sessionPopup: newSessionPopupCommand(),
 		switcher:     newSwitchCommand(),
@@ -48,6 +52,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
+	case "attach":
+		return a.attach.Run(args[1:], stdout, stderr)
 	case "current":
 		return a.current.Run(args[1:], stdout, stderr)
 	case "kill":
@@ -56,6 +62,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.pin.Run(args[1:], stdout, stderr)
 	case "preview":
 		return a.preview.Run(args[1:], stdout, stderr)
+	case "prune":
+		return a.prune.Run(args[1:], stdout, stderr)
 	case "sessions":
 		return a.sessions.Run(args[1:], stdout, stderr)
 	case "session-popup":
@@ -82,10 +90,12 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "projmux")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  attach    Open tmux lifecycle entry helpers")
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
+	fmt.Fprintln(w, "  prune     Trim stale tmux lifecycle state")
 	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
 	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")
 	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
