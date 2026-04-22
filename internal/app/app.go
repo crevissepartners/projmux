@@ -18,6 +18,7 @@ type App struct {
 	kill         *killCommand
 	pin          *pinCommand
 	preview      *previewCommand
+	sessions     *sessionsCommand
 	sessionPopup *sessionPopupCommand
 	switcher     *switchCommand
 	tag          *tagCommand
@@ -31,6 +32,7 @@ func New() *App {
 		kill:         newKillCommand(),
 		pin:          newPinCommand(),
 		preview:      newPreviewCommand(),
+		sessions:     newSessionsCommand(),
 		sessionPopup: newSessionPopupCommand(),
 		switcher:     newSwitchCommand(),
 		tag:          newTagCommand(),
@@ -54,6 +56,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.pin.Run(args[1:], stdout, stderr)
 	case "preview":
 		return a.preview.Run(args[1:], stdout, stderr)
+	case "sessions":
+		return a.sessions.Run(args[1:], stdout, stderr)
 	case "session-popup":
 		return a.sessionPopup.Run(args[1:], stdout, stderr)
 	case "switch":
@@ -82,6 +86,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
+	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
 	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")
 	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
 	fmt.Fprintln(w, "  tag       Manage tagged tmux sessions")
