@@ -230,6 +230,11 @@ func TestPreviewCommandReportsConfigurationAndRuntimeErrors(t *testing.T) {
 }
 
 type stubPreviewStore struct {
+	readSession   string
+	readSelection corepreview.Selection
+	readFound     bool
+	readErr       error
+
 	cyclePaneSession   string
 	cyclePaneWindows   []corepreview.Window
 	cyclePanePanes     []corepreview.Pane
@@ -248,6 +253,14 @@ type stubPreviewStore struct {
 	writeWindowIndex string
 	writePaneIndex   string
 	writeErr         error
+}
+
+func (s *stubPreviewStore) ReadSelection(sessionName string) (corepreview.Selection, bool, error) {
+	s.readSession = sessionName
+	if s.readErr != nil {
+		return corepreview.Selection{}, false, s.readErr
+	}
+	return s.readSelection, s.readFound, nil
 }
 
 func (s *stubPreviewStore) CyclePaneSelection(sessionName string, windows []corepreview.Window, panes []corepreview.Pane, direction corepreview.Direction) (corepreview.CycleResult, error) {

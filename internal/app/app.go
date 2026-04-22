@@ -14,21 +14,25 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 // App wires the CLI entrypoints to concrete command handlers.
 type App struct {
-	current  *currentCommand
-	kill     *killCommand
-	pin      *pinCommand
-	preview  *previewCommand
-	switcher *switchCommand
+	current      *currentCommand
+	kill         *killCommand
+	pin          *pinCommand
+	preview      *previewCommand
+	sessionPopup *sessionPopupCommand
+	switcher     *switchCommand
+	tag          *tagCommand
 }
 
 // New builds the default application graph.
 func New() *App {
 	return &App{
-		current:  newCurrentCommand(),
-		kill:     newKillCommand(),
-		pin:      newPinCommand(),
-		preview:  newPreviewCommand(),
-		switcher: newSwitchCommand(),
+		current:      newCurrentCommand(),
+		kill:         newKillCommand(),
+		pin:          newPinCommand(),
+		preview:      newPreviewCommand(),
+		sessionPopup: newSessionPopupCommand(),
+		switcher:     newSwitchCommand(),
+		tag:          newTagCommand(),
 	}
 }
 
@@ -48,8 +52,12 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.pin.Run(args[1:], stdout, stderr)
 	case "preview":
 		return a.preview.Run(args[1:], stdout, stderr)
+	case "session-popup":
+		return a.sessionPopup.Run(args[1:], stdout, stderr)
 	case "switch":
 		return a.switcher.Run(args[1:], stdout, stderr)
+	case "tag":
+		return a.tag.Run(args[1:], stdout, stderr)
 	case "version", "--version", "-version":
 		_, err := fmt.Fprintf(stdout, "projmux %s\n", version.String())
 		return err
@@ -69,8 +77,10 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
-	fmt.Fprintln(w, "  preview   Cycle persisted tmux preview selection")
+	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
+	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")
 	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
+	fmt.Fprintln(w, "  tag       Manage tagged tmux sessions")
 	fmt.Fprintln(w, "  help      Show bootstrap help")
 	fmt.Fprintln(w, "  version   Print the current version")
 }
