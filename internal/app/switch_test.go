@@ -10,12 +10,14 @@ import (
 
 	"github.com/es5h/projmux/internal/config"
 	"github.com/es5h/projmux/internal/core/candidates"
+	intfzf "github.com/es5h/projmux/internal/ui/fzf"
 )
 
 func TestAppRunSwitchDefaultsToPopupAndRendersCandidates(t *testing.T) {
 	t.Parallel()
 
 	var gotInputs candidates.Inputs
+	var gotRunnerOptions intfzf.Options
 
 	app := &App{
 		switcher: &switchCommand{
@@ -26,6 +28,10 @@ func TestAppRunSwitchDefaultsToPopupAndRendersCandidates(t *testing.T) {
 			pinStore: func() (switchPinStore, error) {
 				return stubSwitchPinStore{list: []string{"/pins/app"}}, nil
 			},
+			runner: switchRunnerFunc(func(options intfzf.Options) (string, error) {
+				gotRunnerOptions = options
+				return "/home/tester/dotfiles", nil
+			}),
 			homeDir:    func() (string, error) { return "/home/tester", nil },
 			workingDir: func() (string, error) { return "/rp/repo-a/nested", nil },
 			lookupEnv: func(name string) string {
@@ -48,7 +54,7 @@ func TestAppRunSwitchDefaultsToPopupAndRendersCandidates(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := stdout.String(), "ui: popup\n1: /home/tester\n2: /home/tester/dotfiles\n"; got != want {
+	if got, want := stdout.String(), "/home/tester/dotfiles\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	if stderr.Len() != 0 {
@@ -70,16 +76,27 @@ func TestAppRunSwitchDefaultsToPopupAndRendersCandidates(t *testing.T) {
 	if got, want := gotInputs.CurrentPath, "/rp/repo-a/nested"; got != want {
 		t.Fatalf("inputs.CurrentPath = %q, want %q", got, want)
 	}
+	if got, want := gotRunnerOptions.UI, switchUIPopup; got != want {
+		t.Fatalf("runner UI = %q, want %q", got, want)
+	}
+	if got, want := gotRunnerOptions.Candidates, []string{"/home/tester", "/home/tester/dotfiles"}; !equalStrings(got, want) {
+		t.Fatalf("runner candidates = %q, want %q", got, want)
+	}
 }
 
 func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	t.Parallel()
 
+	var gotRunnerOptions intfzf.Options
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:   func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+		runner: switchRunnerFunc(func(options intfzf.Options) (string, error) {
+			gotRunnerOptions = options
+			return "/tmp/app", nil
+		}),
 		homeDir:    func() (string, error) { return "/home/tester", nil },
 		workingDir: func() (string, error) { return "/tmp", nil },
 	}
@@ -88,8 +105,11 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if err := cmd.Run([]string{"--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), "ui: sidebar\n1: /tmp/app\n"; got != want {
+	if got, want := stdout.String(), "/tmp/app\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if got, want := gotRunnerOptions.UI, switchUISidebar; got != want {
+		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
 }
 
@@ -125,6 +145,8 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	t.Chdir(fixture.path("managed/work-a/nested"))
 
 	cmd := newSwitchCommand()
+	fakeRunner := &capturingSwitchRunner{selection: fixture.path("managed/work-a")}
+	cmd.runner = fakeRunner
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -135,19 +157,22 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	want := strings.Join([]string{
-		"ui: sidebar",
-		"1: " + fixture.path("home"),
-		"2: " + fixture.path("home/dotfiles"),
-		"3: " + fixture.path("pins/app"),
-		"4: " + fixture.path("managed/work-a"),
-		"5: " + fixture.path("rp/repo-a"),
-		"6: " + fixture.path("managed/work-b"),
-		"",
-	}, "\n")
-
-	if got := stdout.String(); got != want {
+	if got, want := stdout.String(), fixture.path("managed/work-a")+"\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	wantCandidates := []string{
+		fixture.path("home"),
+		fixture.path("home/dotfiles"),
+		fixture.path("pins/app"),
+		fixture.path("managed/work-a"),
+		fixture.path("rp/repo-a"),
+		fixture.path("managed/work-b"),
+	}
+	if got := fakeRunner.last.Candidates; !equalStrings(got, wantCandidates) {
+		t.Fatalf("runner candidates = %q, want %q", got, wantCandidates)
+	}
+	if got, want := fakeRunner.last.UI, switchUISidebar; got != want {
+		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
 }
 
@@ -179,6 +204,7 @@ func TestSwitchCommandRejectsInvalidUsage(t *testing.T) {
 			err := (&switchCommand{
 				discover:   func(candidates.Inputs) ([]string, error) { return nil, nil },
 				pinStore:   func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+				runner:     switchRunnerFunc(func(intfzf.Options) (string, error) { return "", nil }),
 				homeDir:    func() (string, error) { return "/home/tester", nil },
 				workingDir: func() (string, error) { return "/tmp", nil },
 			}).Run(tt.args, &bytes.Buffer{}, &stderr)
@@ -223,11 +249,25 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &switchCommand{
 				homeDir:  func() (string, error) { return "/home/tester", nil },
 				pinStore: func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+				runner:   switchRunnerFunc(func(intfzf.Options) (string, error) { return "", nil }),
 				workingDir: func() (string, error) {
 					return "", errors.New("no cwd")
 				},
 			},
 			want: "resolve current working directory",
+		},
+		{
+			name: "runner",
+			cmd: &switchCommand{
+				discover:   func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
+				homeDir:    func() (string, error) { return "/home/tester", nil },
+				pinStore:   func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+				workingDir: func() (string, error) { return "/tmp", nil },
+				runner: switchRunnerFunc(func(intfzf.Options) (string, error) {
+					return "", errors.New("fzf exploded")
+				}),
+			},
+			want: "run switch picker",
 		},
 	}
 
@@ -246,21 +286,41 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 	}
 }
 
-func TestRenderSwitchPlan(t *testing.T) {
+func TestSwitchCommandAllowsEmptySelection(t *testing.T) {
 	t.Parallel()
 
-	var stdout bytes.Buffer
-	err := renderSwitchPlan(&stdout, switchPlan{
-		UI:         switchUIPopup,
-		Candidates: []string{"/tmp/a", "/tmp/b"},
-	})
-	if err != nil {
-		t.Fatalf("renderSwitchPlan() error = %v", err)
+	cmd := &switchCommand{
+		discover:   func(candidates.Inputs) ([]string, error) { return []string{"/tmp/a"}, nil },
+		pinStore:   func() (switchPinStore, error) { return stubSwitchPinStore{}, nil },
+		runner:     switchRunnerFunc(func(intfzf.Options) (string, error) { return "", nil }),
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
 	}
 
-	if got, want := stdout.String(), "ui: popup\n1: /tmp/a\n2: /tmp/b\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
+	if got := stdout.String(); got != "" {
+		t.Fatalf("stdout = %q, want empty", got)
+	}
+}
+
+type switchRunnerFunc func(options intfzf.Options) (string, error)
+
+func (f switchRunnerFunc) Run(options intfzf.Options) (string, error) {
+	return f(options)
+}
+
+type capturingSwitchRunner struct {
+	last      intfzf.Options
+	selection string
+	err       error
+}
+
+func (r *capturingSwitchRunner) Run(options intfzf.Options) (string, error) {
+	r.last = options
+	return r.selection, r.err
 }
 
 type stubSwitchPinStore struct {
