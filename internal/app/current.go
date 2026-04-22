@@ -20,8 +20,14 @@ type currentPathResolver interface {
 	CurrentPanePath(ctx context.Context) (string, error)
 }
 
+type currentSessionExecutor interface {
+	EnsureSession(ctx context.Context, sessionName, cwd string) error
+	OpenSession(ctx context.Context, sessionName string) error
+}
+
 type currentCommand struct {
 	currentPath currentPathResolver
+	sessions    currentSessionExecutor
 	identity    sessionIdentityResolver
 	identityErr error
 	validate    func(path string) error
@@ -33,18 +39,20 @@ type currentPlan struct {
 }
 
 func newCurrentCommand() *currentCommand {
+	client := inttmux.NewClient(inttmux.ExecRunner{})
 	identity, err := newDefaultCurrentIdentityResolver()
 
 	return &currentCommand{
-		currentPath: inttmux.NewClient(inttmux.ExecRunner{}),
+		currentPath: client,
+		sessions:    client,
 		identity:    identity,
 		identityErr: err,
 		validate:    validateDirectory,
 	}
 }
 
-// Run resolves the current tmux pane path and its target session identity.
-func (c *currentCommand) Run(args []string, stdout, stderr io.Writer) error {
+// Run resolves the current tmux pane path and activates the derived session.
+func (c *currentCommand) Run(args []string, _ io.Writer, stderr io.Writer) error {
 	fs := flag.NewFlagSet("current", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -60,7 +68,10 @@ func (c *currentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	printCurrentPlan(stdout, plan)
+	if err := c.execute(context.Background(), plan); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -95,6 +106,24 @@ func (c *currentCommand) plan(ctx context.Context) (currentPlan, error) {
 	return plan, nil
 }
 
+func (c *currentCommand) execute(ctx context.Context, plan currentPlan) error {
+	if plan.SessionName == "" {
+		return fmt.Errorf("current command requires a target session")
+	}
+	if c.sessions == nil {
+		return fmt.Errorf("current session executor is not configured")
+	}
+
+	if err := c.sessions.EnsureSession(ctx, plan.SessionName, plan.CurrentPath); err != nil {
+		return fmt.Errorf("ensure tmux session %q: %w", plan.SessionName, err)
+	}
+	if err := c.sessions.OpenSession(ctx, plan.SessionName); err != nil {
+		return fmt.Errorf("open tmux session %q: %w", plan.SessionName, err)
+	}
+
+	return nil
+}
+
 type currentIdentityResolver struct {
 	namer coresessions.Namer
 }
@@ -112,17 +141,6 @@ func newDefaultCurrentIdentityResolver() (sessionIdentityResolver, error) {
 
 func (r currentIdentityResolver) SessionIdentityForPath(path string) (string, error) {
 	return r.namer.SessionName(filepath.Clean(path)), nil
-}
-
-func printCurrentPlan(w io.Writer, plan currentPlan) {
-	fmt.Fprintf(w, "current pane path: %s\n", plan.CurrentPath)
-
-	if plan.SessionName != "" {
-		fmt.Fprintf(w, "target session: %s\n", plan.SessionName)
-		return
-	}
-
-	fmt.Fprintln(w, "TODO: wire internal/core/sessions before switch/create is implemented")
 }
 
 func validateDirectory(path string) error {
