@@ -5,7 +5,20 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/es5h/projmux/internal/config"
 )
+
+func TestNewDefaultStoreUsesStatePreviewFile(t *testing.T) {
+	t.Parallel()
+
+	paths := config.DefaultPaths("/tmp/config-home", "/tmp/state-home")
+	store := NewDefaultStore(paths)
+
+	if got, want := store.Path(), paths.PreviewStateFile(); got != want {
+		t.Fatalf("Path() = %q, want %q", got, want)
+	}
+}
 
 func TestStoreReadMissingFile(t *testing.T) {
 	t.Parallel()

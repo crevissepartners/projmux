@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/es5h/projmux/internal/config"
 	"github.com/es5h/projmux/internal/state"
 )
 
@@ -17,6 +18,11 @@ type Store struct {
 // NewStore builds a preview state store for the provided file path.
 func NewStore(path string) Store {
 	return Store{file: state.NewLinesFile(path)}
+}
+
+// NewDefaultStore builds a preview state store from resolved projmux paths.
+func NewDefaultStore(paths config.Paths) Store {
+	return NewStore(paths.PreviewStateFile())
 }
 
 // Path returns the file path used by this store.

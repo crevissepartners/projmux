@@ -27,6 +27,15 @@ func TestPathsPinFile(t *testing.T) {
 	}
 }
 
+func TestPathsPreviewStateFile(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{StateDir: "/tmp/state/projmux"}
+	if got, want := paths.PreviewStateFile(), filepath.Join(paths.StateDir, PreviewStateFileName); got != want {
+		t.Fatalf("PreviewStateFile() = %q, want %q", got, want)
+	}
+}
+
 func TestHomesPathsUsesExplicitXDGHomes(t *testing.T) {
 	t.Parallel()
 

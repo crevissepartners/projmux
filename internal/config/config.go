@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	AppName      = "projmux"
-	PinsFileName = "pins"
+	AppName              = "projmux"
+	PinsFileName         = "pins"
+	PreviewStateFileName = "preview-state"
 )
 
 var ErrHomeDirRequired = errors.New("home directory is required when XDG homes are unset")
@@ -39,6 +40,11 @@ func DefaultPaths(configHome, stateHome string) Paths {
 // PinFile returns the default file used for persistent pin state.
 func (p Paths) PinFile() string {
 	return filepath.Join(p.ConfigDir, PinsFileName)
+}
+
+// PreviewStateFile returns the default file used for persistent preview state.
+func (p Paths) PreviewStateFile() string {
+	return filepath.Join(p.StateDir, PreviewStateFileName)
 }
 
 // Paths resolves the effective XDG-style projmux directories from the provided
