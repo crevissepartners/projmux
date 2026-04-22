@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -106,6 +107,9 @@ func (s *orderedSet) appendRootChildren(root string) error {
 	if err != nil {
 		return fmt.Errorf("read root %q: %w", root, err)
 	}
+	slices.SortFunc(entries, func(a, b os.DirEntry) int {
+		return strings.Compare(a.Name(), b.Name())
+	})
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
