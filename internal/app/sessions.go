@@ -116,7 +116,10 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("build sessions cycle-pane next command: %w", err)
 	}
 
-	rows := intrender.BuildSessionRows(summaries)
+	rows, err := c.buildRows(summaries)
+	if err != nil {
+		return err
+	}
 	result, err := c.runner.Run(intfzf.Options{
 		UI:             *ui,
 		Entries:        rowsToEntries(rows),
@@ -150,6 +153,28 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+func (c *sessionsCommand) buildRows(summaries []inttmux.RecentSessionSummary) ([]intrender.SessionRow, error) {
+	renderSummaries := make([]intrender.SessionSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		renderSummary := intrender.SessionSummary{
+			Name:        summary.Name,
+			Attached:    summary.Attached,
+			WindowCount: summary.WindowCount,
+			PaneCount:   summary.PaneCount,
+			Path:        summary.Path,
+		}
+
+		windowIndex, paneIndex, err := c.resolveSelection(summary.Name)
+		if err != nil {
+			return nil, err
+		}
+		renderSummary.StoredTarget = formatStoredTarget(windowIndex, paneIndex)
+		renderSummaries = append(renderSummaries, renderSummary)
+	}
+
+	return intrender.BuildSessionRows(renderSummaries), nil
+}
+
 func (c *sessionsCommand) resolveSelection(sessionName string) (string, string, error) {
 	if c.store == nil {
 		return "", "", nil
@@ -164,6 +189,18 @@ func (c *sessionsCommand) resolveSelection(sessionName string) (string, string, 
 	}
 
 	return strings.TrimSpace(selection.WindowIndex), strings.TrimSpace(selection.PaneIndex), nil
+}
+
+func formatStoredTarget(windowIndex, paneIndex string) string {
+	windowIndex = strings.TrimSpace(windowIndex)
+	paneIndex = strings.TrimSpace(paneIndex)
+	if windowIndex == "" {
+		return ""
+	}
+	if paneIndex == "" {
+		return "w" + windowIndex
+	}
+	return "w" + windowIndex + ".p" + paneIndex
 }
 
 func sessionsPreviewWindow(ui string) string {

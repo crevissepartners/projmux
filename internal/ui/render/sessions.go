@@ -3,8 +3,6 @@ package render
 import (
 	"strconv"
 	"strings"
-
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
 )
 
 type SessionRow struct {
@@ -12,7 +10,16 @@ type SessionRow struct {
 	Value string
 }
 
-func BuildSessionRows(summaries []inttmux.RecentSessionSummary) []SessionRow {
+type SessionSummary struct {
+	Name         string
+	Attached     bool
+	WindowCount  int
+	PaneCount    int
+	Path         string
+	StoredTarget string
+}
+
+func BuildSessionRows(summaries []SessionSummary) []SessionRow {
 	rows := make([]SessionRow, 0, len(summaries))
 	for _, summary := range summaries {
 		label := sanitizeCell(summary.Name)
@@ -26,6 +33,9 @@ func BuildSessionRows(summaries []inttmux.RecentSessionSummary) []SessionRow {
 		}
 		if summary.PaneCount > 0 {
 			label += "  " + sanitizeCell(strconv.Itoa(summary.PaneCount)) + "p"
+		}
+		if target := sanitizeCell(strings.TrimSpace(summary.StoredTarget)); target != "" {
+			label += "  " + target
 		}
 		if path := sanitizeCell(strings.TrimSpace(summary.Path)); path != "" {
 			label += "  " + path

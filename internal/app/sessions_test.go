@@ -24,11 +24,12 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 				}, nil
 			}),
 			store: &recordingSessionsStore{
-				found: true,
-				selection: corepreview.Selection{
-					SessionName: "repo-b",
-					WindowIndex: "3",
-					PaneIndex:   "1",
+				selections: map[string]corepreview.Selection{
+					"repo-b": {
+						SessionName: "repo-b",
+						WindowIndex: "3",
+						PaneIndex:   "1",
+					},
 				},
 			},
 			runner: sessionsRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
@@ -49,7 +50,7 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.Entries, []intfzf.Entry{
-		{Label: "repo-b  [attached]  3w  4p  /tmp/repo-b", Value: "repo-b"},
+		{Label: "repo-b  [attached]  3w  4p  w3.p1  /tmp/repo-b", Value: "repo-b"},
 		{Label: "home  [detached]  1w  1p  /home/tester", Value: "home"},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
@@ -150,6 +151,30 @@ func TestSessionsCommandReturnsWithoutPickerWhenRecentListIsEmpty(t *testing.T) 
 	}
 	if called {
 		t.Fatal("runner called unexpectedly")
+	}
+}
+
+func TestFormatStoredTarget(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		window     string
+		pane       string
+		wantTarget string
+	}{
+		{name: "window and pane", window: "3", pane: "1", wantTarget: "w3.p1"},
+		{name: "window only", window: "3", pane: "", wantTarget: "w3"},
+		{name: "missing window", window: "", pane: "1", wantTarget: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := formatStoredTarget(tt.window, tt.pane); got != tt.wantTarget {
+				t.Fatalf("formatStoredTarget(%q, %q) = %q, want %q", tt.window, tt.pane, got, tt.wantTarget)
+			}
+		})
 	}
 }
 
@@ -322,14 +347,18 @@ func (o *recordingSessionsOpener) OpenSessionTarget(_ context.Context, sessionNa
 }
 
 type recordingSessionsStore struct {
-	selection corepreview.Selection
-	found     bool
-	err       error
+	selections map[string]corepreview.Selection
+	found      bool
+	err        error
 }
 
-func (s *recordingSessionsStore) ReadSelection(string) (corepreview.Selection, bool, error) {
+func (s *recordingSessionsStore) ReadSelection(sessionName string) (corepreview.Selection, bool, error) {
 	if s.err != nil {
 		return corepreview.Selection{}, false, s.err
 	}
-	return s.selection, s.found, nil
+	if s.selections != nil {
+		selection, ok := s.selections[sessionName]
+		return selection, ok, nil
+	}
+	return corepreview.Selection{}, s.found, nil
 }
