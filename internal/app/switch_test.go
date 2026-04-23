@@ -103,12 +103,13 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Candidates, []string{"/home/tester", "/home/tester/dotfiles"}; !equalStrings(got, want) {
+	if got, want := gotRunnerOptions.Candidates, []string{"/home/tester", "/home/tester/dotfiles", switchSettingsSentinel}; !equalStrings(got, want) {
 		t.Fatalf("runner candidates = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
 		{Label: "dotfiles  [new]  ~", Value: "/home/tester"},
 		{Label: "dotfiles  [new]  ~/dotfiles", Value: "/home/tester/dotfiles"},
+		{Label: "Settings", Value: switchSettingsSentinel},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -170,6 +171,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	}
 	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
 		{Label: "tmp-app  [new]  /tmp/app", Value: "/tmp/app"},
+		{Label: "Settings", Value: switchSettingsSentinel},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -203,6 +205,7 @@ func TestSwitchCommandMarksExistingSessionsInRows(t *testing.T) {
 
 	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
 		{Label: "tmp-app  [existing]  /tmp/app", Value: "/tmp/app"},
+		{Label: "Settings", Value: switchSettingsSentinel},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -265,6 +268,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		fixture.path("managed/work-a"),
 		fixture.path("rp/repo-a"),
 		fixture.path("managed/work-b"),
+		switchSettingsSentinel,
 	}
 	if got := fakeRunner.last.Candidates; !equalStrings(got, wantCandidates) {
 		t.Fatalf("runner candidates = %q, want %q", got, wantCandidates)
@@ -276,6 +280,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		{Label: "managed-work-a  [new]  " + fixture.path("managed/work-a"), Value: fixture.path("managed/work-a")},
 		{Label: "rp-repo-a  [new]  ~rp/repo-a", Value: fixture.path("rp/repo-a")},
 		{Label: "managed-work-b  [new]  " + fixture.path("managed/work-b"), Value: fixture.path("managed/work-b")},
+		{Label: "Settings", Value: switchSettingsSentinel},
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
@@ -669,6 +674,39 @@ func TestSwitchCommandPreviewRendersNewSessionContextWithoutInventory(t *testing
 	}
 }
 
+func TestSwitchCommandPreviewRendersSettingsSentinel(t *testing.T) {
+	t.Parallel()
+
+	cmd := &switchCommand{
+		pinStore: func() (switchPinStore, error) {
+			return &stubSwitchPinStore{list: []string{"/home/tester/source/repos/app"}}, nil
+		},
+		homeDir: func() (string, error) { return "/home/tester", nil },
+		lookupEnv: func(name string) string {
+			if name == repoRootEnvVar {
+				return "/home/tester/source/repos"
+			}
+			return ""
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"preview", switchSettingsSentinel}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := "" +
+		"settings\n" +
+		"pins:\n" +
+		"  * ~rp/app\n" +
+		"keys:\n" +
+		"  enter  open settings menu\n" +
+		"  alt-p  pin/unpin focused directory\n"
+	if got := stdout.String(); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
 func TestSwitchCommandCycleWindowUpdatesStoredPreviewSelection(t *testing.T) {
 	t.Parallel()
 
@@ -872,6 +910,45 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 	}
 }
 
+func TestSwitchCommandSelectingSettingsRunsSettingsMenu(t *testing.T) {
+	t.Parallel()
+
+	var runnerCalls int
+	store := &stubSwitchPinStore{list: []string{"/tmp/app"}, toggled: false}
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return store, nil },
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			runnerCalls++
+			if runnerCalls == 1 {
+				return intfzf.Result{Value: switchSettingsSentinel}, nil
+			}
+			if runnerCalls == 2 {
+				return intfzf.Result{Value: "clear"}, nil
+			}
+			return intfzf.Result{}, nil
+		}),
+		sessions:   &capturingSwitchSessionExecutor{},
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := runnerCalls, 3; got != want {
+		t.Fatalf("runner calls = %d, want %d", got, want)
+	}
+	if got, want := store.clearCalls, 1; got != want {
+		t.Fatalf("clear calls = %d, want %d", got, want)
+	}
+}
+
 func TestSwitchCommandToggleTagSnapsExplicitPathToCandidate(t *testing.T) {
 	t.Parallel()
 
@@ -1046,6 +1123,7 @@ type stubSwitchPinStore struct {
 	list        []string
 	err         error
 	toggleCalls []string
+	clearCalls  int
 	toggled     bool
 }
 
@@ -1062,6 +1140,15 @@ func (s *stubSwitchPinStore) Toggle(path string) (bool, error) {
 		return false, s.err
 	}
 	return s.toggled, nil
+}
+
+func (s *stubSwitchPinStore) Clear() error {
+	s.clearCalls++
+	if s.err != nil {
+		return s.err
+	}
+	s.list = nil
+	return nil
 }
 
 type capturingSwitchTagStore struct {

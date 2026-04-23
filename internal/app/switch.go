@@ -26,6 +26,7 @@ const (
 	switchUISidebar          = "sidebar"
 	switchTagExpectKey       = "alt-t"
 	switchPinExpectKey       = "alt-p"
+	switchSettingsSentinel   = "__projmux_settings__"
 	managedRootsEnvVar       = "PROJMUX_MANAGED_ROOTS"
 	legacyManagedRootsEnvVar = "TMUX_SESSIONIZER_ROOTS"
 	repoRootEnvVar           = "RP"
@@ -36,6 +37,7 @@ type candidateDiscoverer func(inputs candidates.Inputs) ([]string, error)
 type switchPinStore interface {
 	List() ([]string, error)
 	Toggle(path string) (bool, error)
+	Clear() error
 }
 
 type switchPinStoreFactory func() (switchPinStore, error)
@@ -149,6 +151,8 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return c.runToggleTag(args[1:], stdout, stderr)
 		case "toggle-pin":
 			return c.runTogglePin(args[1:], stdout, stderr)
+		case "settings":
+			return c.runSettings(stdout, stderr)
 		case "preview":
 			return c.runPreview(args[1:], stdout, stderr)
 		case "cycle-pane":
@@ -273,6 +277,9 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 		printSwitchUsage(stderr)
 		return fmt.Errorf("switch preview accepts at most 1 [path] argument")
 	}
+	if fs.NArg() == 1 && strings.TrimSpace(fs.Arg(0)) == switchSettingsSentinel {
+		return c.writeSettingsPreview(stdout)
+	}
 
 	target, err := c.resolveSwitchTarget(fs.Args(), "switch preview")
 	if err != nil {
@@ -280,6 +287,9 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 			printSwitchUsage(stderr)
 		}
 		return err
+	}
+	if target == switchSettingsSentinel {
+		return c.writeSettingsPreview(stdout)
 	}
 
 	model, err := c.previewModel(context.Background(), target)
@@ -289,6 +299,50 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 
 	_, err = io.WriteString(stdout, intrender.RenderSwitchPreview(model))
 	return err
+}
+
+func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
+	if c.runner == nil {
+		return fmt.Errorf("switch runner is not configured")
+	}
+
+	for {
+		entries, err := c.settingsEntries()
+		if err != nil {
+			return err
+		}
+
+		result, err := c.runner.Run(intfzf.Options{
+			UI:      "settings",
+			Entries: entries,
+		})
+		if err != nil {
+			return fmt.Errorf("run switch settings picker: %w", err)
+		}
+
+		action := cleanOptionalPath(result.Value)
+		if action == "" {
+			return nil
+		}
+
+		switch {
+		case action == "clear":
+			if err := c.clearPins(); err != nil {
+				return err
+			}
+			if stdout != nil {
+				_, _ = fmt.Fprintln(stdout, "cleared pins")
+			}
+		case strings.HasPrefix(action, "pin:"):
+			target := strings.TrimPrefix(action, "pin:")
+			if err := c.togglePin(target, stdout); err != nil {
+				return err
+			}
+		default:
+			printSwitchUsage(stderr)
+			return fmt.Errorf("unknown switch settings action: %s", action)
+		}
+	}
 }
 
 func (c *switchCommand) runCyclePane(args []string, stderr io.Writer) error {
@@ -321,6 +375,7 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 	if err != nil {
 		return switchPlan{}, fmt.Errorf("discover switch candidates: %w", err)
 	}
+	paths = append(paths, switchSettingsSentinel)
 
 	plan := switchPlan{
 		UI:         ui,
@@ -809,6 +864,9 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 	if selection == "" {
 		return plan, nil
 	}
+	if selection == switchSettingsSentinel {
+		return plan, nil
+	}
 
 	if c.validate == nil {
 		return switchPlan{}, fmt.Errorf("switch directory validator is not configured")
@@ -832,6 +890,12 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 	if plan.Selection == "" {
 		return false, nil
 	}
+	if plan.Selection == switchSettingsSentinel {
+		if err := c.runSettings(stdout, io.Discard); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
 	if plan.Action == switchTagExpectKey {
 		if err := c.toggleTag(plan.Selection, nil); err != nil {
 			return false, err
@@ -839,6 +903,9 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		return true, nil
 	}
 	if plan.Action == switchPinExpectKey {
+		if plan.Selection == switchSettingsSentinel {
+			return false, nil
+		}
 		if err := c.togglePin(plan.Selection, nil); err != nil {
 			return false, err
 		}
@@ -1000,6 +1067,14 @@ func (c *switchCommand) renderRows(ctx context.Context, candidatePaths []string)
 	repoRoot := cleanOptionalPath(c.env(repoRootEnvVar))
 
 	for _, candidatePath := range candidatePaths {
+		if candidatePath == switchSettingsSentinel {
+			renderCandidates = append(renderCandidates, intrender.SwitchCandidate{
+				Path:        candidatePath,
+				DisplayPath: "Settings",
+			})
+			continue
+		}
+
 		sessionName, err := c.identity.SessionIdentityForPath(candidatePath)
 		if err != nil {
 			return nil, fmt.Errorf("render switch rows: resolve session identity for %q: %w", candidatePath, err)
@@ -1042,6 +1117,9 @@ func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePat
 
 	existingBySession := make(map[string]bool)
 	for _, candidatePath := range candidatePaths {
+		if candidatePath == switchSettingsSentinel {
+			continue
+		}
 		sessionName, err := c.identity.SessionIdentityForPath(candidatePath)
 		if err != nil {
 			return nil, fmt.Errorf("check existing switch sessions: resolve session identity for %q: %w", candidatePath, err)
@@ -1065,6 +1143,7 @@ func printSwitchUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux switch [--ui=popup|sidebar]")
 	fmt.Fprintln(w, "  projmux switch toggle-tag [path]")
 	fmt.Fprintln(w, "  projmux switch toggle-pin [path]")
+	fmt.Fprintln(w, "  projmux switch settings")
 	fmt.Fprintln(w, "  projmux switch preview [path]")
 	fmt.Fprintln(w, "  projmux switch cycle-pane <path> <next|prev>")
 	fmt.Fprintln(w, "  projmux switch cycle-window <path> <next|prev>")
@@ -1075,4 +1154,78 @@ func printSwitchUsage(w io.Writer) {
 	fmt.Fprintln(w, "Picker Actions:")
 	fmt.Fprintln(w, "  alt-t         Toggle a tag on the focused candidate and reopen the picker")
 	fmt.Fprintln(w, "  alt-p         Toggle a pin on the focused candidate and reopen the picker")
+}
+
+func (c *switchCommand) settingsEntries() ([]intfzf.Entry, error) {
+	pins, err := c.loadPins()
+	if err != nil {
+		return nil, err
+	}
+
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot := cleanOptionalPath(c.env(repoRootEnvVar))
+
+	entries := make([]intfzf.Entry, 0, len(pins)+1)
+	if len(pins) != 0 {
+		entries = append(entries, intfzf.Entry{
+			Label: "clear all pins",
+			Value: "clear",
+		})
+	}
+	for _, pin := range pins {
+		entries = append(entries, intfzf.Entry{
+			Label: "remove  " + intrender.PrettyPath(pin, homeDir, repoRoot),
+			Value: "pin:" + pin,
+		})
+	}
+	return entries, nil
+}
+
+func (c *switchCommand) writeSettingsPreview(stdout io.Writer) error {
+	pins, err := c.loadPins()
+	if err != nil {
+		return err
+	}
+
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return err
+	}
+	repoRoot := cleanOptionalPath(c.env(repoRootEnvVar))
+
+	var builder strings.Builder
+	builder.WriteString("settings\n")
+	builder.WriteString("pins:\n")
+	if len(pins) == 0 {
+		builder.WriteString("  (no pins yet)\n")
+	} else {
+		for _, pin := range pins {
+			builder.WriteString("  * ")
+			builder.WriteString(intrender.PrettyPath(pin, homeDir, repoRoot))
+			builder.WriteString("\n")
+		}
+	}
+	builder.WriteString("keys:\n")
+	builder.WriteString("  enter  open settings menu\n")
+	builder.WriteString("  alt-p  pin/unpin focused directory\n")
+
+	_, err = io.WriteString(stdout, builder.String())
+	return err
+}
+
+func (c *switchCommand) clearPins() error {
+	store, err := c.loadPinStore()
+	if err != nil {
+		return err
+	}
+	if store == nil {
+		return nil
+	}
+	if err := store.Clear(); err != nil {
+		return fmt.Errorf("clear switch pins: %w", err)
+	}
+	return nil
 }
