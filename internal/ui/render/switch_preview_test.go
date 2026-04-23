@@ -19,12 +19,12 @@ func TestRenderSwitchPreviewForExistingSession(t *testing.T) {
 			SelectedWindowIndex: "2",
 			SelectedPaneIndex:   "1",
 			Windows: []corepreview.Window{
-				{Index: "1"},
-				{Index: "2"},
+				{Index: "1", Name: "shell", PaneCount: 1, Path: "~/"},
+				{Index: "2", Name: "app", PaneCount: 2, Path: "~rp/app"},
 			},
 			Panes: []corepreview.Pane{
-				{WindowIndex: "2", Index: "0"},
-				{WindowIndex: "2", Index: "1"},
+				{WindowIndex: "2", Index: "0", Title: "server", Command: "go", Path: "~rp/app"},
+				{WindowIndex: "2", Index: "1", Title: "tests", Command: "gotest", Path: "~rp/app"},
 			},
 		},
 	})
@@ -35,11 +35,11 @@ func TestRenderSwitchPreviewForExistingSession(t *testing.T) {
 		"state: existing\n" +
 		"selected: window=2 pane=1\n" +
 		"windows:\n" +
-		"    1\n" +
-		"  * 2\n" +
+		"    1 | shell | 1 panes | ~/\n" +
+		"  * 2 | app | 2 panes | ~rp/app\n" +
 		"panes:\n" +
-		"    0\n" +
-		"  * 1\n"
+		"    0 | server | go | ~rp/app\n" +
+		"  * 1 | tests | gotest | ~rp/app\n"
 	if got != want {
 		t.Fatalf("RenderSwitchPreview() = %q, want %q", got, want)
 	}

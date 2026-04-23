@@ -288,7 +288,7 @@ func TestClientListSessionWindowsParsesRows(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("0\t1\n2\t0\n"), nil
+		return []byte("0\t1\tshell\t1\t/home/tester\n2\t0\tdev\t2\t/home/tester/source/repos/dev\n"), nil
 	}))
 
 	windows, err := client.ListSessionWindows(context.Background(), "dotfiles")
@@ -297,8 +297,8 @@ func TestClientListSessionWindowsParsesRows(t *testing.T) {
 	}
 
 	want := []Window{
-		{Index: 0, Active: true},
-		{Index: 2, Active: false},
+		{Index: 0, Name: "shell", PaneCount: 1, Path: "/home/tester", Active: true},
+		{Index: 2, Name: "dev", PaneCount: 2, Path: "/home/tester/source/repos/dev", Active: false},
 	}
 	if !reflect.DeepEqual(windows, want) {
 		t.Fatalf("ListSessionWindows = %#v, want %#v", windows, want)
@@ -339,7 +339,7 @@ func TestClientListSessionWindowsRejectsInvalidWindowIndex(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("oops\t1"), nil
+		return []byte("oops\t1\tshell\t1\t/home/tester"), nil
 	}))
 
 	_, err := client.ListSessionWindows(context.Background(), "dotfiles")
@@ -351,11 +351,27 @@ func TestClientListSessionWindowsRejectsInvalidWindowIndex(t *testing.T) {
 	}
 }
 
+func TestClientListSessionWindowsRejectsInvalidWindowPaneCount(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("0\t1\tshell\toops\t/home/tester"), nil
+	}))
+
+	_, err := client.ListSessionWindows(context.Background(), "dotfiles")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errWindowPaneCountInvalid) {
+		t.Fatalf("ListSessionWindows error = %v, want %v", err, errWindowPaneCountInvalid)
+	}
+}
+
 func TestClientListAllPanesParsesRows(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("dotfiles\t0\t1\t1\nhome\t2\t0\t0\n"), nil
+		return []byte("dotfiles\t0\t1\t1\tserver\tgo\t/home/tester/source/repos/dotfiles\nhome\t2\t0\t0\tshell\tzsh\t/home/tester\n"), nil
 	}))
 
 	panes, err := client.ListAllPanes(context.Background())
@@ -364,8 +380,8 @@ func TestClientListAllPanesParsesRows(t *testing.T) {
 	}
 
 	want := []Pane{
-		{SessionName: "dotfiles", WindowIndex: 0, PaneIndex: 1, Active: true},
-		{SessionName: "home", WindowIndex: 2, PaneIndex: 0, Active: false},
+		{SessionName: "dotfiles", WindowIndex: 0, PaneIndex: 1, Title: "server", Command: "go", Path: "/home/tester/source/repos/dotfiles", Active: true},
+		{SessionName: "home", WindowIndex: 2, PaneIndex: 0, Title: "shell", Command: "zsh", Path: "/home/tester", Active: false},
 	}
 	if !reflect.DeepEqual(panes, want) {
 		t.Fatalf("ListAllPanes = %#v, want %#v", panes, want)
@@ -376,7 +392,7 @@ func TestClientListAllPanesRejectsEmptySessionNames(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte(" \t0\t1\t1"), nil
+		return []byte(" \t0\t1\t1\tshell\tzsh\t/home/tester"), nil
 	}))
 
 	_, err := client.ListAllPanes(context.Background())
@@ -392,7 +408,7 @@ func TestClientListAllPanesRejectsInvalidPaneIndex(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("dotfiles\t0\toops\t1"), nil
+		return []byte("dotfiles\t0\toops\t1\tserver\tgo\t/repo"), nil
 	}))
 
 	_, err := client.ListAllPanes(context.Background())
@@ -408,7 +424,7 @@ func TestClientListAllPanesRejectsInvalidActiveFlag(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("dotfiles\t0\t1\tmaybe"), nil
+		return []byte("dotfiles\t0\t1\tmaybe\tserver\tgo\t/repo"), nil
 	}))
 
 	_, err := client.ListAllPanes(context.Background())

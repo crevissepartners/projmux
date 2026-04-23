@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	corepreview "github.com/es5h/projmux/internal/core/preview"
+	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
 )
 
 func TestAppRunPreviewCyclePane(t *testing.T) {
@@ -229,6 +230,55 @@ func TestPreviewCommandReportsConfigurationAndRuntimeErrors(t *testing.T) {
 	}
 }
 
+func TestTmuxPreviewInventoryMapsWindowMetadata(t *testing.T) {
+	t.Parallel()
+
+	inventory := tmuxPreviewInventory{
+		client: stubTmuxPreviewInventoryClient{
+			windows: []inttmux.Window{
+				{Index: 2, Name: "dev", PaneCount: 3, Path: "/repo/dev", Active: true},
+			},
+		},
+	}
+
+	got, err := inventory.SessionWindows(context.Background(), "dev")
+	if err != nil {
+		t.Fatalf("SessionWindows() error = %v", err)
+	}
+
+	want := []corepreview.Window{
+		{Index: "2", Name: "dev", PaneCount: 3, Path: "/repo/dev", Active: true},
+	}
+	if !equalPreviewWindows(got, want) {
+		t.Fatalf("SessionWindows() = %#v, want %#v", got, want)
+	}
+}
+
+func TestTmuxPreviewInventoryMapsPaneMetadata(t *testing.T) {
+	t.Parallel()
+
+	inventory := tmuxPreviewInventory{
+		client: stubTmuxPreviewInventoryClient{
+			panes: []inttmux.Pane{
+				{SessionName: "dev", WindowIndex: 2, PaneIndex: 1, Title: "server", Command: "go", Path: "/repo/dev", Active: true},
+				{SessionName: "other", WindowIndex: 1, PaneIndex: 0, Title: "skip", Command: "zsh", Path: "/tmp"},
+			},
+		},
+	}
+
+	got, err := inventory.SessionPanes(context.Background(), "dev")
+	if err != nil {
+		t.Fatalf("SessionPanes() error = %v", err)
+	}
+
+	want := []corepreview.Pane{
+		{WindowIndex: "2", Index: "1", Title: "server", Command: "go", Path: "/repo/dev", Active: true},
+	}
+	if !equalPreviewPanes(got, want) {
+		t.Fatalf("SessionPanes() = %#v, want %#v", got, want)
+	}
+}
+
 type stubPreviewStore struct {
 	readSession   string
 	readSelection corepreview.Selection
@@ -299,6 +349,26 @@ type stubPreviewInventory struct {
 	panes                 []corepreview.Pane
 	windowsErr            error
 	panesErr              error
+}
+
+type stubTmuxPreviewInventoryClient struct {
+	windows []inttmux.Window
+	panes   []inttmux.Pane
+	err     error
+}
+
+func (s stubTmuxPreviewInventoryClient) ListSessionWindows(context.Context, string) ([]inttmux.Window, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return append([]inttmux.Window(nil), s.windows...), nil
+}
+
+func (s stubTmuxPreviewInventoryClient) ListAllPanes(context.Context) ([]inttmux.Pane, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return append([]inttmux.Pane(nil), s.panes...), nil
 }
 
 func (s *stubPreviewInventory) SessionWindows(_ context.Context, sessionName string) ([]corepreview.Window, error) {

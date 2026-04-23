@@ -23,13 +23,13 @@ func TestAppRunSessionPopupPreview(t *testing.T) {
 	}
 	inventory := &stubPreviewInventory{
 		windows: []corepreview.Window{
-			{Index: "2", Active: true},
-			{Index: "3"},
+			{Index: "2", Name: "shell", PaneCount: 1, Path: "~/", Active: true},
+			{Index: "3", Name: "dev", PaneCount: 2, Path: "~rp/dev"},
 		},
 		panes: []corepreview.Pane{
-			{WindowIndex: "2", Index: "4", Active: true},
-			{WindowIndex: "3", Index: "7"},
-			{WindowIndex: "3", Index: "8"},
+			{WindowIndex: "2", Index: "4", Title: "shell", Command: "zsh", Path: "~/", Active: true},
+			{WindowIndex: "3", Index: "7", Title: "server", Command: "go", Path: "~rp/dev"},
+			{WindowIndex: "3", Index: "8", Title: "tests", Command: "gotest", Path: "~rp/dev"},
 		},
 	}
 
@@ -59,11 +59,11 @@ func TestAppRunSessionPopupPreview(t *testing.T) {
 		"session: dev\n" +
 		"selected: window=3 pane=8\n" +
 		"windows:\n" +
-		"    2\n" +
-		"  * 3\n" +
+		"    2 | shell | 1 panes | ~/\n" +
+		"  * 3 | dev | 2 panes | ~rp/dev\n" +
 		"panes:\n" +
-		"    7\n" +
-		"  * 8\n"
+		"    7 | server | go | ~rp/dev\n" +
+		"  * 8 | tests | gotest | ~rp/dev\n"
 	if got := stdout.String(); got != wantOutput {
 		t.Fatalf("stdout = %q, want %q", got, wantOutput)
 	}
@@ -84,13 +84,13 @@ func TestAppRunSessionPopupCyclePane(t *testing.T) {
 	}
 	inventory := &stubPreviewInventory{
 		windows: []corepreview.Window{
-			{Index: "2", Active: true},
-			{Index: "3"},
+			{Index: "2", Name: "shell", PaneCount: 1, Path: "~/", Active: true},
+			{Index: "3", Name: "dev", PaneCount: 2, Path: "~rp/dev"},
 		},
 		panes: []corepreview.Pane{
-			{WindowIndex: "2", Index: "4", Active: true},
-			{WindowIndex: "3", Index: "7", Active: true},
-			{WindowIndex: "3", Index: "8"},
+			{WindowIndex: "2", Index: "4", Title: "shell", Command: "zsh", Path: "~/", Active: true},
+			{WindowIndex: "3", Index: "7", Title: "server", Command: "go", Path: "~rp/dev", Active: true},
+			{WindowIndex: "3", Index: "8", Title: "tests", Command: "gotest", Path: "~rp/dev"},
 		},
 	}
 
@@ -125,11 +125,11 @@ func TestAppRunSessionPopupCyclePane(t *testing.T) {
 		"session: dev\n" +
 		"selected: window=3 pane=8\n" +
 		"windows:\n" +
-		"    2\n" +
-		"  * 3\n" +
+		"    2 | shell | 1 panes | ~/\n" +
+		"  * 3 | dev | 2 panes | ~rp/dev\n" +
 		"panes:\n" +
-		"    7\n" +
-		"  * 8\n"
+		"    7 | server | go | ~rp/dev\n" +
+		"  * 8 | tests | gotest | ~rp/dev\n"
 	if got := stdout.String(); got != wantOutput {
 		t.Fatalf("stdout = %q, want %q", got, wantOutput)
 	}
@@ -150,12 +150,12 @@ func TestAppRunSessionPopupCycleWindow(t *testing.T) {
 	}
 	inventory := &stubPreviewInventory{
 		windows: []corepreview.Window{
-			{Index: "3", Active: true},
-			{Index: "4"},
+			{Index: "3", Name: "dev", PaneCount: 1, Path: "~rp/dev", Active: true},
+			{Index: "4", Name: "logs", PaneCount: 1, Path: "~rp/dev"},
 		},
 		panes: []corepreview.Pane{
-			{WindowIndex: "3", Index: "1", Active: true},
-			{WindowIndex: "4", Index: "0"},
+			{WindowIndex: "3", Index: "1", Title: "server", Command: "go", Path: "~rp/dev", Active: true},
+			{WindowIndex: "4", Index: "0", Title: "tail", Command: "tail", Path: "~rp/dev"},
 		},
 	}
 
@@ -191,10 +191,10 @@ func TestAppRunSessionPopupCycleWindow(t *testing.T) {
 		"session: dev\n" +
 		"selected: window=4 pane=0\n" +
 		"windows:\n" +
-		"    3\n" +
-		"  * 4\n" +
+		"    3 | dev | 1 panes | ~rp/dev\n" +
+		"  * 4 | logs | 1 panes | ~rp/dev\n" +
 		"panes:\n" +
-		"  * 0\n"
+		"  * 0 | tail | tail | ~rp/dev\n"
 	if got := stdout.String(); got != wantOutput {
 		t.Fatalf("stdout = %q, want %q", got, wantOutput)
 	}

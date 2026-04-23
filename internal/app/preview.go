@@ -189,8 +189,11 @@ func (i tmuxPreviewInventory) SessionWindows(ctx context.Context, sessionName st
 	windows := make([]corepreview.Window, 0, len(rows))
 	for _, row := range rows {
 		windows = append(windows, corepreview.Window{
-			Index:  strconv.Itoa(row.Index),
-			Active: row.Active,
+			Index:     strconv.Itoa(row.Index),
+			Name:      row.Name,
+			PaneCount: row.PaneCount,
+			Path:      row.Path,
+			Active:    row.Active,
 		})
 	}
 	return windows, nil
@@ -214,6 +217,9 @@ func (i tmuxPreviewInventory) SessionPanes(ctx context.Context, sessionName stri
 		panes = append(panes, corepreview.Pane{
 			WindowIndex: strconv.Itoa(row.WindowIndex),
 			Index:       strconv.Itoa(row.PaneIndex),
+			Title:       row.Title,
+			Command:     row.Command,
+			Path:        row.Path,
 			Active:      row.Active,
 		})
 	}

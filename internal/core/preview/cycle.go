@@ -25,14 +25,20 @@ type Cursor struct {
 
 // Window models a previewable tmux window with an optional active hint.
 type Window struct {
-	Index  string
-	Active bool
+	Index     string
+	Name      string
+	PaneCount int
+	Path      string
+	Active    bool
 }
 
 // Pane models a previewable tmux pane with its parent window and active hint.
 type Pane struct {
 	WindowIndex string
 	Index       string
+	Title       string
+	Command     string
+	Path        string
 	Active      bool
 }
 
@@ -171,8 +177,11 @@ func normalizedWindows(windows []Window) []Window {
 			continue
 		}
 		normalized = append(normalized, Window{
-			Index:  index,
-			Active: window.Active,
+			Index:     index,
+			Name:      strings.TrimSpace(window.Name),
+			PaneCount: window.PaneCount,
+			Path:      strings.TrimSpace(window.Path),
+			Active:    window.Active,
 		})
 	}
 	return normalized
@@ -189,6 +198,9 @@ func normalizedPanes(panes []Pane) []Pane {
 		normalized = append(normalized, Pane{
 			WindowIndex: windowIndex,
 			Index:       index,
+			Title:       strings.TrimSpace(pane.Title),
+			Command:     strings.TrimSpace(pane.Command),
+			Path:        strings.TrimSpace(pane.Path),
 			Active:      pane.Active,
 		})
 	}

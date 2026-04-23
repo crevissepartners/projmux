@@ -25,6 +25,7 @@ var (
 	errSessionAttachedInvalid     = errors.New("tmux session attached flag is invalid")
 	errSessionEphemeralInvalid    = errors.New("tmux session ephemeral flag is invalid")
 	errWindowIndexInvalid         = errors.New("tmux window index is invalid")
+	errWindowPaneCountInvalid     = errors.New("tmux window pane count is invalid")
 	errPaneIndexInvalid           = errors.New("tmux pane index is invalid")
 	errActiveFlagInvalid          = errors.New("tmux active flag is invalid")
 )
@@ -58,8 +59,11 @@ type Client struct {
 
 // Window describes a tmux window inventory row for a session.
 type Window struct {
-	Index  int
-	Active bool
+	Index     int
+	Name      string
+	PaneCount int
+	Path      string
+	Active    bool
 }
 
 // Pane describes a tmux pane inventory row.
@@ -67,6 +71,9 @@ type Pane struct {
 	SessionName string
 	WindowIndex int
 	PaneIndex   int
+	Title       string
+	Command     string
+	Path        string
 	Active      bool
 }
 
@@ -164,7 +171,7 @@ func (c *Client) ListSessionWindows(ctx context.Context, sessionName string) ([]
 		return nil, errSessionNameRequired
 	}
 
-	output, err := c.runner.Run(ctx, "tmux", "list-windows", "-t", sessionName, "-F", "#{window_index}\t#{?window_active,1,0}")
+	output, err := c.runner.Run(ctx, "tmux", "list-windows", "-t", sessionName, "-F", "#{window_index}\t#{?window_active,1,0}\t#{window_name}\t#{window_panes}\t#{pane_current_path}")
 	if err != nil {
 		return nil, fmt.Errorf("list tmux windows for session %q: %w", sessionName, err)
 	}
@@ -179,7 +186,7 @@ func (c *Client) ListSessionWindows(ctx context.Context, sessionName string) ([]
 
 // ListAllPanes lists tmux panes across all sessions with active hints.
 func (c *Client) ListAllPanes(ctx context.Context) ([]Pane, error) {
-	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-a", "-F", "#{session_name}\t#{window_index}\t#{pane_index}\t#{?pane_active,1,0}")
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-a", "-F", "#{session_name}\t#{window_index}\t#{pane_index}\t#{?pane_active,1,0}\t#{pane_title}\t#{pane_current_command}\t#{pane_current_path}")
 	if err != nil {
 		return nil, fmt.Errorf("list tmux panes: %w", err)
 	}
@@ -649,7 +656,7 @@ func parseSessionWindows(output []byte) ([]Window, error) {
 		}
 
 		fields := strings.Split(rawLine, "\t")
-		if len(fields) != 2 {
+		if len(fields) != 5 {
 			return nil, fmt.Errorf("parse tmux windows: malformed row %q", rawLine)
 		}
 
@@ -661,10 +668,17 @@ func parseSessionWindows(output []byte) ([]Window, error) {
 		if err != nil {
 			return nil, err
 		}
+		paneCount, err := strconv.Atoi(strings.TrimSpace(fields[3]))
+		if err != nil {
+			return nil, errWindowPaneCountInvalid
+		}
 
 		windows = append(windows, Window{
-			Index:  index,
-			Active: active,
+			Index:     index,
+			Name:      strings.TrimSpace(fields[2]),
+			PaneCount: paneCount,
+			Path:      strings.TrimSpace(fields[4]),
+			Active:    active,
 		})
 	}
 
@@ -684,7 +698,7 @@ func parseAllPanes(output []byte) ([]Pane, error) {
 		}
 
 		fields := strings.Split(rawLine, "\t")
-		if len(fields) != 4 {
+		if len(fields) != 7 {
 			return nil, fmt.Errorf("parse tmux panes: malformed row %q", rawLine)
 		}
 
@@ -710,6 +724,9 @@ func parseAllPanes(output []byte) ([]Pane, error) {
 			SessionName: sessionName,
 			WindowIndex: windowIndex,
 			PaneIndex:   paneIndex,
+			Title:       strings.TrimSpace(fields[4]),
+			Command:     strings.TrimSpace(fields[5]),
+			Path:        strings.TrimSpace(fields[6]),
 			Active:      active,
 		})
 	}

@@ -1,6 +1,7 @@
 package render
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/es5h/projmux/internal/core/preview"
@@ -57,7 +58,7 @@ func writeWindows(builder *strings.Builder, model preview.PopupReadModel) {
 		builder.WriteString("  ")
 		builder.WriteString(selectionMarker(window.Index == selectedWindow))
 		builder.WriteString(" ")
-		builder.WriteString(sanitizeCell(window.Index))
+		builder.WriteString(formatWindowSummary(window))
 		builder.WriteString("\n")
 	}
 }
@@ -73,7 +74,7 @@ func writePanes(builder *strings.Builder, model preview.PopupReadModel) {
 		builder.WriteString("  ")
 		builder.WriteString(selectionMarker(pane.Index == selectedPane && selectedPane != ""))
 		builder.WriteString(" ")
-		builder.WriteString(sanitizeCell(pane.Index))
+		builder.WriteString(formatPaneSummary(pane))
 		builder.WriteString("\n")
 	}
 }
@@ -83,4 +84,41 @@ func selectionMarker(selected bool) string {
 		return "*"
 	}
 	return " "
+}
+
+func formatWindowSummary(window preview.Window) string {
+	parts := []string{sanitizeCell(window.Index)}
+
+	name := sanitizeCell(window.Name)
+	if name != "" {
+		parts = append(parts, name)
+	}
+	if window.PaneCount > 0 {
+		parts = append(parts, sanitizeCell(strconv.Itoa(window.PaneCount))+" panes")
+	}
+	path := sanitizeCell(window.Path)
+	if path != "" {
+		parts = append(parts, path)
+	}
+
+	return strings.Join(parts, " | ")
+}
+
+func formatPaneSummary(pane preview.Pane) string {
+	parts := []string{sanitizeCell(pane.Index)}
+
+	title := sanitizeCell(pane.Title)
+	if title != "" {
+		parts = append(parts, title)
+	}
+	command := sanitizeCell(pane.Command)
+	if command != "" {
+		parts = append(parts, command)
+	}
+	path := sanitizeCell(pane.Path)
+	if path != "" {
+		parts = append(parts, path)
+	}
+
+	return strings.Join(parts, " | ")
 }
