@@ -701,7 +701,12 @@ func TestSwitchCommandPreviewRendersSettingsSentinel(t *testing.T) {
 		"  * ~rp/app\n" +
 		"keys:\n" +
 		"  enter  open settings menu\n" +
-		"  alt-p  pin/unpin focused directory\n"
+		"  alt-p  pin/unpin focused directory\n" +
+		"menu:\n" +
+		"  + add pin...\n" +
+		"  + add current pin\n" +
+		"  x remove pin\n" +
+		"  x clear all pins\n"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
@@ -735,10 +740,10 @@ func TestSwitchCommandSettingsMenuOffersAddCurrentPin(t *testing.T) {
 	}
 
 	want := []intfzf.Entry{
-		{Label: "add pin...", Value: "add-interactive"},
-		{Label: "add pin  ~rp/new-app", Value: "add:/home/tester/source/repos/new-app"},
-		{Label: "clear all pins", Value: "clear"},
-		{Label: "remove  ~rp/app", Value: "pin:/home/tester/source/repos/app"},
+		{Label: "+ Add pin...", Value: "add-interactive"},
+		{Label: "+ Add current pin  ~rp/new-app", Value: "add:/home/tester/source/repos/new-app"},
+		{Label: "x Clear all pins", Value: "clear"},
+		{Label: "x Remove  ~rp/app", Value: "pin:/home/tester/source/repos/app"},
 	}
 	if !equalEntries(entries, want) {
 		t.Fatalf("settings entries = %#v, want %#v", entries, want)
@@ -773,9 +778,9 @@ func TestSwitchCommandSettingsMenuSkipsAddWhenCurrentTargetAlreadyPinned(t *test
 	}
 
 	want := []intfzf.Entry{
-		{Label: "add pin...", Value: "add-interactive"},
-		{Label: "clear all pins", Value: "clear"},
-		{Label: "remove  ~rp/app", Value: "pin:/home/tester/source/repos/app"},
+		{Label: "+ Add pin...", Value: "add-interactive"},
+		{Label: "x Clear all pins", Value: "clear"},
+		{Label: "x Remove  ~rp/app", Value: "pin:/home/tester/source/repos/app"},
 	}
 	if !equalEntries(entries, want) {
 		t.Fatalf("settings entries = %#v, want %#v", entries, want)

@@ -1231,25 +1231,25 @@ func (c *switchCommand) settingsEntries() ([]intfzf.Entry, error) {
 
 	entries := make([]intfzf.Entry, 0, len(pins)+3)
 	entries = append(entries, intfzf.Entry{
-		Label: "add pin...",
+		Label: "+ Add pin...",
 		Value: "add-interactive",
 	})
 	currentTarget, err := c.resolveSwitchTarget(nil, "switch settings")
 	if err == nil && currentTarget != "" && currentTarget != switchSettingsSentinel && !containsString(pins, currentTarget) {
 		entries = append(entries, intfzf.Entry{
-			Label: "add pin  " + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
+			Label: "+ Add current pin  " + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
 			Value: "add:" + currentTarget,
 		})
 	}
 	if len(pins) != 0 {
 		entries = append(entries, intfzf.Entry{
-			Label: "clear all pins",
+			Label: "x Clear all pins",
 			Value: "clear",
 		})
 	}
 	for _, pin := range pins {
 		entries = append(entries, intfzf.Entry{
-			Label: "remove  " + intrender.PrettyPath(pin, homeDir, repoRoot),
+			Label: "x Remove  " + intrender.PrettyPath(pin, homeDir, repoRoot),
 			Value: "pin:" + pin,
 		})
 	}
@@ -1324,6 +1324,11 @@ func (c *switchCommand) writeSettingsPreview(stdout io.Writer) error {
 	builder.WriteString("keys:\n")
 	builder.WriteString("  enter  open settings menu\n")
 	builder.WriteString("  alt-p  pin/unpin focused directory\n")
+	builder.WriteString("menu:\n")
+	builder.WriteString("  + add pin...\n")
+	builder.WriteString("  + add current pin\n")
+	builder.WriteString("  x remove pin\n")
+	builder.WriteString("  x clear all pins\n")
 
 	_, err = io.WriteString(stdout, builder.String())
 	return err
