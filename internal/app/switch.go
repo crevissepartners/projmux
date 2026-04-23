@@ -977,6 +977,8 @@ func (c *switchCommand) runPicker(plan switchPlan) (intfzf.Result, error) {
 		UI:         plan.UI,
 		Candidates: plan.Candidates,
 		Entries:    plan.Rows,
+		Prompt:     "› ",
+		Footer:     switchPickerFooter(plan.UI),
 		ExpectKeys: []string{switchTagExpectKey, switchPinExpectKey},
 	}
 	if previewCommand, bindings, err := c.switchPickerSurface(plan.UI); err != nil {
@@ -1046,6 +1048,21 @@ func switchPreviewWindow(ui string) string {
 	default:
 		return ""
 	}
+}
+
+func switchPickerFooter(ui string) string {
+	lines := []string{
+		"Enter: switch/create previewed target",
+		"Alt-T: tag focused directory",
+		"Alt-P: pin/unpin focused directory",
+	}
+	if ui == switchUISidebar || ui == switchUIPopup {
+		lines = append(lines,
+			"Left/Right: preview window",
+			"Alt-Up/Alt-Down: preview pane",
+		)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (c *switchCommand) toggleTag(target string, stdout io.Writer) error {

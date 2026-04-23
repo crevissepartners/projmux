@@ -20,11 +20,24 @@ func TestRunnerRunInvokesFZFWithCandidates(t *testing.T) {
 			}
 			return "/usr/bin/fzf", nil
 		},
+		supportsFooter: func(string) bool { return true },
 		newCommand: func(name string, args ...string) command {
 			if name != "/usr/bin/fzf" {
 				t.Fatalf("command name = %q, want /usr/bin/fzf", name)
 			}
-			if got, want := args, []string{"--prompt", "projmux popup> ", "--delimiter", "\t", "--with-nth", "1"}; !equalStrings(got, want) {
+			if got, want := args, []string{
+				"--prompt", "projmux popup> ",
+				"--height", "100%",
+				"--layout", "reverse",
+				"--border",
+				"--ansi",
+				"--delimiter", "\t",
+				"--with-nth", "1",
+				"--exit-0",
+				"--scrollbar", "█",
+				"--scroll-off", "3",
+				"--info", "inline-right",
+			}; !equalStrings(got, want) {
 				t.Fatalf("command args = %q, want %q", got, want)
 			}
 			return fake
@@ -52,8 +65,9 @@ func TestRunnerRunReturnsHiddenEntryValue(t *testing.T) {
 	fake := &fakeCommand{stdout: "dotfiles  [existing]  /home/tester/dotfiles\t/home/tester/dotfiles\n"}
 
 	r := &runner{
-		lookupPath: func(string) (string, error) { return "/usr/bin/fzf", nil },
-		newCommand: func(string, ...string) command { return fake },
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
+		newCommand:     func(string, ...string) command { return fake },
 	}
 
 	got, err := r.Run(Options{
@@ -79,9 +93,23 @@ func TestRunnerRunReturnsExpectedKeyAndHiddenValue(t *testing.T) {
 	fake := &fakeCommand{stdout: "alt-t\ndotfiles  [existing]  /home/tester/dotfiles\t/home/tester/dotfiles\n"}
 
 	r := &runner{
-		lookupPath: func(string) (string, error) { return "/usr/bin/fzf", nil },
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
 		newCommand: func(name string, args ...string) command {
-			if got, want := args, []string{"--prompt", "projmux popup> ", "--delimiter", "\t", "--with-nth", "1", "--expect", "alt-t"}; !equalStrings(got, want) {
+			if got, want := args, []string{
+				"--prompt", "projmux popup> ",
+				"--height", "100%",
+				"--layout", "reverse",
+				"--border",
+				"--ansi",
+				"--delimiter", "\t",
+				"--with-nth", "1",
+				"--exit-0",
+				"--scrollbar", "█",
+				"--scroll-off", "3",
+				"--info", "inline-right",
+				"--expect", "alt-t",
+			}; !equalStrings(got, want) {
 				t.Fatalf("command args = %q, want %q", got, want)
 			}
 			return fake
@@ -129,7 +157,8 @@ func TestRunnerRunReportsExecutionFailure(t *testing.T) {
 	t.Parallel()
 
 	r := &runner{
-		lookupPath: func(string) (string, error) { return "/usr/bin/fzf", nil },
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
 		newCommand: func(string, ...string) command {
 			return &fakeCommand{
 				runErr: errors.New("exit status 2"),
@@ -152,12 +181,23 @@ func TestRunnerRunIncludesPreviewAndBindings(t *testing.T) {
 
 	fake := &fakeCommand{}
 	r := &runner{
-		lookupPath: func(string) (string, error) { return "/usr/bin/fzf", nil },
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
 		newCommand: func(name string, args ...string) command {
 			want := []string{
-				"--prompt", "projmux sidebar> ",
+				"--prompt", "› ",
+				"--height", "100%",
+				"--layout", "reverse",
+				"--border",
+				"--ansi",
 				"--delimiter", "\t",
 				"--with-nth", "1",
+				"--exit-0",
+				"--scrollbar", "█",
+				"--scroll-off", "3",
+				"--info", "inline-right",
+				"--footer", "help text",
+				"--footer-border", "line",
 				"--preview", "exec '/tmp/projmux' 'switch' 'preview' {2}",
 				"--preview-window", "right,60%,border-left",
 				"--bind", "ctrl-r:reload(sync)",
@@ -171,10 +211,53 @@ func TestRunnerRunIncludesPreviewAndBindings(t *testing.T) {
 
 	_, err := r.Run(Options{
 		UI:             "sidebar",
+		Prompt:         "› ",
+		Footer:         "help text",
 		Candidates:     []string{"/tmp/project-a"},
 		PreviewCommand: "exec '/tmp/projmux' 'switch' 'preview' {2}",
 		PreviewWindow:  "right,60%,border-left",
 		Bindings:       []string{"ctrl-r:reload(sync)"},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestRunnerRunFallsBackToHeaderWhenFooterIsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommand{}
+	r := &runner{
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return false },
+		newCommand: func(name string, args ...string) command {
+			want := []string{
+				"--prompt", "› ",
+				"--height", "100%",
+				"--layout", "reverse",
+				"--border",
+				"--ansi",
+				"--delimiter", "\t",
+				"--with-nth", "1",
+				"--exit-0",
+				"--scrollbar", "█",
+				"--scroll-off", "3",
+				"--info", "inline-right",
+				"--header", "help text",
+				"--separator", "─",
+			}
+			if got := args; !equalStrings(got, want) {
+				t.Fatalf("command args = %q, want %q", got, want)
+			}
+			return fake
+		},
+	}
+
+	_, err := r.Run(Options{
+		UI:         "popup",
+		Prompt:     "› ",
+		Footer:     "help text",
+		Candidates: []string{"/tmp/project-a"},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)

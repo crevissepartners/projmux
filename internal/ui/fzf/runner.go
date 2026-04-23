@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +15,9 @@ type Options struct {
 	UI             string
 	Candidates     []string
 	Entries        []Entry
+	Prompt         string
+	Header         string
+	Footer         string
 	ExpectKeys     []string
 	PreviewCommand string
 	PreviewWindow  string
@@ -44,14 +48,16 @@ type command interface {
 type commandFactory func(name string, args ...string) command
 
 type runner struct {
-	lookupPath func(string) (string, error)
-	newCommand commandFactory
+	lookupPath     func(string) (string, error)
+	newCommand     commandFactory
+	supportsFooter func(string) bool
 }
 
 func NewRunner() Runner {
 	return &runner{
-		lookupPath: exec.LookPath,
-		newCommand: newExecCommand,
+		lookupPath:     exec.LookPath,
+		newCommand:     newExecCommand,
+		supportsFooter: defaultSupportsFooter,
 	}
 }
 
@@ -64,11 +70,15 @@ func (r *runner) Run(options Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("fzf is not available: %w", err)
 	}
+	supportsFooter := false
+	if r.supportsFooter != nil {
+		supportsFooter = r.supportsFooter(path)
+	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	cmd := r.newCommand(path, runnerArgs(options)...)
+	cmd := r.newCommand(path, runnerArgs(options, supportsFooter)...)
 	cmd.SetStdin(strings.NewReader(strings.Join(renderedEntries(options), "\n")))
 	cmd.SetStdout(&stdout)
 	cmd.SetStderr(&stderr)
@@ -83,11 +93,32 @@ func (r *runner) Run(options Options) (Result, error) {
 	return selectedResult(trimTrailingNewlines(stdout.String()), len(options.ExpectKeys) != 0), nil
 }
 
-func runnerArgs(options Options) []string {
-	ui := options.UI
-	args := []string{"--prompt", fmt.Sprintf("projmux %s> ", ui), "--delimiter", "\t", "--with-nth", "1"}
+func runnerArgs(options Options, supportsFooter bool) []string {
+	args := []string{
+		"--prompt", resolvedPrompt(options),
+		"--height", "100%",
+		"--layout", "reverse",
+		"--border",
+		"--ansi",
+		"--delimiter", "\t",
+		"--with-nth", "1",
+		"--exit-0",
+		"--scrollbar", "█",
+		"--scroll-off", strconv.Itoa(3),
+		"--info", "inline-right",
+	}
 	if len(options.ExpectKeys) != 0 {
 		args = append(args, "--expect", strings.Join(options.ExpectKeys, ","))
+	}
+	if header := strings.TrimSpace(options.Header); header != "" {
+		args = append(args, "--header", header)
+	}
+	if footer := strings.TrimSpace(options.Footer); footer != "" {
+		if supportsFooter {
+			args = append(args, "--footer", footer, "--footer-border", "line")
+		} else {
+			args = append(args, "--header", footer, "--separator", "─")
+		}
 	}
 	if previewCommand := strings.TrimSpace(options.PreviewCommand); previewCommand != "" {
 		args = append(args, "--preview", previewCommand)
@@ -103,6 +134,21 @@ func runnerArgs(options Options) []string {
 		args = append(args, "--bind", binding)
 	}
 	return args
+}
+
+func resolvedPrompt(options Options) string {
+	if options.Prompt != "" {
+		return options.Prompt
+	}
+	return fmt.Sprintf("projmux %s> ", options.UI)
+}
+
+func defaultSupportsFooter(path string) bool {
+	out, err := exec.Command(path, "--help").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "--footer")
 }
 
 func trimTrailingNewlines(s string) string {

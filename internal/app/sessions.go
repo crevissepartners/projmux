@@ -123,6 +123,8 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	result, err := c.runner.Run(intfzf.Options{
 		UI:             *ui,
 		Entries:        rowsToEntries(rows),
+		Prompt:         "› ",
+		Footer:         sessionsPickerFooter(),
 		PreviewCommand: previewCommand,
 		PreviewWindow:  sessionsPreviewWindow(*ui),
 		Bindings: []string{
@@ -208,6 +210,14 @@ func sessionsPreviewWindow(ui string) string {
 		return "right,60%,border-left"
 	}
 	return "down,45%,border-top"
+}
+
+func sessionsPickerFooter() string {
+	return strings.Join([]string{
+		"Enter: switch to previewed target",
+		"Left/Right: preview window",
+		"Alt-Up/Alt-Down: preview pane",
+	}, "\n")
 }
 
 func rowsToEntries(rows []intrender.SessionRow) []intfzf.Entry {

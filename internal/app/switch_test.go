@@ -89,6 +89,12 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotRunnerOptions.ExpectKeys, []string{switchTagExpectKey, switchPinExpectKey}; !equalStrings(got, want) {
 		t.Fatalf("runner expect keys = %q, want %q", got, want)
 	}
+	if got, want := gotRunnerOptions.Prompt, "› "; got != want {
+		t.Fatalf("runner prompt = %q, want %q", got, want)
+	}
+	if got, want := gotRunnerOptions.Footer, "Enter: switch/create previewed target\nAlt-T: tag focused directory\nAlt-P: pin/unpin focused directory\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+		t.Fatalf("runner footer = %q, want %q", got, want)
+	}
 	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' {2}"; got != want {
 		t.Fatalf("runner preview command = %q, want %q", got, want)
 	}
@@ -154,6 +160,12 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	}
 	if got, want := gotRunnerOptions.UI, switchUISidebar; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
+	}
+	if got, want := gotRunnerOptions.Prompt, "› "; got != want {
+		t.Fatalf("runner prompt = %q, want %q", got, want)
+	}
+	if got, want := gotRunnerOptions.Footer, "Enter: switch/create previewed target\nAlt-T: tag focused directory\nAlt-P: pin/unpin focused directory\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' {2}"; got != want {
 		t.Fatalf("runner preview command = %q, want %q", got, want)

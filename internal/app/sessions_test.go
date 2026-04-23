@@ -49,6 +49,12 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotOptions.UI, switchUIPopup; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
+	if got, want := gotOptions.Prompt, "› "; got != want {
+		t.Fatalf("runner prompt = %q, want %q", got, want)
+	}
+	if got, want := gotOptions.Footer, "Enter: switch to previewed target\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+		t.Fatalf("runner footer = %q, want %q", got, want)
+	}
 	if got, want := gotOptions.Entries, []intfzf.Entry{
 		{Label: "repo-b  [attached]  3w  4p  w3.p1  /tmp/repo-b", Value: "repo-b"},
 		{Label: "home  [detached]  1w  1p  /home/tester", Value: "home"},
@@ -101,6 +107,12 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	}
 	if got, want := gotOptions.UI, switchUISidebar; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
+	}
+	if got, want := gotOptions.Prompt, "› "; got != want {
+		t.Fatalf("runner prompt = %q, want %q", got, want)
+	}
+	if got, want := gotOptions.Footer, "Enter: switch to previewed target\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.PreviewWindow, "right,60%,border-left"; got != want {
 		t.Fatalf("runner preview window = %q, want %q", got, want)
