@@ -735,6 +735,7 @@ func TestSwitchCommandSettingsMenuOffersAddCurrentPin(t *testing.T) {
 	}
 
 	want := []intfzf.Entry{
+		{Label: "add pin...", Value: "add-interactive"},
 		{Label: "add pin  ~rp/new-app", Value: "add:/home/tester/source/repos/new-app"},
 		{Label: "clear all pins", Value: "clear"},
 		{Label: "remove  ~rp/app", Value: "pin:/home/tester/source/repos/app"},
@@ -772,6 +773,7 @@ func TestSwitchCommandSettingsMenuSkipsAddWhenCurrentTargetAlreadyPinned(t *test
 	}
 
 	want := []intfzf.Entry{
+		{Label: "add pin...", Value: "add-interactive"},
 		{Label: "clear all pins", Value: "clear"},
 		{Label: "remove  ~rp/app", Value: "pin:/home/tester/source/repos/app"},
 	}
@@ -1066,6 +1068,74 @@ func TestSwitchCommandSettingsMenuAddCurrentPin(t *testing.T) {
 		t.Fatalf("add calls = %q, want %q", got, want)
 	}
 	if got, want := stdout.String(), "pinned: /home/tester/source/repos/new-app\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandSettingsMenuInteractiveAddPin(t *testing.T) {
+	t.Parallel()
+
+	var runnerCalls int
+	store := &stubSwitchPinStore{list: []string{"/home/tester/source/repos/app"}}
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{
+				"/home/tester/source/repos/app",
+				"/home/tester/source/repos/new-app",
+				"/home/tester/source/repos/lib",
+			}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return store, nil },
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			runnerCalls++
+			if runnerCalls == 1 {
+				return intfzf.Result{Value: switchSettingsSentinel}, nil
+			}
+			if runnerCalls == 2 {
+				if got, want := options.UI, "settings"; got != want {
+					t.Fatalf("settings picker UI = %q, want %q", got, want)
+				}
+				return intfzf.Result{Value: "add-interactive"}, nil
+			}
+			if runnerCalls == 3 {
+				if got, want := options.UI, "pin"; got != want {
+					t.Fatalf("add-pin picker UI = %q, want %q", got, want)
+				}
+				wantEntries := []intfzf.Entry{
+					{Label: "~rp/new-app", Value: "/home/tester/source/repos/new-app"},
+					{Label: "~rp/lib", Value: "/home/tester/source/repos/lib"},
+				}
+				if !equalEntries(options.Entries, wantEntries) {
+					t.Fatalf("add-pin entries = %#v, want %#v", options.Entries, wantEntries)
+				}
+				return intfzf.Result{Value: "/home/tester/source/repos/lib"}, nil
+			}
+			return intfzf.Result{}, nil
+		}),
+		sessions:   &capturingSwitchSessionExecutor{},
+		identity:   stubSwitchIdentityResolver{name: "new-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/home/tester/source/repos/new-app/subdir", nil },
+		lookupEnv: func(name string) string {
+			if name == repoRootEnvVar {
+				return "/home/tester/source/repos"
+			}
+			return ""
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := runnerCalls, 4; got != want {
+		t.Fatalf("runner calls = %d, want %d", got, want)
+	}
+	if got, want := store.addCalls, []string{"/home/tester/source/repos/lib"}; !equalStrings(got, want) {
+		t.Fatalf("add calls = %q, want %q", got, want)
+	}
+	if got, want := stdout.String(), "pinned: /home/tester/source/repos/lib\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }

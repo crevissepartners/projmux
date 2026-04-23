@@ -328,6 +328,10 @@ func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
 		}
 
 		switch {
+		case action == "add-interactive":
+			if err := c.runAddPinInteractive(stdout); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, "add:"):
 			target := strings.TrimPrefix(action, "add:")
 			if err := c.addPin(target, stdout); err != nil {
@@ -350,6 +354,35 @@ func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
 			return fmt.Errorf("unknown switch settings action: %s", action)
 		}
 	}
+}
+
+func (c *switchCommand) runAddPinInteractive(stdout io.Writer) error {
+	if c.runner == nil {
+		return fmt.Errorf("switch runner is not configured")
+	}
+
+	entries, err := c.addPinEntries()
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	result, err := c.runner.Run(intfzf.Options{
+		UI:      "pin",
+		Entries: entries,
+	})
+	if err != nil {
+		return fmt.Errorf("run switch add-pin picker: %w", err)
+	}
+
+	target := cleanOptionalPath(result.Value)
+	if target == "" {
+		return nil
+	}
+
+	return c.addPin(target, stdout)
 }
 
 func (c *switchCommand) runCyclePane(args []string, stderr io.Writer) error {
@@ -1196,7 +1229,11 @@ func (c *switchCommand) settingsEntries() ([]intfzf.Entry, error) {
 	}
 	repoRoot := cleanOptionalPath(c.env(repoRootEnvVar))
 
-	entries := make([]intfzf.Entry, 0, len(pins)+2)
+	entries := make([]intfzf.Entry, 0, len(pins)+3)
+	entries = append(entries, intfzf.Entry{
+		Label: "add pin...",
+		Value: "add-interactive",
+	})
 	currentTarget, err := c.resolveSwitchTarget(nil, "switch settings")
 	if err == nil && currentTarget != "" && currentTarget != switchSettingsSentinel && !containsString(pins, currentTarget) {
 		entries = append(entries, intfzf.Entry{
@@ -1216,6 +1253,47 @@ func (c *switchCommand) settingsEntries() ([]intfzf.Entry, error) {
 			Value: "pin:" + pin,
 		})
 	}
+	return entries, nil
+}
+
+func (c *switchCommand) addPinEntries() ([]intfzf.Entry, error) {
+	inputs, err := c.candidateInputs("")
+	if err != nil {
+		return nil, err
+	}
+
+	if c.discover == nil {
+		return nil, fmt.Errorf("switch candidate discovery is not configured")
+	}
+
+	paths, err := c.discover(inputs)
+	if err != nil {
+		return nil, fmt.Errorf("discover switch add-pin candidates: %w", err)
+	}
+
+	pins, err := c.loadPins()
+	if err != nil {
+		return nil, err
+	}
+
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot := cleanOptionalPath(c.env(repoRootEnvVar))
+
+	entries := make([]intfzf.Entry, 0, len(paths))
+	for _, path := range paths {
+		if path == switchSettingsSentinel || containsString(pins, path) {
+			continue
+		}
+
+		entries = append(entries, intfzf.Entry{
+			Label: intrender.PrettyPath(path, homeDir, repoRoot),
+			Value: path,
+		})
+	}
+
 	return entries, nil
 }
 
