@@ -507,6 +507,9 @@ func parseEphemeralSessions(output []byte) ([]lifecycle.SessionInventory, error)
 	sessions := make([]lifecycle.SessionInventory, 0, len(lines))
 	for _, line := range lines {
 		fields := strings.Split(line, "\t")
+		if len(fields) == 3 {
+			fields = append(fields, "")
+		}
 		if len(fields) != 4 {
 			return nil, fmt.Errorf("parse ephemeral tmux sessions: malformed row %q", line)
 		}
@@ -524,7 +527,7 @@ func parseEphemeralSessions(output []byte) ([]lifecycle.SessionInventory, error)
 		if err != nil {
 			return nil, errSessionActivityInvalid
 		}
-		ephemeral, err := parseBinaryFlag(fields[3], errSessionEphemeralInvalid)
+		ephemeral, err := parseOptionalBinaryFlag(fields[3], errSessionEphemeralInvalid)
 		if err != nil {
 			return nil, err
 		}
@@ -549,6 +552,14 @@ func parseBinaryFlag(value string, invalid error) (bool, error) {
 	default:
 		return false, invalid
 	}
+}
+
+func parseOptionalBinaryFlag(value string, invalid error) (bool, error) {
+	if strings.TrimSpace(value) == "" {
+		return false, nil
+	}
+
+	return parseBinaryFlag(value, invalid)
 }
 
 // BuildPopupPreviewCommand builds the shell command used inside a tmux popup

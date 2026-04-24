@@ -211,6 +211,25 @@ func TestClientListEphemeralSessionsParsesRows(t *testing.T) {
 	}
 }
 
+func TestClientListEphemeralSessionsTreatsMissingEphemeralFlagAsFalse(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("home\t0\t42\t\n"), nil
+	}))
+
+	got, err := client.ListEphemeralSessions(context.Background())
+	if err != nil {
+		t.Fatalf("ListEphemeralSessions() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ListEphemeralSessions() len = %d, want 1", len(got))
+	}
+	if got[0].Ephemeral {
+		t.Fatalf("session = %#v, want non-ephemeral when flag is unset", got[0])
+	}
+}
+
 func TestClientListEphemeralSessionsTreatsNoServerAsEmpty(t *testing.T) {
 	t.Parallel()
 
