@@ -88,6 +88,23 @@ func TestBuildSwitchRowsSidebarUsesAnsiStylingForModeAndToggles(t *testing.T) {
 	}
 }
 
+func TestBuildSwitchRowsSidebarLeavesNewSessionNameUncolored(t *testing.T) {
+	t.Parallel()
+
+	rows := BuildSwitchRows([]SwitchCandidate{{
+		Path:        "/home/tester/source/repos/app",
+		DisplayPath: "~rp/app",
+		SessionName: "app",
+		ModeLabel:   "new",
+		UI:          "sidebar",
+	}})
+
+	const want = "    app \x1b[2m~rp/app\x1b[0m"
+	if got := rows[0].Label; got != want {
+		t.Fatalf("label = %q, want %q", got, want)
+	}
+}
+
 func TestBuildSwitchRowsSidebarFormatsSettingsRow(t *testing.T) {
 	t.Parallel()
 

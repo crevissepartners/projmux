@@ -211,6 +211,84 @@ func TestClientListEphemeralSessionsParsesRows(t *testing.T) {
 	}
 }
 
+func TestClientListEphemeralSessionsTreatsMultipleAttachedClientsAsAttached(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("shared\t2\t42\t1\n"), nil
+	}))
+
+	got, err := client.ListEphemeralSessions(context.Background())
+	if err != nil {
+		t.Fatalf("ListEphemeralSessions() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ListEphemeralSessions() len = %d, want 1", len(got))
+	}
+	if !got[0].Attached {
+		t.Fatalf("session = %#v, want attached when client count is greater than zero", got[0])
+	}
+}
+
+func TestClientListEphemeralSessionsTreatsMissingEphemeralFlagAsFalse(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("home\t0\t42\t\n"), nil
+	}))
+
+	got, err := client.ListEphemeralSessions(context.Background())
+	if err != nil {
+		t.Fatalf("ListEphemeralSessions() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ListEphemeralSessions() len = %d, want 1", len(got))
+	}
+	if got[0].Ephemeral {
+		t.Fatalf("session = %#v, want non-ephemeral when flag is unset", got[0])
+	}
+}
+
+func TestClientListEphemeralSessionsTreatsNoServerAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "no server running",
+			err:  errors.New("tmux list-sessions: exit status 1: no server running on /tmp/tmux-1000/default"),
+		},
+		{
+			name: "socket missing",
+			err:  errors.New("tmux list-sessions: exit status 1: error connecting to /tmp/tmux-1000/default (No such file or directory)"),
+		},
+		{
+			name: "generic failed to connect",
+			err:  errors.New("tmux list-sessions: exit status 1: failed to connect to server"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+				return nil, tt.err
+			}))
+
+			got, err := client.ListEphemeralSessions(context.Background())
+			if err != nil {
+				t.Fatalf("ListEphemeralSessions() error = %v", err)
+			}
+			if got != nil {
+				t.Fatalf("ListEphemeralSessions() = %#v, want nil", got)
+			}
+		})
+	}
+}
+
 func TestClientListEphemeralSessionsRejectsMalformedRows(t *testing.T) {
 	t.Parallel()
 
@@ -237,7 +315,7 @@ func TestClientListEphemeralSessionsRejectsInvalidFlags(t *testing.T) {
 	}{
 		{
 			name:   "attached",
-			row:    "ephemeral\tyes\t42\t1",
+			row:    "ephemeral\tnope\t42\t1",
 			target: errSessionAttachedInvalid,
 		},
 		{
@@ -1205,12 +1283,12 @@ func TestBuildSessionPopupCycleCommandRequiresInputs(t *testing.T) {
 func TestBuildSwitchPreviewCommandQuotesBinaryPath(t *testing.T) {
 	t.Parallel()
 
-	command, err := BuildSwitchPreviewCommand("/tmp/projmux's bin")
+	command, err := BuildSwitchPreviewCommand("/tmp/projmux's bin", "sidebar")
 	if err != nil {
 		t.Fatalf("BuildSwitchPreviewCommand returned error: %v", err)
 	}
 
-	const want = "exec '/tmp/projmux'\\''s bin' 'switch' 'preview' {2}"
+	const want = "exec '/tmp/projmux'\\''s bin' 'switch' 'preview' '--ui=sidebar' {2}"
 	if command != want {
 		t.Fatalf("command = %q, want %q", command, want)
 	}
@@ -1219,7 +1297,7 @@ func TestBuildSwitchPreviewCommandQuotesBinaryPath(t *testing.T) {
 func TestBuildSwitchPreviewCommandRequiresBinaryPath(t *testing.T) {
 	t.Parallel()
 
-	if _, err := BuildSwitchPreviewCommand(" "); err == nil || !strings.Contains(err.Error(), "binary path is required") {
+	if _, err := BuildSwitchPreviewCommand(" ", "popup"); err == nil || !strings.Contains(err.Error(), "binary path is required") {
 		t.Fatalf("unexpected error for binary path: %v", err)
 	}
 }

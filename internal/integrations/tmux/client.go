@@ -40,6 +40,15 @@ type ExecRunner struct{}
 // Run executes a command and returns its combined output.
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if name == "tmux" && len(args) > 0 && (args[0] == "attach-session" || args[0] == "switch-client") {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return nil, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		}
+		return nil, nil
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		trimmed := strings.TrimSpace(string(output))
@@ -205,6 +214,9 @@ func (c *Client) RecentSessionSummaries(ctx context.Context) ([]RecentSessionSum
 func (c *Client) ListEphemeralSessions(ctx context.Context) ([]lifecycle.SessionInventory, error) {
 	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_name}\t#{session_attached}\t#{session_last_attached}\t#{@dotfiles_ephemeral}")
 	if err != nil {
+		if isNoServerError(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("list ephemeral tmux sessions: %w", err)
 	}
 
@@ -214,6 +226,17 @@ func (c *Client) ListEphemeralSessions(ctx context.Context) ([]lifecycle.Session
 	}
 
 	return sessions, nil
+}
+
+func isNoServerError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := err.Error()
+	return strings.Contains(message, "no server running on") ||
+		strings.Contains(message, "failed to connect to server") ||
+		strings.Contains(message, "error connecting to ") && strings.Contains(message, "(No such file or directory)")
 }
 
 // ListSessionWindows lists the windows in a tmux session with active hints.
@@ -493,6 +516,9 @@ func parseEphemeralSessions(output []byte) ([]lifecycle.SessionInventory, error)
 	sessions := make([]lifecycle.SessionInventory, 0, len(lines))
 	for _, line := range lines {
 		fields := strings.Split(line, "\t")
+		if len(fields) == 3 {
+			fields = append(fields, "")
+		}
 		if len(fields) != 4 {
 			return nil, fmt.Errorf("parse ephemeral tmux sessions: malformed row %q", line)
 		}
@@ -502,7 +528,7 @@ func parseEphemeralSessions(output []byte) ([]lifecycle.SessionInventory, error)
 			return nil, errSessionNameRequired
 		}
 
-		attached, err := parseBinaryFlag(fields[1], errSessionAttachedInvalid)
+		attached, err := parseAttachedFlag(fields[1])
 		if err != nil {
 			return nil, err
 		}
@@ -510,7 +536,7 @@ func parseEphemeralSessions(output []byte) ([]lifecycle.SessionInventory, error)
 		if err != nil {
 			return nil, errSessionActivityInvalid
 		}
-		ephemeral, err := parseBinaryFlag(fields[3], errSessionEphemeralInvalid)
+		ephemeral, err := parseOptionalBinaryFlag(fields[3], errSessionEphemeralInvalid)
 		if err != nil {
 			return nil, err
 		}
@@ -535,6 +561,24 @@ func parseBinaryFlag(value string, invalid error) (bool, error) {
 	default:
 		return false, invalid
 	}
+}
+
+func parseAttachedFlag(value string) (bool, error) {
+	trimmed := strings.TrimSpace(value)
+	count, err := strconv.Atoi(trimmed)
+	if err != nil || count < 0 {
+		return false, errSessionAttachedInvalid
+	}
+
+	return count > 0, nil
+}
+
+func parseOptionalBinaryFlag(value string, invalid error) (bool, error) {
+	if strings.TrimSpace(value) == "" {
+		return false, nil
+	}
+
+	return parseBinaryFlag(value, invalid)
 }
 
 // BuildPopupPreviewCommand builds the shell command used inside a tmux popup
@@ -614,13 +658,18 @@ func BuildSessionPopupCycleCommand(binaryPath, subcommand, direction string) (st
 
 // BuildSwitchPreviewCommand builds the shell command used by fzf preview panes
 // for the existing `projmux switch preview {2}` flow.
-func BuildSwitchPreviewCommand(binaryPath string) (string, error) {
+func BuildSwitchPreviewCommand(binaryPath, ui string) (string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
 	if binaryPath == "" {
 		return "", errors.New("switch preview binary path is required")
 	}
 
-	return buildExecCommand(binaryPath, "switch", "preview") + " {2}", nil
+	ui = strings.TrimSpace(ui)
+	if ui == "" {
+		ui = "popup"
+	}
+
+	return buildExecCommand(binaryPath, "switch", "preview", "--ui="+ui) + " {2}", nil
 }
 
 // BuildSwitchCycleWindowCommand builds the shell command used by fzf bindings

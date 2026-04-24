@@ -281,8 +281,13 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 	fs.Usage = func() {
 		printSwitchUsage(stderr)
 	}
+	ui := fs.String(switchUIFlag, switchUIPopup, "preview surface to render")
 
 	if err := fs.Parse(args); err != nil {
+		printSwitchUsage(stderr)
+		return err
+	}
+	if err := validateSwitchUI(*ui); err != nil {
 		printSwitchUsage(stderr)
 		return err
 	}
@@ -310,7 +315,7 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 
-	_, err = io.WriteString(stdout, intrender.RenderSwitchPreview(model))
+	_, err = io.WriteString(stdout, intrender.RenderSwitchPreview(model, *ui))
 	return err
 }
 
@@ -1061,7 +1066,7 @@ func (c *switchCommand) switchPickerSurface(plan switchPlan) (string, []string, 
 		return "", nil, fmt.Errorf("resolve switch preview executable: %w", err)
 	}
 
-	previewCommand, err := inttmux.BuildSwitchPreviewCommand(binaryPath)
+	previewCommand, err := inttmux.BuildSwitchPreviewCommand(binaryPath, plan.UI)
 	if err != nil {
 		return "", nil, fmt.Errorf("build switch preview command: %w", err)
 	}

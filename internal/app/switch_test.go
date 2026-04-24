@@ -95,7 +95,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotRunnerOptions.Footer, "Enter: switch/create previewed target\nAlt-T: tag focused directory\nAlt-P: pin/unpin focused directory\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' {2}"; got != want {
+	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=popup' {2}"; got != want {
 		t.Fatalf("runner preview command = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.PreviewWindow, "right,60%,border-left"; got != want {
@@ -167,7 +167,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotRunnerOptions.Footer, "Enter: switch/create\nAlt-T: tag focused directory\nAlt-P: pin/unpin focused directory"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' {2}"; got != want {
+	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=sidebar' {2}"; got != want {
 		t.Fatalf("runner preview command = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.PreviewWindow, "down,35%,border-top"; got != want {
@@ -179,7 +179,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
-		{Label: "    \x1b[33mtmp-app\x1b[0m \x1b[2m/tmp/app\x1b[0m", Value: "/tmp/app"},
+		{Label: "    tmp-app \x1b[2m/tmp/app\x1b[0m", Value: "/tmp/app"},
 		{Label: "  \x1b[1m\x1b[36mSettings\x1b[0m  \x1b[2mmanage pinned directories\x1b[0m", Value: switchSettingsSentinel},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
@@ -355,18 +355,18 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		t.Fatalf("runner candidates = %q, want %q", got, wantCandidates)
 	}
 	wantEntries := []intfzf.Entry{
-		{Label: "    \x1b[33mhome\x1b[0m \x1b[2m~\x1b[0m", Value: fixture.path("home")},
-		{Label: "    \x1b[33mdotfiles\x1b[0m \x1b[2m~/dotfiles\x1b[0m", Value: fixture.path("home/dotfiles")},
-		{Label: "  \x1b[33m*\x1b[0m \x1b[33mpins-app\x1b[0m \x1b[2m" + fixture.path("pins/app") + "\x1b[0m", Value: fixture.path("pins/app")},
-		{Label: "    \x1b[33mmanaged-work-a\x1b[0m \x1b[2m" + fixture.path("managed/work-a") + "\x1b[0m", Value: fixture.path("managed/work-a")},
-		{Label: "    \x1b[33mrp-repo-a\x1b[0m \x1b[2m~rp/repo-a\x1b[0m", Value: fixture.path("rp/repo-a")},
-		{Label: "    \x1b[33mmanaged-work-b\x1b[0m \x1b[2m" + fixture.path("managed/work-b") + "\x1b[0m", Value: fixture.path("managed/work-b")},
+		{Label: "    home \x1b[2m~\x1b[0m", Value: fixture.path("home")},
+		{Label: "    dotfiles \x1b[2m~/dotfiles\x1b[0m", Value: fixture.path("home/dotfiles")},
+		{Label: "  \x1b[33m*\x1b[0m pins-app \x1b[2m" + fixture.path("pins/app") + "\x1b[0m", Value: fixture.path("pins/app")},
+		{Label: "    managed-work-a \x1b[2m" + fixture.path("managed/work-a") + "\x1b[0m", Value: fixture.path("managed/work-a")},
+		{Label: "    rp-repo-a \x1b[2m~rp/repo-a\x1b[0m", Value: fixture.path("rp/repo-a")},
+		{Label: "    managed-work-b \x1b[2m" + fixture.path("managed/work-b") + "\x1b[0m", Value: fixture.path("managed/work-b")},
 		{Label: "  \x1b[1m\x1b[36mSettings\x1b[0m  \x1b[2mmanage pinned directories\x1b[0m", Value: switchSettingsSentinel},
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
 	}
-	if got, want := fakeRunner.last.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' {2}"; got != want {
+	if got, want := fakeRunner.last.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=sidebar' {2}"; got != want {
 		t.Fatalf("runner preview command = %q, want %q", got, want)
 	}
 	if got, want := fakeRunner.last.PreviewWindow, "down,35%,border-top"; got != want {

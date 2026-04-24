@@ -142,7 +142,7 @@ func formatSidebarSessionName(sessionName, mode string) string {
 	case "existing":
 		return ansiBold + ansiGreen + sessionName + ansiReset
 	case "new":
-		return ansiYellow + sessionName + ansiReset
+		return sessionName
 	default:
 		return sessionName
 	}

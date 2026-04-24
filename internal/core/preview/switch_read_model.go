@@ -9,6 +9,8 @@ type SwitchReadModel struct {
 	SessionName string
 	SessionMode string
 	GitBranch   string
+	Windows     []Window
+	Panes       []Pane
 	Popup       PopupReadModel
 }
 
@@ -35,6 +37,8 @@ func BuildSwitchReadModel(inputs SwitchReadModelInputs) SwitchReadModel {
 		SessionName: strings.TrimSpace(inputs.SessionName),
 		SessionMode: "new",
 		GitBranch:   strings.TrimSpace(inputs.GitBranch),
+		Windows:     normalizedWindows(inputs.Windows),
+		Panes:       normalizedPanes(inputs.Panes),
 	}
 
 	if !inputs.SessionExists {
