@@ -205,6 +205,9 @@ func (c *Client) RecentSessionSummaries(ctx context.Context) ([]RecentSessionSum
 func (c *Client) ListEphemeralSessions(ctx context.Context) ([]lifecycle.SessionInventory, error) {
 	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_name}\t#{session_attached}\t#{session_last_attached}\t#{@dotfiles_ephemeral}")
 	if err != nil {
+		if isNoServerError(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("list ephemeral tmux sessions: %w", err)
 	}
 
@@ -214,6 +217,17 @@ func (c *Client) ListEphemeralSessions(ctx context.Context) ([]lifecycle.Session
 	}
 
 	return sessions, nil
+}
+
+func isNoServerError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := err.Error()
+	return strings.Contains(message, "no server running on") ||
+		strings.Contains(message, "failed to connect to server") ||
+		strings.Contains(message, "error connecting to ") && strings.Contains(message, "(No such file or directory)")
 }
 
 // ListSessionWindows lists the windows in a tmux session with active hints.

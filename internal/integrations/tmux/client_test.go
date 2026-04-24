@@ -211,6 +211,46 @@ func TestClientListEphemeralSessionsParsesRows(t *testing.T) {
 	}
 }
 
+func TestClientListEphemeralSessionsTreatsNoServerAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "no server running",
+			err:  errors.New("tmux list-sessions: exit status 1: no server running on /tmp/tmux-1000/default"),
+		},
+		{
+			name: "socket missing",
+			err:  errors.New("tmux list-sessions: exit status 1: error connecting to /tmp/tmux-1000/default (No such file or directory)"),
+		},
+		{
+			name: "generic failed to connect",
+			err:  errors.New("tmux list-sessions: exit status 1: failed to connect to server"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+				return nil, tt.err
+			}))
+
+			got, err := client.ListEphemeralSessions(context.Background())
+			if err != nil {
+				t.Fatalf("ListEphemeralSessions() error = %v", err)
+			}
+			if got != nil {
+				t.Fatalf("ListEphemeralSessions() = %#v, want nil", got)
+			}
+		})
+	}
+}
+
 func TestClientListEphemeralSessionsRejectsMalformedRows(t *testing.T) {
 	t.Parallel()
 
