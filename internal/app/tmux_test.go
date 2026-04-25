@@ -250,7 +250,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g automatic-rename on",
 		"set -g automatic-rename-format \"#{pane_title}\"",
 		"set -g mode-keys vi",
-		"set -sg escape-time 20",
+		"set -sg escape-time 100",
 		"set -g pane-border-status top",
 		"set -g pane-border-format \"#{pane_title}\"",
 		"set -s user-keys[7] \"\\033[9008u\"",

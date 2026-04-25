@@ -695,7 +695,7 @@ func tmuxAppConfig(binaryPath string) string {
 		"set -g automatic-rename on",
 		"set -g automatic-rename-format \"#{pane_title}\"",
 		"set -g mode-keys vi",
-		"set -sg escape-time 20",
+		"set -sg escape-time 100",
 		"set -g status-style \"bg=colour235,fg=colour245\"",
 		"set -g message-style \"bg=colour45,fg=colour16,bold\"",
 		"set -g pane-border-style \"fg=colour238\"",
