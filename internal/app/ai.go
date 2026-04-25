@@ -363,6 +363,8 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 			"ctrl-alt-s:abort",
 			"alt-4:abort",
 			"alt-[:abort",
+			"ctrl-r:abort",
+			"ctrl-l:abort",
 		},
 	})
 	if err != nil {
@@ -395,6 +397,8 @@ func (c *aiCommand) runAgentPicker(direction string) (intfzf.Result, error) {
 			"alt-5:abort",
 			"ctrl-alt-s:abort",
 			"alt-[:abort",
+			"ctrl-r:abort",
+			"ctrl-l:abort",
 		},
 	})
 }
