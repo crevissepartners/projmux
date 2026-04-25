@@ -157,9 +157,16 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 
 	ctx := context.Background()
 	popupCtx := c.popupContext(ctx)
+	if mode.ClientKey != "" {
+		popupCtx.ClientKey = sanitizePopupKey(mode.ClientKey)
+	}
 	marker := popupMarkerPath(popupCtx.ClientKey, mode.Canonical)
 	if _, err := os.Stat(marker); err == nil {
-		if err := c.closePopup(ctx, popupCtx.OriginPane); err != nil {
+		targetPane := strings.TrimSpace(popupCtx.OriginPane)
+		if content, readErr := os.ReadFile(marker); readErr == nil && strings.TrimSpace(string(content)) != "" {
+			targetPane = strings.TrimSpace(string(content))
+		}
+		if err := c.closePopup(ctx, targetPane); err != nil {
 			return err
 		}
 		_ = os.Remove(marker)
@@ -172,8 +179,12 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := os.WriteFile(marker, []byte(popupCtx.OriginPane+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write tmux popup marker: %w", err)
+	}
 	displayArgs, err := inttmux.BuildDisplayPopupArgs(command, options)
 	if err != nil {
+		_ = os.Remove(marker)
 		return err
 	}
 	if _, err := c.runner.Run(ctx, "tmux", displayArgs...); err != nil {
@@ -187,19 +198,26 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 }
 
 func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleMode, error) {
-	if len(args) != 1 {
+	fs := flag.NewFlagSet("tmux popup-toggle", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	clientKey := fs.String("client", "", "tmux client key used to scope the popup marker")
+	if err := fs.Parse(args); err != nil {
+		return tmuxPopupToggleMode{}, err
+	}
+	if fs.NArg() != 1 {
 		printTmuxUsage(stderr)
 		return tmuxPopupToggleMode{}, fmt.Errorf("tmux popup-toggle requires exactly 1 argument: <mode>")
 	}
 
-	raw := strings.TrimSpace(args[0])
+	raw := strings.TrimSpace(fs.Arg(0))
+	client := strings.TrimSpace(*clientKey)
 	switch raw {
 	case "session-popup", "sessionizer", "sessionizer-sidebar", "ai-split-settings":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: raw}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: raw, ClientKey: client}, nil
 	case "ai-split-picker-right":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right"}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client}, nil
 	case "ai-split-picker-down":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "down"}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "down", ClientKey: client}, nil
 	default:
 		printTmuxUsage(stderr)
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
@@ -409,7 +427,7 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux popup-preview <session>")
 	fmt.Fprintln(w, "  projmux tmux popup-switch")
 	fmt.Fprintln(w, "  projmux tmux popup-sessions")
-	fmt.Fprintln(w, "  projmux tmux popup-toggle <session-popup|sessionizer|sessionizer-sidebar|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
+	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
 	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
 	fmt.Fprintln(w, "  projmux tmux print-app-config [--bin <path>]")
 	fmt.Fprintln(w, "  projmux tmux install [--bin <path>] [--config <path>] [--include <path>]")
@@ -420,6 +438,7 @@ type tmuxPopupToggleMode struct {
 	Raw       string
 	Canonical string
 	Direction string
+	ClientKey string
 }
 
 type tmuxPopupContext struct {
@@ -641,21 +660,21 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"unbind-key -q -n User4",
 		"unbind-key -q -n User5",
 		"unbind-key -q -n User6",
-		"bind-key -n M-1 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle sessionizer-sidebar"),
-		"bind-key -n M-2 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle session-popup"),
-		"bind-key -n M-3 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle sessionizer"),
-		"bind-key -n M-4 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle ai-split-picker-right"),
-		"bind-key -n M-5 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle ai-split-settings"),
+		"bind-key -n M-1 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer-sidebar"),
+		"bind-key -n M-2 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} session-popup"),
+		"bind-key -n M-3 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer"),
+		"bind-key -n M-4 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-picker-right"),
+		"bind-key -n M-5 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-settings"),
 		"bind-key -n User0 run-shell " + tmuxConfigQuote(bin+" ai split right"),
 		"bind-key -n User1 run-shell " + tmuxConfigQuote(bin+" ai split down"),
-		"bind-key -n User2 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle session-popup"),
-		"bind-key -n User3 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle sessionizer"),
-		"bind-key -n User4 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle sessionizer-sidebar"),
-		"bind-key -n User5 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle ai-split-picker-right"),
-		"bind-key -n User6 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle ai-split-settings"),
-		"bind-key b run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle session-popup"),
-		"bind-key f run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle sessionizer"),
-		"bind-key F run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle sessionizer-sidebar"),
+		"bind-key -n User2 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} session-popup"),
+		"bind-key -n User3 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer"),
+		"bind-key -n User4 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer-sidebar"),
+		"bind-key -n User5 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-picker-right"),
+		"bind-key -n User6 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-settings"),
+		"bind-key b run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} session-popup"),
+		"bind-key f run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer"),
+		"bind-key F run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer-sidebar"),
 		"bind-key g run-shell " + tmuxConfigQuote(bin+" current"),
 		"bind-key r run-shell " + tmuxConfigQuote(bin+" ai split right"),
 		"bind-key l run-shell " + tmuxConfigQuote(bin+" ai split down"),
@@ -742,7 +761,7 @@ func tmuxAppKeyBindings() []string {
 }
 
 func buildMarkedPopupCommand(binaryPath string, args []string, marker, cwd string, env map[string]string) string {
-	parts := []string{"touch -- " + tmuxShellQuote(marker)}
+	parts := []string{}
 	if strings.TrimSpace(cwd) != "" {
 		parts = append(parts, "cd -- "+tmuxShellQuote(cwd))
 	}

@@ -52,7 +52,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"bind-key -n User8 previous-window",
 		"bind-key -n User9 next-window",
 		"#[bold,fg=colour16,bg=colour45] projmux #[default]",
-		"'/tmp/proj mux/bin/projmux' tmux popup-toggle sessionizer-sidebar",
+		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 	} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("config = %q, want substring %q", config, want)

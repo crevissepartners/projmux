@@ -126,6 +126,10 @@ func TestAppRunTmuxPopupSessionsUsesDefaultOptions(t *testing.T) {
 func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	t.Parallel()
 
+	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-sidebar"), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
 	runner := &recordingTmuxRunner{formats: map[string]string{
 		"#{client_tty}":        "/dev/pts/projmux-test-sidebar",
 		"#{pane_id}":           "%1",
@@ -163,7 +167,6 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	}
 	command := got.args[len(got.args)-1]
 	for _, want := range []string{
-		"touch -- '/tmp/projmux-tmux-popup-_dev_pts_projmux-test-sidebar-sessionizer-sidebar.marker'",
 		"cd -- '/tmp/work tree'",
 		"TMUX_SESSIONIZER_CONTEXT_SESSION='work'",
 		"TMUX_SESSIONIZER_CONTEXT_PANE='%1'",
@@ -172,6 +175,46 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		if !strings.Contains(command, want) {
 			t.Fatalf("popup command = %q, want substring %q", command, want)
 		}
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker error = %v", err)
+	}
+	if got, want := string(content), "%1\n"; got != want {
+		t.Fatalf("marker content = %q, want %q", got, want)
+	}
+}
+
+func TestAppRunTmuxPopupToggleClosesExistingMarkerWithClientOverride(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/original-client"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "ai-split-picker")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}": "/dev/pts/popup-client",
+		"#{pane_id}":    "%popup",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "ai-split-picker-right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	want := recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-t", "%original", "-C"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("close call = %#v, want %#v", got, want)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want not exist", err)
 	}
 }
 
@@ -206,9 +249,9 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	output := stdout.String()
 	for _, want := range []string{
 		"bind-key -n M-1 run-shell",
-		"'/tmp/proj mux/bin/projmux' tmux popup-toggle sessionizer-sidebar",
+		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"bind-key -n User2 run-shell",
-		"'/tmp/proj mux/bin/projmux' tmux popup-toggle session-popup",
+		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} session-popup",
 		"bind-key -n User0 run-shell",
 		"'/tmp/proj mux/bin/projmux' ai split right",
 		"set-hook -g pane-focus-in",
@@ -269,7 +312,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"bind-key M if -F \"#{mouse}\"",
 		"#[bold,fg=colour16,bg=colour45] projmux #[default]",
 		"#[bold,fg=colour16,bg=colour45] app #[default]",
-		"'/tmp/projmux' tmux popup-toggle sessionizer-sidebar",
+		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
@@ -302,7 +345,7 @@ func TestTmuxInstallWritesSnippetAndIncludesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(snippet), "'/tmp/projmux' tmux popup-toggle sessionizer") {
+	if !strings.Contains(string(snippet), "'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer") {
 		t.Fatalf("snippet = %q, want projmux binding", string(snippet))
 	}
 	config, err := os.ReadFile(configPath)

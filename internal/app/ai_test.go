@@ -109,6 +109,12 @@ func TestAISplitSelectiveDelegatesToPopupToggle(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.executable = func() (string, error) { return "/tmp/projmux bin", nil }
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{client_tty}"}) {
+			return []byte("/dev/pts/7\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
 
 	if err := cmd.Run([]string{"split", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run split error = %v", err)
@@ -116,7 +122,7 @@ func TestAISplitSelectiveDelegatesToPopupToggle(t *testing.T) {
 
 	want := []recordedAICommand{{
 		name: "/tmp/projmux bin",
-		args: []string{"tmux", "popup-toggle", "ai-split-picker-right"},
+		args: []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-picker-right"},
 	}}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)

@@ -502,7 +502,12 @@ func (c *aiCommand) openPickerToggle(direction string) error {
 	if direction == "down" {
 		mode = "ai-split-picker-down"
 	}
-	err = c.run(binaryPath, "tmux", "popup-toggle", mode)
+	args := []string{"tmux", "popup-toggle"}
+	if clientKey := c.readTrimmed("tmux", "display-message", "-p", "-F", "#{client_tty}"); clientKey != "" {
+		args = append(args, "--client", clientKey)
+	}
+	args = append(args, mode)
+	err = c.run(binaryPath, args...)
 	if isNoSelectionExit(err) {
 		return nil
 	}
