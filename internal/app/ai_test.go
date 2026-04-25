@@ -193,6 +193,152 @@ func TestAISplitShellUsesTmuxSplitWindow(t *testing.T) {
 	}
 }
 
+func TestAIStatusSetThinkingMarksPaneBusy(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%1", "#{pane_title}"}) {
+			return []byte("codex: repo\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"status", "set", "thinking", "%1"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run status set thinking error = %v", err)
+	}
+
+	want := []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@dotfiles_desktop_notified"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@dotfiles_attention_state", "busy"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@dotfiles_attention_ack"}},
+		{name: "tmux", args: []string{"select-pane", "-T", "⠹ codex: repo", "-t", "%1"}},
+	}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.now = func() time.Time { return time.Unix(1000, 0) }
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
+			return []byte("/usr/bin/notify-send\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_title}"}):
+			return []byte("Codex: approval needed\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{@dotfiles_desktop_notified}"}),
+			reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{@dotfiles_desktop_notification_key}"}),
+			reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{@dotfiles_desktop_notification_at}"}):
+			return []byte("\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#S"}):
+			return []byte("repo\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#W"}):
+			return []byte("dev\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_current_path}"}):
+			return []byte(home + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"status", "set", "waiting", "%2"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run status set waiting error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	wantPrefix := []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@dotfiles_attention_state", "reply"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%2", "@dotfiles_attention_ack"}},
+		{name: "tmux", args: []string{"select-pane", "-T", "✳ Codex: approval needed", "-t", "%2"}},
+	}
+	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
+	}
+	if !containsAICommand(commands, "notify-send") {
+		t.Fatalf("commands = %#v, want notify-send dispatch", commands)
+	}
+	if !containsAICommandArg(commands, "@dotfiles_desktop_notified") {
+		t.Fatalf("commands = %#v, want notification record", commands)
+	}
+}
+
+func TestAINotifySkipsRecentDuplicateButRefreshesRecord(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.now = func() time.Time { return time.Unix(1000, 0) }
+	cmd.lookupEnv = func(name string) string {
+		if name == "DOTFILES_TMUX_NOTIFY_DEDUPE_SECONDS" {
+			return "120"
+		}
+		return ""
+	}
+	key := "input_required|waiting for input"
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{@dotfiles_desktop_notified}"}):
+			return []byte("\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{pane_title}"}):
+			return []byte("waiting for input\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{@dotfiles_desktop_notification_key}"}):
+			return []byte(key + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{@dotfiles_desktop_notification_at}"}):
+			return []byte("950\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.Run([]string{"notify", "notify", "%3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run notify error = %v", err)
+	}
+	commands := cmdRecorder(cmd).commands
+	if containsAICommand(commands, "notify-send") {
+		t.Fatalf("commands = %#v, did not expect notify-send for duplicate", commands)
+	}
+	if !containsAICommandArg(commands, "@dotfiles_desktop_notification_at") {
+		t.Fatalf("commands = %#v, want refreshed notification timestamp", commands)
+	}
+}
+
+func TestAIWatchTitlePromotesBusyPaneToThinking(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	checks := 0
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%4", "#{pane_id}"}):
+			checks++
+			if checks > 1 {
+				return nil, os.ErrNotExist
+			}
+			return []byte("%4\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%4", "#{pane_title}__DOTFILES_TMUX_AI_SEP__#{@dotfiles_attention_state}__DOTFILES_TMUX_AI_SEP__#{@dotfiles_attention_ack}"}):
+			return []byte("thinking hard__DOTFILES_TMUX_AI_SEP____DOTFILES_TMUX_AI_SEP__\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%4", "#{pane_title}"}):
+			return []byte("thinking hard\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"watch-title", "%4"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run watch-title error = %v", err)
+	}
+
+	if !containsAICommandArg(cmdRecorder(cmd).commands, "busy") {
+		t.Fatalf("commands = %#v, want busy attention state", cmdRecorder(cmd).commands)
+	}
+}
+
 type capturingAIRunner struct {
 	options intfzf.Options
 	result  intfzf.Result
@@ -236,6 +382,7 @@ func testAICommand(home string) *aiCommand {
 		},
 	}
 	cmd.now = func() time.Time { return time.Unix(0, 0) }
+	cmd.sleep = func(time.Duration) {}
 	aiRecorders[cmd] = recorder
 	return cmd
 }
@@ -253,4 +400,24 @@ func readModeFile(t *testing.T, home string) string {
 		t.Fatal(err)
 	}
 	return string(content)
+}
+
+func containsAICommand(commands []recordedAICommand, name string) bool {
+	for _, command := range commands {
+		if command.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAICommandArg(commands []recordedAICommand, arg string) bool {
+	for _, command := range commands {
+		for _, commandArg := range command.args {
+			if commandArg == arg {
+				return true
+			}
+		}
+	}
+	return false
 }

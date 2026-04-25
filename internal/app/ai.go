@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf16"
 
 	intfzf "github.com/es5h/projmux/internal/ui/fzf"
 )
@@ -35,6 +38,7 @@ type aiCommand struct {
 	runCommand  func(ctx context.Context, name string, args ...string) error
 	readCommand func(ctx context.Context, name string, args ...string) ([]byte, error)
 	now         func() time.Time
+	sleep       func(time.Duration)
 }
 
 func newAICommand() *aiCommand {
@@ -46,6 +50,7 @@ func newAICommand() *aiCommand {
 		runCommand:  runExternalCommand,
 		readCommand: readExternalCommand,
 		now:         time.Now,
+		sleep:       time.Sleep,
 	}
 }
 
@@ -62,12 +67,198 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runPicker(args[1:], stderr)
 	case "settings":
 		return c.runSettings(args[1:], stdout, stderr)
+	case "status":
+		return c.runStatus(args[1:], stderr)
+	case "notify":
+		return c.runNotify(args[1:], stderr)
+	case "watch-title":
+		return c.runWatchTitle(args[1:], stderr)
 	case "help", "--help", "-h":
 		printAIUsage(stdout)
 		return nil
 	default:
 		printAIUsage(stderr)
 		return fmt.Errorf("unknown ai subcommand: %s", args[0])
+	}
+}
+
+func (c *aiCommand) runStatus(args []string, stderr io.Writer) error {
+	if len(args) == 0 {
+		printAIUsage(stderr)
+		return errors.New("ai status requires a subcommand")
+	}
+	switch args[0] {
+	case "set":
+		if len(args) < 2 || len(args) > 3 {
+			printAIUsage(stderr)
+			return errors.New("ai status set requires <thinking|waiting|idle> [pane]")
+		}
+		paneID := strings.TrimSpace(c.env("TMUX_PANE"))
+		if len(args) == 3 {
+			paneID = strings.TrimSpace(args[2])
+		}
+		return c.applyAIStatus(args[1], paneID)
+	case "help", "--help", "-h":
+		printAIUsage(stderr)
+		return nil
+	default:
+		printAIUsage(stderr)
+		return fmt.Errorf("unknown ai status subcommand: %s", args[0])
+	}
+}
+
+func (c *aiCommand) applyAIStatus(state, paneID string) error {
+	paneID = strings.TrimSpace(paneID)
+	if paneID == "" {
+		return nil
+	}
+
+	currentTitle := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_title}")
+	baseTitle := trimAIStatePrefix(currentTitle)
+	switch strings.TrimSpace(state) {
+	case "thinking":
+		_ = c.resetAINotification(paneID)
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateBusy)
+		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
+		_ = c.run("tmux", "select-pane", "-T", "⠹ "+baseTitle, "-t", paneID)
+	case "waiting":
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateReply)
+		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
+		_ = c.run("tmux", "select-pane", "-T", "✳ "+baseTitle, "-t", paneID)
+		_ = c.notifyAI(paneID)
+	case "idle", "":
+		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
+		_ = c.run("tmux", "select-pane", "-T", baseTitle, "-t", paneID)
+	default:
+		return fmt.Errorf("unknown ai status state: %s", state)
+	}
+	return nil
+}
+
+func (c *aiCommand) runNotify(args []string, stderr io.Writer) error {
+	action := "notify"
+	paneID := strings.TrimSpace(c.env("TMUX_PANE"))
+	switch len(args) {
+	case 0:
+	case 1:
+		if args[0] == "notify" || args[0] == "reset" {
+			action = args[0]
+		} else {
+			paneID = strings.TrimSpace(args[0])
+		}
+	case 2:
+		action = args[0]
+		paneID = strings.TrimSpace(args[1])
+	default:
+		printAIUsage(stderr)
+		return errors.New("ai notify accepts [notify|reset] [pane]")
+	}
+
+	switch action {
+	case "reset":
+		return c.resetAINotification(paneID)
+	case "notify":
+		return c.notifyAI(paneID)
+	case "help", "--help", "-h":
+		printAIUsage(stderr)
+		return nil
+	default:
+		printAIUsage(stderr)
+		return fmt.Errorf("unknown ai notify action: %s", action)
+	}
+}
+
+func (c *aiCommand) resetAINotification(paneID string) error {
+	if strings.TrimSpace(paneID) == "" {
+		return nil
+	}
+	_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, "@dotfiles_desktop_notified")
+	return nil
+}
+
+func (c *aiCommand) notifyAI(paneID string) error {
+	paneID = strings.TrimSpace(paneID)
+	if paneID == "" {
+		return nil
+	}
+	if c.readTmuxPaneOption(paneID, "@dotfiles_desktop_notified") == "1" {
+		return nil
+	}
+
+	paneTitle := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_title}")
+	sessionName := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#S")
+	windowName := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#W")
+	panePath := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_current_path}")
+	cleanTitle := displayAITopic(paneTitle)
+	replyKind := aiReplyKindForTitle(paneTitle)
+	key := aiNotificationKey(replyKind, paneTitle)
+	if c.duplicateAINotificationRecent(paneID, key) {
+		c.recordAINotification(paneID, key)
+		return nil
+	}
+
+	summary := aiSummaryForKind(replyKind, cleanTitle)
+	body := aiNotificationBody(filepath.Base(defaultString(panePath, "/")), c.gitBranchForPath(panePath), sessionName, windowName)
+	if err := c.dispatchAINotification(summary, body, aiUrgencyForKind(replyKind), "dotfiles.TmuxCodex", paneID, sessionName); err != nil {
+		return nil
+	}
+	c.recordAINotification(paneID, key)
+	return nil
+}
+
+func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
+	if len(args) > 1 {
+		printAIUsage(stderr)
+		return errors.New("ai watch-title accepts at most 1 [pane] argument")
+	}
+	paneID := strings.TrimSpace(c.env("TMUX_PANE"))
+	if len(args) == 1 {
+		paneID = strings.TrimSpace(args[0])
+	}
+	if paneID == "" {
+		return nil
+	}
+
+	interval := c.watchInterval()
+	settleLimit := c.watchSettleLoops()
+	phase := "idle"
+	lastState := ""
+	settleCount := 0
+	for {
+		if _, err := c.read("tmux", "display-message", "-p", "-t", paneID, "#{pane_id}"); err != nil {
+			return nil
+		}
+		title, state, ack := c.readAIWatchSnapshot(paneID)
+		nextState := "idle"
+		switch {
+		case isAIBusyTitle(title):
+			phase = "busy"
+			settleCount = 0
+			nextState = "thinking"
+		case ack != "1" && isAIReplyTitle(title):
+			phase = "replied"
+			settleCount = 0
+			nextState = "waiting"
+		case phase == "busy":
+			settleCount++
+			if settleCount >= settleLimit {
+				phase = "replied"
+				nextState = "waiting"
+			} else {
+				nextState = "thinking"
+			}
+		case phase == "replied" && ack != "1":
+			settleCount = 0
+			nextState = "waiting"
+		default:
+			settleCount = 0
+		}
+
+		if nextState != lastState || aiAttentionMismatch(nextState, state) {
+			_ = c.applyAIStatus(nextState, paneID)
+			lastState = nextState
+		}
+		c.sleepFor(interval)
 	}
 }
 
@@ -520,6 +711,159 @@ func (c *aiCommand) readTrimmed(name string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func (c *aiCommand) readTmuxPaneOption(paneID, option string) string {
+	return c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{"+option+"}")
+}
+
+func (c *aiCommand) duplicateAINotificationRecent(paneID, key string) bool {
+	if key == "" {
+		return false
+	}
+	dedupeSeconds := parsePositiveInt(c.env("DOTFILES_TMUX_NOTIFY_DEDUPE_SECONDS"))
+	if dedupeSeconds <= 0 {
+		dedupeSeconds = 120
+	}
+	if c.readTmuxPaneOption(paneID, "@dotfiles_desktop_notification_key") != key {
+		return false
+	}
+	lastAt := parsePositiveInt(c.readTmuxPaneOption(paneID, "@dotfiles_desktop_notification_at"))
+	if lastAt <= 0 {
+		return false
+	}
+	return c.now().Unix()-int64(lastAt) < int64(dedupeSeconds)
+}
+
+func (c *aiCommand) recordAINotification(paneID, key string) {
+	_ = c.run("tmux", "set-option", "-p", "-t", paneID, "@dotfiles_desktop_notified", "1")
+	if key != "" {
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, "@dotfiles_desktop_notification_key", key)
+	}
+	_ = c.run("tmux", "set-option", "-p", "-t", paneID, "@dotfiles_desktop_notification_at", fmt.Sprintf("%d", c.now().Unix()))
+}
+
+func (c *aiCommand) dispatchAINotification(summary, body, urgency, appName, tag, group string) error {
+	if c.isWSL() {
+		if err := c.dispatchWSLToast(summary, body, appName, tag, group); err == nil {
+			return nil
+		}
+		if c.readTrimmed("command", "-v", "wsl-notify-send.exe") != "" {
+			message := summary
+			if body != "" {
+				message += "\n" + body
+			}
+			if err := c.run("wsl-notify-send.exe", "--category", appName, message); err == nil {
+				return nil
+			}
+		}
+	}
+	if c.readTrimmed("command", "-v", "notify-send") == "" {
+		return errors.New("notify-send is unavailable")
+	}
+	return c.run("notify-send", "--app-name="+appName, "--icon=dialog-information", "--urgency="+urgency, summary, body)
+}
+
+func (c *aiCommand) dispatchWSLToast(summary, body, appName, tag, group string) error {
+	powerShell := c.resolvePowerShell()
+	if powerShell == "" {
+		return errors.New("powershell.exe is unavailable")
+	}
+	script := buildToastPowerShell(summary, body, appName, tag, group)
+	return c.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script))
+}
+
+func (c *aiCommand) resolvePowerShell() string {
+	if path := c.readTrimmed("command", "-v", "powershell.exe"); path != "" {
+		return path
+	}
+	for _, candidate := range []string{
+		"/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+		"/mnt/c/Windows/system32/WindowsPowerShell/v1.0/powershell.exe",
+	} {
+		if isExecutable(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func (c *aiCommand) isWSL() bool {
+	if c.env("WSL_DISTRO_NAME") != "" {
+		return true
+	}
+	content, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	return err == nil && strings.Contains(strings.ToLower(string(content)), "microsoft")
+}
+
+func (c *aiCommand) gitBranchForPath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	if _, err := c.read("git", "-C", path, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return ""
+	}
+	if branch := c.readTrimmed("git", "-C", path, "symbolic-ref", "--quiet", "--short", "HEAD"); branch != "" {
+		return branch
+	}
+	return c.readTrimmed("git", "-C", path, "rev-parse", "--short", "HEAD")
+}
+
+func (c *aiCommand) readAIWatchSnapshot(paneID string) (title, state, ack string) {
+	const delim = "__DOTFILES_TMUX_AI_SEP__"
+	snapshot := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_title}"+delim+"#{"+attentionStateOption+"}"+delim+"#{"+attentionAckOption+"}")
+	title, rest, ok := strings.Cut(snapshot, delim)
+	if !ok {
+		return snapshot, "", ""
+	}
+	state, ack, _ = strings.Cut(rest, delim)
+	return title, state, ack
+}
+
+func (c *aiCommand) watchInterval() time.Duration {
+	value := strings.TrimSpace(c.env("DOTFILES_CODEX_TITLE_WATCH_INTERVAL"))
+	if value == "" {
+		return 400 * time.Millisecond
+	}
+	if strings.ContainsAny(value, "hmsuµns") {
+		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+			return d
+		}
+	}
+	parts := strings.SplitN(value, ".", 2)
+	seconds := parsePositiveInt(parts[0])
+	millis := 0
+	if len(parts) == 2 {
+		frac := parts[1]
+		if len(frac) > 3 {
+			frac = frac[:3]
+		}
+		for len(frac) < 3 {
+			frac += "0"
+		}
+		millis = parsePositiveInt(frac)
+	}
+	d := time.Duration(seconds)*time.Second + time.Duration(millis)*time.Millisecond
+	if d <= 0 {
+		return 400 * time.Millisecond
+	}
+	return d
+}
+
+func (c *aiCommand) watchSettleLoops() int {
+	loops := parsePositiveInt(c.env("DOTFILES_CODEX_REPLY_SETTLE_LOOPS"))
+	if loops <= 0 {
+		return 3
+	}
+	return loops
+}
+
+func (c *aiCommand) sleepFor(d time.Duration) {
+	if c.sleep == nil {
+		time.Sleep(d)
+		return
+	}
+	c.sleep(d)
+}
+
 func parseAISplitDirection(args []string, command string, stderr io.Writer) (string, error) {
 	direction := "right"
 	switch len(args) {
@@ -537,6 +881,205 @@ func parseAISplitDirection(args []string, command string, stderr io.Writer) (str
 		printAIUsage(stderr)
 		return "", fmt.Errorf("%s direction must be right or down", command)
 	}
+}
+
+func trimAIStatePrefix(title string) string {
+	title = strings.TrimLeft(title, " \t")
+	if title == "" {
+		return ""
+	}
+	r, size := utf8DecodeRune(title)
+	if (r >= 0x2800 && r <= 0x28ff) || r == '✳' || r == '✔' {
+		return strings.TrimLeft(title[size:], " \t")
+	}
+	return title
+}
+
+func normalizeAITitle(title string) string {
+	return strings.ToLower(trimAIStatePrefix(title))
+}
+
+func displayAITopic(title string) string {
+	topic := trimAIStatePrefix(title)
+	topic = strings.TrimPrefix(topic, "codex:")
+	topic = strings.TrimPrefix(topic, "Codex:")
+	return topic
+}
+
+func aiReplyKindForTitle(title string) string {
+	normalized := normalizeAITitle(title)
+	switch {
+	case strings.Contains(normalized, "approval") || strings.Contains(normalized, "approve") || strings.Contains(normalized, "permission") || strings.Contains(normalized, "allow"):
+		return "approval_required"
+	case strings.Contains(normalized, "select") || strings.Contains(normalized, "choice") || strings.Contains(normalized, "pick") || strings.Contains(normalized, "which"):
+		return "selection_required"
+	case strings.Contains(normalized, "confirm") || strings.Contains(normalized, "confirmation"):
+		return "confirmation_required"
+	case strings.Contains(normalized, "waiting for input") || strings.Contains(normalized, "input") || strings.Contains(normalized, "answer") || (strings.Contains(normalized, "reply") && !strings.Contains(normalized, "response")):
+		return "input_required"
+	default:
+		return "response_ready"
+	}
+}
+
+func aiSummaryForKind(kind, topic string) string {
+	summary := "응답 완료"
+	switch kind {
+	case "approval_required":
+		summary = "승인 필요"
+	case "selection_required":
+		summary = "선택 필요"
+	case "confirmation_required":
+		summary = "확인 필요"
+	case "input_required":
+		summary = "입력 필요"
+	}
+	if strings.TrimSpace(topic) != "" {
+		summary += " · " + topic
+	}
+	return summary
+}
+
+func aiUrgencyForKind(kind string) string {
+	switch kind {
+	case "approval_required", "selection_required", "confirmation_required", "input_required":
+		return "critical"
+	default:
+		return "normal"
+	}
+}
+
+func aiNotificationBody(project, branch, sessionName, windowName string) string {
+	projectPart := ""
+	switch {
+	case project != "" && branch != "":
+		projectPart = project + "/" + branch
+	case project != "":
+		projectPart = project
+	case branch != "":
+		projectPart = branch
+	}
+	location := ""
+	if sessionName != "" || windowName != "" {
+		location = "tmux " + sessionName + ":" + windowName
+	}
+	switch {
+	case projectPart != "" && location != "":
+		return projectPart + " · " + location
+	case projectPart != "":
+		return projectPart
+	default:
+		return location
+	}
+}
+
+func aiNotificationKey(kind, title string) string {
+	return kind + "|" + normalizeAITitle(displayAITopic(title))
+}
+
+func isAIBusyTitle(title string) bool {
+	if title == "" {
+		return false
+	}
+	r, _ := utf8DecodeRune(strings.TrimLeft(title, " \t"))
+	if r >= 0x2800 && r <= 0x28ff {
+		return true
+	}
+	normalized := normalizeAITitle(title)
+	return strings.Contains(normalized, "thinking") ||
+		strings.Contains(normalized, "responding") ||
+		strings.Contains(normalized, "running") ||
+		strings.Contains(normalized, "working") ||
+		strings.Contains(normalized, "streaming") ||
+		strings.Contains(normalized, "generating")
+}
+
+func isAIReplyTitle(title string) bool {
+	if title == "" {
+		return false
+	}
+	trimmed := strings.TrimLeft(title, " \t")
+	if strings.HasPrefix(trimmed, "✳") || strings.HasPrefix(trimmed, "✔") {
+		return true
+	}
+	normalized := normalizeAITitle(title)
+	return (strings.Contains(normalized, "response") && !strings.Contains(normalized, "responding")) ||
+		strings.Contains(normalized, "reply") ||
+		strings.Contains(normalized, "response needed") ||
+		strings.Contains(normalized, "waiting for input") ||
+		strings.Contains(normalized, "waiting") ||
+		strings.Contains(normalized, "complete") ||
+		strings.Contains(normalized, "completed") ||
+		strings.Contains(normalized, "done") ||
+		strings.Contains(normalized, "idle")
+}
+
+func aiAttentionMismatch(nextState, attentionState string) bool {
+	switch nextState {
+	case "thinking":
+		return attentionState != attentionStateBusy
+	case "waiting":
+		return attentionState != attentionStateReply
+	default:
+		return attentionState != ""
+	}
+}
+
+func buildToastPowerShell(summary, body, appName, tag, group string) string {
+	tagLine := ""
+	if tag != "" {
+		tagLine = "$toast.Tag = '" + psEscape(truncate64(tag)) + "'"
+	}
+	groupLine := ""
+	if group != "" {
+		groupLine = "$toast.Group = '" + psEscape(truncate64(group)) + "'"
+	}
+	return `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] | Out-Null
+$tpl = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$nodes = $tpl.GetElementsByTagName('text')
+[void]$nodes[0].AppendChild($tpl.CreateTextNode('` + psEscape(summary) + `'))
+[void]$nodes[1].AppendChild($tpl.CreateTextNode('` + psEscape(body) + `'))
+$toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
+` + tagLine + `
+` + groupLine + `
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('` + psEscape(appName) + `').Show($toast)
+`
+}
+
+func psEscape(value string) string {
+	return strings.ReplaceAll(value, "'", "''")
+}
+
+func truncate64(value string) string {
+	runes := []rune(value)
+	if len(runes) <= 64 {
+		return value
+	}
+	return string(runes[:64])
+}
+
+func encodeUTF16LEBase64(value string) string {
+	runes := utf16.Encode([]rune(value))
+	bytes := make([]byte, len(runes)*2)
+	for i, r := range runes {
+		binary.LittleEndian.PutUint16(bytes[i*2:], r)
+	}
+	return base64.StdEncoding.EncodeToString(bytes)
+}
+
+func utf8DecodeRune(value string) (rune, int) {
+	for _, r := range value {
+		return r, len(string(r))
+	}
+	return 0, 0
+}
+
+func defaultString(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func normalizeAIMode(mode string) string {
@@ -655,4 +1198,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai split [right|down]")
 	fmt.Fprintln(w, "  projmux ai picker [--inside] [--shell] [right|down]")
 	fmt.Fprintln(w, "  projmux ai settings [--get|--set <mode>]")
+	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")
+	fmt.Fprintln(w, "  projmux ai notify [notify|reset] [pane]")
+	fmt.Fprintln(w, "  projmux ai watch-title [pane]")
 }

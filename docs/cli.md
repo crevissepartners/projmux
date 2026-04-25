@@ -34,6 +34,11 @@
 - `projmux attention clear [pane]`
 - `projmux attention window [window]`
 
+### Tmux AI status
+- `projmux ai status set <thinking|waiting|idle> [pane]`
+- `projmux ai notify [notify|reset] [pane]`
+- `projmux ai watch-title [pane]`
+
 ### Tmux-facing helper entrypoints
 - `projmux tmux popup-toggle <mode>`
 - `projmux tmux print-config [--bin <path>]`
