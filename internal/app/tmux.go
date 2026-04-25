@@ -578,6 +578,8 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"set-hook -g pane-focus-in " + tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
 		"set -g window-status-format " + tmuxConfigQuote("#[fg=colour245,bg=colour235] #("+bin+" attention window #{window_id})#[fg=colour245] #I #W #[default]"),
 		"set -g window-status-current-format " + tmuxConfigQuote("#[bold,fg=colour231,bg=colour238] #("+bin+" attention window #{window_id})#[fg=colour231] #I #W #[default]"),
+		"set -g status-right-length 140",
+		"set -g status-right " + tmuxConfigQuote("#[fg=colour242]#{=/28/...:pane_current_path}#[fg=colour239]  #("+bin+" status kube)#("+bin+" status git)  %Y-%m-%d %H:%M #[bold,fg=colour16,bg=colour45] projmux #[default]"),
 		"unbind-key -q -n M-1",
 		"unbind-key -q -n M-2",
 		"unbind-key -q -n M-3",

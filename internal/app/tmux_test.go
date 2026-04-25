@@ -214,6 +214,9 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set-hook -g pane-focus-in",
 		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id}",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
+		"#[bold,fg=colour16,bg=colour45] projmux #[default]",
+		"'/tmp/proj mux/bin/projmux' status kube",
+		"'/tmp/proj mux/bin/projmux' status git",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
