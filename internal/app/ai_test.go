@@ -452,6 +452,71 @@ func TestAIWatchTitlePromotesBusyPaneToThinking(t *testing.T) {
 	}
 }
 
+func TestAIWatchTitleSettledBusyReturnsIdleWithoutNotification(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "DOTFILES_CODEX_REPLY_SETTLE_LOOPS":
+			return "2"
+		default:
+			return ""
+		}
+	}
+	checks := 0
+	snapshots := []string{
+		"thinking hard__DOTFILES_TMUX_AI_SEP____DOTFILES_TMUX_AI_SEP__",
+		"repo__DOTFILES_TMUX_AI_SEP__busy__DOTFILES_TMUX_AI_SEP__",
+		"repo__DOTFILES_TMUX_AI_SEP__busy__DOTFILES_TMUX_AI_SEP__",
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
+			return []byte("/usr/bin/notify-send\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%6", "#{pane_id}"}):
+			checks++
+			if checks > len(snapshots) {
+				return nil, os.ErrNotExist
+			}
+			return []byte("%6\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%6", "#{pane_title}__DOTFILES_TMUX_AI_SEP__#{@dotfiles_attention_state}__DOTFILES_TMUX_AI_SEP__#{@dotfiles_attention_ack}"}):
+			return []byte(snapshots[checks-1] + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%6", "#{pane_title}"}):
+			if checks <= 1 {
+				return []byte("thinking hard\n"), nil
+			}
+			return []byte("repo\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.Run([]string{"watch-title", "%6"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run watch-title error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"select-pane", "-T", "repo", "-t", "%6"}) {
+		t.Fatalf("commands = %#v, want idle title restore", commands)
+	}
+	if containsAICommand(commands, "notify-send") {
+		t.Fatalf("commands = %#v, did not expect notify-send after settled busy", commands)
+	}
+}
+
+func TestAIReplyTitleIgnoresProjmuxAttentionMarkers(t *testing.T) {
+	for _, title := range []string{"✳ repo", "✔ repo"} {
+		if isAIReplyTitle(title) {
+			t.Fatalf("isAIReplyTitle(%q) = true, want false for projmux marker", title)
+		}
+	}
+}
+
 type capturingAIRunner struct {
 	options intfzf.Options
 	result  intfzf.Result

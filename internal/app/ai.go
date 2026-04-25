@@ -242,8 +242,8 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 		case phase == "busy":
 			settleCount++
 			if settleCount >= settleLimit {
-				phase = "replied"
-				nextState = "waiting"
+				phase = "idle"
+				nextState = "idle"
 			} else {
 				nextState = "thinking"
 			}
@@ -1207,10 +1207,6 @@ func isAIBusyTitle(title string) bool {
 func isAIReplyTitle(title string) bool {
 	if title == "" {
 		return false
-	}
-	trimmed := strings.TrimLeft(title, " \t")
-	if strings.HasPrefix(trimmed, "✳") || strings.HasPrefix(trimmed, "✔") {
-		return true
 	}
 	normalized := normalizeAITitle(title)
 	return (strings.Contains(normalized, "response") && !strings.Contains(normalized, "responding")) ||
