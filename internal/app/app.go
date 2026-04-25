@@ -24,6 +24,7 @@ type App struct {
 	prune        *pruneCommand
 	sessions     *sessionsCommand
 	sessionPopup *sessionPopupCommand
+	status       *statusCommand
 	switcher     *switchCommand
 	tag          *tagCommand
 	tmux         *tmuxCommand
@@ -42,6 +43,7 @@ func New() *App {
 		prune:        newPruneCommand(),
 		sessions:     newSessionsCommand(),
 		sessionPopup: newSessionPopupCommand(),
+		status:       newStatusCommand(),
 		switcher:     newSwitchCommand(),
 		tag:          newTagCommand(),
 		tmux:         newTmuxCommand(),
@@ -76,6 +78,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.sessions.Run(args[1:], stdout, stderr)
 	case "session-popup":
 		return a.sessionPopup.Run(args[1:], stdout, stderr)
+	case "status":
+		return a.status.Run(args[1:], stdout, stderr)
 	case "switch":
 		return a.switcher.Run(args[1:], stdout, stderr)
 	case "tag":
@@ -108,6 +112,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  prune     Trim stale tmux lifecycle state")
 	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
 	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")
+	fmt.Fprintln(w, "  status    Render tmux status bar segments")
 	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
 	fmt.Fprintln(w, "  tag       Manage tagged tmux sessions")
 	fmt.Fprintln(w, "  tmux      Open tmux popup entry helpers")

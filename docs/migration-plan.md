@@ -37,7 +37,7 @@ The migration now targets a standalone mode where dotfiles can remain as a compa
 - pane attention toggle/clear/window badge commands
 - generated tmux window-status and pane-focus hooks backed by `projmux attention`
 - AI pane status, Codex title watcher, and desktop notification commands
-- status bar git/kube segments after attention parity is stable
+- status bar git/kube segments
 
 ## What stays outside standalone projmux
 
@@ -72,4 +72,5 @@ The standalone tmux path is:
 3. `projmux tmux popup-toggle <mode>` replaces `tmux-popup-toggle.sh` for sessionizer, session popup, sidebar, AI picker, and AI settings popups.
 4. `projmux attention <toggle|clear|window>` replaces tmux attention wrapper scripts for pane focus hooks and window badges.
 5. `projmux ai status`, `projmux ai notify`, and `projmux ai watch-title` replace the AI pane state and notification shell scripts.
-6. Dotfiles may keep sourcing the generated config or keep wrapper scripts, but no session-management popup or attention badge flow should require dotfiles.
+6. `projmux status <git|kube>` replaces tmux status-bar segment scripts for git branch and kube context rendering.
+7. Dotfiles may keep sourcing the generated config or keep wrapper scripts, but no session-management popup or attention badge flow should require dotfiles.

@@ -39,6 +39,10 @@
 - `projmux ai notify [notify|reset] [pane]`
 - `projmux ai watch-title [pane]`
 
+### Tmux status bar
+- `projmux status git [path]`
+- `projmux status kube [session]`
+
 ### Tmux-facing helper entrypoints
 - `projmux tmux popup-toggle <mode>`
 - `projmux tmux print-config [--bin <path>]`
