@@ -277,9 +277,9 @@ func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 	case aiModeShell:
 		return c.runShellSplit(direction)
 	case aiModeSelective:
-		return c.openPicker(direction)
+		return c.openPickerToggle(direction)
 	default:
-		return c.openPicker(direction)
+		return c.openPickerToggle(direction)
 	}
 }
 
@@ -487,6 +487,22 @@ func (c *aiCommand) openPicker(direction string) error {
 	command := shellEnv("TMUX_SPLIT_TARGET_PANE", targetPane) + shellQuote(binaryPath) + " ai picker --inside " + shellQuote(direction)
 	width, height := c.popupSize(40, 64, 30, 12)
 	err = c.run("tmux", "display-popup", "-E", "-w", width, "-h", height, command)
+	if isNoSelectionExit(err) {
+		return nil
+	}
+	return err
+}
+
+func (c *aiCommand) openPickerToggle(direction string) error {
+	binaryPath, err := c.binaryPath()
+	if err != nil {
+		return err
+	}
+	mode := "ai-split-picker-right"
+	if direction == "down" {
+		mode = "ai-split-picker-down"
+	}
+	err = c.run(binaryPath, "tmux", "popup-toggle", mode)
 	if isNoSelectionExit(err) {
 		return nil
 	}
@@ -702,10 +718,7 @@ func (c *aiCommand) popupAxisSize(axis string, percent, minimum int) string {
 	if total <= 0 {
 		return fmt.Sprintf("%d%%", percent)
 	}
-	value := max(total*percent/100, minimum)
-	if value > total {
-		value = total
-	}
+	value := min(max(total*percent/100, minimum), total)
 	return fmt.Sprintf("%d", value)
 }
 

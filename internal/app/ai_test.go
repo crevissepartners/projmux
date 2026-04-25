@@ -105,36 +105,18 @@ func TestAIPickerMarksAgentReadyWhenBinaryExistsWithoutLegacyWrapper(t *testing.
 	}
 }
 
-func TestAISplitSelectiveOpensPickerPopup(t *testing.T) {
+func TestAISplitSelectiveDelegatesToPopupToggle(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.executable = func() (string, error) { return "/tmp/projmux bin", nil }
-	cmd.lookupEnv = func(name string) string {
-		if name == "TMUX" {
-			return "/tmp/tmux"
-		}
-		return ""
-	}
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}) {
-			return []byte("%7\n"), nil
-		}
-		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{client_width}"}) {
-			return []byte("200\n"), nil
-		}
-		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{client_height}"}) {
-			return []byte("50\n"), nil
-		}
-		return nil, os.ErrNotExist
-	}
 
 	if err := cmd.Run([]string{"split", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run split error = %v", err)
 	}
 
 	want := []recordedAICommand{{
-		name: "tmux",
-		args: []string{"display-popup", "-E", "-w", "80", "-h", "15", "TMUX_SPLIT_TARGET_PANE='%7' '/tmp/projmux bin' ai picker --inside 'right'"},
+		name: "/tmp/projmux bin",
+		args: []string{"tmux", "popup-toggle", "ai-split-picker-right"},
 	}}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
