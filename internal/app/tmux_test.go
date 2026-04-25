@@ -211,6 +211,9 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle session-popup",
 		"bind-key -n User0 run-shell",
 		"'/tmp/proj mux/bin/projmux' ai split right",
+		"set-hook -g pane-focus-in",
+		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id}",
+		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)

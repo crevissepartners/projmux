@@ -29,6 +29,11 @@
 - `projmux pin clear`
 - `projmux config path`
 
+### Tmux attention
+- `projmux attention toggle [pane]`
+- `projmux attention clear [pane]`
+- `projmux attention window [window]`
+
 ### Tmux-facing helper entrypoints
 - `projmux tmux popup-toggle <mode>`
 - `projmux tmux print-config [--bin <path>]`

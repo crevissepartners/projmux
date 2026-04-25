@@ -15,6 +15,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 // App wires the CLI entrypoints to concrete command handlers.
 type App struct {
 	ai           *aiCommand
+	attention    *attentionCommand
 	attach       *attachCommand
 	current      *currentCommand
 	kill         *killCommand
@@ -32,6 +33,7 @@ type App struct {
 func New() *App {
 	return &App{
 		ai:           newAICommand(),
+		attention:    newAttentionCommand(),
 		attach:       newAttachCommand(),
 		current:      newCurrentCommand(),
 		kill:         newKillCommand(),
@@ -56,6 +58,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "ai":
 		return a.ai.Run(args[1:], stdout, stderr)
+	case "attention":
+		return a.attention.Run(args[1:], stdout, stderr)
 	case "attach":
 		return a.attach.Run(args[1:], stdout, stderr)
 	case "current":
@@ -95,6 +99,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  ai        Manage tmux AI split launch and settings")
+	fmt.Fprintln(w, "  attention Manage tmux pane attention badges")
 	fmt.Fprintln(w, "  attach    Open tmux lifecycle entry helpers")
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
