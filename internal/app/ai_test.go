@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +79,32 @@ func TestAIPickerLabelsProjmuxFooter(t *testing.T) {
 	}
 }
 
+func TestAIPickerMarksAgentReadyWhenBinaryExistsWithoutLegacyWrapper(t *testing.T) {
+	home := t.TempDir()
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	claudeBin := writeExecutable(t, filepath.Join(home, "bin", "claude"))
+	cmd := testAICommand(home)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(codexBin + "\n"), nil
+		}
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "claude"}) {
+			return []byte(claudeBin + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	rows := cmd.agentRows()
+	if len(rows) < 2 {
+		t.Fatalf("agentRows len = %d, want at least 2", len(rows))
+	}
+	for _, row := range rows[:2] {
+		if !strings.Contains(row.Label, "[READY]") {
+			t.Fatalf("row label = %q, want READY without legacy wrapper", row.Label)
+		}
+	}
+}
+
 func TestAISplitSelectiveOpensPickerPopup(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
@@ -110,6 +138,61 @@ func TestAISplitSelectiveOpensPickerPopup(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAISplitCodexRunsNativeTmuxSplitAndStartsWatcher(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd := testAICommand(home)
+	if err := cmd.setMode("codex"); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(codexBin + "\n"), nil
+		}
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}) {
+			return []byte("%7\n"), nil
+		}
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}) {
+			return []byte(work + "\n"), nil
+		}
+		if name == "tmux" && len(args) >= 6 && reflect.DeepEqual(args[:6], []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t"}) {
+			return []byte("%9\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split codex error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%7", "-c", work, "zsh", "-lc"}) {
+		t.Fatalf("commands = %#v, want native tmux split-window", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"run-shell", "-b", "'/tmp/projmux' ai watch-title '%9'"}) {
+		t.Fatalf("commands = %#v, want codex watch-title run-shell", commands)
+	}
+	if !containsAICommandArgSubstring(commands, "cd '"+work+"' && __codex_title='codex:repo'") {
+		t.Fatalf("commands = %#v, want codex launch command with context title", commands)
 	}
 }
 
@@ -411,10 +494,42 @@ func containsAICommand(commands []recordedAICommand, name string) bool {
 	return false
 }
 
+func containsAICommandArgs(commands []recordedAICommand, name string, prefix []string) bool {
+	for _, command := range commands {
+		if command.name != name || len(command.args) < len(prefix) {
+			continue
+		}
+		if reflect.DeepEqual(command.args[:len(prefix)], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeExecutable(t *testing.T, path string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func containsAICommandArg(commands []recordedAICommand, arg string) bool {
 	for _, command := range commands {
+		if slices.Contains(command.args, arg) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAICommandArgSubstring(commands []recordedAICommand, value string) bool {
+	for _, command := range commands {
 		for _, commandArg := range command.args {
-			if commandArg == arg {
+			if strings.Contains(commandArg, value) {
 				return true
 			}
 		}

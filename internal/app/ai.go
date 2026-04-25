@@ -497,11 +497,37 @@ func (c *aiCommand) runAgentSplit(mode, direction string) error {
 	if mode == aiModeShell {
 		return c.runShellSplit(direction)
 	}
-	if !c.agentAvailable(mode) {
+	agentBin := c.findAgentBinary(mode)
+	if agentBin == "" {
 		_ = c.displayMessage("selected runner is not installed: " + mode)
 		return fmt.Errorf("selected runner is not installed: %s", mode)
 	}
-	return c.run(c.agentScript(mode), direction)
+
+	targetPane := c.resolveTargetPane()
+	contextDir := c.resolveAgentContextDir(mode)
+	title := c.buildAgentTitle(mode, contextDir)
+	command := c.agentLaunchCommand(mode, agentBin, contextDir, title)
+	if targetPane == "" {
+		return c.run("zsh", "-lc", command)
+	}
+
+	splitFlag := "-h"
+	if direction == "down" {
+		splitFlag = "-v"
+	}
+	args := []string{"split-window", "-P", "-F", "#{pane_id}", splitFlag, "-t", targetPane}
+	if contextDir != "" {
+		args = append(args, "-c", contextDir)
+	}
+	args = append(args, "zsh", "-lc", command)
+	out, err := c.read("tmux", args...)
+	if err != nil {
+		return err
+	}
+	if mode == aiModeCodex {
+		c.startAIWatchTitle(strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (c *aiCommand) runShellSplit(direction string) error {
@@ -538,6 +564,20 @@ func (c *aiCommand) resolveContextDir() string {
 		}
 	}
 	return c.resolveIDEContextDir()
+}
+
+func (c *aiCommand) resolveAgentContextDir(mode string) string {
+	switch mode {
+	case aiModeClaude:
+		if dir := c.env("CLAUDE_CONTEXT_DIR"); isDir(dir) {
+			return dir
+		}
+	case aiModeCodex:
+		if dir := c.env("CODEX_CONTEXT_DIR"); isDir(dir) {
+			return dir
+		}
+	}
+	return c.resolveContextDir()
 }
 
 func (c *aiCommand) resolveTargetPane() string {
@@ -598,6 +638,61 @@ func (c *aiCommand) popupSize(widthPercent, widthMin, heightPercent, heightMin i
 	return c.popupAxisSize("width", widthPercent, widthMin), c.popupAxisSize("height", heightPercent, heightMin)
 }
 
+func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
+	switch mode {
+	case aiModeClaude:
+		if title := strings.TrimSpace(c.env("CLAUDE_THREAD_TITLE")); title != "" {
+			return "claude:" + title
+		}
+		if title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
+			return "claude:" + title
+		}
+		if contextDir != "" {
+			return "claude:" + filepath.Base(contextDir)
+		}
+		return "claude"
+	case aiModeCodex:
+		if title := strings.TrimSpace(c.env("CODEX_THREAD_TITLE")); title != "" {
+			return "codex:" + title
+		}
+		if title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
+			return "codex:" + title
+		}
+		if contextDir != "" {
+			return "codex:" + filepath.Base(contextDir)
+		}
+		return "codexcli"
+	default:
+		return mode
+	}
+}
+
+func (c *aiCommand) agentLaunchCommand(mode, agentBin, contextDir, title string) string {
+	titleVar := "__" + mode + "_title"
+	parts := []string{}
+	if contextDir != "" {
+		parts = append(parts, "cd "+shellQuote(contextDir))
+	}
+	parts = append(parts,
+		titleVar+"="+shellQuote(title),
+		`printf '\033]0;%s\007' "$`+titleVar+`"`,
+		`if [[ -n "${TMUX:-}" ]]; then tmux select-pane -T "$`+titleVar+`" >/dev/null 2>&1 || true; fi`,
+		"exec "+shellQuote(agentBin),
+	)
+	return strings.Join(parts, " && ")
+}
+
+func (c *aiCommand) startAIWatchTitle(paneID string) {
+	if strings.TrimSpace(paneID) == "" {
+		return
+	}
+	binaryPath, err := c.binaryPath()
+	if err != nil || strings.TrimSpace(binaryPath) == "" {
+		return
+	}
+	_ = c.run("tmux", "run-shell", "-b", shellQuote(binaryPath)+" ai watch-title "+shellQuote(paneID))
+}
+
 func (c *aiCommand) popupAxisSize(axis string, percent, minimum int) string {
 	format := "#{client_width}"
 	if axis == "height" {
@@ -607,10 +702,7 @@ func (c *aiCommand) popupAxisSize(axis string, percent, minimum int) string {
 	if total <= 0 {
 		return fmt.Sprintf("%d%%", percent)
 	}
-	value := total * percent / 100
-	if value < minimum {
-		value = minimum
-	}
+	value := max(total*percent/100, minimum)
 	if value > total {
 		value = total
 	}
@@ -620,9 +712,6 @@ func (c *aiCommand) popupAxisSize(axis string, percent, minimum int) string {
 func (c *aiCommand) agentAvailable(mode string) bool {
 	if mode == aiModeShell {
 		return true
-	}
-	if !isExecutable(c.agentScript(mode)) {
-		return false
 	}
 	return c.findAgentBinary(mode) != ""
 }
@@ -637,17 +726,6 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 		}
 		matches, _ := filepath.Glob(filepath.Join(c.homeOrEmpty(), ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
 		return newestExecutable(matches)
-	default:
-		return ""
-	}
-}
-
-func (c *aiCommand) agentScript(mode string) string {
-	switch mode {
-	case aiModeClaude:
-		return filepath.Join(c.homeOrEmpty(), ".local", "bin", "tmux-claude-split.sh")
-	case aiModeCodex:
-		return filepath.Join(c.homeOrEmpty(), ".local", "bin", "tmux-codex-split.sh")
 	default:
 		return ""
 	}

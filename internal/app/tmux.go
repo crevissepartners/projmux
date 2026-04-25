@@ -783,10 +783,7 @@ func popupSize(total, percent, minimum int) string {
 	if total <= 0 {
 		return fmt.Sprintf("%d%%", percent)
 	}
-	value := total * percent / 100
-	if value < minimum {
-		value = minimum
-	}
+	value := max(total*percent/100, minimum)
 	if value > total {
 		value = total
 	}
