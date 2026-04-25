@@ -188,6 +188,8 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	for _, want := range []string{
 		"bind-key -n M-1 run-shell",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle sessionizer-sidebar",
+		"bind-key -n User2 run-shell",
+		"'/tmp/proj mux/bin/projmux' tmux popup-toggle session-popup",
 		"bind-key -n User0 run-shell",
 		"'/tmp/proj mux/bin/projmux' ai split right",
 	} {
