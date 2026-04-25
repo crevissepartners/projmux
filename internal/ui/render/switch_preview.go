@@ -82,6 +82,12 @@ func renderSidebarSwitchPreview(model corepreview.SwitchReadModel) string {
 		return builder.String()
 	}
 
+	if kube := formatKubeSummary(model); kube != "" {
+		builder.WriteString("k8s:")
+		builder.WriteString(kube)
+		builder.WriteString("\n\n")
+	}
+
 	writeSidebarSection(&builder, "Windows")
 	if len(model.Windows) == 0 {
 		builder.WriteString("(none)\n")
@@ -90,12 +96,6 @@ func renderSidebarSwitchPreview(model corepreview.SwitchReadModel) string {
 
 	for _, window := range model.Windows {
 		builder.WriteString(formatSidebarWindowSummary(window, model.Panes))
-		builder.WriteString("\n")
-	}
-	if kube := formatKubeSummary(model); kube != "" {
-		builder.WriteString("\n")
-		builder.WriteString("k8s:")
-		builder.WriteString(kube)
 		builder.WriteString("\n")
 	}
 

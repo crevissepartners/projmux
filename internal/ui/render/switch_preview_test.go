@@ -107,10 +107,10 @@ func TestRenderSwitchPreviewForSidebarMatchesLegacySections(t *testing.T) {
 	want := "" +
 		"\x1b[1m\x1b[36mDir\x1b[0m\n" +
 		"~rp/app\n\n" +
+		"k8s:\x1b[31mkind-dev\x1b[0m/\x1b[34mdefault\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
 		"[1] shell\n" +
-		"[2] server | tests\n\n" +
-		"k8s:\x1b[31mkind-dev\x1b[0m/\x1b[34mdefault\x1b[0m\n"
+		"[2] server | tests\n"
 	if got != want {
 		t.Fatalf("RenderSwitchPreview() = %q, want %q", got, want)
 	}
