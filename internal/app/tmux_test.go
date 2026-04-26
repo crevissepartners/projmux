@@ -360,6 +360,8 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -sg escape-time 100",
 		"set -g pane-border-status top",
 		"set -g pane-border-format \"#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > ",
+		"#[bold#,fg=colour220] ● ",
+		"#[bold#,fg=colour46] ● ",
 		"#[fg=colour244] ",
 		"#{pane_current_command},#{pane_title}",
 		"set -s user-keys[7] \"\\033[9008u\"",
