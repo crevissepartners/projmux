@@ -804,11 +804,11 @@ func TestSwitchCommandPreviewRendersExistingSessionContext(t *testing.T) {
 		"  \x1b[2mmode\x1b[0m  \x1b[32mexisting\x1b[0m\n" +
 		"  \x1b[2mgit\x1b[0m  main\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
-		"[1] -                   0p  -\n" +
-		"\x1b[1m\x1b[32m[2] -                   0p  -\x1b[0m\n\n" +
+		"[1] -                   0p\n" +
+		"\x1b[1m\x1b[32m[2] -                   0p\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
-		"[2.0] -                  -          -\n" +
-		"\x1b[1m\x1b[32m[2.1] -                  -          -\x1b[0m\n\n" +
+		"[2.0] -                  -\n" +
+		"\x1b[1m\x1b[32m[2.1] -                  -\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPane Snapshot\x1b[0m\n" +
 		"\x1b[2m────────────────────────────────────────────────────────────────\x1b[0m\n" +
 		"npm test\nok\n"

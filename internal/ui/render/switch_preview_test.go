@@ -49,11 +49,11 @@ func TestRenderSwitchPreviewForExistingSession(t *testing.T) {
 		"  \x1b[2mgit\x1b[0m  main\n" +
 		"  \x1b[2mk8s\x1b[0m  \x1b[31mkind-dev\x1b[0m/\x1b[34mapps\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
-		"[1] shell               1p  ~/\n" +
-		"\x1b[1m\x1b[32m[2] app                 2p  ~rp/app\x1b[0m\n\n" +
+		"[1] shell               1p\n" +
+		"\x1b[1m\x1b[32m[2] app                 2p\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
-		"[2.0] server             go         ~rp/app\n" +
-		"\x1b[1m\x1b[32m[2.1] tests              gotest     ~rp/app\x1b[0m\n\n" +
+		"[2.0] server             go\n" +
+		"\x1b[1m\x1b[32m[2.1] tests              gotest\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPane Snapshot\x1b[0m\n" +
 		"\x1b[2m────────────────────────────────────────────────────────────────\x1b[0m\n" +
 		"npm test\npass\n"

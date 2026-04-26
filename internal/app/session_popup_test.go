@@ -71,11 +71,11 @@ func TestAppRunSessionPopupPreview(t *testing.T) {
 		"  \x1b[2mtitle\x1b[0m  tests\n" +
 		"  \x1b[2mpath\x1b[0m  ~rp/dev\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
-		"[2] shell               1p  ~/\n" +
-		"\x1b[1m\x1b[32m[3] dev                 2p  ~rp/dev\x1b[0m\n\n" +
+		"[2] shell               1p\n" +
+		"\x1b[1m\x1b[32m[3] dev                 2p\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
-		"[3.7] server             go         ~rp/dev\n" +
-		"\x1b[1m\x1b[32m[3.8] tests              gotest     ~rp/dev\x1b[0m\n\n" +
+		"[3.7] server             go\n" +
+		"\x1b[1m\x1b[32m[3.8] tests              gotest\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPane Snapshot\x1b[0m\n" +
 		"\x1b[2m────────────────────────────────────────────────────────────────\x1b[0m\n" +
 		"go test ./...\nok\n"
@@ -145,11 +145,11 @@ func TestAppRunSessionPopupCyclePane(t *testing.T) {
 		"  \x1b[2mtitle\x1b[0m  tests\n" +
 		"  \x1b[2mpath\x1b[0m  ~rp/dev\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
-		"[2] shell               1p  ~/\n" +
-		"\x1b[1m\x1b[32m[3] dev                 2p  ~rp/dev\x1b[0m\n\n" +
+		"[2] shell               1p\n" +
+		"\x1b[1m\x1b[32m[3] dev                 2p\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
-		"[3.7] server             go         ~rp/dev\n" +
-		"\x1b[1m\x1b[32m[3.8] tests              gotest     ~rp/dev\x1b[0m\n"
+		"[3.7] server             go\n" +
+		"\x1b[1m\x1b[32m[3.8] tests              gotest\x1b[0m\n"
 	if got := stdout.String(); got != wantOutput {
 		t.Fatalf("stdout = %q, want %q", got, wantOutput)
 	}
@@ -216,10 +216,10 @@ func TestAppRunSessionPopupCycleWindow(t *testing.T) {
 		"  \x1b[2mtitle\x1b[0m  tail\n" +
 		"  \x1b[2mpath\x1b[0m  ~rp/dev\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
-		"[3] dev                 1p  ~rp/dev\n" +
-		"\x1b[1m\x1b[32m[4] logs                1p  ~rp/dev\x1b[0m\n\n" +
+		"[3] dev                 1p\n" +
+		"\x1b[1m\x1b[32m[4] logs                1p\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
-		"\x1b[1m\x1b[32m[4.0] tail               tail       ~rp/dev\x1b[0m\n"
+		"\x1b[1m\x1b[32m[4.0] tail               tail\x1b[0m\n"
 	if got := stdout.String(); got != wantOutput {
 		t.Fatalf("stdout = %q, want %q", got, wantOutput)
 	}

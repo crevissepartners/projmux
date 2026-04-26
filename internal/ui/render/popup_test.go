@@ -32,14 +32,14 @@ func TestRenderPopupPreviewWithSelectedWindowAndPane(t *testing.T) {
 		"  \x1b[2mpane\x1b[0m  4 (window 2)\n" +
 		"  \x1b[2mcmd\x1b[0m  gotest\n" +
 		"  \x1b[2mtitle\x1b[0m  tests\n" +
-		"  \x1b[2mmeta\x1b[0m  att=reply ai=waiting agent=codex topic=approval needed armed=1\n" +
+		"  \x1b[2mstatus\x1b[0m  badge=needs-reply state=waiting-for-you assistant=codex topic=approval needed clears-on-focus=yes\n" +
 		"  \x1b[2mpath\x1b[0m  ~rp/app\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
-		"[1] shell               1p  ~/\n" +
-		"\x1b[1m\x1b[32m[2] app                 2p  ~rp/app\x1b[0m\n\n" +
+		"[1] shell               1p\n" +
+		"\x1b[1m\x1b[32m[2] app                 2p\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
-		"[2.3] server             go         ~rp/app\n" +
-		"\x1b[1m\x1b[32m[2.4] tests              gotest     ~rp/app  \x1b[2matt=reply ai=waiting agent=codex topic=approval needed armed=1\x1b[0m\x1b[0m\n\n" +
+		"[2.3] server             go\n" +
+		"\x1b[1m\x1b[32m[2.4] tests              gotest  \x1b[2mbadge=needs-reply state=waiting-for-you assistant=codex topic=approval needed clears-on-focus=yes\x1b[0m\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPane Snapshot\x1b[0m\n" +
 		"\x1b[2m────────────────────────────────────────────────────────────────\x1b[0m\n" +
 		"go test ./...\nok\n"
@@ -66,7 +66,7 @@ func TestRenderPopupPreviewWithWindowOnlySelection(t *testing.T) {
 		"  \x1b[2mwindows\x1b[0m  1\n" +
 		"  \x1b[2mpane\x1b[0m  ? (window 5)\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
-		"\x1b[1m\x1b[32m[5] build               1p  ~rp/build\x1b[0m\n\n" +
+		"\x1b[1m\x1b[32m[5] build               1p\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
 		"(none)\n"
 	if got != want {
@@ -93,9 +93,9 @@ func TestRenderPopupPreviewWithoutSelectionSanitizesOutput(t *testing.T) {
 		"  \x1b[2mwindows\x1b[0m  1\n" +
 		"  \x1b[2mpane\x1b[0m  ? (window ?)\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
-		"[1 2] main pane           2p  /tmp/app one\n\n" +
+		"[1 2] main pane           2p\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
-		"[1 2.3 4] srv one            go test    /tmp/app one\n"
+		"[1 2.3 4] srv one            go test\n"
 	if got != want {
 		t.Fatalf("RenderPopupPreview() = %q, want %q", got, want)
 	}
