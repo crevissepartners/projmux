@@ -120,6 +120,75 @@ func TestAppRunTmuxPopupSessionsUsesDefaultOptions(t *testing.T) {
 	}
 }
 
+func TestAppRunTmuxPopupCommandsUseMinimumReadableSizes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		args        []string
+		popup       *stubTmuxPopupClient
+		wantOptions inttmux.PopupOptions
+	}{
+		{
+			name:  "preview",
+			args:  []string{"tmux", "popup-preview", "dev"},
+			popup: &stubTmuxPopupClient{},
+			wantOptions: inttmux.PopupOptions{
+				Width:         "120",
+				Height:        "30",
+				CloseBehavior: inttmux.PopupCloseOnExit,
+			},
+		},
+		{
+			name:  "switch",
+			args:  []string{"tmux", "popup-switch"},
+			popup: &stubTmuxPopupClient{currentPanePath: "/tmp/work tree"},
+			wantOptions: inttmux.PopupOptions{
+				Width:         "120",
+				Height:        "28",
+				CloseBehavior: inttmux.PopupCloseOnExit,
+			},
+		},
+		{
+			name:  "sessions",
+			args:  []string{"tmux", "popup-sessions"},
+			popup: &stubTmuxPopupClient{},
+			wantOptions: inttmux.PopupOptions{
+				Width:         "120",
+				Height:        "28",
+				CloseBehavior: inttmux.PopupCloseOnExit,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := &App{
+				tmux: &tmuxCommand{
+					popup:      tt.popup,
+					executable: func() (string, error) { return "/tmp/projmux", nil },
+					runner: &recordingTmuxRunner{formats: map[string]string{
+						"#{client_tty}":    "/dev/pts/7",
+						"#{pane_id}":       "%9",
+						"#S":               "dev",
+						"#{client_width}":  "140",
+						"#{client_height}": "36",
+					}},
+				},
+			}
+
+			if err := app.Run(tt.args, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if !reflect.DeepEqual(tt.popup.options, tt.wantOptions) {
+				t.Fatalf("popup options = %#v, want %#v", tt.popup.options, tt.wantOptions)
+			}
+		})
+	}
+}
+
 func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	t.Parallel()
 

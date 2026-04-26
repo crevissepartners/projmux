@@ -30,9 +30,9 @@ type tmuxCommand struct {
 	lookupEnv     func(string) string
 	writeFile     func(string, []byte, os.FileMode) error
 	readFile      func(string) ([]byte, error)
-	popupOptions  func(sessionName string) inttmux.PopupOptions
-	switchPopup   func() inttmux.PopupOptions
-	sessionsPopup func() inttmux.PopupOptions
+	popupOptions  func(sessionName string, ctx tmuxPopupContext) inttmux.PopupOptions
+	switchPopup   func(ctx tmuxPopupContext) inttmux.PopupOptions
+	sessionsPopup func(ctx tmuxPopupContext) inttmux.PopupOptions
 }
 
 func newTmuxCommand() *tmuxCommand {
@@ -135,9 +135,10 @@ func (c *tmuxCommand) runPopupPreview(args []string, stderr io.Writer) error {
 		return fmt.Errorf("build tmux popup preview command for %q: %w", sessionName, err)
 	}
 
-	options := defaultPopupPreviewOptions(sessionName)
+	popupCtx := c.popupContext(context.Background())
+	options := defaultPopupPreviewOptions(sessionName, popupCtx)
 	if c.popupOptions != nil {
-		options = c.popupOptions(sessionName)
+		options = c.popupOptions(sessionName, popupCtx)
 	}
 
 	if err := c.popup.DisplayPopupWithOptions(context.Background(), command, options); err != nil {
@@ -275,9 +276,10 @@ func (c *tmuxCommand) runPopupSwitch(args []string, stderr io.Writer) error {
 		return fmt.Errorf("build tmux popup switch command: %w", err)
 	}
 
-	options := defaultPopupSwitchOptions()
+	popupCtx := c.popupContext(context.Background())
+	options := defaultPopupSwitchOptions(popupCtx)
 	if c.switchPopup != nil {
-		options = c.switchPopup()
+		options = c.switchPopup(popupCtx)
 	}
 
 	if err := c.popup.DisplayPopupWithOptions(context.Background(), command, options); err != nil {
@@ -309,9 +311,10 @@ func (c *tmuxCommand) runPopupSessions(args []string, stderr io.Writer) error {
 		return fmt.Errorf("build tmux popup sessions command: %w", err)
 	}
 
-	options := defaultPopupSessionsOptions()
+	popupCtx := c.popupContext(context.Background())
+	options := defaultPopupSessionsOptions(popupCtx)
 	if c.sessionsPopup != nil {
-		options = c.sessionsPopup()
+		options = c.sessionsPopup(popupCtx)
 	}
 
 	if err := c.popup.DisplayPopupWithOptions(context.Background(), command, options); err != nil {
@@ -419,26 +422,26 @@ func (c *tmuxCommand) runInstallApp(args []string, stdout, stderr io.Writer) err
 	return err
 }
 
-func defaultPopupPreviewOptions(sessionName string) inttmux.PopupOptions {
+func defaultPopupPreviewOptions(_ string, ctx tmuxPopupContext) inttmux.PopupOptions {
 	return inttmux.PopupOptions{
-		Width:         "80%",
-		Height:        "80%",
+		Width:         popupSize(ctx.ClientWidth, 80, 120),
+		Height:        popupSize(ctx.ClientHeight, 80, 30),
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 }
 
-func defaultPopupSwitchOptions() inttmux.PopupOptions {
+func defaultPopupSwitchOptions(ctx tmuxPopupContext) inttmux.PopupOptions {
 	return inttmux.PopupOptions{
-		Width:         "80%",
-		Height:        "70%",
+		Width:         popupSize(ctx.ClientWidth, 80, 120),
+		Height:        popupSize(ctx.ClientHeight, 70, 28),
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 }
 
-func defaultPopupSessionsOptions() inttmux.PopupOptions {
+func defaultPopupSessionsOptions(ctx tmuxPopupContext) inttmux.PopupOptions {
 	return inttmux.PopupOptions{
-		Width:         "80%",
-		Height:        "75%",
+		Width:         popupSize(ctx.ClientWidth, 80, 120),
+		Height:        popupSize(ctx.ClientHeight, 75, 28),
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 }
