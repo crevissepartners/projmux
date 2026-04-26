@@ -16,7 +16,7 @@
 - candidate discovery
 - popup mode
 - sidebar mode
-- settings sentinel and pin management
+- settings hub and pin management
 - preview target restore on selection
 
 ## Milestone 3: Session popup parity

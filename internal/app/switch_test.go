@@ -125,12 +125,11 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Candidates, []string{"/home/tester", "/home/tester/workspace", switchSettingsSentinel}; !equalStrings(got, want) {
+	if got, want := gotRunnerOptions.Candidates, []string{"/home/tester", "/home/tester/workspace"}; !equalStrings(got, want) {
 		t.Fatalf("runner candidates = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
 		{Label: "[ ]     \x1b[32m[Existing]\x1b[0m  workspace  ~/workspace", Value: "/home/tester/workspace"},
-		{Label: "[ ]   \x1b[1m\x1b[36m[Settings]\x1b[0m        \x1b[2mmanage pinned directories\x1b[0m", Value: switchSettingsSentinel},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -200,7 +199,6 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	}
 	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
 		{Label: "      app \x1b[2m/tmp/app\x1b[0m", Value: "/tmp/app"},
-		{Label: "  \x1b[1m\x1b[36mSettings\x1b[0m  \x1b[2mmanage pinned directories\x1b[0m", Value: switchSettingsSentinel},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -355,7 +353,6 @@ func TestSwitchCommandMarksExistingSessionsInRows(t *testing.T) {
 
 	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
 		{Label: "[ ]     \x1b[32m[Existing]\x1b[0m  live-app  /tmp/live-app", Value: "/tmp/live-app"},
-		{Label: "[ ]   \x1b[1m\x1b[36m[Settings]\x1b[0m        \x1b[2mmanage pinned directories\x1b[0m", Value: switchSettingsSentinel},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -417,7 +414,6 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		fixture.path("managed/work-a"),
 		fixture.path("rp/repo-a"),
 		fixture.path("managed/work-b"),
-		switchSettingsSentinel,
 	}
 	if got := fakeRunner.last.Candidates; !equalStrings(got, wantCandidates) {
 		t.Fatalf("runner candidates = %q, want %q", got, wantCandidates)
@@ -428,7 +424,6 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		{Label: "      repo-a \x1b[2m~rp/repo-a\x1b[0m", Value: fixture.path("rp/repo-a")},
 		{Label: "      work-a \x1b[2m" + fixture.path("managed/work-a") + "\x1b[0m", Value: fixture.path("managed/work-a")},
 		{Label: "      work-b \x1b[2m" + fixture.path("managed/work-b") + "\x1b[0m", Value: fixture.path("managed/work-b")},
-		{Label: "  \x1b[1m\x1b[36mSettings\x1b[0m  \x1b[2mmanage pinned directories\x1b[0m", Value: switchSettingsSentinel},
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
@@ -494,7 +489,6 @@ func TestNewSwitchCommandInfersRepoRootFromHomeSourceRepos(t *testing.T) {
 		fixture.path("home/source/repos/app"),
 		fixture.path("home/source/repos/lib"),
 		fixture.path("home/source/repos"),
-		switchSettingsSentinel,
 	}
 	if got := fakeRunner.last.Candidates; !equalStrings(got, wantCandidates) {
 		t.Fatalf("runner candidates = %q, want %q", got, wantCandidates)
@@ -505,7 +499,6 @@ func TestNewSwitchCommandInfersRepoRootFromHomeSourceRepos(t *testing.T) {
 		{Label: "      app \x1b[2m~rp/app\x1b[0m", Value: fixture.path("home/source/repos/app")},
 		{Label: "      lib \x1b[2m~rp/lib\x1b[0m", Value: fixture.path("home/source/repos/lib")},
 		{Label: "      repos \x1b[2m~rp\x1b[0m", Value: fixture.path("home/source/repos")},
-		{Label: "  \x1b[1m\x1b[36mSettings\x1b[0m  \x1b[2mmanage pinned directories\x1b[0m", Value: switchSettingsSentinel},
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
@@ -1288,7 +1281,7 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 	}
 }
 
-func TestSwitchCommandSelectingSettingsRunsSettingsMenu(t *testing.T) {
+func TestSwitchCommandSettingsSubcommandRunsSettingsMenu(t *testing.T) {
 	t.Parallel()
 
 	var runnerCalls int
@@ -1301,9 +1294,6 @@ func TestSwitchCommandSelectingSettingsRunsSettingsMenu(t *testing.T) {
 		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Value: switchSettingsSentinel}, nil
-			}
-			if runnerCalls == 2 {
 				return intfzf.Result{Value: "clear"}, nil
 			}
 			return intfzf.Result{}, nil
@@ -1316,10 +1306,10 @@ func TestSwitchCommandSelectingSettingsRunsSettingsMenu(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"settings"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := runnerCalls, 3; got != want {
+	if got, want := runnerCalls, 2; got != want {
 		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
 	if got, want := store.clearCalls, 1; got != want {
@@ -1340,9 +1330,6 @@ func TestSwitchCommandSettingsMenuAddCurrentPin(t *testing.T) {
 		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Value: switchSettingsSentinel}, nil
-			}
-			if runnerCalls == 2 {
 				return intfzf.Result{Value: "add:/home/tester/source/repos/new-app"}, nil
 			}
 			return intfzf.Result{}, nil
@@ -1361,10 +1348,10 @@ func TestSwitchCommandSettingsMenuAddCurrentPin(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"settings"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := runnerCalls, 3; got != want {
+	if got, want := runnerCalls, 2; got != want {
 		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
 	if got, want := store.addCalls, []string{"/home/tester/source/repos/new-app"}; !equalStrings(got, want) {
@@ -1392,15 +1379,12 @@ func TestSwitchCommandSettingsMenuInteractiveAddPin(t *testing.T) {
 		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Value: switchSettingsSentinel}, nil
-			}
-			if runnerCalls == 2 {
 				if got, want := options.UI, "settings"; got != want {
 					t.Fatalf("settings picker UI = %q, want %q", got, want)
 				}
 				return intfzf.Result{Value: "add-interactive"}, nil
 			}
-			if runnerCalls == 3 {
+			if runnerCalls == 2 {
 				if got, want := options.UI, "pin"; got != want {
 					t.Fatalf("add-pin picker UI = %q, want %q", got, want)
 				}
@@ -1429,10 +1413,10 @@ func TestSwitchCommandSettingsMenuInteractiveAddPin(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"settings"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := runnerCalls, 4; got != want {
+	if got, want := runnerCalls, 3; got != want {
 		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
 	if got, want := store.addCalls, []string{"/home/tester/source/repos/lib"}; !equalStrings(got, want) {

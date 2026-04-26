@@ -501,7 +501,6 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 	if err != nil {
 		return switchPlan{}, fmt.Errorf("discover switch candidates: %w", err)
 	}
-	paths = append(paths, switchSettingsSentinel)
 
 	plan := switchPlan{
 		UI:            ui,
