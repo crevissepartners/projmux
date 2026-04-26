@@ -129,7 +129,7 @@ func (n aiDesktopNotifier) dbusActivationScript(notification aiNotification, ico
 		"id=$(" + strings.Join(quoted, " ") + " | awk '{print $2}'); " +
 		"[ -n \"$id\" ] || exit 0; " +
 		"timeout 300 dbus-monitor --session " + shellQuote("type='signal',interface='org.freedesktop.Notifications',member='ActionInvoked'") +
-		" | awk -v id=\"$id\" " + shellQuote(`BEGIN{seen=0;found=0} /uint32/ {seen=($2==id)} seen && /string "default"/ {found=1; exit} END{exit found?0:1}`) +
+		" | awk -v id=\"$id\" " + shellQuote(`BEGIN{seen=0;found=0} /uint32/ {seen=($2==id)} seen && /string/ {found=1; exit} END{exit found?0:1}`) +
 		" && " + focusCommand + " >/dev/null 2>&1 || true" +
 		") >/dev/null 2>&1 &"
 	return script, true

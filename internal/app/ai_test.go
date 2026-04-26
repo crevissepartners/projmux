@@ -414,6 +414,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 		"Open pane",
 		"dbus-monitor",
 		"ActionInvoked",
+		"/string/ {found=1",
 		"Codex 승인 필요 · approval needed",
 		"검토 대기: approval needed · projmux/main",
 		"/tmp/projmux' tmux focus-pane '%2",
