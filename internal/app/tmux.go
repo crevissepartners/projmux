@@ -116,7 +116,7 @@ func (c *tmuxCommand) runRebalancePanes(args []string, stderr io.Writer) error {
 }
 
 func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
-	if len(args) != 2 || strings.TrimSpace(args[0]) == "" || strings.TrimSpace(args[1]) == "" {
+	if len(args) != 2 || strings.TrimSpace(args[0]) == "" {
 		printTmuxUsage(stderr)
 		return fmt.Errorf("tmux rename-pane requires <pane> <title>")
 	}
@@ -130,6 +130,15 @@ func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
 	}
 	if _, err := c.runner.Run(context.Background(), "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, title); err != nil {
 		return fmt.Errorf("rename tmux pane topic: %w", err)
+	}
+	if title == "" {
+		if _, err := c.runner.Run(context.Background(), "tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneTopicManualOption); err != nil {
+			return fmt.Errorf("clear manual tmux pane topic flag: %w", err)
+		}
+		return nil
+	}
+	if _, err := c.runner.Run(context.Background(), "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicManualOption, "1"); err != nil {
+		return fmt.Errorf("mark manual tmux pane topic: %w", err)
 	}
 	return nil
 }
@@ -717,7 +726,7 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"bind-key -n M-4 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-picker-right"),
 		"bind-key -n M-5 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-settings"),
 		"bind-key -n M-r command-prompt -I \"#{window_name}\" " + tmuxConfigQuote("rename-window -- '%%'"),
-		"bind-key -n User11 command-prompt -I \"#{?#{!=:#{@projmux_ai_topic},},#{@projmux_ai_topic},#{pane_title}}\" " + tmuxConfigQuote("select-pane -T '%1' \\; set-option -p "+aiPaneTopicOption+" '%1'"),
+		"bind-key -n User11 command-prompt -I \"#{?#{!=:#{@projmux_ai_topic},},#{@projmux_ai_topic},#{pane_title}}\" " + tmuxConfigQuote("select-pane -T '%1' \\; set-option -p "+aiPaneTopicOption+" '%1' \\; if-shell -F '#{==:#{"+aiPaneTopicOption+"},}' 'set-option -p -u "+aiPaneTopicManualOption+"' 'set-option -p "+aiPaneTopicManualOption+" 1'"),
 		"bind-key -n User0 run-shell " + tmuxConfigQuote(bin+" ai split right"),
 		"bind-key -n User1 run-shell " + tmuxConfigQuote(bin+" ai split down"),
 		"bind-key -n User2 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} session-popup"),

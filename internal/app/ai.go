@@ -26,11 +26,12 @@ const (
 	aiModeCodex     = "codex"
 	aiModeShell     = "shell"
 
-	aiPaneManagedOption = "@projmux_ai_managed"
-	aiPaneAgentOption   = "@projmux_ai_agent"
-	aiPaneContextOption = "@projmux_ai_context"
-	aiPaneStateOption   = "@projmux_ai_state"
-	aiPaneTopicOption   = "@projmux_ai_topic"
+	aiPaneManagedOption     = "@projmux_ai_managed"
+	aiPaneAgentOption       = "@projmux_ai_agent"
+	aiPaneContextOption     = "@projmux_ai_context"
+	aiPaneStateOption       = "@projmux_ai_state"
+	aiPaneTopicOption       = "@projmux_ai_topic"
+	aiPaneTopicManualOption = "@projmux_ai_topic_manual"
 )
 
 type aiCommandRunner interface {
@@ -310,7 +311,7 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 		}
 
 		if nextState == "waiting" {
-			c.recordAITopic(paneID, bestAITopic(snapshot.title, snapshot.capture))
+			c.recordAITopic(paneID, bestAITopic(snapshot.title, snapshot.capture), snapshot.topicManual)
 		}
 		if nextState != lastState || aiAttentionMismatch(nextState, snapshot.attentionState) || snapshot.aiState != nextState {
 			_ = c.applyAIStatus(nextState, paneID)
@@ -1064,6 +1065,7 @@ type aiPaneInfo struct {
 	agent          string
 	context        string
 	topic          string
+	topicManual    string
 	aiState        string
 	attentionState string
 	ack            string
@@ -1079,6 +1081,7 @@ func (c *aiCommand) readAIPaneInfo(paneID string) aiPaneInfo {
 		"#{" + aiPaneAgentOption + "}",
 		"#{" + aiPaneContextOption + "}",
 		"#{" + aiPaneTopicOption + "}",
+		"#{" + aiPaneTopicManualOption + "}",
 		"#{" + aiPaneStateOption + "}",
 		"#{" + attentionStateOption + "}",
 		"#{" + attentionAckOption + "}",
@@ -1104,14 +1107,21 @@ func (c *aiCommand) readAIPaneInfo(paneID string) aiPaneInfo {
 	if len(fields) > 5 {
 		info.topic = strings.TrimSpace(fields[5])
 	}
-	if len(fields) > 6 {
-		info.aiState = strings.TrimSpace(fields[6])
-	}
-	if len(fields) > 7 {
-		info.attentionState = strings.TrimSpace(fields[7])
-	}
-	if len(fields) > 8 {
-		info.ack = strings.TrimSpace(fields[8])
+	if len(fields) > 9 {
+		info.topicManual = strings.TrimSpace(fields[6])
+		info.aiState = strings.TrimSpace(fields[7])
+		info.attentionState = strings.TrimSpace(fields[8])
+		info.ack = strings.TrimSpace(fields[9])
+	} else {
+		if len(fields) > 6 {
+			info.aiState = strings.TrimSpace(fields[6])
+		}
+		if len(fields) > 7 {
+			info.attentionState = strings.TrimSpace(fields[7])
+		}
+		if len(fields) > 8 {
+			info.ack = strings.TrimSpace(fields[8])
+		}
 	}
 	if info.title == "" {
 		info.title = c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_title}")
@@ -1141,7 +1151,7 @@ func (c *aiCommand) bootstrapAIWatchMetadata(paneID string, info aiPaneInfo) aiP
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneContextOption, strings.TrimSpace(info.path))
 		info.context = strings.TrimSpace(info.path)
 	}
-	if strings.TrimSpace(info.topic) == "" {
+	if strings.TrimSpace(info.topic) == "" && !isTruthyTmuxOption(info.topicManual) {
 		if topic := bestAITopic(info.title, info.capture); topic != "" {
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic)
 			info.topic = topic
@@ -1186,12 +1196,21 @@ func (c *aiCommand) readAIPaneCapture(paneID string) string {
 	return c.readTrimmed("tmux", "capture-pane", "-p", "-J", "-S", "-80", "-t", paneID)
 }
 
-func (c *aiCommand) recordAITopic(paneID, topic string) {
+func (c *aiCommand) recordAITopic(paneID, topic, manual string) {
 	topic = strings.TrimSpace(topic)
-	if paneID == "" || topic == "" {
+	if paneID == "" || topic == "" || isTruthyTmuxOption(manual) {
 		return
 	}
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic)
+}
+
+func isTruthyTmuxOption(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *aiCommand) watchInterval() time.Duration {

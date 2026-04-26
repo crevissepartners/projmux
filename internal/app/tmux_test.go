@@ -402,6 +402,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"bind-key -n User11 command-prompt",
 		"select-pane -T '%1'",
 		"set-option -p @projmux_ai_topic '%1'",
+		"set-option -p @projmux_ai_topic_manual 1",
 		"bind-key R command-prompt",
 		"set-hook -g pane-focus-out",
 		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane}",
@@ -460,6 +461,27 @@ func TestTmuxRenamePaneSetsTitleAndAITopic(t *testing.T) {
 	want := []recordedTmuxCall{
 		{name: "tmux", args: []string{"select-pane", "-T", "projmux-2", "-t", "%42"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%42", "@projmux_ai_topic", "projmux-2"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%42", "@projmux_ai_topic_manual", "1"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestTmuxRenamePaneEmptyClearsManualAITopic(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingTmuxRunner{}
+	cmd := &tmuxCommand{runner: runner}
+
+	if err := cmd.Run([]string{"rename-pane", "%42", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []recordedTmuxCall{
+		{name: "tmux", args: []string{"select-pane", "-T", "", "-t", "%42"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%42", "@projmux_ai_topic", ""}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%42", "@projmux_ai_topic_manual"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
@@ -510,6 +532,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"bind-key -n User11 command-prompt",
 		"select-pane -T '%1'",
 		"set-option -p @projmux_ai_topic '%1'",
+		"set-option -p @projmux_ai_topic_manual 1",
 		"bind-key -n M-Left select-pane -L",
 		"bind-key -n M-Right select-pane -R",
 		"bind-key -n M-Up select-pane -U",

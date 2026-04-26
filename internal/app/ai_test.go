@@ -712,6 +712,45 @@ func TestAIWatchTitleUsesCapturePaneAsReplySignal(t *testing.T) {
 	}
 }
 
+func TestAIWatchTitlePreservesManualAITopic(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	checks := 0
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
+			return []byte("/usr/bin/notify-send\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%15", "#{pane_id}"}):
+			checks++
+			if checks > 1 {
+				return nil, os.ErrNotExist
+			}
+			return []byte("%15\n"), nil
+		case len(args) == 5 && args[0] == "display-message" && args[3] == "%15" && strings.Contains(args[4], aiPaneTopicManualOption):
+			return []byte("codexcli__PROJMUX_TMUX_AI_SEP__node__PROJMUX_TMUX_AI_SEP__" + home + "__PROJMUX_TMUX_AI_SEP__codex__PROJMUX_TMUX_AI_SEP__" + home + "__PROJMUX_TMUX_AI_SEP__manual topic__PROJMUX_TMUX_AI_SEP__1__PROJMUX_TMUX_AI_SEP__thinking__PROJMUX_TMUX_AI_SEP__busy__PROJMUX_TMUX_AI_SEP__\n"), nil
+		case reflect.DeepEqual(args, []string{"capture-pane", "-p", "-J", "-S", "-80", "-t", "%15"}):
+			return []byte("waiting for input\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.Run([]string{"watch-title", "%15"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run watch-title error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%15", "@projmux_ai_topic", "waiting for input"}) {
+		t.Fatalf("commands = %#v, did not expect watcher to replace manual AI topic", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%15", "@projmux_ai_state", "waiting"}) {
+		t.Fatalf("commands = %#v, want waiting AI state from capture", commands)
+	}
+}
+
 func TestAIWatchTitleBootstrapsMetadataForExistingCodexPane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
