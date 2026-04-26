@@ -2,6 +2,8 @@ package app
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -109,6 +111,104 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 	}
 }
 
+func TestSettingsHubAddProjectScansFilesystem(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	mkdirAll(t, filepath.Join(home, "source", "repos", "app"))
+	mkdirAll(t, filepath.Join(home, "work", "service", "nested"))
+	mkdirAll(t, filepath.Join(home, ".config"))
+	mkdirAll(t, filepath.Join(home, ".cache"))
+
+	store := &stubSwitchPinStore{}
+	switcher := testSettingsSwitchCommandWithHome(t, home, store)
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				if !hasEntryValue(options.Entries, settingsProjectAdd) {
+					t.Fatalf("project settings entries = %#v, want Add Project", options.Entries)
+				}
+				if !hasEntryValue(options.Entries, settingsProjectPins) {
+					t.Fatalf("project settings entries = %#v, want Pinned Projects", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjectAdd}, nil
+			case 3:
+				if got, want := options.UI, "settings-project-add"; got != want {
+					t.Fatalf("add project UI = %q, want %q", got, want)
+				}
+				app := filepath.Join(home, "source", "repos", "app")
+				if !hasEntryValue(options.Entries, settingsActionPrefixSwitch+"add:"+app) {
+					t.Fatalf("add project entries = %#v, want scanned app", options.Entries)
+				}
+				if !hasEntryValue(options.Entries, settingsActionPrefixSwitch+"add:"+filepath.Join(home, ".config")) {
+					t.Fatalf("add project entries = %#v, want hidden whitelist entry", options.Entries)
+				}
+				if hasEntryValue(options.Entries, settingsActionPrefixSwitch+"add:"+filepath.Join(home, ".cache")) {
+					t.Fatalf("add project entries = %#v, want hidden non-whitelist skipped", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixSwitch + "add:" + app}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := store.addCalls, []string{filepath.Join(home, "source", "repos", "app")}; !equalStrings(got, want) {
+		t.Fatalf("add calls = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubPinnedProjectsRemovesPins(t *testing.T) {
+	t.Parallel()
+
+	pin := "/home/tester/source/repos/app"
+	store := &stubSwitchPinStore{list: []string{pin}}
+	switcher := testSettingsSwitchCommand(t, store)
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsProjectPins}, nil
+			case 3:
+				if got, want := options.UI, "settings-project-pins"; got != want {
+					t.Fatalf("pinned projects UI = %q, want %q", got, want)
+				}
+				if !hasEntryValue(options.Entries, settingsActionPrefixSwitch+"clear") {
+					t.Fatalf("pinned project entries = %#v, want clear", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixSwitch + "pin:" + pin}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := store.toggleCalls, []string{pin}; !equalStrings(got, want) {
+		t.Fatalf("toggle calls = %q, want %q", got, want)
+	}
+}
+
 func TestSettingsHubBackReturnsToRoot(t *testing.T) {
 	t.Parallel()
 
@@ -156,10 +256,15 @@ func TestSettingsHubRejectsArguments(t *testing.T) {
 
 func testSettingsSwitchCommand(t *testing.T, store *stubSwitchPinStore) *switchCommand {
 	t.Helper()
+	return testSettingsSwitchCommandWithHome(t, "/home/tester", store)
+}
+
+func testSettingsSwitchCommandWithHome(t *testing.T, home string, store *stubSwitchPinStore) *switchCommand {
+	t.Helper()
 
 	return &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
-			return []string{"/home/tester/source/repos/app"}, nil
+			return []string{filepath.Join(home, "source", "repos", "app")}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return store, nil },
 		runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
@@ -168,11 +273,11 @@ func testSettingsSwitchCommand(t *testing.T, store *stubSwitchPinStore) *switchC
 		sessions:   &capturingSwitchSessionExecutor{},
 		identity:   stubSwitchIdentityResolver{name: "app"},
 		validate:   func(string) error { return nil },
-		homeDir:    func() (string, error) { return "/home/tester", nil },
-		workingDir: func() (string, error) { return "/home/tester/source/repos/app", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		workingDir: func() (string, error) { return filepath.Join(home, "source", "repos", "app"), nil },
 		lookupEnv: func(name string) string {
 			if name == repoRootEnvVar {
-				return "/home/tester/source/repos"
+				return filepath.Join(home, "source", "repos")
 			}
 			return ""
 		},
@@ -186,4 +291,11 @@ func hasEntryValue(entries []intfzf.Entry, value string) bool {
 		}
 	}
 	return false
+}
+
+func mkdirAll(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", path, err)
+	}
 }

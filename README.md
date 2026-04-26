@@ -13,7 +13,8 @@ for either its isolated app server or your normal tmux server.
 - Project picker that creates or switches to tmux sessions from directories.
 - Existing-session picker with popup previews for windows and panes.
 - Sidebar and popup surfaces backed by `fzf`.
-- Nested settings picker for AI split defaults and project pins.
+- Nested settings picker for AI split defaults, filesystem project discovery,
+  and project pins.
 - Pinned project directories.
 - Persisted preview selection for window and pane cycling.
 - Generated tmux bindings for popup launchers, attention badges, and status bar
@@ -200,7 +201,10 @@ Run `projmux help` or `<command> --help` for the full command surface.
 
 `projmux switch` combines pinned directories, live tmux sessions, and discovered
 project roots. The default discovery logic favors common source locations such
-as `~/source/repos` when they exist. Session names are derived from normalized
+as `~/source`, `~/work`, `~/projects`, `~/src`, `~/code`, and `~/source/repos`
+when they exist. `projmux settings` also has `Project Picker > Add Project...`,
+which scans those filesystem roots up to depth 3 so projects outside `~` and
+`~rp` can be added to the picker. Session names are derived from normalized
 directory paths, so a project keeps the same tmux session name across launches.
 
 ## Configuration And State

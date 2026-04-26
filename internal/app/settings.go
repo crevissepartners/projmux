@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	intfzf "github.com/es5h/projmux/internal/ui/fzf"
+	intrender "github.com/es5h/projmux/internal/ui/render"
 )
 
 type settingsCommand struct {
@@ -19,10 +20,13 @@ var errSettingsClosed = errors.New("settings closed")
 
 const (
 	settingsBackValue          = "__settings_back__"
+	settingsNoopValue          = "__settings_noop__"
 	settingsSectionAI          = "section:ai"
 	settingsSectionProject     = "section:project-picker"
 	settingsActionPrefixAI     = "ai:"
 	settingsActionPrefixSwitch = "switch:"
+	settingsProjectAdd         = "project:add"
+	settingsProjectPins        = "project:pins"
 )
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand) *settingsCommand {
@@ -73,6 +77,10 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) error {
+	if section == settingsSectionProject {
+		return c.runProjectPickerSection(stdout, stderr)
+	}
+
 	for {
 		options, err := c.sectionOptions(section)
 		if err != nil {
@@ -133,15 +141,11 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			Bindings:   settingsCloseBindings(),
 		}, nil
 	case settingsSectionProject:
-		entries, err := c.projectPickerEntries()
-		if err != nil {
-			return intfzf.Options{}, err
-		}
 		return intfzf.Options{
 			UI:         "settings-project-picker",
-			Entries:    entries,
+			Entries:    c.projectPickerEntries(),
 			Prompt:     "Settings > Project Picker > ",
-			Header:     "Manage project picker pins",
+			Header:     "Add projects to the picker and manage pinned projects",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -151,20 +155,208 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 	}
 }
 
-func (c *settingsCommand) projectPickerEntries() ([]intfzf.Entry, error) {
-	entries := []intfzf.Entry{settingsBackEntry()}
-
-	if c.switcher != nil {
-		switchEntries, err := c.switcher.settingsEntries()
+func (c *settingsCommand) runProjectPickerSection(stdout, stderr io.Writer) error {
+	for {
+		options, err := c.sectionOptions(settingsSectionProject)
 		if err != nil {
-			return nil, err
+			printSettingsUsage(stderr)
+			return err
 		}
-		for _, entry := range switchEntries {
-			entries = append(entries, intfzf.Entry{
-				Label: entry.Label,
-				Value: settingsActionPrefixSwitch + entry.Value,
-			})
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
 		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsProjectAdd:
+			if err := c.runAddProject(stdout, stderr); err != nil {
+				return err
+			}
+		case action == settingsProjectPins:
+			if err := c.runPinnedProjects(stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixSwitch):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			printSettingsUsage(stderr)
+			return fmt.Errorf("unknown project picker settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAddProject(stdout, stderr io.Writer) error {
+	if c.switcher == nil {
+		return errors.New("project picker settings are not configured")
+	}
+
+	entries, err := c.switcher.filesystemPinEntries()
+	if err != nil {
+		return err
+	}
+	entries = append([]intfzf.Entry{settingsBackEntry()}, entries...)
+
+	result, err := c.runPicker(intfzf.Options{
+		UI:         "settings-project-add",
+		Entries:    entries,
+		Prompt:     "Settings > Project Picker > Add Project > ",
+		Header:     "Choose a filesystem directory to add to the project picker",
+		Footer:     projmuxFooter("Enter: add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys: []string{"enter"},
+		Bindings:   settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+	action := strings.TrimSpace(result.Value)
+	if result.Key != "enter" || action == "" {
+		return errSettingsClosed
+	}
+	if action == settingsBackValue {
+		return nil
+	}
+	return c.execute(action, stdout, stderr)
+}
+
+func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
+	for {
+		entries, err := c.pinnedProjectEntries()
+		if err != nil {
+			return err
+		}
+
+		result, err := c.runPicker(intfzf.Options{
+			UI:         "settings-project-pins",
+			Entries:    entries,
+			Prompt:     "Settings > Project Picker > Pinned Projects > ",
+			Header:     "Remove pinned projects or clear all pins",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		if err := c.execute(action, stdout, stderr); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *settingsCommand) projectPickerEntries() []intfzf.Entry {
+	entries := []intfzf.Entry{
+		settingsBackEntry(),
+		{
+			Label: "\x1b[32m+ Add Project...\x1b[0m     \x1b[90mscan filesystem roots\x1b[0m",
+			Value: settingsProjectAdd,
+		},
+	}
+
+	entries = append(entries, c.addCurrentProjectEntry())
+	entries = append(entries, intfzf.Entry{
+		Label: "\x1b[36mPinned Projects\x1b[0m     \x1b[90mremove or clear pins\x1b[0m",
+		Value: settingsProjectPins,
+	})
+	return entries
+}
+
+func (c *settingsCommand) addCurrentProjectEntry() intfzf.Entry {
+	if c.switcher == nil {
+		return intfzf.Entry{
+			Label: "\x1b[90m+ Add Current Project  unavailable\x1b[0m",
+			Value: settingsNoopValue,
+		}
+	}
+
+	pins, err := c.switcher.loadPins()
+	if err != nil {
+		return intfzf.Entry{
+			Label: "\x1b[90m+ Add Current Project  pins unavailable\x1b[0m",
+			Value: settingsNoopValue,
+		}
+	}
+	homeDir, err := c.switcher.resolveHomeDir()
+	if err != nil {
+		return intfzf.Entry{
+			Label: "\x1b[90m+ Add Current Project  home unavailable\x1b[0m",
+			Value: settingsNoopValue,
+		}
+	}
+	repoRoot := c.switcher.switchRepoRoot(homeDir)
+	currentTarget, err := c.switcher.resolveSwitchTarget(nil, "settings project picker")
+	if err != nil || currentTarget == "" || currentTarget == switchSettingsSentinel {
+		return intfzf.Entry{
+			Label: "\x1b[90m+ Add Current Project  no project context\x1b[0m",
+			Value: settingsNoopValue,
+		}
+	}
+	if containsString(pins, currentTarget) {
+		return intfzf.Entry{
+			Label: "\x1b[90m+ Add Current Project  already pinned  " + intrender.PrettyPath(currentTarget, homeDir, repoRoot) + "\x1b[0m",
+			Value: settingsNoopValue,
+		}
+	}
+	return intfzf.Entry{
+		Label: "+ Add Current Project  " + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
+		Value: settingsActionPrefixSwitch + "add:" + currentTarget,
+	}
+}
+
+func (c *settingsCommand) pinnedProjectEntries() ([]intfzf.Entry, error) {
+	entries := []intfzf.Entry{settingsBackEntry()}
+	if c.switcher == nil {
+		return append(entries, intfzf.Entry{
+			Label: "\x1b[90m(no pinned projects)\x1b[0m",
+			Value: settingsNoopValue,
+		}), nil
+	}
+
+	pins, err := c.switcher.loadPins()
+	if err != nil {
+		return nil, err
+	}
+	homeDir, err := c.switcher.resolveHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot := c.switcher.switchRepoRoot(homeDir)
+
+	if len(pins) == 0 {
+		return append(entries, intfzf.Entry{
+			Label: "\x1b[90m(no pinned projects)\x1b[0m",
+			Value: settingsNoopValue,
+		}), nil
+	}
+
+	entries = append(entries, intfzf.Entry{
+		Label: "x Clear all pins",
+		Value: settingsActionPrefixSwitch + "clear",
+	})
+	for _, pin := range pins {
+		entries = append(entries, intfzf.Entry{
+			Label: "x Remove  " + intrender.PrettyPath(pin, homeDir, repoRoot),
+			Value: settingsActionPrefixSwitch + "pin:" + pin,
+		})
 	}
 	return entries, nil
 }

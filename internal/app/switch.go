@@ -36,6 +36,16 @@ const (
 	repoRootEnvVar           = "RP"
 )
 
+var switchPinHiddenWhitelist = []string{
+	".claude",
+	".codex",
+	".config",
+	".docker",
+	".kube",
+	".local",
+	".ssh",
+}
+
 type candidateDiscoverer func(inputs candidates.Inputs) ([]string, error)
 
 type switchPinStore interface {
@@ -1751,6 +1761,145 @@ func (c *switchCommand) addPinEntries() ([]intfzf.Entry, error) {
 	}
 
 	return entries, nil
+}
+
+func (c *switchCommand) filesystemPinEntries() ([]intfzf.Entry, error) {
+	paths, err := c.filesystemPinCandidates()
+	if err != nil {
+		return nil, err
+	}
+
+	pins, err := c.loadPins()
+	if err != nil {
+		return nil, err
+	}
+
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot := c.switchRepoRoot(homeDir)
+
+	entries := make([]intfzf.Entry, 0, len(paths))
+	for _, path := range paths {
+		if containsString(pins, path) {
+			continue
+		}
+		entries = append(entries, intfzf.Entry{
+			Label: intrender.PrettyPath(path, homeDir, repoRoot),
+			Value: "switch:add:" + path,
+		})
+	}
+	return entries, nil
+}
+
+func (c *switchCommand) filesystemPinCandidates() ([]string, error) {
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot := c.switchRepoRoot(homeDir)
+	roots := switchFilesystemPinRoots(homeDir, repoRoot)
+
+	builder := orderedPathSet{}
+	for _, root := range roots {
+		if err := appendScannedDirs(&builder, root, 3); err != nil {
+			return nil, err
+		}
+	}
+	for _, name := range switchPinHiddenWhitelist {
+		path := filepath.Join(homeDir, name)
+		if dirExistsForSwitch(path) {
+			builder.append(path)
+		}
+	}
+	return builder.values, nil
+}
+
+func switchFilesystemPinRoots(homeDir, repoRoot string) []string {
+	roots := []string{
+		repoRoot,
+		filepath.Join(homeDir, "source"),
+		filepath.Join(homeDir, "work"),
+		filepath.Join(homeDir, "projects"),
+		filepath.Join(homeDir, "code"),
+		filepath.Join(homeDir, "src"),
+		homeDir,
+	}
+	builder := orderedPathSet{}
+	for _, root := range roots {
+		if dirExistsForSwitch(root) {
+			builder.append(root)
+		}
+	}
+	return builder.values
+}
+
+func appendScannedDirs(builder *orderedPathSet, root string, maxDepth int) error {
+	root = cleanOptionalPath(root)
+	if root == "" || !dirExistsForSwitch(root) {
+		return nil
+	}
+	return scanDirs(builder, root, 0, maxDepth)
+}
+
+func scanDirs(builder *orderedPathSet, dir string, depth, maxDepth int) error {
+	if depth > maxDepth {
+		return nil
+	}
+	builder.append(dir)
+	if depth == maxDepth {
+		return nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	slices.SortFunc(entries, func(a, b os.DirEntry) int {
+		return strings.Compare(a.Name(), b.Name())
+	})
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == ".git" || strings.HasPrefix(name, ".") {
+			continue
+		}
+		if err := scanDirs(builder, filepath.Join(dir, name), depth+1, maxDepth); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type orderedPathSet struct {
+	values []string
+	seen   map[string]struct{}
+}
+
+func (s *orderedPathSet) append(path string) {
+	path = cleanOptionalPath(path)
+	if path == "" {
+		return
+	}
+	if s.seen == nil {
+		s.seen = make(map[string]struct{})
+	}
+	if _, ok := s.seen[path]; ok {
+		return
+	}
+	s.seen[path] = struct{}{}
+	s.values = append(s.values, path)
+}
+
+func dirExistsForSwitch(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func (c *switchCommand) writeSettingsPreview(stdout io.Writer) error {

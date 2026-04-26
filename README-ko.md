@@ -13,7 +13,8 @@
 - 프로젝트 디렉터리에서 tmux 세션을 만들거나 기존 세션으로 전환.
 - 기존 세션 목록을 popup으로 보고 window/pane 미리보기.
 - `fzf` 기반 popup 및 sidebar UI.
-- AI split 기본값과 project pin을 중첩 메뉴로 다루는 settings picker.
+- AI split 기본값, filesystem project discovery, project pin을 중첩 메뉴로
+  다루는 settings picker.
 - 자주 쓰는 프로젝트 pin 관리.
 - window/pane preview 선택 상태 저장 및 순환.
 - tmux popup launcher, attention badge, status bar segment 설정 생성.
@@ -196,10 +197,12 @@ projmux status kube [session]
 ## 프로젝트 탐색 방식
 
 `projmux switch`는 pinned directory, 현재 살아 있는 tmux session, 발견된
-project root를 합쳐 후보를 만듭니다. 기본 탐색은 존재하는 경우
-`~/source/repos` 같은 일반적인 소스 디렉터리를 우선합니다. 세션 이름은 정규화된
-디렉터리 경로에서 만들어지므로 같은 프로젝트는 다시 실행해도 같은 tmux 세션으로
-연결됩니다.
+project root를 합쳐 후보를 만듭니다. 기본 탐색은 존재하는 경우 `~/source`,
+`~/work`, `~/projects`, `~/src`, `~/code`, `~/source/repos` 같은 일반적인
+소스 디렉터리를 우선합니다. `projmux settings`의 `Project Picker > Add
+Project...`는 이 filesystem root를 depth 3까지 스캔하므로 `~`나 `~rp` 밖의
+프로젝트도 picker 후보로 추가할 수 있습니다. 세션 이름은 정규화된 디렉터리
+경로에서 만들어지므로 같은 프로젝트는 다시 실행해도 같은 tmux 세션으로 연결됩니다.
 
 ## 설정과 상태 파일
 
