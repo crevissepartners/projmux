@@ -336,6 +336,7 @@ func TestAIStatusSetThinkingMarksPaneBusy(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_state", "thinking"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_attention_state", "busy"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@projmux_attention_ack"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@projmux_attention_focus_armed"}},
 	}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
@@ -379,6 +380,8 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 			return []byte("dev\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_current_path}"}):
 			return []byte(work + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_active}"}):
+			return []byte("0\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -392,6 +395,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_ai_state", "waiting"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_attention_state", "reply"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%2", "@projmux_attention_ack"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_attention_focus_armed", "1"}},
 	}
 	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)

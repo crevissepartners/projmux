@@ -125,14 +125,21 @@ func (c *aiCommand) applyAIStatus(state, paneID string) error {
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "thinking")
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateBusy)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
+		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
 	case "waiting":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "waiting")
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateReply)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
+		if c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_active}") == "1" {
+			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
+		} else {
+			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionFocusArmedOption, "1")
+		}
 		_ = c.notifyAI(paneID)
 	case "idle", "":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
+		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
 	default:
 		return fmt.Errorf("unknown ai status state: %s", state)
 	}

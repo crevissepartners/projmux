@@ -282,6 +282,8 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} session-popup",
 		"bind-key -n User0 run-shell",
 		"'/tmp/proj mux/bin/projmux' ai split right",
+		"set-hook -g pane-focus-out",
+		"'/tmp/proj mux/bin/projmux' attention arm #{pane_id}",
 		"set-hook -g pane-focus-in",
 		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id}",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",

@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	attentionStateOption = "@projmux_attention_state"
-	attentionAckOption   = "@projmux_attention_ack"
-	attentionStateBusy   = "busy"
-	attentionStateReply  = "reply"
+	attentionStateOption      = "@projmux_attention_state"
+	attentionAckOption        = "@projmux_attention_ack"
+	attentionFocusArmedOption = "@projmux_attention_focus_armed"
+	attentionStateBusy        = "busy"
+	attentionStateReply       = "reply"
 )
 
 type attentionCommand struct {
@@ -37,6 +38,8 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runToggle(args[1:], stderr)
 	case "clear":
 		return c.runClear(args[1:], stderr)
+	case "arm":
+		return c.runArm(args[1:], stderr)
 	case "window":
 		return c.runWindow(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
@@ -74,11 +77,16 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 		return err
 	}
 
-	if c.paneAttentionState(paneID) == attentionStateBusy {
+	state := c.paneAttentionState(paneID)
+	if state == attentionStateBusy {
+		return nil
+	}
+	if state == attentionStateReply && c.paneOption(paneID, attentionFocusArmedOption) != "1" {
 		return nil
 	}
 	c.unsetPaneOption(paneID, attentionStateOption)
 	c.setPaneOption(paneID, attentionAckOption, "1")
+	c.unsetPaneOption(paneID, attentionFocusArmedOption)
 
 	title := c.paneTitle(paneID)
 	clean := trimAttentionPrefix(title)
@@ -86,6 +94,17 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 		return nil
 	}
 	c.selectPaneTitle(paneID, clean)
+	return nil
+}
+
+func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
+	paneID, err := parseOptionalAttentionTarget(args, "attention arm", stderr)
+	if err != nil || paneID == "" {
+		return err
+	}
+	if c.paneAttentionState(paneID) == attentionStateReply {
+		c.setPaneOption(paneID, attentionFocusArmedOption, "1")
+	}
 	return nil
 }
 
@@ -144,7 +163,11 @@ func (c *attentionCommand) paneTitle(paneID string) string {
 }
 
 func (c *attentionCommand) paneAttentionState(paneID string) string {
-	output, err := c.run("tmux", "display-message", "-p", "-t", paneID, "#{"+attentionStateOption+"}")
+	return c.paneOption(paneID, attentionStateOption)
+}
+
+func (c *attentionCommand) paneOption(paneID, option string) string {
+	output, err := c.run("tmux", "display-message", "-p", "-t", paneID, "#{"+option+"}")
 	if err != nil {
 		return ""
 	}
@@ -224,5 +247,6 @@ func printAttentionUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux attention toggle [pane]")
 	fmt.Fprintln(w, "  projmux attention clear [pane]")
+	fmt.Fprintln(w, "  projmux attention arm [pane]")
 	fmt.Fprintln(w, "  projmux attention window [window]")
 }
