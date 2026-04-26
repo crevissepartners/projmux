@@ -25,9 +25,8 @@ type Options struct {
 }
 
 type Entry struct {
-	Label      string
-	Value      string
-	SearchText string
+	Label string
+	Value string
 }
 
 type Result struct {
@@ -103,7 +102,6 @@ func runnerArgs(options Options, supportsFooter bool) []string {
 		"--ansi",
 		"--delimiter", "\t",
 		"--with-nth", "1",
-		"--nth", searchNth(options),
 		"--exit-0",
 		"--scrollbar", "█",
 		"--scroll-off", strconv.Itoa(3),
@@ -161,11 +159,7 @@ func renderedEntries(options Options) []string {
 	if len(options.Entries) != 0 {
 		lines := make([]string, 0, len(options.Entries))
 		for _, entry := range options.Entries {
-			line := sanitizeField(entry.Label) + "\t" + sanitizeField(entry.Value)
-			if usesSearchText(options) {
-				line += "\t" + sanitizeField(searchTextForEntry(entry))
-			}
-			lines = append(lines, line)
+			lines = append(lines, entry.Label+"\t"+entry.Value)
 		}
 		return lines
 	}
@@ -175,36 +169,6 @@ func renderedEntries(options Options) []string {
 		lines = append(lines, candidate+"\t"+candidate)
 	}
 	return lines
-}
-
-func searchNth(options Options) string {
-	if usesSearchText(options) {
-		return "3"
-	}
-	return "1"
-}
-
-func usesSearchText(options Options) bool {
-	for _, entry := range options.Entries {
-		if strings.TrimSpace(entry.SearchText) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func searchTextForEntry(entry Entry) string {
-	if strings.TrimSpace(entry.SearchText) != "" {
-		return entry.SearchText
-	}
-	return entry.Label
-}
-
-func sanitizeField(value string) string {
-	value = strings.ReplaceAll(value, "\t", " ")
-	value = strings.ReplaceAll(value, "\r", " ")
-	value = strings.ReplaceAll(value, "\n", " ")
-	return value
 }
 
 func selectedResult(selection string, hasExpectKeys bool) Result {
@@ -224,11 +188,11 @@ func selectedResult(selection string, hasExpectKeys bool) Result {
 }
 
 func selectedValue(selection string) string {
-	fields := strings.Split(selection, "\t")
-	if len(fields) < 2 {
+	_, value, ok := strings.Cut(selection, "\t")
+	if !ok {
 		return selection
 	}
-	return fields[1]
+	return value
 }
 
 type execCommand struct {

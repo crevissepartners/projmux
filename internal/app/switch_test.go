@@ -129,7 +129,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 		t.Fatalf("runner candidates = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
-		{Label: "[ ]     \x1b[32m[Existing]\x1b[0m  workspace  ~/workspace", Value: "/home/tester/workspace", SearchText: "workspace"},
+		{Label: "[ ]     \x1b[32m[Existing]\x1b[0m  workspace  ~/workspace", Value: "/home/tester/workspace"},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -1699,10 +1699,7 @@ func equalEntries(got, want []intfzf.Entry) bool {
 		return false
 	}
 	for i := range got {
-		if got[i].Label != want[i].Label || got[i].Value != want[i].Value {
-			return false
-		}
-		if want[i].SearchText != "" && got[i].SearchText != want[i].SearchText {
+		if got[i] != want[i] {
 			return false
 		}
 	}

@@ -17,9 +17,8 @@ const (
 )
 
 type SwitchRow struct {
-	Label      string
-	Value      string
-	SearchText string
+	Label string
+	Value string
 }
 
 type SwitchCandidate struct {
@@ -69,26 +68,11 @@ func BuildSwitchRows(candidates []SwitchCandidate) []SwitchRow {
 	rows := make([]SwitchRow, 0, len(candidates))
 	for _, candidate := range candidates {
 		rows = append(rows, SwitchRow{
-			Label:      formatSwitchLabel(candidate),
-			Value:      candidate.Path,
-			SearchText: formatSwitchSearchText(candidate),
+			Label: formatSwitchLabel(candidate),
+			Value: candidate.Path,
 		})
 	}
 	return rows
-}
-
-func formatSwitchSearchText(candidate SwitchCandidate) string {
-	if candidate.Path == "__projmux_settings__" {
-		return "settings"
-	}
-	parts := make([]string, 0, 2)
-	if displayName := sanitizeCell(candidate.DisplayName); displayName != "" {
-		parts = append(parts, displayName)
-	}
-	if sessionName := sanitizeCell(candidate.SessionName); sessionName != "" && !containsString(parts, sessionName) {
-		parts = append(parts, sessionName)
-	}
-	return strings.Join(parts, " ")
 }
 
 func formatSwitchLabel(candidate SwitchCandidate) string {

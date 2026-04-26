@@ -33,7 +33,6 @@ func TestRunnerRunInvokesFZFWithCandidates(t *testing.T) {
 				"--ansi",
 				"--delimiter", "\t",
 				"--with-nth", "1",
-				"--nth", "1",
 				"--exit-0",
 				"--scrollbar", "█",
 				"--scroll-off", "3",
@@ -105,7 +104,6 @@ func TestRunnerRunReturnsExpectedKeyAndHiddenValue(t *testing.T) {
 				"--ansi",
 				"--delimiter", "\t",
 				"--with-nth", "1",
-				"--nth", "1",
 				"--exit-0",
 				"--scrollbar", "█",
 				"--scroll-off", "3",
@@ -130,52 +128,6 @@ func TestRunnerRunReturnsExpectedKeyAndHiddenValue(t *testing.T) {
 	}
 	if got != (Result{Key: "alt-t", Value: "/home/tester/workspace"}) {
 		t.Fatalf("Run() = %#v, want key+value result", got)
-	}
-}
-
-func TestRunnerRunUsesHiddenSearchText(t *testing.T) {
-	t.Parallel()
-
-	fake := &fakeCommand{stdout: "repo card\t/home/tester/source/repos/repo\tproject repo\n"}
-
-	r := &runner{
-		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
-		supportsFooter: func(string) bool { return true },
-		newCommand: func(name string, args ...string) command {
-			if got, want := args, []string{
-				"--prompt", "projmux popup> ",
-				"--height", "100%",
-				"--layout", "reverse",
-				"--border",
-				"--ansi",
-				"--delimiter", "\t",
-				"--with-nth", "1",
-				"--nth", "3",
-				"--exit-0",
-				"--scrollbar", "█",
-				"--scroll-off", "3",
-				"--info", "inline-right",
-			}; !equalStrings(got, want) {
-				t.Fatalf("command args = %q, want %q", got, want)
-			}
-			return fake
-		},
-	}
-
-	got, err := r.Run(Options{
-		UI: "popup",
-		Entries: []Entry{
-			{Label: "repo card", Value: "/home/tester/source/repos/repo", SearchText: "project repo"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if got != (Result{Value: "/home/tester/source/repos/repo"}) {
-		t.Fatalf("Run() = %#v, want hidden value without search text", got)
-	}
-	if got, want := fake.stdin.String(), "repo card\t/home/tester/source/repos/repo\tproject repo"; got != want {
-		t.Fatalf("stdin = %q, want %q", got, want)
 	}
 }
 
@@ -240,7 +192,6 @@ func TestRunnerRunIncludesPreviewAndBindings(t *testing.T) {
 				"--ansi",
 				"--delimiter", "\t",
 				"--with-nth", "1",
-				"--nth", "1",
 				"--exit-0",
 				"--scrollbar", "█",
 				"--scroll-off", "3",
@@ -288,7 +239,6 @@ func TestRunnerRunFallsBackToHeaderWhenFooterIsUnsupported(t *testing.T) {
 				"--ansi",
 				"--delimiter", "\t",
 				"--with-nth", "1",
-				"--nth", "1",
 				"--exit-0",
 				"--scrollbar", "█",
 				"--scroll-off", "3",
