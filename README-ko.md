@@ -31,6 +31,18 @@
 
 ## 설치
 
+Go로 설치:
+
+```sh
+go install github.com/es5h/projmux/cmd/projmux@latest
+```
+
+Go binary 디렉터리가 `PATH`에 들어 있어야 합니다. 보통 `$(go env GOPATH)/bin`입니다:
+
+```sh
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
 소스에서 빌드:
 
 ```sh
@@ -88,24 +100,8 @@ status bar, popup binding을 직접 소유합니다.
 앱 세션의 하단 좌측 뱃지는 현재 pane의 프로젝트 이름을 보여줍니다. 하단
 우측에는 현재 경로, kube segment, git segment, 시간이 표시됩니다.
 
-자주 쓰는 앱 키:
-
-| 키 | 동작 |
-| --- | --- |
-| `Alt-1` | 프로젝트 sidebar 열기 |
-| `Alt-2` | 기존 세션 popup 열기 |
-| `Alt-3` | 프로젝트 switcher popup 열기 |
-| `Alt-4` | AI split picker 열기 |
-| `Alt-5` | AI split settings 열기 |
-| `Ctrl-n` | 현재 pane 디렉터리에서 새 tmux window 생성 |
-| `Alt-Left/Right/Up/Down` | pane 이동 |
-| `Alt-Shift-Left/Right` | 이전/다음 window |
-| `Prefix b` | 기존 세션 popup |
-| `Prefix f` | 프로젝트 switcher popup |
-| `Prefix F` | 프로젝트 sidebar |
-| `Prefix g` | 현재 pane 프로젝트 세션으로 이동 |
-| `Prefix r` | 오른쪽 AI split 열기 |
-| `Prefix l` | 아래쪽 AI split 열기 |
+자주 쓰는 앱 키는 projmux가 생성한 tmux 설정에 들어 있습니다. 터미널 에뮬레이터에서
+키 전달을 명시해야 한다면 [터미널 키 설정](docs/keybindings.md)을 참고하세요.
 
 ## 기존 tmux에 적용
 
@@ -254,6 +250,7 @@ make verify
 - [CLI Shape](docs/cli.md)
 - [Migration Plan](docs/migration-plan.md)
 - [Repo Layout](docs/repo-layout.md)
+- [터미널 키 설정](docs/keybindings.md)
 - [Agent Workflow](docs/agent-workflow.md)
 
 ## 라이선스
