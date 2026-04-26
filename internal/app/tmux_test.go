@@ -291,6 +291,8 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' attention arm #{pane_id}",
 		"set-hook -g pane-focus-in",
 		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id}",
+		"set-hook -g pane-exited",
+		"tmux select-layout -t #{hook_window} -E",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
 		"#[bold,fg=colour16,bg=colour45] projmux #[default]",
 		"'/tmp/proj mux/bin/projmux' status kube",

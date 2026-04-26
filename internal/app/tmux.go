@@ -638,6 +638,7 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"set -s user-keys[10] \"\\033[9011u\"",
 		"set-hook -g pane-focus-out " + tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{pane_id}")),
 		"set-hook -g pane-focus-in " + tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
+		"set-hook -g pane-exited " + tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("tmux select-layout -t #{hook_window} -E")),
 		"set -g window-status-format " + tmuxConfigQuote("#[fg=colour245,bg=colour235] #("+bin+" attention window #{window_id})#[fg=colour245] #I #W #[default]"),
 		"set -g window-status-current-format " + tmuxConfigQuote("#[bold,fg=colour231,bg=colour238] #("+bin+" attention window #{window_id})#[fg=colour231] #I #W #[default]"),
 		"set -g status-right-length 140",
