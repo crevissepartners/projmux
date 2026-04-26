@@ -21,6 +21,9 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 			if name == "HOME" {
 				return home
 			}
+			if name == "XDG_CONFIG_HOME" {
+				return ""
+			}
 			return os.Getenv(name)
 		},
 		homeDir:    func() (string, error) { return home, nil },
