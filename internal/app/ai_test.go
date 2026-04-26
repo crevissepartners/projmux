@@ -715,6 +715,88 @@ func TestAIWatchTitleSettledBusyReturnsIdleWithoutNotification(t *testing.T) {
 	}
 }
 
+func TestAIWatchTitleIgnoresStaleBusyCaptureHistory(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	checks := 0
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%13", "#{pane_id}"}):
+			checks++
+			if checks > 1 {
+				return nil, os.ErrNotExist
+			}
+			return []byte("%13\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%13", "#{pane_title}__PROJMUX_TMUX_AI_SEP__#{@projmux_attention_state}__PROJMUX_TMUX_AI_SEP__#{@projmux_attention_ack}"}):
+			return []byte("repo__PROJMUX_TMUX_AI_SEP__busy__PROJMUX_TMUX_AI_SEP__\n"), nil
+		case reflect.DeepEqual(args, []string{"capture-pane", "-p", "-J", "-S", "-80", "-t", "%13"}):
+			return []byte("• Working (27s)\n\n  gpt-5.5 medium · ~/source/repos/projmux · main\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.Run([]string{"watch-title", "%13"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run watch-title error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%13", "@projmux_ai_state", "idle"}) {
+		t.Fatalf("commands = %#v, want stale busy history to clear to idle", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-u", "-t", "%13", "@projmux_attention_state"}) {
+		t.Fatalf("commands = %#v, want stale busy attention cleared", commands)
+	}
+}
+
+func TestAIWatchTitleSettlesUnchangedSpinnerTitle(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "PROJMUX_CODEX_REPLY_SETTLE_LOOPS":
+			return "2"
+		default:
+			return ""
+		}
+	}
+	checks := 0
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%14", "#{pane_id}"}):
+			checks++
+			if checks > 3 {
+				return nil, os.ErrNotExist
+			}
+			return []byte("%14\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%14", "#{pane_title}__PROJMUX_TMUX_AI_SEP__#{@projmux_attention_state}__PROJMUX_TMUX_AI_SEP__#{@projmux_attention_ack}"}):
+			return []byte("⠧ repo__PROJMUX_TMUX_AI_SEP__busy__PROJMUX_TMUX_AI_SEP__\n"), nil
+		case reflect.DeepEqual(args, []string{"capture-pane", "-p", "-J", "-S", "-80", "-t", "%14"}):
+			return []byte("idle prompt\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.Run([]string{"watch-title", "%14"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run watch-title error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%14", "@projmux_ai_state", "idle"}) {
+		t.Fatalf("commands = %#v, want unchanged spinner title to settle idle", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-u", "-t", "%14", "@projmux_attention_state"}) {
+		t.Fatalf("commands = %#v, want unchanged spinner attention cleared", commands)
+	}
+}
+
 func TestAIReplyTitleIgnoresProjmuxAttentionMarkers(t *testing.T) {
 	for _, title := range []string{"✳ repo", "✔ repo"} {
 		if isAIReplyTitle(title) {

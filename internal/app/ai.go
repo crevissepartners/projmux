@@ -241,6 +241,7 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	phase := "idle"
 	lastState := ""
 	settleCount := 0
+	lastBusySignal := ""
 	for {
 		if _, err := c.read("tmux", "display-message", "-p", "-t", paneID, "#{pane_id}"); err != nil {
 			return nil
@@ -248,33 +249,49 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 		snapshot := c.readAIWatchSnapshot(paneID)
 		snapshot = c.bootstrapAIWatchMetadata(paneID, snapshot)
 		nextState := "idle"
-		evidence := strings.Join([]string{snapshot.title, snapshot.capture}, "\n")
+		busy, busySignal := aiBusySignal(snapshot.title, snapshot.capture)
+		replyEvidence := strings.Join([]string{snapshot.title, latestAIPaneCaptureLine(snapshot.capture)}, "\n")
 		switch {
-		case isAIBusyTitle(evidence):
+		case busy:
 			phase = "busy"
-			settleCount = 0
 			nextState = "thinking"
-		case snapshot.ack != "1" && isAIReplyTitle(evidence):
+			if busySignal == lastBusySignal {
+				settleCount++
+				if settleCount >= settleLimit {
+					phase = "idle"
+					nextState = "idle"
+					lastBusySignal = ""
+				}
+			} else {
+				settleCount = 0
+				lastBusySignal = busySignal
+			}
+		case snapshot.ack != "1" && isAIReplyTitle(replyEvidence):
 			phase = "replied"
 			settleCount = 0
+			lastBusySignal = ""
 			nextState = "waiting"
 		case snapshot.ack != "1" && (snapshot.aiState == "waiting" || snapshot.attentionState == attentionStateReply):
 			phase = "replied"
 			settleCount = 0
+			lastBusySignal = ""
 			nextState = "waiting"
 		case phase == "busy":
 			settleCount++
 			if settleCount >= settleLimit {
 				phase = "idle"
 				nextState = "idle"
+				lastBusySignal = ""
 			} else {
 				nextState = "thinking"
 			}
 		case phase == "replied" && snapshot.ack != "1":
 			settleCount = 0
+			lastBusySignal = ""
 			nextState = "waiting"
 		default:
 			settleCount = 0
+			lastBusySignal = ""
 		}
 
 		if nextState == "waiting" {
@@ -1409,6 +1426,28 @@ func aiNotificationBody(project, branch, sessionName, windowName, paneID string)
 
 func aiNotificationKey(kind, title string) string {
 	return kind + "|" + normalizeAITitle(displayAITopic(title))
+}
+
+func aiBusySignal(title, capture string) (bool, string) {
+	if isAIBusyTitle(title) {
+		return true, "title:" + strings.TrimSpace(title)
+	}
+	line := latestAIPaneCaptureLine(capture)
+	if isAIBusyTitle(line) {
+		return true, "capture:" + normalizeAITitle(line)
+	}
+	return false, ""
+}
+
+func latestAIPaneCaptureLine(capture string) string {
+	var latest string
+	for line := range strings.SplitSeq(capture, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			latest = line
+		}
+	}
+	return latest
 }
 
 func isAIBusyTitle(title string) bool {
