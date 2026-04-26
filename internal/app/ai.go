@@ -258,8 +258,8 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 			if busySignal == lastBusySignal {
 				settleCount++
 				if settleCount >= settleLimit {
-					phase = "idle"
-					nextState = "idle"
+					phase = "replied"
+					nextState = "waiting"
 					lastBusySignal = ""
 				}
 			} else {
@@ -267,6 +267,11 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 				lastBusySignal = busySignal
 			}
 		case snapshot.ack != "1" && isAIReplyTitle(replyEvidence):
+			phase = "replied"
+			settleCount = 0
+			lastBusySignal = ""
+			nextState = "waiting"
+		case snapshot.ack != "1" && snapshot.attentionState == attentionStateBusy:
 			phase = "replied"
 			settleCount = 0
 			lastBusySignal = ""
@@ -279,8 +284,8 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 		case phase == "busy":
 			settleCount++
 			if settleCount >= settleLimit {
-				phase = "idle"
-				nextState = "idle"
+				phase = "replied"
+				nextState = "waiting"
 				lastBusySignal = ""
 			} else {
 				nextState = "thinking"

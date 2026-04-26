@@ -655,7 +655,7 @@ func TestAIWatchTitleKeepsWaitingUntilFocusAck(t *testing.T) {
 	}
 }
 
-func TestAIWatchTitleSettledBusyReturnsIdleWithoutNotification(t *testing.T) {
+func TestAIWatchTitleSettledBusyBecomesWaitingReply(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.lookupEnv = func(name string) string {
@@ -704,14 +704,14 @@ func TestAIWatchTitleSettledBusyReturnsIdleWithoutNotification(t *testing.T) {
 	}
 
 	commands := cmdRecorder(cmd).commands
-	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%6", "@projmux_ai_state", "idle"}) {
-		t.Fatalf("commands = %#v, want idle ai pane state", commands)
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%6", "@projmux_ai_state", "waiting"}) {
+		t.Fatalf("commands = %#v, want waiting ai pane state", commands)
 	}
-	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-u", "-t", "%6", "@projmux_attention_state"}) {
-		t.Fatalf("commands = %#v, want cleared attention state", commands)
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%6", "@projmux_attention_state", "reply"}) {
+		t.Fatalf("commands = %#v, want reply attention state", commands)
 	}
-	if containsAICommand(commands, "notify-send") {
-		t.Fatalf("commands = %#v, did not expect notify-send after settled busy", commands)
+	if !containsAICommandArg(commands, "@projmux_desktop_notified") {
+		t.Fatalf("commands = %#v, want notification record after settled busy", commands)
 	}
 }
 
@@ -743,11 +743,11 @@ func TestAIWatchTitleIgnoresStaleBusyCaptureHistory(t *testing.T) {
 	}
 
 	commands := cmdRecorder(cmd).commands
-	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%13", "@projmux_ai_state", "idle"}) {
-		t.Fatalf("commands = %#v, want stale busy history to clear to idle", commands)
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%13", "@projmux_ai_state", "waiting"}) {
+		t.Fatalf("commands = %#v, want stale busy history to become waiting", commands)
 	}
-	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-u", "-t", "%13", "@projmux_attention_state"}) {
-		t.Fatalf("commands = %#v, want stale busy attention cleared", commands)
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%13", "@projmux_attention_state", "reply"}) {
+		t.Fatalf("commands = %#v, want stale busy attention to become reply", commands)
 	}
 }
 
@@ -789,11 +789,11 @@ func TestAIWatchTitleSettlesUnchangedSpinnerTitle(t *testing.T) {
 	}
 
 	commands := cmdRecorder(cmd).commands
-	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%14", "@projmux_ai_state", "idle"}) {
-		t.Fatalf("commands = %#v, want unchanged spinner title to settle idle", commands)
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%14", "@projmux_ai_state", "waiting"}) {
+		t.Fatalf("commands = %#v, want unchanged spinner title to settle waiting", commands)
 	}
-	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-u", "-t", "%14", "@projmux_attention_state"}) {
-		t.Fatalf("commands = %#v, want unchanged spinner attention cleared", commands)
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%14", "@projmux_attention_state", "reply"}) {
+		t.Fatalf("commands = %#v, want unchanged spinner attention to become reply", commands)
 	}
 }
 
