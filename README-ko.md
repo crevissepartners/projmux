@@ -1,26 +1,59 @@
 # projmux
 
-터미널에서 프로젝트별 tmux 세션을 빠르게 만들고 전환하기 위한 도구입니다.
+터미널에서 프로젝트별 tmux 작업 공간을 만들고 유지하는 도구입니다.
 
-`projmux`는 프로젝트 디렉터리를 안정적인 tmux 세션으로 매핑하고, `fzf`
-기반의 전환 UI와 미리보기를 제공합니다. 격리된 앱 서버와 일반 tmux 서버에
-필요한 tmux 설정도 직접 생성합니다.
+`projmux`는 프로젝트 디렉터리를 오래 유지되는 tmux workspace로 매핑하고,
+preview, sidebar navigation, 생성된 keybinding, status metadata, AI pane
+attention signal을 함께 제공합니다. 자체 tmux 앱(`projmux shell`)으로 실행할
+수도 있고, 기존 tmux 서버에 같은 기능을 설치할 수도 있습니다.
 
 [English README](README.md)
 
-## 주요 기능
+## 왜 projmux인가
 
-- 프로젝트 디렉터리에서 tmux 세션을 만들거나 기존 세션으로 전환.
-- 기존 세션 목록을 popup으로 보고 window/pane 미리보기.
-- `fzf` 기반 popup 및 sidebar UI.
-- AI split 기본값, filesystem project discovery, project pin을 중첩 메뉴로
-  다루는 settings picker.
-- 자주 쓰는 프로젝트 pin 관리.
-- window/pane preview 선택 상태 저장 및 순환.
-- tmux popup launcher, attention badge, status bar segment 설정 생성.
-- 별도 tmux 서버와 설정으로 동작하는 `projmux shell` 앱 모드.
-- 현재 git branch와 Kubernetes context/namespace status bar 표시.
-- AI pane split launcher, 상태 표시, desktop notification 헬퍼.
+많은 tmux project switcher는 "디렉터리를 고르고 세션에 붙는다"에서 멈춥니다.
+`projmux`는 그 흐름을 기본값으로 삼고, 매일 쓰는 터미널 workspace에 필요한
+앱 수준의 요소를 더합니다.
+
+- **프로젝트 정체성이 안정적으로 유지됩니다.** directory, pin, live session,
+  preview selection, lifecycle command가 같은 session model을 공유합니다.
+- **전환하기 전에 맥락을 볼 수 있습니다.** popup과 sidebar에서 session,
+  window, pane, git branch, Kubernetes context, pane metadata를 미리 봅니다.
+- **tmux layer를 손으로 이어 붙이지 않습니다.** popup launcher, window/pane
+  rename, status segment, pane border, attention badge, app mode에 필요한 tmux
+  설정을 `projmux`가 생성합니다.
+- **AI pane을 일급 workspace 요소로 다룹니다.** Codex/Claude pane을 실행하고,
+  agent 이름, topic, thinking/waiting 상태, pane/window/session badge, desktop
+  notification까지 tmux 안에서 추적합니다.
+- **격리 실행과 기존 tmux 통합 중 선택할 수 있습니다.** `projmux shell`로 자체
+  tmux 앱을 쓰거나, 생성된 snippet을 기존 tmux 서버에 설치할 수 있습니다.
+
+## 무엇을 하나
+
+- 프로젝트 디렉터리에서 tmux session을 만들거나 기존 session으로 전환.
+- 기존 session을 window/pane preview와 함께 탐색.
+- `fzf` 기반 popup/sidebar navigation 제공.
+- 자주 쓰는 프로젝트 pin 관리와 일반적인 source root 자동 탐색.
+- window/pane preview 선택 상태 저장 및 빠른 순환.
+- launcher, rename prompt, pane border, status segment, attention hook을 위한
+  tmux binding 생성.
+- git branch와 Kubernetes context/namespace를 status area에 표시.
+- Codex/Claude/plain shell split을 만들고 agent/topic/status/notification 상태를
+  tmux UI에 표시.
+
+## 일반적인 사용 흐름
+
+```sh
+projmux shell
+```
+
+앱을 한 번 실행한 뒤, 생성된 tmux binding으로 다음 일을 합니다:
+
+- sidebar 또는 popup에서 프로젝트 이동,
+- attach 전에 session 내용을 미리 확인,
+- 현재 workspace에 Codex, Claude, plain shell split 추가,
+- window와 AI pane topic rename,
+- 확인이 필요한 pane을 badge와 desktop notification으로 파악.
 
 ## 요구 사항
 

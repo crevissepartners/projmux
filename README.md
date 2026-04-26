@@ -1,27 +1,60 @@
 # projmux
 
-Project-aware tmux session management for people who live in terminals.
+Project-aware tmux workspace management for people who live in terminals.
 
-`projmux` turns project directories into stable tmux sessions, gives you fast
-fzf-driven switching and previews, and can install the tmux bindings it needs
-for either its isolated app server or your normal tmux server.
+`projmux` turns project directories into durable tmux workspaces with previews,
+sidebar navigation, generated keybindings, status metadata, and AI-pane
+attention signals. It can run as its own tmux app (`projmux shell`) or install
+the same behavior into your existing tmux server.
 
 [한국어 README](README-ko.md)
 
-## Features
+## Why projmux
 
-- Project picker that creates or switches to tmux sessions from directories.
-- Existing-session picker with popup previews for windows and panes.
-- Sidebar and popup surfaces backed by `fzf`.
-- Nested settings picker for AI split defaults, filesystem project discovery,
-  and project pins.
-- Pinned project directories.
-- Persisted preview selection for window and pane cycling.
-- Generated tmux bindings for popup launchers, attention badges, and status bar
-  segments.
-- Isolated `projmux shell` mode that runs its own tmux server and config.
-- Status bar helpers for the active git branch and Kubernetes context/namespace.
-- AI pane helpers for split launchers, status markers, and desktop notifications.
+Most tmux project switchers stop at "pick a directory and attach a session".
+`projmux` treats that as the foundation, then adds the app-level pieces needed
+for a daily terminal workspace:
+
+- **Project identity stays stable.** Directories, pins, live sessions, preview
+  selection, and lifecycle commands all use the same normalized session model.
+- **The UI shows context before you switch.** Popup and sidebar pickers preview
+  sessions, windows, panes, git branch, Kubernetes context, and pane metadata.
+- **The tmux layer is generated, not hand-spliced.** `projmux` writes the tmux
+  config it needs for popup launchers, window/pane rename flows, status
+  segments, pane borders, attention badges, and app mode.
+- **AI panes are first-class.** Codex and Claude panes can be launched,
+  labeled, tracked as thinking or waiting, surfaced in pane/window/session
+  badges, and announced through desktop notifications.
+- **You can choose isolation or integration.** Use `projmux shell` as a
+  self-contained tmux app, or install the generated snippet into your normal
+  tmux server.
+
+## What It Does
+
+- Creates or switches to tmux sessions from project directories.
+- Shows existing sessions with window and pane previews.
+- Provides popup and sidebar navigation surfaces backed by `fzf`.
+- Pins important projects and scans common source roots for new ones.
+- Persists preview selection for fast window and pane cycling.
+- Generates tmux bindings for launchers, rename prompts, pane borders, status
+  segments, and attention hooks.
+- Displays git branch and Kubernetes context/namespace in the status area.
+- Launches AI splits and keeps their agent name, topic, status, and
+  notification state visible in tmux.
+
+## Typical Workflow
+
+```sh
+projmux shell
+```
+
+Open the app once, then use its generated tmux bindings to:
+
+- jump between projects from a sidebar or popup,
+- inspect sessions before attaching,
+- split Codex, Claude, or a plain shell into the current workspace,
+- rename windows and AI pane topics without losing metadata,
+- see which panes need review from badges and desktop notifications.
 
 ## Requirements
 
