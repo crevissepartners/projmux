@@ -103,7 +103,7 @@ func runnerArgs(options Options, supportsFooter bool) []string {
 		"--ansi",
 		"--delimiter", "\t",
 		"--with-nth", "1",
-		"--nth", "1",
+		"--nth", searchNth(options),
 		"--exit-0",
 		"--scrollbar", "█",
 		"--scroll-off", strconv.Itoa(3),
@@ -161,7 +161,11 @@ func renderedEntries(options Options) []string {
 	if len(options.Entries) != 0 {
 		lines := make([]string, 0, len(options.Entries))
 		for _, entry := range options.Entries {
-			lines = append(lines, sanitizeField(entry.Label)+"\t"+sanitizeField(entry.Value))
+			line := sanitizeField(entry.Label) + "\t" + sanitizeField(entry.Value)
+			if usesSearchText(options) {
+				line += "\t" + sanitizeField(searchTextForEntry(entry))
+			}
+			lines = append(lines, line)
 		}
 		return lines
 	}
@@ -171,6 +175,29 @@ func renderedEntries(options Options) []string {
 		lines = append(lines, candidate+"\t"+candidate)
 	}
 	return lines
+}
+
+func searchNth(options Options) string {
+	if usesSearchText(options) {
+		return "3"
+	}
+	return "1"
+}
+
+func usesSearchText(options Options) bool {
+	for _, entry := range options.Entries {
+		if strings.TrimSpace(entry.SearchText) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func searchTextForEntry(entry Entry) string {
+	if strings.TrimSpace(entry.SearchText) != "" {
+		return entry.SearchText
+	}
+	return entry.Label
 }
 
 func sanitizeField(value string) string {
