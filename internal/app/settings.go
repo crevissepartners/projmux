@@ -425,6 +425,10 @@ func settingsAboutEntries() []intfzf.Entry {
 			Value: settingsNoopValue,
 		},
 		{
+			Label: "Rename key     Ctrl-M sends 9011u, tmux maps User10 to rename",
+			Value: settingsNoopValue,
+		},
+		{
 			Label: "Ghostty        bind alt/ctrl keys to csi:9001u..9012u",
 			Value: settingsNoopValue,
 		},

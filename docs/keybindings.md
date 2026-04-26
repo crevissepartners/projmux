@@ -23,6 +23,7 @@ escape sequences that projmux maps to tmux `User0` through `User11` keys.
 | `Alt-5` | Open settings |
 | `Ctrl-n` | New tmux window in the current pane directory |
 | `Alt-r` | Rename the current tmux window |
+| `Ctrl-M` | Rename the current tmux window when your terminal sends `User10` |
 | `Alt-Left/Right/Up/Down` | Move between panes |
 | `Alt-Shift-Left/Right` | Previous/next window |
 | terminal-configured `User11` | Rename the current tmux pane label |
@@ -82,7 +83,7 @@ keybind = ctrl+shift+r=csi:9001u
 keybind = ctrl+shift+l=csi:9002u
 
 keybind = ctrl+shift+n=csi:9008u
-keybind = alt+r=csi:9011u
+keybind = ctrl+m=csi:9011u
 keybind = ctrl+shift+p=csi:9012u
 keybind = alt+shift+left=csi:9009u
 keybind = alt+shift+right=csi:9010u
@@ -109,7 +110,7 @@ Add entries to `settings.json` under `actions`. Windows Terminal uses
     { "keys": "ctrl+shift+l", "command": { "action": "sendInput", "input": "\u001b[9002u" } },
 
     { "keys": "ctrl+shift+n", "command": { "action": "sendInput", "input": "\u001b[9008u" } },
-    { "keys": "alt+r", "command": { "action": "sendInput", "input": "\u001b[9011u" } },
+    { "keys": "ctrl+m", "command": { "action": "sendInput", "input": "\u001b[9011u" } },
     { "keys": "ctrl+shift+p", "command": { "action": "sendInput", "input": "\u001b[9012u" } },
     { "keys": "alt+shift+left", "command": { "action": "sendInput", "input": "\u001b[9009u" } },
     { "keys": "alt+shift+right", "command": { "action": "sendInput", "input": "\u001b[9010u" } }

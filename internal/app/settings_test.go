@@ -163,6 +163,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		"sidebar, sessions, projects",
 		"new window, rename window/pane",
 		"terminal sends CSI-u keys",
+		"Ctrl-M sends 9011u",
 		"bind alt/ctrl keys",
 		"sendInput",
 		"docs/keybindings.md",
