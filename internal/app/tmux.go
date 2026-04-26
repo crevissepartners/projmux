@@ -551,7 +551,7 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 		commandArgs = []string{"switch", "--ui=sidebar"}
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 96)
-		options.Height = popupSize(ctx.ClientHeight, 30, 12)
+		options.Height = popupSize(ctx.ClientHeight, 45, 20)
 		cwd = ctx.ContextDir
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir

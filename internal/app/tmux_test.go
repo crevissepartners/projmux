@@ -314,7 +314,7 @@ func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
 		"-e", "TMUX_SPLIT_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SPLIT_TARGET_PANE=%1",
 		"-w", "96",
-		"-h", "15",
+		"-h", "22",
 	}
 	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
