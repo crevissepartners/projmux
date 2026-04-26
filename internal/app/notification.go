@@ -65,15 +65,15 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 			}
 		}
 	}
-	if n.command.readTrimmed("command", "-v", "notify-send") == "" {
-		return errors.New("notify-send is unavailable")
-	}
 	icon := strings.TrimSpace(notification.Icon)
 	if icon == "" {
 		icon = "dialog-information"
 	}
-	if script, ok := n.activationScript(notification, icon); ok {
+	if script, ok := n.dbusActivationScript(notification, icon); ok {
 		return n.command.run("sh", "-c", script)
+	}
+	if n.command.readTrimmed("command", "-v", "notify-send") == "" {
+		return errors.New("notify-send is unavailable")
 	}
 	return n.command.run("notify-send",
 		"--app-name="+notification.AppName,
@@ -84,7 +84,7 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	)
 }
 
-func (n aiDesktopNotifier) activationScript(notification aiNotification, icon string) (string, bool) {
+func (n aiDesktopNotifier) dbusActivationScript(notification aiNotification, icon string) (string, bool) {
 	paneID := strings.TrimSpace(notification.TargetPane)
 	if paneID == "" {
 		return "", false
@@ -93,16 +93,32 @@ func (n aiDesktopNotifier) activationScript(notification aiNotification, icon st
 	if err != nil || strings.TrimSpace(binaryPath) == "" {
 		return "", false
 	}
+	if n.command.readTrimmed("command", "-v", "busctl") == "" ||
+		n.command.readTrimmed("command", "-v", "dbus-monitor") == "" ||
+		n.command.readTrimmed("command", "-v", "timeout") == "" {
+		return "", false
+	}
 
 	args := []string{
-		"notify-send",
-		"--app-name=" + notification.AppName,
-		"--icon=" + icon,
-		"--urgency=" + notification.Urgency,
-		"--action=open=Open pane",
-		"--wait",
+		"busctl",
+		"--user",
+		"call",
+		"org.freedesktop.Notifications",
+		"/org/freedesktop/Notifications",
+		"org.freedesktop.Notifications",
+		"Notify",
+		"susssasa{sv}i",
+		notification.AppName,
+		"0",
+		icon,
 		notification.Summary,
 		notification.Body,
+		"2",
+		"open",
+		"Open pane",
+		"0",
+		"--",
+		"-1",
 	}
 	quoted := make([]string, 0, len(args))
 	for _, arg := range args {
@@ -110,8 +126,11 @@ func (n aiDesktopNotifier) activationScript(notification aiNotification, icon st
 	}
 	focusCommand := shellQuote(binaryPath) + " tmux focus-pane " + shellQuote(paneID)
 	script := "(" +
-		"action=$(" + strings.Join(quoted, " ") + "); " +
-		"if [ \"$action\" = open ]; then " + focusCommand + " >/dev/null 2>&1 || true; fi" +
+		"id=$(" + strings.Join(quoted, " ") + " | awk '{print $2}'); " +
+		"[ -n \"$id\" ] || exit 0; " +
+		"timeout 300 dbus-monitor --session " + shellQuote("type='signal',sender='org.freedesktop.Notifications',interface='org.freedesktop.Notifications',member='ActionInvoked'") +
+		" | awk -v id=\"$id\" " + shellQuote(`BEGIN{seen=0;found=0} /uint32/ {seen=($2==id)} seen && /string "open"/ {found=1; exit} END{exit found?0:1}`) +
+		" && " + focusCommand + " >/dev/null 2>&1 || true" +
 		") >/dev/null 2>&1 &"
 	return script, true
 }

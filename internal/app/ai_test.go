@@ -352,8 +352,11 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 	cmd := testAICommand(home)
 	cmd.now = func() time.Time { return time.Unix(1000, 0) }
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
-			return []byte("/usr/bin/notify-send\n"), nil
+		if name == "command" && len(args) == 2 && args[0] == "-v" {
+			switch args[1] {
+			case "notify-send", "busctl", "dbus-monitor", "timeout":
+				return []byte("/usr/bin/" + args[1] + "\n"), nil
+			}
 		}
 		if name == "git" {
 			switch {
@@ -401,11 +404,15 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
 	}
 	for _, want := range []string{
-		"notify-send",
-		"--app-name=projmux.TmuxCodex",
-		"--icon=" + filepath.Join(home, ".local", "share", "projmux", "icons", "codex.svg"),
-		"--urgency=critical",
-		"--action=open=Open pane",
+		"busctl",
+		"org.freedesktop.Notifications",
+		"Notify",
+		"projmux.TmuxCodex",
+		filepath.Join(home, ".local", "share", "projmux", "icons", "codex.svg"),
+		"open",
+		"Open pane",
+		"dbus-monitor",
+		"ActionInvoked",
 		"Codex 승인 필요 · approval needed",
 		"검토 대기: approval needed · projmux/main",
 		"/tmp/projmux' tmux focus-pane '%2",
@@ -572,8 +579,11 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 	cmd := testAICommand(home)
 	cmd.now = func() time.Time { return time.Unix(1000, 0) }
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
-			return []byte("/usr/bin/notify-send\n"), nil
+		if name == "command" && len(args) == 2 && args[0] == "-v" {
+			switch args[1] {
+			case "notify-send", "busctl", "dbus-monitor", "timeout":
+				return []byte("/usr/bin/" + args[1] + "\n"), nil
+			}
 		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
@@ -603,10 +613,11 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 
 	commands := cmdRecorder(cmd).commands
 	for _, want := range []string{
-		"notify-send",
-		"--app-name=projmux.TmuxCodex",
-		"--icon=" + filepath.Join(home, ".local", "share", "projmux", "icons", "claude.svg"),
-		"--urgency=critical",
+		"busctl",
+		"projmux.TmuxCodex",
+		filepath.Join(home, ".local", "share", "projmux", "icons", "claude.svg"),
+		"Open pane",
+		"dbus-monitor",
 		"Claude 승인 필요 · approval needed",
 		"/tmp/projmux' tmux focus-pane '%8",
 	} {
