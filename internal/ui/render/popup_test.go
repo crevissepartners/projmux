@@ -20,7 +20,7 @@ func TestRenderPopupPreviewWithSelectedWindowAndPane(t *testing.T) {
 		},
 		Panes: []preview.Pane{
 			{WindowIndex: "2", Index: "3", Title: "server", Command: "go", Path: "~rp/app"},
-			{WindowIndex: "2", Index: "4", Title: "tests", Command: "gotest", Path: "~rp/app"},
+			{WindowIndex: "2", Index: "4", Title: "tests", AttentionState: "reply", AIState: "waiting", AIAgent: "codex", AITopic: "approval needed", AttentionFocusArmed: "1", Command: "gotest", Path: "~rp/app"},
 		},
 		PaneSnapshot: "go test ./...\nok",
 	})
@@ -32,13 +32,14 @@ func TestRenderPopupPreviewWithSelectedWindowAndPane(t *testing.T) {
 		"  \x1b[2mpane\x1b[0m  4 (window 2)\n" +
 		"  \x1b[2mcmd\x1b[0m  gotest\n" +
 		"  \x1b[2mtitle\x1b[0m  tests\n" +
+		"  \x1b[2mmeta\x1b[0m  att=reply ai=waiting agent=codex topic=approval needed armed=1\n" +
 		"  \x1b[2mpath\x1b[0m  ~rp/app\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
 		"[1] shell               1p  ~/\n" +
 		"\x1b[1m\x1b[32m[2] app                 2p  ~rp/app\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
 		"[2.3] server             go         ~rp/app\n" +
-		"\x1b[1m\x1b[32m[2.4] tests              gotest     ~rp/app\x1b[0m\n\n" +
+		"\x1b[1m\x1b[32m[2.4] tests              gotest     ~rp/app  \x1b[2matt=reply ai=waiting agent=codex topic=approval needed armed=1\x1b[0m\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPane Snapshot\x1b[0m\n" +
 		"\x1b[2m────────────────────────────────────────────────────────────────\x1b[0m\n" +
 		"go test ./...\nok\n"

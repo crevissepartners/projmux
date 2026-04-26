@@ -77,15 +77,20 @@ type Window struct {
 
 // Pane describes a tmux pane inventory row.
 type Pane struct {
-	ID             string
-	SessionName    string
-	WindowIndex    int
-	PaneIndex      int
-	Title          string
-	AttentionState string
-	Command        string
-	Path           string
-	Active         bool
+	ID                  string
+	SessionName         string
+	WindowIndex         int
+	PaneIndex           int
+	Title               string
+	AttentionState      string
+	AIState             string
+	AIAgent             string
+	AITopic             string
+	AttentionAck        string
+	AttentionFocusArmed string
+	Command             string
+	Path                string
+	Active              bool
 }
 
 // WindowPane describes a tmux pane inventory row scoped to a single window.
@@ -267,7 +272,7 @@ func (c *Client) ListSessionWindows(ctx context.Context, sessionName string) ([]
 
 // ListAllPanes lists tmux panes across all sessions with active hints.
 func (c *Client) ListAllPanes(ctx context.Context) ([]Pane, error) {
-	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{window_index}\t#{pane_index}\t#{?pane_active,1,0}\t#{pane_title}\t#{@projmux_attention_state}\t#{pane_current_command}\t#{pane_current_path}")
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{window_index}\t#{pane_index}\t#{?pane_active,1,0}\t#{pane_title}\t#{@projmux_attention_state}\t#{@projmux_ai_state}\t#{@projmux_ai_agent}\t#{@projmux_ai_topic}\t#{@projmux_attention_ack}\t#{@projmux_attention_focus_armed}\t#{pane_current_command}\t#{pane_current_path}")
 	if err != nil {
 		return nil, fmt.Errorf("list tmux panes: %w", err)
 	}
@@ -1002,11 +1007,8 @@ func parseAllPanes(output []byte) ([]Pane, error) {
 			continue
 		}
 
-		fields := strings.Split(rawLine, "\t")
-		if len(fields) == 8 {
-			fields = append(fields[:6], append([]string{""}, fields[6:]...)...)
-		}
-		if len(fields) != 9 {
+		fields := normalizeAllPaneFields(strings.Split(rawLine, "\t"))
+		if len(fields) != 14 {
 			return nil, fmt.Errorf("parse tmux panes: malformed row %q", rawLine)
 		}
 
@@ -1029,19 +1031,36 @@ func parseAllPanes(output []byte) ([]Pane, error) {
 		}
 
 		panes = append(panes, Pane{
-			ID:             strings.TrimSpace(fields[1]),
-			SessionName:    sessionName,
-			WindowIndex:    windowIndex,
-			PaneIndex:      paneIndex,
-			Title:          strings.TrimSpace(fields[5]),
-			AttentionState: strings.TrimSpace(fields[6]),
-			Command:        strings.TrimSpace(fields[7]),
-			Path:           strings.TrimSpace(fields[8]),
-			Active:         active,
+			ID:                  strings.TrimSpace(fields[1]),
+			SessionName:         sessionName,
+			WindowIndex:         windowIndex,
+			PaneIndex:           paneIndex,
+			Title:               strings.TrimSpace(fields[5]),
+			AttentionState:      strings.TrimSpace(fields[6]),
+			AIState:             strings.TrimSpace(fields[7]),
+			AIAgent:             strings.TrimSpace(fields[8]),
+			AITopic:             strings.TrimSpace(fields[9]),
+			AttentionAck:        strings.TrimSpace(fields[10]),
+			AttentionFocusArmed: strings.TrimSpace(fields[11]),
+			Command:             strings.TrimSpace(fields[12]),
+			Path:                strings.TrimSpace(fields[13]),
+			Active:              active,
 		})
 	}
 
 	return panes, nil
+}
+
+func normalizeAllPaneFields(fields []string) []string {
+	switch len(fields) {
+	case 8:
+		fields = append(fields[:6], append([]string{""}, fields[6:]...)...)
+		fallthrough
+	case 9:
+		return append(fields[:7], append([]string{"", "", "", "", ""}, fields[7:]...)...)
+	default:
+		return fields
+	}
 }
 
 func parseWindowPanes(output []byte) ([]WindowPane, error) {

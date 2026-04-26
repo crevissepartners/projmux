@@ -19,6 +19,9 @@ func RenderPopupPreview(model preview.PopupReadModel) string {
 	if pane, ok := selectedPreviewPane(model); ok {
 		writePopupKV(&builder, "cmd", fallbackUnknown(sanitizeCell(pane.Command)))
 		writePopupKV(&builder, "title", fallbackUnknown(sanitizeCell(pane.Title)))
+		if meta := formatPaneMeta(pane); meta != "" {
+			writePopupKV(&builder, "meta", meta)
+		}
 		writePopupKV(&builder, "path", fallbackUnknown(sanitizeCell(pane.Path)))
 	}
 	builder.WriteString("\n")
@@ -156,7 +159,34 @@ func formatPaneSummary(pane preview.Pane) string {
 		path = "-"
 	}
 
-	return "[" + sanitizeCell(pane.WindowIndex) + "." + sanitizeCell(pane.Index) + "] " + padRight(truncateText(title, 18), 18) + " " + padRight(truncateText(command, 10), 10) + " " + truncateText(path, 32)
+	line := "[" + sanitizeCell(pane.WindowIndex) + "." + sanitizeCell(pane.Index) + "] " + padRight(truncateText(title, 18), 18) + " " + padRight(truncateText(command, 10), 10) + " " + truncateText(path, 32)
+	if meta := formatPaneMeta(pane); meta != "" {
+		line += "  " + ansiDim + meta + ansiReset
+	}
+	return line
+}
+
+func formatPaneMeta(pane preview.Pane) string {
+	parts := make([]string, 0, 6)
+	if state := sanitizeCell(pane.AttentionState); state != "" {
+		parts = append(parts, "att="+state)
+	}
+	if state := sanitizeCell(pane.AIState); state != "" {
+		parts = append(parts, "ai="+state)
+	}
+	if agent := sanitizeCell(pane.AIAgent); agent != "" {
+		parts = append(parts, "agent="+agent)
+	}
+	if topic := truncateText(pane.AITopic, 24); topic != "" {
+		parts = append(parts, "topic="+topic)
+	}
+	if ack := sanitizeCell(pane.AttentionAck); ack != "" {
+		parts = append(parts, "ack="+ack)
+	}
+	if armed := sanitizeCell(pane.AttentionFocusArmed); armed != "" {
+		parts = append(parts, "armed="+armed)
+	}
+	return strings.Join(parts, " ")
 }
 
 func writePopupSection(builder *strings.Builder, title string) {

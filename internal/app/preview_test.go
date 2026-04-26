@@ -260,7 +260,7 @@ func TestTmuxPreviewInventoryMapsPaneMetadata(t *testing.T) {
 	inventory := tmuxPreviewInventory{
 		client: stubTmuxPreviewInventoryClient{
 			panes: []inttmux.Pane{
-				{ID: "%1", SessionName: "dev", WindowIndex: 2, PaneIndex: 1, Title: "server", Command: "go", Path: "/repo/dev", Active: true},
+				{ID: "%1", SessionName: "dev", WindowIndex: 2, PaneIndex: 1, Title: "server", AttentionState: "busy", AIState: "thinking", AIAgent: "codex", AITopic: "approval needed", AttentionAck: "1", AttentionFocusArmed: "1", Command: "go", Path: "/repo/dev", Active: true},
 				{SessionName: "other", WindowIndex: 1, PaneIndex: 0, Title: "skip", Command: "zsh", Path: "/tmp"},
 			},
 		},
@@ -272,7 +272,7 @@ func TestTmuxPreviewInventoryMapsPaneMetadata(t *testing.T) {
 	}
 
 	want := []corepreview.Pane{
-		{ID: "%1", SessionName: "dev", WindowIndex: "2", Index: "1", Title: "server", Command: "go", Path: "/repo/dev", Active: true},
+		{ID: "%1", SessionName: "dev", WindowIndex: "2", Index: "1", Title: "server", AttentionState: "busy", AIState: "thinking", AIAgent: "codex", AITopic: "approval needed", AttentionAck: "1", AttentionFocusArmed: "1", Command: "go", Path: "/repo/dev", Active: true},
 	}
 	if !equalPreviewPanes(got, want) {
 		t.Fatalf("SessionPanes() = %#v, want %#v", got, want)
