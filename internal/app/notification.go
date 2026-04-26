@@ -8,14 +8,13 @@ import (
 )
 
 type aiNotification struct {
-	Summary    string
-	Body       string
-	Urgency    string
-	AppName    string
-	Icon       string
-	Tag        string
-	Group      string
-	TargetPane string
+	Summary string
+	Body    string
+	Urgency string
+	AppName string
+	Icon    string
+	Tag     string
+	Group   string
 }
 
 type aiNotifier interface {
@@ -69,9 +68,6 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	if icon == "" {
 		icon = "dialog-information"
 	}
-	if script, ok := n.dbusActivationScript(notification, icon); ok {
-		return n.command.run("sh", "-c", script)
-	}
 	if n.command.readTrimmed("command", "-v", "notify-send") == "" {
 		return errors.New("notify-send is unavailable")
 	}
@@ -82,63 +78,6 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 		notification.Summary,
 		notification.Body,
 	)
-}
-
-func (n aiDesktopNotifier) dbusActivationScript(notification aiNotification, icon string) (string, bool) {
-	paneID := strings.TrimSpace(notification.TargetPane)
-	if paneID == "" {
-		return "", false
-	}
-	if n.command.readTrimmed("command", "-v", "busctl") == "" ||
-		n.command.readTrimmed("command", "-v", "dbus-monitor") == "" ||
-		n.command.readTrimmed("command", "-v", "timeout") == "" ||
-		n.command.readTrimmed("command", "-v", "tmux") == "" {
-		return "", false
-	}
-
-	args := []string{
-		"busctl",
-		"--user",
-		"call",
-		"org.freedesktop.Notifications",
-		"/org/freedesktop/Notifications",
-		"org.freedesktop.Notifications",
-		"Notify",
-		"susssasa{sv}i",
-		notification.AppName,
-		"0",
-		icon,
-		notification.Summary,
-		notification.Body,
-		"2",
-		"default",
-		"Open pane",
-		"0",
-		"--",
-		"-1",
-	}
-	quoted := make([]string, 0, len(args))
-	for _, arg := range args {
-		quoted = append(quoted, shellQuote(arg))
-	}
-	focusPrefix := ""
-	if tmuxEnv := strings.TrimSpace(n.command.env("TMUX")); tmuxEnv != "" {
-		focusPrefix = "TMUX=" + shellQuote(tmuxEnv) + " "
-	}
-	focusCommand := focusPrefix + "tmux switch-client -t " + shellQuote(paneID) + " >/dev/null 2>&1"
-	script := "(" +
-		"id=$(" + strings.Join(quoted, " ") + " | awk '{print $2}'); " +
-		"[ -n \"$id\" ] || exit 0; " +
-		"timeout 300 dbus-monitor --session " + shellQuote("type='signal',interface='org.freedesktop.Notifications',member='ActionInvoked'") +
-		" | while IFS= read -r line; do " +
-		"case \"$line\" in " +
-		"*\"uint32 $id\"*) seen=1 ;; " +
-		"*\"string \"*) if [ \"${seen:-}\" = 1 ]; then " + focusCommand + "; break; fi ;; " +
-		"esac; " +
-		"done" +
-		" || true" +
-		") >/dev/null 2>&1 &"
-	return script, true
 }
 
 func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification) error {

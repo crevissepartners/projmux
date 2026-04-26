@@ -352,20 +352,10 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 	}
 	cmd := testAICommand(home)
 	cmd.now = func() time.Time { return time.Unix(1000, 0) }
-	cmd.lookupEnv = func(name string) string {
-		switch name {
-		case "HOME":
-			return home
-		case "TMUX":
-			return "/tmp/tmux-1000/projmux,1,2"
-		default:
-			return ""
-		}
-	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "command" && len(args) == 2 && args[0] == "-v" {
 			switch args[1] {
-			case "notify-send", "busctl", "dbus-monitor", "timeout", "tmux":
+			case "notify-send":
 				return []byte("/usr/bin/" + args[1] + "\n"), nil
 			}
 		}
@@ -414,21 +404,15 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
 	}
+	if !containsAICommand(commands, "notify-send") {
+		t.Fatalf("commands = %#v, want notify-send dispatch", commands)
+	}
 	for _, want := range []string{
-		"busctl",
-		"org.freedesktop.Notifications",
-		"Notify",
+		"--app-name=projmux.TmuxCodex",
 		"projmux.TmuxCodex",
 		filepath.Join(home, ".local", "share", "projmux", "icons", "codex.svg"),
-		"default",
-		"Open pane",
-		"dbus-monitor",
-		"ActionInvoked",
-		"while IFS= read -r line",
-		"TMUX='",
 		"Codex 승인 필요 · approval needed",
 		"검토 대기: approval needed · projmux/main",
-		"tmux switch-client -t '%2",
 	} {
 		if !containsAICommandArgSubstring(commands, want) {
 			t.Fatalf("commands = %#v, want notification shell containing %q", commands, want)
@@ -594,7 +578,7 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "command" && len(args) == 2 && args[0] == "-v" {
 			switch args[1] {
-			case "notify-send", "busctl", "dbus-monitor", "timeout", "tmux":
+			case "notify-send":
 				return []byte("/usr/bin/" + args[1] + "\n"), nil
 			}
 		}
@@ -625,14 +609,13 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 	}
 
 	commands := cmdRecorder(cmd).commands
+	if !containsAICommand(commands, "notify-send") {
+		t.Fatalf("commands = %#v, want notify-send dispatch", commands)
+	}
 	for _, want := range []string{
-		"busctl",
 		"projmux.TmuxCodex",
 		filepath.Join(home, ".local", "share", "projmux", "icons", "claude.svg"),
-		"Open pane",
-		"dbus-monitor",
 		"Claude 승인 필요 · approval needed",
-		"tmux switch-client -t '%8",
 	} {
 		if !containsAICommandArgSubstring(commands, want) {
 			t.Fatalf("commands = %#v, want metadata-derived Claude notification containing %q", commands, want)

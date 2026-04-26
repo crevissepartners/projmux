@@ -331,29 +331,6 @@ func TestTmuxRebalancePanesSelectsMultiPaneWindows(t *testing.T) {
 	}
 }
 
-func TestTmuxFocusPaneSwitchesToResolvedPaneTarget(t *testing.T) {
-	t.Parallel()
-
-	runner := &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "display-message", "-p", "-t", "%42", "#S\t#{window_index}\t#{pane_index}"}, "\x00"): "repo\t3\t1\n",
-		},
-	}
-	cmd := &tmuxCommand{runner: runner}
-
-	if err := cmd.Run([]string{"focus-pane", "%42"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"display-message", "-p", "-t", "%42", "#S\t#{window_index}\t#{pane_index}"}},
-		{name: "tmux", args: []string{"switch-client", "-t", "repo:3.1"}},
-	}
-	if !reflect.DeepEqual(runner.calls, want) {
-		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
-	}
-}
-
 func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 	t.Parallel()
 

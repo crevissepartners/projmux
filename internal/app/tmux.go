@@ -72,8 +72,6 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runPopupSessions(fs.Args()[1:], stderr)
 	case "popup-toggle":
 		return c.runPopupToggle(fs.Args()[1:], stderr)
-	case "focus-pane":
-		return c.runFocusPane(fs.Args()[1:], stderr)
 	case "rebalance-panes":
 		return c.runRebalancePanes(fs.Args()[1:], stderr)
 	case "print-config":
@@ -111,34 +109,6 @@ func (c *tmuxCommand) runRebalancePanes(args []string, stderr io.Writer) error {
 			continue
 		}
 		_, _ = c.runner.Run(context.Background(), "tmux", "select-layout", "-t", strings.TrimSpace(windowID), "-E")
-	}
-	return nil
-}
-
-func (c *tmuxCommand) runFocusPane(args []string, stderr io.Writer) error {
-	if len(args) != 1 {
-		printTmuxUsage(stderr)
-		return fmt.Errorf("tmux focus-pane requires exactly 1 argument: <pane>")
-	}
-	paneID := strings.TrimSpace(args[0])
-	if paneID == "" {
-		return nil
-	}
-	if c.runner == nil {
-		return errors.New("configure tmux runner: tmux runner is not configured")
-	}
-
-	out, err := c.runner.Run(context.Background(), "tmux", "display-message", "-p", "-t", paneID, "#S\t#{window_index}\t#{pane_index}")
-	if err != nil {
-		return fmt.Errorf("resolve tmux pane target %q: %w", paneID, err)
-	}
-	fields := strings.Split(strings.TrimSpace(string(out)), "\t")
-	if len(fields) != 3 || strings.TrimSpace(fields[0]) == "" || strings.TrimSpace(fields[1]) == "" || strings.TrimSpace(fields[2]) == "" {
-		return fmt.Errorf("resolve tmux pane target %q: unexpected target metadata %q", paneID, strings.TrimSpace(string(out)))
-	}
-	target := fields[0] + ":" + fields[1] + "." + fields[2]
-	if _, err := c.runner.Run(context.Background(), "tmux", "switch-client", "-t", target); err != nil {
-		return fmt.Errorf("focus tmux pane %q: %w", target, err)
 	}
 	return nil
 }
@@ -479,7 +449,6 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux popup-switch")
 	fmt.Fprintln(w, "  projmux tmux popup-sessions")
 	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
-	fmt.Fprintln(w, "  projmux tmux focus-pane <pane>")
 	fmt.Fprintln(w, "  projmux tmux rebalance-panes")
 	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
 	fmt.Fprintln(w, "  projmux tmux print-app-config [--bin <path>]")
