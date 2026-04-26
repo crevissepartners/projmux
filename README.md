@@ -13,7 +13,7 @@ for either its isolated app server or your normal tmux server.
 - Project picker that creates or switches to tmux sessions from directories.
 - Existing-session picker with popup previews for windows and panes.
 - Sidebar and popup surfaces backed by `fzf`.
-- Unified settings picker for AI split defaults and project pins.
+- Nested settings picker for AI split defaults and project pins.
 - Pinned project directories.
 - Persisted preview selection for window and pane cycling.
 - Generated tmux bindings for popup launchers, attention badges, and status bar

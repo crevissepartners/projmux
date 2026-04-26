@@ -13,7 +13,7 @@
 - 프로젝트 디렉터리에서 tmux 세션을 만들거나 기존 세션으로 전환.
 - 기존 세션 목록을 popup으로 보고 window/pane 미리보기.
 - `fzf` 기반 popup 및 sidebar UI.
-- AI split 기본값과 project pin을 한 곳에서 다루는 settings picker.
+- AI split 기본값과 project pin을 중첩 메뉴로 다루는 settings picker.
 - 자주 쓰는 프로젝트 pin 관리.
 - window/pane preview 선택 상태 저장 및 순환.
 - tmux popup launcher, attention badge, status bar segment 설정 생성.

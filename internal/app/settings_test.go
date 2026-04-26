@@ -16,15 +16,20 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	ai := testAICommand(home)
 	switcher := testSettingsSwitchCommand(t, &stubSwitchPinStore{})
 	var calls int
-	var firstOptions intfzf.Options
+	var rootOptions intfzf.Options
+	var aiOptions intfzf.Options
 	cmd := &settingsCommand{
 		ai:       ai,
 		switcher: switcher,
 		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 			calls++
 			if calls == 1 {
-				firstOptions = options
-				return intfzf.Result{Key: "enter", Value: "ai:codex"}, nil
+				rootOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsSectionAI}, nil
+			}
+			if calls == 2 {
+				aiOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixAI + "codex"}, nil
 			}
 			return intfzf.Result{}, nil
 		}),
@@ -33,20 +38,29 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := firstOptions.UI, "settings"; got != want {
-		t.Fatalf("settings UI = %q, want %q", got, want)
+	if got, want := rootOptions.UI, "settings"; got != want {
+		t.Fatalf("root settings UI = %q, want %q", got, want)
 	}
-	if got, want := firstOptions.Prompt, "Settings > "; got != want {
-		t.Fatalf("settings prompt = %q, want %q", got, want)
+	if got, want := rootOptions.Prompt, "Settings > "; got != want {
+		t.Fatalf("root settings prompt = %q, want %q", got, want)
 	}
-	if got, want := firstOptions.Footer, "[projmux]\nEnter: apply  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
-		t.Fatalf("settings footer = %q, want %q", got, want)
+	if got, want := rootOptions.Footer, "[projmux]\nEnter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
-	if !hasEntryPrefix(firstOptions.Entries, "\x1b[35mAI\x1b[0m") {
-		t.Fatalf("settings entries = %#v, want AI entries", firstOptions.Entries)
+	if !hasEntryValue(rootOptions.Entries, settingsSectionAI) {
+		t.Fatalf("root settings entries = %#v, want AI section", rootOptions.Entries)
 	}
-	if !hasEntryPrefix(firstOptions.Entries, "\x1b[36mProject Picker\x1b[0m") {
-		t.Fatalf("settings entries = %#v, want project picker entries", firstOptions.Entries)
+	if !hasEntryValue(rootOptions.Entries, settingsSectionProject) {
+		t.Fatalf("root settings entries = %#v, want project picker section", rootOptions.Entries)
+	}
+	if got, want := aiOptions.UI, "settings-ai"; got != want {
+		t.Fatalf("AI settings UI = %q, want %q", got, want)
+	}
+	if got, want := aiOptions.Prompt, "Settings > AI Settings > "; got != want {
+		t.Fatalf("AI settings prompt = %q, want %q", got, want)
+	}
+	if !hasEntryValue(aiOptions.Entries, settingsBackValue) {
+		t.Fatalf("AI settings entries = %#v, want back entry", aiOptions.Entries)
 	}
 	if got, want := readModeFile(t, home), "codex\n"; got != want {
 		t.Fatalf("mode file = %q, want %q", got, want)
@@ -64,11 +78,20 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 		switcher: switcher,
 		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 			calls++
-			if got, want := options.UI, "settings"; got != want {
-				t.Fatalf("settings UI = %q, want %q", got, want)
-			}
 			if calls == 1 {
-				return intfzf.Result{Key: "enter", Value: "switch:add:/home/tester/source/repos/app"}, nil
+				if got, want := options.UI, "settings"; got != want {
+					t.Fatalf("settings UI = %q, want %q", got, want)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			}
+			if calls == 2 {
+				if got, want := options.UI, "settings-project-picker"; got != want {
+					t.Fatalf("project settings UI = %q, want %q", got, want)
+				}
+				if !hasEntryValue(options.Entries, settingsBackValue) {
+					t.Fatalf("project settings entries = %#v, want back entry", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixSwitch + "add:/home/tester/source/repos/app"}, nil
 			}
 			return intfzf.Result{}, nil
 		}),
@@ -83,6 +106,37 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 	}
 	if got, want := stdout.String(), "pinned: /home/tester/source/repos/app\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubBackReturnsToRoot(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionAI}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 3:
+				if got, want := options.UI, "settings"; got != want {
+					t.Fatalf("settings UI after back = %q, want %q", got, want)
+				}
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
 }
 
@@ -125,9 +179,9 @@ func testSettingsSwitchCommand(t *testing.T, store *stubSwitchPinStore) *switchC
 	}
 }
 
-func hasEntryPrefix(entries []intfzf.Entry, prefix string) bool {
+func hasEntryValue(entries []intfzf.Entry, value string) bool {
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Label, prefix) {
+		if entry.Value == value {
 			return true
 		}
 	}
