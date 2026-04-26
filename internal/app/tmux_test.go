@@ -291,6 +291,8 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane}",
 		"set-hook -g pane-focus-in",
 		"'/tmp/proj mux/bin/projmux' attention clear #{hook_pane}",
+		"set-hook -g after-select-pane",
+		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id}",
 		"set-hook -g pane-exited",
 		"sleep 0.05; '/tmp/proj mux/bin/projmux' tmux rebalance-panes",
 		"set-hook -g after-kill-pane",
