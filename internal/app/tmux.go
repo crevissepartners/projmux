@@ -739,7 +739,7 @@ func tmuxAppConfig(binaryPath string) string {
 		"set -g status-right-length 140",
 		"set -g window-status-separator \" \"",
 		"set -g automatic-rename on",
-		"set -g automatic-rename-format \"#{pane_title}\"",
+		"set -g automatic-rename-format \"#{pane_current_command}\"",
 		"set -g mode-keys vi",
 		"set -sg escape-time 100",
 		"set -g status-style \"bg=colour235,fg=colour245\"",
