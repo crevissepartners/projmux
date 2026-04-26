@@ -30,6 +30,7 @@ const (
 	switchKillExpectKey      = "ctrl-x"
 	switchPinExpectKey       = "alt-p"
 	switchSettingsSentinel   = "__projmux_settings__"
+	switchRead0CardsEnv      = "PROJMUX_FZF_READ0_CARDS"
 	switchContextSessionEnv  = "TMUX_SESSIONIZER_CONTEXT_SESSION"
 	managedRootsEnvVar       = "PROJMUX_MANAGED_ROOTS"
 	legacyManagedRootsEnvVar = "TMUX_SESSIONIZER_ROOTS"
@@ -1143,6 +1144,7 @@ func (c *switchCommand) runPicker(plan switchPlan) (intfzf.Result, error) {
 		UI:         plan.UI,
 		Candidates: plan.Candidates,
 		Entries:    plan.Rows,
+		Read0:      switchRead0CardPOC(c.lookupEnv),
 		Prompt:     "› ",
 		Footer:     switchPickerFooter(plan.UI),
 		ExpectKeys: []string{switchKillExpectKey, switchPinExpectKey},
@@ -1495,14 +1497,23 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 	sortSwitchCandidates(renderCandidates, homeDir)
 	rows := intrender.BuildSwitchRows(renderCandidates)
 	entries := make([]intfzf.Entry, 0, len(rows))
+	read0Cards := switchRead0CardPOC(c.lookupEnv)
 	for _, row := range rows {
+		label := row.Label
+		if read0Cards {
+			label = intrender.FormatSwitchCardLabel(row.Item)
+		}
 		entries = append(entries, intfzf.Entry{
-			Label: row.Label,
+			Label: label,
 			Value: row.Value,
 		})
 	}
 
 	return entries, sessionNames, nil
+}
+
+func switchRead0CardPOC(lookup func(string) string) bool {
+	return envValue(lookup, switchRead0CardsEnv) == "1"
 }
 
 func (c *switchCommand) switchAttentionRanks(ctx context.Context) map[string]int {

@@ -87,6 +87,24 @@ func BuildSwitchPickerItems(candidates []SwitchCandidate) []picker.Item {
 	return items
 }
 
+func FormatSwitchCardLabel(item picker.Item) string {
+	title := sanitizeCell(item.Title)
+	if title == "" {
+		title = sanitizeCell(item.Value)
+	}
+	lines := []string{ansiBold + title + ansiReset}
+	if len(item.Badges) != 0 {
+		lines = append(lines, ansiDim+"  "+strings.Join(sanitizeCells(item.Badges), "  ")+ansiReset)
+	}
+	for _, meta := range sanitizeCells(item.MetaLines) {
+		if meta == "" {
+			continue
+		}
+		lines = append(lines, ansiDim+"  "+meta+ansiReset)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func switchPickerItem(candidate SwitchCandidate) picker.Item {
 	title := sanitizeCell(candidate.DisplayName)
 	if title == "" {
@@ -128,6 +146,18 @@ func switchPickerItem(candidate SwitchCandidate) picker.Item {
 		Badges:        badges,
 		PreviewTarget: candidate.Path,
 	}
+}
+
+func sanitizeCells(values []string) []string {
+	cells := make([]string, 0, len(values))
+	for _, value := range values {
+		value = sanitizeCell(value)
+		if value == "" {
+			continue
+		}
+		cells = append(cells, value)
+	}
+	return cells
 }
 
 func switchPickerPath(candidate SwitchCandidate) string {

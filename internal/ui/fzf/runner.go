@@ -14,6 +14,7 @@ type Options struct {
 	UI             string
 	Candidates     []string
 	Entries        []Entry
+	Read0          bool
 	Prompt         string
 	Header         string
 	Footer         string
@@ -78,7 +79,7 @@ func (r *runner) Run(options Options) (Result, error) {
 	var stderr bytes.Buffer
 
 	cmd := r.newCommand(path, runnerArgs(options, supportsFooter)...)
-	cmd.SetStdin(strings.NewReader(strings.Join(renderedEntries(options), "\n")))
+	cmd.SetStdin(strings.NewReader(renderedInput(options)))
 	cmd.SetStdout(&stdout)
 	cmd.SetStderr(&stderr)
 	if err := cmd.Run(); err != nil {
@@ -89,7 +90,7 @@ func (r *runner) Run(options Options) (Result, error) {
 		return Result{}, fmt.Errorf("run fzf: %w: %s", err, msg)
 	}
 
-	return selectedResult(trimTrailingNewlines(stdout.String()), len(options.ExpectKeys) != 0), nil
+	return selectedResult(trimTrailingRecordTerminators(stdout.String()), len(options.ExpectKeys) != 0), nil
 }
 
 func runnerArgs(options Options, supportsFooter bool) []string {
@@ -104,6 +105,9 @@ func runnerArgs(options Options, supportsFooter bool) []string {
 		"--exit-0",
 		"--scrollbar", "█",
 		"--info", "inline-right",
+	}
+	if options.Read0 {
+		args = append(args, "--read0", "--print0")
 	}
 	if len(options.ExpectKeys) != 0 {
 		args = append(args, "--expect", strings.Join(options.ExpectKeys, ","))
@@ -149,8 +153,16 @@ func defaultSupportsFooter(path string) bool {
 	return strings.Contains(string(out), "--footer")
 }
 
-func trimTrailingNewlines(s string) string {
-	return strings.TrimRight(s, "\r\n")
+func trimTrailingRecordTerminators(s string) string {
+	return strings.TrimRight(s, "\x00\r\n")
+}
+
+func renderedInput(options Options) string {
+	separator := "\n"
+	if options.Read0 {
+		separator = "\x00"
+	}
+	return strings.Join(renderedEntries(options), separator)
 }
 
 func renderedEntries(options Options) []string {

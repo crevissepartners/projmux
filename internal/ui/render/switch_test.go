@@ -187,6 +187,26 @@ func TestBuildSwitchPickerItemsReturnsBackendNeutralRows(t *testing.T) {
 	}
 }
 
+func TestFormatSwitchCardLabelShowsMultilineContext(t *testing.T) {
+	t.Parallel()
+
+	rows := BuildSwitchRows([]SwitchCandidate{{
+		Path:          "/home/tester/source/repos/app",
+		DisplayPath:   "~rp/app",
+		DisplayName:   "app",
+		SessionName:   "repos-app",
+		ModeLabel:     "existing",
+		AttentionRank: 1,
+		Pinned:        true,
+	}})
+
+	got := FormatSwitchCardLabel(rows[0].Item)
+	const want = "\x1b[1mapp\x1b[0m\n\x1b[2m  ready  pinned\x1b[0m\n\x1b[2m  existing\x1b[0m\n\x1b[2m  ~rp/app\x1b[0m"
+	if got != want {
+		t.Fatalf("card label = %q, want %q", got, want)
+	}
+}
+
 func equalStringSlices(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
