@@ -36,7 +36,7 @@ func TestRenderPopupPreviewWithSelectedWindowAndPane(t *testing.T) {
 		"  \x1b[2mpath\x1b[0m  ~rp/app\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
 		"[1] shell               1p\n" +
-		"\x1b[1m\x1b[32m[2] \x1b[32m●\x1b[0m app                 2p\x1b[0m\n\n" +
+		"\x1b[1m\x1b[32m[2] app                 2p\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mPanes\x1b[0m\n" +
 		"[2.3] server             go\n" +
 		"\x1b[1m\x1b[32m[2.4] tests              gotest  \x1b[2mbadge=needs-reply state=waiting-for-you assistant=codex topic=approval needed clears-on-focus=yes\x1b[0m\x1b[0m\n\n" +

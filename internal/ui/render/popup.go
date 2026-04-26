@@ -142,11 +142,7 @@ func formatWindowSummary(window preview.Window, panes []preview.Pane) string {
 	if name == "" {
 		name = "-"
 	}
-	prefix := formatWindowAttentionPrefix(windowAttentionRank(window.Index, panes))
-	if prefix != "" {
-		prefix += " "
-	}
-	return "[" + sanitizeCell(window.Index) + "] " + prefix + padRight(truncateText(name, 18), 18) + " " + padLeft(strconv.Itoa(window.PaneCount), 2) + "p"
+	return "[" + sanitizeCell(window.Index) + "] " + padRight(truncateText(name, 18), 18) + " " + padLeft(strconv.Itoa(window.PaneCount), 2) + "p"
 }
 
 func formatPaneSummary(pane preview.Pane) string {
