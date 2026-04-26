@@ -31,6 +31,8 @@ for either its isolated app server or your normal tmux server.
 - zsh for the generated isolated app config.
 - git for branch/status metadata.
 - kubectl is optional and only needed for Kubernetes status segments.
+- `notify-send` is used for desktop notifications on Linux unless
+  `PROJMUX_NOTIFY_HOOK` is set.
 
 ## Install
 
@@ -78,6 +80,16 @@ Check the binary:
 projmux version
 projmux help
 ```
+
+AI desktop notifications can be routed through a custom executable:
+
+```sh
+export PROJMUX_NOTIFY_HOOK="$HOME/.local/bin/projmux-notify"
+```
+
+The hook receives six arguments: summary, body, urgency, app name, tag, and
+group. When this variable is set, projmux uses the hook instead of its built-in
+desktop notification sender.
 
 That is enough to use the standalone app path. `projmux shell` generates its own
 tmux config and does not require an existing `.tmux.conf` include, zsh framework,

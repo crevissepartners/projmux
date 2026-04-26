@@ -417,6 +417,79 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 	}
 }
 
+func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "projmux")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(home, "notify-hook")
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "PROJMUX_NOTIFY_HOOK":
+			return hook
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
+			t.Fatalf("notify-send lookup should not run when PROJMUX_NOTIFY_HOOK is set")
+		}
+		if name == "git" {
+			switch {
+			case reflect.DeepEqual(args, []string{"-C", work, "rev-parse", "--is-inside-work-tree"}):
+				return []byte("true\n"), nil
+			case reflect.DeepEqual(args, []string{"-C", work, "symbolic-ref", "--quiet", "--short", "HEAD"}):
+				return []byte("main\n"), nil
+			}
+			return nil, os.ErrNotExist
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#{pane_title}"}):
+			return []byte("Codex: answer ready\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#{@projmux_desktop_notified}"}),
+			reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#{@projmux_desktop_notification_key}"}),
+			reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#{@projmux_desktop_notification_at}"}):
+			return []byte("\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#S"}):
+			return []byte("repo\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#W"}):
+			return []byte("dev\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#{pane_active}"}):
+			return []byte("0\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"status", "set", "waiting", "%9"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run status set waiting error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, hook, []string{
+		"Codex 입력 필요 · answer ready",
+		"검토 대기: answer ready · projmux/main",
+		"critical",
+		"projmux.TmuxCodex",
+		"%9",
+		"repo",
+	}) {
+		t.Fatalf("commands = %#v, want notification hook dispatch", commands)
+	}
+	if containsAICommand(commands, "notify-send") {
+		t.Fatalf("commands = %#v, did not expect notify-send with notification hook", commands)
+	}
+}
+
 func TestAIStatusSetWaitingAcksActivePane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)

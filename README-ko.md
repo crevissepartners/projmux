@@ -30,6 +30,8 @@
 - 생성되는 앱 tmux 설정은 zsh를 기본 shell로 사용합니다.
 - git branch/status metadata 표시를 위한 git.
 - kubectl은 선택 사항이며 Kubernetes status segment가 필요할 때만 사용합니다.
+- Linux desktop notification은 기본적으로 `notify-send`를 사용하며,
+  `PROJMUX_NOTIFY_HOOK`을 설정하면 별도 실행 파일로 보낼 수 있습니다.
 
 ## 설치
 
@@ -77,6 +79,16 @@ export PATH="$HOME/.local/bin:$PATH"
 projmux version
 projmux help
 ```
+
+AI desktop notification은 custom executable로 보낼 수 있습니다:
+
+```sh
+export PROJMUX_NOTIFY_HOOK="$HOME/.local/bin/projmux-notify"
+```
+
+hook은 summary, body, urgency, app name, tag, group 순서로 6개 인자를 받습니다.
+이 변수가 설정되어 있으면 projmux는 내장 desktop notification sender 대신 hook을
+사용합니다.
 
 여기까지면 standalone 앱 경로를 사용할 준비가 끝납니다. `projmux shell`은 자체
 tmux 설정을 생성하므로 기존 `.tmux.conf` include나 zsh framework가 필요하지

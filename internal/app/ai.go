@@ -216,9 +216,15 @@ func (c *aiCommand) notifyAI(paneID string) error {
 		return nil
 	}
 
-	summary := aiSummaryForKind(replyKind, agentName, cleanTitle)
-	body := aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName)
-	if err := c.dispatchAINotification(summary, body, aiUrgencyForKind(replyKind), "projmux.TmuxCodex", paneID, sessionName); err != nil {
+	notification := aiNotification{
+		Summary: aiSummaryForKind(replyKind, agentName, cleanTitle),
+		Body:    aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
+		Urgency: aiUrgencyForKind(replyKind),
+		AppName: "projmux.TmuxCodex",
+		Tag:     paneID,
+		Group:   sessionName,
+	}
+	if err := c.notificationNotifier().Notify(notification); err != nil {
 		return nil
 	}
 	c.recordAINotification(paneID, key)
@@ -1011,36 +1017,6 @@ func (c *aiCommand) recordAINotification(paneID, key string) {
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, "@projmux_desktop_notification_key", key)
 	}
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, "@projmux_desktop_notification_at", fmt.Sprintf("%d", c.now().Unix()))
-}
-
-func (c *aiCommand) dispatchAINotification(summary, body, urgency, appName, tag, group string) error {
-	if c.isWSL() {
-		if err := c.dispatchWSLToast(summary, body, appName, tag, group); err == nil {
-			return nil
-		}
-		if c.readTrimmed("command", "-v", "wsl-notify-send.exe") != "" {
-			message := summary
-			if body != "" {
-				message += "\n" + body
-			}
-			if err := c.run("wsl-notify-send.exe", "--category", appName, message); err == nil {
-				return nil
-			}
-		}
-	}
-	if c.readTrimmed("command", "-v", "notify-send") == "" {
-		return errors.New("notify-send is unavailable")
-	}
-	return c.run("notify-send", "--app-name="+appName, "--icon=dialog-information", "--urgency="+urgency, summary, body)
-}
-
-func (c *aiCommand) dispatchWSLToast(summary, body, appName, tag, group string) error {
-	powerShell := c.resolvePowerShell()
-	if powerShell == "" {
-		return errors.New("powershell.exe is unavailable")
-	}
-	script := buildToastPowerShell(summary, body, appName, tag, group)
-	return c.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script))
 }
 
 func (c *aiCommand) resolvePowerShell() string {

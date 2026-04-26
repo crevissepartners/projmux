@@ -40,6 +40,10 @@
 - `projmux ai notify [notify|reset] [pane]`
 - `projmux ai watch-title [pane]`
 
+Set `PROJMUX_NOTIFY_HOOK` to route AI desktop notifications through a custom
+executable. The hook receives summary, body, urgency, app name, tag, and group
+as positional arguments and replaces the built-in sender while configured.
+
 ### Tmux status bar
 - `projmux status git [path]`
 - `projmux status kube [session]`
