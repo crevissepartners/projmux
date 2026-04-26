@@ -100,7 +100,8 @@ func TestRenderSwitchPreviewForSidebarMatchesLegacySections(t *testing.T) {
 		Panes: []corepreview.Pane{
 			{WindowIndex: "1", Index: "0", Title: "shell"},
 			{WindowIndex: "2", Index: "0", Title: "server"},
-			{WindowIndex: "2", Index: "1", Title: "tests"},
+			{WindowIndex: "2", Index: "1", Title: "tests", AttentionState: "busy"},
+			{WindowIndex: "2", Index: "2", Title: "review", AIState: "waiting"},
 		},
 	}, "sidebar")
 
@@ -110,7 +111,7 @@ func TestRenderSwitchPreviewForSidebarMatchesLegacySections(t *testing.T) {
 		"k8s:\x1b[31mkind-dev\x1b[0m/\x1b[34mdefault\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
 		"[1] shell\n" +
-		"[2] server | tests\n"
+		"[2] server | \x1b[33m●\x1b[0m tests | \x1b[32m●\x1b[0m review\n"
 	if got != want {
 		t.Fatalf("RenderSwitchPreview() = %q, want %q", got, want)
 	}

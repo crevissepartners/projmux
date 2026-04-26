@@ -147,13 +147,13 @@ func sidebarWindowTitles(windowIndex string, panes []corepreview.Pane) []string 
 			continue
 		}
 
-		title := sanitizeCell(pane.Title)
+		title := formatSidebarPaneTitle(pane)
 		if title == "" || containsString(unique, title) {
 			continue
 		}
 
 		if len(unique) < 3 {
-			unique = append(unique, formatSidebarPaneTitle(title))
+			unique = append(unique, title)
 			continue
 		}
 		extraCount++
@@ -166,18 +166,54 @@ func sidebarWindowTitles(windowIndex string, panes []corepreview.Pane) []string 
 	return unique
 }
 
-func formatSidebarPaneTitle(title string) string {
+func formatSidebarPaneTitle(pane corepreview.Pane) string {
+	title := sanitizeCell(pane.Title)
+	if title == "" {
+		return ""
+	}
+
+	if badge := sidebarPaneBadge(pane); badge != "" {
+		return badge + " " + trimSidebarPaneTitleMarker(title)
+	}
+
 	switch {
 	case strings.HasPrefix(title, "✳"), strings.HasPrefix(title, "✔"):
-		display := strings.TrimSpace(strings.TrimLeft(title, "✳✔"))
-		return ansiGreen + "●" + ansiReset + " " + display
+		return ansiGreen + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
+	case hasBraillePrefix(title):
+		return ansiYellow + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
+	default:
+		return title
+	}
+}
+
+func sidebarPaneBadge(pane corepreview.Pane) string {
+	switch strings.TrimSpace(pane.AttentionState) {
+	case "busy":
+		return ansiYellow + "●" + ansiReset
+	case "reply":
+		return ansiGreen + "●" + ansiReset
+	}
+
+	switch strings.TrimSpace(pane.AIState) {
+	case "thinking":
+		return ansiYellow + "●" + ansiReset
+	case "waiting":
+		return ansiGreen + "●" + ansiReset
+	default:
+		return ""
+	}
+}
+
+func trimSidebarPaneTitleMarker(title string) string {
+	switch {
+	case strings.HasPrefix(title, "✳"), strings.HasPrefix(title, "✔"):
+		return strings.TrimSpace(strings.TrimLeft(title, "✳✔"))
 	case hasBraillePrefix(title):
 		runes := []rune(title)
-		display := ""
-		if len(runes) > 1 {
-			display = strings.TrimSpace(string(runes[1:]))
+		if len(runes) <= 1 {
+			return ""
 		}
-		return ansiYellow + "●" + ansiReset + " " + display
+		return strings.TrimSpace(string(runes[1:]))
 	default:
 		return title
 	}
