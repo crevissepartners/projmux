@@ -1161,7 +1161,7 @@ func (c *aiCommand) watchInterval() time.Duration {
 func (c *aiCommand) watchSettleLoops() int {
 	loops := parsePositiveInt(c.env("PROJMUX_CODEX_REPLY_SETTLE_LOOPS"))
 	if loops <= 0 {
-		return 3
+		return 75
 	}
 	return loops
 }

@@ -64,7 +64,8 @@ func TestAttentionClearAcksAndStripsPrefix(t *testing.T) {
 
 	runner := &recordingAttentionRunner{
 		outputs: map[string][]byte{
-			"tmux display-message -p -t %3 #{pane_title}": []byte("✔ done\n"),
+			"tmux display-message -p -t %3 #{@projmux_attention_state}": []byte("reply\n"),
+			"tmux display-message -p -t %3 #{pane_title}":               []byte("✔ done\n"),
 		},
 	}
 	cmd := &attentionCommand{runner: runner}
@@ -74,10 +75,33 @@ func TestAttentionClearAcksAndStripsPrefix(t *testing.T) {
 	}
 
 	want := []attentionCall{
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{@projmux_attention_state}"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%3", "@projmux_attention_state"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%3", "@projmux_attention_ack", "1"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{pane_title}"}},
 		{name: "tmux", args: []string{"select-pane", "-T", "done", "-t", "%3"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestAttentionClearKeepsBusyPane(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux display-message -p -t %4 #{@projmux_attention_state}": []byte("busy\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	if err := cmd.Run([]string{"clear", "%4"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []attentionCall{
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%4", "#{@projmux_attention_state}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)

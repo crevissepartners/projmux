@@ -74,6 +74,9 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 		return err
 	}
 
+	if c.paneAttentionState(paneID) == attentionStateBusy {
+		return nil
+	}
 	c.unsetPaneOption(paneID, attentionStateOption)
 	c.setPaneOption(paneID, attentionAckOption, "1")
 
@@ -138,6 +141,14 @@ func (c *attentionCommand) paneTitle(paneID string) string {
 		return ""
 	}
 	return strings.TrimRight(string(output), "\r\n")
+}
+
+func (c *attentionCommand) paneAttentionState(paneID string) string {
+	output, err := c.run("tmux", "display-message", "-p", "-t", paneID, "#{"+attentionStateOption+"}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }
 
 func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindowRow {
