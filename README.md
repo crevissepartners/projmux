@@ -255,8 +255,8 @@ Run `projmux help` or `<command> --help` for the full command surface.
 
 ## Releases
 
-GitHub Actions publishes release archives when a `v*` tag is pushed. The first
-app baseline release is `v0.1.0`.
+GitHub Actions publishes release archives when a `v*` tag is pushed. The current
+app baseline release is `v0.1.1`.
 
 ## How It Finds Projects
 

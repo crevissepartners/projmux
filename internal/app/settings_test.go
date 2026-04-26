@@ -157,7 +157,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		t.Fatalf("settings about entries = %#v, want back entry", aboutOptions.Entries)
 	}
 	for _, want := range []string{
-		"projmux 0.1.0",
+		"projmux 0.1.1",
 		"https://github.com/es5h/projmux",
 		"go install github.com/es5h/projmux/cmd/projmux@latest",
 		"sidebar, sessions, projects",
