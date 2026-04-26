@@ -43,7 +43,6 @@ func TestAppRunTmuxPopupPreviewUsesDefaultOptions(t *testing.T) {
 	wantOptions := inttmux.PopupOptions{
 		Width:         "80%",
 		Height:        "80%",
-		Title:         "projmux: dev",
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 	if !reflect.DeepEqual(popup.options, wantOptions) {
@@ -79,7 +78,6 @@ func TestAppRunTmuxPopupSwitchUsesCurrentPanePathAndDefaultOptions(t *testing.T)
 	wantOptions := inttmux.PopupOptions{
 		Width:         "80%",
 		Height:        "70%",
-		Title:         "projmux switch",
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 	if !reflect.DeepEqual(popup.options, wantOptions) {
@@ -115,7 +113,6 @@ func TestAppRunTmuxPopupSessionsUsesDefaultOptions(t *testing.T) {
 	wantOptions := inttmux.PopupOptions{
 		Width:         "80%",
 		Height:        "75%",
-		Title:         "projmux sessions",
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 	if !reflect.DeepEqual(popup.options, wantOptions) {
@@ -160,7 +157,6 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-y", "0",
 		"-w", "40",
 		"-h", "50",
-		"-T", "projmux sidebar",
 	}
 	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)

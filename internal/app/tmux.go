@@ -399,7 +399,6 @@ func defaultPopupPreviewOptions(sessionName string) inttmux.PopupOptions {
 	return inttmux.PopupOptions{
 		Width:         "80%",
 		Height:        "80%",
-		Title:         "projmux: " + strings.TrimSpace(sessionName),
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 }
@@ -408,7 +407,6 @@ func defaultPopupSwitchOptions() inttmux.PopupOptions {
 	return inttmux.PopupOptions{
 		Width:         "80%",
 		Height:        "70%",
-		Title:         "projmux switch",
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 }
@@ -417,7 +415,6 @@ func defaultPopupSessionsOptions() inttmux.PopupOptions {
 	return inttmux.PopupOptions{
 		Width:         "80%",
 		Height:        "75%",
-		Title:         "projmux sessions",
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 }
@@ -505,12 +502,10 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 	case "session-popup":
 		options.Width = popupSize(ctx.ClientWidth, 80, 120)
 		options.Height = popupSize(ctx.ClientHeight, 70, 28)
-		options.Title = "projmux sessions"
 		commandArgs = []string{"sessions", "--ui=popup"}
 	case "sessionizer":
 		options.Width = popupSize(ctx.ClientWidth, 80, 120)
 		options.Height = popupSize(ctx.ClientHeight, 70, 28)
-		options.Title = "projmux switch"
 		cwd = ctx.ContextDir
 		env["TMUX_SESSIONIZER_CONTEXT_DIR"] = ctx.ContextDir
 		env["TMUX_SESSIONIZER_CONTEXT_SESSION"] = ctx.OriginSession
@@ -519,7 +514,6 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 	case "sessionizer-sidebar":
 		options.Width = popupSize(ctx.ClientWidth, 20, 36)
 		options.Height = popupSize(ctx.ClientHeight, 100, 20)
-		options.Title = "projmux sidebar"
 		options.X = "0"
 		options.Y = "0"
 		cwd = ctx.ContextDir
@@ -530,7 +524,6 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 64)
 		options.Height = popupSize(ctx.ClientHeight, 30, 12)
-		options.Title = "projmux ai launch"
 		cwd = ctx.ContextDir
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
@@ -538,7 +531,6 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 	case "ai-split-settings":
 		options.Width = popupSize(ctx.ClientWidth, 55, 80)
 		options.Height = popupSize(ctx.ClientHeight, 40, 14)
-		options.Title = "projmux ai settings"
 		commandArgs = []string{"ai", "settings"}
 	default:
 		return "", inttmux.PopupOptions{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", mode.Raw)
