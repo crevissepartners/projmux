@@ -282,6 +282,49 @@ func TestAppRunTmuxPopupToggleOpensSettingsHub(t *testing.T) {
 	}
 }
 
+func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
+	t.Parallel()
+
+	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-ai-picker"), "ai-split-picker")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":        "/dev/pts/projmux-test-ai-picker",
+		"#{pane_id}":           "%1",
+		"#{pane_current_path}": "/tmp/work tree",
+		"#{client_width}":      "200",
+		"#{client_height}":     "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "ai-split-picker-right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	wantPrefix := []string{
+		"display-popup",
+		"-t", "%1",
+		"-E",
+		"-d", "/tmp/work tree",
+		"-e", "TMUX_SPLIT_CONTEXT_DIR=/tmp/work tree",
+		"-e", "TMUX_SPLIT_TARGET_PANE=%1",
+		"-w", "96",
+		"-h", "15",
+	}
+	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
+	}
+	command := got.args[len(got.args)-1]
+	if !strings.Contains(command, "'/tmp/projmux' 'ai' 'picker' '--inside' 'right'") {
+		t.Fatalf("popup command = %q, want ai picker command", command)
+	}
+}
+
 func TestAppRunTmuxPopupToggleClosesExistingMarkerWithClientOverride(t *testing.T) {
 	t.Parallel()
 

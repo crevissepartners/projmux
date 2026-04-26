@@ -145,8 +145,12 @@ func formatPopupModeLabel(mode string) string {
 func formatSidebarSwitchLabel(candidate SwitchCandidate) string {
 	parts := make([]string, 0, 5)
 	parts = append(parts, formatAttentionBadge(candidate.AttentionRank))
-	parts = append(parts, formatTagBadge(candidate.Tagged))
-	parts = append(parts, formatPinBadge(candidate.Pinned))
+	if candidate.Tagged {
+		parts = append(parts, formatTagBadge(candidate.Tagged))
+	}
+	if candidate.Pinned {
+		parts = append(parts, formatPinBadge(candidate.Pinned))
+	}
 
 	displayName := sanitizeCell(candidate.DisplayName)
 	if displayName == "" {

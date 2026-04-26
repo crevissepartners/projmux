@@ -99,7 +99,7 @@ func TestBuildSwitchRowsSidebarLeavesNewSessionNameUncolored(t *testing.T) {
 		UI:          "sidebar",
 	}})
 
-	const want = "      app \x1b[2m~rp/app\x1b[0m"
+	const want = "  app \x1b[2m~rp/app\x1b[0m"
 	if got := rows[0].Label; got != want {
 		t.Fatalf("label = %q, want %q", got, want)
 	}
@@ -117,7 +117,7 @@ func TestBuildSwitchRowsSidebarShowsAttentionBadge(t *testing.T) {
 		AttentionRank: 2,
 	}})
 
-	const want = "\x1b[33m●\x1b[0m     \x1b[1m\x1b[32mapp\x1b[0m \x1b[2m~rp/app\x1b[0m"
+	const want = "\x1b[33m●\x1b[0m \x1b[1m\x1b[32mapp\x1b[0m \x1b[2m~rp/app\x1b[0m"
 	if got := rows[0].Label; got != want {
 		t.Fatalf("label = %q, want %q", got, want)
 	}

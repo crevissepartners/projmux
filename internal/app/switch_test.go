@@ -197,7 +197,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
-		{Label: "      app \x1b[2m/tmp/app\x1b[0m", Value: "/tmp/app"},
+		{Label: "  app \x1b[2m/tmp/app\x1b[0m", Value: "/tmp/app"},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -233,7 +233,7 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := gotRunnerOptions.Entries[0].Label, "\x1b[33m●\x1b[0m     \x1b[1m\x1b[32mapp\x1b[0m \x1b[2m/tmp/app\x1b[0m"; got != want {
+	if got, want := gotRunnerOptions.Entries[0].Label, "\x1b[33m●\x1b[0m \x1b[1m\x1b[32mapp\x1b[0m \x1b[2m/tmp/app\x1b[0m"; got != want {
 		t.Fatalf("runner entry = %q, want %q", got, want)
 	}
 }
@@ -417,11 +417,11 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		t.Fatalf("runner candidates = %q, want %q", got, wantCandidates)
 	}
 	wantEntries := []intfzf.Entry{
-		{Label: "      home \x1b[2m~\x1b[0m", Value: fixture.path("home")},
-		{Label: "    \x1b[33m*\x1b[0m app \x1b[2m" + fixture.path("pins/app") + "\x1b[0m", Value: fixture.path("pins/app")},
-		{Label: "      repo-a \x1b[2m~rp/repo-a\x1b[0m", Value: fixture.path("rp/repo-a")},
-		{Label: "      work-a \x1b[2m" + fixture.path("managed/work-a") + "\x1b[0m", Value: fixture.path("managed/work-a")},
-		{Label: "      work-b \x1b[2m" + fixture.path("managed/work-b") + "\x1b[0m", Value: fixture.path("managed/work-b")},
+		{Label: "  home \x1b[2m~\x1b[0m", Value: fixture.path("home")},
+		{Label: "  \x1b[33m*\x1b[0m app \x1b[2m" + fixture.path("pins/app") + "\x1b[0m", Value: fixture.path("pins/app")},
+		{Label: "  repo-a \x1b[2m~rp/repo-a\x1b[0m", Value: fixture.path("rp/repo-a")},
+		{Label: "  work-a \x1b[2m" + fixture.path("managed/work-a") + "\x1b[0m", Value: fixture.path("managed/work-a")},
+		{Label: "  work-b \x1b[2m" + fixture.path("managed/work-b") + "\x1b[0m", Value: fixture.path("managed/work-b")},
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
@@ -492,10 +492,10 @@ func TestNewSwitchCommandInfersRepoRootFromHomeSourceRepos(t *testing.T) {
 	}
 
 	wantEntries := []intfzf.Entry{
-		{Label: "      home \x1b[2m~\x1b[0m", Value: fixture.path("home")},
-		{Label: "      app \x1b[2m~rp/app\x1b[0m", Value: fixture.path("home/source/repos/app")},
-		{Label: "      lib \x1b[2m~rp/lib\x1b[0m", Value: fixture.path("home/source/repos/lib")},
-		{Label: "      repos \x1b[2m~rp\x1b[0m", Value: fixture.path("home/source/repos")},
+		{Label: "  home \x1b[2m~\x1b[0m", Value: fixture.path("home")},
+		{Label: "  app \x1b[2m~rp/app\x1b[0m", Value: fixture.path("home/source/repos/app")},
+		{Label: "  lib \x1b[2m~rp/lib\x1b[0m", Value: fixture.path("home/source/repos/lib")},
+		{Label: "  repos \x1b[2m~rp\x1b[0m", Value: fixture.path("home/source/repos")},
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
