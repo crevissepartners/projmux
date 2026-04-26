@@ -252,7 +252,8 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	settleCount := 0
 	lastBusySignal := ""
 	for {
-		if _, err := c.read("tmux", "display-message", "-p", "-t", paneID, "#{pane_id}"); err != nil {
+		currentPaneID, err := c.read("tmux", "display-message", "-p", "-t", paneID, "#{pane_id}")
+		if err != nil || strings.TrimSpace(string(currentPaneID)) != paneID {
 			return nil
 		}
 		snapshot := c.readAIWatchSnapshot(paneID)

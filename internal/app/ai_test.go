@@ -642,6 +642,24 @@ func TestAIWatchTitlePromotesBusyPaneToThinking(t *testing.T) {
 	}
 }
 
+func TestAIWatchTitleStopsWhenPaneLookupReturnsEmpty(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%8", "#{pane_id}"}) {
+			return []byte("\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"watch-title", "%8"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run watch-title error = %v", err)
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("commands = %#v, want no writes for missing pane", cmdRecorder(cmd).commands)
+	}
+}
+
 func TestAIWatchTitleUsesCapturePaneAsReplySignal(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
