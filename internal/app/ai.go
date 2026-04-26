@@ -217,7 +217,7 @@ func (c *aiCommand) notifyAI(paneID string) error {
 	}
 
 	summary := aiSummaryForKind(replyKind, agentName, cleanTitle)
-	body := aiNotificationBody(aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName, paneID)
+	body := aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName)
 	if err := c.dispatchAINotification(summary, body, aiUrgencyForKind(replyKind), "projmux.TmuxCodex", paneID, sessionName); err != nil {
 		return nil
 	}
@@ -1397,7 +1397,11 @@ func aiProjectName(path string) string {
 	return project
 }
 
-func aiNotificationBody(project, branch, sessionName, windowName, _ string) string {
+func aiNotificationBody(title, project, branch, sessionName, windowName string) string {
+	context := displayAITopic(title)
+	if isGenericAITopic(context) {
+		context = ""
+	}
 	projectPart := ""
 	switch {
 	case project != "" && branch != "":
@@ -1412,8 +1416,12 @@ func aiNotificationBody(project, branch, sessionName, windowName, _ string) stri
 		location = sessionName + ":" + windowName
 	}
 	switch {
+	case context != "" && projectPart != "":
+		return "검토 대기: " + context + " · " + projectPart
+	case context != "":
+		return "검토 대기: " + context
 	case projectPart != "" && location != "":
-		return "검토 대기: " + location + " · " + projectPart
+		return "검토 대기: " + projectPart + " · " + location
 	case projectPart != "":
 		return "검토 대기: " + projectPart
 	default:

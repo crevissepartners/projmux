@@ -408,7 +408,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 		"--icon=dialog-information",
 		"--urgency=critical",
 		"Codex 승인 필요 · approval needed",
-		"검토 대기: repo:dev · projmux/main",
+		"검토 대기: approval needed · projmux/main",
 	}) {
 		t.Fatalf("commands = %#v, want enriched notify-send message", commands)
 	}
@@ -848,10 +848,13 @@ func TestAINotificationMessageLabelsClaudeAndAvoidsRootProject(t *testing.T) {
 	if got, want := aiSummaryForKind("input_required", "Claude", "waiting for input"), "Claude 입력 필요 · waiting for input"; got != want {
 		t.Fatalf("aiSummaryForKind = %q, want %q", got, want)
 	}
-	if got, want := aiNotificationBody("", "", "home", "dev", "%4"), "검토 대기: home:dev"; got != want {
+	if got, want := aiNotificationBody("waiting for input", "", "", "home", "dev"), "검토 대기: waiting for input"; got != want {
 		t.Fatalf("aiNotificationBody = %q, want %q", got, want)
 	}
-	if got, want := aiNotificationBody("projmux", "main", "", "", "%4"), "검토 대기: projmux/main"; got != want {
+	if got, want := aiNotificationBody("", "projmux", "main", "home", "dev"), "검토 대기: projmux/main · home:dev"; got != want {
+		t.Fatalf("aiNotificationBody = %q, want %q", got, want)
+	}
+	if got, want := aiNotificationBody("Codex", "projmux", "main", "", ""), "검토 대기: projmux/main"; got != want {
 		t.Fatalf("aiNotificationBody = %q, want %q", got, want)
 	}
 }
