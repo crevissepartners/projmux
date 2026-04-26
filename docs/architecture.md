@@ -41,13 +41,18 @@ Responsibilities:
 - convert failures into typed errors
 
 ### 3. UI orchestration
-The first implementation can remain `fzf`-driven.
+The first implementation can remain `fzf`-driven, but picker data should be
+modeled independently from fzf rows so richer backends can render multi-line
+cards without changing core selection behavior.
 
 Responsibilities:
 - rows for popup and sidebar views
 - preview rendering
 - keybind-to-action dispatch
 - selection handoff into core actions
+
+Picker-specific display and search rules are tracked in
+[picker-ui-plan.md](picker-ui-plan.md).
 
 This keeps parity with the existing shell workflow while moving state and behavior into Go.
 

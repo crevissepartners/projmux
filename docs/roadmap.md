@@ -35,3 +35,9 @@
 - update generated install flow
 - document setup steps for source and target machines
 - define picker-agnostic popup close/toggle handling so AI picker dismissal does not depend on fzf-specific key bindings
+
+## Milestone 6: Rich picker UI
+- introduce a picker-domain model separate from fzf row encoding
+- keep fzf as the stable fallback backend
+- add an opt-in native picker backend for multi-line card rows and title-focused search
+- port switcher popup/sidebar surfaces after parity tests cover selection, preview, and key actions
