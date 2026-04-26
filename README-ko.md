@@ -86,9 +86,9 @@ AI desktop notification은 custom executable로 보낼 수 있습니다:
 export PROJMUX_NOTIFY_HOOK="$HOME/.local/bin/projmux-notify"
 ```
 
-hook은 summary, body, urgency, app name, tag, group 순서로 6개 인자를 받습니다.
-이 변수가 설정되어 있으면 projmux는 내장 desktop notification sender 대신 hook을
-사용합니다.
+hook은 summary, body, urgency, app name, tag, group, icon path 순서로 7개
+인자를 받습니다. 이 변수가 설정되어 있으면 projmux는 내장 desktop notification
+sender 대신 hook을 사용합니다.
 
 여기까지면 standalone 앱 경로를 사용할 준비가 끝납니다. `projmux shell`은 자체
 tmux 설정을 생성하므로 기존 `.tmux.conf` include나 zsh framework가 필요하지

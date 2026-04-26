@@ -87,9 +87,9 @@ AI desktop notifications can be routed through a custom executable:
 export PROJMUX_NOTIFY_HOOK="$HOME/.local/bin/projmux-notify"
 ```
 
-The hook receives six arguments: summary, body, urgency, app name, tag, and
-group. When this variable is set, projmux uses the hook instead of its built-in
-desktop notification sender.
+The hook receives seven arguments: summary, body, urgency, app name, tag, group,
+and icon path. When this variable is set, projmux uses the hook instead of its
+built-in desktop notification sender.
 
 That is enough to use the standalone app path. `projmux shell` generates its own
 tmux config and does not require an existing `.tmux.conf` include, zsh framework,

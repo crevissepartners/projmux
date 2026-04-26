@@ -405,7 +405,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 	}
 	if !containsAICommandArgs(commands, "notify-send", []string{
 		"--app-name=projmux.TmuxCodex",
-		"--icon=dialog-information",
+		"--icon=" + filepath.Join(home, ".local", "share", "projmux", "icons", "codex.svg"),
 		"--urgency=critical",
 		"Codex 승인 필요 · approval needed",
 		"검토 대기: approval needed · projmux/main",
@@ -482,6 +482,7 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 		"projmux.TmuxCodex",
 		"%9",
 		"repo",
+		filepath.Join(home, ".local", "share", "projmux", "icons", "codex.svg"),
 	}) {
 		t.Fatalf("commands = %#v, want notification hook dispatch", commands)
 	}
@@ -601,7 +602,7 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 	commands := cmdRecorder(cmd).commands
 	if !containsAICommandArgs(commands, "notify-send", []string{
 		"--app-name=projmux.TmuxCodex",
-		"--icon=dialog-information",
+		"--icon=" + filepath.Join(home, ".local", "share", "projmux", "icons", "claude.svg"),
 		"--urgency=critical",
 		"Claude 승인 필요 · approval needed",
 	}) {

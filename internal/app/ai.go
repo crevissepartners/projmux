@@ -221,6 +221,7 @@ func (c *aiCommand) notifyAI(paneID string) error {
 		Body:    aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
 		Urgency: aiUrgencyForKind(replyKind),
 		AppName: "projmux.TmuxCodex",
+		Icon:    c.notificationIcon(agentName),
 		Tag:     paneID,
 		Group:   sessionName,
 	}
