@@ -17,8 +17,8 @@ func RenderPopupPreview(model preview.PopupReadModel) string {
 	writePopupKV(&builder, "windows", sanitizeCell(strconv.Itoa(effectiveWindowCount(model))))
 	writePopupKV(&builder, "pane", formatLegacyPaneSummary(model))
 	if pane, ok := selectedPreviewPane(model); ok {
-		writePopupKV(&builder, "cmd", fallbackUnknown(sanitizeCell(pane.Command)))
-		writePopupKV(&builder, "title", fallbackUnknown(sanitizeCell(pane.Title)))
+		writePopupKV(&builder, "cmd", fallbackUnknown(displayPaneCommand(pane)))
+		writePopupKV(&builder, "title", fallbackUnknown(displayPaneTitle(pane)))
 		if status := formatPaneStatus(pane); status != "" {
 			writePopupKV(&builder, "status", status)
 		}
@@ -146,11 +146,11 @@ func formatWindowSummary(window preview.Window, panes []preview.Pane) string {
 }
 
 func formatPaneSummary(pane preview.Pane) string {
-	title := sanitizeCell(pane.Title)
+	title := displayPaneTitle(pane)
 	if title == "" {
 		title = "-"
 	}
-	command := sanitizeCell(pane.Command)
+	command := displayPaneCommand(pane)
 	if command == "" {
 		command = "-"
 	}
@@ -159,6 +159,34 @@ func formatPaneSummary(pane preview.Pane) string {
 		line += "  " + ansiDim + status + ansiReset
 	}
 	return line
+}
+
+func displayPaneTitle(pane preview.Pane) string {
+	title := sanitizeCell(pane.Title)
+	command := displayPaneCommand(pane)
+	if title == "" {
+		return command
+	}
+	if strings.TrimSpace(pane.AIAgent) == "" && isShellCommand(pane.Command) {
+		return command
+	}
+	return title
+}
+
+func displayPaneCommand(pane preview.Pane) string {
+	if agent := sanitizeCell(pane.AIAgent); agent != "" {
+		return agent
+	}
+	return sanitizeCell(pane.Command)
+}
+
+func isShellCommand(command string) bool {
+	switch strings.TrimSpace(command) {
+	case "sh", "bash", "zsh", "fish", "nu", "xonsh":
+		return true
+	default:
+		return false
+	}
 }
 
 func formatPaneStatus(pane preview.Pane) string {
