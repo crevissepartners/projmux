@@ -31,6 +31,16 @@ escape sequences that projmux maps to tmux `User0` through `User9` keys.
 | `Prefix r` | Open AI split to the right |
 | `Prefix l` | Open AI split below |
 
+## Picker Actions
+
+| Surface | Shortcut | Action |
+| --- | --- | --- |
+| Existing session popup | `Ctrl-X` | Kill the focused session and reopen the popup |
+| Existing session popup | `Left/Right` | Preview previous/next window |
+| Existing session popup | `Alt-Up/Alt-Down` | Preview previous/next pane |
+| Project switcher | `Ctrl-X` | Kill the focused existing session and reopen the picker |
+| Project switcher | `Alt-P` | Pin or unpin the focused directory |
+
 ## CSI-u Map
 
 | CSI-u sequence | tmux key | Action |

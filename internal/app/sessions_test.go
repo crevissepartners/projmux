@@ -52,8 +52,11 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.Footer, "[projmux]\nEnter: switch to previewed target\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+	if got, want := gotOptions.Footer, "[projmux]\nEnter: switch to previewed target\nCtrl-X: kill focused session\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
+	}
+	if got, want := gotOptions.ExpectKeys, []string{sessionsKillExpectKey}; !equalStrings(got, want) {
+		t.Fatalf("runner expect keys = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.Entries, []intfzf.Entry{
 		{Label: "[ ]  \x1b[32m[Attached]\x1b[0m  \x1b[34m3 Windows\x1b[0m  repo-b", Value: "repo-b"},
@@ -116,11 +119,139 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.Footer, "[projmux]\nEnter: switch to previewed target\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+	if got, want := gotOptions.Footer, "[projmux]\nEnter: switch to previewed target\nCtrl-X: kill focused session\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.PreviewWindow, "right,60%,border-left"; got != want {
 		t.Fatalf("runner preview window = %q, want %q", got, want)
+	}
+}
+
+func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) {
+	t.Parallel()
+
+	recentCalls := 0
+	runnerCalls := 0
+	opener := &recordingSessionsOpener{}
+	killer := &recordingSessionsKiller{}
+	var gotOptions []intfzf.Options
+	cmd := &sessionsCommand{
+		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
+			recentCalls++
+			if recentCalls == 1 {
+				return []inttmux.RecentSessionSummary{
+					{Name: "repo-b", Attached: false},
+					{Name: "home", Attached: true},
+				}, nil
+			}
+			return []inttmux.RecentSessionSummary{{Name: "home", Attached: true}}, nil
+		}),
+		runner: sessionsRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			gotOptions = append(gotOptions, options)
+			runnerCalls++
+			if runnerCalls == 1 {
+				return intfzf.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
+			}
+			return intfzf.Result{}, nil
+		}),
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		opener:     opener,
+		killer:     killer,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := len(gotOptions), 2; got != want {
+		t.Fatalf("runner calls = %d, want %d", got, want)
+	}
+	for i, options := range gotOptions {
+		if got, want := options.ExpectKeys, []string{sessionsKillExpectKey}; !equalStrings(got, want) {
+			t.Fatalf("runner expect keys call %d = %q, want %q", i, got, want)
+		}
+	}
+	if got, want := killer.killSessionName, "repo-b"; got != want {
+		t.Fatalf("kill session = %q, want %q", got, want)
+	}
+	if got := opener.openSessionName; got != "" {
+		t.Fatalf("open session called unexpectedly: %q", got)
+	}
+}
+
+func TestSessionsCommandCtrlXSwitchesToFallbackBeforeKillingAttachedSession(t *testing.T) {
+	t.Parallel()
+
+	recentCalls := 0
+	runnerCalls := 0
+	opener := &recordingSessionsOpener{}
+	killer := &recordingSessionsKiller{}
+	cmd := &sessionsCommand{
+		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
+			recentCalls++
+			if recentCalls == 1 {
+				return []inttmux.RecentSessionSummary{
+					{Name: "repo-b", Attached: true},
+					{Name: "home", Attached: false},
+				}, nil
+			}
+			return []inttmux.RecentSessionSummary{{Name: "home", Attached: true}}, nil
+		}),
+		runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			runnerCalls++
+			if runnerCalls == 1 {
+				return intfzf.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
+			}
+			return intfzf.Result{}, nil
+		}),
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		opener:     opener,
+		killer:     killer,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := opener.openSessionName, "home"; got != want {
+		t.Fatalf("fallback open session = %q, want %q", got, want)
+	}
+	if got, want := killer.killSessionName, "repo-b"; got != want {
+		t.Fatalf("kill session = %q, want %q", got, want)
+	}
+}
+
+func TestSessionsCommandCtrlXBlocksAttachedSessionKillWithoutFallback(t *testing.T) {
+	t.Parallel()
+
+	runnerCalls := 0
+	opener := &recordingSessionsOpener{}
+	killer := &recordingSessionsKiller{}
+	cmd := &sessionsCommand{
+		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
+			return []inttmux.RecentSessionSummary{{Name: "repo-b", Attached: true}}, nil
+		}),
+		runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			runnerCalls++
+			if runnerCalls == 1 {
+				return intfzf.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
+			}
+			return intfzf.Result{}, nil
+		}),
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		opener:     opener,
+		killer:     killer,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := killer.killSessionName; got != "" {
+		t.Fatalf("kill session called unexpectedly: %q", got)
+	}
+	if got := opener.openSessionName; got != "" {
+		t.Fatalf("open session called unexpectedly: %q", got)
+	}
+	if got, want := runnerCalls, 2; got != want {
+		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
 }
 
@@ -361,6 +492,16 @@ func (o *recordingSessionsOpener) OpenSessionTarget(_ context.Context, sessionNa
 	o.windowIndex = windowIndex
 	o.paneIndex = paneIndex
 	return o.openErr
+}
+
+type recordingSessionsKiller struct {
+	killSessionName string
+	killErr         error
+}
+
+func (k *recordingSessionsKiller) KillSession(_ context.Context, sessionName string) error {
+	k.killSessionName = sessionName
+	return k.killErr
 }
 
 type recordingSessionsStore struct {

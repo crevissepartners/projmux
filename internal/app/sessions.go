@@ -14,6 +14,8 @@ import (
 	intrender "github.com/es5h/projmux/internal/ui/render"
 )
 
+const sessionsKillExpectKey = "ctrl-x"
+
 type sessionsRecentResolver interface {
 	RecentSessionSummaries(ctx context.Context) ([]inttmux.RecentSessionSummary, error)
 }
@@ -26,6 +28,10 @@ type sessionsOpener interface {
 	OpenSessionTarget(ctx context.Context, sessionName, windowIndex, paneIndex string) error
 }
 
+type sessionsKiller interface {
+	KillSession(ctx context.Context, sessionName string) error
+}
+
 type sessionsRunner interface {
 	Run(options intfzf.Options) (intfzf.Result, error)
 }
@@ -34,6 +40,7 @@ type sessionsCommand struct {
 	recent     sessionsRecentResolver
 	store      sessionsSelectionStore
 	opener     sessionsOpener
+	killer     sessionsKiller
 	runner     sessionsRunner
 	executable func() (string, error)
 }
@@ -44,6 +51,7 @@ func newSessionsCommand() *sessionsCommand {
 		recent:     client,
 		store:      newSessionPopupCommand().store,
 		opener:     client,
+		killer:     client,
 		runner:     intfzf.NewRunner(),
 		executable: os.Executable,
 	}
@@ -93,7 +101,6 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolve sessions executable: %w", err)
 	}
-
 	previewCommand, err := inttmux.BuildSessionPopupPreviewCommand(binaryPath)
 	if err != nil {
 		return fmt.Errorf("build sessions preview command: %w", err)
@@ -116,43 +123,57 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("build sessions cycle-pane next command: %w", err)
 	}
 
-	rows, err := c.buildRows(summaries)
-	if err != nil {
-		return err
-	}
-	result, err := c.runner.Run(intfzf.Options{
-		UI:             *ui,
-		Entries:        rowsToEntries(rows),
-		Prompt:         "› ",
-		Footer:         sessionsPickerFooter(),
-		PreviewCommand: previewCommand,
-		PreviewWindow:  sessionsPreviewWindow(*ui),
-		Bindings: append(pickerCloseBindings(),
-			"left:execute-silent("+cycleWindowPrev+")+refresh-preview",
-			"right:execute-silent("+cycleWindowNext+")+refresh-preview",
-			"alt-up:execute-silent("+cyclePanePrev+")+refresh-preview",
-			"alt-down:execute-silent("+cyclePaneNext+")+refresh-preview",
-		),
-	})
-	if err != nil {
-		return fmt.Errorf("run sessions picker: %w", err)
-	}
-	if result.Value == "" {
+	for {
+		rows, err := c.buildRows(summaries)
+		if err != nil {
+			return err
+		}
+		result, err := c.runner.Run(intfzf.Options{
+			UI:             *ui,
+			Entries:        rowsToEntries(rows),
+			Prompt:         "› ",
+			Footer:         sessionsPickerFooter(),
+			ExpectKeys:     []string{sessionsKillExpectKey},
+			PreviewCommand: previewCommand,
+			PreviewWindow:  sessionsPreviewWindow(*ui),
+			Bindings: append(pickerCloseBindings(),
+				"left:execute-silent("+cycleWindowPrev+")+refresh-preview",
+				"right:execute-silent("+cycleWindowNext+")+refresh-preview",
+				"alt-up:execute-silent("+cyclePanePrev+")+refresh-preview",
+				"alt-down:execute-silent("+cyclePaneNext+")+refresh-preview",
+			),
+		})
+		if err != nil {
+			return fmt.Errorf("run sessions picker: %w", err)
+		}
+		if result.Value == "" {
+			return nil
+		}
+		if result.Key == sessionsKillExpectKey {
+			nextSummaries, err := c.killFocusedSession(context.Background(), summaries, result.Value)
+			if err != nil {
+				return err
+			}
+			if len(nextSummaries) == 0 {
+				return nil
+			}
+			summaries = nextSummaries
+			continue
+		}
+
+		if c.opener == nil {
+			return fmt.Errorf("sessions opener is not configured")
+		}
+		windowIndex, paneIndex, err := c.resolveSelection(result.Value)
+		if err != nil {
+			return err
+		}
+		if err := c.opener.OpenSessionTarget(context.Background(), result.Value, windowIndex, paneIndex); err != nil {
+			return fmt.Errorf("open tmux session %q: %w", result.Value, err)
+		}
+
 		return nil
 	}
-
-	if c.opener == nil {
-		return fmt.Errorf("sessions opener is not configured")
-	}
-	windowIndex, paneIndex, err := c.resolveSelection(result.Value)
-	if err != nil {
-		return err
-	}
-	if err := c.opener.OpenSessionTarget(context.Background(), result.Value, windowIndex, paneIndex); err != nil {
-		return fmt.Errorf("open tmux session %q: %w", result.Value, err)
-	}
-
-	return nil
 }
 
 func (c *sessionsCommand) buildRows(summaries []inttmux.RecentSessionSummary) ([]intrender.SessionRow, error) {
@@ -194,6 +215,59 @@ func (c *sessionsCommand) resolveSelection(sessionName string) (string, string, 
 	return strings.TrimSpace(selection.WindowIndex), strings.TrimSpace(selection.PaneIndex), nil
 }
 
+func (c *sessionsCommand) killFocusedSession(ctx context.Context, summaries []inttmux.RecentSessionSummary, sessionName string) ([]inttmux.RecentSessionSummary, error) {
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		return summaries, nil
+	}
+	if c.killer == nil {
+		return nil, fmt.Errorf("sessions killer is not configured")
+	}
+
+	targetAttached := false
+	targetFound := false
+	fallbackSession := ""
+	nextSummaries := make([]inttmux.RecentSessionSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		name := strings.TrimSpace(summary.Name)
+		if name == "" {
+			continue
+		}
+		if name == sessionName {
+			targetFound = true
+			targetAttached = summary.Attached
+			continue
+		}
+		if fallbackSession == "" {
+			fallbackSession = name
+		}
+		nextSummaries = append(nextSummaries, summary)
+	}
+	if !targetFound {
+		return summaries, nil
+	}
+	if targetAttached {
+		if fallbackSession == "" {
+			return summaries, nil
+		}
+		if c.opener == nil {
+			return nil, fmt.Errorf("sessions opener is not configured")
+		}
+		if err := c.opener.OpenSessionTarget(ctx, fallbackSession, "", ""); err != nil {
+			return nil, fmt.Errorf("open fallback tmux session %q before kill: %w", fallbackSession, err)
+		}
+	}
+	if err := c.killer.KillSession(ctx, sessionName); err != nil {
+		return nil, fmt.Errorf("kill tmux session %q: %w", sessionName, err)
+	}
+
+	refreshed, err := c.recent.RecentSessionSummaries(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve recent tmux sessions after kill: %w", err)
+	}
+	return refreshed, nil
+}
+
 func formatStoredTarget(windowIndex, paneIndex string) string {
 	windowIndex = strings.TrimSpace(windowIndex)
 	paneIndex = strings.TrimSpace(paneIndex)
@@ -216,6 +290,7 @@ func sessionsPreviewWindow(ui string) string {
 func sessionsPickerFooter() string {
 	return projmuxFooter(strings.Join([]string{
 		"Enter: switch to previewed target",
+		"Ctrl-X: kill focused session",
 		"Left/Right: preview window",
 		"Alt-Up/Alt-Down: preview pane",
 	}, "\n"))
