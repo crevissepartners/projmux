@@ -184,6 +184,60 @@ func TestRunnerRunSupportsRead0MultilineEntries(t *testing.T) {
 	}
 }
 
+func TestRunnerRunSupportsRead0ExpectedKeyWithNULSeparator(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommand{stdout: "alt-p\x00workspace\n  ~/workspace\t/home/tester/workspace\x00"}
+
+	r := &runner{
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
+		newCommand:     func(string, ...string) command { return fake },
+	}
+
+	got, err := r.Run(Options{
+		UI:         "popup",
+		Read0:      true,
+		ExpectKeys: []string{"ctrl-x", "alt-p"},
+		Entries: []Entry{
+			{Label: "workspace\n  ~/workspace", Value: "/home/tester/workspace"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got != (Result{Key: "alt-p", Value: "/home/tester/workspace"}) {
+		t.Fatalf("Run() = %#v, want key+value result", got)
+	}
+}
+
+func TestRunnerRunDoesNotTreatMultilineLabelAsExpectedKey(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommand{stdout: "workspace\n  ~/workspace\t/home/tester/workspace\x00"}
+
+	r := &runner{
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
+		newCommand:     func(string, ...string) command { return fake },
+	}
+
+	got, err := r.Run(Options{
+		UI:         "popup",
+		Read0:      true,
+		ExpectKeys: []string{"ctrl-x", "alt-p"},
+		Entries: []Entry{
+			{Label: "workspace\n  ~/workspace", Value: "/home/tester/workspace"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got != (Result{Value: "/home/tester/workspace"}) {
+		t.Fatalf("Run() = %#v, want value without spurious key", got)
+	}
+}
+
 func TestRunnerRunReportsUnavailableBinary(t *testing.T) {
 	t.Parallel()
 

@@ -90,7 +90,7 @@ func (r *runner) Run(options Options) (Result, error) {
 		return Result{}, fmt.Errorf("run fzf: %w: %s", err, msg)
 	}
 
-	return selectedResult(trimTrailingRecordTerminators(stdout.String()), len(options.ExpectKeys) != 0), nil
+	return selectedResult(trimTrailingRecordTerminators(stdout.String()), options.ExpectKeys), nil
 }
 
 func runnerArgs(options Options, supportsFooter bool) []string {
@@ -190,20 +190,37 @@ func renderedEntries(options Options) []string {
 	return lines
 }
 
-func selectedResult(selection string, hasExpectKeys bool) Result {
-	if !hasExpectKeys {
+func selectedResult(selection string, expectKeys []string) Result {
+	if len(expectKeys) == 0 {
 		return Result{Value: selectedValue(selection)}
 	}
 
-	key, selected, ok := strings.Cut(selection, "\n")
-	if !ok {
-		return Result{Key: strings.TrimSpace(key)}
+	if key, selected, ok := cutExpectedKey(selection, expectKeys); ok {
+		return Result{
+			Key:   key,
+			Value: selectedValue(selected),
+		}
 	}
 
-	return Result{
-		Key:   strings.TrimSpace(key),
-		Value: selectedValue(selected),
+	return Result{Value: selectedValue(selection)}
+}
+
+func cutExpectedKey(selection string, expectKeys []string) (string, string, bool) {
+	cutAt := -1
+	for _, separator := range []string{"\n", "\x00"} {
+		if idx := strings.Index(selection, separator); idx >= 0 && (cutAt < 0 || idx < cutAt) {
+			cutAt = idx
+		}
 	}
+	if cutAt < 0 {
+		return "", "", false
+	}
+
+	key := strings.TrimSpace(selection[:cutAt])
+	if key == "" || containsString(expectKeys, key) {
+		return key, selection[cutAt+1:], true
+	}
+	return "", "", false
 }
 
 func selectedValue(selection string) string {
@@ -212,6 +229,15 @@ func selectedValue(selection string) string {
 		return selection
 	}
 	return value
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 type execCommand struct {

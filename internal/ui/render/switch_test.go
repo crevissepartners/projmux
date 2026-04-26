@@ -29,7 +29,7 @@ func TestBuildSwitchRowsFormatsSessionModeAndPath(t *testing.T) {
 	if got, want := rows[0].Item.EffectiveSearchText(), "workspace"; got != want {
 		t.Fatalf("item search text = %q, want %q", got, want)
 	}
-	if got, want := rows[0].Item.MetaLines, []string{"~/workspace [main]"}; !equalStringSlices(got, want) {
+	if got, want := rows[0].Item.MetaLines, []string{"\x1b[38;5;242m~/workspace\x1b[0m \x1b[1;38;5;16;48;5;45m main \x1b[0m"}; !equalStringSlices(got, want) {
 		t.Fatalf("item meta lines = %q, want %q", got, want)
 	}
 }
@@ -181,7 +181,7 @@ func TestBuildSwitchPickerItemsReturnsBackendNeutralRows(t *testing.T) {
 	if got, want := item.Value, "/home/tester/source/repos/app"; got != want {
 		t.Fatalf("value = %q, want %q", got, want)
 	}
-	if got, want := item.MetaLines, []string{"~rp/app [topic]"}; !equalStringSlices(got, want) {
+	if got, want := item.MetaLines, []string{"\x1b[38;5;242m~rp/app\x1b[0m \x1b[1;38;5;16;48;5;45m topic \x1b[0m"}; !equalStringSlices(got, want) {
 		t.Fatalf("meta lines = %q, want %q", got, want)
 	}
 	if got, want := item.Badges, []string{"tagged", "pinned"}; !equalStringSlices(got, want) {
@@ -193,19 +193,23 @@ func TestFormatSwitchCardLabelShowsMultilineContext(t *testing.T) {
 	t.Parallel()
 
 	rows := BuildSwitchRows([]SwitchCandidate{{
-		Path:          "/home/tester/source/repos/app",
-		DisplayPath:   "~rp/app",
-		DisplayName:   "app",
-		SessionName:   "repos-app",
-		ModeLabel:     "existing",
-		GitBranch:     "main",
-		WindowNames:   []string{"shell", "server", "tests"},
+		Path:        "/home/tester/source/repos/app",
+		DisplayPath: "~rp/app",
+		DisplayName: "app",
+		SessionName: "repos-app",
+		ModeLabel:   "existing",
+		GitBranch:   "main",
+		WindowTabs: []SwitchWindowTab{
+			{Name: "shell", Active: true},
+			{Name: "server", AttentionRank: 2},
+			{Name: "tests", AttentionRank: 1},
+		},
 		AttentionRank: 1,
 		Pinned:        true,
 	}})
 
 	got := FormatSwitchCardLabel(rows[0].Item)
-	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[32m●\x1b[0m\n\x1b[2m  ~rp/app [main]\x1b[0m\n\x1b[2m  \x1b[38;5;16;48;5;114m shell \x1b[0m \x1b[38;5;252;48;5;238m server \x1b[0m \x1b[38;5;252;48;5;238m tests \x1b[0m\x1b[0m"
+	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[32m●\x1b[0m \x1b[33m*\x1b[0m\n  \x1b[38;5;242m~rp/app\x1b[0m \x1b[1;38;5;16;48;5;45m main \x1b[0m\n  \x1b[1;38;5;231;48;5;238m shell \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;220m● \x1b[0m\x1b[38;5;245;48;5;235mserver \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;82m● \x1b[0m\x1b[38;5;245;48;5;235mtests \x1b[0m"
 	if got != want {
 		t.Fatalf("card label = %q, want %q", got, want)
 	}

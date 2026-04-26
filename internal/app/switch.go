@@ -1488,7 +1488,7 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 			SessionName:   sessionName,
 			ModeLabel:     modeLabel,
 			GitBranch:     c.resolveGitBranch(candidatePath),
-			WindowNames:   c.switchCardWindowNames(ctx, sessionName, modeLabel),
+			WindowTabs:    c.switchCardWindowTabs(ctx, sessionName, modeLabel),
 			UI:            ui,
 			AttentionRank: attentionRanks[sessionName],
 			Pinned:        pinnedSet[cleanOptionalPath(candidatePath)],
@@ -1508,7 +1508,7 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 	return entries, sessionNames, nil
 }
 
-func (c *switchCommand) switchCardWindowNames(ctx context.Context, sessionName, modeLabel string) []string {
+func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, modeLabel string) []intrender.SwitchWindowTab {
 	if modeLabel != "existing" {
 		return nil
 	}
@@ -1520,7 +1520,12 @@ func (c *switchCommand) switchCardWindowNames(ctx context.Context, sessionName, 
 	if err != nil {
 		return nil
 	}
-	names := make([]string, 0, len(windows))
+	panes, err := inventory.SessionPanes(ctx, sessionName)
+	if err != nil {
+		panes = nil
+	}
+	attentionRanks := switchWindowAttentionRanks(panes)
+	tabs := make([]intrender.SwitchWindowTab, 0, len(windows))
 	for _, window := range windows {
 		name := strings.TrimSpace(window.Name)
 		if name == "" {
@@ -1529,9 +1534,32 @@ func (c *switchCommand) switchCardWindowNames(ctx context.Context, sessionName, 
 		if name == "" {
 			continue
 		}
-		names = append(names, name)
+		tabs = append(tabs, intrender.SwitchWindowTab{
+			Name:          name,
+			AttentionRank: attentionRanks[strings.TrimSpace(window.Index)],
+			Active:        window.Active,
+		})
 	}
-	return names
+	return tabs
+}
+
+func switchWindowAttentionRanks(panes []corepreview.Pane) map[string]int {
+	ranks := make(map[string]int)
+	for _, pane := range panes {
+		windowIndex := strings.TrimSpace(pane.WindowIndex)
+		if windowIndex == "" {
+			continue
+		}
+		rank := ranks[windowIndex]
+		if pane.AttentionState == attentionStateBusy || hasBraillePrefix(pane.Title) {
+			ranks[windowIndex] = 2
+			continue
+		}
+		if rank < 1 && (pane.AttentionState == attentionStateReply || hasAttentionPrefix(pane.Title)) {
+			ranks[windowIndex] = 1
+		}
+	}
+	return ranks
 }
 
 func (c *switchCommand) switchAttentionRanks(ctx context.Context) map[string]int {

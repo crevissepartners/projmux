@@ -19,8 +19,10 @@ const (
 )
 
 const (
-	ansiTabActive   = "\x1b[38;5;16;48;5;114m"
-	ansiTabInactive = "\x1b[38;5;252;48;5;238m"
+	ansiStatusPath  = "\x1b[38;5;242m"
+	ansiStatusGit   = "\x1b[1;38;5;16;48;5;45m"
+	ansiTabActive   = "\x1b[1;38;5;231;48;5;238m"
+	ansiTabInactive = "\x1b[38;5;245;48;5;235m"
 )
 
 type SwitchRow struct {
@@ -36,11 +38,17 @@ type SwitchCandidate struct {
 	SessionName   string
 	ModeLabel     string
 	GitBranch     string
-	WindowNames   []string
+	WindowTabs    []SwitchWindowTab
 	UI            string
 	AttentionRank int
 	Pinned        bool
 	Tagged        bool
+}
+
+type SwitchWindowTab struct {
+	Name          string
+	AttentionRank int
+	Active        bool
 }
 
 func PrettyPath(path, homeDir, repoRoot string) string {
@@ -100,7 +108,7 @@ func FormatSwitchCardLabel(item picker.Item) string {
 		if meta == "" {
 			continue
 		}
-		lines = append(lines, ansiDim+"  "+meta+ansiReset)
+		lines = append(lines, formatSwitchCardMetaLine(meta))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -118,17 +126,10 @@ func switchPickerItem(candidate SwitchCandidate) picker.Item {
 	}
 
 	metaLines := make([]string, 0, 3)
-	meta := switchPickerPath(candidate)
-	if branch := sanitizeCell(candidate.GitBranch); branch != "" {
-		if meta != "" {
-			meta += " "
-		}
-		meta += "[" + branch + "]"
-	}
-	if meta != "" {
+	if meta := formatSwitchPathGitLine(candidate); meta != "" {
 		metaLines = append(metaLines, meta)
 	}
-	if windows := formatSwitchWindowNames(candidate.WindowNames); windows != "" {
+	if windows := formatSwitchWindowTabs(candidate.WindowTabs); windows != "" {
 		metaLines = append(metaLines, windows)
 	}
 
@@ -156,6 +157,13 @@ func switchPickerItem(candidate SwitchCandidate) picker.Item {
 	}
 }
 
+func formatSwitchCardMetaLine(meta string) string {
+	if strings.Contains(meta, "\x1b[") {
+		return "  " + meta
+	}
+	return ansiDim + "  " + meta + ansiReset
+}
+
 func sanitizeCells(values []string) []string {
 	cells := make([]string, 0, len(values))
 	for _, value := range values {
@@ -168,24 +176,44 @@ func sanitizeCells(values []string) []string {
 	return cells
 }
 
-func formatSwitchWindowNames(names []string) string {
-	cells := sanitizeCells(names)
-	if len(cells) == 0 {
+func formatSwitchPathGitLine(candidate SwitchCandidate) string {
+	path := switchPickerPath(candidate)
+	branch := sanitizeCell(candidate.GitBranch)
+	if path == "" && branch == "" {
 		return ""
 	}
-	tabs := make([]string, 0, len(cells))
-	for i, cell := range cells {
-		tabs = append(tabs, formatSwitchWindowTab(cell, i == 0))
+	parts := make([]string, 0, 2)
+	if path != "" {
+		parts = append(parts, ansiStatusPath+path+ansiReset)
+	}
+	if branch != "" {
+		parts = append(parts, ansiStatusGit+" "+branch+" "+ansiReset)
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatSwitchWindowTabs(windows []SwitchWindowTab) string {
+	tabs := make([]string, 0, len(windows))
+	for _, window := range windows {
+		name := sanitizeCell(window.Name)
+		if name == "" {
+			continue
+		}
+		tabs = append(tabs, formatSwitchWindowTab(name, window.AttentionRank, window.Active))
 	}
 	return strings.Join(tabs, " ")
 }
 
-func formatSwitchWindowTab(name string, active bool) string {
+func formatSwitchWindowTab(name string, attentionRank int, active bool) string {
 	style := ansiTabInactive
 	if active {
 		style = ansiTabActive
 	}
-	return style + " " + name + " " + ansiReset
+	badge := formatInlineAttentionBadge(attentionRank)
+	if badge != "" {
+		badge += style
+	}
+	return style + " " + badge + name + " " + ansiReset
 }
 
 func formatSwitchCardTitle(item picker.Item) string {
@@ -212,15 +240,31 @@ func formatSwitchCardTitleText(title, state, value string) string {
 }
 
 func formatSwitchCardStatusBadge(badges []string) string {
+	parts := make([]string, 0, len(badges))
 	for _, badge := range badges {
 		switch sanitizeCell(badge) {
 		case "needs review":
-			return ansiYellow + "●" + ansiReset
+			parts = append(parts, ansiYellow+"●"+ansiReset)
 		case "ready":
-			return ansiGreen + "●" + ansiReset
+			parts = append(parts, ansiGreen+"●"+ansiReset)
+		case "tagged":
+			parts = append(parts, ansiRed+"x"+ansiReset)
+		case "pinned":
+			parts = append(parts, ansiYellow+"*"+ansiReset)
 		}
 	}
-	return ""
+	return strings.Join(parts, " ")
+}
+
+func formatInlineAttentionBadge(rank int) string {
+	switch rank {
+	case 2:
+		return "\x1b[38;5;220m● " + ansiReset
+	case 1:
+		return "\x1b[38;5;82m● " + ansiReset
+	default:
+		return ""
+	}
 }
 
 func switchPickerPath(candidate SwitchCandidate) string {
