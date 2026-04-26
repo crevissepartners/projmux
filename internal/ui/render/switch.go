@@ -18,6 +18,11 @@ const (
 	ansiCyan   = "\x1b[36m"
 )
 
+const (
+	ansiTabActive   = "\x1b[38;5;16;48;5;114m"
+	ansiTabInactive = "\x1b[38;5;252;48;5;238m"
+)
+
 type SwitchRow struct {
 	Label string
 	Value string
@@ -169,10 +174,18 @@ func formatSwitchWindowNames(names []string) string {
 		return ""
 	}
 	tabs := make([]string, 0, len(cells))
-	for _, cell := range cells {
-		tabs = append(tabs, "[ "+cell+" ]")
+	for i, cell := range cells {
+		tabs = append(tabs, formatSwitchWindowTab(cell, i == 0))
 	}
 	return strings.Join(tabs, " ")
+}
+
+func formatSwitchWindowTab(name string, active bool) string {
+	style := ansiTabInactive
+	if active {
+		style = ansiTabActive
+	}
+	return style + " " + name + " " + ansiReset
 }
 
 func formatSwitchCardTitle(item picker.Item) string {

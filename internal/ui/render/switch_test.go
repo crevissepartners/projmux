@@ -205,7 +205,7 @@ func TestFormatSwitchCardLabelShowsMultilineContext(t *testing.T) {
 	}})
 
 	got := FormatSwitchCardLabel(rows[0].Item)
-	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[32m●\x1b[0m\n\x1b[2m  ~rp/app [main]\x1b[0m\n\x1b[2m  [ shell ] [ server ] [ tests ]\x1b[0m"
+	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[32m●\x1b[0m\n\x1b[2m  ~rp/app [main]\x1b[0m\n\x1b[2m  \x1b[38;5;16;48;5;114m shell \x1b[0m \x1b[38;5;252;48;5;238m server \x1b[0m \x1b[38;5;252;48;5;238m tests \x1b[0m\x1b[0m"
 	if got != want {
 		t.Fatalf("card label = %q, want %q", got, want)
 	}
