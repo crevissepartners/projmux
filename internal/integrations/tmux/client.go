@@ -757,6 +757,22 @@ func BuildSwitchSidebarFocusCommand(binaryPath string) (string, error) {
 	return buildExecCommand(binaryPath, "switch", "sidebar-focus") + " {2}", nil
 }
 
+// BuildSwitchSidebarHelpPopupCommand builds the shell command used by fzf
+// bindings to show the compact sidebar key reference in a tmux popup.
+func BuildSwitchSidebarHelpPopupCommand(binaryPath string) (string, error) {
+	binaryPath = strings.TrimSpace(binaryPath)
+	if binaryPath == "" {
+		return "", errors.New("switch sidebar help binary path is required")
+	}
+
+	helpCommand := strings.Join([]string{
+		shellQuote(binaryPath),
+		shellQuote("switch"),
+		shellQuote("sidebar-help"),
+	}, " ") + "; printf '\\nPress Enter to close'; read -r _"
+	return "tmux display-popup -w 56 -h 11 -T 'projmux keys' " + shellQuote(helpCommand), nil
+}
+
 func buildExecCommand(binaryPath string, args ...string) string {
 	quoted := make([]string, 0, len(args)+2)
 	quoted = append(quoted, "exec", shellQuote(binaryPath))

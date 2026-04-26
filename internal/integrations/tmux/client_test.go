@@ -1403,6 +1403,28 @@ func TestBuildSwitchSidebarFocusCommandQuotesBinaryPath(t *testing.T) {
 	}
 }
 
+func TestBuildSwitchSidebarHelpPopupCommandQuotesBinaryPath(t *testing.T) {
+	t.Parallel()
+
+	command, err := BuildSwitchSidebarHelpPopupCommand("/tmp/projmux's bin")
+	if err != nil {
+		t.Fatalf("BuildSwitchSidebarHelpPopupCommand returned error: %v", err)
+	}
+
+	const want = "tmux display-popup -w 56 -h 11 -T 'projmux keys' ''\\''/tmp/projmux'\\''\\'\\'''\\''s bin'\\'' '\\''switch'\\'' '\\''sidebar-help'\\''; printf '\\''\\nPress Enter to close'\\''; read -r _'"
+	if command != want {
+		t.Fatalf("command = %q, want %q", command, want)
+	}
+}
+
+func TestBuildSwitchSidebarHelpPopupCommandRequiresBinaryPath(t *testing.T) {
+	t.Parallel()
+
+	if _, err := BuildSwitchSidebarHelpPopupCommand(" "); err == nil || !strings.Contains(err.Error(), "binary path is required") {
+		t.Fatalf("unexpected error for binary path: %v", err)
+	}
+}
+
 func TestClientEnsureSessionRequiresCWD(t *testing.T) {
 	t.Parallel()
 

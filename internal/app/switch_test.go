@@ -12,6 +12,7 @@ import (
 	"github.com/es5h/projmux/internal/config"
 	"github.com/es5h/projmux/internal/core/candidates"
 	corepreview "github.com/es5h/projmux/internal/core/preview"
+	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
 	intfzf "github.com/es5h/projmux/internal/ui/fzf"
 )
 
@@ -181,7 +182,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotRunnerOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Footer, "Enter: switch/create\nCtrl-X: kill focused session\nAlt-P: pin/unpin focused directory"; got != want {
+	if got, want := gotRunnerOptions.Footer, "Enter: switch/create | C-x: kill | M-p: pin | C-h: help"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=sidebar' {2}"; got != want {
@@ -190,12 +191,17 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotRunnerOptions.PreviewWindow, "down,25%,border-top"; got != want {
 		t.Fatalf("runner preview window = %q, want %q", got, want)
 	}
+	helpCommand, err := inttmux.BuildSwitchSidebarHelpPopupCommand("/tmp/projmux")
+	if err != nil {
+		t.Fatalf("BuildSwitchSidebarHelpPopupCommand() error = %v", err)
+	}
 	if got, want := gotRunnerOptions.Bindings, []string{
 		"esc:abort",
 		"ctrl-n:abort",
 		"alt-1:abort",
 		"alt-2:abort",
 		"alt-3:abort",
+		"ctrl-h:execute-silent(" + helpCommand + ")",
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
@@ -283,12 +289,17 @@ func TestSwitchCommandSidebarUsesContextSessionForInitialPosition(t *testing.T) 
 		t.Fatalf("Run() error = %v", err)
 	}
 
+	helpCommand, err := inttmux.BuildSwitchSidebarHelpPopupCommand("/tmp/projmux")
+	if err != nil {
+		t.Fatalf("BuildSwitchSidebarHelpPopupCommand() error = %v", err)
+	}
 	if got, want := gotRunnerOptions.Bindings, []string{
 		"esc:abort",
 		"ctrl-n:abort",
 		"alt-1:abort",
 		"alt-2:abort",
 		"alt-3:abort",
+		"ctrl-h:execute-silent(" + helpCommand + ")",
 		"start:pos(1)",
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
@@ -314,6 +325,21 @@ func TestSwitchCommandSidebarFocusOpensExistingSession(t *testing.T) {
 	}
 	if got := executor.ensureSessionName; got != "" {
 		t.Fatalf("ensure session called unexpectedly: %q", got)
+	}
+}
+
+func TestSwitchCommandSidebarHelpPrintsKeyReference(t *testing.T) {
+	t.Parallel()
+
+	cmd := &switchCommand{}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"sidebar-help"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	const want = "Sessionizer keys\n\nEnter   switch/create\nCtrl-X  kill focused session\nAlt-P   pin/unpin focused directory\nCtrl-H  show this help\nEsc     close\n"
+	if got := stdout.String(); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 
@@ -435,12 +461,17 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got, want := fakeRunner.last.PreviewWindow, "down,25%,border-top"; got != want {
 		t.Fatalf("runner preview window = %q, want %q", got, want)
 	}
+	helpCommand, err := inttmux.BuildSwitchSidebarHelpPopupCommand("/tmp/projmux")
+	if err != nil {
+		t.Fatalf("BuildSwitchSidebarHelpPopupCommand() error = %v", err)
+	}
 	if got, want := fakeRunner.last.Bindings, []string{
 		"esc:abort",
 		"ctrl-n:abort",
 		"alt-1:abort",
 		"alt-2:abort",
 		"alt-3:abort",
+		"ctrl-h:execute-silent(" + helpCommand + ")",
 		"start:pos(4)",
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
@@ -448,7 +479,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got, want := fakeRunner.last.UI, switchUISidebar; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
-	if got, want := fakeRunner.last.Footer, "Enter: switch/create\nCtrl-X: kill focused session\nAlt-P: pin/unpin focused directory"; got != want {
+	if got, want := fakeRunner.last.Footer, "Enter: switch/create | C-x: kill | M-p: pin | C-h: help"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := fakeExecutor.ensureSessionName, "managed-work-a"; got != want {
