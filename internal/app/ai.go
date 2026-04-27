@@ -174,7 +174,7 @@ func (c *aiCommand) runNotify(args []string, stderr io.Writer) error {
 	case "reset":
 		return c.resetAINotification(paneID)
 	case "notify":
-		return c.notifyAI(paneID)
+		return c.notifyAIForce(paneID)
 	case "help", "--help", "-h":
 		printAIUsage(stderr)
 		return nil
@@ -195,6 +195,14 @@ func (c *aiCommand) resetAINotification(paneID string) error {
 }
 
 func (c *aiCommand) notifyAI(paneID string) error {
+	return c.notifyAIWithMode(paneID, false)
+}
+
+func (c *aiCommand) notifyAIForce(paneID string) error {
+	return c.notifyAIWithMode(paneID, true)
+}
+
+func (c *aiCommand) notifyAIWithMode(paneID string, force bool) error {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
 		return nil
@@ -214,7 +222,7 @@ func (c *aiCommand) notifyAI(paneID string) error {
 	replyEvidence := strings.Join([]string{info.topic, info.title, info.capture}, "\n")
 	replyKind := aiReplyKindForTitle(replyEvidence)
 	key := aiNotificationKey(replyKind, defaultString(cleanTitle, info.title))
-	if c.duplicateAINotificationRecent(paneID, key) {
+	if !force && c.duplicateAINotificationRecent(paneID, key) {
 		c.recordAINotification(paneID, key)
 		return nil
 	}
@@ -1505,7 +1513,7 @@ func aiAttentionMismatch(nextState, attentionState string) bool {
 	}
 }
 
-func buildToastPowerShell(summary, body, appName, tag, group string) string {
+func buildToastPowerShell(summary, body, appName, tag, group, iconPath string) string {
 	tagLine := ""
 	if tag != "" {
 		tagLine = "$toast.Tag = '" + psEscape(truncate64(tag)) + "'"
@@ -1514,12 +1522,24 @@ func buildToastPowerShell(summary, body, appName, tag, group string) string {
 	if group != "" {
 		groupLine = "$toast.Group = '" + psEscape(truncate64(group)) + "'"
 	}
+	iconXML := ""
+	if iconPath != "" {
+		iconXML = "\n      <image placement=\"appLogoOverride\" hint-crop=\"circle\" src=\"" + xmlEscape(iconPath) + "\"/>"
+	}
 	return `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] | Out-Null
-$tpl = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-$nodes = $tpl.GetElementsByTagName('text')
-[void]$nodes[0].AppendChild($tpl.CreateTextNode('` + psEscape(summary) + `'))
-[void]$nodes[1].AppendChild($tpl.CreateTextNode('` + psEscape(body) + `'))
+$xml = @'
+<toast>
+  <visual>
+    <binding template="ToastGeneric">` + iconXML + `
+      <text>` + xmlEscape(summary) + `</text>
+      <text>` + xmlEscape(body) + `</text>
+    </binding>
+  </visual>
+</toast>
+'@
+$tpl = [Windows.Data.Xml.Dom.XmlDocument]::new()
+$tpl.LoadXml($xml)
 $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 ` + tagLine + `
 ` + groupLine + `
@@ -1527,14 +1547,30 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 `
 }
 
-func buildRegisterToastAppIDPowerShell(appID, displayName string) string {
+func buildRegisterToastAppIDPowerShell(appID, displayName, iconURI string) string {
+	iconLine := "Remove-ItemProperty -Path $regPath -Name 'IconUri' -ErrorAction SilentlyContinue"
+	if iconURI != "" {
+		iconLine = "Set-ItemProperty -Path $regPath -Name 'IconUri' -Value '" + psEscape(iconURI) + "' -Type String"
+	}
 	return `$regPath = "HKCU:\SOFTWARE\Classes\AppUserModelId\` + psEscape(appID) + `"
 if (-not (Test-Path $regPath)) {
   New-Item -Path $regPath -Force | Out-Null
 }
 Set-ItemProperty -Path $regPath -Name 'DisplayName' -Value '` + psEscape(displayName) + `' -Type String
 Set-ItemProperty -Path $regPath -Name 'ShowInSettings' -Value 1 -Type DWord
+` + iconLine + `
 `
+}
+
+func xmlEscape(value string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&apos;",
+	)
+	return replacer.Replace(value)
 }
 
 func psEscape(value string) string {

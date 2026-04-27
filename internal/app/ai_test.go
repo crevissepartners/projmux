@@ -507,6 +507,7 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		t.Fatal(err)
 	}
 	psPath := "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+	iconUNC := `\\wsl.localhost\Ubuntu-24.04\` + strings.ReplaceAll(filepath.Join(home, ".local", "share", "projmux", "icons", "codex.png"), "/", `\`)
 	cmd := testAICommand(home)
 	cmd.now = func() time.Time { return time.Unix(1000, 0) }
 	cmd.lookupEnv = func(name string) string {
@@ -527,6 +528,9 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 			case "wsl-notify-send.exe":
 				return nil, os.ErrNotExist
 			}
+		}
+		if name == "wslpath" && reflect.DeepEqual(args, []string{"-w", filepath.Join(home, ".local", "share", "projmux", "icons", "codex.png")}) {
+			return []byte(iconUNC + "\n"), nil
 		}
 		if name == "git" {
 			switch {
@@ -579,6 +583,9 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 	if !strings.Contains(registerScript, "Tmux Codex") {
 		t.Fatalf("register script = %q, want display name", registerScript)
 	}
+	if !strings.Contains(registerScript, iconUNC) {
+		t.Fatalf("register script = %q, want icon uri", registerScript)
+	}
 	toastScript := decodePowerShellEncodedCommand(t, powershellCommands[1])
 	for _, want := range []string{
 		"CreateToastNotifier('projmux.TmuxCodex').Show($toast)",
@@ -586,6 +593,8 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		"$toast.Group = 'repo'",
 		"Codex 승인 필요 · approval needed",
 		"검토 대기: approval needed · projmux/main",
+		iconUNC,
+		"appLogoOverride",
 	} {
 		if !strings.Contains(toastScript, want) {
 			t.Fatalf("toast script = %q, want substring %q", toastScript, want)
@@ -651,8 +660,8 @@ func TestAINotifySkipsRecentDuplicateButRefreshesRecord(t *testing.T) {
 		return []byte("\n"), nil
 	}
 
-	if err := cmd.Run([]string{"notify", "notify", "%3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run notify error = %v", err)
+	if err := cmd.notifyAI("%3"); err != nil {
+		t.Fatalf("notifyAI error = %v", err)
 	}
 	commands := cmdRecorder(cmd).commands
 	if containsAICommand(commands, "notify-send") {
@@ -660,6 +669,69 @@ func TestAINotifySkipsRecentDuplicateButRefreshesRecord(t *testing.T) {
 	}
 	if !containsAICommandArg(commands, "@projmux_desktop_notification_at") {
 		t.Fatalf("commands = %#v, want refreshed notification timestamp", commands)
+	}
+}
+
+func TestAINotifyCommandBypassesDuplicateSuppression(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	cmd.now = func() time.Time { return time.Unix(1000, 0) }
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS":
+			return "120"
+		default:
+			return ""
+		}
+	}
+	key := "input_required|waiting for input"
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && len(args) == 2 && args[0] == "-v" && args[1] == "notify-send" {
+			return []byte("/usr/bin/notify-send\n"), nil
+		}
+		if name == "git" {
+			switch {
+			case reflect.DeepEqual(args, []string{"-C", work, "rev-parse", "--is-inside-work-tree"}):
+				return []byte("true\n"), nil
+			case reflect.DeepEqual(args, []string{"-C", work, "symbolic-ref", "--quiet", "--short", "HEAD"}):
+				return []byte("main\n"), nil
+			}
+			return nil, os.ErrNotExist
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{@projmux_desktop_notified}"}):
+			return []byte("\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{pane_title}"}):
+			return []byte("waiting for input\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{@projmux_desktop_notification_key}"}):
+			return []byte(key + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{@projmux_desktop_notification_at}"}):
+			return []byte("950\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#S"}):
+			return []byte("repo\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#W"}):
+			return []byte("dev\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.Run([]string{"notify", "notify", "%3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run notify error = %v", err)
+	}
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommand(commands, "notify-send") {
+		t.Fatalf("commands = %#v, want notify-send dispatch despite duplicate record", commands)
 	}
 }
 
