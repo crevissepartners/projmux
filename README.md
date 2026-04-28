@@ -114,60 +114,6 @@ make install
 runs `projmux tmux apply` so the live `-L projmux` server picks up new bindings
 without a restart. Override the destination with `INSTALL_DIR=/usr/local/bin`.
 
-## Upgrading
-
-`projmux upgrade` rebuilds the active binary via `go install` and then atomically
-replaces it. The live tmux config is reapplied unless you opt out:
-
-```sh
-projmux upgrade                       # @latest, replace current binary, then apply
-projmux upgrade --ref @v0.2.0          # pin a specific tag
-projmux upgrade --ref @main            # track a branch
-projmux upgrade --target /usr/local/bin/projmux  # replace another path
-projmux upgrade --no-apply             # skip 'projmux tmux apply' afterwards
-projmux upgrade --dry-run              # print the steps without executing
-```
-
-The upgrade reads `PROJDIR`/`RP` from the calling shell when set and memoizes
-the resolved value to `~/.config/projmux/projdir`, so the new binary keeps the
-same project root context as the one it replaces.
-
-Check the binary:
-
-```sh
-projmux version
-projmux help
-```
-
-AI desktop notifications can be routed through a custom executable:
-
-```sh
-export PROJMUX_NOTIFY_HOOK="$HOME/.local/bin/projmux-notify"
-```
-
-The hook receives seven arguments: summary, body, urgency, app name, tag, group,
-and icon path. When this variable is set, projmux uses the hook instead of its
-built-in desktop notification sender.
-
-On WSL, the built-in sender targets Windows toast notifications through
-`powershell.exe`. `projmux` attempts to register the `projmux.TmuxCodex`
-AppUserModelID automatically so the toast channel has a stable display name in
-Windows notification settings.
-
-That is enough to use the standalone app path. `projmux shell` generates its own
-tmux config and does not require an existing `.tmux.conf` include, zsh framework,
-or shell framework.
-
-For development, use:
-
-```sh
-make fmt
-make fix
-make test
-make test-integration
-make test-e2e
-```
-
 ## Quick Start
 
 Launch the isolated projmux tmux app:
@@ -182,6 +128,25 @@ shows path, kube segment, git segment, and clock.
 
 If your terminal emulator needs explicit key forwarding, see
 [Terminal Keybindings](docs/keybindings.md).
+
+## Upgrading
+
+`projmux upgrade` reinstalls the binary via `go install`, atomically replaces
+the active file, and reapplies the live tmux config so a running `-L projmux`
+server picks up new bindings without a restart.
+
+```sh
+projmux upgrade                                  # @latest, replace + apply
+projmux upgrade --ref @v0.2.0                    # pin a specific tag
+projmux upgrade --ref @main                      # track a branch
+projmux upgrade --target /usr/local/bin/projmux  # replace another path
+projmux upgrade --no-apply                       # skip 'projmux tmux apply'
+projmux upgrade --dry-run                        # print the steps only
+```
+
+The upgrade reads `PROJDIR`/`RP` from the calling shell and memoizes the
+resolved value to `~/.config/projmux/projdir`, so the new binary keeps the
+same project root context as the one it replaces.
 
 ## zsh Integration
 
@@ -210,11 +175,6 @@ Day-to-day, projmux is driven by tmux keybindings inside `projmux shell` — see
 [Terminal Keybindings](docs/keybindings.md). For the full CLI surface (pins,
 preview state, status helpers, `upgrade`, etc.), run `projmux help` or
 `<command> --help`.
-
-## Releases
-
-GitHub Actions publishes release archives when a `v*` tag is pushed. The current
-app baseline release is `v0.2.1`.
 
 ## How It Finds Projects
 
@@ -246,41 +206,9 @@ line, `#` comments allowed). It is consulted only when the env vars are unset.
 
 | Variable | Purpose |
 | --- | --- |
-| `PROJDIR` | Sessionizer repo root for the current shell. Wins over `RP`. |
-| `RP` | Legacy repo root env. Honored when `PROJDIR` is unset. |
-| `PROJMUX_MANAGED_ROOTS` | Colon-separated list of search roots. Wins over saved/default. |
-| `TMUX_SESSIONIZER_ROOTS` | Legacy alias for `PROJMUX_MANAGED_ROOTS`. |
-| `PROJMUX_NOTIFY_HOOK` | External executable for AI desktop notifications. |
-| `@projmux_projdir` | tmux user-option declarative source for `PROJDIR`. Set it via `tmux set-option -g @projmux_projdir <path>`. |
-
-When `PROJDIR` (or `RP`) is set explicitly, `projmux` memoizes the resolved
-value to `~/.config/projmux/projdir` so subsequent runs without the env var
-keep the same project root.
-
-## Configuration And State
-
-Default paths follow XDG conventions:
-
-- Config: `~/.config/projmux`
-- State: `~/.local/state/projmux`
-- Cache: `~/.cache/projmux` and tmux-specific cache files under `~/.cache/tmux`
-- Runtime kube session files: `$XDG_RUNTIME_DIR/kube-sessions` when available
-
-Saved files under `~/.config/projmux`:
-
-| File | Contents |
-| --- | --- |
-| `pins` | Pinned project directories (one path per line). |
-| `tags` | Tagged session names (one per line). |
-| `projdir` | Memoized single `PROJDIR` value (auto-written when env is used). |
-| `workdirs` | Persistent search-roots list, one absolute path per line. Managed via Settings. |
-| `tmux.conf` | Isolated `-L projmux` server config, regenerated by `projmux tmux install-app` or `projmux tmux apply`. |
-
-The generated app tmux config lives at:
-
-```text
-~/.config/projmux/tmux.conf
-```
+| `PROJDIR` | Default project root for the current shell. Memoized to `~/.config/projmux/projdir` after first use. |
+| `PROJMUX_MANAGED_ROOTS` | Colon-separated list of search roots. Overrides the saved/default list. |
+| `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in sender. |
 
 ## Scope
 
