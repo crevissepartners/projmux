@@ -283,8 +283,21 @@ func TestAISplitCodexRunsNativeTmuxSplitAndStartsWatcher(t *testing.T) {
 			t.Fatalf("commands = %#v, want AI pane metadata %v", commands, want)
 		}
 	}
-	if !containsAICommandArgSubstring(commands, "cd '"+work+"' && __codex_title='codex:repo'") {
-		t.Fatalf("commands = %#v, want codex launch command with context title", commands)
+	wantLaunchPrefix := "export PATH='" + filepath.Join(home, "bin") + "'\":$PATH\" && cd '" + work + "' && __codex_title='codex:repo'"
+	if !containsAICommandArgSubstring(commands, wantLaunchPrefix) {
+		t.Fatalf("commands = %#v, want codex launch command starting with %q", commands, wantLaunchPrefix)
+	}
+}
+
+func TestAgentLaunchCommandPrependsAgentBinDirToPath(t *testing.T) {
+	cmd := &aiCommand{}
+	got := cmd.agentLaunchCommand("codex", "/home/u/.nvm/versions/node/v24.0.0/bin/codex", "/work/repo", "codex:repo")
+	want := `export PATH='/home/u/.nvm/versions/node/v24.0.0/bin'":$PATH"`
+	if !strings.HasPrefix(got, want+" && ") {
+		t.Fatalf("agentLaunchCommand = %q, want it to start with %q", got, want)
+	}
+	if !strings.Contains(got, "exec '/home/u/.nvm/versions/node/v24.0.0/bin/codex'") {
+		t.Fatalf("agentLaunchCommand = %q, want it to exec the agent binary", got)
 	}
 }
 

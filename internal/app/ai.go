@@ -874,6 +874,10 @@ func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
 func (c *aiCommand) agentLaunchCommand(mode, agentBin, contextDir, title string) string {
 	titleVar := "__" + mode + "_title"
 	parts := []string{}
+	// nvm/fnm/asdf/volta colocate `node` with the agent CLI; `zsh -lc` does not source their init scripts, so without this prepend the agent's `env node` shebang fails and the pane exits immediately.
+	if binDir := filepath.Dir(agentBin); binDir != "" && binDir != "." && binDir != "/" {
+		parts = append(parts, "export PATH="+shellQuote(binDir)+`":$PATH"`)
+	}
 	if contextDir != "" {
 		parts = append(parts, "cd "+shellQuote(contextDir))
 	}
