@@ -93,11 +93,22 @@ export PATH="$HOME/.local/bin:$PATH"
 `$(go env GOPATH)/bin/projmux` binary를 `PATH`에서 더 앞에 있는 디렉터리로
 복사할 수 있습니다.
 
-소스에서 빌드:
+소스에서 빌드 (atomic 설치 + live 적용):
 
 ```sh
 git clone https://github.com/es5h/projmux.git
 cd projmux
+make install
+```
+
+`make install`은 binary를 빌드해 `~/.local/bin/projmux`를 atomically 교체하고,
+바로 `projmux tmux apply`를 실행해 동작 중인 `-L projmux` 서버가 새 binding과
+status segment를 즉시 반영하도록 합니다. 별도로 `source-file`을 호출할 필요가
+없습니다.
+
+설치 없이 빌드만 하려면:
+
+```sh
 make build
 install -m 0755 .bin/projmux ~/.local/bin/projmux
 ```
@@ -107,6 +118,23 @@ install -m 0755 .bin/projmux ~/.local/bin/projmux
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+## 업그레이드
+
+`projmux upgrade`는 `go install`로 binary를 다시 받아 atomically 교체하고
+live tmux 설정을 적용합니다. 기본 동작을 끄고 싶다면 flag를 사용하세요:
+
+```sh
+projmux upgrade                       # @latest로 현재 binary를 교체하고 apply
+projmux upgrade --ref @v0.2.0          # 특정 tag 고정
+projmux upgrade --ref @main            # branch tracking
+projmux upgrade --target /usr/local/bin/projmux  # 다른 경로 교체
+projmux upgrade --no-apply             # 'projmux tmux apply' 생략
+projmux upgrade --dry-run              # 실행 없이 단계만 출력
+```
+
+upgrade는 호출 shell의 `PROJDIR`/`RP`를 읽어 `~/.config/projmux/projdir`에
+memoize 하므로, 새 binary도 같은 프로젝트 루트 컨텍스트를 유지합니다.
 
 설치 확인:
 
@@ -193,6 +221,17 @@ projmux tmux print-config --bin "$(command -v projmux)"
 projmux tmux install-app --bin "$(command -v projmux)"
 ```
 
+격리된 앱 설정을 다시 쓰고 동작 중인 `-L projmux` 서버에 즉시 source-file까지
+적용하려면:
+
+```sh
+projmux tmux apply
+```
+
+`projmux tmux apply`는 `make install`과 `projmux upgrade`가 binary 교체 직후
+호출하는 명령입니다. pin이나 workdir을 바꾼 뒤 동작 중인 서버에 즉시 반영하고
+싶을 때 직접 실행해도 안전합니다.
+
 ## zsh 적용
 
 가장 단순한 방법은 alias입니다:
@@ -248,11 +287,18 @@ tmux 연동 헬퍼:
 ```sh
 projmux tmux install
 projmux tmux install-app
+projmux tmux apply
 projmux tmux popup-toggle <mode>
 projmux tmux rename-pane <pane> <title>
 projmux attention toggle [pane]
 projmux status git [path]
 projmux status kube [session]
+```
+
+자가 업데이트:
+
+```sh
+projmux upgrade [--ref @latest|@vX.Y.Z|@main] [--target /path] [--no-apply] [--dry-run]
 ```
 
 전체 명령은 `projmux help` 또는 `<command> --help`로 확인할 수 있습니다.
@@ -272,6 +318,33 @@ Project...`는 이 filesystem root를 depth 3까지 스캔하므로 `~`나 `~rp`
 프로젝트도 picker 후보로 추가할 수 있습니다. 세션 이름은 정규화된 디렉터리
 경로에서 만들어지므로 같은 프로젝트는 다시 실행해도 같은 tmux 세션으로 연결됩니다.
 
+탐색 root를 영구적으로 커스터마이즈하려면 Project Picker 섹션의 다음 항목을
+사용하세요:
+
+- `+ Add Workdir...` - 디렉터리 하나를 saved workdirs 목록에 누적 추가.
+- `Workdirs` - 저장된 workdir 검토/삭제. 환경변수 `PROJMUX_MANAGED_ROOTS` /
+  `TMUX_SESSIONIZER_ROOTS`가 설정되어 있으면 read-only 행으로 함께 표시되어
+  saved 목록 대신 env list가 우선되는 이유를 한눈에 볼 수 있습니다.
+
+저장 파일은 `~/.config/projmux/workdirs`이며, 절대경로 한 줄당 한 항목이고
+`#`로 시작하는 줄은 주석으로 무시됩니다. env가 설정되어 있을 때는 무시되며
+env가 비었을 때만 사용됩니다.
+
+## 환경 변수
+
+| 변수 | 용도 |
+| --- | --- |
+| `PROJDIR` | 현재 shell의 sessionizer repo root. `RP`보다 우선. |
+| `RP` | legacy repo root env. `PROJDIR`이 비어 있으면 사용. |
+| `PROJMUX_MANAGED_ROOTS` | 콜론 구분 검색 root 목록. saved/default보다 우선. |
+| `TMUX_SESSIONIZER_ROOTS` | `PROJMUX_MANAGED_ROOTS`의 legacy 별칭. |
+| `PROJMUX_NOTIFY_HOOK` | AI desktop notification 외부 실행 파일. |
+| `@projmux_projdir` | tmux user-option. 선언적인 `PROJDIR` 소스. `tmux set-option -g @projmux_projdir <path>`로 설정. |
+
+`PROJDIR` 또는 `RP`가 명시적으로 설정되면 `projmux`는 그 값을
+`~/.config/projmux/projdir`에 memoize 하여, 이후 env가 없어도 같은 프로젝트
+루트가 유지됩니다.
+
 ## 설정과 상태 파일
 
 기본 경로는 XDG 규칙을 따릅니다:
@@ -280,6 +353,16 @@ Project...`는 이 filesystem root를 depth 3까지 스캔하므로 `~`나 `~rp`
 - State: `~/.local/state/projmux`
 - Cache: `~/.cache/projmux`, tmux 관련 cache는 `~/.cache/tmux`
 - Runtime kube session file: 가능하면 `$XDG_RUNTIME_DIR/kube-sessions`
+
+`~/.config/projmux` 아래의 저장 파일:
+
+| 파일 | 내용 |
+| --- | --- |
+| `pins` | pinned 프로젝트 디렉터리 (한 줄당 한 경로). |
+| `tags` | tagged 세션 이름. |
+| `projdir` | memoize된 `PROJDIR` 단일 값 (env 사용 시 자동 기록). |
+| `workdirs` | 저장된 workdir 목록. settings에서 관리. |
+| `tmux.conf` | 격리 `-L projmux` 서버 설정. `projmux tmux install-app` 또는 `projmux tmux apply`가 다시 씀. |
 
 생성된 앱 tmux 설정:
 

@@ -26,9 +26,16 @@
   3. `make test`
   4. `make test-integration`
   5. `make test-e2e`
+- `make install` is the deploy step (build + atomic replace of `~/.local/bin/projmux` + `projmux tmux apply`). Do not run it during routine validation; reserve it for after review when promoting a build.
 - If a target is missing for the area you are changing, add it or leave the repository in a state where the gap is explicit in docs and review notes.
 - If behavior changes, update the maintained test list in [docs/agent-workflow.md](/home/es5h/source/repos/projmux/docs/agent-workflow.md) in the same branch.
 - Do not skip `fmt` or `fix` because tests passed. Formatting, automatic fixes, and test execution are separate gates.
+
+## Configuration And Environment
+- `PROJDIR` (preferred) and `RP` (legacy) supply the sessionizer repo root. `~/.config/projmux/projdir` memoizes whichever value was last seen.
+- `PROJMUX_MANAGED_ROOTS` / `TMUX_SESSIONIZER_ROOTS` provide colon-separated search-root lists. They take priority over the saved file and the default heuristics.
+- `~/.config/projmux/workdirs` stores the cumulative workdirs list managed via the Settings UX. It is read only when no env list is set.
+- `tmux set-option -g @projmux_projdir <path>` is a declarative source for `PROJDIR` that the switch command reads through `tmuxProjdirOption`.
 
 ## Review Expectations
 - Reviews should be small enough to reason about quickly.

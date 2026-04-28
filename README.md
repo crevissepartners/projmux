@@ -94,11 +94,21 @@ As a fallback, add `$(go env GOPATH)/bin` to `PATH` instead, or copy the binary
 from `$(go env GOPATH)/bin/projmux` to a directory that appears earlier on
 `PATH`.
 
-From source:
+From source (atomic install + apply live config):
 
 ```sh
 git clone https://github.com/es5h/projmux.git
 cd projmux
+make install
+```
+
+`make install` builds the binary, atomically replaces `~/.local/bin/projmux`,
+and runs `projmux tmux apply` so the live `-L projmux` server picks up any new
+bindings or status segments without a manual `source-file`.
+
+To build without installing:
+
+```sh
 make build
 install -m 0755 .bin/projmux ~/.local/bin/projmux
 ```
@@ -108,6 +118,24 @@ Make sure `~/.local/bin` is on your `PATH`:
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+## Upgrading
+
+`projmux upgrade` rebuilds the active binary via `go install` and then atomically
+replaces it. The live tmux config is reapplied unless you opt out:
+
+```sh
+projmux upgrade                       # @latest, replace current binary, then apply
+projmux upgrade --ref @v0.2.0          # pin a specific tag
+projmux upgrade --ref @main            # track a branch
+projmux upgrade --target /usr/local/bin/projmux  # replace another path
+projmux upgrade --no-apply             # skip 'projmux tmux apply' afterwards
+projmux upgrade --dry-run              # print the steps without executing
+```
+
+The upgrade reads `PROJDIR`/`RP` from the calling shell when set and memoizes
+the resolved value to `~/.config/projmux/projdir`, so the new binary keeps the
+same project root context as the one it replaces.
 
 Check the binary:
 
@@ -194,6 +222,17 @@ To only regenerate the isolated app config:
 projmux tmux install-app --bin "$(command -v projmux)"
 ```
 
+To regenerate the isolated app config and live-source it on the running
+`-L projmux` socket without restarting the server:
+
+```sh
+projmux tmux apply
+```
+
+`projmux tmux apply` is what `make install` and `projmux upgrade` run after a
+successful binary swap. It is safe to call manually any time you change pin or
+workdir state and want the running server to pick up new sidebar entries.
+
 ## zsh Integration
 
 The lowest-friction setup is an alias:
@@ -251,11 +290,18 @@ Tmux integration helpers:
 ```sh
 projmux tmux install
 projmux tmux install-app
+projmux tmux apply
 projmux tmux popup-toggle <mode>
 projmux tmux rename-pane <pane> <title>
 projmux attention toggle [pane]
 projmux status git [path]
 projmux status kube [session]
+```
+
+Self-update:
+
+```sh
+projmux upgrade [--ref @latest|@vX.Y.Z|@main] [--target /path] [--no-apply] [--dry-run]
 ```
 
 Run `projmux help` or `<command> --help` for the full command surface.
@@ -275,6 +321,33 @@ which scans those filesystem roots up to depth 3 so projects outside `~` and
 `~rp` can be added to the picker. Session names are derived from normalized
 directory paths, so a project keeps the same tmux session name across launches.
 
+For permanent search-root customization, the Project Picker section also
+includes:
+
+- `+ Add Workdir...` - append a single directory to the saved workdirs list.
+- `Workdirs` - review and remove saved workdirs. The same picker also surfaces
+  any active `PROJMUX_MANAGED_ROOTS` / `TMUX_SESSIONIZER_ROOTS` env values as
+  read-only rows so you can see why an env list might be overriding the saved
+  file.
+
+The saved file lives at `~/.config/projmux/workdirs` (one absolute path per
+line, `#` comments allowed). It is consulted only when the env vars are unset.
+
+## Environment Variables
+
+| Variable | Purpose |
+| --- | --- |
+| `PROJDIR` | Sessionizer repo root for the current shell. Wins over `RP`. |
+| `RP` | Legacy repo root env. Honored when `PROJDIR` is unset. |
+| `PROJMUX_MANAGED_ROOTS` | Colon-separated list of search roots. Wins over saved/default. |
+| `TMUX_SESSIONIZER_ROOTS` | Legacy alias for `PROJMUX_MANAGED_ROOTS`. |
+| `PROJMUX_NOTIFY_HOOK` | External executable for AI desktop notifications. |
+| `@projmux_projdir` | tmux user-option declarative source for `PROJDIR`. Set it via `tmux set-option -g @projmux_projdir <path>`. |
+
+When `PROJDIR` (or `RP`) is set explicitly, `projmux` memoizes the resolved
+value to `~/.config/projmux/projdir` so subsequent runs without the env var
+keep the same project root.
+
 ## Configuration And State
 
 Default paths follow XDG conventions:
@@ -283,6 +356,16 @@ Default paths follow XDG conventions:
 - State: `~/.local/state/projmux`
 - Cache: `~/.cache/projmux` and tmux-specific cache files under `~/.cache/tmux`
 - Runtime kube session files: `$XDG_RUNTIME_DIR/kube-sessions` when available
+
+Saved files under `~/.config/projmux`:
+
+| File | Contents |
+| --- | --- |
+| `pins` | Pinned project directories (one path per line). |
+| `tags` | Tagged session names (one per line). |
+| `projdir` | Memoized single `PROJDIR` value (auto-written when env is used). |
+| `workdirs` | Persistent search-roots list, one absolute path per line. Managed via Settings. |
+| `tmux.conf` | Isolated `-L projmux` server config, regenerated by `projmux tmux install-app` or `projmux tmux apply`. |
 
 The generated app tmux config lives at:
 
