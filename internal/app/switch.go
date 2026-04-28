@@ -113,6 +113,7 @@ type switchCommand struct {
 	kubeInfo        func(sessionName string) switchKubeInfo
 	loadProjdir     func(homeDir string) (string, error)
 	saveProjdir     func(homeDir, value string) error
+	loadWorkdirs    func(homeDir string) ([]string, error)
 	tmuxProjdir     func() string
 	focusSession    string
 }
@@ -141,24 +142,25 @@ func newSwitchCommand() *switchCommand {
 	paths, pathsErr := config.DefaultPathsFromEnv()
 
 	cmd := &switchCommand{
-		discover:    candidates.Discover,
-		pinStore:    newDefaultSwitchPinStore,
-		tagStore:    newDefaultSwitchTagStore,
-		runner:      intfzf.NewRunner(),
-		sessions:    client,
-		inventory:   tmuxPreviewInventory{client: client},
-		executable:  os.Executable,
-		identity:    identity,
-		identityErr: err,
-		validate:    validateDirectory,
-		homeDir:     os.UserHomeDir,
-		workingDir:  os.Getwd,
-		lookupEnv:   os.Getenv,
-		gitBranch:   detectGitBranch,
-		kubeInfo:    defaultSwitchKubeInfo,
-		loadProjdir: config.LoadProjdir,
-		saveProjdir: config.SaveProjdir,
-		tmuxProjdir: tmuxProjdirOption,
+		discover:     candidates.Discover,
+		pinStore:     newDefaultSwitchPinStore,
+		tagStore:     newDefaultSwitchTagStore,
+		runner:       intfzf.NewRunner(),
+		sessions:     client,
+		inventory:    tmuxPreviewInventory{client: client},
+		executable:   os.Executable,
+		identity:     identity,
+		identityErr:  err,
+		validate:     validateDirectory,
+		homeDir:      os.UserHomeDir,
+		workingDir:   os.Getwd,
+		lookupEnv:    os.Getenv,
+		gitBranch:    detectGitBranch,
+		kubeInfo:     defaultSwitchKubeInfo,
+		loadProjdir:  config.LoadProjdir,
+		saveProjdir:  config.SaveProjdir,
+		loadWorkdirs: config.LoadWorkdirs,
+		tmuxProjdir:  tmuxProjdirOption,
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -542,7 +544,7 @@ func (c *switchCommand) candidateInputs(currentPath string) (candidates.Inputs, 
 	return candidates.Inputs{
 		HomeDir:      homeDir,
 		RepoRoot:     repoRoot,
-		ManagedRoots: switchManagedRoots(homeDir, repoRoot, c.lookupEnv),
+		ManagedRoots: switchManagedRoots(homeDir, repoRoot, c.lookupEnv, c.loadWorkdirs),
 		Pins:         pins,
 		CurrentPath:  currentPath,
 	}, nil
@@ -1029,7 +1031,7 @@ func memoizeProjdir(
 	_ = save(homeDir, value)
 }
 
-func switchManagedRoots(homeDir, repoRoot string, lookup func(string) string) []string {
+func switchManagedRoots(homeDir, repoRoot string, lookup func(string) string, loadWorkdirs func(string) ([]string, error)) []string {
 	roots := make([]string, 0)
 	seen := make(map[string]struct{})
 
@@ -1047,6 +1049,23 @@ func switchManagedRoots(homeDir, repoRoot string, lookup func(string) string) []
 			}
 			seen[root] = struct{}{}
 			roots = append(roots, root)
+		}
+	}
+
+	if len(roots) == 0 && loadWorkdirs != nil {
+		saved, err := loadWorkdirs(homeDir)
+		if err == nil {
+			for _, root := range saved {
+				root = cleanOptionalPath(root)
+				if root == "" {
+					continue
+				}
+				if _, ok := seen[root]; ok {
+					continue
+				}
+				seen[root] = struct{}{}
+				roots = append(roots, root)
+			}
 		}
 	}
 
@@ -1972,6 +1991,130 @@ func (c *switchCommand) filesystemPinEntries() ([]intfzf.Entry, error) {
 		})
 	}
 	return entries, nil
+}
+
+// filesystemWorkdirEntries renders filesystem-scan entries that map to the
+// "workdir:add:<path>" settings action. Already-saved workdirs are skipped.
+func (c *switchCommand) filesystemWorkdirEntries() ([]intfzf.Entry, error) {
+	paths, err := c.filesystemPinCandidates()
+	if err != nil {
+		return nil, err
+	}
+
+	saved, err := c.loadSavedWorkdirs()
+	if err != nil {
+		return nil, err
+	}
+	savedSet := make(map[string]struct{}, len(saved))
+	for _, dir := range saved {
+		savedSet[dir] = struct{}{}
+	}
+
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot := c.switchRepoRoot(homeDir)
+
+	entries := make([]intfzf.Entry, 0, len(paths))
+	for _, path := range paths {
+		if _, ok := savedSet[path]; ok {
+			continue
+		}
+		entries = append(entries, intfzf.Entry{
+			Label: intrender.PrettyPath(path, homeDir, repoRoot),
+			Value: "workdir:add:" + path,
+		})
+	}
+	return entries, nil
+}
+
+func (c *switchCommand) loadSavedWorkdirs() ([]string, error) {
+	if c.loadWorkdirs == nil {
+		return nil, nil
+	}
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	saved, err := c.loadWorkdirs(homeDir)
+	if err != nil {
+		return nil, fmt.Errorf("load saved workdirs: %w", err)
+	}
+	return saved, nil
+}
+
+// envWorkdirSources returns the read-only ManagedRoots/legacy env values
+// surfaced for informational rows in the Workdirs picker. The first return
+// names the environment variable; the second is its colon-separated value.
+func (c *switchCommand) envWorkdirSources() []envWorkdirSource {
+	return []envWorkdirSource{
+		{Name: managedRootsEnvVar, Value: envValue(c.lookupEnv, managedRootsEnvVar)},
+		{Name: legacyManagedRootsEnvVar, Value: envValue(c.lookupEnv, legacyManagedRootsEnvVar)},
+	}
+}
+
+type envWorkdirSource struct {
+	Name  string
+	Value string
+}
+
+// addWorkdir persists target to the saved workdirs file. Returns an
+// already-present message via stdout if the entry is not new.
+func (c *switchCommand) addWorkdir(target string, stdout io.Writer) error {
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return err
+	}
+	added, err := config.AddWorkdir(homeDir, target)
+	if err != nil {
+		return fmt.Errorf("add workdir: %w", err)
+	}
+	if stdout == nil {
+		return nil
+	}
+	if added {
+		_, err = fmt.Fprintf(stdout, "added workdir: %s\n", target)
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "already saved workdir: %s\n", target)
+	return err
+}
+
+// removeWorkdir deletes target from the saved workdirs file. Reports a no-op
+// message when the entry was not present.
+func (c *switchCommand) removeWorkdir(target string, stdout io.Writer) error {
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return err
+	}
+	removed, err := config.RemoveWorkdir(homeDir, target)
+	if err != nil {
+		return fmt.Errorf("remove workdir: %w", err)
+	}
+	if stdout == nil {
+		return nil
+	}
+	if removed {
+		_, err = fmt.Fprintf(stdout, "removed workdir: %s\n", target)
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "workdir not saved: %s\n", target)
+	return err
+}
+
+// executeWorkdirSettingsAction handles "add:<path>" and "remove:<path>"
+// actions emitted from the settings UX.
+func (c *switchCommand) executeWorkdirSettingsAction(action string, stdout, stderr io.Writer) error {
+	switch {
+	case strings.HasPrefix(action, "add:"):
+		return c.addWorkdir(strings.TrimPrefix(action, "add:"), stdout)
+	case strings.HasPrefix(action, "remove:"):
+		return c.removeWorkdir(strings.TrimPrefix(action, "remove:"), stdout)
+	default:
+		printSwitchUsage(stderr)
+		return fmt.Errorf("unknown workdir settings action: %s", action)
+	}
 }
 
 func (c *switchCommand) filesystemPinCandidates() ([]string, error) {

@@ -20,15 +20,18 @@ type settingsCommand struct {
 var errSettingsClosed = errors.New("settings closed")
 
 const (
-	settingsBackValue          = "__settings_back__"
-	settingsNoopValue          = "__settings_noop__"
-	settingsSectionAI          = "section:ai"
-	settingsSectionProject     = "section:project-picker"
-	settingsSectionAbout       = "section:about"
-	settingsActionPrefixAI     = "ai:"
-	settingsActionPrefixSwitch = "switch:"
-	settingsProjectAdd         = "project:add"
-	settingsProjectPins        = "project:pins"
+	settingsBackValue           = "__settings_back__"
+	settingsNoopValue           = "__settings_noop__"
+	settingsSectionAI           = "section:ai"
+	settingsSectionProject      = "section:project-picker"
+	settingsSectionAbout        = "section:about"
+	settingsActionPrefixAI      = "ai:"
+	settingsActionPrefixSwitch  = "switch:"
+	settingsActionPrefixWorkdir = "workdir:"
+	settingsProjectAdd          = "project:add"
+	settingsProjectPins         = "project:pins"
+	settingsWorkdirAdd          = "workdir:add"
+	settingsWorkdirList         = "workdir:list"
 )
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand) *settingsCommand {
@@ -203,7 +206,19 @@ func (c *settingsCommand) runProjectPickerSection(stdout, stderr io.Writer) erro
 			if err := c.runPinnedProjects(stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsWorkdirAdd:
+			if err := c.runAddWorkdir(stdout, stderr); err != nil {
+				return err
+			}
+		case action == settingsWorkdirList:
+			if err := c.runWorkdirsList(stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, settingsActionPrefixSwitch):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixWorkdir):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err
 			}
@@ -245,6 +260,114 @@ func (c *settingsCommand) runAddProject(stdout, stderr io.Writer) error {
 		return nil
 	}
 	return c.execute(action, stdout, stderr)
+}
+
+func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
+	if c.switcher == nil {
+		return errors.New("project picker settings are not configured")
+	}
+
+	entries, err := c.switcher.filesystemWorkdirEntries()
+	if err != nil {
+		return err
+	}
+	entries = append([]intfzf.Entry{settingsBackEntry()}, entries...)
+
+	result, err := c.runPicker(intfzf.Options{
+		UI:         "settings-workdir-add",
+		Entries:    entries,
+		Prompt:     "Settings > Project Picker > Add Workdir > ",
+		Header:     "Add a workdir to scan",
+		Footer:     projmuxFooter("Enter: add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys: []string{"enter"},
+		Bindings:   settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+	action := strings.TrimSpace(result.Value)
+	if result.Key != "enter" || action == "" {
+		return errSettingsClosed
+	}
+	if action == settingsBackValue {
+		return nil
+	}
+	return c.execute(action, stdout, stderr)
+}
+
+func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
+	for {
+		entries, err := c.workdirListEntries()
+		if err != nil {
+			return err
+		}
+
+		result, err := c.runPicker(intfzf.Options{
+			UI:         "settings-workdirs",
+			Entries:    entries,
+			Prompt:     "Settings > Project Picker > Workdirs > ",
+			Header:     "Remove saved workdirs (env list takes priority when set)",
+			Footer:     projmuxFooter("Enter: remove  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		if err := c.execute(action, stdout, stderr); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *settingsCommand) workdirListEntries() ([]intfzf.Entry, error) {
+	entries := []intfzf.Entry{settingsBackEntry()}
+	if c.switcher == nil {
+		return append(entries, intfzf.Entry{
+			Label: "\x1b[90m(no saved workdirs)\x1b[0m",
+			Value: settingsNoopValue,
+		}), nil
+	}
+
+	saved, err := c.switcher.loadSavedWorkdirs()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(saved) == 0 {
+		entries = append(entries, intfzf.Entry{
+			Label: "\x1b[90m(no saved workdirs)\x1b[0m",
+			Value: settingsNoopValue,
+		})
+	} else {
+		for _, dir := range saved {
+			entries = append(entries, intfzf.Entry{
+				Label: "x Remove  " + dir + "  \x1b[90m(saved)\x1b[0m",
+				Value: settingsActionPrefixWorkdir + "remove:" + dir,
+			})
+		}
+	}
+
+	for _, src := range c.switcher.envWorkdirSources() {
+		if strings.TrimSpace(src.Value) == "" {
+			continue
+		}
+		entries = append(entries, intfzf.Entry{
+			Label: "\x1b[90m" + src.Name + " = " + src.Value + "  (env, read-only)\x1b[0m",
+			Value: settingsNoopValue,
+		})
+	}
+	return entries, nil
 }
 
 func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
@@ -297,6 +420,14 @@ func (c *settingsCommand) projectPickerEntries() []intfzf.Entry {
 	entries = append(entries, intfzf.Entry{
 		Label: "\x1b[36mPinned Projects\x1b[0m     \x1b[90mremove or clear pins\x1b[0m",
 		Value: settingsProjectPins,
+	})
+	entries = append(entries, intfzf.Entry{
+		Label: "\x1b[32m+ Add Workdir...\x1b[0m     \x1b[90mappend a directory to the saved workdirs list\x1b[0m",
+		Value: settingsWorkdirAdd,
+	})
+	entries = append(entries, intfzf.Entry{
+		Label: "\x1b[36mWorkdirs\x1b[0m            \x1b[90mremove saved workdirs (env list takes priority)\x1b[0m",
+		Value: settingsWorkdirList,
 	})
 	return entries
 }
@@ -488,6 +619,12 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return errors.New("project picker settings are not configured")
 		}
 		return c.switcher.executeSettingsAction(action, stdout, stderr)
+	case strings.HasPrefix(value, settingsActionPrefixWorkdir):
+		action := strings.TrimPrefix(value, settingsActionPrefixWorkdir)
+		if c.switcher == nil {
+			return errors.New("project picker settings are not configured")
+		}
+		return c.switcher.executeWorkdirSettingsAction(action, stdout, stderr)
 	default:
 		printSettingsUsage(stderr)
 		return fmt.Errorf("unknown settings action: %s", value)

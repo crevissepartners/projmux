@@ -272,6 +272,188 @@ func TestSettingsHubPinnedProjectsRemovesPins(t *testing.T) {
 	}
 }
 
+func TestProjectPickerEntriesIncludesWorkdirsRows(t *testing.T) {
+	t.Parallel()
+
+	const home = "/home/tester"
+	cmd := &settingsCommand{
+		switcher: &switchCommand{
+			homeDir:      func() (string, error) { return home, nil },
+			lookupEnv:    func(string) string { return "" },
+			tmuxProjdir:  emptyTmuxOption,
+			loadProjdir:  func(string) (string, error) { return "", nil },
+			saveProjdir:  func(string, string) error { return nil },
+			loadWorkdirs: func(string) ([]string, error) { return nil, nil },
+		},
+	}
+
+	entries := cmd.projectPickerEntries()
+	if !hasEntryValue(entries, settingsWorkdirAdd) {
+		t.Fatalf("project picker entries = %#v, want Add Workdir entry", entries)
+	}
+	if !hasEntryValue(entries, settingsWorkdirList) {
+		t.Fatalf("project picker entries = %#v, want Workdirs entry", entries)
+	}
+	if !hasEntryLabelContaining(entries, "+ Add Workdir...") {
+		t.Fatalf("project picker entries = %#v, want '+ Add Workdir...' label", entries)
+	}
+	if !hasEntryLabelContaining(entries, "Workdirs") {
+		t.Fatalf("project picker entries = %#v, want 'Workdirs' label", entries)
+	}
+}
+
+func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	mkdirAll(t, filepath.Join(home, "source", "repos", "app"))
+
+	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				if !hasEntryValue(options.Entries, settingsWorkdirAdd) {
+					t.Fatalf("project settings entries = %#v, want Add Workdir", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 3:
+				if got, want := options.UI, "settings-workdir-add"; got != want {
+					t.Fatalf("add workdir UI = %q, want %q", got, want)
+				}
+				app := filepath.Join(home, "source", "repos", "app")
+				want := settingsActionPrefixWorkdir + "add:" + app
+				if !hasEntryValue(options.Entries, want) {
+					t.Fatalf("add workdir entries = %#v, want value %q", options.Entries, want)
+				}
+				return intfzf.Result{Key: "enter", Value: want}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	saved, err := readWorkdirsFile(t, home)
+	if err != nil {
+		t.Fatalf("readWorkdirsFile() error = %v", err)
+	}
+	app := filepath.Join(home, "source", "repos", "app")
+	if !equalStrings(saved, []string{app}) {
+		t.Fatalf("saved workdirs = %#v, want [%q]", saved, app)
+	}
+	if got, want := stdout.String(), "added workdir: "+app+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubWorkdirsListRemovesSavedEntry(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	target := filepath.Join(home, "source", "repos", "app")
+	if err := os.MkdirAll(filepath.Join(home, ".config", "projmux"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "projmux", "workdirs"), []byte(target+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher.loadWorkdirs = func(homeDir string) ([]string, error) {
+		// Use the real loader so removal is observed end-to-end via the saved file.
+		return loadSavedWorkdirsFromFile(homeDir), nil
+	}
+
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
+			case 3:
+				if got, want := options.UI, "settings-workdirs"; got != want {
+					t.Fatalf("workdirs list UI = %q, want %q", got, want)
+				}
+				want := settingsActionPrefixWorkdir + "remove:" + target
+				if !hasEntryValue(options.Entries, want) {
+					t.Fatalf("workdirs list entries = %#v, want %q", options.Entries, want)
+				}
+				return intfzf.Result{Key: "enter", Value: want}, nil
+			case 4:
+				// After remove, list should be empty (just back + placeholder).
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	saved, err := readWorkdirsFile(t, home)
+	if err != nil {
+		t.Fatalf("readWorkdirsFile() error = %v", err)
+	}
+	if len(saved) != 0 {
+		t.Fatalf("saved workdirs = %#v, want empty", saved)
+	}
+	if got, want := stdout.String(), "removed workdir: "+target+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestWorkdirListEntriesSurfacesEnvSources(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{
+		switcher: &switchCommand{
+			homeDir: func() (string, error) { return "/home/tester", nil },
+			lookupEnv: func(name string) string {
+				if name == managedRootsEnvVar {
+					return "/env/one:/env/two"
+				}
+				return ""
+			},
+			tmuxProjdir:  emptyTmuxOption,
+			loadProjdir:  func(string) (string, error) { return "", nil },
+			saveProjdir:  func(string, string) error { return nil },
+			loadWorkdirs: func(string) ([]string, error) { return []string{"/saved/a"}, nil },
+		},
+	}
+
+	entries, err := cmd.workdirListEntries()
+	if err != nil {
+		t.Fatalf("workdirListEntries() error = %v", err)
+	}
+	if !hasEntryLabelContaining(entries, "/saved/a") {
+		t.Fatalf("workdir list entries = %#v, want saved entry", entries)
+	}
+	if !hasEntryLabelContaining(entries, managedRootsEnvVar+" = /env/one:/env/two") {
+		t.Fatalf("workdir list entries = %#v, want env source label", entries)
+	}
+}
+
 func TestSettingsHubBackReturnsToRoot(t *testing.T) {
 	t.Parallel()
 
@@ -509,4 +691,42 @@ func mkdirAll(t *testing.T, path string) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", path, err)
 	}
+}
+
+func readWorkdirsFile(t *testing.T, home string) ([]string, error) {
+	t.Helper()
+	path := filepath.Join(home, ".config", "projmux", "workdirs")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := []string{}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out, nil
+}
+
+func loadSavedWorkdirsFromFile(home string) []string {
+	path := filepath.Join(home, ".config", "projmux", "workdirs")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }

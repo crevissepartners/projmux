@@ -755,6 +755,87 @@ func TestSwitchCommandUsesDefaultManagedRootsWhenEnvUnset(t *testing.T) {
 	}
 }
 
+func TestSwitchCommandUsesSavedWorkdirsWhenEnvUnset(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv(projdirEnvVar, "")
+	t.Setenv(repoRootEnvVar, "")
+
+	var gotInputs candidates.Inputs
+	cmd := &switchCommand{
+		discover: func(inputs candidates.Inputs) ([]string, error) {
+			gotInputs = inputs
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:     switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
+		sessions:   &capturingSwitchSessionExecutor{},
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+		lookupEnv:  func(string) string { return "" },
+		loadWorkdirs: func(homeDir string) ([]string, error) {
+			if homeDir != "/home/tester" {
+				t.Fatalf("loadWorkdirs homeDir = %q, want /home/tester", homeDir)
+			}
+			return []string{"/srv/projects", "/srv/lib"}, nil
+		},
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := gotInputs.ManagedRoots, []string{
+		"/srv/projects",
+		"/srv/lib",
+	}; !equalStrings(got, want) {
+		t.Fatalf("inputs.ManagedRoots = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandManagedRootsEnvBeatsSavedWorkdirs(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv(projdirEnvVar, "")
+	t.Setenv(repoRootEnvVar, "")
+
+	var gotInputs candidates.Inputs
+	cmd := &switchCommand{
+		discover: func(inputs candidates.Inputs) ([]string, error) {
+			gotInputs = inputs
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:     switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
+		sessions:   &capturingSwitchSessionExecutor{},
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+		lookupEnv: func(name string) string {
+			if name == managedRootsEnvVar {
+				return "/env/one:/env/two"
+			}
+			return ""
+		},
+		loadWorkdirs: func(string) ([]string, error) {
+			t.Fatalf("loadWorkdirs should not be consulted when env is set")
+			return nil, nil
+		},
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := gotInputs.ManagedRoots, []string{
+		"/env/one",
+		"/env/two",
+	}; !equalStrings(got, want) {
+		t.Fatalf("inputs.ManagedRoots = %q, want %q", got, want)
+	}
+}
+
 func TestSwitchCommandPreviewRendersExistingSessionContext(t *testing.T) {
 	t.Parallel()
 
