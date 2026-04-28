@@ -101,6 +101,13 @@ func (r *runner) Run(options Options) (Result, error) {
 	cmd.SetStdout(&stdout)
 	cmd.SetStderr(&stderr)
 	if err := cmd.Run(); err != nil {
+		// In AcceptQuery mode the typed flow uses `print-query+abort`, which
+		// makes fzf exit non-zero (130) by design. Treat any non-empty stdout
+		// as a successful query capture before falling through to the error.
+		if options.AcceptQuery && strings.TrimSpace(stdout.String()) != "" {
+			output := trimTrailingRecordTerminators(stdout.String())
+			return selectedResultWithQuery(output, options.ExpectKeys), nil
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			return Result{}, fmt.Errorf("run fzf: %w", err)
@@ -170,7 +177,7 @@ func runnerArgs(options Options, supportsFooter bool, filterFile string) []strin
 		"--info", "inline-right",
 	)
 	if options.AcceptQuery {
-		args = append(args, "--print-query")
+		args = append(args, "--print-query", "--bind", "enter:print-query+abort")
 	}
 	if options.Read0 {
 		args = append(args,
