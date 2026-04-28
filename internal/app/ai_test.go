@@ -109,6 +109,80 @@ func TestAIPickerMarksAgentReadyWhenBinaryExistsWithoutLegacyWrapper(t *testing.
 	}
 }
 
+func TestFindAgentBinaryDiscoversNodeManagerInstalls(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    string
+		binPath string
+	}{
+		{"codex via nvm", aiModeCodex, filepath.Join(".nvm", "versions", "node", "v24.15.0", "bin", "codex")},
+		{"claude via nvm", aiModeClaude, filepath.Join(".nvm", "versions", "node", "v22.0.0", "bin", "claude")},
+		{"codex via fnm", aiModeCodex, filepath.Join(".fnm", "node-versions", "v22.4.0", "installation", "bin", "codex")},
+		{"codex via asdf", aiModeCodex, filepath.Join(".asdf", "installs", "nodejs", "20.10.0", "bin", "codex")},
+		{"claude via volta", aiModeClaude, filepath.Join(".volta", "bin", "claude")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			absBin := writeExecutable(t, filepath.Join(home, tc.binPath))
+			cmd := testAICommand(home)
+
+			got := cmd.findAgentBinary(tc.mode)
+			if got != absBin {
+				t.Fatalf("findAgentBinary(%q) = %q, want %q", tc.mode, got, absBin)
+			}
+			if !cmd.agentAvailable(tc.mode) {
+				t.Fatalf("agentAvailable(%q) = false, want true", tc.mode)
+			}
+		})
+	}
+}
+
+func TestFindAgentBinaryPrefersPathOverNodeManager(t *testing.T) {
+	home := t.TempDir()
+	pathBin := writeExecutable(t, filepath.Join(home, "system-bin", "codex"))
+	nvmBin := writeExecutable(t, filepath.Join(home, ".nvm", "versions", "node", "v24.15.0", "bin", "codex"))
+	cmd := testAICommand(home)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(pathBin + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	got := cmd.findAgentBinary(aiModeCodex)
+	if got != pathBin {
+		t.Fatalf("findAgentBinary = %q, want PATH hit %q (nvm fallback was %q)", got, pathBin, nvmBin)
+	}
+}
+
+func TestFindAgentBinaryPicksNewestNvmVersion(t *testing.T) {
+	home := t.TempDir()
+	older := writeExecutable(t, filepath.Join(home, ".nvm", "versions", "node", "v18.0.0", "bin", "codex"))
+	newer := writeExecutable(t, filepath.Join(home, ".nvm", "versions", "node", "v24.15.0", "bin", "codex"))
+	past := time.Now().Add(-72 * time.Hour)
+	if err := os.Chtimes(older, past, past); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	cmd := testAICommand(home)
+	got := cmd.findAgentBinary(aiModeCodex)
+	if got != newer {
+		t.Fatalf("findAgentBinary = %q, want newest %q (older candidate %q)", got, newer, older)
+	}
+}
+
+func TestFindAgentBinaryReturnsEmptyWhenAbsent(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	if got := cmd.findAgentBinary(aiModeCodex); got != "" {
+		t.Fatalf("findAgentBinary on empty home = %q, want empty", got)
+	}
+	if cmd.agentAvailable(aiModeCodex) {
+		t.Fatalf("agentAvailable on empty home = true, want false")
+	}
+}
+
 func TestAISplitSelectiveDelegatesToPopupToggle(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
