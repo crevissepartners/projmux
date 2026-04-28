@@ -113,6 +113,7 @@ type switchCommand struct {
 	kubeInfo        func(sessionName string) switchKubeInfo
 	loadProjdir     func(homeDir string) (string, error)
 	saveProjdir     func(homeDir, value string) error
+	tmuxProjdir     func() string
 	focusSession    string
 }
 
@@ -157,6 +158,7 @@ func newSwitchCommand() *switchCommand {
 		kubeInfo:    defaultSwitchKubeInfo,
 		loadProjdir: config.LoadProjdir,
 		saveProjdir: config.SaveProjdir,
+		tmuxProjdir: tmuxProjdirOption,
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -887,20 +889,34 @@ func (c *switchCommand) originSession() string {
 }
 
 func (c *switchCommand) switchRepoRoot(homeDir string) string {
-	return switchRepoRoot(homeDir, c.lookupEnv, c.loadProjdir, c.saveProjdir)
+	return switchRepoRoot(homeDir, c.lookupEnv, c.tmuxProjdir, c.loadProjdir, c.saveProjdir)
 }
 
 func switchRepoRoot(
 	homeDir string,
 	lookup func(string) string,
+	tmuxOption func() string,
 	load func(string) (string, error),
 	save func(string, string) error,
 ) string {
-	envRaw, envSource := preferredProjdirEnv(lookup)
-	if envSource != "" {
-		repoRoot := cleanOptionalPath(envRaw)
-		if repoRoot != "" {
-			memoizeProjdir(homeDir, envRaw, load, save)
+	if raw := envValue(lookup, projdirEnvVar); strings.TrimSpace(raw) != "" {
+		if repoRoot := cleanOptionalPath(raw); repoRoot != "" {
+			memoizeProjdir(homeDir, raw, load, save)
+			return repoRoot
+		}
+	}
+
+	if tmuxOption != nil {
+		if raw := strings.TrimSpace(tmuxOption()); raw != "" {
+			if repoRoot := cleanOptionalPath(raw); repoRoot != "" {
+				return repoRoot
+			}
+		}
+	}
+
+	if raw := envValue(lookup, repoRootEnvVar); strings.TrimSpace(raw) != "" {
+		if repoRoot := cleanOptionalPath(raw); repoRoot != "" {
+			memoizeProjdir(homeDir, raw, load, save)
 			return repoRoot
 		}
 	}
@@ -931,6 +947,22 @@ func preferredProjdirEnv(lookup func(string) string) (string, string) {
 		return raw, name
 	}
 	return "", ""
+}
+
+// tmuxProjdirOption returns the tmux user-option @projmux_projdir value when
+// running inside a tmux client. The TMUX env gate keeps us off the default
+// socket when projmux runs outside tmux, where show-option may either fail
+// or return a stale value from another server. Errors are swallowed because
+// the caller falls through to the next priority source.
+func tmuxProjdirOption() string {
+	if os.Getenv("TMUX") == "" {
+		return ""
+	}
+	out, err := exec.Command("tmux", "show-option", "-gqv", "@projmux_projdir").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // memoizeProjdir best-effort persists value to the saved-projdir file. It
