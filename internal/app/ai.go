@@ -930,18 +930,54 @@ func (c *aiCommand) agentAvailable(mode string) bool {
 }
 
 func (c *aiCommand) findAgentBinary(mode string) string {
+	var binName string
 	switch mode {
 	case aiModeClaude:
-		return firstExecutable(c.readTrimmed("command", "-v", "claude"), filepath.Join(c.homeOrEmpty(), ".local", "bin", "claude"))
+		binName = "claude"
 	case aiModeCodex:
-		if path := firstExecutable(c.readTrimmed("command", "-v", "codex"), filepath.Join(c.homeOrEmpty(), ".npm-global", "bin", "codex"), filepath.Join(c.homeOrEmpty(), ".local", "bin", "codex")); path != "" {
-			return path
-		}
-		matches, _ := filepath.Glob(filepath.Join(c.homeOrEmpty(), ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
-		return newestExecutable(matches)
+		binName = "codex"
 	default:
 		return ""
 	}
+
+	home := c.homeOrEmpty()
+	if path := firstExecutable(
+		c.readTrimmed("command", "-v", binName),
+		filepath.Join(home, ".npm-global", "bin", binName),
+		filepath.Join(home, ".local", "bin", binName),
+	); path != "" {
+		return path
+	}
+	if path := newestExecutable(nodeManagerCandidates(home, binName)); path != "" {
+		return path
+	}
+	if mode == aiModeCodex {
+		matches, _ := filepath.Glob(filepath.Join(home, ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
+		return newestExecutable(matches)
+	}
+	return ""
+}
+
+// nodeManagerCandidates returns possible install paths for a globally-installed
+// npm CLI when the user manages Node via nvm / fnm / asdf / volta. These tools
+// install into versioned prefixes that aren't on PATH unless the shell ran
+// their init script, so we probe the on-disk layouts directly.
+func nodeManagerCandidates(home, binName string) []string {
+	if home == "" || binName == "" {
+		return nil
+	}
+	var candidates []string
+	globs := []string{
+		filepath.Join(home, ".nvm", "versions", "node", "*", "bin", binName),
+		filepath.Join(home, ".fnm", "node-versions", "*", "installation", "bin", binName),
+		filepath.Join(home, ".asdf", "installs", "nodejs", "*", "bin", binName),
+	}
+	for _, pattern := range globs {
+		matches, _ := filepath.Glob(pattern)
+		candidates = append(candidates, matches...)
+	}
+	candidates = append(candidates, filepath.Join(home, ".volta", "bin", binName))
+	return candidates
 }
 
 func (c *aiCommand) displayMessage(message string) error {
