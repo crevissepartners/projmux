@@ -795,7 +795,7 @@ func tmuxAppConfig(binaryPath string) string {
 	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfig(binaryPath)), "\n")[1:]...)
 	lines = append(lines, tmuxAppKeyBindings()...)
 	lines = append(lines,
-		"set -g status-left \"#[bold,fg=colour231,bg=colour90] #{b:pane_current_path} #[default]\"",
+		"set -g status-left \"#[bold,fg=colour231,bg=colour90] #S #[default]\"",
 		"set -g status-right "+tmuxConfigQuote("#[fg=colour242]#{=/28/...:pane_current_path}#[fg=colour239]  #("+bin+" status kube)#("+bin+" status git)  %Y-%m-%d %H:%M#[default]"),
 	)
 	return strings.Join(lines, "\n") + "\n"
