@@ -26,7 +26,7 @@
   3. `make test`
   4. `make test-integration`
   5. `make test-e2e`
-- `make install` is the deploy step (build + atomic replace of `~/.local/bin/projmux` + `projmux tmux apply`). Do not run it during routine validation; reserve it for after review when promoting a build.
+- `make install` is the deploy step (build + atomic replace of `$(go env GOPATH)/bin/projmux` + `projmux tmux apply`). Do not run it during routine validation; reserve it for after review when promoting a build.
 - If a target is missing for the area you are changing, add it or leave the repository in a state where the gap is explicit in docs and review notes.
 - If behavior changes, update the maintained test list in [docs/agent-workflow.md](/home/es5h/source/repos/projmux/docs/agent-workflow.md) in the same branch.
 - Do not skip `fmt` or `fix` because tests passed. Formatting, automatic fixes, and test execution are separate gates.

@@ -71,28 +71,21 @@ Open the app once, then use its generated tmux bindings to:
 
 ## Install
 
-With Go:
+With Go (recommended):
 
 ```sh
-GOBIN="$HOME/.local/bin" go install github.com/es5h/projmux/cmd/projmux@latest
-hash -r
+go install github.com/es5h/projmux/cmd/projmux@latest
 ```
 
-By default, `go install` writes binaries to `$(go env GOPATH)/bin`. That may
-install or update a different `projmux` than the one your shell finds first on
-`PATH`. The command above installs directly to `~/.local/bin`, which is the
-recommended location if that directory is already on your `PATH`. `hash -r`
-clears your shell's cached command lookup after an update.
-
-Make sure `~/.local/bin` is on your `PATH`:
+This writes the binary to `$(go env GOBIN)` (when set) or `$(go env GOPATH)/bin`
+(default `~/go/bin`). Make sure that directory is on your `PATH`:
 
 ```sh
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-As a fallback, add `$(go env GOPATH)/bin` to `PATH` instead, or copy the binary
-from `$(go env GOPATH)/bin/projmux` to a directory that appears earlier on
-`PATH`.
+If you upgrade an already-running shell, run `hash -r` so it picks up the new
+binary instead of the cached path.
 
 From source (atomic install + apply live config):
 
@@ -102,21 +95,20 @@ cd projmux
 make install
 ```
 
-`make install` builds the binary, atomically replaces `~/.local/bin/projmux`,
-and runs `projmux tmux apply` so the live `-L projmux` server picks up any new
-bindings or status segments without a manual `source-file`.
+`make install` builds the binary, atomically replaces
+`$(go env GOPATH)/bin/projmux`, and runs `projmux tmux apply` so the live
+`-L projmux` server picks up any new bindings or status segments without a
+manual `source-file`. Override the destination with `INSTALL_DIR`:
+
+```sh
+make install INSTALL_DIR=/usr/local/bin
+```
 
 To build without installing:
 
 ```sh
 make build
-install -m 0755 .bin/projmux ~/.local/bin/projmux
-```
-
-Make sure `~/.local/bin` is on your `PATH`:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
+install -m 0755 .bin/projmux "$(go env GOPATH)/bin/projmux"
 ```
 
 ## Upgrading

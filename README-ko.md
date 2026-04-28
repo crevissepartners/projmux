@@ -70,28 +70,21 @@ projmux shell
 
 ## 설치
 
-Go로 설치:
+Go 로 설치 (권장):
 
 ```sh
-GOBIN="$HOME/.local/bin" go install github.com/es5h/projmux/cmd/projmux@latest
-hash -r
+go install github.com/es5h/projmux/cmd/projmux@latest
 ```
 
-기본적으로 `go install`은 binary를 `$(go env GOPATH)/bin`에 씁니다. 이 위치가
-shell이 `PATH`에서 먼저 찾는 `projmux`와 다를 수 있으므로, 설치나 업데이트 후에도
-실제로 실행되는 `projmux`가 바뀌지 않을 수 있습니다. 위 명령은 `~/.local/bin`이
-이미 `PATH`에 들어 있다는 전제에서 그 위치에 직접 설치하는 권장 방식입니다.
-`hash -r`은 업데이트 후 shell의 command lookup cache를 지웁니다.
-
-`~/.local/bin`이 `PATH`에 들어 있어야 합니다:
+binary 는 `$(go env GOBIN)` (설정된 경우) 또는 `$(go env GOPATH)/bin`
+(기본값 `~/go/bin`) 에 들어갑니다. 해당 디렉터리가 `PATH` 에 있어야 합니다:
 
 ```sh
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-대안으로 `$(go env GOPATH)/bin`을 `PATH`에 추가하거나,
-`$(go env GOPATH)/bin/projmux` binary를 `PATH`에서 더 앞에 있는 디렉터리로
-복사할 수 있습니다.
+이미 실행 중인 shell 에서 업그레이드한 경우 `hash -r` 로 명령 lookup cache 를
+지워야 새 binary 가 잡힙니다.
 
 소스에서 빌드 (atomic 설치 + live 적용):
 
@@ -101,22 +94,21 @@ cd projmux
 make install
 ```
 
-`make install`은 binary를 빌드해 `~/.local/bin/projmux`를 atomically 교체하고,
-바로 `projmux tmux apply`를 실행해 동작 중인 `-L projmux` 서버가 새 binding과
-status segment를 즉시 반영하도록 합니다. 별도로 `source-file`을 호출할 필요가
-없습니다.
+`make install` 은 binary 를 빌드해 `$(go env GOPATH)/bin/projmux` 를
+atomically 교체하고, 바로 `projmux tmux apply` 를 실행해 동작 중인 `-L projmux`
+서버가 새 binding 과 status segment 를 즉시 반영하도록 합니다. 별도로
+`source-file` 을 호출할 필요가 없습니다. 설치 위치를 바꾸려면 `INSTALL_DIR` 로
+override 하세요:
+
+```sh
+make install INSTALL_DIR=/usr/local/bin
+```
 
 설치 없이 빌드만 하려면:
 
 ```sh
 make build
-install -m 0755 .bin/projmux ~/.local/bin/projmux
-```
-
-`~/.local/bin`이 `PATH`에 들어 있어야 합니다:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
+install -m 0755 .bin/projmux "$(go env GOPATH)/bin/projmux"
 ```
 
 ## 업그레이드
