@@ -2,7 +2,12 @@ GO ?= go
 GOFMT ?= gofmt
 BUILD_DIR ?= .bin
 PROJMUX_BIN ?= $(BUILD_DIR)/projmux
-INSTALL_DIR ?= $(HOME)/.local/bin
+
+GO_INSTALL_DIR := $(strip $(shell $(GO) env GOBIN 2>/dev/null))
+ifeq ($(GO_INSTALL_DIR),)
+GO_INSTALL_DIR := $(strip $(shell $(GO) env GOPATH 2>/dev/null))/bin
+endif
+INSTALL_DIR ?= $(GO_INSTALL_DIR)
 INSTALL_BIN := $(INSTALL_DIR)/projmux
 
 GO_FILES := $(shell find . -type f -name '*.go' \
