@@ -330,6 +330,10 @@ includes:
   read-only rows so you can see why an env list might be overriding the saved
   file.
 
+`Add Workdir > Type path manually...` gives you a typed entry that skips the
+filesystem scan. Use it for paths you do not want crawled, e.g. WSL mounts
+(`/mnt/c/Users/...`), large NFS mounts, or per-project temp roots.
+
 The saved file lives at `~/.config/projmux/workdirs` (one absolute path per
 line, `#` comments allowed). It is consulted only when the env vars are unset.
 

@@ -326,6 +326,10 @@ Project...`는 이 filesystem root를 depth 3까지 스캔하므로 `~`나 `~rp`
   `TMUX_SESSIONIZER_ROOTS`가 설정되어 있으면 read-only 행으로 함께 표시되어
   saved 목록 대신 env list가 우선되는 이유를 한눈에 볼 수 있습니다.
 
+`Add Workdir > Type path manually...`를 고르면 파일시스템 스캔을 건너뛰고
+경로를 직접 입력할 수 있습니다. 스캔에 부담이 큰 WSL 마운트
+(`/mnt/c/Users/...`), 대용량 NFS, 프로젝트별 임시 루트 등에 활용하세요.
+
 저장 파일은 `~/.config/projmux/workdirs`이며, 절대경로 한 줄당 한 항목이고
 `#`로 시작하는 줄은 주석으로 무시됩니다. env가 설정되어 있을 때는 무시되며
 env가 비었을 때만 사용됩니다.
