@@ -18,22 +18,43 @@
 - If another agent owns a file, do not overwrite their changes. Adjust around them or coordinate a handoff.
 - Keep changes narrow. Split docs, bootstrap, migration, and feature work into separate branches unless they are inseparable.
 
+## Branch Protection And PR Flow
+- `main` is protected by the repository ruleset `main-protect`. Direct pushes to `main` are blocked even for repository admins.
+- Every change ships through a pull request. The required status check is the CI `Test` job.
+- Admin bypass mode is `pull_request`: the admin can self-merge a PR without approvals, but the PR itself is mandatory.
+- Default merge method is **squash**. The PR title becomes the squash commit subject and is what release-please parses, so write it as a Conventional Commit. Follow [docs/pr-guideline.md](docs/pr-guideline.md) for full conventions.
+- `make install` cannot run before the PR is merged into `main`. The full team-lead loop is: push branch → open PR → wait for CI → merge → `git pull --ff-only` → `make install`.
+
 ## Standard Dev Flow
 - Make targets are the contract for local validation. Keep them stable and predictable.
-- Run work in this order before review:
+- Run work in this order before opening a PR:
   1. `make fmt`
   2. `make fix`
   3. `make test`
   4. `make test-integration`
   5. `make test-e2e`
-- `make install` is the deploy step (build + atomic replace of `$(go env GOPATH)/bin/projmux` + `projmux tmux apply`). Do not run it during routine validation; reserve it for after review when promoting a build.
+- Then push and open the PR:
+  6. `git push -u origin <branch>`
+  7. `gh pr create --title ... --body ...` (Conventional Commit title; see [docs/pr-guideline.md](docs/pr-guideline.md)).
+  8. Wait for the `Test` check to turn green (`gh pr checks <num> --watch`). Use `--auto` on `gh pr merge` if you want it queued.
+  9. `gh pr merge <num> --squash --delete-branch`.
+- Promote the build only after merge:
+  10. `git -C <repo> pull --ff-only`
+  11. `make install` — atomic replace of `$(go env GOPATH)/bin/projmux` plus `projmux tmux apply`. **Never run it before step 10**; pre-merge state has not cleared CI yet and may not match what `main` will hold.
+  12. `wt cleanup --apply` to retire the merged worktree.
 - If a target is missing for the area you are changing, add it or leave the repository in a state where the gap is explicit in docs and review notes.
-- If behavior changes, update the maintained test list in [docs/agent-workflow.md](/home/es5h/source/repos/projmux/docs/agent-workflow.md) in the same branch.
+- If behavior changes, update the maintained test list in [docs/agent-workflow.md](docs/agent-workflow.md) in the same branch.
 - Do not skip `fmt` or `fix` because tests passed. Formatting, automatic fixes, and test execution are separate gates.
 
+## Release Flow
+- `release-please-action` watches `main`, accumulates Conventional Commit subjects, and opens or refreshes a "chore(main): release X.Y.Z" PR. That PR contains the version bump (`internal/version/version.go` + `.release-please-manifest.json`), `CHANGELOG.md` updates, and the release notes.
+- Merging the release PR pushes the `vX.Y.Z` tag and creates the GitHub Release with auto-generated notes.
+- `.github/workflows/release.yml` triggers on the tag push, builds the linux/darwin × amd64/arm64 matrix, and uploads tarballs to the release that already exists (`gh release upload --clobber`). Do not add hardcoded notes back to that workflow — release-please owns the notes.
+- Non-Conventional commit subjects on `main` are silently skipped by release-please. Keep PR titles strict; squash merge ensures the PR title is the only subject that lands.
+
 ## Configuration And Environment
-- `PROJDIR` (preferred) and `RP` (legacy) supply the sessionizer repo root. `~/.config/projmux/projdir` memoizes whichever value was last seen.
-- `PROJMUX_MANAGED_ROOTS` / `TMUX_SESSIONIZER_ROOTS` provide colon-separated search-root lists. They take priority over the saved file and the default heuristics.
+- `PROJDIR` is the canonical project-root env. Memoized to `~/.config/projmux/projdir` after first use. The legacy `RP` alias is still honored at runtime; do not feature it in user-facing docs.
+- `PROJMUX_MANAGED_ROOTS` is the colon-separated search-root override (priority: env > saved file > defaults). Legacy alias `TMUX_SESSIONIZER_ROOTS` is still honored at runtime.
 - `~/.config/projmux/workdirs` stores the cumulative workdirs list managed via the Settings UX. It is read only when no env list is set.
 - `tmux set-option -g @projmux_projdir <path>` is a declarative source for `PROJDIR` that the switch command reads through `tmuxProjdirOption`.
 
