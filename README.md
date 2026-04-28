@@ -148,27 +148,6 @@ The upgrade reads `PROJDIR`/`RP` from the calling shell and memoizes the
 resolved value to `~/.config/projmux/projdir`, so the new binary keeps the
 same project root context as the one it replaces.
 
-## zsh Integration
-
-The lowest-friction setup is an alias:
-
-```sh
-alias pmx='projmux shell'
-```
-
-If you want new interactive zsh shells to enter the projmux app automatically,
-add a guarded hook to `~/.zshrc`:
-
-```sh
-if [[ -o interactive && -z "${TMUX:-}" ]] && command -v projmux >/dev/null 2>&1; then
-  exec projmux shell
-fi
-```
-
-Keep machine-specific shell policy in your own zsh config. `projmux` provides
-the stable app entrypoint and generated tmux config; it does not own terminal
-emulator or login-shell policy.
-
 ## Usage
 
 Day-to-day, projmux is driven by tmux keybindings inside `projmux shell` — see
