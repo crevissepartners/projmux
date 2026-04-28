@@ -1,45 +1,67 @@
 # Terminal Keybindings
 
-`projmux shell` and `projmux tmux install` generate the tmux bindings used by the
-app. In many terminals, `Alt-1`, `Alt-2`, and the other default shortcuts pass
-through to tmux without extra setup.
+projmux is keyboard-driven. `projmux shell` writes a tmux config that owns
+every binding listed here, so the keys are live the moment the app starts —
+no extra setup in most terminals.
 
-Use this page when your terminal emulator consumes a shortcut before tmux sees
-it, or when you want explicit terminal-level bindings. The examples send CSI-u
-escape sequences that projmux maps to tmux `User0` through `User11` keys.
+If your terminal emulator swallows `Alt-1`, `Ctrl-M`, or other shortcuts before
+tmux sees them, jump to [If your terminal eats shortcuts](#if-your-terminal-eats-shortcuts).
 
-한국어 요약: 보통은 별도 설정 없이 `projmux shell`이 생성한 tmux 키가 동작합니다.
-터미널이 `Alt-1` 같은 조합을 먼저 가로채면 아래 Ghostty 또는 Windows Terminal
-설정을 추가해서 projmux 전용 CSI-u 시퀀스를 tmux로 보내면 됩니다.
+> 한국어 요약: `projmux shell` 만 실행하면 아래 키가 바로 동작합니다. 터미널이
+> `Alt-1` 같은 조합을 먼저 가로채는 경우 [If your terminal eats shortcuts](#if-your-terminal-eats-shortcuts)
+> 의 Ghostty / Windows Terminal 설정을 참고해 CSI-u 시퀀스를 tmux 로 흘려보내면
+> 됩니다.
 
-## Generated App Bindings
+The tmux **prefix** is the upstream default `Ctrl-b`. Inside the running
+session, `Ctrl-b ?` lists every binding live.
+
+## Pickers
+
+These open the projmux popups and the sidebar. No prefix needed.
 
 | Shortcut | Action |
 | --- | --- |
-| `Alt-1` | Open project sidebar |
-| `Alt-2` | Open existing session popup |
-| `Alt-3` | Open project switcher popup |
-| `Alt-4` | Open AI split picker |
-| `Alt-5` | Open settings |
-| `Ctrl-n` | New tmux window in the current pane directory |
-| `Alt-r` | Rename the current tmux window |
-| `Ctrl-M` | Rename the current tmux window when your terminal sends `User10` |
-| `Alt-Left/Right/Up/Down` | Move between panes |
-| `Alt-Shift-Left/Right` | Previous/next window |
-| `Ctrl-Shift-M` | Rename the current tmux pane label when your terminal sends `User11` |
+| `Alt-1` | Project sidebar |
+| `Alt-2` | Existing session popup |
+| `Alt-3` | Project switcher popup |
+| `Alt-4` | AI split picker |
+| `Alt-5` | Settings |
+
+The same surfaces are also available from the prefix table:
+
+| Shortcut | Action |
+| --- | --- |
+| `Prefix F` | Project sidebar |
 | `Prefix b` | Existing session popup |
 | `Prefix f` | Project switcher popup |
-| `Prefix F` | Project sidebar |
-| `Prefix g` | Jump to the current pane project session |
-| `Prefix r` | Open AI split to the right |
-| `Prefix l` | Open AI split below |
-| `Prefix R` | Rename the current tmux window |
+| `Prefix g` | Jump to the current pane's project session |
 
-When a pane exits or is killed, projmux asks tmux shortly after pane removal to
-spread panes evenly in every multi-pane window so the previous split does not
-leave one side oversized.
+## Windows, panes, AI splits
 
-## Picker Actions
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl-n` | New tmux window in the current pane's directory |
+| `Alt-Shift-Left` / `Alt-Shift-Right` | Previous / next window |
+| `Alt-Left` / `Right` / `Up` / `Down` | Move focus between panes |
+| `Alt-r` | Rename the current window |
+| `Prefix R` | Rename the current window |
+| `Prefix r` | Open an AI split to the right |
+| `Prefix l` | Open an AI split below |
+
+When a pane closes, projmux re-spreads remaining panes so the surviving split
+does not stretch lopsided.
+
+### Conditional rename keys
+
+These two only fire if your terminal forwards CSI-u sequences (see
+[CSI-u Map](#csi-u-map)). Without that wiring, plain `Ctrl-M` is just `Enter`.
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl-M` | Rename the current window (terminal must send `User10`) |
+| `Ctrl-Shift-M` | Rename the current AI pane label / topic (terminal must send `User11`) |
+
+## Inside the pickers
 
 | Surface | Shortcut | Action |
 | --- | --- | --- |
@@ -49,7 +71,14 @@ leave one side oversized.
 | Project switcher | `Ctrl-X` | Kill the focused existing session and reopen the picker |
 | Project switcher | `Alt-P` | Pin or unpin the focused directory |
 
-## CSI-u Map
+## If your terminal eats shortcuts
+
+Some terminals consume `Alt-1`, `Ctrl-M`, or `Ctrl-Shift-M` for their own
+actions. The fix is to map those keystrokes to a CSI-u sequence the terminal
+sends to tmux unchanged. projmux binds CSI-u escapes to tmux's `User0`–`User11`
+keys, so once the terminal forwards the sequence the action fires.
+
+### CSI-u Map
 
 | CSI-u sequence | tmux key | Action |
 | --- | --- | --- |
@@ -66,7 +95,7 @@ leave one side oversized.
 | `ESC [ 9011 u` | `User10` | Rename the current tmux window |
 | `ESC [ 9012 u` | `User11` | Rename the current tmux pane label |
 
-## Ghostty
+### Ghostty
 
 Add key bindings to your Ghostty config. Ghostty keybinds use
 `keybind = trigger=action`; the `csi:` action sends a CSI sequence without the
@@ -91,7 +120,7 @@ keybind = alt+shift+right=csi:9010u
 
 Reload Ghostty or restart the terminal after changing the config.
 
-## Windows Terminal
+### Windows Terminal
 
 Add `sendInput` actions to `settings.json` and bind them from `keybindings`.
 Windows Terminal works well with plain tmux escape sequences for the default

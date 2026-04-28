@@ -197,57 +197,12 @@ fi
 
 `projmux`는 안정적인 앱 entrypoint와 생성 가능한 tmux 설정을 제공합니다.
 
-## 명령어
+## 사용법
 
-주요 이동 명령:
-
-```sh
-projmux shell
-projmux switch [--ui=popup|sidebar]
-projmux sessions [--ui=popup|sidebar]
-projmux settings
-projmux current
-```
-
-세션 생명주기:
-
-```sh
-projmux attach auto [--keep=N] [--fallback=home|ephemeral]
-projmux prune ephemeral [--keep=N]
-```
-
-Pin과 preview 상태:
-
-```sh
-projmux pin add <dir>
-projmux pin remove <dir>
-projmux pin toggle <dir>
-projmux pin list
-projmux preview select <session> <window> <pane>
-projmux preview cycle-window <session> <next|prev>
-projmux preview cycle-pane <session> <next|prev>
-```
-
-tmux 연동 헬퍼:
-
-```sh
-projmux tmux install
-projmux tmux install-app
-projmux tmux apply
-projmux tmux popup-toggle <mode>
-projmux tmux rename-pane <pane> <title>
-projmux attention toggle [pane]
-projmux status git [path]
-projmux status kube [session]
-```
-
-자가 업데이트:
-
-```sh
-projmux upgrade [--ref @latest|@vX.Y.Z|@main] [--target /path] [--no-apply] [--dry-run]
-```
-
-전체 명령은 `projmux help` 또는 `<command> --help`로 확인할 수 있습니다.
+일상 작업은 `projmux shell` 안의 tmux 키바인딩으로 진행합니다 —
+[터미널 키 설정](docs/keybindings.md) 참고. pin / preview / status helper /
+`upgrade` 같은 CLI 전체 표면은 `projmux help` 또는 `<command> --help` 로 확인할
+수 있습니다.
 
 ## 릴리스
 

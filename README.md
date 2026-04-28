@@ -204,57 +204,12 @@ Keep machine-specific shell policy in your own zsh config. `projmux` provides
 the stable app entrypoint and generated tmux config; it does not own terminal
 emulator or login-shell policy.
 
-## Commands
+## Usage
 
-High-level navigation:
-
-```sh
-projmux shell
-projmux switch [--ui=popup|sidebar]
-projmux sessions [--ui=popup|sidebar]
-projmux settings
-projmux current
-```
-
-Session lifecycle:
-
-```sh
-projmux attach auto [--keep=N] [--fallback=home|ephemeral]
-projmux prune ephemeral [--keep=N]
-```
-
-Pins and preview state:
-
-```sh
-projmux pin add <dir>
-projmux pin remove <dir>
-projmux pin toggle <dir>
-projmux pin list
-projmux preview select <session> <window> <pane>
-projmux preview cycle-window <session> <next|prev>
-projmux preview cycle-pane <session> <next|prev>
-```
-
-Tmux integration helpers:
-
-```sh
-projmux tmux install
-projmux tmux install-app
-projmux tmux apply
-projmux tmux popup-toggle <mode>
-projmux tmux rename-pane <pane> <title>
-projmux attention toggle [pane]
-projmux status git [path]
-projmux status kube [session]
-```
-
-Self-update:
-
-```sh
-projmux upgrade [--ref @latest|@vX.Y.Z|@main] [--target /path] [--no-apply] [--dry-run]
-```
-
-Run `projmux help` or `<command> --help` for the full command surface.
+Day-to-day, projmux is driven by tmux keybindings inside `projmux shell` — see
+[Terminal Keybindings](docs/keybindings.md). For the full CLI surface (pins,
+preview state, status helpers, `upgrade`, etc.), run `projmux help` or
+`<command> --help`.
 
 ## Releases
 
