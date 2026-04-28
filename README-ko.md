@@ -172,58 +172,11 @@ make test-e2e
 projmux shell
 ```
 
-이 명령은 `~/.config/projmux/tmux.conf`를 만들고 다음 형태로 tmux를
-실행합니다:
+projmux가 이 tmux 서버, 생성된 설정, status bar, popup binding을 직접 소유합니다.
+하단 좌측 뱃지에는 현재 프로젝트 이름이, 우측에는 경로/kube/git/시간이 표시됩니다.
 
-```sh
-tmux -L projmux -f ~/.config/projmux/tmux.conf new-session -A -s main
-```
-
-이 경로가 권장되는 첫 실행 진입점입니다. projmux가 이 tmux 서버, 생성된 설정,
-status bar, popup binding을 직접 소유합니다.
-
-앱 세션의 하단 좌측 뱃지는 현재 pane의 프로젝트 이름을 보여줍니다. 하단
-우측에는 현재 경로, kube segment, git segment, 시간이 표시됩니다.
-
-자주 쓰는 앱 키는 projmux가 생성한 tmux 설정에 들어 있습니다. 터미널 에뮬레이터에서
-키 전달을 명시해야 한다면 [터미널 키 설정](docs/keybindings.md)을 참고하세요.
-
-## 기존 tmux에 적용
-
-격리된 앱 서버가 아니라 평소 쓰는 tmux 서버에 projmux를 붙이고 싶다면 생성된
-tmux snippet을 설치합니다:
-
-```sh
-projmux tmux install --bin "$(command -v projmux)"
-tmux source-file ~/.tmux.conf
-```
-
-이 명령은 `~/.config/tmux/projmux.conf`를 쓰고, `~/.tmux.conf`에 source
-라인을 추가합니다. 설치된 binding은 shell script wrapper 없이 `projmux`를 직접
-호출합니다.
-
-설치 전에 생성될 설정을 확인하려면:
-
-```sh
-projmux tmux print-config --bin "$(command -v projmux)"
-```
-
-격리된 앱 설정만 다시 생성하려면:
-
-```sh
-projmux tmux install-app --bin "$(command -v projmux)"
-```
-
-격리된 앱 설정을 다시 쓰고 동작 중인 `-L projmux` 서버에 즉시 source-file까지
-적용하려면:
-
-```sh
-projmux tmux apply
-```
-
-`projmux tmux apply`는 `make install`과 `projmux upgrade`가 binary 교체 직후
-호출하는 명령입니다. pin이나 workdir을 바꾼 뒤 동작 중인 서버에 즉시 반영하고
-싶을 때 직접 실행해도 안전합니다.
+터미널 에뮬레이터에서 키 전달을 명시해야 한다면
+[터미널 키 설정](docs/keybindings.md)을 참고하세요.
 
 ## zsh 적용
 
@@ -365,12 +318,6 @@ env가 비었을 때만 사용됩니다.
 
 ```text
 ~/.config/projmux/tmux.conf
-```
-
-생성된 일반 tmux snippet:
-
-```text
-~/.config/tmux/projmux.conf
 ```
 
 ## 범위
