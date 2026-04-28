@@ -58,36 +58,51 @@ Open the app once, then use its generated tmux bindings to:
 
 ## Requirements
 
-- Go 1.24 or newer.
-- tmux.
-- fzf for interactive pickers.
-- zsh for the generated isolated app config.
-- git for branch/status metadata.
-- kubectl is optional and only needed for Kubernetes status segments.
-- On WSL, `projmux` sends Windows toast notifications through `powershell.exe`
-  and auto-registers its toast AppUserModelID on first use when possible.
-- On Linux, `notify-send` is used for desktop notifications unless
-  `PROJMUX_NOTIFY_HOOK` is set.
+- [Go 1.24+](https://go.dev/dl/) — required to install or build the binary.
+- [tmux](https://github.com/tmux/tmux/wiki/Installing) — the workspace runtime.
+- [fzf](https://github.com/junegunn/fzf#installation) — interactive popup/sidebar pickers.
+- [zsh](https://zsh.sourceforge.io/) — default shell of the generated app config (`projmux shell`).
+- [git](https://git-scm.com/downloads) — branch/status metadata.
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) — optional, only for the Kubernetes status segment.
+
+Desktop notifications: Linux uses `notify-send`; WSL routes Windows toasts via
+`powershell.exe`. Override either with `PROJMUX_NOTIFY_HOOK`.
 
 ## Install
-
-With Go (recommended):
 
 ```sh
 go install github.com/es5h/projmux/cmd/projmux@latest
 ```
 
-This writes the binary to `$(go env GOBIN)` (when set) or `$(go env GOPATH)/bin`
+This drops the binary in `$(go env GOBIN)` (when set) or `$(go env GOPATH)/bin`
 (default `~/go/bin`). Make sure that directory is on your `PATH`:
 
 ```sh
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-If you upgrade an already-running shell, run `hash -r` so it picks up the new
-binary instead of the cached path.
+Verify:
 
-From source (atomic install + apply live config):
+```sh
+projmux version
+```
+
+### Optional: `PROJDIR`
+
+`PROJDIR` is the default project root projmux uses for picker and discovery.
+It is optional — when unset, projmux falls back to its built-in source-root
+discovery (`~/source`, `~/work`, `~/projects`, `~/src`, `~/code`,
+`~/source/repos`).
+
+```sh
+export PROJDIR="$HOME/source/repos"
+```
+
+Add the line to `~/.zshrc` (or your shell's rc file). The resolved value is
+memoized to `~/.config/projmux/projdir` after first use, so later shells keep
+the same root even without the env var.
+
+### From source
 
 ```sh
 git clone https://github.com/es5h/projmux.git
@@ -95,21 +110,9 @@ cd projmux
 make install
 ```
 
-`make install` builds the binary, atomically replaces
-`$(go env GOPATH)/bin/projmux`, and runs `projmux tmux apply` so the live
-`-L projmux` server picks up any new bindings or status segments without a
-manual `source-file`. Override the destination with `INSTALL_DIR`:
-
-```sh
-make install INSTALL_DIR=/usr/local/bin
-```
-
-To build without installing:
-
-```sh
-make build
-install -m 0755 .bin/projmux "$(go env GOPATH)/bin/projmux"
-```
+`make install` builds, atomically replaces `$(go env GOPATH)/bin/projmux`, and
+runs `projmux tmux apply` so the live `-L projmux` server picks up new bindings
+without a restart. Override the destination with `INSTALL_DIR=/usr/local/bin`.
 
 ## Upgrading
 

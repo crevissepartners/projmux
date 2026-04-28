@@ -57,36 +57,50 @@ projmux shell
 
 ## 요구 사항
 
-- Go 1.24 이상.
-- tmux.
-- 대화형 picker를 위한 fzf.
-- 생성되는 앱 tmux 설정은 zsh를 기본 shell로 사용합니다.
-- git branch/status metadata 표시를 위한 git.
-- kubectl은 선택 사항이며 Kubernetes status segment가 필요할 때만 사용합니다.
-- WSL에서는 가능할 때 `powershell.exe`를 통해 Windows toast notification을
-  보내고, 첫 사용 시 toast AppUserModelID를 자동 등록합니다.
-- Linux desktop notification은 기본적으로 `notify-send`를 사용하며,
-  `PROJMUX_NOTIFY_HOOK`을 설정하면 별도 실행 파일로 보낼 수 있습니다.
+- [Go 1.24+](https://go.dev/dl/) — binary 설치/빌드에 필요.
+- [tmux](https://github.com/tmux/tmux/wiki/Installing) — workspace 런타임.
+- [fzf](https://github.com/junegunn/fzf#installation) — popup/sidebar picker.
+- [zsh](https://zsh.sourceforge.io/) — `projmux shell` 이 만드는 앱 tmux 설정의 기본 shell.
+- [git](https://git-scm.com/downloads) — branch/status segment.
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) — 선택, Kubernetes status segment 사용 시에만.
+
+데스크톱 알림: Linux 는 `notify-send`, WSL 은 `powershell.exe` 토스트를 사용합니다.
+다른 실행 파일로 보내려면 `PROJMUX_NOTIFY_HOOK` 을 설정하세요.
 
 ## 설치
-
-Go 로 설치 (권장):
 
 ```sh
 go install github.com/es5h/projmux/cmd/projmux@latest
 ```
 
 binary 는 `$(go env GOBIN)` (설정된 경우) 또는 `$(go env GOPATH)/bin`
-(기본값 `~/go/bin`) 에 들어갑니다. 해당 디렉터리가 `PATH` 에 있어야 합니다:
+(기본값 `~/go/bin`) 에 떨어집니다. 해당 디렉터리가 `PATH` 에 있어야 합니다:
 
 ```sh
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-이미 실행 중인 shell 에서 업그레이드한 경우 `hash -r` 로 명령 lookup cache 를
-지워야 새 binary 가 잡힙니다.
+확인:
 
-소스에서 빌드 (atomic 설치 + live 적용):
+```sh
+projmux version
+```
+
+### 선택: `PROJDIR`
+
+`PROJDIR` 은 projmux 가 picker/탐색에서 기본으로 사용할 프로젝트 루트입니다.
+설정하지 않으면 projmux 가 내장된 source-root 탐색(`~/source`, `~/work`,
+`~/projects`, `~/src`, `~/code`, `~/source/repos`) 으로 자동 fallback 합니다.
+
+```sh
+export PROJDIR="$HOME/source/repos"
+```
+
+`~/.zshrc` (또는 사용 중인 shell rc 파일) 에 한 줄 추가하면 됩니다. 첫 실행
+이후에는 `~/.config/projmux/projdir` 에 memoize 되므로, 이후 env 가 없어도 같은
+루트가 유지됩니다.
+
+### 소스에서 빌드
 
 ```sh
 git clone https://github.com/es5h/projmux.git
@@ -94,22 +108,9 @@ cd projmux
 make install
 ```
 
-`make install` 은 binary 를 빌드해 `$(go env GOPATH)/bin/projmux` 를
-atomically 교체하고, 바로 `projmux tmux apply` 를 실행해 동작 중인 `-L projmux`
-서버가 새 binding 과 status segment 를 즉시 반영하도록 합니다. 별도로
-`source-file` 을 호출할 필요가 없습니다. 설치 위치를 바꾸려면 `INSTALL_DIR` 로
-override 하세요:
-
-```sh
-make install INSTALL_DIR=/usr/local/bin
-```
-
-설치 없이 빌드만 하려면:
-
-```sh
-make build
-install -m 0755 .bin/projmux "$(go env GOPATH)/bin/projmux"
-```
+`make install` 은 빌드 후 `$(go env GOPATH)/bin/projmux` 를 atomically 교체하고
+`projmux tmux apply` 를 실행해 동작 중인 `-L projmux` 서버가 즉시 새 binding 을
+반영하도록 합니다. 설치 위치는 `INSTALL_DIR=/usr/local/bin` 으로 override.
 
 ## 업그레이드
 
