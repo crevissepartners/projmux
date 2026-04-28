@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/es5h/projmux/internal/config"
 )
 
 // upgradeCommand wraps `go install` to refresh the active projmux binary.
@@ -125,6 +127,11 @@ func (c *upgradeCommand) runDryRun(opts upgradeOptions, stdout io.Writer) error 
 }
 
 func (c *upgradeCommand) runUpgrade(opts upgradeOptions, stdout, stderr io.Writer) error {
+	if home, err := os.UserHomeDir(); err == nil {
+		if raw, _ := preferredProjdirEnv(os.Getenv); raw != "" {
+			memoizeProjdir(home, raw, config.LoadProjdir, config.SaveProjdir)
+		}
+	}
 	if c.lookPath == nil {
 		return errors.New("configure upgrade lookPath: lookup function is not configured")
 	}
