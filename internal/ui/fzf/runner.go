@@ -24,6 +24,11 @@ type Options struct {
 	PreviewCommand string
 	PreviewWindow  string
 	Bindings       []string
+	// AcceptQuery surfaces the user-typed query alongside any selection.
+	// When true, the runner passes --print-query to fzf and Result.Query is
+	// populated from the first stdout line emitted by fzf. Existing callers
+	// can leave this false to keep the previous behavior.
+	AcceptQuery bool
 }
 
 type Entry struct {
@@ -35,6 +40,9 @@ type Entry struct {
 type Result struct {
 	Key   string
 	Value string
+	// Query is the user-typed query string when Options.AcceptQuery is true.
+	// It is empty for callers that do not opt into query echo.
+	Query string
 }
 
 type Runner interface {
@@ -100,7 +108,40 @@ func (r *runner) Run(options Options) (Result, error) {
 		return Result{}, fmt.Errorf("run fzf: %w: %s", err, msg)
 	}
 
-	return selectedResult(trimTrailingRecordTerminators(stdout.String()), options.ExpectKeys), nil
+	output := trimTrailingRecordTerminators(stdout.String())
+	if options.AcceptQuery {
+		return selectedResultWithQuery(output, options.ExpectKeys), nil
+	}
+	return selectedResult(output, options.ExpectKeys), nil
+}
+
+// selectedResultWithQuery handles the --print-query stdout shape: fzf always
+// prints the typed query as the first line, then the expect-key (if any) and
+// the selected entry on subsequent lines. We split the leading query line off,
+// then defer to selectedResult for the remainder.
+func selectedResultWithQuery(selection string, expectKeys []string) Result {
+	if selection == "" {
+		return Result{}
+	}
+	cutAt := -1
+	for _, separator := range []string{"\n", "\x00"} {
+		if idx := strings.Index(selection, separator); idx >= 0 && (cutAt < 0 || idx < cutAt) {
+			cutAt = idx
+		}
+	}
+	if cutAt < 0 {
+		// Single line: query only, no selection (e.g. user typed and pressed Enter
+		// against an empty list with --exit-0).
+		return Result{Query: selection}
+	}
+	query := selection[:cutAt]
+	rest := selection[cutAt+1:]
+	if rest == "" {
+		return Result{Query: query}
+	}
+	result := selectedResult(rest, expectKeys)
+	result.Query = query
+	return result
 }
 
 func runnerArgs(options Options, supportsFooter bool, filterFile string) []string {
@@ -126,6 +167,9 @@ func runnerArgs(options Options, supportsFooter bool, filterFile string) []strin
 		"--scrollbar", "█",
 		"--info", "inline-right",
 	)
+	if options.AcceptQuery {
+		args = append(args, "--print-query")
+	}
 	if options.Read0 {
 		args = append(args,
 			"--read0",

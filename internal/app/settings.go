@@ -4,12 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	intfzf "github.com/es5h/projmux/internal/ui/fzf"
 	intrender "github.com/es5h/projmux/internal/ui/render"
 	"github.com/es5h/projmux/internal/version"
 )
+
+// osStat is a package-level indirection so tests can stub filesystem checks.
+var osStat = os.Stat
 
 type settingsCommand struct {
 	ai       *aiCommand
@@ -32,6 +37,7 @@ const (
 	settingsProjectPins         = "project:pins"
 	settingsWorkdirAdd          = "workdir:add"
 	settingsWorkdirList         = "workdir:list"
+	settingsWorkdirTyped        = "workdir:typed"
 )
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand) *settingsCommand {
@@ -271,7 +277,10 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	entries = append([]intfzf.Entry{settingsBackEntry()}, entries...)
+	entries = append([]intfzf.Entry{
+		settingsBackEntry(),
+		settingsWorkdirTypedEntry(),
+	}, entries...)
 
 	result, err := c.runPicker(intfzf.Options{
 		UI:         "settings-workdir-add",
@@ -292,7 +301,90 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 	if action == settingsBackValue {
 		return nil
 	}
+	if action == settingsWorkdirTyped {
+		return c.runAddWorkdirTyped(stdout, stderr)
+	}
 	return c.execute(action, stdout, stderr)
+}
+
+// settingsWorkdirTypedEntry surfaces the "Type path manually..." row that
+// bypasses the filesystem scan and lets the user type an absolute path
+// directly. Useful for heavy WSL mounts (/mnt/c/Users/...), large NFS, etc.
+func settingsWorkdirTypedEntry() intfzf.Entry {
+	return intfzf.Entry{
+		Label: "\x1b[32m✏  Type path manually...\x1b[0m   \x1b[90m(skip filesystem scan)\x1b[0m",
+		Value: settingsWorkdirTyped,
+	}
+}
+
+// runAddWorkdirTyped opens a typed-entry picker that surfaces the user-typed
+// query as the workdir path, skipping the filesystem scan. Empty input is
+// treated as a quiet close. Validation: must be an absolute path; "~" is
+// expanded via the home resolver. A failing os.Stat is logged as a warning
+// but does not block the add (WSL mounts may be temporarily unmounted).
+func (c *settingsCommand) runAddWorkdirTyped(stdout, stderr io.Writer) error {
+	if c.switcher == nil {
+		return errors.New("project picker settings are not configured")
+	}
+
+	result, err := c.runPicker(intfzf.Options{
+		UI:          "settings-workdir-typed",
+		Entries:     nil,
+		AcceptQuery: true,
+		Prompt:      "Type workdir path > ",
+		Header:      "Type an absolute path. WSL example: /mnt/c/Users/me/code",
+		Footer:      projmuxFooter("Enter: add  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys:  []string{"enter"},
+		Bindings:    settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+
+	typed := strings.TrimSpace(result.Query)
+	if typed == "" {
+		// Empty input: treat as a quiet close, no error.
+		return nil
+	}
+
+	expanded, err := c.expandTypedWorkdir(typed)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return nil
+	}
+
+	if !filepath.IsAbs(expanded) {
+		fmt.Fprintf(stderr, "workdir must be an absolute path: %s\n", typed)
+		return nil
+	}
+
+	if info, statErr := osStat(expanded); statErr != nil {
+		fmt.Fprintf(stderr, "warning: cannot stat workdir (continuing): %s: %v\n", expanded, statErr)
+	} else if !info.IsDir() {
+		fmt.Fprintf(stderr, "warning: workdir is not a directory (continuing): %s\n", expanded)
+	}
+
+	return c.switcher.addWorkdir(expanded, stdout)
+}
+
+// expandTypedWorkdir trims and home-expands a typed workdir path. The home
+// expansion mirrors how the typed flow's UX hint advertises "~" support.
+func (c *settingsCommand) expandTypedWorkdir(typed string) (string, error) {
+	typed = strings.TrimSpace(typed)
+	if typed == "" {
+		return "", errors.New("workdir path is empty")
+	}
+	if typed == "~" || strings.HasPrefix(typed, "~/") {
+		homeDir, err := c.switcher.resolveHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory for %q: %w", typed, err)
+		}
+		if typed == "~" {
+			return homeDir, nil
+		}
+		return filepath.Join(homeDir, strings.TrimPrefix(typed, "~/")), nil
+	}
+	return typed, nil
 }
 
 func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {

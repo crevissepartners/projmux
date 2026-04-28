@@ -454,6 +454,168 @@ func TestWorkdirListEntriesSurfacesEnvSources(t *testing.T) {
 	}
 }
 
+func TestAddWorkdirEntriesIncludesTypedRow(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv(projdirEnvVar, "")
+
+	home := t.TempDir()
+	mkdirAll(t, filepath.Join(home, "source", "repos", "app"))
+
+	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+
+	var addOptions intfzf.Options
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 3:
+				addOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := addOptions.UI, "settings-workdir-add"; got != want {
+		t.Fatalf("add workdir UI = %q, want %q", got, want)
+	}
+	if !hasEntryValue(addOptions.Entries, settingsWorkdirTyped) {
+		t.Fatalf("add workdir entries = %#v, want typed-entry row", addOptions.Entries)
+	}
+	if !hasEntryLabelContaining(addOptions.Entries, "Type path manually") {
+		t.Fatalf("add workdir entries = %#v, want 'Type path manually' label", addOptions.Entries)
+	}
+}
+
+func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv(projdirEnvVar, "")
+
+	home := t.TempDir()
+	typed := filepath.Join(home, "mnt", "c", "Users", "me", "code")
+	mkdirAll(t, typed)
+
+	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+
+	var typedOptions intfzf.Options
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 3:
+				if !hasEntryValue(options.Entries, settingsWorkdirTyped) {
+					t.Fatalf("add workdir entries = %#v, want typed row", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirTyped}, nil
+			case 4:
+				typedOptions = options
+				return intfzf.Result{Key: "enter", Query: typed}, nil
+			case 5:
+				// After typed flow returns, the project picker reopens. Close it.
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := typedOptions.UI, "settings-workdir-typed"; got != want {
+		t.Fatalf("typed picker UI = %q, want %q", got, want)
+	}
+	if !typedOptions.AcceptQuery {
+		t.Fatalf("typed picker AcceptQuery = false, want true")
+	}
+	if got, want := typedOptions.Prompt, "Type workdir path > "; got != want {
+		t.Fatalf("typed picker prompt = %q, want %q", got, want)
+	}
+
+	saved, err := readWorkdirsFile(t, home)
+	if err != nil {
+		t.Fatalf("readWorkdirsFile() error = %v", err)
+	}
+	if !equalStrings(saved, []string{typed}) {
+		t.Fatalf("saved workdirs = %#v, want [%q]", saved, typed)
+	}
+	if got, want := stdout.String(), "added workdir: "+typed+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv(projdirEnvVar, "")
+
+	home := t.TempDir()
+	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 3:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirTyped}, nil
+			case 4:
+				return intfzf.Result{Key: "enter", Query: "relative/path"}, nil
+			case 5:
+				// After typed-flow falls back, settings should return to the
+				// project picker section. Close to terminate the run.
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "absolute path") {
+		t.Fatalf("stderr = %q, want absolute-path error", got)
+	}
+	saved, err := readWorkdirsFile(t, home)
+	if err != nil {
+		t.Fatalf("readWorkdirsFile() error = %v", err)
+	}
+	if len(saved) != 0 {
+		t.Fatalf("saved workdirs = %#v, want empty after rejected typed input", saved)
+	}
+}
+
 func TestSettingsHubBackReturnsToRoot(t *testing.T) {
 	t.Parallel()
 

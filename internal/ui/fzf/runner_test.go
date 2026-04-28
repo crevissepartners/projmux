@@ -332,6 +332,69 @@ func TestRunnerRunDoesNotTreatMultilineLabelAsExpectedKey(t *testing.T) {
 	}
 }
 
+func TestRunnerRunAcceptQueryReturnsQueryOnly(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommand{stdout: "/mnt/c/Users/me/code\n"}
+
+	r := &runner{
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
+		newCommand: func(name string, args ...string) command {
+			if !containsString(args, "--print-query") {
+				t.Fatalf("command args = %q, want --print-query", args)
+			}
+			return fake
+		},
+	}
+
+	got, err := r.Run(Options{
+		UI:          "popup",
+		AcceptQuery: true,
+		ExpectKeys:  []string{"enter"},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := Result{Query: "/mnt/c/Users/me/code"}
+	if got != want {
+		t.Fatalf("Run() = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunnerRunAcceptQueryReturnsQueryAndSelection(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommand{stdout: "work\nenter\nworkspace\t/home/tester/workspace\n"}
+
+	r := &runner{
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
+		newCommand: func(name string, args ...string) command {
+			if !containsString(args, "--print-query") {
+				t.Fatalf("command args = %q, want --print-query", args)
+			}
+			return fake
+		},
+	}
+
+	got, err := r.Run(Options{
+		UI:          "popup",
+		AcceptQuery: true,
+		ExpectKeys:  []string{"enter"},
+		Entries: []Entry{
+			{Label: "workspace", Value: "/home/tester/workspace"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := Result{Key: "enter", Value: "/home/tester/workspace", Query: "work"}
+	if got != want {
+		t.Fatalf("Run() = %#v, want %#v", got, want)
+	}
+}
+
 func TestRunnerRunReportsUnavailableBinary(t *testing.T) {
 	t.Parallel()
 
