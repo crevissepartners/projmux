@@ -84,6 +84,8 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runInstall(fs.Args()[1:], stdout, stderr)
 	case "install-app":
 		return c.runInstallApp(fs.Args()[1:], stdout, stderr)
+	case "apply":
+		return c.runApply(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printTmuxUsage(stdout)
 		return nil
@@ -431,24 +433,91 @@ func (c *tmuxCommand) runInstallApp(args []string, stdout, stderr io.Writer) err
 		return errors.New("tmux install-app does not accept positional arguments")
 	}
 
-	binaryPath, err := c.resolveConfigBinary(*binaryOverride)
+	resolved, err := c.writeAppConfig(*binaryOverride, *configPath)
 	if err != nil {
 		return err
 	}
-	config := c.expandHome(strings.TrimSpace(*configPath))
+	_, err = fmt.Fprintf(stdout, "wrote %s\n", resolved)
+	return err
+}
+
+// writeAppConfig resolves the binary + config target and writes the projmux
+// app tmux config. Returns the resolved on-disk config path so callers can
+// log it or pass it to tmux source-file.
+func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (string, error) {
+	binaryPath, err := c.resolveConfigBinary(binaryOverride)
+	if err != nil {
+		return "", err
+	}
+	config := c.expandHome(strings.TrimSpace(configOverride))
 	if config == "" {
 		config = c.expandHome("~/.config/projmux/tmux.conf")
 	}
 	if c.writeFile == nil {
-		return errors.New("configure tmux install-app writer: file writer is not configured")
+		return "", errors.New("configure tmux install-app writer: file writer is not configured")
 	}
 	if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {
-		return fmt.Errorf("create tmux app config directory: %w", err)
+		return "", fmt.Errorf("create tmux app config directory: %w", err)
 	}
 	if err := c.writeFile(config, []byte(tmuxAppConfig(binaryPath)), 0o644); err != nil {
-		return fmt.Errorf("write tmux app config: %w", err)
+		return "", fmt.Errorf("write tmux app config: %w", err)
 	}
-	_, err = fmt.Fprintf(stdout, "wrote %s\n", config)
+	return config, nil
+}
+
+func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("tmux apply", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	binaryOverride := fs.String("bin", "", "projmux binary path to write into the app config")
+	configPath := fs.String("config", "", "app tmux config path to write")
+	socket := fs.String("socket", "projmux", "tmux -L socket name to reload")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printTmuxUsage(stderr)
+		return errors.New("tmux apply does not accept positional arguments")
+	}
+
+	resolved, err := c.writeAppConfig(*binaryOverride, *configPath)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "wrote %s\n", resolved); err != nil {
+		return err
+	}
+
+	socketName := strings.TrimSpace(*socket)
+	if socketName == "" {
+		socketName = "projmux"
+	}
+	if c.runner == nil {
+		_, err = fmt.Fprintf(stdout, "skipped reload: no tmux runner configured\n")
+		return err
+	}
+
+	ctx := context.Background()
+	// Probe the socket. tmux exits non-zero (and writes "no server running"
+	// to stderr) when the socket is dead — treat that as a non-fatal skip.
+	sessionsOut, listErr := c.runner.Run(ctx, "tmux", "-L", socketName, "list-sessions", "-F", "#{session_id}")
+	if listErr != nil {
+		_, err = fmt.Fprintf(stdout, "skipped reload: no live tmux server -L %s\n", socketName)
+		return err
+	}
+
+	if _, err := c.runner.Run(ctx, "tmux", "-L", socketName, "source-file", resolved); err != nil {
+		fmt.Fprintf(stderr, "tmux source-file failed on -L %s: %v\n", socketName, err)
+		_, err2 := fmt.Fprintf(stdout, "skipped reload: source-file failed on -L %s\n", socketName)
+		return err2
+	}
+
+	count := 0
+	for line := range strings.SplitSeq(strings.TrimSpace(string(sessionsOut)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	_, err = fmt.Fprintf(stdout, "reloaded tmux server -L %s: %d sessions\n", socketName, count)
 	return err
 }
 
@@ -488,6 +557,7 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux print-app-config [--bin <path>]")
 	fmt.Fprintln(w, "  projmux tmux install [--bin <path>] [--config <path>] [--include <path>]")
 	fmt.Fprintln(w, "  projmux tmux install-app [--bin <path>] [--config <path>]")
+	fmt.Fprintln(w, "  projmux tmux apply [--bin <path>] [--config <path>] [--socket <name>]")
 }
 
 type tmuxPopupToggleMode struct {

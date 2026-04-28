@@ -629,6 +629,95 @@ func TestTmuxInstallAppWritesAppConfig(t *testing.T) {
 	}
 }
 
+func TestTmuxApplySkipsReloadWhenServerMissing(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	runner := &recordingTmuxRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(name string) string { return home },
+		writeFile:  os.WriteFile,
+		runner:     runner,
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"apply", "--config", configPath, "--socket", "projmux-test"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "set -g @projmux_app 1") {
+		t.Fatalf("config = %q, want app marker", string(content))
+	}
+	if !strings.Contains(stdout.String(), "wrote "+configPath) {
+		t.Fatalf("stdout = %q, want wrote line", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "skipped reload: no live tmux server -L projmux-test") {
+		t.Fatalf("stdout = %q, want skip message", stdout.String())
+	}
+
+	if len(runner.calls) == 0 {
+		t.Fatalf("expected at least one tmux probe call")
+	}
+	first := runner.calls[0]
+	if first.name != "tmux" || len(first.args) < 4 || first.args[0] != "-L" || first.args[1] != "projmux-test" || first.args[2] != "list-sessions" {
+		t.Fatalf("first call = %+v, want list-sessions probe", first)
+	}
+	for _, c := range runner.calls {
+		if len(c.args) >= 3 && c.args[2] == "source-file" {
+			t.Fatalf("source-file should not run when probe failed: %+v", c)
+		}
+	}
+}
+
+func TestTmuxApplyReloadsLiveServer(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	probeKey := strings.Join([]string{"tmux", "-L", "projmux", "list-sessions", "-F", "#{session_id}"}, "\x00")
+	sourceKey := strings.Join([]string{"tmux", "-L", "projmux", "source-file", configPath}, "\x00")
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			probeKey:  "$0\n$1\n$2\n",
+			sourceKey: "",
+		},
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(name string) string { return home },
+		writeFile:  os.WriteFile,
+		runner:     runner,
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"apply", "--config", configPath}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "wrote "+configPath) {
+		t.Fatalf("stdout = %q, want wrote line", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "reloaded tmux server -L projmux: 3 sessions") {
+		t.Fatalf("stdout = %q, want reload summary with 3 sessions", stdout.String())
+	}
+
+	var sawSource bool
+	for _, c := range runner.calls {
+		if len(c.args) >= 4 && c.args[2] == "source-file" && c.args[3] == configPath {
+			sawSource = true
+		}
+	}
+	if !sawSource {
+		t.Fatalf("expected source-file call, calls = %+v", runner.calls)
+	}
+}
+
 func TestTmuxCommandRejectsInvalidUsage(t *testing.T) {
 	t.Parallel()
 

@@ -2,16 +2,29 @@ GO ?= go
 GOFMT ?= gofmt
 BUILD_DIR ?= .bin
 PROJMUX_BIN ?= $(BUILD_DIR)/projmux
+INSTALL_DIR ?= $(HOME)/.local/bin
+INSTALL_BIN := $(INSTALL_DIR)/projmux
 
 GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './.git/*' \
 	-not -path './.wt/*')
 
-.PHONY: fmt fmt-check fix build test test-integration test-e2e e2e verify
+.PHONY: fmt fmt-check fix build install test test-integration test-e2e e2e verify
 
 build:
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -o $(PROJMUX_BIN) ./cmd/projmux
+	@echo ">> built $(PROJMUX_BIN)"
+
+install: build
+	@mkdir -p $(INSTALL_DIR)
+	@tmpfile="$(INSTALL_BIN).tmp.$$$$"; \
+	  cp $(PROJMUX_BIN) "$$tmpfile" && \
+	  chmod 0755 "$$tmpfile" && \
+	  mv "$$tmpfile" $(INSTALL_BIN)
+	@echo ">> atomically replaced $(INSTALL_BIN)"
+	@echo ">> applying live config..."
+	@$(INSTALL_BIN) tmux apply
 
 fmt:
 	@if [ -n "$(GO_FILES)" ]; then \
