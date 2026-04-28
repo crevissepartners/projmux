@@ -85,9 +85,11 @@ jobs:
           path: dist/*.tar.gz
 
   publish:
-    name: Publish Release
+    name: Publish Artifacts
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -99,11 +101,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Create GitHub release
+      - name: Upload artifacts to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          gh release create "${GITHUB_REF_NAME}" dist/*.tar.gz \
-            --title "projmux ${version}" \
-            --notes "Initial app baseline release for projmux ${version}."
+        run: gh release upload "${GITHUB_REF_NAME}" dist/*.tar.gz --clobber
