@@ -9,6 +9,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	"github.com/crevissepartners/projmux/internal/version"
 )
 
 func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
@@ -157,7 +158,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		t.Fatalf("settings about entries = %#v, want back entry", aboutOptions.Entries)
 	}
 	for _, want := range []string{
-		"projmux 0.2.1",
+		"projmux " + version.String(),
 		"https://github.com/crevissepartners/projmux",
 		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
 		"sidebar, sessions, projects",
