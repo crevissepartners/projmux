@@ -83,6 +83,8 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runNotify(args[1:], stderr)
 	case "watch-title":
 		return c.runWatchTitle(args[1:], stderr)
+	case "topic":
+		return c.runTopic(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printAIUsage(stdout)
 		return nil
@@ -329,6 +331,118 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 		}
 		c.sleepFor(interval)
 	}
+}
+
+func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		printAIUsage(stderr)
+		return errors.New("ai topic requires a subcommand")
+	}
+	switch args[0] {
+	case "set":
+		rest, paneID, err := parseAITopicArgs(args[1:])
+		if err != nil {
+			printAIUsage(stderr)
+			return err
+		}
+		if len(rest) == 0 {
+			printAIUsage(stderr)
+			return errors.New("ai topic set requires <text>")
+		}
+		if len(rest) > 1 {
+			printAIUsage(stderr)
+			return errors.New("ai topic set accepts a single <text> argument")
+		}
+		text := strings.TrimSpace(rest[0])
+		if text == "" {
+			printAIUsage(stderr)
+			return errors.New("ai topic set requires non-empty <text>")
+		}
+		paneID, err = c.resolveTopicPaneID(paneID)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return err
+		}
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, text)
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicManualOption, "on")
+		return nil
+	case "clear":
+		rest, paneID, err := parseAITopicArgs(args[1:])
+		if err != nil {
+			printAIUsage(stderr)
+			return err
+		}
+		if len(rest) > 0 {
+			printAIUsage(stderr)
+			return errors.New("ai topic clear takes no positional arguments")
+		}
+		paneID, err = c.resolveTopicPaneID(paneID)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return err
+		}
+		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneTopicOption)
+		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneTopicManualOption)
+		return nil
+	case "get":
+		rest, paneID, err := parseAITopicArgs(args[1:])
+		if err != nil {
+			printAIUsage(stderr)
+			return err
+		}
+		if len(rest) > 0 {
+			printAIUsage(stderr)
+			return errors.New("ai topic get takes no positional arguments")
+		}
+		paneID, err = c.resolveTopicPaneID(paneID)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return err
+		}
+		fmt.Fprintln(stdout, c.readTmuxPaneOption(paneID, aiPaneTopicOption))
+		return nil
+	case "help", "--help", "-h":
+		printAIUsage(stdout)
+		return nil
+	default:
+		printAIUsage(stderr)
+		return fmt.Errorf("unknown ai topic subcommand: %s", args[0])
+	}
+}
+
+func parseAITopicArgs(args []string) ([]string, string, error) {
+	rest := make([]string, 0, len(args))
+	paneID := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--pane":
+			if i+1 >= len(args) {
+				return nil, "", errors.New("--pane requires a value")
+			}
+			paneID = strings.TrimSpace(args[i+1])
+			i++
+		default:
+			if value, ok := strings.CutPrefix(args[i], "--pane="); ok {
+				paneID = strings.TrimSpace(value)
+				continue
+			}
+			rest = append(rest, args[i])
+		}
+	}
+	return rest, paneID, nil
+}
+
+func (c *aiCommand) resolveTopicPaneID(explicit string) (string, error) {
+	if explicit = strings.TrimSpace(explicit); explicit != "" {
+		return explicit, nil
+	}
+	if envPane := strings.TrimSpace(c.env("TMUX_PANE")); envPane != "" {
+		return envPane, nil
+	}
+	if pane := c.readTrimmed("tmux", "display-message", "-p", "#{pane_id}"); pane != "" {
+		return pane, nil
+	}
+	return "", errors.New("ai topic requires a tmux pane (set --pane or run inside tmux)")
 }
 
 func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
@@ -1898,4 +2012,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")
 	fmt.Fprintln(w, "  projmux ai notify [notify|reset] [pane]")
 	fmt.Fprintln(w, "  projmux ai watch-title [pane]")
+	fmt.Fprintln(w, "  projmux ai topic set <text> [--pane <id>]")
+	fmt.Fprintln(w, "  projmux ai topic clear [--pane <id>]")
+	fmt.Fprintln(w, "  projmux ai topic get [--pane <id>]")
 }
