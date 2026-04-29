@@ -1429,3 +1429,158 @@ func paneGeometryIDs(panes []aiPaneGeometry) []string {
 	}
 	return ids
 }
+
+func TestAITopicSetWritesPaneOptionAndManualFlag(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+
+	if err := cmd.Run([]string{"topic", "set", "fix login bug", "--pane", "%3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run topic set error = %v", err)
+	}
+
+	want := []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%3", "@projmux_ai_topic", "fix login bug"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%3", "@projmux_ai_topic_manual", "on"}},
+	}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAITopicSetUsesEnvPaneWhenFlagOmitted(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "TMUX_PANE":
+			return "%7"
+		case "HOME":
+			return home
+		default:
+			return ""
+		}
+	}
+
+	if err := cmd.Run([]string{"topic", "set", "review PR"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run topic set error = %v", err)
+	}
+
+	want := []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_ai_topic", "review PR"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_ai_topic_manual", "on"}},
+	}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAITopicClearUnsetsBothPaneOptions(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+
+	if err := cmd.Run([]string{"topic", "clear", "--pane", "%4"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run topic clear error = %v", err)
+	}
+
+	want := []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%4", "@projmux_ai_topic"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%4", "@projmux_ai_topic_manual"}},
+	}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAITopicGetPrintsPaneOptionValue(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%5", "#{@projmux_ai_topic}"}) {
+			return []byte("ship the feature\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	stdout := &bytes.Buffer{}
+	if err := cmd.Run([]string{"topic", "get", "--pane", "%5"}, stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run topic get error = %v", err)
+	}
+
+	if got, want := stdout.String(), "ship the feature\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestAITopicGetEmitsBlankLineWhenUnset(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+
+	stdout := &bytes.Buffer{}
+	if err := cmd.Run([]string{"topic", "get", "--pane", "%6"}, stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run topic get error = %v", err)
+	}
+	if got, want := stdout.String(), "\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestAITopicSetRequiresText(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"topic", "set", "--pane", "%2"}, &bytes.Buffer{}, stderr); err == nil {
+		t.Fatalf("Run topic set without text expected error, got nil")
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("expected no tmux commands, got %#v", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestAITopicUnknownActionReturnsError(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+
+	stderr := &bytes.Buffer{}
+	err := cmd.Run([]string{"topic", "foo"}, &bytes.Buffer{}, stderr)
+	if err == nil {
+		t.Fatalf("Run topic foo expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown ai topic subcommand") {
+		t.Fatalf("error = %v, want contains \"unknown ai topic subcommand\"", err)
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("expected no tmux commands, got %#v", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestAITopicHelpListedInUsage(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	printAIUsage(stdout)
+	for _, want := range []string{
+		"projmux ai topic set <text> [--pane <id>]",
+		"projmux ai topic clear [--pane <id>]",
+		"projmux ai topic get [--pane <id>]",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("usage = %q, want contains %q", stdout.String(), want)
+		}
+	}
+}
+
+func TestAITopicErrorsWhenNoPaneAvailable(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(string) string { return "" }
+	cmd.readCommand = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("not in tmux")
+	}
+
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"topic", "set", "anything"}, &bytes.Buffer{}, stderr); err == nil {
+		t.Fatalf("Run topic set without pane expected error, got nil")
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("expected no tmux set-option commands, got %#v", cmdRecorder(cmd).commands)
+	}
+}
