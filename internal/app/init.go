@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -17,6 +18,11 @@ type initCommand struct {
 	getenv   func(string) string
 	readFile func(string) ([]byte, error)
 	stat     func(string) (os.FileInfo, error)
+	// lstat is used for symlink detection; defaults to os.Lstat. Tests can
+	// override it to drive the symlink branch without touching the real fs.
+	lstat func(string) (os.FileInfo, error)
+	// getwd resolves relative --config paths against the caller's cwd.
+	getwd func() (string, error)
 }
 
 func newInitCommand() *initCommand {
@@ -25,6 +31,8 @@ func newInitCommand() *initCommand {
 		getenv:   os.Getenv,
 		readFile: os.ReadFile,
 		stat:     os.Stat,
+		lstat:    os.Lstat,
+		getwd:    os.Getwd,
 	}
 }
 
@@ -39,7 +47,8 @@ func (c *initCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	apply := fs.Bool("apply", false, "write the merged config (default: dry-run preview)")
 	dryRun := fs.Bool("dry-run", false, "force dry-run preview even when no other flag is set")
-	configOverride := fs.String("config", "", "override the terminal config path (mostly for tests)")
+	configOverride := fs.String("config", "", "explicit config file path (overrides auto-detected candidates)")
+	allowSymlink := fs.Bool("allow-symlink", false, "merge into a symlinked config target (default: refuse to mutate symlink targets such as dotfiles repos)")
 	if err := fs.Parse(flagArgs); err != nil {
 		return err
 	}
@@ -72,13 +81,13 @@ func (c *initCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	configPath := strings.TrimSpace(*configOverride)
-	if configPath == "" {
-		path, err := adapter.ConfigPath(c.env())
-		if err != nil {
-			return fmt.Errorf("init: resolve %s config path: %w", adapter.Name(), err)
-		}
-		configPath = path
+	configPath, err := c.resolveConfigPath(adapter, strings.TrimSpace(*configOverride))
+	if err != nil {
+		return err
+	}
+
+	if err := c.guardSymlink(configPath, *allowSymlink); err != nil {
+		return err
 	}
 
 	current, exists, err := c.loadConfig(configPath)
@@ -108,6 +117,111 @@ func (c *initCommand) env() func(string) string {
 		return c.getenv
 	}
 	return os.Getenv
+}
+
+// resolveConfigPath chooses the config file the merge should target.
+//
+// When the caller passes an explicit --config override, that path is used
+// verbatim (with relative paths resolved against the cwd). Otherwise the
+// adapter is asked for its candidate list (or single ConfigPath, for
+// adapters that have not opted into the multi-candidate interface):
+//
+//   - exactly one candidate exists  -> pick it
+//   - both candidates exist         -> ambiguous, require --config <path>
+//   - none exist                    -> pick the first (canonical default)
+//
+// Adapters that only register a single ConfigPath fall through to the same
+// logic with a one-element candidate list.
+func (c *initCommand) resolveConfigPath(adapter TerminalAdapter, override string) (string, error) {
+	if override != "" {
+		return c.absConfigPath(override)
+	}
+
+	candidates, err := c.candidatesFor(adapter)
+	if err != nil {
+		return "", fmt.Errorf("init: resolve %s config path: %w", adapter.Name(), err)
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("init: %s has no config path candidates", adapter.Name())
+	}
+
+	statFn := c.stat
+	if statFn == nil {
+		statFn = os.Stat
+	}
+	var existing []string
+	for _, cand := range candidates {
+		if _, statErr := statFn(cand); statErr == nil {
+			existing = append(existing, cand)
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "", fmt.Errorf("init: stat %s: %w", cand, statErr)
+		}
+	}
+	switch len(existing) {
+	case 0:
+		return candidates[0], nil
+	case 1:
+		return existing[0], nil
+	default:
+		return "", fmt.Errorf("init: multiple %s config files found (%s); pass --config <path> to disambiguate", adapter.Name(), strings.Join(existing, ", "))
+	}
+}
+
+// candidatesFor returns the adapter's well-known config path candidates,
+// falling back to a single-element list for adapters that have not opted
+// into ConfigPathCandidatesResolver.
+func (c *initCommand) candidatesFor(adapter TerminalAdapter) ([]string, error) {
+	if multi, ok := adapter.(ConfigPathCandidatesResolver); ok {
+		return multi.ConfigPathCandidates(c.env())
+	}
+	path, err := adapter.ConfigPath(c.env())
+	if err != nil {
+		return nil, err
+	}
+	return []string{path}, nil
+}
+
+// absConfigPath turns a (possibly relative) --config override into an
+// absolute path so downstream stat/symlink checks behave consistently.
+func (c *initCommand) absConfigPath(p string) (string, error) {
+	if filepath.IsAbs(p) {
+		return p, nil
+	}
+	getwd := c.getwd
+	if getwd == nil {
+		getwd = os.Getwd
+	}
+	cwd, err := getwd()
+	if err != nil {
+		return "", fmt.Errorf("init: resolve --config %q: %w", p, err)
+	}
+	return filepath.Join(cwd, p), nil
+}
+
+// guardSymlink refuses to merge into a symlinked target unless the caller
+// explicitly opts in via --allow-symlink. The default refusal exists because
+// dotfiles users commonly symlink terminal configs into a tracked repo, and
+// silently editing through the symlink would mutate that repo without their
+// knowledge.
+func (c *initCommand) guardSymlink(path string, allow bool) error {
+	lstatFn := c.lstat
+	if lstatFn == nil {
+		lstatFn = os.Lstat
+	}
+	info, err := lstatFn(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("init: lstat %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	if allow {
+		return nil
+	}
+	return fmt.Errorf("init: %s is a symlink; merging would mutate the symlink target (e.g. a dotfiles repo). Pass --config <path> to point at a different file, or --allow-symlink to proceed anyway", path)
 }
 
 // loadConfig reads the terminal config and reports whether it already exists.

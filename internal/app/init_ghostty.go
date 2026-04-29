@@ -81,28 +81,58 @@ func (g *GhosttyAdapter) Detect(env func(string) string) bool {
 	return false
 }
 
-// ConfigPath implements TerminalAdapter. Ghostty looks at
-// `$XDG_CONFIG_HOME/ghostty/config` first, falling back to
-// `$HOME/.config/ghostty/config`.
+// ConfigPath implements TerminalAdapter. It returns the canonical default
+// path (`config`); callers wanting both well-known XDG candidates should use
+// ConfigPathCandidates instead. Resolution order:
+//   - `$XDG_CONFIG_HOME/ghostty/config`
+//   - `$HOME/.config/ghostty/config`
 func (g *GhosttyAdapter) ConfigPath(env func(string) string) (string, error) {
+	candidates, err := g.ConfigPathCandidates(env)
+	if err != nil {
+		return "", err
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("resolve ghostty config path: no candidates")
+	}
+	return candidates[0], nil
+}
+
+// ConfigPathCandidates returns both well-known Ghostty config paths in the
+// order Ghostty itself loads them. The init dispatcher uses this list to pick
+// the file that already exists, surface ambiguity when both exist, and create
+// the canonical `config` path when neither does.
+//
+// Order:
+//  1. `<config-dir>/ghostty/config`         (canonical default)
+//  2. `<config-dir>/ghostty/config.ghostty` (common dotfiles convention)
+//
+// `<config-dir>` honours `$XDG_CONFIG_HOME` first, falling back to
+// `$HOME/.config`.
+func (g *GhosttyAdapter) ConfigPathCandidates(env func(string) string) ([]string, error) {
 	if env == nil {
 		env = os.Getenv
 	}
+	var base string
 	if xdg := strings.TrimSpace(env("XDG_CONFIG_HOME")); xdg != "" {
-		return filepath.Join(xdg, "ghostty", "config"), nil
+		base = filepath.Join(xdg, "ghostty")
+	} else {
+		homeFn := g.userHomeDir
+		if homeFn == nil {
+			homeFn = os.UserHomeDir
+		}
+		home, err := homeFn()
+		if err != nil {
+			return nil, fmt.Errorf("resolve home directory for ghostty config: %w", err)
+		}
+		if home == "" {
+			return nil, fmt.Errorf("resolve home directory for ghostty config: empty home")
+		}
+		base = filepath.Join(home, ".config", "ghostty")
 	}
-	homeFn := g.userHomeDir
-	if homeFn == nil {
-		homeFn = os.UserHomeDir
-	}
-	home, err := homeFn()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory for ghostty config: %w", err)
-	}
-	if home == "" {
-		return "", fmt.Errorf("resolve home directory for ghostty config: empty home")
-	}
-	return filepath.Join(home, ".config", "ghostty", "config"), nil
+	return []string{
+		filepath.Join(base, "config"),
+		filepath.Join(base, "config.ghostty"),
+	}, nil
 }
 
 // PlanMerge implements TerminalAdapter. The merge is idempotent: bindings

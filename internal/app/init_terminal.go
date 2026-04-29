@@ -65,6 +65,20 @@ type TerminalAdapter interface {
 	ApplyMerge(plan MergePlan) error
 }
 
+// ConfigPathCandidatesResolver is an optional interface for terminal adapters
+// whose configuration may live at one of several well-known paths (e.g.
+// Ghostty looks at both `config` and `config.ghostty`). The init command uses
+// the candidate list to pick the existing file, surface ambiguity when more
+// than one exists, and fall back to the first entry when none exists. Adapters
+// that map cleanly to a single path can ignore this interface; the init
+// dispatcher falls back to TerminalAdapter.ConfigPath in that case.
+type ConfigPathCandidatesResolver interface {
+	// ConfigPathCandidates returns the ordered list of well-known config
+	// file paths, most-canonical first (used as the "default" when none of
+	// the candidates exist on disk).
+	ConfigPathCandidates(env func(string) string) ([]string, error)
+}
+
 // terminalRegistry is the global registry of TerminalAdapter implementations.
 type terminalRegistry struct {
 	mu       sync.RWMutex
