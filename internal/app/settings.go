@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	intfzf "github.com/es5h/projmux/internal/ui/fzf"
-	intrender "github.com/es5h/projmux/internal/ui/render"
-	"github.com/es5h/projmux/internal/version"
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
+	"github.com/crevissepartners/projmux/internal/version"
 )
 
 // osStat is a package-level indirection so tests can stub filesystem checks.
@@ -672,8 +672,8 @@ func (c *settingsCommand) aiEntries() []intfzf.Entry {
 func settingsAboutEntries() []intfzf.Entry {
 	rows := []struct{ name, value string }{
 		{"Version", "projmux " + version.String()},
-		{"Source", "https://github.com/es5h/projmux"},
-		{"Update", "go install github.com/es5h/projmux/cmd/projmux@latest"},
+		{"Source", "https://github.com/crevissepartners/projmux"},
+		{"Update", "go install github.com/crevissepartners/projmux/cmd/projmux@latest"},
 		{"App", "sidebar, sessions, projects, AI picker, settings"},
 		{"Tmux actions", "new window, rename window/pane, previous/next window"},
 		{"Key model", "terminal sends CSI-u keys; tmux runs projmux actions"},

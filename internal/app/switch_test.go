@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/es5h/projmux/internal/config"
-	"github.com/es5h/projmux/internal/core/candidates"
-	corepreview "github.com/es5h/projmux/internal/core/preview"
-	intfzf "github.com/es5h/projmux/internal/ui/fzf"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/candidates"
+	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 )
 
 func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/es5h/projmux/internal/config"
-	"github.com/es5h/projmux/internal/core/pins"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/pins"
 )
 
 type pinStore interface {

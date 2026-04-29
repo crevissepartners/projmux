@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/es5h/projmux/internal/config"
-	corepreview "github.com/es5h/projmux/internal/core/preview"
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/config"
+	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 type previewStore interface {

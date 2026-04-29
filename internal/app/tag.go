@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/es5h/projmux/internal/config"
-	coretags "github.com/es5h/projmux/internal/core/tags"
+	"github.com/crevissepartners/projmux/internal/config"
+	coretags "github.com/crevissepartners/projmux/internal/core/tags"
 )
 
 type tagStore interface {

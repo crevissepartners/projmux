@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/es5h/projmux/internal/core/candidates"
-	intfzf "github.com/es5h/projmux/internal/ui/fzf"
+	"github.com/crevissepartners/projmux/internal/core/candidates"
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 )
 
 func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
@@ -158,8 +158,8 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	}
 	for _, want := range []string{
 		"projmux 0.2.1",
-		"https://github.com/es5h/projmux",
-		"go install github.com/es5h/projmux/cmd/projmux@latest",
+		"https://github.com/crevissepartners/projmux",
+		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
 		"sidebar, sessions, projects",
 		"new window, rename window/pane",
 		"terminal sends CSI-u keys",

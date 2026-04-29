@@ -71,7 +71,7 @@ Desktop notifications: Linux uses `notify-send`; WSL routes Windows toasts via
 ## Install
 
 ```sh
-go install github.com/es5h/projmux/cmd/projmux@latest
+go install github.com/crevissepartners/projmux/cmd/projmux@latest
 ```
 
 This drops the binary in `$(go env GOBIN)` (when set) or `$(go env GOPATH)/bin`
@@ -105,7 +105,7 @@ the same root even without the env var.
 ### From source
 
 ```sh
-git clone https://github.com/es5h/projmux.git
+git clone https://github.com/crevissepartners/projmux.git
 cd projmux
 make install
 ```

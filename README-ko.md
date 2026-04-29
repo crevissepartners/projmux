@@ -70,7 +70,7 @@ projmux shell
 ## 설치
 
 ```sh
-go install github.com/es5h/projmux/cmd/projmux@latest
+go install github.com/crevissepartners/projmux/cmd/projmux@latest
 ```
 
 binary 는 `$(go env GOBIN)` (설정된 경우) 또는 `$(go env GOPATH)/bin`
@@ -103,7 +103,7 @@ export PROJDIR="$HOME/source/repos"
 ### 소스에서 빌드
 
 ```sh
-git clone https://github.com/es5h/projmux.git
+git clone https://github.com/crevissepartners/projmux.git
 cd projmux
 make install
 ```

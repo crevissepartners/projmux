@@ -6,9 +6,9 @@ import (
 	"errors"
 	"testing"
 
-	corepreview "github.com/es5h/projmux/internal/core/preview"
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
-	intfzf "github.com/es5h/projmux/internal/ui/fzf"
+	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 )
 
 func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {

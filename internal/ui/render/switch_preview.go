@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	corepreview "github.com/es5h/projmux/internal/core/preview"
+	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 )
 
 // RenderSwitchPreview renders sidebar/popup preview context for a switch

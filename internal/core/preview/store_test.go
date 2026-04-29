@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/es5h/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 func TestNewDefaultStoreUsesStatePreviewFile(t *testing.T) {

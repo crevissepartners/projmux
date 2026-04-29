@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/es5h/projmux/internal/core/lifecycle"
-	coresessions "github.com/es5h/projmux/internal/core/sessions"
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/core/lifecycle"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 type attachInventoryResolver interface {

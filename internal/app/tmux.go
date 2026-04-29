@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 type tmuxPopupClient interface {

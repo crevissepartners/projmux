@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/es5h/projmux/internal/version"
+	"github.com/crevissepartners/projmux/internal/version"
 )
 
 // Run is the current CLI bootstrap. Feature commands will grow from here.

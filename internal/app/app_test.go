@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	coresessions "github.com/es5h/projmux/internal/core/sessions"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 )
 
 func TestAppRunCurrentEnsuresAndOpensDerivedSession(t *testing.T) {

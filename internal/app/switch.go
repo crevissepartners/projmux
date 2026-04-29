@@ -13,14 +13,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/es5h/projmux/internal/config"
-	"github.com/es5h/projmux/internal/core/candidates"
-	"github.com/es5h/projmux/internal/core/pins"
-	corepreview "github.com/es5h/projmux/internal/core/preview"
-	coretags "github.com/es5h/projmux/internal/core/tags"
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
-	intfzf "github.com/es5h/projmux/internal/ui/fzf"
-	intrender "github.com/es5h/projmux/internal/ui/render"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/candidates"
+	"github.com/crevissepartners/projmux/internal/core/pins"
+	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	coretags "github.com/crevissepartners/projmux/internal/core/tags"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 const (

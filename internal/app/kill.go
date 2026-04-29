@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/es5h/projmux/internal/config"
-	"github.com/es5h/projmux/internal/core/lifecycle"
-	coresessions "github.com/es5h/projmux/internal/core/sessions"
-	"github.com/es5h/projmux/internal/core/tags"
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/lifecycle"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/core/tags"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 type killCurrentSessionResolver interface {

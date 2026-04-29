@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	coresessions "github.com/es5h/projmux/internal/core/sessions"
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 type sessionIdentityResolver interface {
