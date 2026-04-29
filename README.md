@@ -149,7 +149,12 @@ projmux owns this tmux server, its generated config, status bar, and popup
 bindings. The left status badge shows the current project name; the right side
 shows path, kube segment, git segment, and clock.
 
-If your terminal emulator needs explicit key forwarding, see
+If a key does not fire, run `projmux setup` to see which sequences your
+terminal swallows, then `projmux init [terminal] --apply` (auto-detects when
+no terminal is given) to merge the right CSI-u bindings into your terminal
+config. Dotfiles users on multi-machine setups should pass
+`--allow-symlink` or `--config <path>` to make their intent explicit. Full
+flow and the manual CSI-u fallback are in
 [Terminal Keybindings](docs/keybindings.md).
 
 ## Upgrading

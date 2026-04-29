@@ -144,8 +144,11 @@ projmux shell
 projmux가 이 tmux 서버, 생성된 설정, status bar, popup binding을 직접 소유합니다.
 하단 좌측 뱃지에는 현재 프로젝트 이름이, 우측에는 경로/kube/git/시간이 표시됩니다.
 
-터미널 에뮬레이터에서 키 전달을 명시해야 한다면
-[터미널 키 설정](docs/keybindings.md)을 참고하세요.
+키가 동작하지 않으면 `projmux setup` 으로 터미널이 어떤 시퀀스를 swallow 하는지
+진단한 뒤, `projmux init [terminal] --apply` (terminal 생략 시 자동 감지) 로
+필요한 CSI-u 바인딩을 터미널 설정에 머지하세요. 여러 머신을 dotfiles 로
+관리하는 경우에는 `--allow-symlink` 또는 `--config <path>` 로 의도를 명시합니다.
+전체 흐름과 수동 CSI-u fallback 은 [터미널 키 설정](docs/keybindings.md) 참고.
 
 ## 업그레이드
 
