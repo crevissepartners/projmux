@@ -223,8 +223,10 @@ func splitInitArgs(args []string) (terminal string, flagArgs []string) {
 	return terminal, flagArgs
 }
 
-// init registers the Ghostty adapter with the package-level registry. Future
-// terminals add a sibling file with their own init() block.
+// init registers the bundled terminal adapters with the package-level
+// registry. Future terminals add a sibling file with their own init() block,
+// or extend this list when registration order matters.
 func init() {
 	RegisterTerminalAdapter(NewGhosttyAdapter())
+	RegisterTerminalAdapter(NewWindowsTerminalAdapter())
 }
