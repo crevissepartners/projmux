@@ -181,6 +181,15 @@ filesystem scan. Use it for paths you do not want crawled, e.g. WSL mounts
 The saved file lives at `~/.config/projmux/workdirs` (one absolute path per
 line, `#` comments allowed). It is consulted only when the env vars are unset.
 
+## Hooks
+
+projmux runs an optional user script at `~/.config/projmux/hooks/post-create`
+whenever it creates a new tmux session. Use it to inject per-session env via
+`tmux set-environment` (e.g. picking a `GH_TOKEN` based on the project path).
+Missing or non-executable hooks are skipped silently; failures never block
+session creation. See [Hooks](docs/hooks.md) for the env contract, examples,
+and troubleshooting.
+
 ## Environment Variables
 
 | Variable | Purpose |
@@ -212,6 +221,7 @@ More documentation:
 
 - [Architecture](docs/architecture.md)
 - [CLI Shape](docs/cli.md)
+- [Hooks](docs/hooks.md)
 - [Migration Plan](docs/migration-plan.md)
 - [Repo Layout](docs/repo-layout.md)
 - [Terminal Keybindings](docs/keybindings.md)

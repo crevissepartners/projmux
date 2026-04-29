@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 type sessionIdentityResolver interface {
@@ -39,7 +38,7 @@ type currentPlan struct {
 }
 
 func newCurrentCommand() *currentCommand {
-	client := inttmux.NewClient(inttmux.ExecRunner{})
+	client := defaultTmuxClient()
 	identity, err := newDefaultCurrentIdentityResolver()
 
 	return &currentCommand{

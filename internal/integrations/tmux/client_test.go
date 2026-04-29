@@ -7,7 +7,10 @@ import (
 	"os/exec"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
 
 func TestClientCurrentPanePathTrimsOutput(t *testing.T) {
@@ -1403,6 +1406,149 @@ func TestBuildSwitchSidebarFocusCommandQuotesBinaryPath(t *testing.T) {
 	}
 }
 
+func TestClientEnsureSessionInvokesPostCreateRunnerOnNewSession(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: exitError(t, 1)},
+			{},
+		},
+	}
+	hook := &fakePostCreateRunner{}
+	client := NewClient(runner, withPostCreateRunnerInterface(hook), WithSocketName("projmux"))
+
+	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
+		t.Fatalf("EnsureSession returned error: %v", err)
+	}
+
+	if got := len(hook.calls); got != 1 {
+		t.Fatalf("post-create calls = %d, want 1", got)
+	}
+	want := hooks.PostCreateContext{
+		SessionName: "workspace",
+		CWD:         "/tmp/projmux",
+		Kind:        "persistent",
+		Socket:      "projmux",
+	}
+	if got := hook.calls[0]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-create call = %#v, want %#v", got, want)
+	}
+}
+
+func TestClientEnsureSessionSkipsPostCreateWhenSessionExists(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{}},
+	}
+	hook := &fakePostCreateRunner{}
+	client := NewClient(runner, withPostCreateRunnerInterface(hook))
+
+	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
+		t.Fatalf("EnsureSession returned error: %v", err)
+	}
+
+	if len(hook.calls) != 0 {
+		t.Fatalf("post-create calls = %#v, want none", hook.calls)
+	}
+}
+
+func TestClientEnsureSessionSkipsPostCreateWhenNewSessionFails(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: exitError(t, 1)},
+			{err: errors.New("new-session failed")},
+		},
+	}
+	hook := &fakePostCreateRunner{}
+	client := NewClient(runner, withPostCreateRunnerInterface(hook))
+
+	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err == nil {
+		t.Fatal("expected error")
+	}
+	if len(hook.calls) != 0 {
+		t.Fatalf("post-create calls = %#v, want none", hook.calls)
+	}
+}
+
+func TestClientCreateEphemeralSessionInvokesPostCreateRunner(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{}, {}},
+	}
+	hook := &fakePostCreateRunner{}
+	client := NewClient(runner, withPostCreateRunnerInterface(hook), WithSocketName("projmux"))
+
+	if err := client.CreateEphemeralSession(context.Background(), "scratch", "/tmp/projmux"); err != nil {
+		t.Fatalf("CreateEphemeralSession returned error: %v", err)
+	}
+
+	if got := len(hook.calls); got != 1 {
+		t.Fatalf("post-create calls = %d, want 1", got)
+	}
+	want := hooks.PostCreateContext{
+		SessionName: "scratch",
+		CWD:         "/tmp/projmux",
+		Kind:        "ephemeral",
+		Socket:      "projmux",
+	}
+	if got := hook.calls[0]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-create call = %#v, want %#v", got, want)
+	}
+}
+
+func TestClientCreateEphemeralSessionRunsHookEvenWhenMarkerFails(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{},
+			{err: errors.New("set-option failed")},
+		},
+	}
+	hook := &fakePostCreateRunner{}
+	client := NewClient(runner, withPostCreateRunnerInterface(hook))
+
+	if err := client.CreateEphemeralSession(context.Background(), "scratch", "/tmp/projmux"); err != nil {
+		t.Fatalf("CreateEphemeralSession returned error: %v", err)
+	}
+	if len(hook.calls) != 1 {
+		t.Fatalf("post-create calls = %d, want 1", len(hook.calls))
+	}
+	if hook.calls[0].Kind != "ephemeral" {
+		t.Fatalf("post-create kind = %q, want ephemeral", hook.calls[0].Kind)
+	}
+}
+
+func TestClientCreateEphemeralSessionSkipsPostCreateWhenNewSessionFails(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: errors.New("new-session failed")},
+		},
+	}
+	hook := &fakePostCreateRunner{}
+	client := NewClient(runner, withPostCreateRunnerInterface(hook))
+
+	if err := client.CreateEphemeralSession(context.Background(), "scratch", "/tmp/projmux"); err == nil {
+		t.Fatal("expected error")
+	}
+	if len(hook.calls) != 0 {
+		t.Fatalf("post-create calls = %#v, want none", hook.calls)
+	}
+}
+
 func TestClientEnsureSessionRequiresCWD(t *testing.T) {
 	t.Parallel()
 
@@ -1448,6 +1594,25 @@ func (r *scriptedRunner) Run(ctx context.Context, name string, args ...string) (
 	step := r.steps[0]
 	r.steps = r.steps[1:]
 	return step.output, step.err
+}
+
+type fakePostCreateRunner struct {
+	mu    sync.Mutex
+	calls []hooks.PostCreateContext
+}
+
+func (f *fakePostCreateRunner) Run(_ context.Context, c hooks.PostCreateContext) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, c)
+}
+
+// withPostCreateRunnerInterface wires a test stub through the same field that
+// WithPostCreateRunner targets without depending on a real *hooks.PostCreateRunner.
+func withPostCreateRunnerInterface(r postCreateRunner) ClientOption {
+	return func(c *Client) {
+		c.postCreate = r
+	}
 }
 
 func exitError(t *testing.T, code int) error {
