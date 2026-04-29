@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -401,5 +402,367 @@ func TestSplitGhosttyConfigUserOverrideTrumpsManagedBlock(t *testing.T) {
 	_, bindings := splitGhosttyConfig(raw)
 	if got := bindings["alt+1"]; got != "new_window" {
 		t.Fatalf("alt+1 = %q, want new_window (user override should win)", got)
+	}
+}
+
+func TestGhosttyAdapterConfigPathCandidatesXDG(t *testing.T) {
+	t.Parallel()
+
+	a := NewGhosttyAdapter()
+	env := func(k string) string {
+		if k == "XDG_CONFIG_HOME" {
+			return "/xdg"
+		}
+		return ""
+	}
+	got, err := a.ConfigPathCandidates(env)
+	if err != nil {
+		t.Fatalf("ConfigPathCandidates() error = %v", err)
+	}
+	want := []string{
+		filepath.Join("/xdg", "ghostty", "config"),
+		filepath.Join("/xdg", "ghostty", "config.ghostty"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ConfigPathCandidates() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ConfigPathCandidates()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestGhosttyAdapterConfigPathCandidatesHomeFallback(t *testing.T) {
+	t.Parallel()
+
+	a := NewGhosttyAdapter()
+	a.userHomeDir = func() (string, error) { return "/home/u", nil }
+	got, err := a.ConfigPathCandidates(func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("ConfigPathCandidates() error = %v", err)
+	}
+	want := []string{
+		filepath.Join("/home/u", ".config", "ghostty", "config"),
+		filepath.Join("/home/u", ".config", "ghostty", "config.ghostty"),
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("candidates[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// newGhosttyTestInitCommand returns an init command wired to operate inside a
+// per-test temp dir as if it were $XDG_CONFIG_HOME. The Ghostty adapter is
+// the sole registered terminal so the test exercises the production code
+// path including ConfigPathCandidates.
+func newGhosttyTestInitCommand(t *testing.T, xdg string) *initCommand {
+	t.Helper()
+	reg := newTestRegistry()
+	reg.register(NewGhosttyAdapter())
+	return &initCommand{
+		registry: reg,
+		getenv: func(k string) string {
+			if k == "XDG_CONFIG_HOME" {
+				return xdg
+			}
+			return ""
+		},
+		readFile: os.ReadFile,
+		stat:     os.Stat,
+		lstat:    os.Lstat,
+		getwd:    os.Getwd,
+	}
+}
+
+func TestGhosttyInitNoCandidatesCreatesConfig(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cmd := newGhosttyTestInitCommand(t, tmp)
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"ghostty", "--apply"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v (stderr=%s)", err, stderr.String())
+	}
+	cfg := filepath.Join(tmp, "ghostty", "config")
+	if _, err := os.Stat(cfg); err != nil {
+		t.Fatalf("expected canonical config to be created at %s: %v", cfg, err)
+	}
+	other := filepath.Join(tmp, "ghostty", "config.ghostty")
+	if _, err := os.Stat(other); !os.IsNotExist(err) {
+		t.Fatalf("config.ghostty should not be created when neither candidate exists, stat err=%v", err)
+	}
+}
+
+func TestGhosttyInitOnlyConfigExistsMergesIntoIt(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "ghostty")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cfg := filepath.Join(cfgDir, "config")
+	if err := os.WriteFile(cfg, []byte("# user\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	cmd := newGhosttyTestInitCommand(t, tmp)
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"ghostty", "--apply"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v (stderr=%s)", err, stderr.String())
+	}
+	got, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(got), ghosttyManagedHeader) {
+		t.Fatalf("merge did not write managed block:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(cfgDir, "config.ghostty")); !os.IsNotExist(err) {
+		t.Fatalf("config.ghostty should not be created when only config exists, stat err=%v", err)
+	}
+}
+
+func TestGhosttyInitOnlyConfigGhosttyExistsMergesIntoIt(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "ghostty")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	target := filepath.Join(cfgDir, "config.ghostty")
+	if err := os.WriteFile(target, []byte("# dotfiles\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	cmd := newGhosttyTestInitCommand(t, tmp)
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"ghostty", "--apply"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v (stderr=%s)", err, stderr.String())
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read config.ghostty: %v", err)
+	}
+	if !strings.Contains(string(got), ghosttyManagedHeader) {
+		t.Fatalf("merge did not write managed block into config.ghostty:\n%s", got)
+	}
+	// The other candidate must NOT be created — that would split the user's
+	// dotfiles between two files.
+	if _, err := os.Stat(filepath.Join(cfgDir, "config")); !os.IsNotExist(err) {
+		t.Fatalf("canonical config should not be created when config.ghostty exists, stat err=%v", err)
+	}
+	if !strings.Contains(stdout.String(), "config.ghostty") {
+		t.Fatalf("output should reference config.ghostty path, got:\n%s", stdout.String())
+	}
+}
+
+func TestGhosttyInitBothCandidatesExistRequiresExplicitConfig(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "ghostty")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for _, name := range []string{"config", "config.ghostty"} {
+		if err := os.WriteFile(filepath.Join(cfgDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+
+	cmd := newGhosttyTestInitCommand(t, tmp)
+	var stdout, stderr bytes.Buffer
+	err := cmd.Run([]string{"ghostty", "--apply"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("expected ambiguity error when both candidates exist")
+	}
+	if !strings.Contains(err.Error(), "--config") {
+		t.Fatalf("error message should mention --config, got: %v", err)
+	}
+	// Neither file should have been mutated.
+	for _, name := range []string{"config", "config.ghostty"} {
+		got, readErr := os.ReadFile(filepath.Join(cfgDir, name))
+		if readErr != nil {
+			t.Fatalf("read %s: %v", name, readErr)
+		}
+		if strings.Contains(string(got), ghosttyManagedHeader) {
+			t.Fatalf("%s mutated despite ambiguity:\n%s", name, got)
+		}
+	}
+}
+
+func TestGhosttyInitBothCandidatesExistResolvedByConfigOverride(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "ghostty")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for _, name := range []string{"config", "config.ghostty"} {
+		if err := os.WriteFile(filepath.Join(cfgDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+
+	target := filepath.Join(cfgDir, "config.ghostty")
+	cmd := newGhosttyTestInitCommand(t, tmp)
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"ghostty", "--apply", "--config", target}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() with --config error = %v (stderr=%s)", err, stderr.String())
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if !strings.Contains(string(got), ghosttyManagedHeader) {
+		t.Fatalf("--config override did not merge into chosen file:\n%s", got)
+	}
+	// The other candidate must remain pristine.
+	other, err := os.ReadFile(filepath.Join(cfgDir, "config"))
+	if err != nil {
+		t.Fatalf("read other: %v", err)
+	}
+	if strings.Contains(string(other), ghosttyManagedHeader) {
+		t.Fatalf("non-targeted candidate should not be mutated:\n%s", other)
+	}
+}
+
+func TestGhosttyInitSymlinkRefusedByDefault(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "ghostty")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Pretend the user keeps their real config in a dotfiles directory and
+	// has symlinked ~/.config/ghostty/config.ghostty to it.
+	dotfiles := filepath.Join(tmp, "dotfiles")
+	if err := os.MkdirAll(dotfiles, 0o755); err != nil {
+		t.Fatalf("mkdir dotfiles: %v", err)
+	}
+	source := filepath.Join(dotfiles, "ghostty.conf")
+	original := "# tracked in dotfiles repo\n"
+	if err := os.WriteFile(source, []byte(original), 0o644); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+	link := filepath.Join(cfgDir, "config.ghostty")
+	if err := os.Symlink(source, link); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+
+	cmd := newGhosttyTestInitCommand(t, tmp)
+	var stdout, stderr bytes.Buffer
+	err := cmd.Run([]string{"ghostty", "--apply"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("expected symlink refusal")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("error should mention symlink, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--allow-symlink") {
+		t.Fatalf("error should mention --allow-symlink, got: %v", err)
+	}
+	got, readErr := os.ReadFile(source)
+	if readErr != nil {
+		t.Fatalf("read source: %v", readErr)
+	}
+	if string(got) != original {
+		t.Fatalf("source mutated despite refusal:\n%s", got)
+	}
+}
+
+func TestGhosttyInitSymlinkProceedsWithAllowFlag(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "ghostty")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	dotfiles := filepath.Join(tmp, "dotfiles")
+	if err := os.MkdirAll(dotfiles, 0o755); err != nil {
+		t.Fatalf("mkdir dotfiles: %v", err)
+	}
+	source := filepath.Join(dotfiles, "ghostty.conf")
+	if err := os.WriteFile(source, []byte("# tracked\n"), 0o644); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+	link := filepath.Join(cfgDir, "config.ghostty")
+	if err := os.Symlink(source, link); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+
+	cmd := newGhosttyTestInitCommand(t, tmp)
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"ghostty", "--apply", "--allow-symlink"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() with --allow-symlink error = %v (stderr=%s)", err, stderr.String())
+	}
+	// Writing through the symlink must update the real source file.
+	got, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !strings.Contains(string(got), ghosttyManagedHeader) {
+		t.Fatalf("merge did not write through symlink:\n%s", got)
+	}
+}
+
+func TestGhosttyInitConfigOverrideToSymlinkStillRefused(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	source := filepath.Join(tmp, "real.conf")
+	if err := os.WriteFile(source, []byte("# real\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	link := filepath.Join(tmp, "linked.conf")
+	if err := os.Symlink(source, link); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+
+	// Use a separate xdg dir with no candidates so override is the only
+	// path being considered.
+	xdg := filepath.Join(tmp, "xdg")
+	if err := os.MkdirAll(xdg, 0o755); err != nil {
+		t.Fatalf("mkdir xdg: %v", err)
+	}
+	cmd := newGhosttyTestInitCommand(t, xdg)
+	var stdout, stderr bytes.Buffer
+	err := cmd.Run([]string{"ghostty", "--apply", "--config", link}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("expected --config override to a symlink to be refused")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("error should mention symlink, got: %v", err)
+	}
+}
+
+func TestGhosttyInitConfigOverrideAcceptsRelativePath(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "custom.conf")
+	if err := os.WriteFile(target, []byte("# custom\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	cmd := newGhosttyTestInitCommand(t, tmp)
+	cmd.getwd = func() (string, error) { return tmp, nil }
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"ghostty", "--apply", "--config", "custom.conf"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() with relative --config error = %v (stderr=%s)", err, stderr.String())
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if !strings.Contains(string(got), ghosttyManagedHeader) {
+		t.Fatalf("relative --config did not merge into target:\n%s", got)
 	}
 }
