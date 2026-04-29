@@ -56,10 +56,10 @@
 - Non-Conventional commit subjects on `main` are silently skipped by release-please. Keep PR titles strict; squash merge ensures the PR title is the only subject that lands.
 
 ## Configuration And Environment
-- `PROJDIR` is the canonical project-root env. Memoized to `~/.config/projmux/projdir` after first use. The legacy `RP` alias is still honored at runtime; do not feature it in user-facing docs.
+- `PROJMUX_PROJDIR` is the canonical project-root env. It accepts an OS-native PATH-style multi-value (`filepath.SplitList`): the first non-empty entry is the primary repo root (memoized to `~/.config/projmux/projdir`), and any additional entries are prepended to managed roots. The legacy `PROJDIR`/`RP` env vars are no longer honored.
 - `PROJMUX_MANAGED_ROOTS` is the colon-separated search-root override (priority: env > saved file > defaults). Legacy alias `TMUX_SESSIONIZER_ROOTS` is still honored at runtime.
 - `~/.config/projmux/workdirs` stores the cumulative workdirs list managed via the Settings UX. It is read only when no env list is set.
-- `tmux set-option -g @projmux_projdir <path>` is a declarative source for `PROJDIR` that the switch command reads through `tmuxProjdirOption`.
+- `tmux set-option -g @projmux_projdir <path>` is a declarative source for `PROJMUX_PROJDIR` that the switch command reads through `tmuxProjdirOption`.
 
 ## Review Expectations
 - Reviews should be small enough to reason about quickly.

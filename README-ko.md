@@ -86,19 +86,40 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 projmux version
 ```
 
-### 선택: `PROJDIR`
+### 선택: `PROJMUX_PROJDIR`
 
-`PROJDIR` 은 projmux 가 picker/탐색에서 기본으로 사용할 프로젝트 루트입니다.
-설정하지 않으면 projmux 가 내장된 source-root 탐색(`~/source`, `~/work`,
-`~/projects`, `~/src`, `~/code`, `~/source/repos`) 으로 자동 fallback 합니다.
+`PROJMUX_PROJDIR` 은 projmux 가 picker/탐색에서 기본으로 사용할 프로젝트
+루트입니다. 설정하지 않으면 projmux 가 내장된 source-root 탐색(`~/source`,
+`~/work`, `~/projects`, `~/src`, `~/code`, `~/source/repos`) 으로 자동
+fallback 합니다.
 
 ```sh
-export PROJDIR="$HOME/source/repos"
+export PROJMUX_PROJDIR="$HOME/source/repos"
 ```
 
 `~/.zshrc` (또는 사용 중인 shell rc 파일) 에 한 줄 추가하면 됩니다. 첫 실행
 이후에는 `~/.config/projmux/projdir` 에 memoize 되므로, 이후 env 가 없어도 같은
 루트가 유지됩니다.
+
+`PROJMUX_PROJDIR` 은 OS-native PATH 형식의 multi-path 도 받습니다 (Linux/macOS
+는 `:`, Windows 는 `;`). 첫 번째 비어있지 않은 항목이 primary 프로젝트 루트가
+되고, 이후 항목은 `PROJMUX_MANAGED_ROOTS` 처럼 managed roots 검색 목록 앞에
+prepend 됩니다. saved 파일에는 primary 만 memoize 됩니다.
+
+```sh
+# Linux/macOS — primary repo + 보조 검색 root
+export PROJMUX_PROJDIR="$HOME/source/repos:/srv/work/repos"
+```
+
+#### 최초 설치 시 projdir 지정
+
+```sh
+PROJMUX_PROJDIR=/your/path go install github.com/crevissepartners/projmux/cmd/projmux@latest
+PROJMUX_PROJDIR=/your/path projmux tmux apply
+```
+
+env 가 살아있는 첫 실행이 `~/.config/projmux/projdir` 에 값을 기록하므로,
+이후 새 shell 에서 env 없이도 같은 루트가 유지됩니다.
 
 ### 소스에서 빌드
 
@@ -140,8 +161,19 @@ projmux upgrade --no-apply                       # 'projmux tmux apply' 생략
 projmux upgrade --dry-run                        # 실행 없이 단계만 출력
 ```
 
-upgrade 는 호출 shell 의 `PROJDIR`/`RP` 를 읽어 `~/.config/projmux/projdir` 에
-memoize 하므로, 새 binary 도 같은 프로젝트 루트 컨텍스트를 유지합니다.
+upgrade 는 호출 shell 의 `PROJMUX_PROJDIR` 을 읽어 primary (첫 번째) 경로를
+`~/.config/projmux/projdir` 에 memoize 하므로, 새 binary 도 같은 프로젝트 루트
+컨텍스트를 유지합니다.
+
+업그레이드와 동시에 새 프로젝트 루트로 전환하고 싶다면 env 와 함께 호출하세요:
+
+```sh
+PROJMUX_PROJDIR=/new/path projmux upgrade
+
+# multi-path 도 동일하게 동작합니다. saved 파일에는 primary 만 기록됩니다.
+PROJMUX_PROJDIR="/main/repos:/secondary/repos" projmux upgrade   # Linux/macOS
+# Windows: PROJMUX_PROJDIR="C:\main\repos;C:\secondary\repos"
+```
 
 ## 사용법
 
@@ -189,7 +221,7 @@ projmux는 새 tmux 세션을 만들 때마다 선택적 사용자 스크립트
 
 | 변수 | 용도 |
 | --- | --- |
-| `PROJDIR` | 현재 shell 의 기본 프로젝트 루트. 첫 사용 후 `~/.config/projmux/projdir` 에 memoize 됨. |
+| `PROJMUX_PROJDIR` | 현재 shell 의 기본 프로젝트 루트. OS-native PATH 형식 multi-value 지원: 첫 항목이 primary repo root (saved 파일에 memoize), 이후 항목은 managed-roots 검색 목록 앞에 prepend. |
 | `PROJMUX_MANAGED_ROOTS` | 콜론 구분 검색 root 목록. saved/default 보다 우선. |
 | `PROJMUX_NOTIFY_HOOK` | AI desktop notification 을 내장 sender 대신 받는 외부 실행 파일. |
 

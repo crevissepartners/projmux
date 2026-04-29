@@ -54,7 +54,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 			workingDir: func() (string, error) { return "/rp/repo-a/nested", nil },
 			lookupEnv: func(name string) string {
 				switch name {
-				case repoRootEnvVar:
+				case projdirEnvVar:
 					return "/rp"
 				case managedRootsEnvVar:
 					return "/managed/a:/managed/b"
@@ -378,8 +378,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv("XDG_STATE_HOME", stateHome)
 	t.Setenv("TMUX", "")
-	t.Setenv(projdirEnvVar, "")
-	t.Setenv(repoRootEnvVar, fixture.path("rp"))
+	t.Setenv(projdirEnvVar, fixture.path("rp"))
 	t.Setenv(managedRootsEnvVar, fixture.path("managed"))
 
 	paths, err := config.DefaultPathsFromEnv()
@@ -478,7 +477,6 @@ func TestNewSwitchCommandInfersRepoRootFromHomeSourceRepos(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", fixture.path("xdg-state"))
 	t.Setenv("TMUX", "")
 	t.Setenv(projdirEnvVar, "")
-	t.Setenv(repoRootEnvVar, "")
 	t.Chdir(fixture.path("home/source/repos/app/nested"))
 
 	cmd := newSwitchCommand()
@@ -758,7 +756,6 @@ func TestSwitchCommandUsesDefaultManagedRootsWhenEnvUnset(t *testing.T) {
 func TestSwitchCommandUsesSavedWorkdirsWhenEnvUnset(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv(projdirEnvVar, "")
-	t.Setenv(repoRootEnvVar, "")
 
 	var gotInputs candidates.Inputs
 	cmd := &switchCommand{
@@ -797,7 +794,6 @@ func TestSwitchCommandUsesSavedWorkdirsWhenEnvUnset(t *testing.T) {
 func TestSwitchCommandManagedRootsEnvBeatsSavedWorkdirs(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv(projdirEnvVar, "")
-	t.Setenv(repoRootEnvVar, "")
 
 	var gotInputs candidates.Inputs
 	cmd := &switchCommand{
@@ -833,6 +829,119 @@ func TestSwitchCommandManagedRootsEnvBeatsSavedWorkdirs(t *testing.T) {
 		"/env/two",
 	}; !equalStrings(got, want) {
 		t.Fatalf("inputs.ManagedRoots = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandMultiPathProjdirSplitsPrimaryAndExtras(t *testing.T) {
+	t.Setenv("TMUX", "")
+
+	multi := strings.Join([]string{"/main/repo", "/extra/one", "/extra/two"}, string(os.PathListSeparator))
+	t.Setenv(projdirEnvVar, multi)
+
+	var gotInputs candidates.Inputs
+	cmd := &switchCommand{
+		discover: func(inputs candidates.Inputs) ([]string, error) {
+			gotInputs = inputs
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:     switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
+		sessions:   &capturingSwitchSessionExecutor{},
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+		lookupEnv:  os.Getenv,
+		loadWorkdirs: func(string) ([]string, error) {
+			t.Fatalf("loadWorkdirs should not be consulted when PROJMUX_PROJDIR provides extras")
+			return nil, nil
+		},
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := gotInputs.RepoRoot, "/main/repo"; got != want {
+		t.Fatalf("inputs.RepoRoot = %q, want %q", got, want)
+	}
+	if got, want := gotInputs.ManagedRoots, []string{
+		"/extra/one",
+		"/extra/two",
+	}; !equalStrings(got, want) {
+		t.Fatalf("inputs.ManagedRoots = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandMultiPathProjdirCombinesWithManagedRootsEnv(t *testing.T) {
+	t.Setenv("TMUX", "")
+
+	multi := strings.Join([]string{"/main/repo", "/extra/one"}, string(os.PathListSeparator))
+	t.Setenv(projdirEnvVar, multi)
+	t.Setenv(managedRootsEnvVar, strings.Join([]string{"/extra/one", "/managed/two"}, string(os.PathListSeparator)))
+
+	var gotInputs candidates.Inputs
+	cmd := &switchCommand{
+		discover: func(inputs candidates.Inputs) ([]string, error) {
+			gotInputs = inputs
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:     switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
+		sessions:   &capturingSwitchSessionExecutor{},
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+		lookupEnv:  os.Getenv,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// extras prepend; PROJMUX_MANAGED_ROOTS follows, dedupe drops the
+	// repeated /extra/one.
+	if got, want := gotInputs.ManagedRoots, []string{
+		"/extra/one",
+		"/managed/two",
+	}; !equalStrings(got, want) {
+		t.Fatalf("inputs.ManagedRoots = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandSinglePathProjdirRetainsSavedWorkdirs(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv(projdirEnvVar, "/main/repo")
+
+	var gotInputs candidates.Inputs
+	cmd := &switchCommand{
+		discover: func(inputs candidates.Inputs) ([]string, error) {
+			gotInputs = inputs
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:     switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
+		sessions:   &capturingSwitchSessionExecutor{},
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+		lookupEnv:  os.Getenv,
+		loadWorkdirs: func(string) ([]string, error) {
+			return []string{"/srv/projects"}, nil
+		},
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := gotInputs.RepoRoot, "/main/repo"; got != want {
+		t.Fatalf("inputs.RepoRoot = %q, want %q", got, want)
+	}
+	if got, want := gotInputs.ManagedRoots, []string{"/srv/projects"}; !equalStrings(got, want) {
+		t.Fatalf("inputs.ManagedRoots = %q, want %q (single-path PROJMUX_PROJDIR must not suppress saved workdirs)", got, want)
 	}
 }
 
@@ -873,7 +982,7 @@ func TestSwitchCommandPreviewRendersExistingSessionContext(t *testing.T) {
 		homeDir:      func() (string, error) { return fixture.path("home"), nil },
 		workingDir:   func() (string, error) { return fixture.path("home/source/repos/repo-a/subdir"), nil },
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return fixture.path("home/source/repos")
 			}
 			return ""
@@ -934,7 +1043,7 @@ func TestSwitchCommandPreviewRendersNewSessionContextWithoutInventory(t *testing
 		homeDir:      func() (string, error) { return fixture.path("home"), nil },
 		workingDir:   func() (string, error) { return fixture.path("home/source/repos/repo-a/subdir"), nil },
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return fixture.path("home/source/repos")
 			}
 			return ""
@@ -973,7 +1082,7 @@ func TestSwitchCommandPreviewRendersSettingsSentinel(t *testing.T) {
 		},
 		homeDir: func() (string, error) { return "/home/tester", nil },
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return "/home/tester/source/repos"
 			}
 			return ""
@@ -1017,7 +1126,7 @@ func TestSwitchCommandSettingsMenuOffersAddCurrentPin(t *testing.T) {
 		validate:   func(string) error { return nil },
 		identity:   stubSwitchIdentityResolver{name: "new-app"},
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return "/home/tester/source/repos"
 			}
 			return ""
@@ -1055,7 +1164,7 @@ func TestSwitchCommandSettingsMenuSkipsAddWhenCurrentTargetAlreadyPinned(t *test
 		validate:   func(string) error { return nil },
 		identity:   stubSwitchIdentityResolver{name: "app"},
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return "/home/tester/source/repos"
 			}
 			return ""
@@ -1108,7 +1217,7 @@ func TestSwitchCommandCycleWindowUpdatesStoredPreviewSelection(t *testing.T) {
 		validate:     validateDirectory,
 		homeDir:      func() (string, error) { return fixture.path("home"), nil },
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return fixture.path("home/source/repos")
 			}
 			return ""
@@ -1150,7 +1259,7 @@ func TestSwitchCommandCyclePaneNoOpsForNewSessionCandidates(t *testing.T) {
 		validate:     validateDirectory,
 		homeDir:      func() (string, error) { return fixture.path("home"), nil },
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return fixture.path("home/source/repos")
 			}
 			return ""
@@ -1426,7 +1535,7 @@ func TestSwitchCommandSettingsMenuAddCurrentPin(t *testing.T) {
 		homeDir:    func() (string, error) { return "/home/tester", nil },
 		workingDir: func() (string, error) { return "/home/tester/source/repos/new-app/subdir", nil },
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return "/home/tester/source/repos"
 			}
 			return ""
@@ -1491,7 +1600,7 @@ func TestSwitchCommandSettingsMenuInteractiveAddPin(t *testing.T) {
 		homeDir:    func() (string, error) { return "/home/tester", nil },
 		workingDir: func() (string, error) { return "/home/tester/source/repos/new-app/subdir", nil },
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return "/home/tester/source/repos"
 			}
 			return ""

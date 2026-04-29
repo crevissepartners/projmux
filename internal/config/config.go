@@ -58,7 +58,8 @@ func (p Paths) PreviewStateFile() string {
 	return filepath.Join(p.StateDir, PreviewStateFileName)
 }
 
-// ProjdirFile returns the default file used for the persisted PROJDIR value.
+// ProjdirFile returns the default file used for the persisted
+// PROJMUX_PROJDIR value (the primary project root path).
 func (p Paths) ProjdirFile() string {
 	return filepath.Join(p.ConfigDir, ProjdirFileName)
 }
@@ -69,7 +70,7 @@ func (p Paths) PostCreateHookPath() string {
 	return filepath.Join(p.ConfigDir, HooksDirName, PostCreateHookFileName)
 }
 
-// ProjdirFile returns the path to the persisted PROJDIR file rooted at the
+// ProjdirFile returns the path to the persisted projdir file rooted at the
 // supplied home directory. An empty homeDir yields an empty string.
 func ProjdirFile(homeDir string) string {
 	if homeDir == "" {
@@ -78,7 +79,7 @@ func ProjdirFile(homeDir string) string {
 	return filepath.Join(homeDir, ".config", AppName, ProjdirFileName)
 }
 
-// LoadProjdir returns the trimmed first line of the persisted PROJDIR file
+// LoadProjdir returns the trimmed first line of the persisted projdir file
 // rooted at homeDir. A missing file or empty content yields ("", nil).
 func LoadProjdir(homeDir string) (string, error) {
 	path := ProjdirFile(homeDir)
@@ -108,7 +109,7 @@ func LoadProjdir(homeDir string) (string, error) {
 	return "", nil
 }
 
-// SaveProjdir persists value to the PROJDIR file rooted at homeDir using an
+// SaveProjdir persists value to the projdir file rooted at homeDir using an
 // atomic rename. An empty value removes the file. The parent directory is
 // created with 0o755 if missing.
 func SaveProjdir(homeDir, value string) error {

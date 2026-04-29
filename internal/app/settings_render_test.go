@@ -56,7 +56,7 @@ func TestSettingsLabelDimWrapsRowInDimColor(t *testing.T) {
 func TestSettingsLabelInfoEmitsValueAndSource(t *testing.T) {
 	t.Parallel()
 
-	label := settingsLabelInfo("Project Root", "/home/me/code", "PROJDIR env")
+	label := settingsLabelInfo("Project Root", "/home/me/code", "PROJMUX_PROJDIR env")
 
 	if !strings.Contains(label, "Project Root") {
 		t.Fatalf("label = %q, want name", label)
@@ -64,7 +64,7 @@ func TestSettingsLabelInfoEmitsValueAndSource(t *testing.T) {
 	if !strings.Contains(label, settingsColorActive+"/home/me/code"+settingsColorReset) {
 		t.Fatalf("label = %q, want bold value run", label)
 	}
-	if !strings.Contains(label, "(PROJDIR env)") {
+	if !strings.Contains(label, "(PROJMUX_PROJDIR env)") {
 		t.Fatalf("label = %q, want parenthesized source", label)
 	}
 }

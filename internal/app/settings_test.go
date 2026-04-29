@@ -694,7 +694,7 @@ func testSettingsSwitchCommandWithHome(t *testing.T, home string, store *stubSwi
 		homeDir:    func() (string, error) { return home, nil },
 		workingDir: func() (string, error) { return filepath.Join(home, "source", "repos", "app"), nil },
 		lookupEnv: func(name string) string {
-			if name == repoRootEnvVar {
+			if name == projdirEnvVar {
 				return filepath.Join(home, "source", "repos")
 			}
 			return ""
@@ -715,13 +715,10 @@ func TestCurrentProjdirInfoSourcePriority(t *testing.T) {
 		wantSource string
 	}{
 		{
-			name: "PROJDIR env wins",
+			name: "PROJMUX_PROJDIR env wins",
 			lookup: func(name string) string {
-				switch name {
-				case projdirEnvVar:
+				if name == projdirEnvVar {
 					return "/from/projdir"
-				case repoRootEnvVar:
-					return "/from/rp"
 				}
 				return ""
 			},
@@ -731,30 +728,25 @@ func TestCurrentProjdirInfoSourcePriority(t *testing.T) {
 			wantSource: projdirSourcePROJDIRenv,
 		},
 		{
-			name: "tmux option used when PROJDIR empty",
+			name: "PROJMUX_PROJDIR multi-path uses first entry as primary",
 			lookup: func(name string) string {
-				if name == repoRootEnvVar {
-					return "/from/rp"
-				}
-				return ""
-			},
-			tmuxOption: func() string { return "/from/tmux" },
-			load:       func(string) (string, error) { return "/from/saved", nil },
-			wantValue:  "/from/tmux",
-			wantSource: projdirSourceTmuxOption,
-		},
-		{
-			name: "RP env used when PROJDIR and tmux empty",
-			lookup: func(name string) string {
-				if name == repoRootEnvVar {
-					return "/from/rp"
+				if name == projdirEnvVar {
+					return "/from/projdir" + string(os.PathListSeparator) + "/extra/one"
 				}
 				return ""
 			},
 			tmuxOption: emptyTmuxOption,
 			load:       func(string) (string, error) { return "/from/saved", nil },
-			wantValue:  "/from/rp",
-			wantSource: projdirSourceRPEnv,
+			wantValue:  "/from/projdir",
+			wantSource: projdirSourcePROJDIRenv,
+		},
+		{
+			name:       "tmux option used when PROJMUX_PROJDIR empty",
+			lookup:     func(string) string { return "" },
+			tmuxOption: func() string { return "/from/tmux" },
+			load:       func(string) (string, error) { return "/from/saved", nil },
+			wantValue:  "/from/tmux",
+			wantSource: projdirSourceTmuxOption,
 		},
 		{
 			name:       "saved file used when env unset",
@@ -836,7 +828,7 @@ func TestProjectPickerEntriesIncludesProjdirRow(t *testing.T) {
 	if !hasEntryLabelContaining(entries, "("+projdirSourcePROJDIRenv+")") {
 		t.Fatalf("project picker entries = %#v, want source label", entries)
 	}
-	if !hasEntryLabelContaining(entries, "Override via PROJDIR env") {
+	if !hasEntryLabelContaining(entries, "Override via PROJMUX_PROJDIR env") {
 		t.Fatalf("project picker entries = %#v, want override hint row", entries)
 	}
 }

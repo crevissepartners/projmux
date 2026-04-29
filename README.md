@@ -87,20 +87,43 @@ Verify:
 projmux version
 ```
 
-### Optional: `PROJDIR`
+### Optional: `PROJMUX_PROJDIR`
 
-`PROJDIR` is the default project root projmux uses for picker and discovery.
-It is optional — when unset, projmux falls back to its built-in source-root
-discovery (`~/source`, `~/work`, `~/projects`, `~/src`, `~/code`,
+`PROJMUX_PROJDIR` is the default project root projmux uses for picker and
+discovery. It is optional — when unset, projmux falls back to its built-in
+source-root discovery (`~/source`, `~/work`, `~/projects`, `~/src`, `~/code`,
 `~/source/repos`).
 
 ```sh
-export PROJDIR="$HOME/source/repos"
+export PROJMUX_PROJDIR="$HOME/source/repos"
 ```
 
 Add the line to `~/.zshrc` (or your shell's rc file). The resolved value is
 memoized to `~/.config/projmux/projdir` after first use, so later shells keep
 the same root even without the env var.
+
+`PROJMUX_PROJDIR` accepts an OS-native PATH-style multi-value (`:` on
+Linux/macOS, `;` on Windows). The first non-empty entry is the primary
+project root; any additional entries are prepended to the managed-roots
+search list, so they participate in discovery just like
+`PROJMUX_MANAGED_ROOTS`. Only the primary path is memoized to
+`~/.config/projmux/projdir`.
+
+```sh
+# Linux/macOS — primary repo + secondary search root
+export PROJMUX_PROJDIR="$HOME/source/repos:/srv/work/repos"
+```
+
+#### Set the project root at install time
+
+```sh
+PROJMUX_PROJDIR=/your/path go install github.com/crevissepartners/projmux/cmd/projmux@latest
+PROJMUX_PROJDIR=/your/path projmux tmux apply
+```
+
+The first invocation that sees the env var writes
+`~/.config/projmux/projdir`, so later shells without the env var still
+resolve the same root.
 
 ### From source
 
@@ -144,9 +167,20 @@ projmux upgrade --no-apply                       # skip 'projmux tmux apply'
 projmux upgrade --dry-run                        # print the steps only
 ```
 
-The upgrade reads `PROJDIR`/`RP` from the calling shell and memoizes the
-resolved value to `~/.config/projmux/projdir`, so the new binary keeps the
-same project root context as the one it replaces.
+The upgrade reads `PROJMUX_PROJDIR` from the calling shell and memoizes the
+primary (first) path to `~/.config/projmux/projdir`, so the new binary keeps
+the same project root context as the one it replaces.
+
+Pass a new project root inline to atomically switch the binary and the saved
+projdir in one step:
+
+```sh
+PROJMUX_PROJDIR=/new/path projmux upgrade
+
+# Multi-path also works; only the primary entry is persisted to the saved file.
+PROJMUX_PROJDIR="/main/repos:/secondary/repos" projmux upgrade   # Linux/macOS
+# Windows: PROJMUX_PROJDIR="C:\main\repos;C:\secondary\repos"
+```
 
 ## Usage
 
@@ -194,7 +228,7 @@ and troubleshooting.
 
 | Variable | Purpose |
 | --- | --- |
-| `PROJDIR` | Default project root for the current shell. Memoized to `~/.config/projmux/projdir` after first use. |
+| `PROJMUX_PROJDIR` | Default project root for the current shell. Accepts an OS-native PATH-style multi-value: the first entry is the primary repo root (memoized to `~/.config/projmux/projdir`), and any additional entries are prepended to the managed-roots search list. |
 | `PROJMUX_MANAGED_ROOTS` | Colon-separated list of search roots. Overrides the saved/default list. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in sender. |
 

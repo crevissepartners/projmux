@@ -129,7 +129,13 @@ func (c *upgradeCommand) runDryRun(opts upgradeOptions, stdout io.Writer) error 
 func (c *upgradeCommand) runUpgrade(opts upgradeOptions, stdout, stderr io.Writer) error {
 	if home, err := os.UserHomeDir(); err == nil {
 		if raw, _ := preferredProjdirEnv(os.Getenv); raw != "" {
-			memoizeProjdir(home, raw, config.LoadProjdir, config.SaveProjdir)
+			// PROJMUX_PROJDIR is a PATH-style multi-value; only the
+			// primary (first non-empty) entry is persisted to the
+			// saved projdir file so the saved value remains a
+			// single canonical path.
+			if primary := firstProjdirPath(raw); primary != "" {
+				memoizeProjdir(home, primary, config.LoadProjdir, config.SaveProjdir)
+			}
 		}
 	}
 	if c.lookPath == nil {

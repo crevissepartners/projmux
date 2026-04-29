@@ -91,7 +91,7 @@ func settingsLabelDim(name, description string) string {
 //
 //	·  Name (muted, padded)  Value (bold)  (source) (dim)
 //
-// Used for things like "Project Root  /home/...  (PROJDIR env)" where the
+// Used for things like "Project Root  /home/...  (PROJMUX_PROJDIR env)" where the
 // name is a static label, the value is the resolved data, and the source
 // annotation explains where the value came from.
 func settingsLabelInfo(name, value, source string) string {
