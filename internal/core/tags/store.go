@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/es5h/projmux/internal/config"
-	"github.com/es5h/projmux/internal/state"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/state"
 )
 
 var ErrInvalidTag = errors.New("invalid tag")

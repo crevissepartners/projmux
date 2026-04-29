@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/es5h/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/core/preview"
 )
 
 func TestRenderPopupPreviewWithSelectedWindowAndPane(t *testing.T) {

@@ -73,7 +73,7 @@ jobs:
           name="projmux_${version}_${GOOS}_${GOARCH}"
           mkdir -p "dist/${name}"
           go build -trimpath \
-            -ldflags "-s -w -X github.com/es5h/projmux/internal/version.current=${version}" \
+            -ldflags "-s -w -X github.com/crevissepartners/projmux/internal/version.current=${version}" \
             -o "dist/${name}/projmux" ./cmd/projmux
           cp README.md README-ko.md LICENSE "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "${name}"

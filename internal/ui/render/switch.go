@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/es5h/projmux/internal/ui/picker"
+	"github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 const (

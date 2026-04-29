@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/es5h/projmux/internal/core/lifecycle"
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/core/lifecycle"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 type pruneInventoryResolver interface {

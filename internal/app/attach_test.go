@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/es5h/projmux/internal/core/lifecycle"
+	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 )
 
 func TestAppRunAttachAutoReusesEphemeralSession(t *testing.T) {

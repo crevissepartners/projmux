@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/es5h/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 func TestAppRunPinList(t *testing.T) {

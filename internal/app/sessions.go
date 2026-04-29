@@ -8,10 +8,10 @@ import (
 	"os"
 	"strings"
 
-	corepreview "github.com/es5h/projmux/internal/core/preview"
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
-	intfzf "github.com/es5h/projmux/internal/ui/fzf"
-	intrender "github.com/es5h/projmux/internal/ui/render"
+	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 const sessionsKillExpectKey = "ctrl-x"

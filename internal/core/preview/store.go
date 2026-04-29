@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/es5h/projmux/internal/config"
-	"github.com/es5h/projmux/internal/state"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/state"
 )
 
 var ErrInvalidSessionName = errors.New("invalid session name")

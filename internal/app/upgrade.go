@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/es5h/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 // upgradeCommand wraps `go install` to refresh the active projmux binary.
@@ -60,7 +60,7 @@ type upgradeOptions struct {
 
 const (
 	defaultUpgradeRef    = "latest"
-	defaultUpgradeModule = "github.com/es5h/projmux/cmd/projmux"
+	defaultUpgradeModule = "github.com/crevissepartners/projmux/cmd/projmux"
 )
 
 // Run executes the projmux upgrade self-update flow.

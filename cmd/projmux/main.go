@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/es5h/projmux/internal/app"
+	"github.com/crevissepartners/projmux/internal/app"
 )
 
 func main() {

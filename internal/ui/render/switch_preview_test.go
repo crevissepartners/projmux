@@ -3,7 +3,7 @@ package render
 import (
 	"testing"
 
-	corepreview "github.com/es5h/projmux/internal/core/preview"
+	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 )
 
 func TestRenderSwitchPreviewForExistingSession(t *testing.T) {

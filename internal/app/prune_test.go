@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/es5h/projmux/internal/core/lifecycle"
+	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 )
 
 func TestAppRunPruneEphemeralKillsTargetsBeyondKeep(t *testing.T) {

@@ -8,10 +8,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/es5h/projmux/internal/config"
-	corepreview "github.com/es5h/projmux/internal/core/preview"
-	inttmux "github.com/es5h/projmux/internal/integrations/tmux"
-	intrender "github.com/es5h/projmux/internal/ui/render"
+	"github.com/crevissepartners/projmux/internal/config"
+	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 type sessionPopupStore interface {

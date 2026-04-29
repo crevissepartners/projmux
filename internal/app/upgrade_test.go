@@ -71,7 +71,7 @@ func TestUpgradeRunDryRunPrintsExpectedCommands(t *testing.T) {
 
 	out := stdout.String()
 	wantSubstrings := []string{
-		"would run: GOBIN=/home/user/.local/bin/.projmux-upgrade-XXXXXX go install github.com/es5h/projmux/cmd/projmux@latest",
+		"would run: GOBIN=/home/user/.local/bin/.projmux-upgrade-XXXXXX go install github.com/crevissepartners/projmux/cmd/projmux@latest",
 		"would replace: /home/user/.local/bin/projmux (atomic via temp file)",
 		"would run: /home/user/.local/bin/projmux tmux apply",
 	}
@@ -251,7 +251,7 @@ func TestUpgradeRunHappyPathInvokesGoInstallAndApply(t *testing.T) {
 		t.Fatalf("commands = %d, want 2 (go install + apply)\nrecorded=%v", len(stub.commands), stub.commands)
 	}
 
-	wantInstall := []string{"/usr/local/bin/go", "install", "github.com/es5h/projmux/cmd/projmux@v1.2.3"}
+	wantInstall := []string{"/usr/local/bin/go", "install", "github.com/crevissepartners/projmux/cmd/projmux@v1.2.3"}
 	if !equalSlices(stub.commands[0].args, wantInstall) {
 		t.Fatalf("install command = %v, want %v", stub.commands[0].args, wantInstall)
 	}
@@ -280,7 +280,7 @@ func TestUpgradeRunHappyPathInvokesGoInstallAndApply(t *testing.T) {
 
 	out := stdout.String()
 	for _, want := range []string{
-		">> fetching github.com/es5h/projmux/cmd/projmux@v1.2.3 via go install",
+		">> fetching github.com/crevissepartners/projmux/cmd/projmux@v1.2.3 via go install",
 		">> installed: /home/user/.local/bin/.projmux-upgrade-stub/projmux",
 		">> atomically replaced " + target,
 		">> applying live config...",

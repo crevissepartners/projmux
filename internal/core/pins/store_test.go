@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/es5h/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 func TestNewDefaultStoreUsesConfigPinFile(t *testing.T) {

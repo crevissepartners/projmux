@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/es5h/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/core/preview"
 )
 
 // RenderPopupPreview renders a concise textual popup preview from the derived

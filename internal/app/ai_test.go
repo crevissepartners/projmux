@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	intfzf "github.com/es5h/projmux/internal/ui/fzf"
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 )
 
 func TestAISettingsGetAndSetMode(t *testing.T) {
