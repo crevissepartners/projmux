@@ -102,6 +102,19 @@ func TestPathsProjdirFile(t *testing.T) {
 	}
 }
 
+func TestPathsPostCreateHookPath(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{ConfigDir: "/tmp/config/projmux"}
+	want := filepath.Join(paths.ConfigDir, HooksDirName, PostCreateHookFileName)
+	if got := paths.PostCreateHookPath(); got != want {
+		t.Fatalf("PostCreateHookPath() = %q, want %q", got, want)
+	}
+	if want != filepath.Join("/tmp/config/projmux", "hooks", "post-create") {
+		t.Fatalf("PostCreateHookPath layout drifted: want %q", want)
+	}
+}
+
 func TestProjdirFile(t *testing.T) {
 	t.Parallel()
 

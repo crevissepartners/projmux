@@ -10,11 +10,13 @@ import (
 )
 
 const (
-	AppName              = "projmux"
-	PinsFileName         = "pins"
-	TagsFileName         = "tags"
-	PreviewStateFileName = "preview-state"
-	ProjdirFileName      = "projdir"
+	AppName                = "projmux"
+	PinsFileName           = "pins"
+	TagsFileName           = "tags"
+	PreviewStateFileName   = "preview-state"
+	ProjdirFileName        = "projdir"
+	HooksDirName           = "hooks"
+	PostCreateHookFileName = "post-create"
 )
 
 var ErrHomeDirRequired = errors.New("home directory is required when XDG homes are unset")
@@ -59,6 +61,12 @@ func (p Paths) PreviewStateFile() string {
 // ProjdirFile returns the default file used for the persisted PROJDIR value.
 func (p Paths) ProjdirFile() string {
 	return filepath.Join(p.ConfigDir, ProjdirFileName)
+}
+
+// PostCreateHookPath returns the default location for the optional
+// post-create hook script.
+func (p Paths) PostCreateHookPath() string {
+	return filepath.Join(p.ConfigDir, HooksDirName, PostCreateHookFileName)
 }
 
 // ProjdirFile returns the path to the persisted PROJDIR file rooted at the

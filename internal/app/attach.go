@@ -12,7 +12,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 type attachInventoryResolver interface {
@@ -39,7 +38,7 @@ type attachCommand struct {
 }
 
 func newAttachCommand() *attachCommand {
-	client := inttmux.NewClient(inttmux.ExecRunner{})
+	client := defaultTmuxClient()
 	return &attachCommand{
 		inventory:  client,
 		sessions:   client,

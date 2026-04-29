@@ -176,6 +176,15 @@ Project...`는 이 filesystem root를 depth 3까지 스캔하므로 `~`나 `~rp`
 `#`로 시작하는 줄은 주석으로 무시됩니다. env가 설정되어 있을 때는 무시되며
 env가 비었을 때만 사용됩니다.
 
+## Hooks
+
+projmux는 새 tmux 세션을 만들 때마다 선택적 사용자 스크립트
+`~/.config/projmux/hooks/post-create`를 실행합니다. `tmux set-environment`로
+세션별 환경 변수를 주입하거나(예: 프로젝트 경로별 `GH_TOKEN` 선택) 다른
+부수 효과를 걸 때 활용하세요. 파일이 없거나 실행 비트가 빠져 있으면 조용히
+건너뛰며, hook 실패는 세션 생성을 막지 않습니다. 환경 변수 계약, 예시,
+문제 해결은 [Hooks](docs/hooks.md)를 참고하세요.
+
 ## 환경 변수
 
 | 변수 | 용도 |
@@ -208,6 +217,7 @@ make verify
 
 - [Architecture](docs/architecture.md)
 - [CLI Shape](docs/cli.md)
+- [Hooks](docs/hooks.md)
 - [Migration Plan](docs/migration-plan.md)
 - [Repo Layout](docs/repo-layout.md)
 - [터미널 키 설정](docs/keybindings.md)

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
 
 var (
@@ -60,10 +61,43 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	return output, nil
 }
 
+// postCreateRunner is the subset of *hooks.PostCreateRunner that the tmux
+// client invokes after creating a new session. The interface keeps the
+// dependency narrow and lets tests stub it without spinning up real exec.
+type postCreateRunner interface {
+	Run(ctx context.Context, c hooks.PostCreateContext)
+}
+
 // Client exposes typed tmux queries used by CLI commands.
 type Client struct {
-	runner    commandRunner
-	lookupEnv func(string) string
+	runner     commandRunner
+	lookupEnv  func(string) string
+	postCreate postCreateRunner
+	socket     string
+}
+
+// ClientOption configures optional Client behavior.
+type ClientOption func(*Client)
+
+// WithPostCreateRunner attaches a hook runner that fires after a tmux
+// session is newly created. Pass nil to disable.
+func WithPostCreateRunner(r *hooks.PostCreateRunner) ClientOption {
+	return func(c *Client) {
+		if r == nil {
+			c.postCreate = nil
+			return
+		}
+		c.postCreate = r
+	}
+}
+
+// WithSocketName records the tmux -L socket name (if any) the caller is using
+// so it can be propagated to hook scripts via PROJMUX_SOCKET. The Client
+// itself does not currently shell out with -L; this is metadata only.
+func WithSocketName(socket string) ClientOption {
+	return func(c *Client) {
+		c.socket = strings.TrimSpace(socket)
+	}
 }
 
 // Window describes a tmux window inventory row for a session.
@@ -129,16 +163,28 @@ type RecentSessionSummary struct {
 	Activity    int64
 }
 
-// NewClient builds a tmux client over the provided runner.
-func NewClient(runner commandRunner) *Client {
-	return newClientWithEnv(runner, os.Getenv)
+// NewClient builds a tmux client over the provided runner with optional
+// configuration.
+func NewClient(runner commandRunner, opts ...ClientOption) *Client {
+	c := &Client{
+		runner:    runner,
+		lookupEnv: os.Getenv,
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
-func newClientWithEnv(runner commandRunner, lookupEnv func(string) string) *Client {
-	return &Client{
+func newClientWithEnv(runner commandRunner, lookupEnv func(string) string, opts ...ClientOption) *Client {
+	c := &Client{
 		runner:    runner,
 		lookupEnv: lookupEnv,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // CurrentPanePath returns the current tmux pane path for the active client.
@@ -344,6 +390,7 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 		return fmt.Errorf("create tmux session %q: %w", sessionName, err)
 	}
 
+	c.runPostCreate(ctx, sessionName, cwd, "persistent")
 	return nil
 }
 
@@ -361,10 +408,25 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 		return fmt.Errorf("create tmux ephemeral session %q: %w", sessionName, err)
 	}
 	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", "@projmux_ephemeral", "1"); err != nil {
-		return nil
+		// set-option failure is intentionally swallowed; the session is still
+		// usable. The post-create hook still runs so the session gets the same
+		// lifecycle treatment as one whose marker stuck.
 	}
+	c.runPostCreate(ctx, sessionName, cwd, "ephemeral")
 
 	return nil
+}
+
+func (c *Client) runPostCreate(ctx context.Context, sessionName, cwd, kind string) {
+	if c.postCreate == nil {
+		return
+	}
+	c.postCreate.Run(ctx, hooks.PostCreateContext{
+		SessionName: sessionName,
+		CWD:         cwd,
+		Kind:        kind,
+		Socket:      c.socket,
+	})
 }
 
 // SessionExists reports whether the named tmux session already exists.

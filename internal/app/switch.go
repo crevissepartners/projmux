@@ -137,7 +137,7 @@ type switchPlan struct {
 }
 
 func newSwitchCommand() *switchCommand {
-	client := inttmux.NewClient(inttmux.ExecRunner{})
+	client := defaultTmuxClient()
 	identity, err := newDefaultCurrentIdentityResolver()
 	paths, pathsErr := config.DefaultPathsFromEnv()
 

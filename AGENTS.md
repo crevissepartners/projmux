@@ -46,6 +46,9 @@
 - If behavior changes, update the maintained test list in [docs/agent-workflow.md](docs/agent-workflow.md) in the same branch.
 - Do not skip `fmt` or `fix` because tests passed. Formatting, automatic fixes, and test execution are separate gates.
 
+## Hook Contract Stability
+- The post-create hook contract (path `~/.config/projmux/hooks/post-create`, `PROJMUX_*` env vars, 5s timeout) is part of the public API. Adding, removing, or renaming any `PROJMUX_*` env var, or moving the hook path, requires at minimum a minor version bump.
+
 ## Release Flow
 - `release-please-action` watches `main`, accumulates Conventional Commit subjects, and opens or refreshes a "chore(main): release X.Y.Z" PR. That PR contains the version bump (`internal/version/version.go` + `.release-please-manifest.json`), `CHANGELOG.md` updates, and the release notes.
 - Merging the release PR pushes the `vX.Y.Z` tag and creates the GitHub Release with auto-generated notes.
