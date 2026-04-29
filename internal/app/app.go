@@ -25,6 +25,7 @@ type App struct {
 	sessions     *sessionsCommand
 	sessionPopup *sessionPopupCommand
 	settings     *settingsCommand
+	setup        *setupCommand
 	shell        *shellCommand
 	status       *statusCommand
 	switcher     *switchCommand
@@ -49,6 +50,7 @@ func New() *App {
 		sessions:     newSessionsCommand(),
 		sessionPopup: newSessionPopupCommand(),
 		settings:     newSettingsCommand(ai, switcher),
+		setup:        newSetupCommand(),
 		shell:        newShellCommand(),
 		status:       newStatusCommand(),
 		switcher:     switcher,
@@ -88,6 +90,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.sessionPopup.Run(args[1:], stdout, stderr)
 	case "settings":
 		return a.settings.Run(args[1:], stdout, stderr)
+	case "setup":
+		return a.setup.Run(args[1:], stdout, stderr)
 	case "shell":
 		return a.shell.Run(args[1:], stdout, stderr)
 	case "status":
@@ -127,6 +131,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
 	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")
 	fmt.Fprintln(w, "  settings  Configure projmux")
+	fmt.Fprintln(w, "  setup     Probe terminal key delivery for projmux bindings")
 	fmt.Fprintln(w, "  shell     Open the isolated projmux tmux app")
 	fmt.Fprintln(w, "  status    Render tmux status bar segments")
 	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
