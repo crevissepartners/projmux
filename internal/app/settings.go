@@ -524,7 +524,7 @@ func (c *settingsCommand) projectPickerEntries() []intfzf.Entry {
 	return entries
 }
 
-// projectRootEntry renders the resolved PROJDIR path with its source label.
+// projectRootEntry renders the resolved PROJMUX_PROJDIR path with its source label.
 // The row is read-only (settingsNoopValue) and never triggers memoization.
 func (c *settingsCommand) projectRootEntry() intfzf.Entry {
 	if c.switcher == nil {
@@ -548,9 +548,10 @@ func (c *settingsCommand) projectRootEntry() intfzf.Entry {
 
 func (c *settingsCommand) projectRootHintEntry() intfzf.Entry {
 	// Keep the entire hint in one dim run so search substrings such as
-	// "Override via PROJDIR env" stay contiguous in the rendered label.
+	// "Override via PROJMUX_PROJDIR env" stay contiguous in the rendered
+	// label.
 	return intfzf.Entry{
-		Label: "  " + settingsColorDim + "Override via PROJDIR env, set -g @projmux_projdir, or ~/.config/projmux/projdir" + settingsColorReset,
+		Label: "  " + settingsColorDim + "Override via PROJMUX_PROJDIR env (multi-path with `:` on Linux/`;` on Windows), set -g @projmux_projdir, or ~/.config/projmux/projdir" + settingsColorReset,
 		Value: settingsNoopValue,
 	}
 }
