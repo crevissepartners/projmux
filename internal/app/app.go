@@ -18,6 +18,7 @@ type App struct {
 	attention    *attentionCommand
 	attach       *attachCommand
 	current      *currentCommand
+	doctor       *doctorCommand
 	initCmd      *initCommand
 	kill         *killCommand
 	pin          *pinCommand
@@ -44,6 +45,7 @@ func New() *App {
 		attention:    newAttentionCommand(),
 		attach:       newAttachCommand(),
 		current:      newCurrentCommand(),
+		doctor:       newDoctorCommand(),
 		initCmd:      newInitCommand(),
 		kill:         newKillCommand(),
 		pin:          newPinCommand(),
@@ -78,6 +80,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.attach.Run(args[1:], stdout, stderr)
 	case "current":
 		return a.current.Run(args[1:], stdout, stderr)
+	case "doctor":
+		return a.doctor.Run(args[1:], stdout, stderr)
 	case "init":
 		return a.initCmd.Run(args[1:], stdout, stderr)
 	case "kill":
@@ -128,6 +132,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  attention Manage tmux pane attention badges")
 	fmt.Fprintln(w, "  attach    Open tmux lifecycle entry helpers")
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
+	fmt.Fprintln(w, "  doctor    Diagnose runtime dependencies and suggest installs")
 	fmt.Fprintln(w, "  init      Merge projmux keybindings into a terminal config")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
