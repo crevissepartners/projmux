@@ -59,14 +59,18 @@ Open the app once, then use its generated tmux bindings to:
 ## Requirements
 
 - [Go 1.24+](https://go.dev/dl/) — required to install or build the binary.
-- [tmux](https://github.com/tmux/tmux/wiki/Installing) — the workspace runtime.
-- [fzf](https://github.com/junegunn/fzf#installation) — interactive popup/sidebar pickers.
+- [tmux](https://github.com/tmux/tmux/wiki/Installing) **≥ 3.4** — the workspace runtime. Earlier versions miss `display-popup -T` and other features projmux depends on.
+- [fzf](https://github.com/junegunn/fzf#installation) **≥ 0.55** — interactive popup/sidebar pickers. The multiline picker uses `--marker-multi-line`, `--gap-line`, and `--highlight-line`, which landed by 0.55.
 - [zsh](https://zsh.sourceforge.io/) — default shell of the generated app config (`projmux shell`).
 - [git](https://git-scm.com/downloads) — branch/status metadata.
+- `stty` — POSIX terminal control, used by `projmux setup`. Already shipped by every macOS / Linux base system; not applicable on Windows hosts.
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) — optional, only for the Kubernetes status segment.
 
 Desktop notifications: Linux uses `notify-send`; WSL routes Windows toasts via
 `powershell.exe`. Override either with `PROJMUX_NOTIFY_HOOK`.
+
+Run `projmux doctor` any time to verify everything is on `PATH` and that
+tmux/fzf meet the minimum supported versions.
 
 ## Install
 
@@ -157,10 +161,9 @@ config. Dotfiles users on multi-machine setups should pass
 flow and the manual CSI-u fallback are in
 [Terminal Keybindings](docs/keybindings.md).
 
-Run `projmux doctor` to check that runtime dependencies (tmux, fzf, git,
-stty, kubectl) are on PATH, verify tmux/fzf meet the minimum supported
-versions, and get OS-appropriate install hints when something is missing
-or stale.
+If anything looks off, `projmux doctor` reports which dependency is
+missing or stale and how to install it. See [Requirements](#requirements)
+for the supported versions.
 
 ## Upgrading
 
