@@ -157,6 +157,10 @@ config. Dotfiles users on multi-machine setups should pass
 flow and the manual CSI-u fallback are in
 [Terminal Keybindings](docs/keybindings.md).
 
+Run `projmux doctor` to check that runtime dependencies (tmux, fzf, git,
+stty, kubectl) are on PATH and get OS-appropriate install hints when
+something is missing.
+
 ## Upgrading
 
 `projmux upgrade` reinstalls the binary via `go install`, atomically replaces

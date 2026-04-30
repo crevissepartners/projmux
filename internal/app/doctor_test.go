@@ -1,0 +1,374 @@
+package app
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+)
+
+func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
+	return &doctorCommand{
+		lookPath: func(name string) (string, error) {
+			if present[name] {
+				return "/usr/bin/" + name, nil
+			}
+			return "", errors.New("not found")
+		},
+		goos:   func() string { return host },
+		getenv: func(string) string { return "" },
+		commandVersion: func(name string) string {
+			if present[name] {
+				return name + " 1.2.3"
+			}
+			return ""
+		},
+	}
+}
+
+func TestDoctorRunAllRequiredPresentSucceeds(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true,
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v\nstderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"[ok]", "tmux", "fzf", "git", "stty", "kubectl"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "5 ok, 0 missing, 0 skipped, 0 hint.") {
+		t.Fatalf("summary line wrong:\n%s", out)
+	}
+}
+
+func TestDoctorRunRequiredMissingReturnsError(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "fzf": true, "stty": true, "apt-get": true,
+	})
+
+	var stdout, stderr bytes.Buffer
+	err := cmd.Run(nil, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("Run() error = nil, want missing required failure")
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "[missing]") || !strings.Contains(out, "git") {
+		t.Fatalf("output missing expected missing line:\n%s", out)
+	}
+	if !strings.Contains(out, "sudo apt-get install -y git") {
+		t.Fatalf("apt-get install hint not rendered:\n%s", out)
+	}
+}
+
+func TestDoctorRunRejectsPositionalArguments(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{})
+	err := cmd.Run([]string{"extra"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want positional argument rejection")
+	}
+	if !strings.Contains(err.Error(), "positional") {
+		t.Fatalf("Run() error = %v, want mention of positional arguments", err)
+	}
+}
+
+func TestDoctorEvaluateOptionalMissingIsHintNotError(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "fzf": true, "git": true, "stty": true,
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "[hint]") || !strings.Contains(out, "kubectl") {
+		t.Fatalf("output missing kubectl hint line:\n%s", out)
+	}
+	if !strings.Contains(out, "optional; install if you use the kubectl switcher") {
+		t.Fatalf("hint note not rendered:\n%s", out)
+	}
+	if !strings.Contains(out, "4 ok, 0 missing, 0 skipped, 1 hint.") {
+		t.Fatalf("summary line wrong:\n%s", out)
+	}
+}
+
+func TestDoctorEvaluateSkipsSttyOnWindows(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("windows", map[string]bool{
+		"tmux": true, "fzf": true, "git": true, "kubectl": true,
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "[skip]") || !strings.Contains(out, "stty") {
+		t.Fatalf("stty should be skipped on windows:\n%s", out)
+	}
+	if !strings.Contains(out, "windows host") {
+		t.Fatalf("skip reason missing:\n%s", out)
+	}
+}
+
+func TestDoctorRunJSONOutputIsValid(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "fzf": true, "git": true, "stty": true,
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var results []doctorResult
+	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
+	}
+	if len(results) != 5 {
+		t.Fatalf("len(results) = %d, want 5", len(results))
+	}
+	byName := map[string]doctorResult{}
+	for _, r := range results {
+		byName[r.Name] = r
+	}
+	if byName["tmux"].Status != doctorStatusOK {
+		t.Fatalf("tmux status = %q, want ok", byName["tmux"].Status)
+	}
+	if byName["kubectl"].Status != doctorStatusHint {
+		t.Fatalf("kubectl status = %q, want hint", byName["kubectl"].Status)
+	}
+	if !byName["tmux"].Required {
+		t.Fatalf("tmux Required = false, want true")
+	}
+	if byName["kubectl"].Required {
+		t.Fatalf("kubectl Required = true, want false")
+	}
+}
+
+func TestDetectInstallHintByOSAndPM(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		dep      doctorDep
+		host     string
+		present  map[string]bool
+		want     string
+		contains []string
+	}{
+		{
+			name:    "linux apt-get",
+			dep:     doctorDep{Name: "git"},
+			host:    "linux",
+			present: map[string]bool{"apt-get": true},
+			want:    "sudo apt-get install -y git",
+		},
+		{
+			name:    "linux pacman",
+			dep:     doctorDep{Name: "git"},
+			host:    "linux",
+			present: map[string]bool{"pacman": true},
+			want:    "sudo pacman -S git",
+		},
+		{
+			name:    "linux dnf",
+			dep:     doctorDep{Name: "git"},
+			host:    "linux",
+			present: map[string]bool{"dnf": true},
+			want:    "sudo dnf install git",
+		},
+		{
+			name:    "linux zypper",
+			dep:     doctorDep{Name: "git"},
+			host:    "linux",
+			present: map[string]bool{"zypper": true},
+			want:    "sudo zypper install git",
+		},
+		{
+			name:    "linux apk",
+			dep:     doctorDep{Name: "git"},
+			host:    "linux",
+			present: map[string]bool{"apk": true},
+			want:    "sudo apk add git",
+		},
+		{
+			name:    "darwin brew",
+			dep:     doctorDep{Name: "git"},
+			host:    "darwin",
+			present: map[string]bool{"brew": true},
+			want:    "brew install git",
+		},
+		{
+			name:    "windows scoop default",
+			dep:     doctorDep{Name: "git"},
+			host:    "windows",
+			present: map[string]bool{},
+			want:    "scoop install git",
+		},
+		{
+			name:     "fzf appends go install fallback on linux apt",
+			dep:      doctorDep{Name: "fzf", FallbackHint: "or: go install github.com/junegunn/fzf@latest"},
+			host:     "linux",
+			present:  map[string]bool{"apt-get": true},
+			contains: []string{"sudo apt-get install -y fzf", "or: go install github.com/junegunn/fzf@latest"},
+		},
+		{
+			name:    "fzf falls back to go install when no PM detected",
+			dep:     doctorDep{Name: "fzf", FallbackHint: "or: go install github.com/junegunn/fzf@latest"},
+			host:    "linux",
+			present: map[string]bool{},
+			want:    "or: go install github.com/junegunn/fzf@latest",
+		},
+		{
+			name:    "linux no package manager returns empty",
+			dep:     doctorDep{Name: "git"},
+			host:    "linux",
+			present: map[string]bool{},
+			want:    "",
+		},
+		{
+			name:    "darwin without brew returns empty",
+			dep:     doctorDep{Name: "git"},
+			host:    "darwin",
+			present: map[string]bool{},
+			want:    "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lookPath := func(name string) (string, error) {
+				if tc.present[name] {
+					return "/usr/bin/" + name, nil
+				}
+				return "", errors.New("not found")
+			}
+			got := detectInstallHint(tc.dep, tc.host, lookPath)
+			if len(tc.contains) > 0 {
+				for _, want := range tc.contains {
+					if !strings.Contains(got, want) {
+						t.Fatalf("detectInstallHint = %q, want substring %q", got, want)
+					}
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("detectInstallHint = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDoctorFzfHintAlwaysIncludesGoInstallFallback(t *testing.T) {
+	t.Parallel()
+
+	hosts := []struct {
+		name    string
+		host    string
+		present map[string]bool
+	}{
+		{"linux apt", "linux", map[string]bool{"apt-get": true}},
+		{"linux pacman", "linux", map[string]bool{"pacman": true}},
+		{"darwin brew", "darwin", map[string]bool{"brew": true}},
+		{"windows", "windows", map[string]bool{}},
+		{"linux bare", "linux", map[string]bool{}},
+	}
+
+	deps := doctorDeps()
+	var fzfDep doctorDep
+	for _, d := range deps {
+		if d.Name == "fzf" {
+			fzfDep = d
+			break
+		}
+	}
+	if fzfDep.Name == "" {
+		t.Fatalf("fzf dep not present in doctorDeps()")
+	}
+
+	for _, tc := range hosts {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lookPath := func(name string) (string, error) {
+				if tc.present[name] {
+					return "/usr/bin/" + name, nil
+				}
+				return "", errors.New("not found")
+			}
+			got := detectInstallHint(fzfDep, tc.host, lookPath)
+			if !strings.Contains(got, "go install github.com/junegunn/fzf@latest") {
+				t.Fatalf("fzf hint missing go install fallback on %s: %q", tc.name, got)
+			}
+		})
+	}
+}
+
+func TestDoctorRunWindowsMissingHintIncludesScoop(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("windows", map[string]bool{
+		"tmux": true, "fzf": true, "kubectl": true,
+	})
+
+	var stdout bytes.Buffer
+	err := cmd.Run(nil, &stdout, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want missing required (git) on windows")
+	}
+	if !strings.Contains(stdout.String(), "scoop install git") {
+		t.Fatalf("windows install hint missing scoop:\n%s", stdout.String())
+	}
+}
+
+func TestDoctorRunDarwinMissingHintIncludesBrew(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("darwin", map[string]bool{
+		"tmux": true, "fzf": true, "stty": true, "brew": true,
+	})
+
+	var stdout bytes.Buffer
+	err := cmd.Run(nil, &stdout, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want missing required (git) on darwin")
+	}
+	if !strings.Contains(stdout.String(), "brew install git") {
+		t.Fatalf("darwin install hint missing brew:\n%s", stdout.String())
+	}
+}
+
+func TestDoctorRunLinuxPacmanMissingHint(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "fzf": true, "stty": true, "pacman": true,
+	})
+
+	var stdout bytes.Buffer
+	err := cmd.Run(nil, &stdout, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want missing required (git)")
+	}
+	if !strings.Contains(stdout.String(), "sudo pacman -S git") {
+		t.Fatalf("pacman install hint not rendered:\n%s", stdout.String())
+	}
+}
