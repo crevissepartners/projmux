@@ -20,6 +20,12 @@ func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
 		getenv: func(string) string { return "" },
 		commandVersion: func(name string) string {
 			if present[name] {
+				switch name {
+				case "tmux":
+					return "tmux 3.6"
+				case "fzf":
+					return "0.71.0 (62899fd7)"
+				}
 				return name + " 1.2.3"
 			}
 			return ""
@@ -44,7 +50,7 @@ func TestDoctorRunAllRequiredPresentSucceeds(t *testing.T) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "5 ok, 0 missing, 0 skipped, 0 hint.") {
+	if !strings.Contains(out, "5 ok, 0 missing, 0 stale, 0 skipped, 0 hint.") {
 		t.Fatalf("summary line wrong:\n%s", out)
 	}
 }
@@ -101,7 +107,7 @@ func TestDoctorEvaluateOptionalMissingIsHintNotError(t *testing.T) {
 	if !strings.Contains(out, "optional; install if you use the kubectl switcher") {
 		t.Fatalf("hint note not rendered:\n%s", out)
 	}
-	if !strings.Contains(out, "4 ok, 0 missing, 0 skipped, 1 hint.") {
+	if !strings.Contains(out, "4 ok, 0 missing, 0 stale, 0 skipped, 1 hint.") {
 		t.Fatalf("summary line wrong:\n%s", out)
 	}
 }
@@ -370,5 +376,240 @@ func TestDoctorRunLinuxPacmanMissingHint(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "sudo pacman -S git") {
 		t.Fatalf("pacman install hint not rendered:\n%s", stdout.String())
+	}
+}
+
+func newStubDoctorCommandWithVersions(host string, present map[string]bool, versions map[string]string) *doctorCommand {
+	return &doctorCommand{
+		lookPath: func(name string) (string, error) {
+			if present[name] {
+				return "/usr/bin/" + name, nil
+			}
+			return "", errors.New("not found")
+		},
+		goos:   func() string { return host },
+		getenv: func(string) string { return "" },
+		commandVersion: func(name string) string {
+			if v, ok := versions[name]; ok {
+				return v
+			}
+			if !present[name] {
+				return ""
+			}
+			switch name {
+			case "tmux":
+				return "tmux 3.6"
+			case "fzf":
+				return "0.71.0 (62899fd7)"
+			}
+			return name + " 1.2.3"
+		},
+	}
+}
+
+func TestParseDoctorVersion(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		in    string
+		major int
+		minor int
+		patch int
+		ok    bool
+	}{
+		{"tmux 3.6", "tmux 3.6", 3, 6, 0, true},
+		{"tmux 3.4a", "tmux 3.4a", 3, 4, 0, true},
+		{"plain 3.4", "3.4", 3, 4, 0, true},
+		{"fzf full", "0.71.0 (62899fd7)", 0, 71, 0, true},
+		{"fzf devel", "0.54 (devel)", 0, 54, 0, true},
+		{"git long", "git version 2.53.0", 2, 53, 0, true},
+		{"empty", "", 0, 0, 0, false},
+		{"unrecognized", "unrecognized", 0, 0, 0, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			major, minor, patch, ok := parseDoctorVersion(tc.in)
+			if major != tc.major || minor != tc.minor || patch != tc.patch || ok != tc.ok {
+				t.Fatalf("parseDoctorVersion(%q) = (%d, %d, %d, %v), want (%d, %d, %d, %v)",
+					tc.in, major, minor, patch, ok, tc.major, tc.minor, tc.patch, tc.ok)
+			}
+		})
+	}
+}
+
+func TestVersionAtLeast(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		got     string
+		want    string
+		atLeast bool
+		parsed  bool
+	}{
+		{"3.6 >= 3.4", "3.6", "3.4", true, true},
+		{"3.4 >= 3.4", "3.4", "3.4", true, true},
+		{"3.3 < 3.4", "3.3", "3.4", false, true},
+		{"3.4a >= 3.4", "3.4a", "3.4", true, true},
+		{"0.55 >= 0.55", "0.55", "0.55", true, true},
+		{"0.54 < 0.55", "0.54", "0.55", false, true},
+		{"0.71.0 >= 0.55", "0.71.0", "0.55", true, true},
+		{"garbage lenient", "garbage", "0.55", true, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			atLeast, parsed := versionAtLeast(tc.got, tc.want)
+			if atLeast != tc.atLeast || parsed != tc.parsed {
+				t.Fatalf("versionAtLeast(%q, %q) = (%v, %v), want (%v, %v)",
+					tc.got, tc.want, atLeast, parsed, tc.atLeast, tc.parsed)
+			}
+		})
+	}
+}
+
+func TestDoctorStaleFzfFailsRequired(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommandWithVersions(
+		"linux",
+		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
+		map[string]string{"fzf": "0.54 (devel)"},
+	)
+
+	var stdout, stderr bytes.Buffer
+	err := cmd.Run(nil, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("Run() error = nil, want stale-required failure")
+	}
+	if !strings.Contains(err.Error(), "missing required dependencies") {
+		t.Fatalf("error = %v, want mention of missing required dependencies", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{"[stale]", "fzf", "minimum 0.55; found 0.54 (devel)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "1 stale") {
+		t.Fatalf("summary line missing stale count:\n%s", out)
+	}
+}
+
+func TestDoctorStaleTmuxFailsRequired(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommandWithVersions(
+		"linux",
+		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
+		map[string]string{"tmux": "tmux 3.2"},
+	)
+
+	var stdout, stderr bytes.Buffer
+	err := cmd.Run(nil, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("Run() error = nil, want stale-required failure")
+	}
+	if !strings.Contains(err.Error(), "missing required dependencies") {
+		t.Fatalf("error = %v, want mention of missing required dependencies", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{"[stale]", "tmux", "minimum 3.4; found tmux 3.2"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "1 stale") {
+		t.Fatalf("summary line missing stale count:\n%s", out)
+	}
+}
+
+func TestDoctorNoMinVersionSkipsCheck(t *testing.T) {
+	t.Parallel()
+
+	// Confirms that when MinVersion == "" (e.g. git, stty, kubectl), no
+	// version comparison happens even if the version output is empty.
+	cmd := newStubDoctorCommandWithVersions(
+		"linux",
+		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true},
+		map[string]string{"git": "", "stty": "", "kubectl": ""},
+	)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v\noutput=%s", err, stdout.String())
+	}
+	out := stdout.String()
+	if strings.Contains(out, "[stale]") {
+		t.Fatalf("output should not flag any dep as stale:\n%s", out)
+	}
+	if !strings.Contains(out, "5 ok, 0 missing, 0 stale, 0 skipped, 0 hint.") {
+		t.Fatalf("summary line wrong:\n%s", out)
+	}
+}
+
+func TestDoctorVersionParseFailureDoesNotMarkStale(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommandWithVersions(
+		"linux",
+		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true},
+		map[string]string{"fzf": ""},
+	)
+
+	results := cmd.evaluate()
+	var fzf doctorResult
+	for _, r := range results {
+		if r.Name == "fzf" {
+			fzf = r
+			break
+		}
+	}
+	if fzf.Name == "" {
+		t.Fatalf("fzf result missing")
+	}
+	if fzf.Status != doctorStatusOK {
+		t.Fatalf("fzf status = %q, want ok (parse glitch should not mark stale)", fzf.Status)
+	}
+}
+
+func TestDoctorStaleFzfSerializesToJSON(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommandWithVersions(
+		"linux",
+		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
+		map[string]string{"fzf": "0.54 (devel)"},
+	)
+
+	var stdout bytes.Buffer
+	// Run returns the stale-required error but JSON output is still written
+	// to stdout before the error return path checks status.
+	_ = cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{})
+
+	var results []doctorResult
+	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
+	}
+	byName := map[string]doctorResult{}
+	for _, r := range results {
+		byName[r.Name] = r
+	}
+	fzf, ok := byName["fzf"]
+	if !ok {
+		t.Fatalf("fzf result missing from JSON output")
+	}
+	if fzf.Status != doctorStatusStale {
+		t.Fatalf("fzf JSON status = %q, want stale", fzf.Status)
+	}
+	if fzf.Hint == "" {
+		t.Fatalf("fzf JSON hint unset, want minimum/found message")
+	}
+	if !strings.Contains(string(stdout.Bytes()), `"status": "stale"`) {
+		t.Fatalf("raw JSON missing %q:\n%s", `"status": "stale"`, stdout.String())
 	}
 }
