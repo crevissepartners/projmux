@@ -199,6 +199,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		"alt-1:abort",
 		"alt-2:abort",
 		"alt-3:abort",
+		"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
@@ -292,6 +293,7 @@ func TestSwitchCommandSidebarUsesContextSessionForInitialPosition(t *testing.T) 
 		"alt-1:abort",
 		"alt-2:abort",
 		"alt-3:abort",
+		"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
 		"start:pos(1)",
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
@@ -445,6 +447,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		"alt-1:abort",
 		"alt-2:abort",
 		"alt-3:abort",
+		"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
 		"start:pos(4)",
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
