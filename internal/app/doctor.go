@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -58,6 +60,9 @@ type doctorDep struct {
 	// OptionalNote is the human-readable explanation rendered for optional
 	// deps regardless of presence.
 	OptionalNote string
+	// MinVersion is the inclusive minimum semver-ish version required.
+	// Empty means no version check is performed.
+	MinVersion string
 }
 
 type doctorStatus string
@@ -65,6 +70,7 @@ type doctorStatus string
 const (
 	doctorStatusOK      doctorStatus = "ok"
 	doctorStatusMissing doctorStatus = "missing"
+	doctorStatusStale   doctorStatus = "stale"
 	doctorStatusHint    doctorStatus = "hint"
 	doctorStatusSkip    doctorStatus = "skip"
 )
@@ -80,12 +86,13 @@ type doctorResult struct {
 
 func doctorDeps() []doctorDep {
 	return []doctorDep{
-		{Name: "tmux", Required: true, Category: doctorCategoryCore},
+		{Name: "tmux", Required: true, Category: doctorCategoryCore, MinVersion: "3.4"},
 		{
 			Name:         "fzf",
 			Required:     true,
 			Category:     doctorCategoryCore,
 			FallbackHint: "or: go install github.com/junegunn/fzf@latest",
+			MinVersion:   "0.55",
 		},
 		{Name: "git", Required: true, Category: doctorCategoryWorkflow},
 		{Name: "stty", Required: true, Category: doctorCategoryWorkflow, SkipOnWindows: true},
@@ -121,7 +128,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	for _, r := range results {
-		if r.Required && r.Status == doctorStatusMissing {
+		if r.Required && (r.Status == doctorStatusMissing || r.Status == doctorStatusStale) {
 			return fmt.Errorf("missing required dependencies; see report above")
 		}
 	}
@@ -155,6 +162,14 @@ func (c *doctorCommand) evaluateDep(dep doctorDep, host string) doctorResult {
 		if c.commandVersion != nil {
 			res.Version = c.commandVersion(dep.Name)
 		}
+		if dep.MinVersion != "" {
+			atLeast, parsed := versionAtLeast(res.Version, dep.MinVersion)
+			if parsed && !atLeast {
+				res.Status = doctorStatusStale
+				res.Hint = fmt.Sprintf("minimum %s; found %s", dep.MinVersion, res.Version)
+				res.Install = detectInstallHint(dep, host, c.lookPath)
+			}
+		}
 		return res
 	}
 
@@ -176,7 +191,7 @@ func writeDoctorText(w io.Writer, results []doctorResult) error {
 	var buf bytes.Buffer
 	buf.WriteString("projmux doctor\n")
 
-	var ok, missing, skipped, hints int
+	var ok, missing, stale, skipped, hints int
 	for _, r := range results {
 		tag := fmt.Sprintf("[%s]", r.Status)
 		// Why: pad tag column to fit "[missing]" so subsequent columns line up.
@@ -195,6 +210,16 @@ func writeDoctorText(w io.Writer, results []doctorResult) error {
 				buf.WriteString(r.Install)
 			} else {
 				buf.WriteString("see https://github.com/crevissepartners/projmux for guidance")
+			}
+		case doctorStatusStale:
+			stale++
+			buf.WriteString("- ")
+			if r.Hint != "" {
+				buf.WriteString(r.Hint)
+			}
+			if r.Install != "" {
+				buf.WriteString("; install: ")
+				buf.WriteString(r.Install)
 			}
 		case doctorStatusHint:
 			hints++
@@ -216,7 +241,7 @@ func writeDoctorText(w io.Writer, results []doctorResult) error {
 		buf.WriteString("\n")
 	}
 
-	fmt.Fprintf(&buf, "\n%d ok, %d missing, %d skipped, %d hint.\n", ok, missing, skipped, hints)
+	fmt.Fprintf(&buf, "\n%d ok, %d missing, %d stale, %d skipped, %d hint.\n", ok, missing, stale, skipped, hints)
 	_, err := w.Write(buf.Bytes())
 	return err
 }
@@ -284,6 +309,58 @@ func hasOnPath(lookPath func(string) (string, error), name string) bool {
 var versionProbeArgs = map[string][]string{
 	"tmux":    {"-V"},
 	"kubectl": {"version", "--client"},
+}
+
+// doctorVersionPattern matches the first version-looking token in a string,
+// tolerating a trailing single-letter suffix (tmux uses 3.4a/3.4b convention).
+var doctorVersionPattern = regexp.MustCompile(`\d+(\.\d+){0,2}[a-z]?`)
+
+// parseDoctorVersion extracts a (major, minor, patch) tuple from a tool's
+// version-output line. Missing components default to 0. Trailing letter
+// suffixes on tmux (e.g. "3.4a") are tolerated. Returns ok=false when no
+// version-looking token is found.
+func parseDoctorVersion(raw string) (major, minor, patch int, ok bool) {
+	tok := doctorVersionPattern.FindString(raw)
+	if tok == "" {
+		return 0, 0, 0, false
+	}
+	if last := tok[len(tok)-1]; last >= 'a' && last <= 'z' {
+		tok = tok[:len(tok)-1]
+	}
+	if tok == "" {
+		return 0, 0, 0, false
+	}
+	parts := strings.Split(tok, ".")
+	out := [3]int{}
+	for i := 0; i < len(parts) && i < 3; i++ {
+		n, err := strconv.Atoi(parts[i])
+		if err != nil {
+			return 0, 0, 0, false
+		}
+		out[i] = n
+	}
+	return out[0], out[1], out[2], true
+}
+
+// versionAtLeast reports whether got >= want using lexicographic
+// (major, minor, patch) comparison. Both inputs are parsed via
+// parseDoctorVersion. If parsing fails on either side, returns true,
+// false (i.e. cannot determine — treat as ok rather than failing
+// loudly on parse glitches).
+func versionAtLeast(got, want string) (atLeast bool, parsed bool) {
+	gM, gm, gp, gok := parseDoctorVersion(got)
+	wM, wm, wp, wok := parseDoctorVersion(want)
+	if !gok || !wok {
+		return true, false
+	}
+	g := [3]int{gM, gm, gp}
+	w := [3]int{wM, wm, wp}
+	for i := 0; i < 3; i++ {
+		if g[i] != w[i] {
+			return g[i] > w[i], true
+		}
+	}
+	return true, true
 }
 
 func defaultCommandVersion(name string) string {

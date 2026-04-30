@@ -158,8 +158,9 @@ flow and the manual CSI-u fallback are in
 [Terminal Keybindings](docs/keybindings.md).
 
 Run `projmux doctor` to check that runtime dependencies (tmux, fzf, git,
-stty, kubectl) are on PATH and get OS-appropriate install hints when
-something is missing.
+stty, kubectl) are on PATH, verify tmux/fzf meet the minimum supported
+versions, and get OS-appropriate install hints when something is missing
+or stale.
 
 ## Upgrading
 
