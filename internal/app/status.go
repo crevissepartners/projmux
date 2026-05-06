@@ -21,6 +21,7 @@ type statusCommand struct {
 	homeDir     func() (string, error)
 	readCommand func(ctx context.Context, name string, args ...string) ([]byte, error)
 	now         func() time.Time
+	usage       *usageCommand
 }
 
 func newStatusCommand() *statusCommand {
@@ -29,6 +30,7 @@ func newStatusCommand() *statusCommand {
 		homeDir:     os.UserHomeDir,
 		readCommand: readExternalCommand,
 		now:         time.Now,
+		usage:       newUsageCommand(),
 	}
 }
 
@@ -43,6 +45,11 @@ func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runGit(args[1:], stdout, stderr)
 	case "kube":
 		return c.runKube(args[1:], stdout, stderr)
+	case "usage":
+		if c.usage == nil {
+			c.usage = newUsageCommand()
+		}
+		return c.usage.runStatus(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printStatusUsage(stdout)
 		return nil
@@ -276,4 +283,5 @@ func printStatusUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux status git [path]")
 	fmt.Fprintln(w, "  projmux status kube [session]")
+	fmt.Fprintln(w, "  projmux status usage [--max-width N]")
 }
