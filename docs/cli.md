@@ -52,6 +52,14 @@ the `projmux.TmuxCodex` AppUserModelID automatically on first use.
 ### Tmux status bar
 - `projmux status git [path]`
 - `projmux status kube [session]`
+- `projmux status usage [--max-width N]`
+- `projmux status notify [--max-width N]`
+- `projmux statusbar click <range-id> [--socket <s>] [--mouse-x N] [--mouse-y N]`
+
+`projmux statusbar click` is the click/keyboard dispatcher for the three-line
+status bar. Range ids are `session pwd kube git usage notify`. See
+[architecture.md](architecture.md#three-line-clickable-status-bar) for the
+full mapping.
 
 ### Tmux-facing helper entrypoints
 - `projmux tmux popup-toggle <mode>`

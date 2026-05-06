@@ -88,6 +88,31 @@ Ephemeral runtime state:
 - popup marker files
 - current tagged selection set
 
+## Three-line clickable status bar
+
+projmux configures tmux with `status 3`. Line 0 is the existing
+session/window/path/git/kube/clock row, line 1 is the AI usage bar, and line 2
+is the notification bar. Each clickable segment is wrapped in a tmux
+user-defined range (`#[range=user|<id>]...#[norange]`) and dispatched through
+`projmux statusbar click <range-id>`. A single `bind -n MouseDown1Status`
+covers all three lines because tmux fires `MouseDown1Status` from any line of a
+multi-line status bar with `#{mouse_status_range}` resolving to whichever
+range the cursor was over.
+
+| Range id | Line | Click action                              | Keybinding   |
+|----------|------|-------------------------------------------|--------------|
+| session  | 0    | display session name (TODO: picker)       | prefix+s s   |
+| pwd      | 0    | display pane_current_path                 | prefix+s p   |
+| kube     | 0    | (TODO: kube filter picker)                | prefix+s k   |
+| git      | 0    | (TODO: git filter picker)                 | prefix+s g   |
+| usage    | 1    | popup `projmux usage`                     | prefix+s u   |
+| notify   | 2    | focus origin pane of newest notification  | prefix+s n   |
+
+The keyboard chord uses `bind-key s switch-client -T projmux-status` so the
+prefix-then-`s`-then-letter shortcut routes through the same dispatcher as
+the mouse click. Empty `#{mouse_status_range}` (clicks on whitespace) is a
+no-op so the binding never flashes a spurious error.
+
 ## Non-goals
 
 - replacing tmux
