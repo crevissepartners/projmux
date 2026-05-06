@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -81,7 +82,7 @@ func TestUpdateStatusReadsFreshCacheAndInstaller(t *testing.T) {
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
 		Version:   1,
 		CheckedAt: now.Add(-time.Hour),
-		TagName:   "v0.4.1",
+		TagName:   testVersionTag(t, 1),
 	})
 
 	var stdout bytes.Buffer
@@ -90,7 +91,7 @@ func TestUpdateStatusReadsFreshCacheAndInstaller(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{
-		"latest:    v0.4.1 (fresh)",
+		"latest:    " + testVersionTag(t, 1) + " (fresh)",
 		"state:     update_available",
 		"installer: go - Installed with Go tooling; update apply delegates to projmux upgrade.",
 	} {
@@ -108,7 +109,7 @@ func TestUpdateStatusJSONMarksStaleCache(t *testing.T) {
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
 		Version:   1,
 		CheckedAt: now.Add(-25 * time.Hour),
-		TagName:   "v0.4.0",
+		TagName:   testVersionTag(t, 0),
 	})
 
 	var stdout bytes.Buffer
@@ -125,8 +126,8 @@ func TestUpdateStatusJSONMarksStaleCache(t *testing.T) {
 	if st.UpdateState != "current" {
 		t.Fatalf("UpdateState = %q, want current", st.UpdateState)
 	}
-	if st.LatestVersion != "v0.4.0" {
-		t.Fatalf("LatestVersion = %q, want v0.4.0", st.LatestVersion)
+	if want := testVersionTag(t, 0); st.LatestVersion != want {
+		t.Fatalf("LatestVersion = %q, want %s", st.LatestVersion, want)
 	}
 }
 
@@ -135,6 +136,7 @@ func TestUpdateCheckFetchesAndWritesCache(t *testing.T) {
 
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	cmd, cacheDir := testUpdateCommand(t, now)
+	latest := testVersionTag(t, 2)
 	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != cmd.apiURL {
 			t.Fatalf("request URL = %q, want %q", req.URL.String(), cmd.apiURL)
@@ -142,7 +144,7 @@ func TestUpdateCheckFetchesAndWritesCache(t *testing.T) {
 		if got := req.Header.Get("User-Agent"); !strings.Contains(got, "projmux/") {
 			t.Fatalf("User-Agent = %q, want projmux prefix", got)
 		}
-		body := `{"tag_name":"v0.4.2","name":"v0.4.2","html_url":"https://github.com/crevissepartners/projmux/releases/tag/v0.4.2","published_at":"2026-05-06T10:00:00Z"}`
+		body := fmt.Sprintf(`{"tag_name":%q,"name":%q,"html_url":"https://github.com/crevissepartners/projmux/releases/tag/%s","published_at":"2026-05-06T10:00:00Z"}`, latest, latest, latest)
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(body)),
@@ -156,7 +158,7 @@ func TestUpdateCheckFetchesAndWritesCache(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{
-		"latest: v0.4.2",
+		"latest: " + latest,
 		"state: update_available",
 		"apply: run projmux update apply",
 	} {
@@ -166,8 +168,8 @@ func TestUpdateCheckFetchesAndWritesCache(t *testing.T) {
 	}
 
 	cache := readUpdateCacheFixture(t, cacheDir)
-	if cache.TagName != "v0.4.2" {
-		t.Fatalf("cache.TagName = %q, want v0.4.2", cache.TagName)
+	if cache.TagName != latest {
+		t.Fatalf("cache.TagName = %q, want %s", cache.TagName, latest)
 	}
 	if !cache.CheckedAt.Equal(now) {
 		t.Fatalf("cache.CheckedAt = %v, want %v", cache.CheckedAt, now)
@@ -488,4 +490,17 @@ func testReleaseArchive(t *testing.T, content string) []byte {
 		t.Fatalf("gzip Close() error = %v", err)
 	}
 	return buf.Bytes()
+}
+
+func testVersionTag(t *testing.T, patchDelta int) string {
+	t.Helper()
+	parts, ok := parseUpdateVersion(version.String())
+	if !ok {
+		t.Fatalf("cannot parse current version %q", version.String())
+	}
+	parts[2] += patchDelta
+	if parts[2] < 0 {
+		t.Fatalf("invalid patch delta %d for current version %q", patchDelta, version.String())
+	}
+	return fmt.Sprintf("v%d.%d.%d", parts[0], parts[1], parts[2])
 }
