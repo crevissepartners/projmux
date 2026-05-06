@@ -213,6 +213,27 @@ func TestUpgradeRunReportsMissingGoToolchain(t *testing.T) {
 	}
 }
 
+func TestUpgradeRunRejectsNPMInstaller(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubUpgradeCommand("/usr/local/lib/node_modules/projmux/node_modules/@projmux/linux-x64/bin/projmux")
+	cmd.environ = func() []string { return []string{"PATH=/usr/bin", "PROJMUX_INSTALLER=npm"} }
+	cmd.lookPath = func(string) (string, error) {
+		t.Fatalf("lookPath should not run for npm installs")
+		return "", nil
+	}
+
+	err := cmd.Run([]string{}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want npm installer rejection")
+	}
+	for _, want := range []string{"npm installs", "projmux update apply", "npm update -g projmux"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Run() error = %v, want %q", err, want)
+		}
+	}
+}
+
 func TestUpgradeRunHappyPathInvokesGoInstallAndApply(t *testing.T) {
 	t.Parallel()
 

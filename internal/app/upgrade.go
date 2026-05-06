@@ -79,6 +79,10 @@ func (c *upgradeCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("upgrade does not accept positional arguments")
 	}
 
+	if source := c.installerSource(); source == "npm" {
+		return errors.New("projmux upgrade is for Go/source installs; npm installs should run 'projmux update apply' or 'npm update -g projmux'")
+	}
+
 	opts := upgradeOptions{
 		ref:     strings.TrimSpace(*ref),
 		target:  strings.TrimSpace(*target),
@@ -124,6 +128,19 @@ func (c *upgradeCommand) runDryRun(opts upgradeOptions, stdout io.Writer) error 
 		}
 	}
 	return nil
+}
+
+func (c *upgradeCommand) installerSource() string {
+	env := os.Environ()
+	if c.environ != nil {
+		env = c.environ()
+	}
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "PROJMUX_INSTALLER="); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (c *upgradeCommand) runUpgrade(opts upgradeOptions, stdout, stderr io.Writer) error {
