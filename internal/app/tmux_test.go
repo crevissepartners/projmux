@@ -458,10 +458,14 @@ func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *tes
 
 	output := stdout.String()
 	for _, want := range []string{
-		// Must short-circuit the bare "window" range to native select-window.
-		"bind-key -n MouseDown1Status if-shell -F \"#{==:#{mouse_status_range},window}\" \"select-window -t =\"",
-		// Projmux fallback path for non-window ranges still goes through run-shell.
-		`run-shell \"'/tmp/proj mux/bin/projmux' statusbar click \\"#{mouse_status_range}\\" --mouse-window \\"#{mouse_window}\\"\"`,
+		// Must short-circuit the bare "window" range to native select-window
+		// using tmux block syntax (avoids invalid triple-escaped quoting that
+		// breaks the tmux config parser).
+		"bind-key -n MouseDown1Status if-shell -F \"#{==:#{mouse_status_range},window}\"",
+		"{ select-window -t = }",
+		// Projmux fallback path for non-window ranges still goes through run-shell,
+		// now wrapped in a `{ ... }` block instead of an extra layer of quoting.
+		`{ run-shell "'/tmp/proj mux/bin/projmux' statusbar click \"#{mouse_status_range}\" --mouse-window \"#{mouse_window}\"" }`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
