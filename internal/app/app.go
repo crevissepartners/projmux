@@ -87,7 +87,7 @@ func New() *App {
 		sessionPopup: newSessionPopupCommand(),
 		settings:     newSettingsCommand(ai, switcher, update),
 		setup:        newSetupCommand(),
-		shell:        newShellCommand(),
+		shell:        newShellCommand(update),
 		status:       newStatusCommand(),
 		statusbar:    newStatusbarCommand(),
 		switcher:     switcher,

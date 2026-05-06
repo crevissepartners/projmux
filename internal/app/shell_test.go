@@ -3,11 +3,15 @@ package app
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 )
 
 func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
@@ -120,6 +124,216 @@ func TestShellSupportsRuntimeOverrides(t *testing.T) {
 	}
 }
 
+func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
+	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	var updateCommands []string
+	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		updateCommands = append(updateCommands, updateApplyCommand{Name: name, Args: args}.String())
+		return nil
+	}
+	latest := testVersionTag(t, 1)
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     latest,
+		HTMLURL:     "https://github.com/crevissepartners/projmux/releases/tag/" + latest,
+		PublishedAt: now,
+	})
+
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	var promptOptions intfzf.Options
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		getwd:      func() (string, error) { return "", nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+		update:     update,
+		updatePromptRunner: shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			promptOptions = options
+			return intfzf.Result{Value: shellUpdateApply}, nil
+		}),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := promptOptions.UI, "shell-update"; got != want {
+		t.Fatalf("prompt UI = %q, want %q", got, want)
+	}
+	if !strings.Contains(promptOptions.Header, latest) {
+		t.Fatalf("prompt header = %q, want latest %s", promptOptions.Header, latest)
+	}
+	for _, want := range []string{shellUpdateApply, shellUpdateLater, shellUpdateSkip} {
+		if !hasEntryValue(promptOptions.Entries, want) {
+			t.Fatalf("prompt entries = %#v, want %s", promptOptions.Entries, want)
+		}
+	}
+	wantCommands := []string{"npm update -g projmux", "projmux tmux apply"}
+	if !reflect.DeepEqual(updateCommands, wantCommands) {
+		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
+	}
+	if recorder.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
+	}
+	if !strings.Contains(stdout.String(), ">> running: npm update -g projmux") {
+		t.Fatalf("stdout = %q, want npm update command", stdout.String())
+	}
+}
+
+func TestShellUpdatePromptLaterContinuesWithoutApplying(t *testing.T) {
+	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		t.Fatalf("unexpected update command: %s %#v", name, args)
+		return nil
+	}
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     testVersionTag(t, 1),
+		PublishedAt: now,
+	})
+
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		getwd:      func() (string, error) { return "", nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+		update:     update,
+		updatePromptRunner: shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			return intfzf.Result{Value: shellUpdateLater}, nil
+		}),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if recorder.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
+	}
+}
+
+func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
+	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	latest := testVersionTag(t, 1)
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     latest,
+		PublishedAt: now,
+	})
+
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	promptCalls := 0
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		getwd:      func() (string, error) { return "", nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+		update:     update,
+		updatePromptRunner: shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			promptCalls++
+			return intfzf.Result{Value: shellUpdateSkip}, nil
+		}),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("first Run() error = %v", err)
+	}
+	if promptCalls != 1 {
+		t.Fatalf("prompt calls after first run = %d, want 1", promptCalls)
+	}
+	skipPath, err := cmd.updateSkipPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(skipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), latest) {
+		t.Fatalf("skip state = %s, want %s", data, latest)
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if promptCalls != 1 {
+		t.Fatalf("prompt calls after skipped run = %d, want 1", promptCalls)
+	}
+}
+
+func TestShellSkipsPromptWithoutFreshSupportedUpdate(t *testing.T) {
+	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "source"
+		}
+		return ""
+	}
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     testVersionTag(t, 1),
+		PublishedAt: now,
+	})
+
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		getwd:      func() (string, error) { return "", nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+		update:     update,
+		updatePromptRunner: shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			t.Fatalf("unexpected update prompt: %#v", options)
+			return intfzf.Result{}, nil
+		}),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if recorder.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
+	}
+}
+
 func TestShellRejectsNestedProjmuxSocket(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/tmux-1000/projmux,123,0")
 
@@ -190,4 +404,10 @@ func (r *recordingShellRunner) run(_ context.Context, env []string, name string,
 	r.name = name
 	r.args = append([]string(nil), args...)
 	return nil
+}
+
+type shellUpdateRunnerFunc func(options intfzf.Options) (intfzf.Result, error)
+
+func (f shellUpdateRunnerFunc) Run(options intfzf.Options) (intfzf.Result, error) {
+	return f(options)
 }
