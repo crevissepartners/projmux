@@ -48,6 +48,16 @@ type BackoffStater interface {
 	SaveBackoff() BackoffState
 }
 
+// BackoffResetter is an optional interface adapters may implement to
+// support `--force`: clearing any active cooldown and zeroing the
+// consecutive-429 counter so the next Collect call attempts the API
+// regardless of prior 429 streak. The Manager calls ResetBackoff
+// AFTER LoadBackoff but BEFORE Collect when ForceCollect is invoked,
+// so on-disk state is overridden purely for that one cycle.
+type BackoffResetter interface {
+	ResetBackoff()
+}
+
 // Registry stores adapters keyed by Name(). It is safe for concurrent use.
 type Registry struct {
 	mu       sync.RWMutex

@@ -58,14 +58,35 @@ func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
 	// Throttle of 0 → unconditional: every adapter runs (subject to
 	// adapter-internal backoff). Used by `projmux usage` where the user
 	// explicitly asked for fresh data.
-	return m.collect(ctx, 0)
+	return m.collect(ctx, 0, false)
+}
+
+// ForceCollect runs every registered adapter unconditionally, bypassing
+// per-adapter throttle AND clearing any active backoff (in-memory and
+// the on-disk Backoff map) so the network call attempts now regardless
+// of prior 429 streak. A successful response resets the streak to 0; a
+// 429 reinstates backoff with consecutive=1 (the streak does NOT
+// preserve across `--force`).
+//
+// Useful as a manual override (`projmux usage --force` /
+// `projmux status usage --force`) when the user wants the latest
+// numbers right now and accepts that they may re-trigger 429.
+func (m *Manager) ForceCollect(ctx context.Context) ([]Snapshot, error) {
+	return m.collect(ctx, 0, true)
 }
 
 // collect is the shared implementation. perAdapterFloor is the minimum
 // time-since-last-collect required for an adapter to be invoked; a value
 // of 0 disables the floor and runs every adapter. Adapters that
 // implement ThrottleHinter raise the floor on a per-adapter basis.
-func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration) ([]Snapshot, error) {
+//
+// force=true disables the throttle gate entirely (so `--force` ignores
+// last_collect timestamps) AND clears any persisted backoff before the
+// adapter sees it (so a Collect actually attempts the network call
+// even if there's an active 429 cooldown). Adapters that implement
+// BackoffResetter have ResetBackoff() invoked after LoadBackoff so the
+// in-memory state matches the cleared on-disk view.
+func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, force bool) ([]Snapshot, error) {
 	if m == nil {
 		return nil, errors.New("usage: nil manager")
 	}
@@ -104,8 +125,10 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration) ([
 
 		// Per-adapter throttle gate. Skip adapters whose effective
 		// interval has not elapsed; their prior rows survive via the
-		// merge step below. Floor=0 disables the gate.
-		if perAdapterFloor > 0 {
+		// merge step below. Floor=0 disables the gate. force=true
+		// also disables the gate so `--force` always attempts every
+		// adapter.
+		if !force && perAdapterFloor > 0 {
 			interval := adapterInterval(adapter, perAdapterFloor)
 			if last, ok := priorState.LastCollect[name]; ok && !last.IsZero() && now.Sub(last) < interval {
 				continue
@@ -113,9 +136,22 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration) ([
 		}
 
 		// Install persisted backoff state before Collect so the adapter
-		// can early-return without making the network call.
+		// can early-return without making the network call. Under
+		// force=true we drop both the on-disk view AND the in-memory
+		// view via ResetBackoff so this Collect attempts the network
+		// call regardless of prior 429 streak.
 		if bs, ok := adapter.(BackoffStater); ok {
-			bs.LoadBackoff(priorState.Backoff[name])
+			if force {
+				bs.LoadBackoff(BackoffState{})
+				priorState.Backoff[name] = BackoffState{}
+			} else {
+				bs.LoadBackoff(priorState.Backoff[name])
+			}
+		}
+		if force {
+			if br, ok := adapter.(BackoffResetter); ok {
+				br.ResetBackoff()
+			}
 		}
 		snaps, err := adapter.Collect(ctx)
 		if err != nil {
@@ -189,13 +225,13 @@ func (m *Manager) MaybeCollect(ctx context.Context, throttle time.Duration) (boo
 	if !m.shouldCollect(now, throttle) {
 		return false, nil
 	}
-	_, collectErr := m.collect(ctx, throttle)
+	_, collectErr := m.collect(ctx, throttle, false)
 	return true, collectErr
 }
 
 // shouldCollect reports whether MaybeCollect should run adapters. It
 // consults per-adapter timestamps so a slow adapter (Claude OAuth,
-// 60s) does not block a fast one (Codex, 30s). The Manager runs the
+// 5min) does not block a fast one (Codex, 30s). The Manager runs the
 // full adapter walk if ANY adapter is due, then Collect's own merge
 // preserves the not-yet-due adapters' prior rows.
 func (m *Manager) shouldCollect(now time.Time, defaultThrottle time.Duration) bool {

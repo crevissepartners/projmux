@@ -236,12 +236,43 @@ func TestAdapter429SetsBackoffWithRetryAfter(t *testing.T) {
 		t.Fatalf("snaps = %+v, want nil on 429", snaps)
 	}
 	state := a.SaveBackoff()
+	// 120s is above the retryAfterFloor (60s) so it's used verbatim.
 	want := now.Add(120 * time.Second)
 	if !state.Until.Equal(want) {
 		t.Fatalf("backoff.Until = %v, want %v (Retry-After=120)", state.Until, want)
 	}
 	if state.Consecutive != 1 {
 		t.Fatalf("backoff.Consecutive = %d, want 1", state.Consecutive)
+	}
+}
+
+func TestAdapter429RetryAfterBelowFloorIsClampedUp(t *testing.T) {
+	t.Parallel()
+
+	// Server returns Retry-After: 5 (seconds). Adapter must clamp UP
+	// to retryAfterFloor (60s) so we never hammer Anthropic at sub-60s
+	// cadence even if the upstream tells us we may.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCreds(t, credsPath, "access-1", "refresh-1")
+
+	a := NewWithConfig(credsPath, server.URL+"/usage", server.URL+"/refresh", server.Client())
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	if _, err := a.Collect(context.Background()); err == nil {
+		t.Fatalf("expected 429 error")
+	}
+	state := a.SaveBackoff()
+	want := now.Add(retryAfterFloor)
+	if !state.Until.Equal(want) {
+		t.Fatalf("backoff.Until = %v, want %v (Retry-After=5 clamped UP to %v)", state.Until, want, retryAfterFloor)
 	}
 }
 
@@ -265,9 +296,9 @@ func TestAdapter429NoHeaderUsesDefault(t *testing.T) {
 		t.Fatalf("expected 429 error")
 	}
 	state := a.SaveBackoff()
-	want := now.Add(5 * time.Minute)
+	want := now.Add(30 * time.Minute)
 	if !state.Until.Equal(want) {
-		t.Fatalf("backoff.Until = %v, want %v (default 5m)", state.Until, want)
+		t.Fatalf("backoff.Until = %v, want %v (default 30m)", state.Until, want)
 	}
 }
 
@@ -297,10 +328,10 @@ func TestAdapter429ConsecutiveDoublesUpToCap(t *testing.T) {
 		}
 	}
 	state := a.SaveBackoff()
-	// 5m → 10m → 20m capped at 15m → 40m capped at 15m. Final: 15m.
-	want := now.Add(15 * time.Minute)
+	// 30m → 60m (cap) → 120m capped at 60m → 240m capped at 60m. Final: 60m.
+	want := now.Add(60 * time.Minute)
 	if !state.Until.Equal(want) {
-		t.Fatalf("backoff.Until = %v, want %v (capped at 15m)", state.Until, want)
+		t.Fatalf("backoff.Until = %v, want %v (capped at 60m)", state.Until, want)
 	}
 	if state.Consecutive != 4 {
 		t.Fatalf("backoff.Consecutive = %d, want 4", state.Consecutive)
@@ -378,8 +409,24 @@ func TestAdapterThrottleHint(t *testing.T) {
 	t.Parallel()
 
 	a := New()
-	if got := a.ThrottleHint(); got != 60*time.Second {
-		t.Fatalf("ThrottleHint = %v, want 60s", got)
+	if got := a.ThrottleHint(); got != 5*time.Minute {
+		t.Fatalf("ThrottleHint = %v, want 5m", got)
+	}
+}
+
+func TestAdapterResetBackoffClearsState(t *testing.T) {
+	t.Parallel()
+
+	a := New()
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	a.LoadBackoff(usage.BackoffState{Until: now.Add(30 * time.Minute), Consecutive: 3})
+	a.ResetBackoff()
+	state := a.SaveBackoff()
+	if !state.Until.IsZero() {
+		t.Fatalf("backoff.Until = %v, want zero after ResetBackoff", state.Until)
+	}
+	if state.Consecutive != 0 {
+		t.Fatalf("backoff.Consecutive = %d, want 0 after ResetBackoff", state.Consecutive)
 	}
 }
 
