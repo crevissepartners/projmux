@@ -501,6 +501,215 @@ func TestCollectPersistsBackoffState(t *testing.T) {
 	}
 }
 
+// TestCollectPreservesPriorClaudeRowsOn429 is the user-visible
+// contract: when the Claude adapter fails with a 429, prior claude
+// rows on disk MUST survive AND be returned to the caller, alongside
+// fresh codex rows. The previous slice landed the merge logic — this
+// test formalises it so a future refactor can't silently break the
+// "429 doesn't erase existing values" guarantee.
+func TestCollectPreservesPriorClaudeRowsOn429(t *testing.T) {
+	t.Parallel()
+
+	now := mustTime(t, "2026-05-06T12:00:00Z")
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	// Seed snapshots.json with claude {5h: 18%, weekly: 13%}.
+	priorClaude5h := Snapshot{Model: "claude", Window: Window5h, Pct: 18.0, ResetsAt: mustTime(t, "2026-05-06T17:00:00Z"), UpdatedAt: now.Add(-time.Minute)}
+	priorClaudeWeekly := Snapshot{Model: "claude", Window: WindowWeekly, Pct: 13.0, ResetsAt: mustTime(t, "2026-05-13T00:00:00Z"), UpdatedAt: now.Add(-time.Minute)}
+	if err := store.SaveState(State{
+		Snapshots: []Snapshot{priorClaude5h, priorClaudeWeekly},
+		LastCollect: map[string]time.Time{
+			"claude": now.Add(-time.Minute),
+			"codex":  now.Add(-time.Minute),
+		},
+	}); err != nil {
+		t.Fatalf("seed SaveState: %v", err)
+	}
+
+	registry := NewRegistry()
+	// Claude adapter returns (nil, 429) — the same shape the real
+	// adapter produces during a backoff-recording 429.
+	claudeAd := &countingAdapter{
+		name: "claude",
+		err:  errors.New("claude: usage endpoint returned status 429 (backing off)"),
+	}
+	codexAd := &countingAdapter{
+		name: "codex",
+		snaps: []Snapshot{
+			{Model: "codex", Window: Window5h, Pct: 7.0, ResetsAt: mustTime(t, "2026-05-06T17:00:00Z")},
+		},
+	}
+	if err := registry.Register(claudeAd); err != nil {
+		t.Fatalf("register claude: %v", err)
+	}
+	if err := registry.Register(codexAd); err != nil {
+		t.Fatalf("register codex: %v", err)
+	}
+	mgr := NewManager(registry, store, func() time.Time { return now })
+
+	got, err := mgr.Collect(context.Background())
+	if err == nil {
+		t.Fatalf("Collect must surface 429 error for diagnostics")
+	}
+
+	// Returned snapshots: prior claude rows + fresh codex row.
+	gotByKey := map[string]Snapshot{}
+	for _, s := range got {
+		gotByKey[s.Model+"/"+string(s.Window)] = s
+	}
+	if cl5h, ok := gotByKey["claude/5h"]; !ok {
+		t.Fatalf("returned snapshots missing claude 5h: %+v", got)
+	} else if cl5h.Pct != 18.0 {
+		t.Fatalf("claude 5h preserved value = %v, want 18", cl5h.Pct)
+	}
+	if clWk, ok := gotByKey["claude/weekly"]; !ok {
+		t.Fatalf("returned snapshots missing claude weekly: %+v", got)
+	} else if clWk.Pct != 13.0 {
+		t.Fatalf("claude weekly preserved value = %v, want 13", clWk.Pct)
+	}
+	if cx, ok := gotByKey["codex/5h"]; !ok {
+		t.Fatalf("returned snapshots missing codex 5h: %+v", got)
+	} else if cx.Pct != 7.0 {
+		t.Fatalf("codex 5h fresh value = %v, want 7", cx.Pct)
+	}
+
+	// Persisted file must contain the same combined set.
+	loaded, _, err := store.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	loadedByKey := map[string]Snapshot{}
+	for _, s := range loaded {
+		loadedByKey[s.Model+"/"+string(s.Window)] = s
+	}
+	if len(loadedByKey) != 3 {
+		t.Fatalf("on-disk len = %d, want 3 (preserved claude 5h+weekly + fresh codex 5h): %+v", len(loadedByKey), loaded)
+	}
+	if loadedByKey["claude/5h"].Pct != 18.0 {
+		t.Fatalf("on-disk claude 5h = %v, want 18", loadedByKey["claude/5h"].Pct)
+	}
+	if loadedByKey["claude/weekly"].Pct != 13.0 {
+		t.Fatalf("on-disk claude weekly = %v, want 13", loadedByKey["claude/weekly"].Pct)
+	}
+	if loadedByKey["codex/5h"].Pct != 7.0 {
+		t.Fatalf("on-disk codex 5h = %v, want 7", loadedByKey["codex/5h"].Pct)
+	}
+}
+
+// TestCollectBackoffShortCircuitPreservesPriorClaudeRows covers the
+// other half of the contract: when the Claude adapter is in active
+// backoff the in-process Collect returns (nil, nil) — no error, no
+// snapshots — and the merge layer must still preserve the prior
+// claude rows so the user keeps seeing last-known values.
+func TestCollectBackoffShortCircuitPreservesPriorClaudeRows(t *testing.T) {
+	t.Parallel()
+
+	now := mustTime(t, "2026-05-06T12:00:00Z")
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	priorClaude5h := Snapshot{Model: "claude", Window: Window5h, Pct: 18.0, ResetsAt: mustTime(t, "2026-05-06T17:00:00Z"), UpdatedAt: now.Add(-time.Minute)}
+	priorClaudeWeekly := Snapshot{Model: "claude", Window: WindowWeekly, Pct: 13.0, ResetsAt: mustTime(t, "2026-05-13T00:00:00Z"), UpdatedAt: now.Add(-time.Minute)}
+	if err := store.SaveState(State{
+		Snapshots: []Snapshot{priorClaude5h, priorClaudeWeekly},
+		LastCollect: map[string]time.Time{
+			"claude": now.Add(-time.Minute),
+		},
+		Backoff: map[string]BackoffState{
+			"claude": {Until: now.Add(30 * time.Minute), Consecutive: 1},
+		},
+	}); err != nil {
+		t.Fatalf("seed SaveState: %v", err)
+	}
+
+	registry := NewRegistry()
+	// Adapter returns (nil, nil) to model the in-backoff short-circuit
+	// path the real claude adapter takes.
+	claudeAd := &countingAdapter{name: "claude"}
+	if err := registry.Register(claudeAd); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	mgr := NewManager(registry, store, func() time.Time { return now })
+
+	got, err := mgr.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect must be silent during backoff short-circuit: %v", err)
+	}
+	gotByKey := map[string]Snapshot{}
+	for _, s := range got {
+		gotByKey[s.Model+"/"+string(s.Window)] = s
+	}
+	if cl5h, ok := gotByKey["claude/5h"]; !ok {
+		t.Fatalf("returned missing claude 5h: %+v", got)
+	} else if cl5h.Pct != 18.0 {
+		t.Fatalf("claude 5h = %v, want 18 (preserved during backoff)", cl5h.Pct)
+	}
+	if clWk, ok := gotByKey["claude/weekly"]; !ok {
+		t.Fatalf("returned missing claude weekly: %+v", got)
+	} else if clWk.Pct != 13.0 {
+		t.Fatalf("claude weekly = %v, want 13 (preserved during backoff)", clWk.Pct)
+	}
+
+	loaded, _, err := store.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("on-disk len = %d, want 2: %+v", len(loaded), loaded)
+	}
+}
+
+// TestForceCollectBypassesBackoffAndThrottle asserts the `--force`
+// contract: an adapter that's in active backoff is invoked anyway, the
+// backoff state is cleared on the way in, and a 429-on-force reinstates
+// backoff with consecutive=1 (i.e. the streak does NOT preserve).
+func TestForceCollectBypassesBackoffAndThrottle(t *testing.T) {
+	t.Parallel()
+
+	now := mustTime(t, "2026-05-06T12:00:00Z")
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	if err := store.SaveState(State{
+		LastCollect: map[string]time.Time{"claude": now.Add(-time.Second)},
+		Backoff: map[string]BackoffState{
+			"claude": {Until: now.Add(30 * time.Minute), Consecutive: 5},
+		},
+	}); err != nil {
+		t.Fatalf("seed SaveState: %v", err)
+	}
+
+	registry := NewRegistry()
+	claudeAd := &backoffAdapter{
+		countingAdapter: countingAdapter{
+			name: "claude",
+			snaps: []Snapshot{
+				{Model: "claude", Window: Window5h, Pct: 9.0, ResetsAt: mustTime(t, "2026-05-06T17:00:00Z")},
+			},
+		},
+	}
+	if err := registry.Register(claudeAd); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	mgr := NewManager(registry, store, func() time.Time { return now })
+
+	if _, err := mgr.ForceCollect(context.Background()); err != nil {
+		t.Fatalf("ForceCollect: %v", err)
+	}
+	if claudeAd.Calls() != 1 {
+		t.Fatalf("adapter calls = %d, want 1 (force must invoke despite active backoff)", claudeAd.Calls())
+	}
+	// LoadBackoff was called with a zero-valued state (force cleared
+	// the persisted view before handing it to the adapter).
+	if !claudeAd.loaded.Until.IsZero() {
+		t.Fatalf("LoadBackoff received Until=%v, want zero (force clears)", claudeAd.loaded.Until)
+	}
+	if claudeAd.loaded.Consecutive != 0 {
+		t.Fatalf("LoadBackoff received Consecutive=%d, want 0 (force clears)", claudeAd.loaded.Consecutive)
+	}
+}
+
 func TestStoreMigratesLegacyLastCollectString(t *testing.T) {
 	t.Parallel()
 
