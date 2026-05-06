@@ -30,6 +30,8 @@ install: build
 	@echo ">> atomically replaced $(INSTALL_BIN)"
 	@echo ">> applying live config..."
 	@$(INSTALL_BIN) tmux apply
+	@echo ">> reconciling notify queue..."
+	@$(INSTALL_BIN) notify reconcile || true
 
 fmt:
 	@if [ -n "$(GO_FILES)" ]; then \

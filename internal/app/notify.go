@@ -27,10 +27,11 @@ type notifyCommand struct {
 	store    notifyStore
 	storeErr error
 	now      func() time.Time
+	runner   tmuxRunner
 }
 
 func newNotifyCommand() *notifyCommand {
-	cmd := &notifyCommand{now: time.Now}
+	cmd := &notifyCommand{now: time.Now, runner: reconcileDefaultRunner()}
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
 		cmd.storeErr = fmt.Errorf("resolve default config paths: %w", err)
@@ -54,6 +55,8 @@ func (c *notifyCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runList(args[1:], stdout, stderr)
 	case "ack":
 		return c.runAck(args[1:], stdout, stderr)
+	case "reconcile":
+		return c.runReconcile(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printNotifyUsage(stdout)
 		return nil
@@ -401,4 +404,5 @@ func printNotifyUsage(w io.Writer) {
 	fmt.Fprintln(w, "                        [--ttl <seconds>] [--id <s>] [--json]")
 	fmt.Fprintln(w, "  projmux notify list  [--json] [--limit N] [--severity ...] [--source ...]")
 	fmt.Fprintln(w, "  projmux notify ack   <id> [--all]")
+	fmt.Fprintln(w, "  projmux notify reconcile [--json]")
 }
