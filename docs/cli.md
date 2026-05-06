@@ -91,13 +91,19 @@ than one default location (Ghostty `config` vs `config.ghostty`).
 
 ```
 projmux doctor [--json]
+projmux doctor --install-missing [--dry-run] [--include-optional]
 ```
 
 Runs a dependency check: `tmux ≥ 3.4`, `fzf ≥ 0.55`, `git`, `stty` (POSIX
 only), and `kubectl` (optional). Exit code `0` even when optional deps are
 missing; non-zero only when a required dep is missing or stale. `--json`
 emits a machine-readable array; the default is the human report with
-suggested install commands per platform.
+suggested install commands per platform. `--install-missing` is explicit
+opt-in and runs generated install commands only for missing or stale required
+dependencies. `--dry-run` prints those commands without executing them.
+`--include-optional` also includes optional missing dependencies such as
+`kubectl` when an install command is available. Install flags cannot be
+combined with `--json`.
 
 ## focus
 
