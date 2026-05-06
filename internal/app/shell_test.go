@@ -58,7 +58,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"bind-key -n User10 command-prompt",
 		"bind-key -n User11 command-prompt",
 		"set -g status-left-length 20",
-		"set -g status-left \"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]\"",
+		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 	} {

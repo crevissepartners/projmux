@@ -773,8 +773,12 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"set-hook -g after-kill-pane " + tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
 		"set -g window-status-format " + tmuxConfigQuote("#[fg=colour245,bg=colour235] #("+bin+" attention window #{window_id})#[fg=colour245] #I #W #[default]"),
 		"set -g window-status-current-format " + tmuxConfigQuote("#[bold,fg=colour231,bg=colour238] #("+bin+" attention window #{window_id})#[fg=colour231] #I #W #[default]"),
+		"set -g status 3",
 		"set -g status-right-length 140",
-		"set -g status-right " + tmuxConfigQuote("#[fg=colour242]#{=/28/...:pane_current_path}#[fg=colour239]  #("+bin+" status kube)#("+bin+" status git)  %Y-%m-%d %H:%M #[bold,fg=colour16,bg=colour45] projmux #[default]"),
+		"set -g status-left " + tmuxConfigQuote("#[range=user|session][#S] #[norange]"),
+		"set -g status-right " + tmuxConfigQuote("#[range=user|pwd]#[fg=colour242]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]  %Y-%m-%d %H:%M #[bold,fg=colour16,bg=colour45] projmux #[default]"),
+		"set -g status-format[1] " + tmuxConfigQuote("#[align=left range=user|usage]#("+bin+" status usage --max-width 200)#[norange]"),
+		"set -g status-format[2] " + tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 200)#[norange]"),
 		"unbind-key -q -n M-1",
 		"unbind-key -q -n M-2",
 		"unbind-key -q -n M-3",
@@ -813,6 +817,7 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"bind-key l run-shell " + tmuxConfigQuote(bin+" ai split down"),
 		"bind-key R command-prompt -I \"#{window_name}\" " + tmuxConfigQuote("rename-window -- '%%'"),
 	}
+	lines = append(lines, tmuxStatusbarKeyBindings(binaryPath)...)
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -865,9 +870,21 @@ func tmuxAppConfig(binaryPath string) string {
 	}
 	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfig(binaryPath)), "\n")[1:]...)
 	lines = append(lines, tmuxAppKeyBindings()...)
+	// Three-line status bar:
+	//   [0] existing session/window/path/git/kube/clock row
+	//   [1] AI usage segment (codex / claude × 5h+weekly)
+	//   [2] persistent notification segment
+	// We re-assert `status 3` here because `tmuxStandaloneConfig` already
+	// sets it, but a tmux server that previously ran an older projmux build
+	// may have stuck a leftover `status-format[1]` showing pane debug info —
+	// we explicitly overwrite both extra lines so they always reflect this
+	// build's intent.
 	lines = append(lines,
-		"set -g status-left \"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]\"",
-		"set -g status-right "+tmuxConfigQuote("#[fg=colour242]#{=/28/...:pane_current_path}#[fg=colour239]  #("+bin+" status kube)#("+bin+" status git)  %Y-%m-%d %H:%M#[default]"),
+		"set -g status 3",
+		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
+		"set -g status-right "+tmuxConfigQuote("#[range=user|pwd]#[fg=colour242]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]  %Y-%m-%d %H:%M#[default]"),
+		"set -g status-format[1] "+tmuxConfigQuote("#[align=left range=user|usage]#("+bin+" status usage --max-width 200)#[norange]"),
+		"set -g status-format[2] "+tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 200)#[norange]"),
 	)
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -898,6 +915,31 @@ func tmuxAppKeyBindings() []string {
 		"bind-key -n User8 previous-window",
 		"bind-key -n User9 next-window",
 		"bind-key M if -F \"#{mouse}\" \"set -g mouse off \\; display-message 'tmux mouse: off'\" \"set -g mouse on \\; display-message 'tmux mouse: on'\"",
+	}
+}
+
+// tmuxStatusbarKeyBindings emits the bindings that wire the projmux statusbar
+// click dispatcher to both mouse clicks and the `prefix s {letter}` chord.
+//
+// Note: `MouseDown1Status` fires for *any* line of a multi-line status bar,
+// and `#{mouse_status_range}` returns whichever user-defined range we wrapped
+// under the cursor — so a single bind covers all three lines.
+//
+// The `prefix s` chord uses tmux's `switch-client -T <table>` mechanism so
+// keyboard users get the same handlers as mouse clickers without re-defining
+// each handler twice.
+func tmuxStatusbarKeyBindings(binaryPath string) []string {
+	bin := tmuxShellQuote(binaryPath)
+	return []string{
+		"unbind-key -q -n MouseDown1Status",
+		"bind-key -n MouseDown1Status run-shell " + tmuxConfigQuote(bin+" statusbar click \"#{mouse_status_range}\""),
+		"bind-key s switch-client -T projmux-status",
+		"bind-key -T projmux-status u run-shell " + tmuxConfigQuote(bin+" statusbar click usage"),
+		"bind-key -T projmux-status n run-shell " + tmuxConfigQuote(bin+" statusbar click notify"),
+		"bind-key -T projmux-status g run-shell " + tmuxConfigQuote(bin+" statusbar click git"),
+		"bind-key -T projmux-status k run-shell " + tmuxConfigQuote(bin+" statusbar click kube"),
+		"bind-key -T projmux-status p run-shell " + tmuxConfigQuote(bin+" statusbar click pwd"),
+		"bind-key -T projmux-status s run-shell " + tmuxConfigQuote(bin+" statusbar click session"),
 	}
 }
 

@@ -3,12 +3,16 @@ package app
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
 const (
@@ -17,21 +21,34 @@ const (
 )
 
 type statusCommand struct {
-	lookupEnv   func(string) string
-	homeDir     func() (string, error)
-	readCommand func(ctx context.Context, name string, args ...string) ([]byte, error)
-	now         func() time.Time
-	usage       *usageCommand
+	lookupEnv     func(string) string
+	homeDir       func() (string, error)
+	readCommand   func(ctx context.Context, name string, args ...string) ([]byte, error)
+	now           func() time.Time
+	usage         *usageCommand
+	notifyStoreFn func() (notifyStore, error)
 }
 
 func newStatusCommand() *statusCommand {
 	return &statusCommand{
-		lookupEnv:   os.Getenv,
-		homeDir:     os.UserHomeDir,
-		readCommand: readExternalCommand,
-		now:         time.Now,
-		usage:       newUsageCommand(),
+		lookupEnv:     os.Getenv,
+		homeDir:       os.UserHomeDir,
+		readCommand:   readExternalCommand,
+		now:           time.Now,
+		usage:         newUsageCommand(),
+		notifyStoreFn: defaultStatusNotifyStore,
 	}
+}
+
+// defaultStatusNotifyStore resolves the canonical notify queue used by the
+// status bar segment. Failures here become silent emptiness — the status
+// segment must never fail loudly during the tmux refresh interval.
+func defaultStatusNotifyStore() (notifyStore, error) {
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("resolve default config paths: %w", err)
+	}
+	return notify.NewDefaultStore(paths), nil
 }
 
 func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -50,6 +67,8 @@ func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 			c.usage = newUsageCommand()
 		}
 		return c.usage.runStatus(args[1:], stdout, stderr)
+	case "notify":
+		return c.runNotify(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printStatusUsage(stdout)
 		return nil
@@ -284,4 +303,121 @@ func printStatusUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux status git [path]")
 	fmt.Fprintln(w, "  projmux status kube [session]")
 	fmt.Fprintln(w, "  projmux status usage [--max-width N]")
+	fmt.Fprintln(w, "  projmux status notify [--max-width N]")
+}
+
+// defaultStatusNotifyMaxWidth bounds the rendered notification segment so it
+// cannot blow out the status line on narrow terminals.
+const defaultStatusNotifyMaxWidth = 200
+
+// runNotify renders the newest entry in the notify queue as a tmux status
+// segment. The segment is intentionally silent on failure — the tmux status
+// interval polls this command and must never produce a stack trace.
+func (c *statusCommand) runNotify(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("status notify", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	maxWidth := fs.Int("max-width", defaultStatusNotifyMaxWidth, "truncate the inner text to N runes (0 = no truncation)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("status notify does not accept positional arguments")
+	}
+
+	store, err := c.notifyStore()
+	if err != nil {
+		// Status segments must never fail loudly.
+		return nil
+	}
+	entries, err := store.List()
+	if err != nil {
+		return nil
+	}
+	out := formatStatusNotify(entries, *maxWidth)
+	if out == "" {
+		return nil
+	}
+	_, err = fmt.Fprint(stdout, out)
+	return err
+}
+
+func (c *statusCommand) notifyStore() (notifyStore, error) {
+	if c.notifyStoreFn == nil {
+		return nil, errors.New("status notify store factory is not configured")
+	}
+	return c.notifyStoreFn()
+}
+
+// formatStatusNotify renders the newest entry of the queue as a single tmux
+// status segment. The output is plain ASCII (no emoji) and ends with a tmux
+// `#[default]` reset so adjacent segments are not stained by colors.
+//
+// Layout: `[X] <text> · <session> +<N>` where X is one of I/W/!.
+func formatStatusNotify(entries []notify.Notification, maxWidth int) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	head := entries[0]
+	extras := len(entries) - 1
+	prefix := "[" + severityLetter(head.Severity) + "] "
+	suffix := " " + middotSeparator() + " " + head.Session
+	plus := ""
+	if extras > 0 {
+		plus = fmt.Sprintf(" +%d", extras)
+	}
+
+	overhead := runeLen(prefix) + runeLen(suffix) + runeLen(plus)
+	text := strings.TrimSpace(head.Text)
+	if maxWidth > 0 {
+		room := maxWidth - overhead
+		if room < 1 {
+			room = 1
+		}
+		if runeLen(text) > room {
+			rs := []rune(text)
+			if room <= 1 {
+				text = string(rs[:room])
+			} else {
+				text = string(rs[:room-1]) + "."
+			}
+		}
+	}
+
+	color := severityColor(head.Severity)
+	return color + prefix + text + suffix + plus + "#[default]"
+}
+
+// severityLetter maps notify severities to a single-character status letter.
+// Anything unknown falls back to `I` so we never emit garbage.
+func severityLetter(severity string) string {
+	switch severity {
+	case notify.SeverityWarn:
+		return "W"
+	case notify.SeverityCritical:
+		return "!"
+	default:
+		return "I"
+	}
+}
+
+// severityColor maps notify severities to the tmux color prefix. Info is the
+// default style (no color override) — tmux ignores empty `#[]` so we omit it.
+func severityColor(severity string) string {
+	switch severity {
+	case notify.SeverityWarn:
+		return "#[fg=yellow]"
+	case notify.SeverityCritical:
+		return "#[fg=red,bold]"
+	default:
+		return ""
+	}
+}
+
+// middotSeparator returns the ASCII separator used between the message body
+// and the session name. The spec requires plain ASCII so we use `-`.
+func middotSeparator() string {
+	return "-"
 }
