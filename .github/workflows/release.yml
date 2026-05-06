@@ -105,3 +105,46 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${GITHUB_REF_NAME}" dist/*.tar.gz --clobber
+
+  publish-npm:
+    name: Publish npm Packages
+    needs: publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Stage npm packages
+        run: scripts/package-npm.sh --version "${GITHUB_REF_NAME#v}" --out dist/npm
+
+      - name: Publish npm packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "::error::NPM_TOKEN is required to publish npm packages"
+            exit 1
+          fi
+
+          npm whoami
+          for dir in \
+            dist/npm/@projmux/linux-x64 \
+            dist/npm/@projmux/linux-arm64 \
+            dist/npm/@projmux/darwin-x64 \
+            dist/npm/@projmux/darwin-arm64 \
+            dist/npm/projmux; do
+            npm publish "$dir" --access public
+          done
