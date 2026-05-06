@@ -19,6 +19,7 @@ var osStat = os.Stat
 type settingsCommand struct {
 	ai       *aiCommand
 	switcher *switchCommand
+	update   *updateCommand
 	runner   intfzf.Runner
 }
 
@@ -32,18 +33,21 @@ const (
 	settingsSectionAbout        = "section:about"
 	settingsActionPrefixAI      = "ai:"
 	settingsActionPrefixSwitch  = "switch:"
+	settingsActionPrefixUpdate  = "update:"
 	settingsActionPrefixWorkdir = "workdir:"
 	settingsProjectAdd          = "project:add"
 	settingsProjectPins         = "project:pins"
+	settingsUpdateCheck         = "update:check"
 	settingsWorkdirAdd          = "workdir:add"
 	settingsWorkdirList         = "workdir:list"
 	settingsWorkdirTyped        = "workdir:typed"
 )
 
-func newSettingsCommand(ai *aiCommand, switcher *switchCommand) *settingsCommand {
+func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand) *settingsCommand {
 	return &settingsCommand{
 		ai:       ai,
 		switcher: switcher,
+		update:   update,
 		runner:   intfzf.NewRunner(),
 	}
 }
@@ -140,7 +144,7 @@ func (c *settingsCommand) rootEntries() []intfzf.Entry {
 			Value: settingsSectionProject,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "About", "version, source, common keys"),
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "About", "version, updates, source, common keys"),
 			Value: settingsSectionAbout,
 		},
 	}
@@ -171,10 +175,10 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 	case settingsSectionAbout:
 		return intfzf.Options{
 			UI:         "settings-about",
-			Entries:    settingsAboutEntries(),
+			Entries:    c.aboutEntries(),
 			Prompt:     "Settings > About > ",
-			Header:     "projmux app information",
-			Footer:     projmuxFooter("Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Header:     "projmux app information and updates",
+			Footer:     projmuxFooter("Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -670,11 +674,15 @@ func (c *settingsCommand) aiEntries() []intfzf.Entry {
 	return entries
 }
 
-func settingsAboutEntries() []intfzf.Entry {
+func (c *settingsCommand) aboutEntries() []intfzf.Entry {
+	status, statusErr := updateStatus{}, errors.New("update status is not configured")
+	if c.update != nil {
+		status, statusErr = c.update.status()
+	}
+
 	rows := []struct{ name, value string }{
 		{"Version", "projmux " + version.String()},
 		{"Source", "https://github.com/crevissepartners/projmux"},
-		{"Update", "go install github.com/crevissepartners/projmux/cmd/projmux@latest"},
 		{"App", "sidebar, sessions, projects, AI picker, settings"},
 		{"Tmux actions", "new window, rename window/pane, previous/next window"},
 		{"Key model", "terminal sends CSI-u keys; tmux runs projmux actions"},
@@ -683,8 +691,43 @@ func settingsAboutEntries() []intfzf.Entry {
 		{"Windows Term.", "actions sendInput tmux/meta sequences; keybindings attach keys"},
 		{"Docs", "docs/keybindings.md has copyable terminal examples"},
 	}
-	entries := make([]intfzf.Entry, 0, len(rows)+1)
+	entries := make([]intfzf.Entry, 0, len(rows)+8)
 	entries = append(entries, settingsBackEntry())
+	if statusErr != nil {
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabelInfo("Update", "status unavailable", statusErr.Error()),
+			Value: settingsNoopValue,
+		})
+	} else {
+		latest := status.LatestVersion
+		if latest == "" {
+			latest = "unknown"
+		}
+		entries = append(entries,
+			intfzf.Entry{
+				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Check Updates", "fetch latest GitHub release metadata"),
+				Value: settingsUpdateCheck,
+			},
+			intfzf.Entry{
+				Label: settingsLabelInfo("Latest", latest, status.CacheState),
+				Value: settingsNoopValue,
+			},
+			intfzf.Entry{
+				Label: settingsLabelInfo("Update state", status.UpdateState, ""),
+				Value: settingsNoopValue,
+			},
+			intfzf.Entry{
+				Label: settingsLabelInfo("Installer", status.Installer.Source, status.Installer.Note),
+				Value: settingsNoopValue,
+			},
+		)
+		if status.ReleaseURL != "" {
+			entries = append(entries, intfzf.Entry{
+				Label: settingsLabelInfo("Release notes", status.ReleaseURL, ""),
+				Value: settingsNoopValue,
+			})
+		}
+	}
 	for _, r := range rows {
 		entries = append(entries, intfzf.Entry{
 			Label: settingsLabelInfo(r.name, r.value, ""),
@@ -708,6 +751,17 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return errors.New("project picker settings are not configured")
 		}
 		return c.switcher.executeSettingsAction(action, stdout, stderr)
+	case strings.HasPrefix(value, settingsActionPrefixUpdate):
+		if c.update == nil {
+			return errors.New("update settings are not configured")
+		}
+		action := strings.TrimPrefix(value, settingsActionPrefixUpdate)
+		switch action {
+		case "check":
+			return c.update.Run([]string{"check"}, stdout, stderr)
+		default:
+			return fmt.Errorf("unknown update settings action: %s", action)
+		}
 	case strings.HasPrefix(value, settingsActionPrefixWorkdir):
 		action := strings.TrimPrefix(value, settingsActionPrefixWorkdir)
 		if c.switcher == nil {

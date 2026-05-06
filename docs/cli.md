@@ -332,7 +332,9 @@ flags with the top-level `switch` UX:
 - `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI
-  splits, and the switcher's saved workdirs list.
+  splits, the switcher's saved workdirs list, and About/Update status.
+  The About section reads the cached update status without network access;
+  selecting Check Updates runs `projmux update check`.
 
 ## See also
 

@@ -69,6 +69,7 @@ type App struct {
 func New() *App {
 	ai := newAICommand()
 	switcher := newSwitchCommand()
+	update := newUpdateCommand()
 	return &App{
 		ai:           ai,
 		attention:    newAttentionCommand(),
@@ -84,7 +85,7 @@ func New() *App {
 		prune:        newPruneCommand(),
 		sessions:     newSessionsCommand(),
 		sessionPopup: newSessionPopupCommand(),
-		settings:     newSettingsCommand(ai, switcher),
+		settings:     newSettingsCommand(ai, switcher, update),
 		setup:        newSetupCommand(),
 		shell:        newShellCommand(),
 		status:       newStatusCommand(),
@@ -92,7 +93,7 @@ func New() *App {
 		switcher:     switcher,
 		tag:          newTagCommand(),
 		tmux:         newTmuxCommand(),
-		update:       newUpdateCommand(),
+		update:       update,
 		upgrade:      newUpgradeCommand(),
 		usage:        newUsageCommand(),
 	}
