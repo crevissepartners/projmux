@@ -56,6 +56,7 @@ type App struct {
 	setup        *setupCommand
 	shell        *shellCommand
 	status       *statusCommand
+	statusbar    *statusbarCommand
 	switcher     *switchCommand
 	tag          *tagCommand
 	tmux         *tmuxCommand
@@ -86,6 +87,7 @@ func New() *App {
 		setup:        newSetupCommand(),
 		shell:        newShellCommand(),
 		status:       newStatusCommand(),
+		statusbar:    newStatusbarCommand(),
 		switcher:     switcher,
 		tag:          newTagCommand(),
 		tmux:         newTmuxCommand(),
@@ -138,6 +140,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.shell.Run(args[1:], stdout, stderr)
 	case "status":
 		return a.status.Run(args[1:], stdout, stderr)
+	case "statusbar":
+		return a.statusbar.Run(args[1:], stdout, stderr)
 	case "switch":
 		return a.switcher.Run(args[1:], stdout, stderr)
 	case "tag":
@@ -182,6 +186,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  setup     Probe terminal key delivery for projmux bindings")
 	fmt.Fprintln(w, "  shell     Open the isolated projmux tmux app")
 	fmt.Fprintln(w, "  status    Render tmux status bar segments")
+	fmt.Fprintln(w, "  statusbar Dispatch projmux status bar clicks and shortcuts")
 	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
 	fmt.Fprintln(w, "  tag       Manage tagged tmux sessions")
 	fmt.Fprintln(w, "  tmux      Open tmux popup entry helpers")
