@@ -647,6 +647,62 @@ func TestStatusbarClickNotifyWithMouseWindowIgnoresFlag(t *testing.T) {
 	}
 }
 
+// TestStatusbarClickWindowRangeTokenWithMouseWindowSelectsWindow covers the
+// real tmux shape for a window-list click: `#{mouse_status_range}` evaluates
+// to `window|<idx>` (the built-in `STYLE_RANGE_WINDOW`) rather than an empty
+// string. When `#{mouse_window}` is also populated we should use it (it's the
+// unique window id) and address with the `@<id>` syntax.
+func TestStatusbarClickWindowRangeTokenWithMouseWindowSelectsWindow(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "window|3", "--mouse-window", "5"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@5"}) {
+		t.Fatalf("missing select-window -t @5; calls = %#v", runner.calls)
+	}
+}
+
+// TestStatusbarClickWindowRangeTokenWithoutMouseWindowFallsBackToIndex covers
+// the tmux configurations where `#{mouse_window}` is empty for a window-range
+// click but the range token still carries the winlink index (`window|<idx>`).
+// We fall back to addressing by index (`:<idx>`) so the click still switches
+// tabs reliably — this is the regression the user reported.
+func TestStatusbarClickWindowRangeTokenWithoutMouseWindowFallsBackToIndex(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "window|3", "--mouse-window", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", ":3"}) {
+		t.Fatalf("missing select-window -t :3; calls = %#v", runner.calls)
+	}
+}
+
+// TestStatusbarClickBareWindowRangeWithoutIndexIsNoop covers the (rare) case
+// where `#{mouse_status_range}` is the bare `window` token with no index
+// attached and no `mouse_window` either. We have nothing to switch to, so
+// the click must be a noop rather than a tmux error popup.
+func TestStatusbarClickBareWindowRangeWithoutIndexIsNoop(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "window", "--mouse-window", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("bare 'window' range with no mouse-window must be a noop, got %d calls", len(runner.calls))
+	}
+}
+
 // TestStatusbarClickRejectsMultiplePositionals ensures a stray second
 // positional still fails fast rather than getting silently dropped.
 func TestStatusbarClickRejectsMultiplePositionals(t *testing.T) {
