@@ -355,21 +355,24 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 	return c.notifyStoreFn()
 }
 
-// HUD-style design tokens for the notify status segment. Reused dim color
-// (`colour245`) keeps the segment visually consistent with the AI usage
-// segment so the two read as one design family.
+// HUD-style design tokens for the notify status segment. The leading
+// severity+agent block is rendered as a solid color "badge" (bg fill) so
+// the segment reads as an actual notification pill instead of dim text.
+// Reused dim color (`colour245`) keeps the metadata visually consistent
+// with the AI usage segment so the two read as one design family.
 const (
-	notifyDimColor       = "colour245"
-	notifyCountColor     = "colour244"
-	notifyAgentColorOpen = "#[fg=cyan,bold]"
-	notifySeverityInfo   = "#[fg=brightcyan]"
-	notifySeverityWarn   = "#[fg=yellow]"
-	notifySeverityCrit   = "#[fg=red,bold]"
-	notifyIcon           = "●"
-	notifyBar            = "▎"
-	notifyMidDot         = "·"
-	notifyEllipsis       = "…"
-	notifyReset          = "#[default]"
+	notifyDimColor      = "colour245"
+	notifyCountColor    = "colour244"
+	notifyBadgeInfoOpen = "#[bg=brightcyan,fg=black,bold]"
+	notifyBadgeWarnOpen = "#[bg=yellow,fg=black,bold]"
+	notifyBadgeCritOpen = "#[bg=red,fg=white,bold]"
+	notifySeverityInfo  = "#[fg=brightcyan]"
+	notifySeverityWarn  = "#[fg=yellow]"
+	notifySeverityCrit  = "#[fg=red,bold]"
+	notifyIcon          = "●"
+	notifyMidDot        = "·"
+	notifyEllipsis      = "…"
+	notifyReset         = "#[default]"
 )
 
 // known agent prefixes recognised when stripping a leading `<agent>:` from
@@ -381,15 +384,21 @@ var notifyKnownAgents = []string{"claude", "codex"}
 // HUD-style tmux status segment. The output ends with a tmux `#[default]`
 // reset so adjacent segments are not stained by colors.
 //
-// Long form: `●  <agent>  ▎  <text>  ·  <target>  ·  <age>   +<N>`
+// Long form: `[ <agent|LABEL> ] <text>  · <target> · <age>   +<N>`
 //
-// The renderer degrades through five tiers as `maxWidth` shrinks:
+// The leading block is a solid color badge (bg=severity, fg=black/white,
+// bold) padded with a single space on each side. The body text uses the
+// terminal default foreground (no dim, no bold) so it pops against the
+// dim metadata that follows it.
 //
-//  1. Drop `<age>` (and its preceding `·`).
-//  2. Drop `<target>` (and its preceding `·`).
-//  3. Truncate `<text>` with a trailing `…`.
-//  4. Drop `▎ <agent>` (back to icon + text).
-//  5. Hard truncate everything (icon + count are still preserved).
+// The renderer degrades through six tiers as `maxWidth` shrinks:
+//
+//  1. Full long form: badge + text + target + age + count.
+//  2. Drop `<age>` (and its preceding `·`).
+//  3. Drop `<target>` (and its preceding `·`).
+//  4. Truncate `<text>` with a trailing `…`.
+//  5. Drop the badge entirely; fall back to a standalone `●` severity icon.
+//  6. Hard truncate everything (icon + count are still preserved).
 //
 // `now` is the wall-clock used to compute the relative age. Pass the zero
 // time to suppress the age field entirely.
@@ -400,8 +409,9 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 	head := entries[0]
 	extras := len(entries) - 1
 
+	badge := renderNotifyBadge(head)
 	icon := renderNotifyIcon(head.Severity)
-	agent, text := splitAgentPrefix(head)
+	_, text := splitAgentPrefix(head)
 	target := compactTarget(head)
 	age := ""
 	if !now.IsZero() && !head.CreatedAt.IsZero() {
@@ -414,22 +424,26 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 
 	tiers := []func() string{
 		// Tier 1: full long form.
-		func() string { return assembleNotify(icon, agent, text, target, age, plus) },
+		func() string { return assembleNotify(badge, text, target, age, plus) },
 		// Tier 2: drop age.
-		func() string { return assembleNotify(icon, agent, text, target, "", plus) },
+		func() string { return assembleNotify(badge, text, target, "", plus) },
 		// Tier 3: drop target (and age).
-		func() string { return assembleNotify(icon, agent, text, "", "", plus) },
+		func() string { return assembleNotify(badge, text, "", "", plus) },
 		// Tier 4: truncate text with trailing ellipsis.
 		func() string {
-			budget := tierBudget(maxWidth, icon, agent, "", "", "", plus)
+			budget := tierBudget(maxWidth, badge, "", "", plus)
 			truncated := shrinkText(text, budget)
-			return assembleNotify(icon, agent, truncated, "", "", plus)
+			return assembleNotify(badge, truncated, "", "", plus)
 		},
-		// Tier 5: drop agent + bar.
+		// Tier 5: drop badge — fall back to bare severity icon + text.
 		func() string {
-			budget := tierBudget(maxWidth, icon, "", "", "", "", plus)
+			iconLead := icon + "  "
+			budget := tierBudget(maxWidth, iconLead, "", "", plus)
 			truncated := shrinkText(text, budget)
-			return assembleNotify(icon, "", truncated, "", "", plus)
+			if truncated == "" {
+				return iconLead + plus
+			}
+			return iconLead + truncated + plus
 		},
 	}
 	for _, tier := range tiers {
@@ -445,30 +459,24 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 	// Hard truncate. Keep the icon + plus suffix; rune-truncate everything
 	// in between. The reset directive is appended unconditionally so we
 	// never leak color into the next segment.
-	short := assembleNotify(icon, "", text, "", "", plus)
+	short := icon + "  " + text + plus
 	return truncateWithEllipsis(short, maxWidth) + notifyReset
 }
 
-// assembleNotify glues the parts of the long form together. Empty parts are
+// assembleNotify glues the long-form parts together. Empty parts are
 // omitted along with their preceding separator so we can reuse this for
 // every degradation tier.
-func assembleNotify(icon, agent, text, target, age, plus string) string {
+//
+// Layout: `<badge> <text>  · <target> · <age><plus>`
+//
+// The badge already carries its own bg/fg styling and trailing `#[default]`,
+// so we just concatenate it. The body text inherits the terminal default
+// foreground (deliberately not dim) so it pops next to the dim metadata.
+func assembleNotify(badge, text, target, age, plus string) string {
 	var b strings.Builder
-	b.WriteString(icon)
-	if agent != "" {
-		b.WriteString("  ")
-		b.WriteString(notifyAgentColorOpen)
-		b.WriteString(agent)
-		b.WriteString(notifyReset)
-		b.WriteString("  ")
-		b.WriteString("#[fg=")
-		b.WriteString(notifyDimColor)
-		b.WriteString("]")
-		b.WriteString(notifyBar)
-		b.WriteString(notifyReset)
-	}
+	b.WriteString(badge)
 	if text != "" {
-		b.WriteString("  ")
+		b.WriteString(" ")
 		b.WriteString(text)
 	}
 	if target != "" {
@@ -477,25 +485,17 @@ func assembleNotify(icon, agent, text, target, age, plus string) string {
 		b.WriteString(notifyDimColor)
 		b.WriteString("]")
 		b.WriteString(notifyMidDot)
-		b.WriteString(notifyReset)
-		b.WriteString("  ")
-		b.WriteString("#[fg=")
-		b.WriteString(notifyDimColor)
-		b.WriteString("]")
+		b.WriteString(" ")
 		b.WriteString(target)
 		b.WriteString(notifyReset)
 	}
 	if age != "" {
-		b.WriteString("  ")
+		b.WriteString(" ")
 		b.WriteString("#[fg=")
 		b.WriteString(notifyDimColor)
 		b.WriteString("]")
 		b.WriteString(notifyMidDot)
-		b.WriteString(notifyReset)
-		b.WriteString("  ")
-		b.WriteString("#[fg=")
-		b.WriteString(notifyDimColor)
-		b.WriteString("]")
+		b.WriteString(" ")
 		b.WriteString(age)
 		b.WriteString(notifyReset)
 	}
@@ -508,19 +508,63 @@ func assembleNotify(icon, agent, text, target, age, plus string) string {
 // tierBudget returns how many runes of `text` fit within maxWidth given the
 // fixed-width pieces we are committing to render at this tier. Returns the
 // full budget when maxWidth is non-positive.
-func tierBudget(maxWidth int, icon, agent, _, target, age, plus string) int {
+//
+// The text is rendered with a single leading space, which we charge back
+// here so callers don't need to know the assembly's gap rules.
+func tierBudget(maxWidth int, badge, target, age, plus string) int {
 	if maxWidth <= 0 {
 		return 0
 	}
-	overhead := visualLen(assembleNotify(icon, agent, "", target, age, plus))
-	// `assembleNotify` already inserts the leading "  " before text, so we
-	// charge that back to the budget here.
-	textGap := 2
+	overhead := visualLen(assembleNotify(badge, "", target, age, plus))
+	textGap := 1
 	room := maxWidth - overhead - textGap
 	if room < 1 {
 		room = 1
 	}
 	return room
+}
+
+// renderNotifyBadge builds the leading severity+agent pill. For ai-source
+// entries with a recognised `<agent>:` prefix, the badge text is the agent
+// name (e.g. ` claude `). Otherwise we fall back to a severity label
+// (` INFO ` / ` WARN ` / ` CRIT `). The badge always carries a trailing
+// `#[default]` so subsequent body text reverts to the terminal default fg
+// (no dim, no bold).
+func renderNotifyBadge(n notify.Notification) string {
+	open := notifyBadgeOpen(n.Severity)
+	label := notifyBadgeLabel(n)
+	return open + " " + label + " " + notifyReset
+}
+
+// notifyBadgeOpen maps a severity to the bg/fg/bold opening directive for
+// the badge. Unknown severities fall through to the info palette so we
+// never emit a stripped escape.
+func notifyBadgeOpen(severity string) string {
+	switch severity {
+	case notify.SeverityWarn:
+		return notifyBadgeWarnOpen
+	case notify.SeverityCritical:
+		return notifyBadgeCritOpen
+	default:
+		return notifyBadgeInfoOpen
+	}
+}
+
+// notifyBadgeLabel returns the inner text of the badge: the agent name
+// when present, otherwise the severity label (`INFO`/`WARN`/`CRIT`).
+func notifyBadgeLabel(n notify.Notification) string {
+	agent, _ := splitAgentPrefix(n)
+	if agent != "" {
+		return agent
+	}
+	switch n.Severity {
+	case notify.SeverityWarn:
+		return "WARN"
+	case notify.SeverityCritical:
+		return "CRIT"
+	default:
+		return "INFO"
+	}
 }
 
 // shrinkText shrinks s so its rune length is at most maxRunes, replacing
