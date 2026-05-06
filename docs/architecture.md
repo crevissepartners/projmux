@@ -88,16 +88,17 @@ Ephemeral runtime state:
 - popup marker files
 - current tagged selection set
 
-## Three-line clickable status bar
+## Two-line clickable status bar
 
-projmux configures tmux with `status 3`. Line 0 is the existing
-session/window/path/git/kube/clock row, line 1 is the AI usage bar, and line 2
-is the notification bar. Each clickable segment is wrapped in a tmux
-user-defined range (`#[range=user|<id>]...#[norange]`) and dispatched through
-`projmux statusbar click <range-id>`. A single `bind -n MouseDown1Status`
-covers all three lines because tmux fires `MouseDown1Status` from any line of a
-multi-line status bar with `#{mouse_status_range}` resolving to whichever
-range the cursor was over.
+projmux configures tmux with `status 2`. Line 0 is the existing
+session/window/path/git/kube/clock row. Line 1 splits the notification bar
+(left half, capped at 80 cells) and the AI usage HUD (right half, capped at
+120 cells) using tmux `#[align=left]` / `#[align=right]`. Each clickable
+segment is wrapped in a tmux user-defined range (`#[range=user|<id>]...
+#[norange]`) and dispatched through `projmux statusbar click <range-id>`. A
+single `bind -n MouseDown1Status` covers both lines because tmux fires
+`MouseDown1Status` from any line of a multi-line status bar with
+`#{mouse_status_range}` resolving to whichever range the cursor was over.
 
 | Range id | Line | Click action                              | Keybinding   |
 |----------|------|-------------------------------------------|--------------|
@@ -106,7 +107,7 @@ range the cursor was over.
 | kube     | 0    | (TODO: kube filter picker)                | prefix+s k   |
 | git      | 0    | (TODO: git filter picker)                 | prefix+s g   |
 | usage    | 1    | popup `projmux usage`                     | prefix+s u   |
-| notify   | 2    | focus origin pane of newest notification  | prefix+s n   |
+| notify   | 1    | focus origin pane of newest notification  | prefix+s n   |
 
 The keyboard chord uses `bind-key s switch-client -T projmux-status` so the
 prefix-then-`s`-then-letter shortcut routes through the same dispatcher as
