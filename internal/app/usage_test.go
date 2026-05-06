@@ -416,49 +416,51 @@ func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 	}
 }
 
-func TestFormatStatusUsageMarksStaleSnapshot(t *testing.T) {
+func TestFormatStatusUsageHUDOmitsTildeStaleMarker(t *testing.T) {
 	t.Parallel()
 
+	// Schema v3 of the HUD replaces the legacy `~` / `~~` stale
+	// markers with an explicit age indicator (see TestFormatStatusUsageAge*).
+	// The colored marker forms must never appear in the rendered output.
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	stale := now.Add(-15 * time.Minute) // older than staleAfter (10m)
+	stale := now.Add(-15 * time.Minute)
 	snaps := []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: stale},
 		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}
 	got := formatStatusUsage(snaps, 0, now)
-	// Claude is stale → marker present after its 18%. Codex is fresh →
-	// no marker. Use the colored marker form for the HUD tier.
-	if !strings.Contains(got, "18%#[default]#[fg=colour245]~#[default]") {
-		t.Fatalf("missing stale marker after claude 18%%: %q", got)
+	if strings.Contains(got, "~") {
+		t.Fatalf("HUD must not emit `~` stale marker: %q", got)
 	}
-	// Codex 50% must NOT carry a marker.
-	if strings.Contains(got, "50%#[default]#[fg=colour245]~") {
-		t.Fatalf("codex marked stale but should be fresh: %q", got)
+	// Codex stays clean too — no age, no `~`.
+	if strings.Contains(got, "(") && strings.Contains(got, ")Codex") {
+		t.Fatalf("codex must not carry an age indicator: %q", got)
 	}
 }
 
-func TestFormatStatusUsageStaleTextTier(t *testing.T) {
+func TestFormatStatusUsageTextTiersOmitTildeMarker(t *testing.T) {
 	t.Parallel()
 
+	// Text tiers used to append `~` / `~~` to stale rows. Those
+	// markers are gone everywhere now (the long HUD tier carries the
+	// signal via the age indicator; verbose CLI inspection uses the
+	// `STALE` column in `projmux usage`'s table form).
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	stale := now.Add(-15 * time.Minute)
+	veryStale := now.Add(-90 * time.Minute)
 	snaps := []usage.Snapshot{
-		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: stale},
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: veryStale},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: stale},
 		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
 	}
-	// Width=45 lands us in the long-text tier; assert the plain `~`
-	// marker on the stale claude rows but not the fresh codex rows.
-	tier3 := formatStatusUsage(snaps, 45, now)
-	if !strings.Contains(tier3, "5h:42%~") {
-		t.Fatalf("text tier missing stale marker on claude 5h: %q", tier3)
-	}
-	if !strings.Contains(tier3, "wk:18%~") {
-		t.Fatalf("text tier missing stale marker on claude wk: %q", tier3)
-	}
-	if strings.Contains(tier3, "5h:71%~") || strings.Contains(tier3, "wk:55%~") {
-		t.Fatalf("fresh codex rows got stale marker: %q", tier3)
+	// Width=45 lands us in the long-text tier. Width=30 lands us in
+	// the short-label tier. Both must be `~`-free.
+	for _, w := range []int{45, 30} {
+		got := formatStatusUsage(snaps, w, now)
+		if strings.Contains(got, "~") {
+			t.Fatalf("text tier (width=%d) emitted `~`: %q", w, got)
+		}
 	}
 }
 
@@ -746,43 +748,156 @@ func TestFormatBackoffDurationShapes(t *testing.T) {
 	}
 }
 
-func TestFormatStatusUsageMarksVeryStaleSnapshot(t *testing.T) {
+// TestFormatStatusUsageAgeFreshOmitsIndicator covers the `now` case
+// from the spec: an age below 1 minute keeps the bar tight by
+// suppressing the `(<age>)` block entirely.
+func TestFormatStatusUsageAgeFreshOmitsIndicator(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	veryStale := now.Add(-90 * time.Minute) // > veryStaleAfter (1h)
 	snaps := []usage.Snapshot{
-		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: veryStale},
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-30 * time.Second)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-30 * time.Second)},
 	}
 	got := formatStatusUsage(snaps, 0, now)
-	// Very-stale → `~~` marker present in HUD form.
-	if !strings.Contains(got, "18%#[default]#[fg=colour245]~~#[default]") {
-		t.Fatalf("missing very-stale ~~ marker: %q", got)
+	if strings.Contains(got, "(") {
+		t.Fatalf("fresh data must not render an age indicator: %q", got)
+	}
+	// Sanity: the label and bar still render.
+	if !strings.Contains(got, "Claude") {
+		t.Fatalf("missing Claude label: %q", got)
 	}
 }
 
-func TestFormatStatusUsageVeryStaleTextTier(t *testing.T) {
+// TestFormatStatusUsageAgeMinutesGrey covers the spec's `(3m)`
+// scenario — minute-scale age renders in dim grey.
+func TestFormatStatusUsageAgeMinutesGrey(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	veryStale := now.Add(-90 * time.Minute)
-	stale := now.Add(-15 * time.Minute) // stale but not very-stale
 	snaps := []usage.Snapshot{
-		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: veryStale},
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-3 * time.Minute)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-3 * time.Minute)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if !strings.Contains(got, "#[fg=colour245](3m)#[default]") {
+		t.Fatalf("missing dim-grey (3m) age indicator: %q", got)
+	}
+}
+
+// TestFormatStatusUsageAgeWarnYellow covers the 1h..6h band — the
+// indicator switches to dim yellow to flag attention.
+func TestFormatStatusUsageAgeWarnYellow(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-90 * time.Minute)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-90 * time.Minute)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if !strings.Contains(got, "#[fg=yellow](1h)#[default]") {
+		t.Fatalf("missing dim-yellow (1h) age indicator: %q", got)
+	}
+}
+
+// TestFormatStatusUsageAgeAlertRedBold covers the >=6h band — the
+// indicator switches to bold red. The unit stays the actual hours
+// value (e.g. `8h`) so the user knows exactly how stale the cache is.
+func TestFormatStatusUsageAgeAlertRedBold(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-8 * time.Hour)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-8 * time.Hour)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if !strings.Contains(got, "#[fg=red,bold](8h)#[default]") {
+		t.Fatalf("missing bold-red (8h) age indicator: %q", got)
+	}
+}
+
+// TestFormatStatusUsageCodexNoAgeIndicator confirms the Codex block
+// never carries the age indicator (its rate_limits payload is sourced
+// from the latest rollout file every call — always near-current).
+func TestFormatStatusUsageCodexNoAgeIndicator(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	// Even a deliberately ancient Codex UpdatedAt must not produce
+	// an age block.
+	snaps := []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-12 * time.Hour)},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 25, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-12 * time.Hour)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if strings.Contains(got, "(") {
+		t.Fatalf("codex rendered an age indicator: %q", got)
+	}
+}
+
+// TestFormatStatusUsageAgeDropsOnTier2 verifies that when the budget
+// can't fit the long-with-age tier, the renderer falls back to the
+// (current default) long form WITHOUT the age block — rather than
+// jumping straight to the bar-less text tier. This matches the spec's
+// width-tier degradation table.
+func TestFormatStatusUsageAgeDropsOnTier2(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-3 * time.Minute)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: stale},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: stale},
 		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
 	}
-	tier3 := formatStatusUsage(snaps, 45, now)
-	if !strings.Contains(tier3, "5h:42%~~") {
-		t.Fatalf("text tier missing very-stale ~~ marker on claude 5h: %q", tier3)
+	// Tier 1 (with age) renders to width 70.
+	tier1 := formatStatusUsage(snaps, 200, now)
+	if !strings.Contains(tier1, "(3m)") {
+		t.Fatalf("tier1 missing age indicator at unconstrained width: %q", tier1)
 	}
-	if !strings.Contains(tier3, "wk:18%~") {
-		t.Fatalf("text tier missing stale ~ marker on claude wk: %q", tier3)
+	tier1Width := visualLen(tier1)
+	// Pick a budget that fits tier 2 but not tier 1.
+	budget := tier1Width - 1
+	tier2 := formatStatusUsage(snaps, budget, now)
+	if strings.Contains(tier2, "(3m)") {
+		t.Fatalf("tier2 must drop age indicator: %q", tier2)
 	}
-	// Don't double-mark the merely-stale row as ~~.
-	if strings.Contains(tier3, "wk:18%~~") {
-		t.Fatalf("merely-stale row got ~~ marker: %q", tier3)
+	if !strings.Contains(tier2, "wk ") {
+		t.Fatalf("tier2 must keep the wk bar: %q", tier2)
+	}
+	if visualLen(tier2) > budget {
+		t.Fatalf("tier2 visualLen=%d > budget=%d: %q", visualLen(tier2), budget, tier2)
+	}
+}
+
+// TestFormatLastSyncAgeUnits covers the formatLastSyncAge unit
+// ladder: <1m → "" (omit), 1m..1h → minutes, 1h..24h → hours, >=24h
+// → days.
+func TestFormatLastSyncAgeUnits(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{30 * time.Second, ""},
+		{59 * time.Second, ""},
+		{60 * time.Second, "1m"},
+		{3 * time.Minute, "3m"},
+		{59 * time.Minute, "59m"},
+		{60 * time.Minute, "1h"},
+		{8 * time.Hour, "8h"},
+		{23 * time.Hour, "23h"},
+		{24 * time.Hour, "1d"},
+		{72 * time.Hour, "3d"},
+	}
+	for _, tc := range cases {
+		if got := formatLastSyncAge(tc.in); got != tc.want {
+			t.Fatalf("formatLastSyncAge(%v) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
