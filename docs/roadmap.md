@@ -1,43 +1,87 @@
 # Roadmap
 
-## Milestone 0: Bootstrap
-- repository scaffold
-- agent docs
-- architecture and migration plan
+## Done (0.4.0)
 
-## Milestone 1: Core parity
-- session naming package
-- pin store
-- preview state store
-- current-directory jump command
-- tagged kill logic
+The 0.4 line filled in the operational surface around the session-management
+core that 0.3 had landed.
 
-## Milestone 2: Sessionizer parity
-- candidate discovery
-- popup mode
-- sidebar mode
-- settings hub and pin management
-- preview target restore on selection
+### Setup and install
 
-## Milestone 3: Session popup parity
-- list sessions by recent activity
-- session preview metadata
-- pane snapshot support
-- window and pane cycling
+- `projmux setup` — TTY raw-mode probe that reports which projmux key
+  sequences (`Alt-1..5`, `Ctrl-N`, `Ctrl-Shift-{R,L,M}`, `Ctrl-M`,
+  `Alt-Shift-{Left,Right}`) reach the process and which the terminal
+  swallows.
+- `projmux init [terminal]` — auto-merges projmux's CSI-u + chord
+  bindings into a terminal config. Adapters: Ghostty (with the
+  `config` / `config.ghostty` candidate split and symlink guard) and
+  Windows Terminal (WSL + native).
 
-## Milestone 4: Lifecycle helpers
-- auto attach
-- ephemeral prune
-- kube session support
+### Diagnostics
 
-## Milestone 5: Standalone integration
-- replace shell wrappers with thin `projmux` commands
-- update generated install flow
-- document setup steps for source and target machines
-- define picker-agnostic popup close/toggle handling so AI picker dismissal does not depend on fzf-specific key bindings
+- `projmux doctor` — runtime dependency report. Enforces minimum tmux
+  3.4 and fzf 0.55 (`stale` status when present but below the floor).
 
-## Milestone 6: Rich picker UI
-- introduce a picker-domain model separate from fzf row encoding
-- keep fzf as the stable fallback backend
-- add an opt-in native picker backend for multi-line card rows and title-focused search
-- port switcher popup/sidebar surfaces after parity tests cover selection, preview, and key actions
+### Focus
+
+- `projmux focus` — unified switch-client dispatch. Resolves a target
+  session against the live tmux inventory, redirects an existing client
+  if one is attached, otherwise emits a desktop notification. Used by
+  the status-bar notify click and by the AI reply-ready handler.
+
+### Notify queue
+
+- `projmux notify push|list|ack` — persistent JSON-backed queue at
+  `<state>/projmux/notify.json` with TTL, severity, source, and target
+  metadata.
+- `projmux notify reconcile` — back-fills the queue from live pane
+  state by walking `tmux list-panes -a`.
+- Producer wired to the attention state machine: a pane transitioning
+  to `reply` with an AI agent option set pushes an `ai:<session>:<pane>`
+  entry; the matching `clear` acks it.
+
+### Usage tracking
+
+- `projmux usage` (and `status usage`) — authoritative 5h + weekly
+  utilisation for both Claude (OAuth `api/oauth/usage` endpoint with
+  401 token refresh) and Codex (latest rollout `rate_limits` JSONL).
+- Per-adapter throttle (Claude `5m`, default `30s`), 429 backoff
+  (`30m`–`60m` exponential), `--force` to bypass both. Snapshots
+  preserved on failure so a 429 does not erase prior rows.
+
+### Statusbar and HUD
+
+- Two-line clickable status bar: row 0 is the existing
+  session/window/path/git/kube row, row 1 splits notify (left) and
+  usage (right).
+- `projmux statusbar click` — single dispatcher for both mouse clicks
+  and the `prefix s {u,n,g,k,p,s}` keyboard chord. Window-list clicks
+  on tabs short-circuit to native `select-window`.
+- HUD-style notify segment with severity+agent badge, midpoint dot
+  separators, and an age field.
+- HUD-style usage segment with bars, last-sync age indicator (Claude),
+  and graceful degradation through six tiers as `--max-width` shrinks.
+
+## Next (0.5+)
+
+Carried forward from earlier milestones — items still outstanding when
+v0.4 shipped.
+
+### Picker UI
+
+- Picker-domain model separate from fzf row encoding (kept fzf as the
+  stable fallback backend).
+- Opt-in native picker backend for multi-line card rows and
+  title-focused search.
+- Port switcher popup/sidebar surfaces after parity tests cover
+  selection, preview, and key actions.
+
+### Picker dismissal
+
+- Picker-agnostic popup close/toggle handling so AI picker dismissal
+  does not depend on fzf-specific key bindings.
+
+### Statusbar follow-ups
+
+- Wire the `session` / `kube` / `git` click ranges to real pickers
+  (`switch --filter=...`). They currently surface the active context
+  via `display-message` as a placeholder.
