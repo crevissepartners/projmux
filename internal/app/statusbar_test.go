@@ -281,13 +281,13 @@ func TestStatusbarClickNotifyAcksEntryAfterSuccessfulFocus(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickNotifyDoesNotAckWhenFocusFails(t *testing.T) {
+func TestStatusbarClickNotifyTransientFocusFailureSurfacesToastAndKeepsEntry(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{
 		respond: func(name string, _ []string) ([]byte, error) {
 			if name == "/usr/local/bin/projmux" {
-				return nil, errors.New("focus boom")
+				return nil, &fakeExitError{code: 1, msg: "focus boom"}
 			}
 			return nil, nil
 		},
@@ -305,12 +305,90 @@ func TestStatusbarClickNotifyDoesNotAckWhenFocusFails(t *testing.T) {
 	}}
 	cmd := newStatusbarTestCommand(runner, store)
 
-	err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil {
-		t.Fatal("expected error from failed focus")
+	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil (transient failure must not surface as tmux error popup)", err)
 	}
 	if store.ackedID != "" {
-		t.Fatalf("store.ackedID = %q, want empty (entry must remain on focus failure)", store.ackedID)
+		t.Fatalf("store.ackedID = %q, want empty (transient focus failure must keep entry for retry)", store.ackedID)
+	}
+	got, ok := lastDisplayMessage(runner.calls)
+	if !ok {
+		t.Fatalf("missing display-message; calls = %#v", runner.calls)
+	}
+	if !strings.HasPrefix(got, "focus failed:") {
+		t.Fatalf("display-message = %q, want prefix 'focus failed:'", got)
+	}
+}
+
+func TestStatusbarClickNotifyTargetGoneAcksEntryAndShowsToast(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{
+		respond: func(name string, _ []string) ([]byte, error) {
+			if name == "/usr/local/bin/projmux" {
+				return nil, &fakeExitError{code: focusExitNotResolved, msg: "target unresolved"}
+			}
+			return nil, nil
+		},
+	}
+	store := &stubNotifyStore{listEntries: []notify.Notification{
+		{
+			ID:      "abc",
+			Text:    "deploy ok",
+			Source:  notify.SourceAI,
+			Socket:  "projmux",
+			Session: "__nope",
+			Window:  "1",
+			Pane:    "0",
+		},
+	}}
+	cmd := newStatusbarTestCommand(runner, store)
+
+	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil (target-gone must not surface as tmux error popup)", err)
+	}
+	if store.ackedID != "abc" {
+		t.Fatalf("store.ackedID = %q, want %q (target-gone must ack to drop the junk entry)", store.ackedID, "abc")
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "notify target gone, dropping entry") {
+		t.Fatalf("missing 'notify target gone' display-message; calls = %#v", runner.calls)
+	}
+}
+
+func TestStatusbarClickNotifyUsageErrorTreatedAsTargetGone(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{
+		respond: func(name string, _ []string) ([]byte, error) {
+			if name == "/usr/local/bin/projmux" {
+				// Simulate the focus subprocess exiting with a wrapped
+				// app.UsageError. main.go maps UsageError to exit code 2,
+				// which we equate with target-unresolved here.
+				return nil, &UsageError{Message: "focus --target invalid"}
+			}
+			return nil, nil
+		},
+	}
+	store := &stubNotifyStore{listEntries: []notify.Notification{
+		{
+			ID:      "abc",
+			Text:    "deploy ok",
+			Source:  notify.SourceAI,
+			Session: "main",
+			Window:  "1",
+			Pane:    "0",
+		},
+	}}
+	cmd := newStatusbarTestCommand(runner, store)
+
+	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if store.ackedID != "abc" {
+		t.Fatalf("store.ackedID = %q, want %q (UsageError should ack like target-gone)", store.ackedID, "abc")
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "notify target gone, dropping entry") {
+		t.Fatalf("missing target-gone display-message; calls = %#v", runner.calls)
 	}
 }
 
@@ -450,3 +528,15 @@ func sliceContainsPair(values []string, key, value string) bool {
 	}
 	return false
 }
+
+// fakeExitError simulates the shape of a subprocess exit error: it carries a
+// numeric exit code that the production code can extract via an
+// `interface{ ExitCode() int }` assertion, mirroring how *exec.ExitError
+// (via *os.ProcessState) exposes its exit code in real runs.
+type fakeExitError struct {
+	code int
+	msg  string
+}
+
+func (e *fakeExitError) Error() string { return e.msg }
+func (e *fakeExitError) ExitCode() int { return e.code }

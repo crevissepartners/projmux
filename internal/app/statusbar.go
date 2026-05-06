@@ -201,6 +201,14 @@ func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Wri
 // handleNotify focuses the origin pane of the newest queued notification. If
 // the queue is empty we surface that fact in tmux rather than silently doing
 // nothing — that gives the keyboard shortcut a useful interactive ack.
+//
+// This handler MUST NOT return an error to its caller (tmux's run-shell). A
+// non-zero exit from run-shell triggers a "...returned N" error popup, which
+// is hostile UX for a status-bar click. Every failure mode here resolves to
+// a tmux display-message toast and a nil return; the only place we still
+// surface errors is the binary-path resolution check, because if we cannot
+// even find the projmux executable there is nothing useful to display and
+// the failure is a packaging bug, not a runtime UX glitch.
 func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io.Writer) error {
 	if c.notifyStoreFn == nil {
 		return c.runTmux(stderr, "display-message", "no notifications")
@@ -238,9 +246,22 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 	if socket != "" {
 		args = append(args, "--socket", socket)
 	}
-	if _, err := c.runner.Run(context.Background(), binaryPath, args...); err != nil {
-		// Leave the entry in place so the user can retry the click.
-		return fmt.Errorf("statusbar notify: focus invocation failed: %w", err)
+	if _, runErr := c.runner.Run(context.Background(), binaryPath, args...); runErr != nil {
+		// The focus subprocess exits with a deterministic code 2 when the
+		// target session/window/pane cannot be resolved (see focus.go's
+		// focusExitNotResolved). Treat that as "the queue entry is junk":
+		// ack it so the next click moves on, and tell the user via a
+		// non-error toast. Any other exit code is treated as transient
+		// (network hiccup, tmux server churn, etc.) — keep the entry so
+		// the user can retry, and surface the reason as a toast instead
+		// of a tmux error popup.
+		if isFocusTargetUnresolved(runErr) {
+			if ackErr := store.Ack(head.ID); ackErr != nil {
+				fmt.Fprintf(stderr, "statusbar notify: ack %s: %v\n", head.ID, ackErr)
+			}
+			return c.runTmux(stderr, "display-message", "notify target gone, dropping entry")
+		}
+		return c.runTmux(stderr, "display-message", fmt.Sprintf("focus failed: %s", focusFailureSummary(runErr)))
 	}
 	// Click-to-focus has no separate producer to ack the entry, so the
 	// click itself is the consume signal: a successful focus dispatch is
@@ -252,6 +273,49 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		fmt.Fprintf(stderr, "statusbar notify: ack %s: %v\n", head.ID, ackErr)
 	}
 	return nil
+}
+
+// isFocusTargetUnresolved reports whether the focus subprocess error
+// represents the deterministic "target could not be resolved" exit
+// (focus.go: focusExitNotResolved == 2). We accept three signals:
+//
+//   - The wrapped error is an *exec.ExitError with ExitCode() == 2 (the
+//     normal in-process subprocess case).
+//   - The wrapped error is any other type that exposes ExitCode() == 2 —
+//     this covers test fakes and the in-process focusExitError shape.
+//   - The wrapped error is an app.UsageError. UsageErrors also exit the
+//     subprocess with code 2, and treating them as "target unresolved"
+//     keeps the click loop from getting stuck on a malformed queue entry.
+func isFocusTargetUnresolved(err error) bool {
+	if err == nil {
+		return false
+	}
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) && coded.ExitCode() == focusExitNotResolved {
+		return true
+	}
+	if IsUsageError(err) {
+		return true
+	}
+	return false
+}
+
+// focusFailureSummary renders a short human-readable reason for a transient
+// focus failure. We strip the wrapper prefixes the runner adds so the toast
+// stays under tmux's display-message length budget.
+func focusFailureSummary(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	msg := err.Error()
+	if idx := strings.LastIndex(msg, ": "); idx >= 0 && idx < len(msg)-2 {
+		msg = msg[idx+2:]
+	}
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return "unknown"
+	}
+	return msg
 }
 
 func (c *statusbarCommand) resolveBinary() (string, error) {
