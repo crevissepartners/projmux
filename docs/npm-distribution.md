@@ -53,6 +53,18 @@ Publishing the scoped platform packages requires control of the `@projmux`
 npm scope. The release automation should fail before publishing if that scope
 or `NPM_TOKEN` is unavailable.
 
+Tag releases publish npm packages from GitHub Actions after release archives
+are uploaded. The workflow runs:
+
+```bash
+scripts/package-npm.sh --version "${GITHUB_REF_NAME#v}" --out dist/npm
+```
+
+then publishes each staged package with `npm publish --access public`.
+Configure the repository secret `NPM_TOKEN` with an npm token that can publish
+both `projmux` and the `@projmux/*` platform packages. PR CI runs
+`make npm-pack` so package staging and dry-run packing fail before release.
+
 ## Non-Goals
 
 The npm installer must not install system dependencies, edit shell startup

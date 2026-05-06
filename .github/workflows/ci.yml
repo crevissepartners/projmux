@@ -21,11 +21,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Check formatting
         run: make fmt-check
 
       - name: Run unit tests
         run: make test
+
+      - name: Validate npm package staging
+        run: make npm-pack
 
       - name: Run integration tests
         run: make test-integration

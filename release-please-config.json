@@ -8,7 +8,12 @@
   "packages": {
     ".": {
       "extra-files": [
-        "internal/version/version.go"
+        "internal/version/version.go",
+        "package.json",
+        "npm/platform/darwin-arm64/package.json",
+        "npm/platform/darwin-x64/package.json",
+        "npm/platform/linux-arm64/package.json",
+        "npm/platform/linux-x64/package.json"
       ]
     }
   }
