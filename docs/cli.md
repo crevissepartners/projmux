@@ -41,6 +41,7 @@ projmux <command> [args...]
 | `switch` | Pick and open a project tmux session. |
 | `tag` | Manage tagged tmux sessions. |
 | `tmux` | Open tmux popup entry helpers / install generated config. |
+| `update` | Check installer-aware GitHub release update status. |
 | `upgrade` | Self-update via `go install`. |
 | `usage` | Report AI token usage across 5h and weekly windows. |
 | `version` | Print the current version. |
@@ -267,6 +268,31 @@ accepted by `popup-toggle` mirror the historical sessionizer surface:
 `apply` reloads the live `-L projmux` server's config without restarting
 it; `make install` and `projmux upgrade` invoke it after replacing the
 binary.
+
+## update
+
+```
+projmux update status [--json]
+projmux update check  [--json]
+```
+
+Installer-aware update status foundation. `status` is read-only: it
+prints the current version, cached latest GitHub Release tag when present,
+cache freshness (`fresh`, `stale`, or `unknown`), update state, detected
+installer source, and cache path. It never reaches the network, so it is
+safe for interactive use and shell startup paths.
+
+`check` fetches the latest GitHub Release metadata for
+`crevissepartners/projmux`, atomically writes
+`${XDG_CACHE_HOME:-~/.cache}/projmux/update.json`, then prints the concise
+latest/update/cache result. `--json` emits the same machine-readable
+status shape for both subcommands.
+
+Installer detection honors
+`PROJMUX_INSTALLER=npm|go|github-release|source`. When unset or invalid,
+the source is reported as `unknown` with guidance to set the variable.
+Applying updates through `projmux update` is future work; `check` does
+not install or replace anything.
 
 ## upgrade
 

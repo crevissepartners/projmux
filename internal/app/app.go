@@ -60,6 +60,7 @@ type App struct {
 	switcher     *switchCommand
 	tag          *tagCommand
 	tmux         *tmuxCommand
+	update       *updateCommand
 	upgrade      *upgradeCommand
 	usage        *usageCommand
 }
@@ -91,6 +92,7 @@ func New() *App {
 		switcher:     switcher,
 		tag:          newTagCommand(),
 		tmux:         newTmuxCommand(),
+		update:       newUpdateCommand(),
 		upgrade:      newUpgradeCommand(),
 		usage:        newUsageCommand(),
 	}
@@ -148,6 +150,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.tag.Run(args[1:], stdout, stderr)
 	case "tmux":
 		return a.tmux.Run(args[1:], stdout, stderr)
+	case "update":
+		return a.update.Run(args[1:], stdout, stderr)
 	case "upgrade":
 		return a.upgrade.Run(args[1:], stdout, stderr)
 	case "usage":
@@ -190,6 +194,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
 	fmt.Fprintln(w, "  tag       Manage tagged tmux sessions")
 	fmt.Fprintln(w, "  tmux      Open tmux popup entry helpers")
+	fmt.Fprintln(w, "  update    Check installer-aware release update status")
 	fmt.Fprintln(w, "  upgrade   Self-update projmux via go install")
 	fmt.Fprintln(w, "  usage     Report AI token usage across 5h and weekly windows")
 	fmt.Fprintln(w, "  help      Show bootstrap help")
