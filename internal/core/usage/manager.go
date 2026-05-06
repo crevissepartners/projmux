@@ -7,12 +7,18 @@ import (
 	"time"
 )
 
+// DefaultThrottle is the per-adapter throttle used when an adapter does
+// not implement ThrottleHinter. Aligns with the prior global throttle
+// value so cheap, local-file adapters keep their existing cadence.
+const DefaultThrottle = 30 * time.Second
+
 // Manager wires a Registry and a Store into the standard "collect, persist,
 // load" flow consumed by the CLI.
 type Manager struct {
 	registry *Registry
 	store    *Store
 	now      func() time.Time
+	debug    func(format string, args ...any)
 }
 
 // NewManager constructs a Manager. now defaults to time.Now when nil.
@@ -23,11 +29,43 @@ func NewManager(registry *Registry, store *Store, now func() time.Time) *Manager
 	return &Manager{registry: registry, store: store, now: now}
 }
 
-// Collect runs every registered adapter, replaces the persisted snapshot
-// file with the union of their results, and returns the merged slice.
-// Adapter errors are joined and returned alongside any successful
-// snapshots — partial data still renders.
+// SetDebug installs a callback used to surface backoff/throttle decisions
+// for diagnostics. The callback is only invoked from cold paths and is
+// safe to leave nil — the Manager never logs by default.
+func (m *Manager) SetDebug(debug func(format string, args ...any)) {
+	if m == nil {
+		return
+	}
+	m.debug = debug
+}
+
+// Collect runs every registered adapter, merging fresh results with the
+// prior on-disk snapshots so an adapter that fails (e.g. 429) does NOT
+// erase its earlier rows. Per-adapter `last_collect` and `backoff` state
+// are also round-tripped through the snapshot file.
+//
+// Merge semantics, evaluated per adapter:
+//   - Adapter returns a non-empty snapshot slice → REPLACE all prior rows
+//     for that model.
+//   - Adapter errors or returns zero snapshots → PRESERVE prior rows for
+//     that model. The user keeps seeing last-known values until the next
+//     successful collect.
+//
+// Adapters that implement BackoffStater have their persisted state
+// loaded before Collect and saved after (success OR failure) so a 429
+// observed on one process survives a CLI restart.
 func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
+	// Throttle of 0 → unconditional: every adapter runs (subject to
+	// adapter-internal backoff). Used by `projmux usage` where the user
+	// explicitly asked for fresh data.
+	return m.collect(ctx, 0)
+}
+
+// collect is the shared implementation. perAdapterFloor is the minimum
+// time-since-last-collect required for an adapter to be invoked; a value
+// of 0 disables the floor and runs every adapter. Adapters that
+// implement ThrottleHinter raise the floor on a per-adapter basis.
+func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration) ([]Snapshot, error) {
 	if m == nil {
 		return nil, errors.New("usage: nil manager")
 	}
@@ -42,12 +80,46 @@ func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
 	// Best-effort cleanup of v1 artifacts. Cheap; safe to retry.
 	m.store.CleanupLegacyArtifacts()
 
-	var allSnaps []Snapshot
+	priorState, _ := m.store.LoadState()
+	if priorState.LastCollect == nil {
+		priorState.LastCollect = map[string]time.Time{}
+	}
+	if priorState.Backoff == nil {
+		priorState.Backoff = map[string]BackoffState{}
+	}
+
+	// Bucket prior snapshots by model so per-adapter merge is O(n).
+	priorByModel := map[string][]Snapshot{}
+	for _, s := range priorState.Snapshots {
+		priorByModel[s.Model] = append(priorByModel[s.Model], s)
+	}
+
+	merged := make([]Snapshot, 0, len(priorState.Snapshots))
+	freshModels := map[string]bool{}
 	var errs []error
-	for _, adapter := range m.registry.All() {
+
+	adapters := m.registry.All()
+	for _, adapter := range adapters {
+		name := adapter.Name()
+
+		// Per-adapter throttle gate. Skip adapters whose effective
+		// interval has not elapsed; their prior rows survive via the
+		// merge step below. Floor=0 disables the gate.
+		if perAdapterFloor > 0 {
+			interval := adapterInterval(adapter, perAdapterFloor)
+			if last, ok := priorState.LastCollect[name]; ok && !last.IsZero() && now.Sub(last) < interval {
+				continue
+			}
+		}
+
+		// Install persisted backoff state before Collect so the adapter
+		// can early-return without making the network call.
+		if bs, ok := adapter.(BackoffStater); ok {
+			bs.LoadBackoff(priorState.Backoff[name])
+		}
 		snaps, err := adapter.Collect(ctx)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", adapter.Name(), err))
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 		// Stamp UpdatedAt so the renderer can show "as of" without callers
 		// having to thread the clock through every adapter.
@@ -56,32 +128,56 @@ func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
 				snaps[i].UpdatedAt = now
 			}
 		}
-		allSnaps = append(allSnaps, snaps...)
+		// last_collect[name] advances on every adapter walk — failures
+		// and empty results included. The throttle is about not
+		// hammering the upstream; backoff (BackoffStater) handles the
+		// longer 429-induced cooldown separately. Only the merged
+		// snapshot rows distinguish success from failure.
+		priorState.LastCollect[name] = now
+		if len(snaps) > 0 {
+			// Successful collect: replace all prior rows for the models
+			// the adapter touched. We trust the adapter to emit one row
+			// per (model, window) it owns.
+			for _, s := range snaps {
+				freshModels[s.Model] = true
+			}
+			merged = append(merged, snaps...)
+		}
+		// Persist backoff regardless of success/failure: a 429 sets
+		// `until`; a clean success resets `consecutive` to 0.
+		if bs, ok := adapter.(BackoffStater); ok {
+			priorState.Backoff[name] = bs.SaveBackoff()
+		}
 	}
 
-	if err := m.store.SaveAll(allSnaps, now); err != nil {
+	// Preserve prior rows for any model the current cycle did NOT
+	// successfully refresh. This is the load-bearing fix for the 429
+	// regression: a Claude failure must not erase the Claude rows.
+	for model, rows := range priorByModel {
+		if freshModels[model] {
+			continue
+		}
+		merged = append(merged, rows...)
+	}
+
+	priorState.Snapshots = merged
+	if err := m.store.SaveState(priorState); err != nil {
 		errs = append(errs, fmt.Errorf("save snapshots: %w", err))
 	}
 	if len(errs) > 0 {
-		return allSnaps, errors.Join(errs...)
+		return merged, errors.Join(errs...)
 	}
-	return allSnaps, nil
+	return merged, nil
 }
 
 // MaybeCollect opportunistically refreshes the snapshot file if the
 // supplied throttle interval has elapsed since the last successful
-// collection. It is the cheap, status-bar-safe variant of Collect:
+// collection of any registered adapter. It runs Collect (which itself
+// gates each adapter on its own ThrottleHint) when at least one adapter
+// is due; otherwise it is a no-op.
 //
-//   - If the snapshot file is missing or its last_collect is older than
-//     throttle, adapters run immediately.
-//   - Otherwise the call is a no-op (no adapter walk, no disk write).
-//   - Adapter errors are surfaced for diagnostics (PROJMUX_USAGE_DEBUG)
-//     but the caller (CLI status segment) MUST swallow them. The marker
-//     in the file is updated regardless of success so a permanently
-//     failing adapter does not flood the status hot path.
-//
-// Returns true when a collect cycle ran (regardless of success), false
-// when throttled.
+// `throttle` is the floor used for adapters that do not implement
+// ThrottleHinter. Adapters with a hint use max(throttle, hint).
 func (m *Manager) MaybeCollect(ctx context.Context, throttle time.Duration) (bool, error) {
 	if m == nil {
 		return false, errors.New("usage: nil manager")
@@ -93,25 +189,57 @@ func (m *Manager) MaybeCollect(ctx context.Context, throttle time.Duration) (boo
 	if !m.shouldCollect(now, throttle) {
 		return false, nil
 	}
-	_, collectErr := m.Collect(ctx)
+	_, collectErr := m.collect(ctx, throttle)
 	return true, collectErr
 }
 
-// shouldCollect reports whether MaybeCollect should run adapters. A
-// missing file or unreadable last_collect is treated as stale so a
-// corrupt state dir self-heals on the next redraw.
-func (m *Manager) shouldCollect(now time.Time, throttle time.Duration) bool {
-	if throttle <= 0 {
+// shouldCollect reports whether MaybeCollect should run adapters. It
+// consults per-adapter timestamps so a slow adapter (Claude OAuth,
+// 60s) does not block a fast one (Codex, 30s). The Manager runs the
+// full adapter walk if ANY adapter is due, then Collect's own merge
+// preserves the not-yet-due adapters' prior rows.
+func (m *Manager) shouldCollect(now time.Time, defaultThrottle time.Duration) bool {
+	if defaultThrottle <= 0 {
 		return true
 	}
-	_, last, err := m.store.LoadAll()
+	state, err := m.store.LoadState()
 	if err != nil {
 		return true
 	}
-	if last.IsZero() {
+	if m.registry == nil {
 		return true
 	}
-	return now.Sub(last) >= throttle
+	for _, adapter := range m.registry.All() {
+		name := adapter.Name()
+		interval := adapterInterval(adapter, defaultThrottle)
+		// During backoff the adapter is effectively "not due" — we must
+		// not run Collect just to no-op the network call. Defer to the
+		// adapter's own Collect logic only when out of backoff.
+		if bs, ok := state.Backoff[name]; ok && !bs.Until.IsZero() && now.Before(bs.Until) {
+			if m.debug != nil {
+				m.debug("usage: %s in backoff until %s", name, bs.Until.Format(time.RFC3339))
+			}
+			continue
+		}
+		last := state.LastCollect[name]
+		if last.IsZero() || now.Sub(last) >= interval {
+			return true
+		}
+	}
+	return false
+}
+
+// adapterInterval resolves the effective throttle for an adapter:
+// max(default, ThrottleHint). The default acts as a floor so callers
+// that pass throttle=0 (always run) keep their semantics.
+func adapterInterval(a Adapter, defaultThrottle time.Duration) time.Duration {
+	interval := defaultThrottle
+	if hinter, ok := a.(ThrottleHinter); ok {
+		if hint := hinter.ThrottleHint(); hint > interval {
+			interval = hint
+		}
+	}
+	return interval
 }
 
 // LoadAll reads the persisted snapshots without invoking adapters. Useful
@@ -129,4 +257,16 @@ func (m *Manager) LoadAll() ([]Snapshot, error) {
 		return nil, err
 	}
 	return snaps, nil
+}
+
+// LoadState exposes per-adapter backoff/last_collect for callers that
+// want to render diagnostics (e.g. `projmux usage --json`).
+func (m *Manager) LoadState() (State, error) {
+	if m == nil {
+		return State{}, errors.New("usage: nil manager")
+	}
+	if m.store == nil {
+		return State{}, errors.New("usage: nil store")
+	}
+	return m.store.LoadState()
 }

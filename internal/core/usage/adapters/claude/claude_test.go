@@ -211,6 +211,178 @@ func TestAdapterCollectMissingCredentialsFile(t *testing.T) {
 	}
 }
 
+func TestAdapter429SetsBackoffWithRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCreds(t, credsPath, "access-1", "refresh-1")
+
+	a := NewWithConfig(credsPath, server.URL+"/usage", server.URL+"/refresh", server.Client())
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	snaps, err := a.Collect(context.Background())
+	if err == nil {
+		t.Fatalf("expected error on 429, got nil")
+	}
+	if snaps != nil {
+		t.Fatalf("snaps = %+v, want nil on 429", snaps)
+	}
+	state := a.SaveBackoff()
+	want := now.Add(120 * time.Second)
+	if !state.Until.Equal(want) {
+		t.Fatalf("backoff.Until = %v, want %v (Retry-After=120)", state.Until, want)
+	}
+	if state.Consecutive != 1 {
+		t.Fatalf("backoff.Consecutive = %d, want 1", state.Consecutive)
+	}
+}
+
+func TestAdapter429NoHeaderUsesDefault(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCreds(t, credsPath, "access-1", "refresh-1")
+
+	a := NewWithConfig(credsPath, server.URL+"/usage", server.URL+"/refresh", server.Client())
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	if _, err := a.Collect(context.Background()); err == nil {
+		t.Fatalf("expected 429 error")
+	}
+	state := a.SaveBackoff()
+	want := now.Add(5 * time.Minute)
+	if !state.Until.Equal(want) {
+		t.Fatalf("backoff.Until = %v, want %v (default 5m)", state.Until, want)
+	}
+}
+
+func TestAdapter429ConsecutiveDoublesUpToCap(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCreds(t, credsPath, "access-1", "refresh-1")
+
+	a := NewWithConfig(credsPath, server.URL+"/usage", server.URL+"/refresh", server.Client())
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Synthesise consecutive 429s by clearing the backoff window
+	// between calls (otherwise the adapter short-circuits during
+	// backoff and never bumps the counter).
+	for i := 1; i <= 4; i++ {
+		a.LoadBackoff(usage.BackoffState{Until: time.Time{}, Consecutive: i - 1})
+		if _, err := a.Collect(context.Background()); err == nil {
+			t.Fatalf("iter %d: expected 429 error", i)
+		}
+	}
+	state := a.SaveBackoff()
+	// 5m → 10m → 20m capped at 15m → 40m capped at 15m. Final: 15m.
+	want := now.Add(15 * time.Minute)
+	if !state.Until.Equal(want) {
+		t.Fatalf("backoff.Until = %v, want %v (capped at 15m)", state.Until, want)
+	}
+	if state.Consecutive != 4 {
+		t.Fatalf("backoff.Consecutive = %d, want 4", state.Consecutive)
+	}
+}
+
+func TestAdapterBackoffShortCircuitsCollect(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":1.0,"resets_at":"2026-05-06T17:00:00Z"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCreds(t, credsPath, "access-1", "refresh-1")
+
+	a := NewWithConfig(credsPath, server.URL+"/usage", server.URL+"/refresh", server.Client())
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	a.LoadBackoff(usage.BackoffState{Until: now.Add(time.Minute), Consecutive: 1})
+
+	snaps, err := a.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect during backoff must be silent: %v", err)
+	}
+	if snaps != nil {
+		t.Fatalf("snaps = %+v, want nil during backoff", snaps)
+	}
+	if calls != 0 {
+		t.Fatalf("HTTP calls = %d, want 0 (backoff short-circuit)", calls)
+	}
+}
+
+func TestAdapter200ResetsBackoff(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":3.0,"resets_at":"2026-05-06T17:00:00Z"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCreds(t, credsPath, "access-1", "refresh-1")
+
+	a := NewWithConfig(credsPath, server.URL+"/usage", server.URL+"/refresh", server.Client())
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	// Pre-load a stale backoff that has expired (so Collect proceeds).
+	a.LoadBackoff(usage.BackoffState{Until: now.Add(-time.Minute), Consecutive: 3})
+
+	snaps, err := a.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(snaps) != 1 {
+		t.Fatalf("snaps len=%d, want 1", len(snaps))
+	}
+	state := a.SaveBackoff()
+	if !state.Until.IsZero() {
+		t.Fatalf("backoff.Until = %v, want zero (reset on 200)", state.Until)
+	}
+	if state.Consecutive != 0 {
+		t.Fatalf("backoff.Consecutive = %d, want 0 (reset on 200)", state.Consecutive)
+	}
+}
+
+func TestAdapterThrottleHint(t *testing.T) {
+	t.Parallel()
+
+	a := New()
+	if got := a.ThrottleHint(); got != 60*time.Second {
+		t.Fatalf("ThrottleHint = %v, want 60s", got)
+	}
+}
+
 func TestRedactTokenNeverLeaksFullSecret(t *testing.T) {
 	t.Parallel()
 

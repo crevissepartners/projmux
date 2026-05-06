@@ -16,13 +16,36 @@ import (
 // report the current account-wide state.
 const snapshotFileName = "snapshots.json"
 
-// snapshotFile is the on-disk schema the Store writes. Version is bumped
-// to 2 to make the schema break (v1 was per-model bucketed token counts)
-// explicit.
+// BackoffState captures per-adapter exponential-backoff bookkeeping that
+// must survive process restarts. `Until` is the absolute time at which
+// the next adapter call is permitted; `Consecutive` counts the number of
+// 429-style failures observed in a row so callers can grow the next
+// interval geometrically.
+type BackoffState struct {
+	Until       time.Time `json:"until"`
+	Consecutive int       `json:"consecutive"`
+}
+
+// snapshotFile is the on-disk schema the Store writes. Version stays at 2;
+// the shape evolved (per-adapter `last_collect` map, optional `backoff`
+// map) in a backward-compatible way. The custom UnmarshalJSON below
+// accepts both the prior single-string `last_collect` (treated as missing
+// per-adapter timestamps) and the new map form.
 type snapshotFile struct {
-	Version     int        `json:"version"`
-	LastCollect time.Time  `json:"last_collect"`
-	Snapshots   []Snapshot `json:"snapshots"`
+	Version     int                     `json:"version"`
+	LastCollect map[string]time.Time    `json:"last_collect,omitempty"`
+	Backoff     map[string]BackoffState `json:"backoff,omitempty"`
+	Snapshots   []Snapshot              `json:"snapshots"`
+}
+
+// snapshotFileWire is the loose, decode-only mirror of snapshotFile that
+// permits `last_collect` to be either a string (legacy) or a map. Encoding
+// always uses snapshotFile so we never re-emit the legacy string form.
+type snapshotFileWire struct {
+	Version     int                     `json:"version"`
+	LastCollect json.RawMessage         `json:"last_collect,omitempty"`
+	Backoff     map[string]BackoffState `json:"backoff,omitempty"`
+	Snapshots   []Snapshot              `json:"snapshots"`
 }
 
 // Store persists the most recent batch of Snapshots emitted by all
@@ -52,45 +75,111 @@ func (s *Store) BaseDir() string {
 	return s.baseDir
 }
 
+// State is the rich view the Manager and adapters need: snapshots plus
+// per-adapter throttle/backoff bookkeeping. Returned by LoadState; the
+// older LoadAll wrapper is kept for callers that only want the snapshot
+// list.
+type State struct {
+	Snapshots   []Snapshot
+	LastCollect map[string]time.Time
+	Backoff     map[string]BackoffState
+}
+
 // LoadAll reads the persisted snapshots. A missing file reads as empty
-// (no error) so first-run callers see []Snapshot{}.
+// (no error) so first-run callers see []Snapshot{}. The second return is
+// the most recent global last_collect across adapters (kept for callers
+// that only care that *something* was collected) — for per-adapter timing
+// use LoadState.
 func (s *Store) LoadAll() ([]Snapshot, time.Time, error) {
+	st, err := s.LoadState()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	var latest time.Time
+	for _, t := range st.LastCollect {
+		if t.After(latest) {
+			latest = t
+		}
+	}
+	return st.Snapshots, latest, nil
+}
+
+// LoadState reads the persisted file and returns the full per-adapter
+// state. A missing file reads as zero-value State (no error).
+func (s *Store) LoadState() (State, error) {
 	path := s.FilePath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, time.Time{}, nil
+			return State{}, nil
 		}
-		return nil, time.Time{}, fmt.Errorf("usage: read snapshots %s: %w", path, err)
+		return State{}, fmt.Errorf("usage: read snapshots %s: %w", path, err)
 	}
 	if len(data) == 0 {
-		return nil, time.Time{}, nil
+		return State{}, nil
 	}
-	var f snapshotFile
-	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, time.Time{}, fmt.Errorf("usage: parse snapshots %s: %w", path, err)
+	var w snapshotFileWire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return State{}, fmt.Errorf("usage: parse snapshots %s: %w", path, err)
 	}
-	out := make([]Snapshot, 0, len(f.Snapshots))
-	for _, snap := range f.Snapshots {
+
+	state := State{
+		LastCollect: map[string]time.Time{},
+		Backoff:     map[string]BackoffState{},
+	}
+	if len(w.LastCollect) > 0 {
+		// Try map form first; fall back to string (legacy v2). A bare
+		// string predates the per-adapter map and is treated as missing
+		// per-adapter timestamps so the next collect runs everything.
+		var asMap map[string]time.Time
+		if err := json.Unmarshal(w.LastCollect, &asMap); err == nil {
+			for k, v := range asMap {
+				state.LastCollect[k] = v.UTC()
+			}
+		}
+		// If asMap parsing failed (string form), the map stays empty —
+		// equivalent to "no per-adapter timestamps", which is the
+		// documented migration behaviour.
+	}
+	for k, v := range w.Backoff {
+		v.Until = v.Until.UTC()
+		state.Backoff[k] = v
+	}
+	out := make([]Snapshot, 0, len(w.Snapshots))
+	for _, snap := range w.Snapshots {
 		// Defensive normalisation: ensure timestamps are UTC so the renderer
 		// gets a stable shape regardless of how the file was written.
 		snap.ResetsAt = snap.ResetsAt.UTC()
 		snap.UpdatedAt = snap.UpdatedAt.UTC()
 		out = append(out, snap)
 	}
-	return out, f.LastCollect.UTC(), nil
+	state.Snapshots = out
+	return state, nil
 }
 
 // SaveAll persists snapshots to disk, replacing whatever was there
-// before. lastCollect is recorded so MaybeCollect can throttle without a
-// separate marker file.
+// before. lastCollect is recorded under a single synthetic adapter key
+// ("_global") so legacy callers that don't know about per-adapter
+// throttling still mark forward progress. New callers should use
+// SaveState directly.
 func (s *Store) SaveAll(snaps []Snapshot, lastCollect time.Time) error {
+	state := State{
+		Snapshots: snaps,
+		LastCollect: map[string]time.Time{
+			"_global": lastCollect.UTC(),
+		},
+	}
+	return s.SaveState(state)
+}
+
+// SaveState persists the full per-adapter state to disk atomically.
+func (s *Store) SaveState(state State) error {
 	if err := os.MkdirAll(s.baseDir, 0o755); err != nil {
 		return fmt.Errorf("usage: create cache dir %s: %w", s.baseDir, err)
 	}
 	// Stable ordering: model asc, window asc within model.
-	sorted := make([]Snapshot, len(snaps))
-	copy(sorted, snaps)
+	sorted := make([]Snapshot, len(state.Snapshots))
+	copy(sorted, state.Snapshots)
 	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1}
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if sorted[i].Model != sorted[j].Model {
@@ -98,9 +187,25 @@ func (s *Store) SaveAll(snaps []Snapshot, lastCollect time.Time) error {
 		}
 		return windowOrder[sorted[i].Window] < windowOrder[sorted[j].Window]
 	})
+	last := map[string]time.Time{}
+	for k, v := range state.LastCollect {
+		last[k] = v.UTC()
+	}
+	backoff := map[string]BackoffState{}
+	for k, v := range state.Backoff {
+		// Drop zero-valued entries: they mean "no active backoff" and
+		// just clutter the on-disk file. Adapters reload an absent key
+		// as a zero BackoffState which is the desired default.
+		if v.Until.IsZero() && v.Consecutive == 0 {
+			continue
+		}
+		v.Until = v.Until.UTC()
+		backoff[k] = v
+	}
 	payload := snapshotFile{
 		Version:     2,
-		LastCollect: lastCollect.UTC(),
+		LastCollect: last,
+		Backoff:     backoff,
 		Snapshots:   sorted,
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")

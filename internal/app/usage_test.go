@@ -21,7 +21,7 @@ func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
 		{Model: "codex", Window: usage.Window5h, Pct: 71.0, ResetsAt: now.Add(5 * time.Hour), UpdatedAt: now},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 55.0, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
 	}
-	got := formatStatusUsage(snaps, 0)
+	got := formatStatusUsage(snaps, 0, now)
 
 	if !strings.Contains(got, "Claude") || !strings.Contains(got, "Codex") {
 		t.Fatalf("missing model labels: %q", got)
@@ -58,7 +58,7 @@ func TestFormatStatusUsageOmitsPlaceholderRows(t *testing.T) {
 		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 25, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
 	}
-	got := formatStatusUsage(snaps, 0)
+	got := formatStatusUsage(snaps, 0, now)
 	if strings.Contains(got, "Claude") {
 		t.Fatalf("claude has no data but appears in output: %q", got)
 	}
@@ -79,7 +79,7 @@ func TestFormatStatusUsageRendersGenuineZeroWithResetTime(t *testing.T) {
 	snaps := []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 0, ResetsAt: now.Add(5 * time.Hour), UpdatedAt: now},
 	}
-	got := formatStatusUsage(snaps, 0)
+	got := formatStatusUsage(snaps, 0, now)
 	if !strings.Contains(got, "Claude") {
 		t.Fatalf("genuine 0%% must still render label: %q", got)
 	}
@@ -91,13 +91,13 @@ func TestFormatStatusUsageRendersGenuineZeroWithResetTime(t *testing.T) {
 func TestFormatStatusUsageAllEmpty(t *testing.T) {
 	t.Parallel()
 
-	if got := formatStatusUsage(nil, 0); got != "" {
+	if got := formatStatusUsage(nil, 0, time.Time{}); got != "" {
 		t.Fatalf("formatStatusUsage(nil) = %q, want empty", got)
 	}
 	snaps := []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h},
 	}
-	if got := formatStatusUsage(snaps, 0); got != "" {
+	if got := formatStatusUsage(snaps, 0, time.Time{}); got != "" {
 		t.Fatalf("formatStatusUsage(no data) = %q, want empty", got)
 	}
 }
@@ -114,7 +114,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	}
 
 	// Tier 1: long HUD with both bars per model.
-	long := formatStatusUsage(snaps, 200)
+	long := formatStatusUsage(snaps, 200, now)
 	if !strings.Contains(long, "Claude") || !strings.Contains(long, "wk ") {
 		t.Fatalf("tier1 long HUD missing wk bar: %q", long)
 	}
@@ -123,7 +123,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	}
 
 	// Tier 2: drop wk bars (label + 5h only).
-	tier2 := formatStatusUsage(snaps, 60)
+	tier2 := formatStatusUsage(snaps, 60, now)
 	if visualLen(tier2) > 60 {
 		t.Fatalf("tier2 visualLen=%d > 60: %q", visualLen(tier2), tier2)
 	}
@@ -138,7 +138,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	}
 
 	// Tier 3: drop bars, keep long labels.
-	tier3 := formatStatusUsage(snaps, 45)
+	tier3 := formatStatusUsage(snaps, 45, now)
 	if visualLen(tier3) > 45 {
 		t.Fatalf("tier3 visualLen=%d > 45: %q", visualLen(tier3), tier3)
 	}
@@ -150,7 +150,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	}
 
 	// Tier 4: single-letter labels.
-	tier4 := formatStatusUsage(snaps, 30)
+	tier4 := formatStatusUsage(snaps, 30, now)
 	if visualLen(tier4) > 30 {
 		t.Fatalf("tier4 visualLen=%d > 30: %q", visualLen(tier4), tier4)
 	}
@@ -162,7 +162,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	}
 
 	// Tier 5: hard truncate with ellipsis.
-	tier5 := formatStatusUsage(snaps, 15)
+	tier5 := formatStatusUsage(snaps, 15, now)
 	if visualLen(tier5) > 15 {
 		t.Fatalf("tier5 visualLen=%d > 15: %q", visualLen(tier5), tier5)
 	}
@@ -179,7 +179,7 @@ func TestFormatStatusUsageOverLimitShowsActualPercent(t *testing.T) {
 		{Model: "claude", Window: usage.Window5h, Pct: 319, ResetsAt: now.Add(time.Hour)},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 110, ResetsAt: now.Add(7 * 24 * time.Hour)},
 	}
-	got := formatStatusUsage(snaps, 0)
+	got := formatStatusUsage(snaps, 0, now)
 	if !strings.Contains(got, "319%") {
 		t.Fatalf("missing actual over-limit percent: %q", got)
 	}
@@ -413,6 +413,143 @@ func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "network down") {
 		t.Fatalf("stderr = %q, want adapter error surfaced under PROJMUX_USAGE_DEBUG", stderr.String())
+	}
+}
+
+func TestFormatStatusUsageMarksStaleSnapshot(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-15 * time.Minute) // older than staleAfter (10m)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: stale},
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	// Claude is stale → marker present after its 18%. Codex is fresh →
+	// no marker. Use the colored marker form for the HUD tier.
+	if !strings.Contains(got, "18%#[default]#[fg=colour245]~#[default]") {
+		t.Fatalf("missing stale marker after claude 18%%: %q", got)
+	}
+	// Codex 50% must NOT carry a marker.
+	if strings.Contains(got, "50%#[default]#[fg=colour245]~") {
+		t.Fatalf("codex marked stale but should be fresh: %q", got)
+	}
+}
+
+func TestFormatStatusUsageStaleTextTier(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-15 * time.Minute)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: stale},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: stale},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
+	}
+	// Width=45 lands us in the long-text tier; assert the plain `~`
+	// marker on the stale claude rows but not the fresh codex rows.
+	tier3 := formatStatusUsage(snaps, 45, now)
+	if !strings.Contains(tier3, "5h:42%~") {
+		t.Fatalf("text tier missing stale marker on claude 5h: %q", tier3)
+	}
+	if !strings.Contains(tier3, "wk:18%~") {
+		t.Fatalf("text tier missing stale marker on claude wk: %q", tier3)
+	}
+	if strings.Contains(tier3, "5h:71%~") || strings.Contains(tier3, "wk:55%~") {
+		t.Fatalf("fresh codex rows got stale marker: %q", tier3)
+	}
+}
+
+func TestUsageTableShowsStaleColumn(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-30 * time.Minute)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: stale},
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	out := &bytes.Buffer{}
+	if err := writeUsageTable(out, snaps, now); err != nil {
+		t.Fatalf("writeUsageTable: %v", err)
+	}
+	body := out.String()
+	if !strings.Contains(body, "STALE") {
+		t.Fatalf("table header missing STALE column: %q", body)
+	}
+	// Claude row must have a `*` in the STALE column; codex row must not.
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("table too short: %q", body)
+	}
+	var claudeLine, codexLine string
+	for _, l := range lines[1:] {
+		if strings.Contains(l, "claude") {
+			claudeLine = l
+		}
+		if strings.Contains(l, "codex") {
+			codexLine = l
+		}
+	}
+	if !strings.Contains(claudeLine, "*") {
+		t.Fatalf("claude row missing stale marker: %q", claudeLine)
+	}
+	if strings.Contains(codexLine, "*") {
+		t.Fatalf("codex row should be fresh, not stale-marked: %q", codexLine)
+	}
+}
+
+func TestUsageJSONIncludesStaleAndBackoff(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-30 * time.Minute)},
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	state := usage.State{
+		Backoff: map[string]usage.BackoffState{
+			"claude": {Until: now.Add(5 * time.Minute), Consecutive: 1},
+		},
+	}
+	out := &bytes.Buffer{}
+	if err := writeUsageJSON(out, snaps, state, now); err != nil {
+		t.Fatalf("writeUsageJSON: %v", err)
+	}
+	body := out.String()
+	if !strings.Contains(body, `"stale": true`) {
+		t.Fatalf("missing stale=true for claude row: %s", body)
+	}
+	if !strings.Contains(body, `"stale": false`) {
+		t.Fatalf("missing stale=false for codex row: %s", body)
+	}
+	if !strings.Contains(body, `"backoff"`) {
+		t.Fatalf("missing backoff block: %s", body)
+	}
+	if !strings.Contains(body, `"claude"`) {
+		t.Fatalf("backoff block missing claude entry: %s", body)
+	}
+}
+
+func TestUsageJSONHealthyOmitsBackoff(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	out := &bytes.Buffer{}
+	if err := writeUsageJSON(out, snaps, usage.State{}, now); err != nil {
+		t.Fatalf("writeUsageJSON: %v", err)
+	}
+	body := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(body, "[") {
+		t.Fatalf("healthy --json should emit bare array: %s", body)
+	}
+	if !strings.Contains(body, `"stale": false`) {
+		t.Fatalf("missing per-row stale field: %s", body)
 	}
 }
 
