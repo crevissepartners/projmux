@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -73,6 +74,91 @@ func TestDoctorRunRequiredMissingReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(out, "sudo apt-get install -y git") {
 		t.Fatalf("apt-get install hint not rendered:\n%s", out)
+	}
+}
+
+func TestDoctorInstallMissingDryRunPrintsCommands(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "fzf": true, "stty": true, "apt-get": true,
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--install-missing", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "would install git: sudo apt-get install -y git") {
+		t.Fatalf("dry-run install command missing:\n%s", out)
+	}
+}
+
+func TestDoctorInstallMissingRunsCommands(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "fzf": true, "stty": true, "apt-get": true,
+	})
+	var ran []string
+	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--install-missing"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"sudo apt-get install -y git"}
+	if !equalStrings(ran, want) {
+		t.Fatalf("ran = %#v, want %#v", ran, want)
+	}
+	if !strings.Contains(stdout.String(), "install commands completed; rerun projmux doctor to verify") {
+		t.Fatalf("completion hint missing:\n%s", stdout.String())
+	}
+}
+
+func TestDoctorInstallMissingCanIncludeOptional(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("darwin", map[string]bool{
+		"tmux": true, "fzf": true, "git": true, "stty": true, "brew": true,
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--install-missing", "--include-optional", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "would install kubectl: brew install kubectl") {
+		t.Fatalf("optional install command missing:\n%s", out)
+	}
+}
+
+func TestDoctorInstallFlagsRejectInvalidCombinations(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{})
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"--json", "--install-missing"}, want: "--json cannot be combined"},
+		{args: []string{"--dry-run"}, want: "require --install-missing"},
+		{args: []string{"--include-optional"}, want: "require --install-missing"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			t.Parallel()
+			err := cmd.Run(tc.args, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("Run() error = nil, want %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Run() error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

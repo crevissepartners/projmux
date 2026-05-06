@@ -21,6 +21,7 @@ type doctorCommand struct {
 	goos           func() string
 	getenv         func(string) string
 	commandVersion func(name string) string
+	runExternal    func(name string, args []string, stdout, stderr io.Writer) error
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -32,6 +33,7 @@ func newDoctorCommand() *doctorCommand {
 	c.commandVersion = func(name string) string {
 		return defaultCommandVersion(name)
 	}
+	c.runExternal = runDoctorExternal
 	return c
 }
 
@@ -110,11 +112,20 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
+	installMissing := fs.Bool("install-missing", false, "install missing or stale required dependencies")
+	includeOptional := fs.Bool("include-optional", false, "include optional missing dependencies with --install-missing")
+	dryRun := fs.Bool("dry-run", false, "print install commands without running them")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("doctor does not accept positional arguments")
+	}
+	if *jsonOut && (*installMissing || *dryRun || *includeOptional) {
+		return fmt.Errorf("doctor --json cannot be combined with install flags")
+	}
+	if (*dryRun || *includeOptional) && !*installMissing {
+		return fmt.Errorf("doctor --dry-run and --include-optional require --install-missing")
 	}
 
 	results := c.evaluate()
@@ -126,6 +137,12 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if err := writeDoctorText(stdout, results); err != nil {
 		return err
 	}
+	if *installMissing {
+		return c.installMissing(results, doctorInstallOptions{
+			DryRun:          *dryRun,
+			IncludeOptional: *includeOptional,
+		}, stdout, stderr)
+	}
 
 	for _, r := range results {
 		if r.Required && (r.Status == doctorStatusMissing || r.Status == doctorStatusStale) {
@@ -133,6 +150,108 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	return nil
+}
+
+type doctorInstallOptions struct {
+	DryRun          bool
+	IncludeOptional bool
+}
+
+func (c *doctorCommand) installMissing(results []doctorResult, opts doctorInstallOptions, stdout, stderr io.Writer) error {
+	commands := doctorInstallCommands(results, opts.IncludeOptional)
+	if len(commands) == 0 {
+		if _, err := fmt.Fprintln(stdout, "no installable missing dependencies"); err != nil {
+			return err
+		}
+		for _, r := range results {
+			if r.Required && (r.Status == doctorStatusMissing || r.Status == doctorStatusStale) {
+				return fmt.Errorf("missing required dependencies; no install command was detected")
+			}
+		}
+		return nil
+	}
+
+	for _, command := range commands {
+		if opts.DryRun {
+			if _, err := fmt.Fprintf(stdout, "would install %s: %s\n", command.Dep, command.String()); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := fmt.Fprintf(stdout, ">> installing %s: %s\n", command.Dep, command.String()); err != nil {
+			return err
+		}
+		if err := c.externalRunner()(command.Name, command.Args, stdout, stderr); err != nil {
+			return fmt.Errorf("install %s via %s: %w", command.Dep, command.String(), err)
+		}
+	}
+	if !opts.DryRun {
+		_, err := fmt.Fprintln(stdout, "install commands completed; rerun projmux doctor to verify")
+		return err
+	}
+	return nil
+}
+
+type doctorInstallCommand struct {
+	Dep  string
+	Name string
+	Args []string
+}
+
+func (c doctorInstallCommand) String() string {
+	return strings.Join(append([]string{c.Name}, c.Args...), " ")
+}
+
+func doctorInstallCommands(results []doctorResult, includeOptional bool) []doctorInstallCommand {
+	var out []doctorInstallCommand
+	for _, r := range results {
+		installableStatus := r.Status == doctorStatusMissing || r.Status == doctorStatusStale
+		if includeOptional {
+			installableStatus = installableStatus || r.Status == doctorStatusHint
+		}
+		if !installableStatus || (!r.Required && !includeOptional) {
+			continue
+		}
+		cmd, ok := parseDoctorInstallCommand(r.Name, r.Install)
+		if ok {
+			out = append(out, cmd)
+		}
+	}
+	return out
+}
+
+func parseDoctorInstallCommand(dep, hint string) (doctorInstallCommand, bool) {
+	command := strings.TrimSpace(hint)
+	if command == "" {
+		return doctorInstallCommand{}, false
+	}
+	if before, _, ok := strings.Cut(command, ";"); ok {
+		command = strings.TrimSpace(before)
+	}
+	command = strings.TrimPrefix(command, "or:")
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return doctorInstallCommand{}, false
+	}
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		return doctorInstallCommand{}, false
+	}
+	return doctorInstallCommand{Dep: dep, Name: parts[0], Args: parts[1:]}, true
+}
+
+func (c *doctorCommand) externalRunner() func(string, []string, io.Writer, io.Writer) error {
+	if c.runExternal != nil {
+		return c.runExternal
+	}
+	return runDoctorExternal
+}
+
+func runDoctorExternal(name string, args []string, stdout, stderr io.Writer) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
 }
 
 func (c *doctorCommand) evaluate() []doctorResult {
@@ -355,7 +474,7 @@ func versionAtLeast(got, want string) (atLeast bool, parsed bool) {
 	}
 	g := [3]int{gM, gm, gp}
 	w := [3]int{wM, wm, wp}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if g[i] != w[i] {
 			return g[i] > w[i], true
 		}
