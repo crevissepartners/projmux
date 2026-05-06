@@ -133,11 +133,18 @@ func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 	return err
 }
 
+// stateDirEnvVar lets multi-machine users redirect the snapshot cache to
+// a synced location (Dropbox, iCloud Drive, etc) so the HUD on every box
+// reflects whichever machine collected most recently.
+const stateDirEnvVar = "PROJMUX_USAGE_STATE_DIR"
+
+// limitsEnvVar is documented as deprecated in v2: authoritative limits
+// come from the upstream APIs themselves, so the override file has no
+// effect. We accept the env var silently rather than rejecting it so
+// existing user configs keep working.
+const limitsEnvVar = "PROJMUX_USAGE_LIMITS_PATH"
+
 func (c *usageCommand) defaultManager() (*usage.Manager, error) {
-	paths, err := config.DefaultPathsFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("usage: resolve config paths: %w", err)
-	}
 	registry := usage.NewRegistry()
 	if err := registry.Register(claudeadapter.New()); err != nil {
 		return nil, fmt.Errorf("usage: register claude adapter: %w", err)
@@ -145,12 +152,31 @@ func (c *usageCommand) defaultManager() (*usage.Manager, error) {
 	if err := registry.Register(codexadapter.New()); err != nil {
 		return nil, fmt.Errorf("usage: register codex adapter: %w", err)
 	}
-	limits, err := usage.LoadLimits(c.env(usage.LimitsEnvVar))
+	stateDir, err := c.resolveStateDir()
 	if err != nil {
 		return nil, err
 	}
-	store := usage.NewStore(filepath.Join(paths.StateDir, "usage"))
-	return usage.NewManager(registry, store, limits, c.now), nil
+	// PROJMUX_USAGE_LIMITS_PATH is deprecated in schema v2 — observe it
+	// here purely so users who set it don't see a "permission denied" or
+	// similar surprise. Authoritative limits come from the API now.
+	_ = c.env(limitsEnvVar)
+	store := usage.NewStore(stateDir)
+	return usage.NewManager(registry, store, c.now), nil
+}
+
+// resolveStateDir honours PROJMUX_USAGE_STATE_DIR when set, falling back
+// to <StateDir>/usage. The env-var path is used verbatim so users can
+// point it at e.g. ~/Dropbox/projmux/usage to share the cache across
+// machines.
+func (c *usageCommand) resolveStateDir() (string, error) {
+	if override := strings.TrimSpace(c.env(stateDirEnvVar)); override != "" {
+		return override, nil
+	}
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return "", fmt.Errorf("usage: resolve config paths: %w", err)
+	}
+	return filepath.Join(paths.StateDir, "usage"), nil
 }
 
 func (c *usageCommand) env(name string) string {
@@ -195,19 +221,18 @@ func writeUsageJSON(w io.Writer, snaps []usage.Snapshot) error {
 
 func writeUsageTable(w io.Writer, snaps []usage.Snapshot) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "MODEL\tWINDOW\tTOKENS\tPCT\tRESETS_AT"); err != nil {
+	if _, err := fmt.Fprintln(tw, "MODEL\tWINDOW\tPCT\tRESETS_AT"); err != nil {
 		return err
 	}
 	for _, s := range snaps {
-		pct := "-"
-		if s.Limit > 0 {
-			pct = fmt.Sprintf("%.0f%%", s.Pct)
-		}
+		// Pct comes straight from the upstream API in schema v2, so we
+		// always render it (even at 0% — that's a real value).
+		pct := fmt.Sprintf("%.0f%%", s.Pct)
 		resets := "-"
 		if !s.ResetsAt.IsZero() {
 			resets = s.ResetsAt.Local().Format(time.RFC3339)
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", s.Model, s.Window, s.Tokens, pct, resets); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", s.Model, s.Window, pct, resets); err != nil {
 			return err
 		}
 	}
@@ -398,14 +423,18 @@ func percentText(pct float64) string {
 }
 
 // buildModelDisplays converts snapshots into the canonical-ordered display
-// rows the renderers iterate over. Snapshots without a Limit are dropped
-// because we cannot compute a percentage to display.
+// rows the renderers iterate over. In schema v2 the Pct value is the
+// authoritative percentage from the upstream API, so we no longer drop
+// rows by Limit. We still drop rows whose Pct is exactly zero AND whose
+// ResetsAt is the zero time — those are placeholders that represent "no
+// data" rather than a genuine 0% (e.g. when the upstream returned
+// `seven_day_oauth_apps: null`).
 func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 	byModel := make(map[string]*modelDisplay)
 	order := make([]string, 0, 2)
 	for i := range snaps {
 		s := snaps[i]
-		if s.Limit <= 0 {
+		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 {
 			continue
 		}
 		row, ok := byModel[s.Model]

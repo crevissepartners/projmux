@@ -9,16 +9,18 @@ import (
 
 // Adapter is the pluggable contract for an AI-usage data source.
 //
-// Adapters return raw TokenEvents. They MUST NOT perform aggregation — the
-// Store and Aggregator handle bucketing and window math centrally so a future
-// PR can swap in real data sources without touching CLI code.
+// Adapters return Snapshots sourced from authoritative upstream APIs. They
+// MUST NOT aggregate or merge — the upstream already reports the
+// account-wide percentage; the Store's only job is to persist whatever
+// the adapter returns.
 //
-// Best-effort v0 contract: when data is not yet reachable (logs missing,
-// schema unknown, etc), implementations should return nil events and a nil
-// error so the pipeline degrades to "no data" rather than failing loudly.
+// Best-effort contract: when data is not reachable (no credentials, no
+// network, expired token, etc) implementations should return zero
+// snapshots. Returning an error is fine for diagnostics under
+// PROJMUX_USAGE_DEBUG; the status segment swallows it on the hot path.
 type Adapter interface {
 	Name() string
-	Collect(ctx context.Context) ([]TokenEvent, error)
+	Collect(ctx context.Context) ([]Snapshot, error)
 }
 
 // Registry stores adapters keyed by Name(). It is safe for concurrent use.

@@ -234,6 +234,27 @@ projmux는 새 tmux 세션을 만들 때마다 선택적 사용자 스크립트
 | `PROJMUX_PROJDIR` | 현재 shell 의 기본 프로젝트 루트. OS-native PATH 형식 multi-value 지원: 첫 항목이 primary repo root (saved 파일에 memoize), 이후 항목은 managed-roots 검색 목록 앞에 prepend. |
 | `PROJMUX_MANAGED_ROOTS` | 콜론 구분 검색 root 목록. saved/default 보다 우선. |
 | `PROJMUX_NOTIFY_HOOK` | AI desktop notification 을 내장 sender 대신 받는 외부 실행 파일. |
+| `PROJMUX_USAGE_STATE_DIR` | AI 사용량 snapshot 캐시 디렉터리. 기본값은 `<state>/projmux/usage`. Dropbox/iCloud 같은 동기화 위치를 가리키게 하면 여러 머신 사이에서 authoritative 사용량을 공유할 수 있다. |
+| `PROJMUX_USAGE_DEBUG` | 비어 있지 않으면 `projmux status usage` 의 adapter 오류를 swallow 하지 않고 stderr 로 surface 한다. |
+| `PROJMUX_USAGE_LIMITS_PATH` | 사용 중단 (deprecated). limit 값은 upstream API (Anthropic OAuth usage endpoint, Codex `rate_limits`) 에서 직접 가져오므로 이 변수는 읽되 무시된다. |
+
+## AI 사용량 추적
+
+`projmux usage` 는 Claude Code 와 Codex CLI 양쪽의 authoritative 5시간 / 주간
+사용률을 보고한다. 두 어댑터 모두 upstream 의 계정 뷰를 직접 읽으므로 `claude
+/usage` 와 `codex` 가 native 로 보여주는 숫자와 일치한다:
+
+- **Claude** — `~/.claude/.credentials.json` 의 bearer 토큰으로
+  `GET https://api.anthropic.com/api/oauth/usage` 호출. 401 응답 시 한 번의
+  refresh round-trip 을 수행해 credentials 파일을 회전된 토큰으로 다시 쓴다.
+  토큰은 로그에 기록되지 않는다.
+- **Codex** — 가장 최근의 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` 에서
+  마지막 `rate_limits` 페이로드를 읽는다. `primary` 는 5시간 창,
+  `secondary` 는 주간 창에 매핑된다.
+
+Snapshot 은 `<state>/projmux/usage/snapshots.json` (또는
+`PROJMUX_USAGE_STATE_DIR`) 에 저장되며, tmux 상태바에서 `projmux status
+usage` 가 실행될 때 최대 30초 주기로만 refresh 된다.
 
 ## 범위
 
