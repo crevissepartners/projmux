@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/crevissepartners/projmux/compare/v0.4.1...v0.4.2) (2026-05-06)
+
+
+### Bug Fixes
+
+* reject go upgrade for npm installs ([#55](https://github.com/crevissepartners/projmux/issues/55)) ([223eed1](https://github.com/crevissepartners/projmux/commit/223eed12cf22ebfc3cfe09a7469369e423d84fc7))
+
 ## [0.4.1](https://github.com/crevissepartners/projmux/compare/v0.4.0...v0.4.1) (2026-05-06)
 
 
