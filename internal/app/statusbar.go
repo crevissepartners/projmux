@@ -14,11 +14,11 @@ package app
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -99,28 +99,124 @@ type statusbarClickOptions struct {
 	MouseY      int
 }
 
-func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("statusbar click", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	socket := fs.String("socket", "", "tmux socket path (overrides $TMUX)")
-	mouseWindow := fs.String("mouse-window", "", "tmux #{mouse_window} for window-list click passthrough")
-	mouseX := fs.Int("mouse-x", -1, "tmux #{mouse_x} (reserved for telemetry)")
-	mouseY := fs.Int("mouse-y", -1, "tmux #{mouse_y} (reserved for telemetry)")
-	if err := fs.Parse(args); err != nil {
-		return usageError(fmt.Sprintf("parse statusbar click flags: %v", err))
-	}
-	if fs.NArg() != 1 {
-		printStatusbarUsage(stderr)
-		return usageError("statusbar click requires exactly 1 <range-id> argument")
+// parseStatusbarClickArgs parses the argv handed to `projmux statusbar click`
+// in an order-flexible way. The standard `flag` package stops at the first
+// non-flag token, which means that when tmux emits args in the natural
+// "<range-id> --mouse-window <id>" order the trailing flag pair is misread as
+// extra positionals and the whole click is rejected with exit 2 — re-introducing
+// the very tmux error popup we are trying to avoid. We therefore walk argv
+// ourselves: any token starting with `-` (or `--`) is treated as a flag plus
+// optional value, anything else is a positional. Up to one positional is
+// allowed; everything beyond that is a UsageError.
+//
+// Recognized flags: --socket, --mouse-window, --mouse-x, --mouse-y. Both
+// space-separated (`--flag value`) and equals (`--flag=value`) forms are
+// accepted. Unknown flags are reported as UsageError so typos don't silently
+// swallow values.
+func parseStatusbarClickArgs(args []string) (string, statusbarClickOptions, error) {
+	var (
+		opts        statusbarClickOptions
+		positionals []string
+		mouseX      = -1
+		mouseY      = -1
+	)
+	opts.MouseX = mouseX
+	opts.MouseY = mouseY
+
+	consumeValue := func(name string, i int) (string, int, error) {
+		if i+1 >= len(args) {
+			return "", i, usageError(fmt.Sprintf("flag --%s requires a value", name))
+		}
+		return args[i+1], i + 1, nil
 	}
 
-	raw := strings.TrimSpace(fs.Arg(0))
-	opts := statusbarClickOptions{
-		RangeID:     statusbarRangeID(raw),
-		Socket:      strings.TrimSpace(*socket),
-		MouseWindow: strings.TrimSpace(*mouseWindow),
-		MouseX:      *mouseX,
-		MouseY:      *mouseY,
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			positionals = append(positionals, a)
+			continue
+		}
+		// Strip leading dashes and split on `=` for the equals form.
+		name := strings.TrimLeft(a, "-")
+		value := ""
+		hasValue := false
+		if eq := strings.IndexByte(name, '='); eq >= 0 {
+			value = name[eq+1:]
+			name = name[:eq]
+			hasValue = true
+		}
+		switch name {
+		case "socket":
+			if !hasValue {
+				v, ni, err := consumeValue(name, i)
+				if err != nil {
+					return "", opts, err
+				}
+				value = v
+				i = ni
+			}
+			opts.Socket = strings.TrimSpace(value)
+		case "mouse-window":
+			if !hasValue {
+				v, ni, err := consumeValue(name, i)
+				if err != nil {
+					return "", opts, err
+				}
+				value = v
+				i = ni
+			}
+			opts.MouseWindow = strings.TrimSpace(value)
+		case "mouse-x":
+			if !hasValue {
+				v, ni, err := consumeValue(name, i)
+				if err != nil {
+					return "", opts, err
+				}
+				value = v
+				i = ni
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil {
+				return "", opts, usageError(fmt.Sprintf("flag --mouse-x: %v", err))
+			}
+			opts.MouseX = n
+		case "mouse-y":
+			if !hasValue {
+				v, ni, err := consumeValue(name, i)
+				if err != nil {
+					return "", opts, err
+				}
+				value = v
+				i = ni
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil {
+				return "", opts, usageError(fmt.Sprintf("flag --mouse-y: %v", err))
+			}
+			opts.MouseY = n
+		case "help", "h":
+			return "", opts, usageError("statusbar click: help requested")
+		default:
+			return "", opts, usageError(fmt.Sprintf("unknown flag --%s", name))
+		}
+	}
+
+	if len(positionals) > 1 {
+		return "", opts, usageError("statusbar click accepts at most 1 <range-id> argument")
+	}
+	raw := ""
+	if len(positionals) == 1 {
+		raw = strings.TrimSpace(positionals[0])
+	}
+	opts.RangeID = statusbarRangeID(raw)
+	return raw, opts, nil
+}
+
+func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) error {
+	raw, opts, err := parseStatusbarClickArgs(args)
+	if err != nil {
+		printStatusbarUsage(stderr)
+		return err
 	}
 	// MouseX/MouseY are intentionally unused today. The fields are wired
 	// through so we can plumb click telemetry without changing the bind.
