@@ -239,7 +239,17 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		args = append(args, "--socket", socket)
 	}
 	if _, err := c.runner.Run(context.Background(), binaryPath, args...); err != nil {
+		// Leave the entry in place so the user can retry the click.
 		return fmt.Errorf("statusbar notify: focus invocation failed: %w", err)
+	}
+	// Click-to-focus has no separate producer to ack the entry, so the
+	// click itself is the consume signal: a successful focus dispatch is
+	// the user telling us "I have handled this notification". We swallow
+	// the ack error because the focus already succeeded — the user has
+	// been navigated to the pane, and a stale queue entry will be cleaned
+	// up by the next reconcile pass anyway.
+	if ackErr := store.Ack(head.ID); ackErr != nil {
+		fmt.Fprintf(stderr, "statusbar notify: ack %s: %v\n", head.ID, ackErr)
 	}
 	return nil
 }
