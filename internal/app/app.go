@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -12,6 +13,29 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	return New().Run(args, stdout, stderr)
 }
 
+// UsageError marks an error caused by invalid CLI input (parse failure,
+// invalid enum, missing required flag). The main entrypoint treats these as
+// exit code 2.
+type UsageError struct {
+	Message string
+}
+
+// Error implements the error interface for UsageError.
+func (e *UsageError) Error() string {
+	return e.Message
+}
+
+// usageError builds a UsageError with the supplied message.
+func usageError(message string) error {
+	return &UsageError{Message: message}
+}
+
+// IsUsageError reports whether err (or any wrapped error) is a UsageError.
+func IsUsageError(err error) bool {
+	var ue *UsageError
+	return errors.As(err, &ue)
+}
+
 // App wires the CLI entrypoints to concrete command handlers.
 type App struct {
 	ai           *aiCommand
@@ -20,6 +44,7 @@ type App struct {
 	current      *currentCommand
 	initCmd      *initCommand
 	kill         *killCommand
+	notify       *notifyCommand
 	pin          *pinCommand
 	preview      *previewCommand
 	prune        *pruneCommand
@@ -46,6 +71,7 @@ func New() *App {
 		current:      newCurrentCommand(),
 		initCmd:      newInitCommand(),
 		kill:         newKillCommand(),
+		notify:       newNotifyCommand(),
 		pin:          newPinCommand(),
 		preview:      newPreviewCommand(),
 		prune:        newPruneCommand(),
@@ -82,6 +108,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.initCmd.Run(args[1:], stdout, stderr)
 	case "kill":
 		return a.kill.Run(args[1:], stdout, stderr)
+	case "notify":
+		return a.notify.Run(args[1:], stdout, stderr)
 	case "pin":
 		return a.pin.Run(args[1:], stdout, stderr)
 	case "preview":
@@ -130,6 +158,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
 	fmt.Fprintln(w, "  init      Merge projmux keybindings into a terminal config")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
+	fmt.Fprintln(w, "  notify    Persist status-bar notifications (push/list/ack)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
 	fmt.Fprintln(w, "  prune     Trim stale tmux lifecycle state")
