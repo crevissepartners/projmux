@@ -21,6 +21,13 @@
 // refresh token. On success the credentials file is rewritten preserving
 // its exact original schema; on failure we return zero snapshots and a
 // non-fatal error.
+//
+// Rate-limit handling: the OAuth usage endpoint enforces a low
+// per-credential request budget. On HTTP 429 the adapter persists an
+// exponential backoff (5m → 10m → cap 15m, doubling per consecutive
+// failure) so the next Collect short-circuits without making the
+// network call. A `Retry-After` header (seconds or HTTP-date) is
+// honoured up to the 15m cap. A non-429 success resets the streak.
 package claude
 
 import (
@@ -33,7 +40,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/usage"
@@ -61,6 +70,21 @@ const userAgent = "projmux-usage/0.2"
 // anthropicVersion is the API version header recommended by Anthropic.
 const anthropicVersion = "2023-06-01"
 
+// throttleHint is the per-adapter minimum interval between Collect
+// invocations. The OAuth usage endpoint is more sensitive to call
+// frequency than the local-file Codex source, so it gets a longer floor.
+const throttleHint = 60 * time.Second
+
+// Backoff parameters. Defaults align with the Anthropic guidance for
+// OAuth surfaces: start at 5 minutes, double per consecutive 429, cap at
+// 15 minutes. Retry-After (when present) overrides the doubling
+// progression but is still clamped to the cap so a hostile server can't
+// pin the adapter offline indefinitely.
+const (
+	backoffDefault = 5 * time.Minute
+	backoffCap     = 15 * time.Minute
+)
+
 // Adapter is the Claude implementation of usage.Adapter.
 type Adapter struct {
 	credentialsPath string
@@ -68,6 +92,14 @@ type Adapter struct {
 	refreshURL      string
 	httpClient      *http.Client
 	now             func() time.Time
+
+	// Backoff bookkeeping. Mutated under mu so concurrent Collect calls
+	// (rare — the CLI is single-threaded — but cheap to be safe) don't
+	// race on counter increments. The Manager round-trips the persisted
+	// form through snapshots.json via LoadBackoff/SaveBackoff.
+	mu             sync.Mutex
+	backoffUntil   time.Time
+	consecutive429 int
 }
 
 // New returns an Adapter that reads credentials from
@@ -103,11 +135,50 @@ func NewWithConfig(credentialsPath, usageURL, refreshURL string, client *http.Cl
 // Name implements usage.Adapter.
 func (a *Adapter) Name() string { return Name }
 
+// ThrottleHint implements usage.ThrottleHinter. Claude's OAuth usage
+// endpoint enforces a low per-credential request budget, so we ask the
+// Manager for at least 60s between calls.
+func (a *Adapter) ThrottleHint() time.Duration { return throttleHint }
+
+// LoadBackoff implements usage.BackoffStater. Called by the Manager
+// before Collect with the on-disk backoff snapshot, so a CLI restart
+// observes prior 429 progress.
+func (a *Adapter) LoadBackoff(state usage.BackoffState) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.backoffUntil = state.Until
+	a.consecutive429 = state.Consecutive
+}
+
+// SaveBackoff implements usage.BackoffStater. Called by the Manager
+// after Collect so a fresh 429 (or success) is persisted.
+func (a *Adapter) SaveBackoff() usage.BackoffState {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return usage.BackoffState{
+		Until:       a.backoffUntil,
+		Consecutive: a.consecutive429,
+	}
+}
+
 // Collect calls the OAuth usage endpoint and translates the response into
 // 5h + weekly Snapshots. Best-effort: any failure (no creds, network
 // error, 401 with no working refresh) returns nil snapshots and a
 // non-fatal error so the status segment stays silent.
+//
+// During 429-induced backoff the adapter short-circuits: it returns
+// (nil, nil) so the Manager's merge logic preserves the prior on-disk
+// rows. The caller never observes an error during backoff because
+// "we deferred the call" is not a failure — it's the desired behaviour.
 func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
+	now := a.now().UTC()
+	a.mu.Lock()
+	if !a.backoffUntil.IsZero() && now.Before(a.backoffUntil) {
+		a.mu.Unlock()
+		return nil, nil
+	}
+	a.mu.Unlock()
+
 	if a.credentialsPath == "" {
 		return nil, errors.New("claude: no credentials path resolved")
 	}
@@ -119,9 +190,13 @@ func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 		return nil, errors.New("claude: empty access token")
 	}
 
-	body, status, err := a.fetchUsage(ctx, creds.token())
+	body, status, retryAfter, err := a.fetchUsage(ctx, creds.token())
 	if err != nil {
 		return nil, err
+	}
+	if status == http.StatusTooManyRequests {
+		a.recordBackoff(now, retryAfter)
+		return nil, fmt.Errorf("claude: usage endpoint returned status 429 (backing off)")
 	}
 	if status == http.StatusUnauthorized {
 		// Try a single refresh round-trip. If that fails, give up.
@@ -137,9 +212,13 @@ func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 		// token is still in memory, so this Collect can proceed; the
 		// next invocation may have to refresh again.
 		_ = writeCredentials(a.credentialsPath, raw, newAccess, newRefresh, expiresIn, a.now())
-		body, status, err = a.fetchUsage(ctx, newAccess)
+		body, status, retryAfter, err = a.fetchUsage(ctx, newAccess)
 		if err != nil {
 			return nil, err
+		}
+		if status == http.StatusTooManyRequests {
+			a.recordBackoff(now, retryAfter)
+			return nil, fmt.Errorf("claude: usage endpoint returned status 429 (backing off)")
 		}
 	}
 	if status != http.StatusOK {
@@ -150,14 +229,51 @@ func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Reset backoff on a clean 200.
+	a.mu.Lock()
+	a.backoffUntil = time.Time{}
+	a.consecutive429 = 0
+	a.mu.Unlock()
 	return resp.toSnapshots(a.now().UTC()), nil
 }
 
-// fetchUsage performs a single GET against the usage endpoint.
-func (a *Adapter) fetchUsage(ctx context.Context, token string) ([]byte, int, error) {
+// recordBackoff applies the exponential-backoff policy. retryAfter > 0
+// (parsed from the Retry-After header) takes precedence over the
+// doubling progression; both are clamped to backoffCap.
+func (a *Adapter) recordBackoff(now time.Time, retryAfter time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.consecutive429++
+	var dur time.Duration
+	if retryAfter > 0 {
+		dur = retryAfter
+	} else {
+		// 5m, 10m, 20m → cap 15m. n=1 → 5m, n=2 → 10m, n>=3 → 15m.
+		shift := a.consecutive429 - 1
+		if shift < 0 {
+			shift = 0
+		}
+		if shift > 30 {
+			shift = 30 // guard against overflow on absurd streaks.
+		}
+		dur = backoffDefault << shift
+	}
+	if dur > backoffCap {
+		dur = backoffCap
+	}
+	if dur < 0 {
+		dur = backoffDefault
+	}
+	a.backoffUntil = now.Add(dur)
+}
+
+// fetchUsage performs a single GET against the usage endpoint. The
+// returned retryAfter is non-zero only when the response carried a
+// parseable Retry-After header (typically alongside a 429).
+func (a *Adapter) fetchUsage(ctx context.Context, token string) ([]byte, int, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.usageURL, nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("claude: build request: %w", err)
+		return nil, 0, 0, fmt.Errorf("claude: build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", userAgent)
@@ -165,14 +281,39 @@ func (a *Adapter) fetchUsage(ctx context.Context, token string) ([]byte, int, er
 	req.Header.Set("Accept", "application/json")
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("claude: GET usage: %w", err)
+		return nil, 0, 0, fmt.Errorf("claude: GET usage: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("claude: read body: %w", err)
+		return nil, resp.StatusCode, 0, fmt.Errorf("claude: read body: %w", err)
 	}
-	return body, resp.StatusCode, nil
+	retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"), a.now())
+	return body, resp.StatusCode, retryAfter, nil
+}
+
+// parseRetryAfter accepts both forms of the Retry-After header: integer
+// seconds, or an HTTP-date. Returns 0 when the value is missing or
+// unparseable so the caller falls back to the doubling progression.
+func parseRetryAfter(raw string, now time.Time) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(raw); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(raw); err == nil {
+		d := t.Sub(now)
+		if d <= 0 {
+			return 0
+		}
+		return d
+	}
+	return 0
 }
 
 // refreshToken trades a refresh token for a new access (and possibly a new
