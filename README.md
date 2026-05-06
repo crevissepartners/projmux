@@ -244,6 +244,28 @@ and troubleshooting.
 | `PROJMUX_PROJDIR` | Default project root for the current shell. Accepts an OS-native PATH-style multi-value: the first entry is the primary repo root (memoized to `~/.config/projmux/projdir`), and any additional entries are prepended to the managed-roots search list. |
 | `PROJMUX_MANAGED_ROOTS` | Colon-separated list of search roots. Overrides the saved/default list. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in sender. |
+| `PROJMUX_USAGE_STATE_DIR` | Override directory for the AI-usage snapshot cache. Defaults to `<state>/projmux/usage`. Point this at a synced location (Dropbox, iCloud Drive, etc) to share authoritative usage between machines. |
+| `PROJMUX_USAGE_DEBUG` | When non-empty, surfaces adapter errors from `projmux status usage` to stderr instead of swallowing them. |
+| `PROJMUX_USAGE_LIMITS_PATH` | Deprecated. Limits now come from the upstream APIs (Anthropic OAuth usage endpoint, Codex `rate_limits`); this variable is read but ignored. |
+
+## AI usage tracking
+
+`projmux usage` reports authoritative 5-hour and weekly utilisation for both
+Claude Code and the Codex CLI. Both adapters read from the upstream's own
+view of your account so the percentages match what `claude /usage` and
+`codex` show natively:
+
+- **Claude** — calls `GET https://api.anthropic.com/api/oauth/usage` with the
+  bearer token in `~/.claude/.credentials.json`. The adapter performs a
+  single refresh round-trip on 401 and rewrites the credentials file with
+  the rotated tokens. Tokens are never logged.
+- **Codex** — reads the most recent `rate_limits` payload from the newest
+  `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. `primary` maps to the 5h
+  window, `secondary` to the weekly window.
+
+Snapshots are persisted under `<state>/projmux/usage/snapshots.json` (or
+`PROJMUX_USAGE_STATE_DIR`) and refreshed at most every 30 seconds when
+`projmux status usage` runs in the tmux status bar.
 
 ## Scope
 
