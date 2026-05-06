@@ -1,0 +1,21 @@
+{
+  "name": "@projmux/linux-x64",
+  "version": "0.4.0",
+  "description": "Linux x64 binary for projmux",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crevissepartners/projmux.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/projmux",
+    "README.md",
+    "LICENSE"
+  ]
+}

@@ -14,7 +14,7 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './.git/*' \
 	-not -path './.wt/*')
 
-.PHONY: fmt fmt-check fix build install test test-integration test-e2e e2e verify
+.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-e2e e2e verify
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -32,6 +32,9 @@ install: build
 	@$(INSTALL_BIN) tmux apply
 	@echo ">> reconciling notify queue..."
 	@$(INSTALL_BIN) notify reconcile || true
+
+npm-pack:
+	scripts/package-npm.sh --pack
 
 fmt:
 	@if [ -n "$(GO_FILES)" ]; then \

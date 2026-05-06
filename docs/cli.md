@@ -338,6 +338,7 @@ flags with the top-level `switch` UX:
 
 ## See also
 
+- [npm-distribution.md](npm-distribution.md) — npm binary package layout.
 - [statusbar.md](statusbar.md) — two-line layout and click range catalogue.
 - [notify-queue.md](notify-queue.md) — queue file format and lifecycle.
 - [usage-tracking.md](usage-tracking.md) — adapter HTTP/file behaviour.
