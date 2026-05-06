@@ -934,6 +934,12 @@ func tmuxAppKeyBindings() []string {
 // and `#{mouse_status_range}` returns whichever user-defined range we wrapped
 // under the cursor — so a single bind covers both lines.
 //
+// We also pass `--mouse-window "#{mouse_window}"` so the dispatcher can fall
+// back to tmux's default window-list behavior (`select-window -t @<id>`) when
+// the click lands on a window entry rather than one of our user-defined
+// ranges. Without this, overriding `MouseDown1Status` would silently disable
+// click-to-switch-window in the window list.
+//
 // The `prefix s` chord uses tmux's `switch-client -T <table>` mechanism so
 // keyboard users get the same handlers as mouse clickers without re-defining
 // each handler twice.
@@ -941,7 +947,7 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 	bin := tmuxShellQuote(binaryPath)
 	return []string{
 		"unbind-key -q -n MouseDown1Status",
-		"bind-key -n MouseDown1Status run-shell " + tmuxConfigQuote(bin+" statusbar click \"#{mouse_status_range}\""),
+		"bind-key -n MouseDown1Status run-shell " + tmuxConfigQuote(bin+" statusbar click \"#{mouse_status_range}\" --mouse-window \"#{mouse_window}\""),
 		"bind-key s switch-client -T projmux-status",
 		"bind-key -T projmux-status u run-shell " + tmuxConfigQuote(bin+" statusbar click usage"),
 		"bind-key -T projmux-status n run-shell " + tmuxConfigQuote(bin+" statusbar click notify"),

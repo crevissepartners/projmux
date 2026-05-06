@@ -69,24 +69,21 @@ func TestStatusbarDispatchTableCoversAllKnownRanges(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickRejectsUnknownRange(t *testing.T) {
+func TestStatusbarClickUnknownRangeWithoutMouseWindowIsNoop(t *testing.T) {
 	t.Parallel()
 
+	// Once we share `MouseDown1Status` with the window-list passthrough, an
+	// unknown range id is no longer a user error — it just means the click
+	// landed somewhere we don't manage. Returning nil keeps run-shell from
+	// flashing a tmux error popup at the user.
 	runner := &statusbarFakeRunner{}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	err := cmd.Run([]string{"click", "totally-bogus"}, &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil {
-		t.Fatal("expected error for unknown range id")
-	}
-	if !IsUsageError(err) {
-		t.Fatalf("expected UsageError, got %T: %v", err, err)
-	}
-	if !strings.Contains(err.Error(), "unknown statusbar range id") {
-		t.Fatalf("err = %v, want substring 'unknown statusbar range id'", err)
+	if err := cmd.Run([]string{"click", "totally-bogus"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
 	}
 	if len(runner.calls) != 0 {
-		t.Fatalf("unknown range should not invoke runner, got %d calls", len(runner.calls))
+		t.Fatalf("unknown range without mouse-window should not invoke runner, got %d calls", len(runner.calls))
 	}
 }
 
@@ -101,6 +98,103 @@ func TestStatusbarClickEmptyRangeIsNoop(t *testing.T) {
 	}
 	if len(runner.calls) != 0 {
 		t.Fatalf("empty range should not invoke runner, got %d calls", len(runner.calls))
+	}
+}
+
+func TestStatusbarClickKnownRangeIgnoresMouseWindow(t *testing.T) {
+	t.Parallel()
+
+	// When the click lands on a projmux user-defined range, the range
+	// handler always wins. The `--mouse-window` passthrough only applies
+	// when the click landed outside any range.
+	runner := &statusbarFakeRunner{}
+	store := &stubNotifyStore{listEntries: nil}
+	cmd := newStatusbarTestCommand(runner, store)
+
+	if err := cmd.Run([]string{"click", "--mouse-window", "3", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, call := range runner.calls {
+		if call.name != "tmux" || len(call.args) < 1 {
+			continue
+		}
+		if call.args[0] == "select-window" {
+			t.Fatalf("known range must not trigger select-window passthrough; calls = %#v", runner.calls)
+		}
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "no notifications") {
+		t.Fatalf("notify handler did not run; calls = %#v", runner.calls)
+	}
+}
+
+func TestStatusbarClickEmptyRangeWithMouseWindowSelectsWindow(t *testing.T) {
+	t.Parallel()
+
+	// Default tmux behavior: clicking on a window-list entry switches to
+	// that window. Restored here via select-window with the `@` prefix.
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "--mouse-window", "3", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@3"}) {
+		t.Fatalf("missing select-window -t @3; calls = %#v", runner.calls)
+	}
+}
+
+func TestStatusbarClickEmptyRangeWithPrefixedMouseWindowDoesNotDoublePrefix(t *testing.T) {
+	t.Parallel()
+
+	// `#{mouse_window}` is normally numeric (e.g. "3") but if a future
+	// tmux ever returns "@5" we must not produce "@@5".
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "--mouse-window", "@5", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@5"}) {
+		t.Fatalf("missing select-window -t @5; calls = %#v", runner.calls)
+	}
+	for _, call := range runner.calls {
+		if call.name == "tmux" && len(call.args) >= 3 && call.args[0] == "select-window" && call.args[2] == "@@5" {
+			t.Fatalf("select-window target was double-prefixed; calls = %#v", runner.calls)
+		}
+	}
+}
+
+func TestStatusbarClickEmptyRangeWithEmptyMouseWindowIsNoop(t *testing.T) {
+	t.Parallel()
+
+	// Click on row-1 whitespace between two ranges: tmux gives us an empty
+	// `mouse_status_range` *and* an empty `mouse_window`. We must not call
+	// select-window with a bare `@`.
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "--mouse-window", "", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("empty range + empty mouse-window must be a noop, got %d calls", len(runner.calls))
+	}
+}
+
+func TestStatusbarClickUnknownRangeWithMouseWindowSelectsWindow(t *testing.T) {
+	t.Parallel()
+
+	// Some custom right-hand `range=user|foo` from a third-party plugin
+	// could deliver an unfamiliar range id. We still want the click to
+	// switch to the window underneath the cursor when one is available.
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "--mouse-window", "7", "totally-bogus"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@7"}) {
+		t.Fatalf("missing select-window -t @7; calls = %#v", runner.calls)
 	}
 }
 
@@ -481,6 +575,18 @@ func sawTmuxSubcommand(calls []statusbarFakeCall, sub string) bool {
 			if a == sub {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func sawTmuxArgs(calls []statusbarFakeCall, want []string) bool {
+	for _, c := range calls {
+		if c.name != "tmux" {
+			continue
+		}
+		if equalStringSlices(c.args, want) {
+			return true
 		}
 	}
 	return false
