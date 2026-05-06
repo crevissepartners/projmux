@@ -29,6 +29,26 @@ for a daily terminal workspace:
   self-contained tmux app, or install the generated snippet into your normal
   tmux server.
 
+## What's new in 0.4
+
+- **`projmux setup` / `projmux init`** — diagnose terminal key delivery,
+  then auto-merge the right CSI-u bindings into Ghostty or Windows
+  Terminal configs.
+- **`projmux doctor`** — runtime dependency report with minimum-version
+  enforcement (tmux 3.4, fzf 0.55).
+- **`projmux focus`** — unified switch-client dispatch shared by the
+  AI reply-ready flow and the status-bar notify click.
+- **Persistent notify queue** — `projmux notify push|list|ack|reconcile`
+  with TTL, severity, source, and target metadata. See
+  [notify-queue.md](docs/notify-queue.md).
+- **Authoritative usage tracking** — `projmux usage` reads Claude's
+  OAuth usage endpoint and Codex's local rollout `rate_limits`. See
+  [usage-tracking.md](docs/usage-tracking.md).
+- **Two-line clickable status bar** — row 0 keeps the native window
+  list (click a tab to switch), row 1 splits a notify HUD pill (left)
+  and a usage HUD bar (right). Both segments degrade gracefully on
+  narrow status budgets. See [statusbar.md](docs/statusbar.md).
+
 ## What It Does
 
 - Creates or switches to tmux sessions from project directories.
@@ -39,6 +59,9 @@ for a daily terminal workspace:
 - Generates tmux bindings for launchers, rename prompts, pane borders, status
   segments, and attention hooks.
 - Displays git branch and Kubernetes context/namespace in the status area.
+- Renders a two-line clickable status bar with click-to-switch tabs on
+  row 0 and HUD-style notify (left) and AI usage (right) segments on
+  row 1.
 - Launches AI splits and keeps their agent name, topic, status, and
   notification state visible in tmux.
 
@@ -289,7 +312,10 @@ make verify
 More documentation:
 
 - [Architecture](docs/architecture.md)
-- [CLI Shape](docs/cli.md)
+- [CLI Reference](docs/cli.md)
+- [Statusbar](docs/statusbar.md)
+- [Notify queue](docs/notify-queue.md)
+- [Usage tracking](docs/usage-tracking.md)
 - [Hooks](docs/hooks.md)
 - [Migration Plan](docs/migration-plan.md)
 - [Repo Layout](docs/repo-layout.md)

@@ -28,6 +28,26 @@ attention signal을 함께 제공합니다. 자체 tmux 앱(`projmux shell`)으�
 - **격리 실행과 기존 tmux 통합 중 선택할 수 있습니다.** `projmux shell`로 자체
   tmux 앱을 쓰거나, 생성된 snippet을 기존 tmux 서버에 설치할 수 있습니다.
 
+## 0.4 주요 변경
+
+- **`projmux setup` / `projmux init`** — 터미널이 어떤 키 시퀀스를
+  swallow 하는지 진단한 뒤, Ghostty 또는 Windows Terminal 설정에 맞는
+  CSI-u 바인딩을 자동 머지한다.
+- **`projmux doctor`** — 런타임 의존성 점검 + 최소 버전 강제 (tmux 3.4,
+  fzf 0.55).
+- **`projmux focus`** — AI reply-ready 와 status-bar notify 클릭이 공유하는
+  통합 switch-client 디스패처.
+- **영속 notify queue** — `projmux notify push|list|ack|reconcile` 가 TTL,
+  severity, source, target 메타데이터를 가진 큐를 디스크에 보존한다.
+  자세한 내용은 [notify-queue.md](docs/notify-queue.md).
+- **Authoritative 사용량 추적** — `projmux usage` 가 Claude OAuth usage
+  endpoint 와 Codex 로컬 rollout 의 `rate_limits` 를 직접 읽는다.
+  자세한 내용은 [usage-tracking.md](docs/usage-tracking.md).
+- **Two-line clickable status bar** — row 0 는 native window list 를 그대로
+  살려 탭 클릭으로 전환할 수 있고, row 1 은 좌측 notify HUD 와 우측 usage
+  HUD 로 분할된다. 폭이 좁아지면 두 세그먼트 모두 단계적으로 축소된다.
+  자세한 내용은 [statusbar.md](docs/statusbar.md).
+
 ## 무엇을 하나
 
 - 프로젝트 디렉터리에서 tmux session을 만들거나 기존 session으로 전환.
@@ -38,6 +58,8 @@ attention signal을 함께 제공합니다. 자체 tmux 앱(`projmux shell`)으�
 - launcher, rename prompt, pane border, status segment, attention hook을 위한
   tmux binding 생성.
 - git branch와 Kubernetes context/namespace를 status area에 표시.
+- Two-line clickable status bar — row 0 의 native 윈도우 목록은 탭 클릭으로
+  바로 전환되고, row 1 은 notify(좌)와 AI usage(우) HUD 세그먼트로 분할된다.
 - Codex/Claude/plain shell split을 만들고 agent/topic/status/notification 상태를
   tmux UI에 표시.
 
@@ -279,7 +301,10 @@ make verify
 추가 문서:
 
 - [Architecture](docs/architecture.md)
-- [CLI Shape](docs/cli.md)
+- [CLI Reference](docs/cli.md)
+- [Statusbar](docs/statusbar.md)
+- [Notify queue](docs/notify-queue.md)
+- [Usage tracking](docs/usage-tracking.md)
 - [Hooks](docs/hooks.md)
 - [Migration Plan](docs/migration-plan.md)
 - [Repo Layout](docs/repo-layout.md)

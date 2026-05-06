@@ -56,10 +56,42 @@
 - Non-Conventional commit subjects on `main` are silently skipped by release-please. Keep PR titles strict; squash merge ensures the PR title is the only subject that lands.
 
 ## Configuration And Environment
+
+Project root and discovery:
+
 - `PROJMUX_PROJDIR` is the canonical project-root env. It accepts an OS-native PATH-style multi-value (`filepath.SplitList`): the first non-empty entry is the primary repo root (memoized to `~/.config/projmux/projdir`), and any additional entries are prepended to managed roots. The legacy `PROJDIR`/`RP` env vars are no longer honored.
 - `PROJMUX_MANAGED_ROOTS` is the colon-separated search-root override (priority: env > saved file > defaults). Legacy alias `TMUX_SESSIONIZER_ROOTS` is still honored at runtime.
 - `~/.config/projmux/workdirs` stores the cumulative workdirs list managed via the Settings UX. It is read only when no env list is set.
 - `tmux set-option -g @projmux_projdir <path>` is a declarative source for `PROJMUX_PROJDIR` that the switch command reads through `tmuxProjdirOption`.
+
+Notifications:
+
+- `PROJMUX_NOTIFY_HOOK` — external executable that receives AI desktop notifications instead of the built-in sender. The hook is invoked with positional arguments: summary, body, urgency, app name, tag, group, icon path. When unset, projmux uses `notify-send` on Linux and PowerShell toasts on WSL.
+- `PROJMUX_WSL_TOAST_ICON_DIR` — override directory for the icon copied into a Windows-readable path before the WSL toast call.
+
+Usage tracking:
+
+- `PROJMUX_USAGE_STATE_DIR` — override for the snapshot cache directory. Defaults to `<state>/projmux/usage`. Point at a synced location (Dropbox, iCloud Drive) to share authoritative usage between machines. Resolved verbatim, no `~` expansion.
+- `PROJMUX_USAGE_DEBUG` — when non-empty, surfaces adapter errors from `projmux status usage` to stderr instead of swallowing them.
+- `PROJMUX_USAGE_LIMITS_PATH` — deprecated. v2 takes limits straight from the upstream APIs; the variable is read but ignored.
+
+Focus:
+
+- `PROJMUX_FOCUS_DEBUG` — when non-empty, `projmux focus` prints a one-line telemetry record (target/session/window/pane/socket/source/kind) to stderr.
+
+Hook contract environment (passed to `~/.config/projmux/hooks/post-create`):
+
+- `PROJMUX_SESSION` — session name being created.
+- `PROJMUX_CWD` — absolute path of the project directory.
+- `PROJMUX_SESSION_KIND` — `persistent` or `ephemeral`.
+- `PROJMUX_SOCKET` — tmux socket path when projmux is running on a non-default `-L` socket; absent on the default socket.
+- `PROJMUX_VERSION` — the binary's `internal/version` string.
+
+Tunables (rarely touched):
+
+- `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` — collapse window for duplicate AI notifications keyed on `(summary, tag)`.
+- `PROJMUX_CODEX_TITLE_WATCH_INTERVAL`, `PROJMUX_CODEX_REPLY_SETTLE_LOOPS` — pacing knobs for the AI title-watch loop.
+- `TMUX_KUBE_CACHE_TTL`, `TMUX_KUBE_TIMEOUT` — knob for the kube status segment cache and the kubectl invocation budget.
 
 ## Review Expectations
 - Reviews should be small enough to reason about quickly.

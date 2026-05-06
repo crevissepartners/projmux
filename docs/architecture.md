@@ -88,6 +88,73 @@ Ephemeral runtime state:
 - popup marker files
 - current tagged selection set
 
+## Notify queue
+
+`projmux` keeps a single JSON-backed queue of pending notifications at
+`<state>/projmux/notify.json` (typically `~/.local/state/projmux/notify.json`,
+following XDG). Writes go through an `O_CREATE|O_EXCL` lock file
+(`notify.json.lock`) with bounded retry + jittered backoff so the queue
+is safe across concurrent producers (the AI flow, the manual `attention
+toggle`, the `notify push` CLI) on a local filesystem.
+
+- **Push** — `projmux notify push` (or the in-process producer in
+  `internal/app/notify_producer.go`) appends an entry. Entries carry a
+  stable id (caller-supplied or `ai:<session>:<pane>` for the producer
+  path), text (capped at 80 runes), severity (`info|warn|critical`),
+  source (`ai|k8s|git|external`), TTL (default 600s), and a
+  `Target{Socket, Session, Window, Pane}`. Re-pushing an existing id
+  refreshes the entry's text and timestamp.
+- **List** — `projmux notify list` returns newest-first. TTL'd entries
+  are filtered out at read time, not at write time, so a slow ack pass
+  never resurrects stale rows.
+- **Ack** — `projmux notify ack <id>` removes one entry; `--all`
+  flushes everything. The status-bar click handler acks the entry
+  it focused so the queue self-clears.
+- **Reconcile** — `projmux notify reconcile` walks
+  `tmux list-panes -a` and back-fills entries for panes whose
+  attention state is `reply` AND whose AI agent option is set,
+  acking stale `ai:` entries that no longer match a live pane.
+  `make install` and `projmux upgrade` invoke it so the queue
+  recovers from any drift introduced by a lost daemon.
+
+The producer is wired to the attention state machine: a pane
+transitioning to `reply` with an AI agent option set pushes an
+`ai:<session>:<pane>` entry; the matching `clear` (or the AI
+flow's `status set idle`) acks it. Manual `attention toggle` on a
+shell pane does not push because the agent option is empty —
+the queue is intentionally AI-driven only.
+
+See [notify-queue.md](notify-queue.md) for the full reference.
+
+## Usage snapshots
+
+`projmux usage` and `projmux status usage` share a single `Manager`
+that walks two registered adapters (Claude, Codex) and persists the
+result to `<state>/projmux/usage/snapshots.json` (or
+`PROJMUX_USAGE_STATE_DIR`). The cache file is the authoritative source
+for the HUD render path so the tmux status interval never blocks on a
+network call.
+
+- **Per-adapter throttle** — Claude reports a 5-minute hint via the
+  `ThrottleHinter` interface; Codex falls through to the global
+  `30s` floor used by `status usage`. `MaybeCollect` only invokes an
+  adapter when `now - last_collect >= throttle`. `--force` bypasses the
+  gate.
+- **429 backoff** — Claude implements `BackoffStater`. On HTTP 429
+  the adapter persists `BackoffState{Until, Consecutive}`: the
+  default cooldown is 30 minutes, doubling per consecutive 429 up to a
+  60-minute cap. A `Retry-After` header (when present) raises the floor.
+  During backoff `Collect` short-circuits (no network call). A clean
+  200 resets the streak. `--force` clears the persisted state via the
+  `BackoffResetter` interface so the next call attempts the network
+  call regardless of streak.
+- **Failure preservation** — adapter failures do not erase prior
+  rows. The Manager merges new snapshots over the on-disk slice, so a
+  transient 429 keeps the last known good numbers visible.
+
+See [usage-tracking.md](usage-tracking.md) for adapter detail (token
+refresh, rollout schema).
+
 ## Two-line clickable status bar
 
 projmux configures tmux with `status 2`. Line 0 is the existing
