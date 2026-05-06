@@ -151,12 +151,12 @@ func TestTarget_Selectors(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name      string
-		target    Target
-		wantHasW  bool
-		wantHasP  bool
-		wantWSel  string
-		wantPSel  string
+		name     string
+		target   Target
+		wantHasW bool
+		wantHasP bool
+		wantWSel string
+		wantPSel string
 	}{
 		{
 			name:     "session only",

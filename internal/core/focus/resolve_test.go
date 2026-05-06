@@ -45,8 +45,8 @@ func TestResolve_PrefersLongerSharedPrefixOverRecency(t *testing.T) {
 	t.Parallel()
 
 	inv := []Candidate{
-		{Name: "foo-other"},     // shares 1 token (foo)
-		{Name: "foo-feat-zzz"},  // shares 2 tokens (foo, feat)
+		{Name: "foo-other"},    // shares 1 token (foo)
+		{Name: "foo-feat-zzz"}, // shares 2 tokens (foo, feat)
 	}
 
 	res, ok := Resolve("foo-feat-baz", inv)
