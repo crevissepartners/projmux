@@ -255,6 +255,65 @@ func TestStatusbarClickNotifyExecsFocusForNewestEntry(t *testing.T) {
 	}
 }
 
+func TestStatusbarClickNotifyAcksEntryAfterSuccessfulFocus(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	store := &stubNotifyStore{listEntries: []notify.Notification{
+		{
+			ID:      "abc",
+			Text:    "deploy ok",
+			Source:  notify.SourceAI,
+			Socket:  "projmux",
+			Session: "main",
+			Window:  "1",
+			Pane:    "0",
+		},
+	}}
+	cmd := newStatusbarTestCommand(runner, store)
+
+	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if store.ackedID != "abc" {
+		t.Fatalf("store.ackedID = %q, want %q", store.ackedID, "abc")
+	}
+}
+
+func TestStatusbarClickNotifyDoesNotAckWhenFocusFails(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{
+		respond: func(name string, _ []string) ([]byte, error) {
+			if name == "/usr/local/bin/projmux" {
+				return nil, errors.New("focus boom")
+			}
+			return nil, nil
+		},
+	}
+	store := &stubNotifyStore{listEntries: []notify.Notification{
+		{
+			ID:      "abc",
+			Text:    "deploy ok",
+			Source:  notify.SourceAI,
+			Socket:  "projmux",
+			Session: "main",
+			Window:  "1",
+			Pane:    "0",
+		},
+	}}
+	cmd := newStatusbarTestCommand(runner, store)
+
+	err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error from failed focus")
+	}
+	if store.ackedID != "" {
+		t.Fatalf("store.ackedID = %q, want empty (entry must remain on focus failure)", store.ackedID)
+	}
+}
+
 func TestStatusbarClickNotifyExplicitSocketOverridesEntry(t *testing.T) {
 	t.Parallel()
 
