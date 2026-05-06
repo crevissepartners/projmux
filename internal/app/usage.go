@@ -192,116 +192,321 @@ func writeUsageTable(w io.Writer, snaps []usage.Snapshot) error {
 	return tw.Flush()
 }
 
-// formatStatusUsage produces the one-line tmux status segment described in
-// the spec: `c:42% w:18% | x:71% w:55%`.
+// HUD layout constants. Separators are constant runes so visualLen can
+// reliably count cells without ever falling back to the tmux-escape
+// stripper.
+const (
+	statusInnerSeparator = " · " // between 5h and wk inside a model.
+	statusModelSeparator = "   " // 3 spaces between Claude and Codex blocks.
+	statusDefaultReset   = "#[default]"
+)
+
+// modelDisplay is the in-memory representation of a single model's
+// snapshots. Pct values are floats so the >100% over-limit branch can
+// surface the actual number (e.g. `319%`) instead of capping at 100%.
+type modelDisplay struct {
+	model      string // canonical lowercase key.
+	label      string // user-facing label (Claude / Codex / ...).
+	shortLabel string // legacy single-letter (C / X / ...).
+	hasFive    bool
+	fivePct    float64
+	hasWeek    bool
+	weekPct    float64
+}
+
+// formatStatusUsage produces the HUD-style tmux status segment. The output
+// degrades gracefully through five tiers:
 //
-//   - claude => c:, codex => x:.
-//   - First number is the 5h window, second is the weekly window.
-//   - A model with no snapshots (or no limits to compute pct) is omitted.
-//   - When maxWidth > 0 and the rendered output exceeds that rune count,
-//     trailing groups are dropped first and, if still too long, the last
-//     group is truncated and ellipsised.
+//  1. Long form with bars + wk: `Claude 5h [████████░░] 80% · wk [...]`
+//  2. Drop wk bars (label + 5h bar only).
+//  3. Drop bars entirely (`Claude 5h:80% wk:30%`).
+//  4. Single-letter labels (`C 5h:80% wk:30%`).
+//  5. Hard rune-truncation with trailing `…`.
+//
+// maxWidth is measured in display cells; tmux color escapes (`#[...]`) are
+// stripped before counting so adding color does not push the segment over
+// the budget.
 func formatStatusUsage(snaps []usage.Snapshot, maxWidth int) string {
-	groups := buildStatusGroups(snaps)
-	if len(groups) == 0 {
+	models := buildModelDisplays(snaps)
+	if len(models) == 0 {
 		return ""
 	}
-	full := strings.Join(groups, " | ")
-	if maxWidth <= 0 || runeLen(full) <= maxWidth {
-		return full
+	tiers := []func([]modelDisplay) string{
+		renderTierLongHUD,
+		renderTierFiveHOnlyHUD,
+		renderTierTextLong,
+		renderTierTextShort,
 	}
-	// Drop trailing groups until it fits.
-	for len(groups) > 1 {
-		groups = groups[:len(groups)-1]
-		candidate := strings.Join(groups, " | ")
-		if runeLen(candidate) <= maxWidth {
-			return candidate
+	for _, tier := range tiers {
+		out := tier(models)
+		if out == "" {
+			continue
+		}
+		if maxWidth <= 0 || visualLen(out) <= maxWidth {
+			return out
 		}
 	}
-	// Last resort: truncate the single remaining group.
-	only := groups[0]
-	if runeLen(only) <= maxWidth {
-		return only
-	}
-	if maxWidth <= 1 {
-		return string([]rune(only)[:maxWidth])
-	}
-	rs := []rune(only)
-	return string(rs[:maxWidth-1]) + "…"
+	// Last resort: rune-truncate the shortest tier.
+	short := renderTierTextShort(models)
+	return truncateWithEllipsis(short, maxWidth)
 }
 
-// statusGroup builds the per-model substring like "c:42% w:18%". Returns ""
-// when the model has no usable snapshots.
-func statusGroup(prefix string, fiveH, weekly *usage.Snapshot) string {
+// renderTierLongHUD renders the full HUD: label + 5h bar + wk bar per model.
+func renderTierLongHUD(models []modelDisplay) string {
+	blocks := make([]string, 0, len(models))
+	for _, m := range models {
+		if !m.hasFive && !m.hasWeek {
+			continue
+		}
+		var b strings.Builder
+		b.WriteString("#[fg=cyan,bold]")
+		b.WriteString(m.label)
+		b.WriteString(statusDefaultReset)
+		first := true
+		if m.hasFive {
+			b.WriteByte(' ')
+			b.WriteString(renderHUDPair("5h", m.fivePct))
+			first = false
+		}
+		if m.hasWeek {
+			if first {
+				b.WriteByte(' ')
+			} else {
+				b.WriteString(statusInnerSeparator)
+			}
+			b.WriteString(renderHUDPair("wk", m.weekPct))
+		}
+		b.WriteString(statusDefaultReset)
+		blocks = append(blocks, b.String())
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	return strings.Join(blocks, statusModelSeparator) + statusDefaultReset
+}
+
+// renderTierFiveHOnlyHUD drops the wk bar but keeps the 5h bar.
+func renderTierFiveHOnlyHUD(models []modelDisplay) string {
+	blocks := make([]string, 0, len(models))
+	for _, m := range models {
+		if !m.hasFive {
+			continue
+		}
+		var b strings.Builder
+		b.WriteString("#[fg=cyan,bold]")
+		b.WriteString(m.label)
+		b.WriteString(statusDefaultReset)
+		b.WriteByte(' ')
+		b.WriteString(renderHUDPair("5h", m.fivePct))
+		b.WriteString(statusDefaultReset)
+		blocks = append(blocks, b.String())
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	return strings.Join(blocks, statusModelSeparator) + statusDefaultReset
+}
+
+// renderTierTextLong drops bars entirely but keeps the long model labels.
+func renderTierTextLong(models []modelDisplay) string {
+	blocks := make([]string, 0, len(models))
+	for _, m := range models {
+		text := renderTextPair(m, m.label)
+		if text != "" {
+			blocks = append(blocks, text)
+		}
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	return strings.Join(blocks, statusModelSeparator)
+}
+
+// renderTierTextShort uses single-letter labels (legacy form, no color).
+func renderTierTextShort(models []modelDisplay) string {
+	blocks := make([]string, 0, len(models))
+	for _, m := range models {
+		text := renderTextPair(m, m.shortLabel)
+		if text != "" {
+			blocks = append(blocks, text)
+		}
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	return strings.Join(blocks, statusModelSeparator)
+}
+
+// renderTextPair builds a `<label> 5h:N% wk:N%` substring used by both
+// non-HUD tiers. Returns "" when the model has nothing to show.
+func renderTextPair(m modelDisplay, label string) string {
 	parts := make([]string, 0, 2)
-	if fiveH != nil && fiveH.Limit > 0 {
-		parts = append(parts, fmt.Sprintf("%s:%.0f%%", prefix, fiveH.Pct))
+	if m.hasFive {
+		parts = append(parts, fmt.Sprintf("5h:%s", percentText(m.fivePct)))
 	}
-	if weekly != nil && weekly.Limit > 0 {
-		parts = append(parts, fmt.Sprintf("w:%.0f%%", weekly.Pct))
+	if m.hasWeek {
+		parts = append(parts, fmt.Sprintf("wk:%s", percentText(m.weekPct)))
 	}
-	return strings.Join(parts, " ")
+	if len(parts) == 0 {
+		return ""
+	}
+	return label + " " + strings.Join(parts, " ")
 }
 
-// statusPrefix maps known model names to their single-letter status prefix.
-// Unknown models get the first letter of their name as a graceful fallback.
-func statusPrefix(model string) string {
+// renderHUDPair renders a single `<window> [bar] N%` substring with color
+// escapes. Used for both 5h and wk pairs in the HUD tiers.
+func renderHUDPair(window string, pct float64) string {
+	color := usage.BarColorForPct(pct)
+	bar := usage.RenderColoredBar(pct, color, usage.BarEmptyColor)
+	// `#[default]` after the bar restores label fg before the wk text. The
+	// percent number then re-applies the same color as the bar fill so the
+	// numeric matches visually (a red bar's 90% reads red too).
+	return fmt.Sprintf("%s%s #[fg=%s]%s%s",
+		window+" ", bar, color, percentText(pct), statusDefaultReset)
+}
+
+// percentText formats a percentage. Negative values are clamped to 0.
+// Above 100 we still print the actual number (the bar saturates, the
+// numeric does not — the user must see how far over they are).
+func percentText(pct float64) string {
+	if pct < 0 {
+		pct = 0
+	}
+	return fmt.Sprintf("%.0f%%", pct)
+}
+
+// buildModelDisplays converts snapshots into the canonical-ordered display
+// rows the renderers iterate over. Snapshots without a Limit are dropped
+// because we cannot compute a percentage to display.
+func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
+	byModel := make(map[string]*modelDisplay)
+	order := make([]string, 0, 2)
+	for i := range snaps {
+		s := snaps[i]
+		if s.Limit <= 0 {
+			continue
+		}
+		row, ok := byModel[s.Model]
+		if !ok {
+			row = &modelDisplay{
+				model:      s.Model,
+				label:      modelDisplayLabel(s.Model),
+				shortLabel: modelShortLabel(s.Model),
+			}
+			byModel[s.Model] = row
+			order = append(order, s.Model)
+		}
+		switch s.Window {
+		case usage.Window5h:
+			row.hasFive = true
+			row.fivePct = s.Pct
+		case usage.WindowWeekly:
+			row.hasWeek = true
+			row.weekPct = s.Pct
+		}
+	}
+	canonical := []string{"claude", "codex"}
+	listed := make(map[string]bool, len(canonical))
+	out := make([]modelDisplay, 0, len(byModel))
+	for _, m := range canonical {
+		if row, ok := byModel[m]; ok {
+			out = append(out, *row)
+			listed[m] = true
+		}
+	}
+	for _, m := range order {
+		if listed[m] {
+			continue
+		}
+		out = append(out, *byModel[m])
+	}
+	return out
+}
+
+// modelDisplayLabel maps a model name to its capitalized HUD label.
+func modelDisplayLabel(model string) string {
 	switch strings.ToLower(model) {
 	case "claude":
-		return "c"
+		return "Claude"
 	case "codex":
-		return "x"
+		return "Codex"
 	default:
 		if model == "" {
 			return "?"
 		}
-		return strings.ToLower(model[:1])
+		// Title-case the first rune; rest stays lowercase.
+		rs := []rune(strings.ToLower(model))
+		rs[0] = []rune(strings.ToUpper(string(rs[0])))[0]
+		return string(rs)
 	}
 }
 
-// buildStatusGroups groups snapshots by model in the canonical claude-then-
-// codex order and renders each group.
-func buildStatusGroups(snaps []usage.Snapshot) []string {
-	byModel := make(map[string]map[usage.Window]*usage.Snapshot)
-	order := make([]string, 0, 2)
-	for i := range snaps {
-		s := snaps[i]
-		row, ok := byModel[s.Model]
-		if !ok {
-			row = make(map[usage.Window]*usage.Snapshot, 2)
-			byModel[s.Model] = row
-			order = append(order, s.Model)
+// modelShortLabel returns the one-letter legacy fallback used by the
+// narrowest text tier. Stable across models so the segment stays scannable
+// when squeezed.
+func modelShortLabel(model string) string {
+	switch strings.ToLower(model) {
+	case "claude":
+		return "C"
+	case "codex":
+		return "X"
+	default:
+		if model == "" {
+			return "?"
 		}
-		row[s.Window] = &s
+		return strings.ToUpper(model[:1])
 	}
-	// Stable canonical order: claude first, codex second, anything else after
-	// in first-seen order.
-	canonical := []string{"claude", "codex"}
-	priority := map[string]int{}
-	for i, m := range canonical {
-		priority[m] = i
+}
+
+// truncateWithEllipsis hard-truncates s so its visual length is at most
+// maxWidth, appending an ellipsis when truncation actually occurred. Tmux
+// color escapes are stripped first so we never split inside an escape.
+func truncateWithEllipsis(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
 	}
-	sortedModels := make([]string, 0, len(order))
-	for _, m := range canonical {
-		if _, ok := byModel[m]; ok {
-			sortedModels = append(sortedModels, m)
-		}
+	plain := stripTmuxEscapes(s)
+	if visualLen(plain) <= maxWidth {
+		return plain
 	}
-	for _, m := range order {
-		if _, listed := priority[m]; listed {
+	rs := []rune(plain)
+	if maxWidth == 1 {
+		return string(rs[:1])
+	}
+	return string(rs[:maxWidth-1]) + "…"
+}
+
+// visualLen returns the rune count of s after stripping tmux `#[...]`
+// escape sequences. The HUD format strings only contain single-cell runes
+// (ASCII + `█` + `░` + `·`), so rune count matches display width 1:1.
+func visualLen(s string) int {
+	return len([]rune(stripTmuxEscapes(s)))
+}
+
+// stripTmuxEscapes removes `#[...]` escape sequences from s. A literal `#`
+// followed by a non-`[` is preserved untouched so user content with `#` is
+// not mangled.
+func stripTmuxEscapes(s string) string {
+	if !strings.Contains(s, "#[") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '#' && i+1 < len(s) && s[i+1] == '[' {
+			end := strings.IndexByte(s[i+2:], ']')
+			if end < 0 {
+				// Unterminated escape — emit verbatim and stop scanning.
+				b.WriteString(s[i:])
+				break
+			}
+			i += 2 + end + 1
 			continue
 		}
-		sortedModels = append(sortedModels, m)
+		b.WriteByte(s[i])
+		i++
 	}
-	groups := make([]string, 0, len(sortedModels))
-	for _, m := range sortedModels {
-		row := byModel[m]
-		group := statusGroup(statusPrefix(m), row[usage.Window5h], row[usage.WindowWeekly])
-		if group != "" {
-			groups = append(groups, group)
-		}
-	}
-	return groups
+	return b.String()
 }
 
 func runeLen(s string) int {
