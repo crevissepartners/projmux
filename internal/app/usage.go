@@ -389,22 +389,30 @@ const (
 	statusInnerSeparator = " · " // between 5h and wk inside a model.
 	statusModelSeparator = "   " // 3 spaces between Claude and Codex blocks.
 	statusDefaultReset   = "#[default]"
-	// staleMarker (`~`) flags snapshots older than staleAfter (10m).
-	// staleMarkerVery (`~~`) flags snapshots older than veryStaleAfter
-	// (1h) — rendered in the same dim color so the user sees a stronger
-	// nudge to manually `--force` without the segment shifting visual
-	// weight.
-	staleMarker     = "#[fg=colour245]~#[default]"
-	staleMarkerVery = "#[fg=colour245]~~#[default]"
+)
+
+// Age-indicator colour thresholds for the Claude HUD block. The age
+// indicator carries the staleness signal (it replaces the legacy `~` /
+// `~~` markers) so its colour ramps with the staleness level:
+//
+//   - age <  ageWarnAfter (1h)   → dim grey, informational
+//   - age >= ageWarnAfter (1h)   → dim yellow, attention
+//   - age >= ageAlertAfter (6h)  → bold red, alert
+const (
+	ageWarnAfter  = 1 * time.Hour
+	ageAlertAfter = 6 * time.Hour
 )
 
 // modelDisplay is the in-memory representation of a single model's
 // snapshots. Pct values are floats so the >100% over-limit branch can
 // surface the actual number (e.g. `319%`) instead of capping at 100%.
 //
-// Staleness is captured as a level so the renderer can emit `~` for
-// stale rows (>staleAfter) and `~~` for very-stale rows
-// (>veryStaleAfter): 0 = fresh, 1 = stale, 2 = very stale.
+// Staleness is surfaced via lastSync (the most recent UpdatedAt across
+// the model's rows) — the long HUD tier renders an age indicator
+// (`(3m)`, `(1h)`, `(8h)`) for adapters whose data may be throttled or
+// in backoff (currently Claude). Adapters whose data is always
+// near-current (Codex reads from the latest rollout file every call)
+// have showAge=false so the indicator is suppressed.
 type modelDisplay struct {
 	model      string // canonical lowercase key.
 	label      string // user-facing label (Claude / Codex / ...).
@@ -415,16 +423,26 @@ type modelDisplay struct {
 	hasWeek    bool
 	weekPct    float64
 	weekStale  int
+	// lastSync is max(fiveUpdatedAt, weekUpdatedAt). Used together
+	// with `now` to compute the age indicator. Zero when no row
+	// supplied an UpdatedAt timestamp.
+	lastSync time.Time
+	// showAge gates the age-indicator render path. False for
+	// adapters whose data is always near-current (Codex).
+	showAge bool
 }
 
 // formatStatusUsage produces the HUD-style tmux status segment. The output
-// degrades gracefully through five tiers:
+// degrades gracefully through six tiers:
 //
-//  1. Long form with bars + wk: `Claude 5h [████████░░] 80% · wk [...]`
-//  2. Drop wk bars (label + 5h bar only).
-//  3. Drop bars entirely (`Claude 5h:80% wk:30%`).
-//  4. Single-letter labels (`C 5h:80% wk:30%`).
-//  5. Hard rune-truncation with trailing `…`.
+//  1. Long form with age indicator + bars + wk:
+//     `Claude (3m) 5h [████████░░] 80% · wk [...]   Codex 5h [...] 20% · wk [...]`
+//  2. Drop the age indicator (the legacy `Claude 5h [bar] N% · wk [bar] N%`
+//     form, current default).
+//  3. Drop the wk bar (label + 5h bar only).
+//  4. Drop bars entirely (`Claude 5h:80% wk:30%`).
+//  5. Single-letter labels (`C 5h:80% wk:30%`).
+//  6. Hard rune-truncation with trailing `…`.
 //
 // maxWidth is measured in display cells; tmux color escapes (`#[...]`) are
 // stripped before counting so adding color does not push the segment over
@@ -437,14 +455,15 @@ func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) stri
 	if len(models) == 0 {
 		return ""
 	}
-	tiers := []func([]modelDisplay) string{
+	tiers := []func([]modelDisplay, time.Time) string{
+		renderTierLongHUDWithAge,
 		renderTierLongHUD,
 		renderTierFiveHOnlyHUD,
 		renderTierTextLong,
 		renderTierTextShort,
 	}
 	for _, tier := range tiers {
-		out := tier(models)
+		out := tier(models, now)
 		if out == "" {
 			continue
 		}
@@ -453,12 +472,30 @@ func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) stri
 		}
 	}
 	// Last resort: rune-truncate the shortest tier.
-	short := renderTierTextShort(models)
+	short := renderTierTextShort(models, now)
 	return truncateWithEllipsis(short, maxWidth)
 }
 
-// renderTierLongHUD renders the full HUD: label + 5h bar + wk bar per model.
-func renderTierLongHUD(models []modelDisplay) string {
+// renderTierLongHUDWithAge renders the long HUD plus a per-model
+// last-sync age indicator. Only models with showAge=true and a
+// non-empty rendered age (>= 60s old) emit the indicator — fresh data
+// keeps the segment tight.
+func renderTierLongHUDWithAge(models []modelDisplay, now time.Time) string {
+	return renderLongHUDInternal(models, now, true)
+}
+
+// renderTierLongHUD renders the full HUD without the age indicator
+// (current-default form). Used as tier 2 once the age block doesn't
+// fit the budget.
+func renderTierLongHUD(models []modelDisplay, now time.Time) string {
+	return renderLongHUDInternal(models, now, false)
+}
+
+// renderLongHUDInternal is the shared implementation of the two long
+// HUD tiers (with/without age indicator). When withAge is true and the
+// model carries showAge + an age >= 60s, the indicator is injected
+// between the label and the 5h bar.
+func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) string {
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
 		if !m.hasFive && !m.hasWeek {
@@ -468,10 +505,16 @@ func renderTierLongHUD(models []modelDisplay) string {
 		b.WriteString("#[fg=cyan,bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
+		if withAge {
+			if ind := renderAgeIndicator(m, now); ind != "" {
+				b.WriteByte(' ')
+				b.WriteString(ind)
+			}
+		}
 		first := true
 		if m.hasFive {
 			b.WriteByte(' ')
-			b.WriteString(renderHUDPair("5h", m.fivePct, m.fiveStale))
+			b.WriteString(renderHUDPair("5h", m.fivePct))
 			first = false
 		}
 		if m.hasWeek {
@@ -480,7 +523,7 @@ func renderTierLongHUD(models []modelDisplay) string {
 			} else {
 				b.WriteString(statusInnerSeparator)
 			}
-			b.WriteString(renderHUDPair("wk", m.weekPct, m.weekStale))
+			b.WriteString(renderHUDPair("wk", m.weekPct))
 		}
 		b.WriteString(statusDefaultReset)
 		blocks = append(blocks, b.String())
@@ -492,7 +535,8 @@ func renderTierLongHUD(models []modelDisplay) string {
 }
 
 // renderTierFiveHOnlyHUD drops the wk bar but keeps the 5h bar.
-func renderTierFiveHOnlyHUD(models []modelDisplay) string {
+func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
+	_ = now
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
 		if !m.hasFive {
@@ -503,7 +547,7 @@ func renderTierFiveHOnlyHUD(models []modelDisplay) string {
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		b.WriteByte(' ')
-		b.WriteString(renderHUDPair("5h", m.fivePct, m.fiveStale))
+		b.WriteString(renderHUDPair("5h", m.fivePct))
 		b.WriteString(statusDefaultReset)
 		blocks = append(blocks, b.String())
 	}
@@ -514,7 +558,8 @@ func renderTierFiveHOnlyHUD(models []modelDisplay) string {
 }
 
 // renderTierTextLong drops bars entirely but keeps the long model labels.
-func renderTierTextLong(models []modelDisplay) string {
+func renderTierTextLong(models []modelDisplay, now time.Time) string {
+	_ = now
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
 		text := renderTextPair(m, m.label)
@@ -529,7 +574,8 @@ func renderTierTextLong(models []modelDisplay) string {
 }
 
 // renderTierTextShort uses single-letter labels (legacy form, no color).
-func renderTierTextShort(models []modelDisplay) string {
+func renderTierTextShort(models []modelDisplay, now time.Time) string {
+	_ = now
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
 		text := renderTextPair(m, m.shortLabel)
@@ -544,14 +590,17 @@ func renderTierTextShort(models []modelDisplay) string {
 }
 
 // renderTextPair builds a `<label> 5h:N% wk:N%` substring used by both
-// non-HUD tiers. Returns "" when the model has nothing to show.
+// non-HUD tiers. Returns "" when the model has nothing to show. The
+// legacy `~` / `~~` stale markers are not emitted here — the long HUD
+// tier carries staleness via the age indicator. The non-JSON `usage`
+// table CLI still surfaces a STALE column for verbose inspection.
 func renderTextPair(m modelDisplay, label string) string {
 	parts := make([]string, 0, 2)
 	if m.hasFive {
-		parts = append(parts, fmt.Sprintf("5h:%s%s", percentText(m.fivePct), staleSuffix(m.fiveStale)))
+		parts = append(parts, fmt.Sprintf("5h:%s", percentText(m.fivePct)))
 	}
 	if m.hasWeek {
-		parts = append(parts, fmt.Sprintf("wk:%s%s", percentText(m.weekPct), staleSuffix(m.weekStale)))
+		parts = append(parts, fmt.Sprintf("wk:%s", percentText(m.weekPct)))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -561,35 +610,61 @@ func renderTextPair(m modelDisplay, label string) string {
 
 // renderHUDPair renders a single `<window> [bar] N%` substring with color
 // escapes. Used for both 5h and wk pairs in the HUD tiers.
-func renderHUDPair(window string, pct float64, staleLevel int) string {
+func renderHUDPair(window string, pct float64) string {
 	color := usage.BarColorForPct(pct)
 	bar := usage.RenderColoredBar(pct, color, usage.BarEmptyColor)
-	suffix := ""
-	switch staleLevel {
-	case 1:
-		suffix = staleMarker
-	case 2:
-		suffix = staleMarkerVery
-	}
 	// `#[default]` after the bar restores label fg before the wk text. The
 	// percent number then re-applies the same color as the bar fill so the
 	// numeric matches visually (a red bar's 90% reads red too).
-	return fmt.Sprintf("%s%s #[fg=%s]%s%s%s",
-		window+" ", bar, color, percentText(pct), statusDefaultReset, suffix)
+	return fmt.Sprintf("%s%s #[fg=%s]%s%s",
+		window+" ", bar, color, percentText(pct), statusDefaultReset)
 }
 
-// staleSuffix returns the text-tier stale marker. Plain `~`/`~~` (no
-// color escapes) since the text tiers run uncolored. Levels match
-// staleLevel: 1 = stale (`~`), 2 = very stale (`~~`).
-func staleSuffix(staleLevel int) string {
-	switch staleLevel {
-	case 1:
-		return "~"
-	case 2:
-		return "~~"
-	default:
+// formatLastSyncAge formats the age payload used by the HUD's
+// last-sync indicator. Returns "" for an age below 1 minute (the
+// indicator is omitted to keep the bar tight when fresh) so callers
+// can branch on the empty string. Otherwise the unit ladders through
+// minutes, hours and days.
+func formatLastSyncAge(d time.Duration) string {
+	if d < time.Minute {
 		return ""
 	}
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+// renderAgeIndicator returns the colored `(<age>)` block injected
+// between the model label and the 5h bar. Returns "" when the age is
+// fresh (<1m), the model opted out (Codex), or the now/lastSync clock
+// is missing. Colours ramp with staleness so the user can spot a
+// stagnant cache at a glance:
+//
+//   - <1h:  dim grey  (#[fg=colour245])
+//   - 1-6h: dim yellow (#[fg=yellow])
+//   - >=6h: bold red   (#[fg=red,bold])
+func renderAgeIndicator(m modelDisplay, now time.Time) string {
+	if !m.showAge || now.IsZero() || m.lastSync.IsZero() {
+		return ""
+	}
+	age := now.Sub(m.lastSync)
+	text := formatLastSyncAge(age)
+	if text == "" {
+		return ""
+	}
+	color := "colour245"
+	switch {
+	case age >= ageAlertAfter:
+		color = "red,bold"
+	case age >= ageWarnAfter:
+		color = "yellow"
+	}
+	return fmt.Sprintf("#[fg=%s](%s)%s", color, text, statusDefaultReset)
 }
 
 // percentText formats a percentage. Negative values are clamped to 0.
@@ -637,6 +712,17 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 			row.hasWeek = true
 			row.weekPct = s.Pct
 			row.weekStale = level
+		}
+		// lastSync tracks the most recent successful refresh
+		// across the model's rows; the long HUD tier renders its
+		// age relative to `now`. Codex reads from the latest
+		// rollout file every call so its age is always near "now"
+		// — uninteresting for the HUD, so showAge stays false.
+		if !s.UpdatedAt.IsZero() && s.UpdatedAt.After(row.lastSync) {
+			row.lastSync = s.UpdatedAt
+		}
+		if strings.EqualFold(s.Model, "claude") {
+			row.showAge = true
 		}
 	}
 	canonical := []string{"claude", "codex"}
