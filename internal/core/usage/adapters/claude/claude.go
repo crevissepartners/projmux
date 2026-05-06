@@ -23,11 +23,15 @@
 // non-fatal error.
 //
 // Rate-limit handling: the OAuth usage endpoint enforces a low
-// per-credential request budget. On HTTP 429 the adapter persists an
-// exponential backoff (5m → 10m → cap 15m, doubling per consecutive
-// failure) so the next Collect short-circuits without making the
-// network call. A `Retry-After` header (seconds or HTTP-date) is
-// honoured up to the 15m cap. A non-429 success resets the streak.
+// per-credential request budget — much tighter than initially modelled.
+// On HTTP 429 the adapter persists an exponential backoff
+// (30m → 60m → 60m, doubling per consecutive failure, capped at 60m)
+// so the next Collect short-circuits without making the network call.
+// A `Retry-After` header (seconds or HTTP-date) is honoured up to the
+// 60m cap; if the server returns an unreasonably small Retry-After
+// (under retryAfterFloor, currently 60s) we clamp UP to the floor to
+// avoid hammering Anthropic's rate limiter into a tighter loop.
+// A non-429 success resets the streak.
 package claude
 
 import (
@@ -71,18 +75,29 @@ const userAgent = "projmux-usage/0.2"
 const anthropicVersion = "2023-06-01"
 
 // throttleHint is the per-adapter minimum interval between Collect
-// invocations. The OAuth usage endpoint is more sensitive to call
-// frequency than the local-file Codex source, so it gets a longer floor.
-const throttleHint = 60 * time.Second
+// invocations. The OAuth usage endpoint enforces a much tighter quota
+// than initially modelled — a 60s cadence still trips 429 in practice —
+// so the floor is 5 minutes. Codex (local-file source, no quota) keeps
+// the global 30s default.
+const throttleHint = 5 * time.Minute
 
-// Backoff parameters. Defaults align with the Anthropic guidance for
-// OAuth surfaces: start at 5 minutes, double per consecutive 429, cap at
-// 15 minutes. Retry-After (when present) overrides the doubling
-// progression but is still clamped to the cap so a hostile server can't
-// pin the adapter offline indefinitely.
+// Backoff parameters. Defaults reflect Anthropic's observed
+// per-credential 429 quota for OAuth usage surfaces: start at 30
+// minutes, double per consecutive 429, cap at 60 minutes. The doubling
+// sequence is therefore 30m → 60m → 60m. Retry-After (when present)
+// overrides the doubling progression but is still clamped to the cap
+// so a hostile server cannot pin the adapter offline indefinitely.
+//
+// retryAfterFloor protects against an inverse failure mode: a
+// misconfigured or aggressive server returning Retry-After: 1 (or
+// similar) would otherwise let the CLI hammer the API every second.
+// We clamp Retry-After UP to this floor (i.e. dur = max(retry_after,
+// retryAfterFloor)) when the header value is below it. Anthropic's
+// hint still wins when it's reasonable.
 const (
-	backoffDefault = 5 * time.Minute
-	backoffCap     = 15 * time.Minute
+	backoffDefault  = 30 * time.Minute
+	backoffCap      = 60 * time.Minute
+	retryAfterFloor = 60 * time.Second
 )
 
 // Adapter is the Claude implementation of usage.Adapter.
@@ -136,8 +151,9 @@ func NewWithConfig(credentialsPath, usageURL, refreshURL string, client *http.Cl
 func (a *Adapter) Name() string { return Name }
 
 // ThrottleHint implements usage.ThrottleHinter. Claude's OAuth usage
-// endpoint enforces a low per-credential request budget, so we ask the
-// Manager for at least 60s between calls.
+// endpoint enforces a tight per-credential request budget; a 60s
+// cadence still trips 429 in practice. We ask the Manager for at least
+// 5 minutes between calls.
 func (a *Adapter) ThrottleHint() time.Duration { return throttleHint }
 
 // LoadBackoff implements usage.BackoffStater. Called by the Manager
@@ -159,6 +175,18 @@ func (a *Adapter) SaveBackoff() usage.BackoffState {
 		Until:       a.backoffUntil,
 		Consecutive: a.consecutive429,
 	}
+}
+
+// ResetBackoff implements usage.BackoffResetter. It clears any active
+// cooldown AND zeroes the consecutive counter so a `--force` refresh
+// neither short-circuits nor preserves prior 429 streak. If that
+// `--force` request itself returns 429, the adapter records a fresh
+// streak starting at consecutive=1.
+func (a *Adapter) ResetBackoff() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.backoffUntil = time.Time{}
+	a.consecutive429 = 0
 }
 
 // Collect calls the OAuth usage endpoint and translates the response into
@@ -239,7 +267,16 @@ func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 
 // recordBackoff applies the exponential-backoff policy. retryAfter > 0
 // (parsed from the Retry-After header) takes precedence over the
-// doubling progression; both are clamped to backoffCap.
+// doubling progression. The result is then clamped:
+//
+//   - upward to retryAfterFloor when Retry-After arrives unreasonably
+//     small (<60s). Anthropic's hint wins when reasonable; we never
+//     hammer the API every second just because the server said so.
+//   - downward to backoffCap so a hostile or buggy server cannot pin
+//     the adapter offline beyond the documented 60-minute ceiling.
+//
+// Doubling sequence (no Retry-After): n=1 → 30m, n=2 → 60m,
+// n>=3 → 60m (cap).
 func (a *Adapter) recordBackoff(now time.Time, retryAfter time.Duration) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -247,8 +284,15 @@ func (a *Adapter) recordBackoff(now time.Time, retryAfter time.Duration) {
 	var dur time.Duration
 	if retryAfter > 0 {
 		dur = retryAfter
+		// Server told us a value but it's smaller than our anti-hammer
+		// floor: bump it up. This protects against pathological 429
+		// loops where Retry-After: 1 would otherwise let the CLI
+		// re-hit Anthropic once per second.
+		if dur < retryAfterFloor {
+			dur = retryAfterFloor
+		}
 	} else {
-		// 5m, 10m, 20m → cap 15m. n=1 → 5m, n=2 → 10m, n>=3 → 15m.
+		// 30m, 60m, 60m (cap). n=1 → 30m, n>=2 → 60m.
 		shift := a.consecutive429 - 1
 		if shift < 0 {
 			shift = 0
