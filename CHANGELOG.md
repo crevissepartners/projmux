@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/crevissepartners/projmux/compare/v0.4.2...v0.4.3) (2026-05-06)
+
+
+### Features
+
+* prompt for updates on shell startup ([#57](https://github.com/crevissepartners/projmux/issues/57)) ([c3bd949](https://github.com/crevissepartners/projmux/commit/c3bd94925c1847819da083a131d416c5b9812fd7))
+
 ## [0.4.2](https://github.com/crevissepartners/projmux/compare/v0.4.1...v0.4.2) (2026-05-06)
 
 
