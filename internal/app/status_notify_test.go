@@ -28,8 +28,9 @@ func TestStatusNotifyEmptyQueueIsEmptyOutput(t *testing.T) {
 	}
 }
 
-// External-source entry has no agent prefix and no leading agent block.
-func TestStatusNotifyExternalEntryOmitsAgentBlock(t *testing.T) {
+// External-source info entry renders an ` INFO ` severity badge (no agent
+// prefix is available) and bright body text followed by dim metadata.
+func TestStatusNotifyExternalEntryRendersInfoBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -52,11 +53,8 @@ func TestStatusNotifyExternalEntryOmitsAgentBlock(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[fg=brightcyan]●#[default]") {
-		t.Fatalf("stdout = %q, want brightcyan info icon prefix", got)
-	}
-	if strings.Contains(got, "▎") {
-		t.Fatalf("external entry must not include agent bar separator: %q", got)
+	if !strings.HasPrefix(got, "#[bg=brightcyan,fg=black,bold] INFO #[default]") {
+		t.Fatalf("stdout = %q, want INFO badge prefix", got)
 	}
 	if !strings.Contains(got, "hello world") {
 		t.Fatalf("stdout = %q, want body 'hello world'", got)
@@ -67,14 +65,25 @@ func TestStatusNotifyExternalEntryOmitsAgentBlock(t *testing.T) {
 	if !strings.Contains(got, "2m") {
 		t.Fatalf("stdout = %q, want age '2m'", got)
 	}
+	// Body text appears after the badge reset and BEFORE any dim escape —
+	// so the literal " hello world  " region must contain no `#[fg=colour`.
+	bodyStart := strings.Index(got, "#[default]") + len("#[default]")
+	dimStart := strings.Index(got, "#[fg=colour245]")
+	if bodyStart <= 0 || dimStart <= bodyStart {
+		t.Fatalf("stdout = %q, expected default-styled body before dim metadata", got)
+	}
+	body := got[bodyStart:dimStart]
+	if strings.Contains(body, "#[") {
+		t.Fatalf("body region %q must be unstyled (default fg)", body)
+	}
 	if !strings.HasSuffix(got, "#[default]") {
 		t.Fatalf("stdout = %q, want trailing '#[default]'", got)
 	}
 }
 
 // AI-source entry whose text begins with `claude:` strips the prefix and
-// renders it as a bolded agent block followed by the thin bar separator.
-func TestStatusNotifyAIEntryStripsAgentPrefix(t *testing.T) {
+// renders the agent name inside a brightcyan badge.
+func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -97,11 +106,8 @@ func TestStatusNotifyAIEntryStripsAgentPrefix(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "#[fg=cyan,bold]claude#[default]") {
-		t.Fatalf("stdout = %q, want bolded cyan agent block", got)
-	}
-	if !strings.Contains(got, "▎") {
-		t.Fatalf("stdout = %q, want bar separator", got)
+	if !strings.HasPrefix(got, "#[bg=brightcyan,fg=black,bold] claude #[default]") {
+		t.Fatalf("stdout = %q, want claude badge prefix", got)
 	}
 	if strings.Contains(got, "claude:") {
 		t.Fatalf("stdout = %q, agent prefix should have been stripped from text", got)
@@ -112,9 +118,12 @@ func TestStatusNotifyAIEntryStripsAgentPrefix(t *testing.T) {
 	if !strings.Contains(got, "s:1.0") {
 		t.Fatalf("stdout = %q, want compact target", got)
 	}
+	if !strings.Contains(got, "#[fg=colour245]") {
+		t.Fatalf("stdout = %q, want dim metadata", got)
+	}
 }
 
-func TestStatusNotifyWarnEntryEmitsYellowIcon(t *testing.T) {
+func TestStatusNotifyWarnEntryRendersYellowBadge(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{listEntries: []notify.Notification{
@@ -126,12 +135,12 @@ func TestStatusNotifyWarnEntryEmitsYellowIcon(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[fg=yellow]●#[default]") {
-		t.Fatalf("stdout = %q, want yellow icon prefix", got)
+	if !strings.HasPrefix(got, "#[bg=yellow,fg=black,bold] WARN #[default]") {
+		t.Fatalf("stdout = %q, want yellow WARN badge prefix", got)
 	}
 }
 
-func TestStatusNotifyCriticalEntryEmitsRedBoldIcon(t *testing.T) {
+func TestStatusNotifyCriticalEntryRendersRedBadge(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{listEntries: []notify.Notification{
@@ -143,8 +152,27 @@ func TestStatusNotifyCriticalEntryEmitsRedBoldIcon(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[fg=red,bold]●#[default]") {
-		t.Fatalf("stdout = %q, want red,bold icon prefix", got)
+	if !strings.HasPrefix(got, "#[bg=red,fg=white,bold] CRIT #[default]") {
+		t.Fatalf("stdout = %q, want red CRIT badge prefix", got)
+	}
+}
+
+// Defensive: an entry with an unknown severity falls back to the INFO
+// badge palette so we never emit a stripped escape directive.
+func TestStatusNotifyUnknownSeverityFallsBackToInfoBadge(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{listEntries: []notify.Notification{
+		{ID: "a", Text: "huh", Severity: "mystery", Source: notify.SourceExternal, Session: "s"},
+	}}
+	cmd := newStatusNotifyCommand(store)
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"notify"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.HasPrefix(got, "#[bg=brightcyan,fg=black,bold] INFO #[default]") {
+		t.Fatalf("stdout = %q, want INFO fallback badge", got)
 	}
 }
 
@@ -242,7 +270,13 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 	if visualLen(out) > 80 {
 		t.Fatalf("tier1 visualLen=%d > 80: %q", visualLen(out), out)
 	}
-	for _, want := range []string{"●", "claude", "▎", "reply ready · review", "s:1.0", "2m", "+1"} {
+	for _, want := range []string{
+		"#[bg=brightcyan,fg=black,bold] claude #[default]",
+		"reply ready · review",
+		"s:1.0",
+		"2m",
+		"+1",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tier1 missing %q in %q", want, out)
 		}
@@ -252,15 +286,20 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 func TestStatusNotifyWidthTier2DropsAge(t *testing.T) {
 	t.Parallel()
 
-	// With the canonical fixture the long form is ~56 cells, so we pick a
+	// With the canonical fixture the long form is 48 cells, so we pick a
 	// budget tight enough to force the tier-2 fallback (no age) but loose
 	// enough to keep the target.
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	out := formatStatusNotify(fixtureAIEntry(now), 50, now)
-	if visualLen(out) > 50 {
-		t.Fatalf("tier2 visualLen=%d > 50: %q", visualLen(out), out)
+	out := formatStatusNotify(fixtureAIEntry(now), 45, now)
+	if visualLen(out) > 45 {
+		t.Fatalf("tier2 visualLen=%d > 45: %q", visualLen(out), out)
 	}
-	for _, want := range []string{"●", "claude", "▎", "reply ready · review", "s:1.0", "+1"} {
+	for _, want := range []string{
+		"#[bg=brightcyan,fg=black,bold] claude #[default]",
+		"reply ready · review",
+		"s:1.0",
+		"+1",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tier2 missing %q in %q", want, out)
 		}
@@ -278,12 +317,16 @@ func TestStatusNotifyWidthTier3DropsTarget(t *testing.T) {
 	if visualLen(out) > 40 {
 		t.Fatalf("tier3 visualLen=%d > 40: %q", visualLen(out), out)
 	}
-	for _, want := range []string{"●", "claude", "▎", "reply ready · review", "+1"} {
+	for _, want := range []string{
+		"#[bg=brightcyan,fg=black,bold] claude #[default]",
+		"reply ready · review",
+		"+1",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tier3 missing %q in %q", want, out)
 		}
 	}
-	if strings.Contains(out, "s") {
+	if strings.Contains(out, "s:1.0") {
 		t.Fatalf("tier3 must drop target: %q", out)
 	}
 	if strings.Contains(out, "2m") {
@@ -299,8 +342,8 @@ func TestStatusNotifyWidthTier4TruncatesText(t *testing.T) {
 	if visualLen(out) > 24 {
 		t.Fatalf("tier4 visualLen=%d > 24: %q", visualLen(out), out)
 	}
-	if !strings.Contains(out, "claude") {
-		t.Fatalf("tier4 should still show agent: %q", out)
+	if !strings.Contains(out, "#[bg=brightcyan,fg=black,bold] claude #[default]") {
+		t.Fatalf("tier4 should still show badge: %q", out)
 	}
 	if !strings.Contains(out, "+1") {
 		t.Fatalf("tier4 should still show count: %q", out)
@@ -310,22 +353,25 @@ func TestStatusNotifyWidthTier4TruncatesText(t *testing.T) {
 	}
 }
 
-func TestStatusNotifyWidthTier5DropsAgent(t *testing.T) {
+// Tier 5 drops the bg-filled badge. The standalone severity-tinted `●`
+// icon (no bg fill) preserves a minimal severity hint for very narrow
+// statuslines.
+func TestStatusNotifyWidthTier5DropsBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	out := formatStatusNotify(fixtureAIEntry(now), 15, now)
-	if visualLen(out) > 15 {
-		t.Fatalf("tier5 visualLen=%d > 15: %q", visualLen(out), out)
+	out := formatStatusNotify(fixtureAIEntry(now), 14, now)
+	if visualLen(out) > 14 {
+		t.Fatalf("tier5 visualLen=%d > 14: %q", visualLen(out), out)
+	}
+	if strings.Contains(out, "bg=brightcyan") {
+		t.Fatalf("tier5 must drop the bg-filled badge: %q", out)
 	}
 	if strings.Contains(out, "claude") {
-		t.Fatalf("tier5 must drop agent block: %q", out)
+		t.Fatalf("tier5 must drop the agent label: %q", out)
 	}
-	if strings.Contains(out, "▎") {
-		t.Fatalf("tier5 must drop bar separator: %q", out)
-	}
-	if !strings.Contains(out, "●") {
-		t.Fatalf("tier5 should still show icon: %q", out)
+	if !strings.Contains(out, "#[fg=brightcyan]●#[default]") {
+		t.Fatalf("tier5 should still show the icon-only severity hint: %q", out)
 	}
 	if !strings.Contains(out, "+1") {
 		t.Fatalf("tier5 should still show count: %q", out)
@@ -352,7 +398,7 @@ func TestStatusNotifyAgentPrefixGracefulFallback(t *testing.T) {
 	cases := []struct {
 		name      string
 		text      string
-		wantAgent string
+		wantAgent string // "" means INFO label badge
 	}{
 		{name: "no colon", text: "reply ready", wantAgent: ""},
 		{name: "unknown agent", text: "gpt: reply ready", wantAgent: ""},
@@ -369,14 +415,12 @@ func TestStatusNotifyAgentPrefixGracefulFallback(t *testing.T) {
 				ID: "a", Text: tc.text, Severity: notify.SeverityInfo,
 				Source: notify.SourceAI, Session: "s", CreatedAt: now,
 			}}, 0, now)
-			if tc.wantAgent == "" {
-				if strings.Contains(out, "#[fg=cyan,bold]") {
-					t.Fatalf("expected no agent block in %q", out)
-				}
-				return
+			wantBadge := "#[bg=brightcyan,fg=black,bold] INFO #[default]"
+			if tc.wantAgent != "" {
+				wantBadge = "#[bg=brightcyan,fg=black,bold] " + tc.wantAgent + " #[default]"
 			}
-			if !strings.Contains(out, "#[fg=cyan,bold]"+tc.wantAgent+"#[default]") {
-				t.Fatalf("expected agent block %q in %q", tc.wantAgent, out)
+			if !strings.HasPrefix(out, wantBadge) {
+				t.Fatalf("expected badge %q at start of %q", wantBadge, out)
 			}
 		})
 	}
