@@ -318,7 +318,9 @@ projmux upgrade [--ref @latest|@<tag>|@<branch>]
 `go install`s the binary, atomically replaces the on-disk file, then
 runs `projmux tmux apply` (skipped with `--no-apply`). Reads
 `PROJMUX_PROJDIR` from the calling shell and memoizes the primary entry
-to `~/.config/projmux/projdir`.
+to `~/.config/projmux/projdir`. npm-installed binaries reject this
+command; use `projmux update apply` or `npm update -g projmux` for npm
+installs.
 
 ## sessions / session-popup / preview / pin / kill / prune / tag
 
