@@ -205,7 +205,7 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 	case "source":
 		return nil, errors.New("update apply for source installs is not supported; update the source checkout and rebuild")
 	default:
-		return nil, errors.New("update apply requires PROJMUX_INSTALLER=npm or PROJMUX_INSTALLER=go")
+		return nil, errors.New("update apply requires PROJMUX_INSTALLER=npm, PROJMUX_INSTALLER=go, or PROJMUX_INSTALLER=github-release")
 	}
 }
 
