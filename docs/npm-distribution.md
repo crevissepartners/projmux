@@ -50,8 +50,19 @@ projmux
 ```
 
 Publishing the scoped platform packages requires control of the `@projmux`
-npm scope. The release automation should fail before publishing if that scope
-or `NPM_TOKEN` is unavailable.
+npm scope. Configure npm Trusted Publishing for every package before merging a
+release PR:
+
+| npm package | GitHub organization/user | repository | workflow filename |
+| --- | --- | --- | --- |
+| `@projmux/linux-x64` | `crevissepartners` | `projmux` | `release.yml` |
+| `@projmux/linux-arm64` | `crevissepartners` | `projmux` | `release.yml` |
+| `@projmux/darwin-x64` | `crevissepartners` | `projmux` | `release.yml` |
+| `@projmux/darwin-arm64` | `crevissepartners` | `projmux` | `release.yml` |
+| `projmux` | `crevissepartners` | `projmux` | `release.yml` |
+
+Leave the npm trusted publisher environment field empty unless the workflow is
+later moved behind a GitHub deployment environment.
 
 Tag releases publish npm packages from GitHub Actions after release archives
 are uploaded. The workflow runs:
@@ -61,9 +72,9 @@ scripts/package-npm.sh --version "${GITHUB_REF_NAME#v}" --out dist/npm
 ```
 
 then publishes each staged package with `npm publish --access public`.
-Configure the repository secret `NPM_TOKEN` with an npm token that can publish
-both `projmux` and the `@projmux/*` platform packages. PR CI runs
-`make npm-pack` so package staging and dry-run packing fail before release.
+The npm publish job uses GitHub Actions OIDC (`id-token: write`) instead of a
+long-lived `NPM_TOKEN` secret. PR CI runs `make npm-pack` so package staging and
+dry-run packing fail before release.
 
 ## Non-Goals
 

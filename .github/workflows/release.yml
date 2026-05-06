@@ -110,6 +110,9 @@ jobs:
     name: Publish npm Packages
     needs: publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -124,22 +127,14 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - name: Stage npm packages
         run: scripts/package-npm.sh --version "${GITHUB_REF_NAME#v}" --out dist/npm
 
       - name: Publish npm packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo "::error::NPM_TOKEN is required to publish npm packages"
-            exit 1
-          fi
-
-          npm whoami
           for dir in \
             dist/npm/@projmux/linux-x64 \
             dist/npm/@projmux/linux-arm64 \
