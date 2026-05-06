@@ -958,10 +958,14 @@ func tmuxAppKeyBindings() []string {
 func tmuxStatusbarKeyBindings(binaryPath string) []string {
 	bin := tmuxShellQuote(binaryPath)
 	clickCmd := bin + " statusbar click \"#{mouse_status_range}\" --mouse-window \"#{mouse_window}\""
+	// Use tmux's `{...}` block syntax for the if-shell branches so the nested
+	// quotes inside `run-shell` don't need to be escaped through another layer
+	// of tmux config quoting (which the parser rejects). Block syntax requires
+	// tmux 3.0+; projmux already enforces tmux >= 3.4 via the doctor check.
 	mouseDownBind := "bind-key -n MouseDown1Status if-shell -F " +
 		tmuxConfigQuote("#{==:#{mouse_status_range},window}") + " " +
-		tmuxConfigQuote("select-window -t =") + " " +
-		tmuxConfigQuote("run-shell "+tmuxConfigQuote(clickCmd))
+		"{ select-window -t = } " +
+		"{ run-shell " + tmuxConfigQuote(clickCmd) + " }"
 	return []string{
 		"unbind-key -q -n MouseDown1Status",
 		mouseDownBind,
