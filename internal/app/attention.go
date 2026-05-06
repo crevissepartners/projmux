@@ -20,11 +20,55 @@ const (
 )
 
 type attentionCommand struct {
-	runner tmuxRunner
+	runner   tmuxRunner
+	producer attentionNotifyProducer
 }
 
 func newAttentionCommand() *attentionCommand {
-	return &attentionCommand{runner: inttmux.ExecRunner{}}
+	return &attentionCommand{
+		runner:   inttmux.ExecRunner{},
+		producer: newAttentionNotifyProducer(),
+	}
+}
+
+// notifyProducer returns the wired-up producer or a noop when the command
+// was constructed without one (tests that focus on the existing tmux call
+// surface).
+func (c *attentionCommand) notifyProducer() attentionNotifyProducer {
+	if c == nil || c.producer == nil {
+		return noopAttentionNotifyProducer{}
+	}
+	return c.producer
+}
+
+// notifyLookup adapts attentionCommand's tmux helpers to the producer
+// lookup contract so the producer does not need its own tmux runner. The
+// helpers already short-circuit to "" on error, which is exactly the
+// fallback the producer expects.
+func (c *attentionCommand) notifyLookup() attentionNotifyLookup {
+	return attentionLookup{cmd: c}
+}
+
+type attentionLookup struct {
+	cmd *attentionCommand
+}
+
+func (l attentionLookup) PaneOption(paneID, option string) string {
+	if l.cmd == nil {
+		return ""
+	}
+	return l.cmd.paneOption(paneID, option)
+}
+
+func (l attentionLookup) PaneFormat(paneID, format string) string {
+	if l.cmd == nil || l.cmd.runner == nil {
+		return ""
+	}
+	output, err := l.cmd.run("tmux", "display-message", "-p", "-t", paneID, format)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }
 
 func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -62,12 +106,14 @@ func (c *attentionCommand) runToggle(args []string, stderr io.Writer) error {
 		c.unsetPaneOption(paneID, attentionStateOption)
 		c.selectPaneTitle(paneID, trimAttentionPrefix(title))
 		c.displayPaneMessage(paneID, "attention: cleared")
+		c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
 		return nil
 	}
 
 	c.setPaneOption(paneID, attentionStateOption, attentionStateReply)
 	c.selectPaneTitle(paneID, "✳ "+title)
 	c.displayPaneMessage(paneID, "attention: needs reply")
+	c.notifyProducer().PushReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
 	return nil
 }
 
@@ -87,6 +133,7 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 	c.unsetPaneOption(paneID, attentionStateOption)
 	c.setPaneOption(paneID, attentionAckOption, "1")
 	c.unsetPaneOption(paneID, attentionFocusArmedOption)
+	c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
 
 	title := c.paneTitle(paneID)
 	clean := trimAttentionPrefix(title)

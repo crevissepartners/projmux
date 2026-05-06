@@ -48,6 +48,7 @@ type aiCommand struct {
 	readCommand func(ctx context.Context, name string, args ...string) ([]byte, error)
 	now         func() time.Time
 	sleep       func(time.Duration)
+	producer    attentionNotifyProducer
 }
 
 func newAICommand() *aiCommand {
@@ -61,7 +62,43 @@ func newAICommand() *aiCommand {
 		readCommand: readExternalCommand,
 		now:         time.Now,
 		sleep:       time.Sleep,
+		producer:    newAttentionNotifyProducer(),
 	}
+}
+
+// notifyProducer returns the wired-up producer or a noop when the command
+// was constructed without one (the test fixtures build aiCommand structs
+// directly).
+func (c *aiCommand) notifyProducer() attentionNotifyProducer {
+	if c == nil || c.producer == nil {
+		return noopAttentionNotifyProducer{}
+	}
+	return c.producer
+}
+
+// notifyLookup adapts aiCommand's existing read helpers to the producer
+// lookup contract. It uses the same readTmuxPaneOption/readTrimmed surface
+// the rest of the AI flow already uses.
+func (c *aiCommand) notifyLookup() attentionNotifyLookup {
+	return aiNotifyLookup{cmd: c}
+}
+
+type aiNotifyLookup struct {
+	cmd *aiCommand
+}
+
+func (l aiNotifyLookup) PaneOption(paneID, option string) string {
+	if l.cmd == nil {
+		return ""
+	}
+	return l.cmd.readTmuxPaneOption(paneID, option)
+}
+
+func (l aiNotifyLookup) PaneFormat(paneID, format string) string {
+	if l.cmd == nil {
+		return ""
+	}
+	return l.cmd.readTrimmed("tmux", "display-message", "-p", "-t", paneID, format)
 }
 
 func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -131,6 +168,7 @@ func (c *aiCommand) applyAIStatus(state, paneID string) error {
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateBusy)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
+		c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
 	case "waiting":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "waiting")
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
@@ -138,15 +176,20 @@ func (c *aiCommand) applyAIStatus(state, paneID string) error {
 			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionAckOption, "1")
 			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
+			// The pane is already active so no reply badge survives — clear
+			// any stale queue entry instead of pushing a new one.
+			c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
 		} else {
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateReply)
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionFocusArmedOption, "1")
 			_ = c.notifyAI(paneID)
+			c.notifyProducer().PushReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
 		}
 	case "idle", "":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
+		c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
 	default:
 		return fmt.Errorf("unknown ai status state: %s", state)
 	}
