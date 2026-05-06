@@ -336,7 +336,11 @@ func (c *statusCommand) runNotify(args []string, stdout, stderr io.Writer) error
 	if err != nil {
 		return nil
 	}
-	out := formatStatusNotify(entries, *maxWidth)
+	now := time.Now()
+	if c.now != nil {
+		now = c.now()
+	}
+	out := formatStatusNotify(entries, *maxWidth, now)
 	if out == "" {
 		return nil
 	}
@@ -351,73 +355,274 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 	return c.notifyStoreFn()
 }
 
-// formatStatusNotify renders the newest entry of the queue as a single tmux
-// status segment. The output is plain ASCII (no emoji) and ends with a tmux
-// `#[default]` reset so adjacent segments are not stained by colors.
+// HUD-style design tokens for the notify status segment. Reused dim color
+// (`colour245`) keeps the segment visually consistent with the AI usage
+// segment so the two read as one design family.
+const (
+	notifyDimColor       = "colour245"
+	notifyCountColor     = "colour244"
+	notifyAgentColorOpen = "#[fg=cyan,bold]"
+	notifySeverityInfo   = "#[fg=brightcyan]"
+	notifySeverityWarn   = "#[fg=yellow]"
+	notifySeverityCrit   = "#[fg=red,bold]"
+	notifyIcon           = "●"
+	notifyBar            = "▎"
+	notifyMidDot         = "·"
+	notifyEllipsis       = "…"
+	notifyReset          = "#[default]"
+)
+
+// known agent prefixes recognised when stripping a leading `<agent>:` from
+// the producer-rendered text. Lower-case match only. New agents can be added
+// here without touching call sites.
+var notifyKnownAgents = []string{"claude", "codex"}
+
+// formatStatusNotify renders the newest entry of the queue as a single
+// HUD-style tmux status segment. The output ends with a tmux `#[default]`
+// reset so adjacent segments are not stained by colors.
 //
-// Layout: `[X] <text> · <session> +<N>` where X is one of I/W/!.
-func formatStatusNotify(entries []notify.Notification, maxWidth int) string {
+// Long form: `●  <agent>  ▎  <text>  ·  <target>  ·  <age>   +<N>`
+//
+// The renderer degrades through five tiers as `maxWidth` shrinks:
+//
+//  1. Drop `<age>` (and its preceding `·`).
+//  2. Drop `<target>` (and its preceding `·`).
+//  3. Truncate `<text>` with a trailing `…`.
+//  4. Drop `▎ <agent>` (back to icon + text).
+//  5. Hard truncate everything (icon + count are still preserved).
+//
+// `now` is the wall-clock used to compute the relative age. Pass the zero
+// time to suppress the age field entirely.
+func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Time) string {
 	if len(entries) == 0 {
 		return ""
 	}
 	head := entries[0]
 	extras := len(entries) - 1
-	prefix := "[" + severityLetter(head.Severity) + "] "
-	suffix := " " + middotSeparator() + " " + head.Session
+
+	icon := renderNotifyIcon(head.Severity)
+	agent, text := splitAgentPrefix(head)
+	target := compactTarget(head)
+	age := ""
+	if !now.IsZero() && !head.CreatedAt.IsZero() {
+		age = formatRelativeAge(now.Sub(head.CreatedAt))
+	}
 	plus := ""
 	if extras > 0 {
-		plus = fmt.Sprintf(" +%d", extras)
+		plus = fmt.Sprintf("   #[fg=%s]+%d%s", notifyCountColor, extras, notifyReset)
 	}
 
-	overhead := runeLen(prefix) + runeLen(suffix) + runeLen(plus)
-	text := strings.TrimSpace(head.Text)
-	if maxWidth > 0 {
-		room := maxWidth - overhead
-		if room < 1 {
-			room = 1
+	tiers := []func() string{
+		// Tier 1: full long form.
+		func() string { return assembleNotify(icon, agent, text, target, age, plus) },
+		// Tier 2: drop age.
+		func() string { return assembleNotify(icon, agent, text, target, "", plus) },
+		// Tier 3: drop target (and age).
+		func() string { return assembleNotify(icon, agent, text, "", "", plus) },
+		// Tier 4: truncate text with trailing ellipsis.
+		func() string {
+			budget := tierBudget(maxWidth, icon, agent, "", "", "", plus)
+			truncated := shrinkText(text, budget)
+			return assembleNotify(icon, agent, truncated, "", "", plus)
+		},
+		// Tier 5: drop agent + bar.
+		func() string {
+			budget := tierBudget(maxWidth, icon, "", "", "", "", plus)
+			truncated := shrinkText(text, budget)
+			return assembleNotify(icon, "", truncated, "", "", plus)
+		},
+	}
+	for _, tier := range tiers {
+		out := tier()
+		if out == "" {
+			continue
 		}
-		if runeLen(text) > room {
-			rs := []rune(text)
-			if room <= 1 {
-				text = string(rs[:room])
-			} else {
-				text = string(rs[:room-1]) + "."
-			}
+		if maxWidth <= 0 || visualLen(out) <= maxWidth {
+			return out + notifyReset
 		}
 	}
 
-	color := severityColor(head.Severity)
-	return color + prefix + text + suffix + plus + "#[default]"
+	// Hard truncate. Keep the icon + plus suffix; rune-truncate everything
+	// in between. The reset directive is appended unconditionally so we
+	// never leak color into the next segment.
+	short := assembleNotify(icon, "", text, "", "", plus)
+	return truncateWithEllipsis(short, maxWidth) + notifyReset
 }
 
-// severityLetter maps notify severities to a single-character status letter.
-// Anything unknown falls back to `I` so we never emit garbage.
-func severityLetter(severity string) string {
-	switch severity {
-	case notify.SeverityWarn:
-		return "W"
-	case notify.SeverityCritical:
-		return "!"
-	default:
-		return "I"
+// assembleNotify glues the parts of the long form together. Empty parts are
+// omitted along with their preceding separator so we can reuse this for
+// every degradation tier.
+func assembleNotify(icon, agent, text, target, age, plus string) string {
+	var b strings.Builder
+	b.WriteString(icon)
+	if agent != "" {
+		b.WriteString("  ")
+		b.WriteString(notifyAgentColorOpen)
+		b.WriteString(agent)
+		b.WriteString(notifyReset)
+		b.WriteString("  ")
+		b.WriteString("#[fg=")
+		b.WriteString(notifyDimColor)
+		b.WriteString("]")
+		b.WriteString(notifyBar)
+		b.WriteString(notifyReset)
 	}
+	if text != "" {
+		b.WriteString("  ")
+		b.WriteString(text)
+	}
+	if target != "" {
+		b.WriteString("  ")
+		b.WriteString("#[fg=")
+		b.WriteString(notifyDimColor)
+		b.WriteString("]")
+		b.WriteString(notifyMidDot)
+		b.WriteString(notifyReset)
+		b.WriteString("  ")
+		b.WriteString("#[fg=")
+		b.WriteString(notifyDimColor)
+		b.WriteString("]")
+		b.WriteString(target)
+		b.WriteString(notifyReset)
+	}
+	if age != "" {
+		b.WriteString("  ")
+		b.WriteString("#[fg=")
+		b.WriteString(notifyDimColor)
+		b.WriteString("]")
+		b.WriteString(notifyMidDot)
+		b.WriteString(notifyReset)
+		b.WriteString("  ")
+		b.WriteString("#[fg=")
+		b.WriteString(notifyDimColor)
+		b.WriteString("]")
+		b.WriteString(age)
+		b.WriteString(notifyReset)
+	}
+	if plus != "" {
+		b.WriteString(plus)
+	}
+	return b.String()
 }
 
-// severityColor maps notify severities to the tmux color prefix. Info is the
-// default style (no color override) — tmux ignores empty `#[]` so we omit it.
-func severityColor(severity string) string {
+// tierBudget returns how many runes of `text` fit within maxWidth given the
+// fixed-width pieces we are committing to render at this tier. Returns the
+// full budget when maxWidth is non-positive.
+func tierBudget(maxWidth int, icon, agent, _, target, age, plus string) int {
+	if maxWidth <= 0 {
+		return 0
+	}
+	overhead := visualLen(assembleNotify(icon, agent, "", target, age, plus))
+	// `assembleNotify` already inserts the leading "  " before text, so we
+	// charge that back to the budget here.
+	textGap := 2
+	room := maxWidth - overhead - textGap
+	if room < 1 {
+		room = 1
+	}
+	return room
+}
+
+// shrinkText shrinks s so its rune length is at most maxRunes, replacing
+// the trailing rune with `…` when truncation actually occurs. A budget of
+// zero means "no shrinking".
+func shrinkText(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return s
+	}
+	rs := []rune(s)
+	if len(rs) <= maxRunes {
+		return s
+	}
+	if maxRunes == 1 {
+		return notifyEllipsis
+	}
+	return string(rs[:maxRunes-1]) + notifyEllipsis
+}
+
+// renderNotifyIcon returns the severity-tinted bullet that opens the
+// segment. Unknown severities fall through to the info color so we never
+// emit a stripped escape.
+func renderNotifyIcon(severity string) string {
+	color := notifySeverityInfo
 	switch severity {
 	case notify.SeverityWarn:
-		return "#[fg=yellow]"
+		color = notifySeverityWarn
 	case notify.SeverityCritical:
-		return "#[fg=red,bold]"
-	default:
+		color = notifySeverityCrit
+	}
+	return color + notifyIcon + notifyReset
+}
+
+// splitAgentPrefix extracts the leading `<agent>:` from the queue entry's
+// text when the source is `ai`. Returns the lower-cased agent token and the
+// remaining text (whitespace-trimmed). When no recognised prefix is found
+// the agent is empty and the original text (trimmed) is returned.
+//
+// Edge inputs (text without `:`, unknown agents, empty text) all degrade to
+// "no agent prefix" rather than panicking.
+func splitAgentPrefix(n notify.Notification) (string, string) {
+	text := strings.TrimSpace(n.Text)
+	if n.Source != notify.SourceAI {
+		return "", text
+	}
+	idx := strings.Index(text, ":")
+	if idx <= 0 {
+		return "", text
+	}
+	candidate := strings.ToLower(strings.TrimSpace(text[:idx]))
+	if !isKnownAgent(candidate) {
+		return "", text
+	}
+	rest := strings.TrimSpace(text[idx+1:])
+	if rest == "" {
+		// The text was just `claude:` — no body left, so don't strip.
+		return "", text
+	}
+	return candidate, rest
+}
+
+func isKnownAgent(name string) bool {
+	for _, a := range notifyKnownAgents {
+		if name == a {
+			return true
+		}
+	}
+	return false
+}
+
+// compactTarget renders the entry's target as `<sess>:<window>.<pane>`.
+// Empty session yields the empty string; empty window/pane segments are
+// dropped so we never emit dangling `:` or `.` separators.
+func compactTarget(n notify.Notification) string {
+	sess := strings.TrimSpace(n.Session)
+	if sess == "" {
 		return ""
 	}
+	out := sess
+	win := strings.TrimSpace(n.Window)
+	if win != "" {
+		out += ":" + win
+		pane := strings.TrimSpace(n.Pane)
+		if pane != "" {
+			out += "." + pane
+		}
+	}
+	return out
 }
 
-// middotSeparator returns the ASCII separator used between the message body
-// and the session name. The spec requires plain ASCII so we use `-`.
-func middotSeparator() string {
-	return "-"
+// formatRelativeAge renders a duration as `just now`, `<N>s` (only via the
+// "just now" branch), `<N>m`, `<N>h`, or `<N>d`. Negative durations (clock
+// skew) are clamped to "just now".
+func formatRelativeAge(d time.Duration) string {
+	if d < 60*time.Second {
+		return "just now"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	}
+	return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
 }
