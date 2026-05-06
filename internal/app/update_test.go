@@ -24,11 +24,12 @@ func testUpdateCommand(t *testing.T, now time.Time) (*updateCommand, string) {
 	t.Helper()
 	cacheDir := t.TempDir()
 	cmd := &updateCommand{
-		now:      func() time.Time { return now },
-		getenv:   func(string) string { return "" },
-		cacheDir: func() (string, error) { return cacheDir, nil },
-		client:   http.DefaultClient,
-		apiURL:   "https://example.invalid/latest",
+		now:        func() time.Time { return now },
+		getenv:     func(string) string { return "" },
+		cacheDir:   func() (string, error) { return cacheDir, nil },
+		client:     http.DefaultClient,
+		apiURL:     "https://example.invalid/latest",
+		executable: func() (string, error) { return "/tmp/projmux", nil },
 	}
 	return cmd, cacheDir
 }
@@ -81,7 +82,7 @@ func TestUpdateStatusReadsFreshCacheAndInstaller(t *testing.T) {
 	for _, want := range []string{
 		"latest:    v0.4.1 (fresh)",
 		"state:     update_available",
-		"installer: go - Installed with Go tooling",
+		"installer: go - Installed with Go tooling; update apply delegates to projmux upgrade.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
@@ -147,7 +148,7 @@ func TestUpdateCheckFetchesAndWritesCache(t *testing.T) {
 	for _, want := range []string{
 		"latest: v0.4.2",
 		"state: update_available",
-		"apply: future work; no update was installed",
+		"apply: run projmux update apply",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
@@ -160,6 +161,117 @@ func TestUpdateCheckFetchesAndWritesCache(t *testing.T) {
 	}
 	if !cache.CheckedAt.Equal(now) {
 		t.Fatalf("cache.CheckedAt = %v, want %v", cache.CheckedAt, now)
+	}
+}
+
+func TestUpdateApplyDryRunForNPM(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+	cmd.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"would run: npm update -g projmux",
+		"would run: projmux tmux apply",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+}
+
+func TestUpdateApplyRunsNPMCommands(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+	cmd.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	var ran []string
+	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	}
+
+	if err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"npm update -g projmux", "projmux tmux apply"}
+	if !equalStrings(ran, want) {
+		t.Fatalf("ran = %#v, want %#v", ran, want)
+	}
+}
+
+func TestUpdateApplyRunsGoUpgradeNoApply(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+	cmd.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "go"
+		}
+		return ""
+	}
+	cmd.executable = func() (string, error) { return "/home/me/bin/projmux", nil }
+	var ran []string
+	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	}
+
+	if err := cmd.Run([]string{"apply", "--no-apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"/home/me/bin/projmux upgrade --no-apply"}
+	if !equalStrings(ran, want) {
+		t.Fatalf("ran = %#v, want %#v", ran, want)
+	}
+}
+
+func TestUpdateApplyRejectsUnsupportedInstallers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		installer string
+		want      string
+	}{
+		{name: "unknown", installer: "", want: "requires PROJMUX_INSTALLER"},
+		{name: "github release", installer: "github-release", want: "not implemented yet"},
+		{name: "source", installer: "source", want: "not supported"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+			cmd.getenv = func(name string) string {
+				if name == "PROJMUX_INSTALLER" {
+					return tc.installer
+				}
+				return ""
+			}
+			err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("Run() error = nil, want %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Run() error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -176,6 +288,7 @@ func TestUpdateRejectsInvalidUsage(t *testing.T) {
 		{name: "unknown", args: []string{"bad"}, want: "unknown update subcommand"},
 		{name: "status args", args: []string{"status", "extra"}, want: "update status does not accept positional arguments"},
 		{name: "check args", args: []string{"check", "extra"}, want: "update check does not accept positional arguments"},
+		{name: "apply args", args: []string{"apply", "extra"}, want: "update apply does not accept positional arguments"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

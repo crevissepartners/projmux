@@ -37,6 +37,7 @@ const (
 	settingsActionPrefixWorkdir = "workdir:"
 	settingsProjectAdd          = "project:add"
 	settingsProjectPins         = "project:pins"
+	settingsUpdateApply         = "update:apply"
 	settingsUpdateCheck         = "update:check"
 	settingsWorkdirAdd          = "workdir:add"
 	settingsWorkdirList         = "workdir:list"
@@ -705,6 +706,10 @@ func (c *settingsCommand) aboutEntries() []intfzf.Entry {
 		}
 		entries = append(entries,
 			intfzf.Entry{
+				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Update Now", "run installer-specific update command"),
+				Value: settingsUpdateApply,
+			},
+			intfzf.Entry{
 				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Check Updates", "fetch latest GitHub release metadata"),
 				Value: settingsUpdateCheck,
 			},
@@ -757,6 +762,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		}
 		action := strings.TrimPrefix(value, settingsActionPrefixUpdate)
 		switch action {
+		case "apply":
+			return c.update.Run([]string{"apply"}, stdout, stderr)
 		case "check":
 			return c.update.Run([]string{"check"}, stdout, stderr)
 		default:

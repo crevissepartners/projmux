@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -30,11 +31,13 @@ type updateHTTPClient interface {
 }
 
 type updateCommand struct {
-	now      func() time.Time
-	getenv   func(string) string
-	cacheDir func() (string, error)
-	client   updateHTTPClient
-	apiURL   string
+	now         func() time.Time
+	getenv      func(string) string
+	cacheDir    func() (string, error)
+	client      updateHTTPClient
+	apiURL      string
+	executable  func() (string, error)
+	runExternal func(name string, args []string, stdout, stderr io.Writer) error
 }
 
 type updateCache struct {
@@ -71,11 +74,13 @@ type githubRelease struct {
 
 func newUpdateCommand() *updateCommand {
 	return &updateCommand{
-		now:      time.Now,
-		getenv:   os.Getenv,
-		cacheDir: defaultUpdateCacheDir,
-		client:   &http.Client{Timeout: updateHTTPTimeout},
-		apiURL:   updateReleaseURL,
+		now:         time.Now,
+		getenv:      os.Getenv,
+		cacheDir:    defaultUpdateCacheDir,
+		client:      &http.Client{Timeout: updateHTTPTimeout},
+		apiURL:      updateReleaseURL,
+		executable:  os.Executable,
+		runExternal: runUpdateExternal,
 	}
 }
 
@@ -88,11 +93,87 @@ func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runStatus(args[1:], stdout, stderr)
 	case "check":
 		return c.runCheck(args[1:], stdout, stderr)
+	case "apply":
+		return c.runApply(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printUpdateUsage(stdout)
 		return nil
 	default:
 		return fmt.Errorf("unknown update subcommand: %s", args[0])
+	}
+}
+
+func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("update apply", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dryRun := fs.Bool("dry-run", false, "print installer-specific update command without running it")
+	noApply := fs.Bool("no-apply", false, "skip running 'projmux tmux apply' after update")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("update apply does not accept positional arguments")
+	}
+
+	installer := c.detectInstaller()
+	commands, err := c.applyCommands(installer.Source, *noApply)
+	if err != nil {
+		return err
+	}
+	if *dryRun {
+		for _, command := range commands {
+			if _, err := fmt.Fprintf(stdout, "would run: %s\n", command.String()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for _, command := range commands {
+		if _, err := fmt.Fprintf(stdout, ">> running: %s\n", command.String()); err != nil {
+			return err
+		}
+		if err := c.externalRunner()(command.Name, command.Args, stdout, stderr); err != nil {
+			return fmt.Errorf("run %s: %w", command.String(), err)
+		}
+	}
+	return nil
+}
+
+type updateApplyCommand struct {
+	Name string
+	Args []string
+}
+
+func (c updateApplyCommand) String() string {
+	parts := append([]string{c.Name}, c.Args...)
+	return strings.Join(parts, " ")
+}
+
+func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateApplyCommand, error) {
+	switch source {
+	case "npm":
+		commands := []updateApplyCommand{{Name: "npm", Args: []string{"update", "-g", "projmux"}}}
+		if !noApply {
+			commands = append(commands, updateApplyCommand{Name: "projmux", Args: []string{"tmux", "apply"}})
+		}
+		return commands, nil
+	case "go":
+		exe, err := c.currentExecutable()
+		if err != nil {
+			return nil, err
+		}
+		args := []string{"upgrade"}
+		if noApply {
+			args = append(args, "--no-apply")
+		}
+		return []updateApplyCommand{{Name: exe, Args: args}}, nil
+	case "github-release":
+		return nil, errors.New("update apply for github-release installs is not implemented yet; download from GitHub Releases")
+	case "source":
+		return nil, errors.New("update apply for source installs is not supported; update the source checkout and rebuild")
+	default:
+		return nil, errors.New("update apply requires PROJMUX_INSTALLER=npm or PROJMUX_INSTALLER=go")
 	}
 }
 
@@ -311,9 +392,9 @@ func (c *updateCommand) detectInstaller() updateInstaller {
 	}
 	switch source {
 	case "npm":
-		return updateInstaller{Source: source, Note: "Installed by npm shim; update apply support is future work."}
+		return updateInstaller{Source: source, Note: "Installed by npm shim; update with projmux update apply or npm update -g projmux."}
 	case "go":
-		return updateInstaller{Source: source, Note: "Installed with Go tooling; use projmux upgrade or go install until update apply exists."}
+		return updateInstaller{Source: source, Note: "Installed with Go tooling; update apply delegates to projmux upgrade."}
 	case "github-release":
 		return updateInstaller{Source: source, Note: "Installed from a GitHub release binary; update apply support is future work."}
 	case "source":
@@ -323,6 +404,35 @@ func (c *updateCommand) detectInstaller() updateInstaller {
 	default:
 		return updateInstaller{Source: "unknown", Note: "Unrecognized PROJMUX_INSTALLER=" + source + "; expected npm|go|github-release|source."}
 	}
+}
+
+func (c *updateCommand) currentExecutable() (string, error) {
+	if c.executable == nil {
+		return "", errors.New("update apply: executable resolver is not configured")
+	}
+	exe, err := c.executable()
+	if err != nil {
+		return "", fmt.Errorf("update apply: resolve current executable: %w", err)
+	}
+	exe = strings.TrimSpace(exe)
+	if exe == "" {
+		return "", errors.New("update apply: current executable path is empty")
+	}
+	return exe, nil
+}
+
+func (c *updateCommand) externalRunner() func(string, []string, io.Writer, io.Writer) error {
+	if c.runExternal != nil {
+		return c.runExternal
+	}
+	return runUpdateExternal
+}
+
+func runUpdateExternal(name string, args []string, stdout, stderr io.Writer) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
 }
 
 func (c *updateCommand) clock() time.Time {
@@ -383,7 +493,7 @@ func writeUpdateCheckText(w io.Writer, st updateStatus) error {
 	if _, err := fmt.Fprintf(w, "cache: %s\n", st.CachePath); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(w, "apply: future work; no update was installed")
+	_, err := fmt.Fprintln(w, "apply: run projmux update apply")
 	return err
 }
 
@@ -399,6 +509,7 @@ func printUpdateUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux update status [--json]")
 	fmt.Fprintln(w, "  projmux update check  [--json]")
+	fmt.Fprintln(w, "  projmux update apply  [--dry-run] [--no-apply]")
 }
 
 func compareUpdateState(current, latest string) string {
