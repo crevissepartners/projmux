@@ -274,6 +274,7 @@ binary.
 ```
 projmux update status [--json]
 projmux update check  [--json]
+projmux update apply  [--dry-run] [--no-apply]
 ```
 
 Installer-aware update status foundation. `status` is read-only: it
@@ -291,8 +292,12 @@ status shape for both subcommands.
 Installer detection honors
 `PROJMUX_INSTALLER=npm|go|github-release|source`. When unset or invalid,
 the source is reported as `unknown` with guidance to set the variable.
-Applying updates through `projmux update` is future work; `check` does
-not install or replace anything.
+`apply` is installer-aware and only runs after explicit user selection.
+For npm installs, it runs `npm update -g projmux` and then
+`projmux tmux apply` unless `--no-apply` is set. For Go installs, it
+delegates to the existing atomic `projmux upgrade` flow. `github-release`
+and `source` installs report actionable errors until direct release-binary
+replacement is implemented.
 
 ## upgrade
 
@@ -334,7 +339,8 @@ flags with the top-level `switch` UX:
 - `settings` — interactive configuration UI for the project picker, AI
   splits, the switcher's saved workdirs list, and About/Update status.
   The About section reads the cached update status without network access;
-  selecting Check Updates runs `projmux update check`.
+  selecting Check Updates runs `projmux update check`, and Update Now runs
+  `projmux update apply`.
 
 ## See also
 

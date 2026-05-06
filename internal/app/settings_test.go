@@ -182,9 +182,13 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	if !hasEntryValue(aboutOptions.Entries, settingsUpdateCheck) {
 		t.Fatalf("settings about entries = %#v, want update check action", aboutOptions.Entries)
 	}
+	if !hasEntryValue(aboutOptions.Entries, settingsUpdateApply) {
+		t.Fatalf("settings about entries = %#v, want update apply action", aboutOptions.Entries)
+	}
 	for _, want := range []string{
 		"projmux " + version.String(),
 		"https://github.com/crevissepartners/projmux",
+		"Update Now",
 		"Check Updates",
 		"v0.4.1",
 		"update_available",
@@ -202,6 +206,58 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		if !hasEntryLabelContaining(aboutOptions.Entries, want) {
 			t.Fatalf("settings about entries = %#v, want label containing %q", aboutOptions.Entries, want)
 		}
+	}
+}
+
+func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
+	update, _ := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	var ran []string
+	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	}
+
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		update:   update,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionAbout}, nil
+			case 2:
+				if !hasEntryValue(options.Entries, settingsUpdateApply) {
+					t.Fatalf("settings about entries = %#v, want update apply action", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsUpdateApply}, nil
+			case 3:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 4:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"npm update -g projmux", "projmux tmux apply"}
+	if !equalStrings(ran, want) {
+		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}
 }
 
