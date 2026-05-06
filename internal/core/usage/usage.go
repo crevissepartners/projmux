@@ -1,21 +1,26 @@
 // Package usage models AI token usage tracking for projmux.
 //
+// Schema v2 — authoritative usage:
+//
+// Adapters now emit Snapshots directly, sourced from authoritative,
+// server-side data (Anthropic OAuth usage API for Claude; rate_limits in
+// the latest Codex rollout JSONL for Codex). The previous bucketed token
+// counting and per-model placeholder limits are gone — adapters return the
+// real used_percent and resets_at, which the HUD renders verbatim.
+//
 // The package exposes:
 //
-//   - Adapter / TokenEvent: a pluggable interface for collecting raw token
-//     events from external sources (CLI logs, API endpoints, etc).
+//   - Adapter / Snapshot: a pluggable interface for collecting Snapshots
+//     from external sources.
 //   - Registry: a process-level registry of named adapters.
-//   - Store: a per-model 1-minute-bucketed cache persisted under
-//     <StateDir>/usage/<model>.json. Entries older than the weekly retention
-//     window are trimmed on append.
-//   - Aggregator: window math (5h rolling, weekly Mon 00:00 local rollover).
-//   - Limits: hardcoded placeholder limits with optional JSON override loaded
-//     from PROJMUX_USAGE_LIMITS_PATH.
+//   - Store: a single-file snapshot cache persisted at
+//     <StateDir>/usage/snapshots.json. The store REPLACES on Collect; it
+//     does not merge.
+//   - Manager: orchestrates Collect / MaybeCollect (throttled) / LoadAll.
 //
-// All adapters today are best-effort v0 stubs — if the data is not reachable
-// they return zero events (not an error) so the rest of the pipeline (and the
-// status-bar segment) degrades gracefully. See the per-adapter package
-// comment for the TODO that marks the real-data follow-up.
+// All adapters remain best-effort: when authoritative data is not reachable
+// (no network, no credentials, no rollout file) they return zero snapshots
+// and a non-fatal error so the status segment degrades gracefully.
 package usage
 
 import "time"
@@ -33,9 +38,11 @@ func AllWindows() []Window {
 	return []Window{Window5h, WindowWeekly}
 }
 
-// Duration is the rolling window length used when aggregating events. The
-// weekly window's "duration" is approximate — actual rollover follows the
-// Monday-00:00-local boundary in NextResetAt.
+// Duration is the rolling window length used when describing windows. The
+// weekly window's duration is approximate — actual rollover follows the
+// vendor's published reset cadence (Anthropic returns an explicit
+// resets_at; Codex's rate_limits payload includes resets_at as a unix
+// timestamp).
 func (w Window) Duration() time.Duration {
 	switch w {
 	case Window5h:
@@ -47,20 +54,15 @@ func (w Window) Duration() time.Duration {
 	}
 }
 
-// TokenEvent is a single point-in-time count of consumed tokens reported by
-// an adapter. Adapters emit raw events; aggregation is the Store's job.
-type TokenEvent struct {
-	At     time.Time
-	Tokens int64
-}
-
-// Snapshot is the aggregated, CLI-facing view of usage for one (model,
-// window) pair.
+// Snapshot is the canonical, CLI-facing view of usage for one (model,
+// window) pair. Pct is the authoritative percentage from the upstream
+// API. Tokens and Limit are OPTIONAL — they are zero when the adapter is
+// percent-only (e.g. Claude OAuth usage API, Codex rate_limits payload).
 type Snapshot struct {
 	Model     string    `json:"model"`
 	Window    Window    `json:"window"`
-	Tokens    int64     `json:"tokens"`
-	Limit     int64     `json:"limit"`
+	Tokens    int64     `json:"tokens,omitempty"`
+	Limit     int64     `json:"limit,omitempty"`
 	Pct       float64   `json:"pct"`
 	ResetsAt  time.Time `json:"resets_at"`
 	UpdatedAt time.Time `json:"updated_at"`

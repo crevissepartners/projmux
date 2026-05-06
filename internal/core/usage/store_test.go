@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,103 +16,132 @@ func mustTime(t *testing.T, value string) time.Time {
 	return parsed.UTC()
 }
 
-func TestStoreLoadMissingReturnsNil(t *testing.T) {
+func TestStoreLoadAllMissingReturnsEmpty(t *testing.T) {
 	t.Parallel()
 
 	s := NewStore(t.TempDir())
-	got, err := s.Load("claude")
+	got, last, err := s.LoadAll()
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadAll() error = %v", err)
 	}
 	if got != nil {
-		t.Fatalf("Load() = %v, want nil", got)
+		t.Fatalf("LoadAll() snapshots = %v, want nil", got)
+	}
+	if !last.IsZero() {
+		t.Fatalf("LoadAll() last = %v, want zero", last)
 	}
 }
 
-func TestStoreAppendAggregatesBucketsByMinute(t *testing.T) {
-	t.Parallel()
-
-	s := NewStore(t.TempDir())
-	now := mustTime(t, "2026-05-06T12:30:00Z")
-	events := []TokenEvent{
-		{At: mustTime(t, "2026-05-06T12:00:10Z"), Tokens: 100},
-		{At: mustTime(t, "2026-05-06T12:00:55Z"), Tokens: 200},
-		{At: mustTime(t, "2026-05-06T12:05:00Z"), Tokens: 50},
-	}
-	merged, err := s.Append("claude", events, now)
-	if err != nil {
-		t.Fatalf("Append() error = %v", err)
-	}
-	if len(merged) != 2 {
-		t.Fatalf("len(merged) = %d, want 2", len(merged))
-	}
-	if merged[0].Minute != mustTime(t, "2026-05-06T12:00:00Z") || merged[0].Tokens != 300 {
-		t.Fatalf("bucket[0] = %+v, want minute=12:00 tokens=300", merged[0])
-	}
-	if merged[1].Minute != mustTime(t, "2026-05-06T12:05:00Z") || merged[1].Tokens != 50 {
-		t.Fatalf("bucket[1] = %+v, want minute=12:05 tokens=50", merged[1])
-	}
-}
-
-func TestStoreAppendPersistsAndReloads(t *testing.T) {
+func TestStoreSaveAllAndLoadRoundtrip(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	s := NewStore(dir)
-	now := mustTime(t, "2026-05-06T12:30:00Z")
-
-	if _, err := s.Append("codex", []TokenEvent{{At: mustTime(t, "2026-05-06T12:00:10Z"), Tokens: 7}}, now); err != nil {
-		t.Fatalf("Append() error = %v", err)
+	now := mustTime(t, "2026-05-06T12:00:00Z")
+	resetA := mustTime(t, "2026-05-06T17:00:00Z")
+	resetB := mustTime(t, "2026-05-11T00:00:00Z")
+	snaps := []Snapshot{
+		{Model: "claude", Window: Window5h, Pct: 9.0, ResetsAt: resetA, UpdatedAt: now},
+		{Model: "claude", Window: WindowWeekly, Pct: 12.0, ResetsAt: resetB, UpdatedAt: now},
+		{Model: "codex", Window: Window5h, Pct: 0.0, ResetsAt: resetA, UpdatedAt: now},
 	}
-	if _, err := s.Append("codex", []TokenEvent{{At: mustTime(t, "2026-05-06T12:00:50Z"), Tokens: 3}}, now); err != nil {
-		t.Fatalf("Append() error = %v", err)
+	if err := s.SaveAll(snaps, now); err != nil {
+		t.Fatalf("SaveAll: %v", err)
 	}
 
-	reloaded, err := s.Load("codex")
+	got, last, err := s.LoadAll()
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadAll: %v", err)
 	}
-	if len(reloaded) != 1 {
-		t.Fatalf("len(reloaded) = %d, want 1", len(reloaded))
+	if len(got) != 3 {
+		t.Fatalf("len(got) = %d, want 3", len(got))
 	}
-	if reloaded[0].Tokens != 10 {
-		t.Fatalf("tokens = %d, want 10 (merged 7+3)", reloaded[0].Tokens)
+	if !last.Equal(now) {
+		t.Fatalf("last = %v, want %v", last, now)
 	}
-	// Sanity: file lives where FilePath says.
-	if got := s.FilePath("codex"); filepath.Dir(got) != dir {
-		t.Fatalf("FilePath dir = %q, want %q", filepath.Dir(got), dir)
+	// SaveAll sorts by (model, window). Verify ordering and Pct round-trip.
+	if got[0].Model != "claude" || got[0].Window != Window5h || got[0].Pct != 9.0 {
+		t.Fatalf("got[0] = %+v, want claude/5h/9.0", got[0])
+	}
+	if got[1].Window != WindowWeekly {
+		t.Fatalf("got[1].Window = %v, want weekly", got[1].Window)
+	}
+	if got[2].Model != "codex" {
+		t.Fatalf("got[2].Model = %v, want codex", got[2].Model)
+	}
+	if !got[0].ResetsAt.Equal(resetA) {
+		t.Fatalf("ResetsAt round-trip = %v, want %v", got[0].ResetsAt, resetA)
+	}
+	// Sanity: file is on disk.
+	if _, err := os.Stat(s.FilePath()); err != nil {
+		t.Fatalf("snapshot file missing: %v", err)
+	}
+	if filepath.Base(s.FilePath()) != snapshotFileName {
+		t.Fatalf("FilePath base = %s, want %s", filepath.Base(s.FilePath()), snapshotFileName)
 	}
 }
 
-func TestStoreAppendTrimsBeyondRetention(t *testing.T) {
+func TestStoreSaveAllReplacesPriorContents(t *testing.T) {
 	t.Parallel()
 
-	s := NewStore(t.TempDir())
-	now := mustTime(t, "2026-05-10T00:00:00Z")
-	events := []TokenEvent{
-		{At: mustTime(t, "2026-05-01T00:00:00Z"), Tokens: 1}, // 9 days ago — drop.
-		{At: mustTime(t, "2026-05-04T00:00:00Z"), Tokens: 2}, // 6 days ago — keep.
-		{At: mustTime(t, "2026-05-09T00:00:00Z"), Tokens: 4}, // 1 day ago — keep.
+	dir := t.TempDir()
+	s := NewStore(dir)
+	now := mustTime(t, "2026-05-06T12:00:00Z")
+
+	if err := s.SaveAll([]Snapshot{
+		{Model: "claude", Window: Window5h, Pct: 50, UpdatedAt: now},
+	}, now); err != nil {
+		t.Fatalf("first SaveAll: %v", err)
 	}
-	merged, err := s.Append("claude", events, now)
+	if err := s.SaveAll([]Snapshot{
+		{Model: "codex", Window: Window5h, Pct: 25, UpdatedAt: now},
+	}, now); err != nil {
+		t.Fatalf("second SaveAll: %v", err)
+	}
+	got, _, err := s.LoadAll()
 	if err != nil {
-		t.Fatalf("Append() error = %v", err)
+		t.Fatalf("LoadAll: %v", err)
 	}
-	if len(merged) != 2 {
-		t.Fatalf("len(merged) = %d, want 2 (after trim)", len(merged))
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1 (replace not merge)", len(got))
 	}
-	if merged[0].Tokens != 2 || merged[1].Tokens != 4 {
-		t.Fatalf("merged = %+v, want [{tokens:2}, {tokens:4}]", merged)
+	if got[0].Model != "codex" {
+		t.Fatalf("got[0].Model = %s, want codex", got[0].Model)
 	}
 }
 
-func TestStoreFilePathSanitizesModel(t *testing.T) {
+func TestStoreCleanupLegacyArtifacts(t *testing.T) {
 	t.Parallel()
 
-	s := NewStore("/tmp/usage")
-	got := s.FilePath("claude/dangerous..name")
-	want := "/tmp/usage/claude_dangerous__name.json"
-	if got != want {
-		t.Fatalf("FilePath = %q, want %q", got, want)
+	dir := t.TempDir()
+	for _, name := range []string{"claude.json", "codex.json", "last_collect"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("legacy"), 0o644); err != nil {
+			t.Fatalf("WriteFile %s: %v", name, err)
+		}
+	}
+	s := NewStore(dir)
+	s.CleanupLegacyArtifacts()
+	for _, name := range []string{"claude.json", "codex.json", "last_collect"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("legacy file %s still present (err=%v)", name, err)
+		}
+	}
+}
+
+func TestSortedSnapshotsStable(t *testing.T) {
+	t.Parallel()
+
+	in := []Snapshot{
+		{Model: "codex", Window: WindowWeekly, Pct: 4},
+		{Model: "claude", Window: WindowWeekly, Pct: 2},
+		{Model: "codex", Window: Window5h, Pct: 3},
+		{Model: "claude", Window: Window5h, Pct: 1},
+	}
+	got := SortedSnapshots(in)
+	want := []float64{1, 2, 3, 4}
+	for i, s := range got {
+		if s.Pct != want[i] {
+			t.Fatalf("got[%d].Pct = %v, want %v", i, s.Pct, want[i])
+		}
 	}
 }

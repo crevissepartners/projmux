@@ -7,14 +7,14 @@ import (
 )
 
 type fakeAdapter struct {
-	name   string
-	events []TokenEvent
-	err    error
+	name  string
+	snaps []Snapshot
+	err   error
 }
 
 func (f *fakeAdapter) Name() string { return f.name }
-func (f *fakeAdapter) Collect(ctx context.Context) ([]TokenEvent, error) {
-	return f.events, f.err
+func (f *fakeAdapter) Collect(ctx context.Context) ([]Snapshot, error) {
+	return f.snaps, f.err
 }
 
 func TestRegistryRegisterAndLookup(t *testing.T) {

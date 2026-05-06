@@ -3,27 +3,26 @@ package usage
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// countingAdapter records how many times Collect has been invoked. Used by
-// the MaybeCollect tests to assert the throttle gate actually blocks
+// countingAdapter records how many times Collect has been invoked. Used
+// by the MaybeCollect tests to assert the throttle gate actually blocks
 // repeated adapter walks.
 type countingAdapter struct {
 	name  string
 	calls int64
+	snaps []Snapshot
 	err   error
 }
 
 func (c *countingAdapter) Name() string { return c.name }
 
-func (c *countingAdapter) Collect(ctx context.Context) ([]TokenEvent, error) {
+func (c *countingAdapter) Collect(ctx context.Context) ([]Snapshot, error) {
 	atomic.AddInt64(&c.calls, 1)
-	return nil, c.err
+	return c.snaps, c.err
 }
 
 func (c *countingAdapter) Calls() int64 {
@@ -41,29 +40,59 @@ func newTestManager(t *testing.T, adapter Adapter, now time.Time) (*Manager, str
 	}
 	store := NewStore(dir)
 	clock := now
-	mgr := NewManager(registry, store, DefaultLimits, func() time.Time { return clock })
+	mgr := NewManager(registry, store, func() time.Time { return clock })
 	return mgr, dir
 }
 
-func TestMaybeCollectRunsWhenMarkerMissing(t *testing.T) {
+func TestCollectPersistsSnapshots(t *testing.T) {
+	t.Parallel()
+
+	now := mustTime(t, "2026-05-06T12:00:00Z")
+	adapter := &countingAdapter{
+		name: "claude",
+		snaps: []Snapshot{
+			{Model: "claude", Window: Window5h, Pct: 9.0, ResetsAt: mustTime(t, "2026-05-06T17:00:00Z")},
+		},
+	}
+	mgr, dir := newTestManager(t, adapter, now)
+
+	got, err := mgr.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(got) != 1 || got[0].Pct != 9.0 {
+		t.Fatalf("Collect returned = %+v, want one snapshot at 9%%", got)
+	}
+	// Persisted file must contain the same data.
+	store := NewStore(dir)
+	loaded, last, err := store.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	if len(loaded) != 1 || loaded[0].Pct != 9.0 {
+		t.Fatalf("loaded = %+v, want one at 9%%", loaded)
+	}
+	if !last.Equal(now) {
+		t.Fatalf("last_collect = %v, want %v", last, now)
+	}
+}
+
+func TestMaybeCollectRunsWhenSnapshotsMissing(t *testing.T) {
 	t.Parallel()
 
 	now := mustTime(t, "2026-05-06T12:00:00Z")
 	adapter := &countingAdapter{name: "claude"}
-	mgr, dir := newTestManager(t, adapter, now)
+	mgr, _ := newTestManager(t, adapter, now)
 
 	ran, err := mgr.MaybeCollect(context.Background(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("MaybeCollect: %v", err)
 	}
 	if !ran {
-		t.Fatalf("ran=false, want true (marker missing)")
+		t.Fatalf("ran=false, want true (file missing)")
 	}
 	if adapter.Calls() != 1 {
 		t.Fatalf("adapter calls = %d, want 1", adapter.Calls())
-	}
-	if _, err := os.Stat(filepath.Join(dir, collectMarkerName)); err != nil {
-		t.Fatalf("marker not written: %v", err)
 	}
 }
 
@@ -72,31 +101,25 @@ func TestMaybeCollectThrottlesWithinWindow(t *testing.T) {
 
 	now := mustTime(t, "2026-05-06T12:00:00Z")
 	adapter := &countingAdapter{name: "claude"}
-	mgr, dir := newTestManager(t, adapter, now)
+	mgr, _ := newTestManager(t, adapter, now)
 
-	ran, err := mgr.MaybeCollect(context.Background(), 30*time.Second)
-	if err != nil || !ran {
-		t.Fatalf("first MaybeCollect: ran=%v err=%v", ran, err)
+	if _, err := mgr.MaybeCollect(context.Background(), 30*time.Second); err != nil {
+		t.Fatalf("first: %v", err)
 	}
 	if adapter.Calls() != 1 {
 		t.Fatalf("after first: calls=%d, want 1", adapter.Calls())
 	}
 
-	// Second call inside the throttle window — must be a no-op.
-	ran, err = mgr.MaybeCollect(context.Background(), 30*time.Second)
+	// Second call within throttle window — must be a no-op.
+	ran, err := mgr.MaybeCollect(context.Background(), 30*time.Second)
 	if err != nil {
-		t.Fatalf("second MaybeCollect: %v", err)
+		t.Fatalf("second: %v", err)
 	}
 	if ran {
 		t.Fatalf("ran=true, want false (throttled)")
 	}
 	if adapter.Calls() != 1 {
-		t.Fatalf("after second: calls=%d, want 1 (still)", adapter.Calls())
-	}
-
-	// Sanity: marker still present.
-	if _, err := os.Stat(filepath.Join(dir, collectMarkerName)); err != nil {
-		t.Fatalf("marker missing: %v", err)
+		t.Fatalf("after second: calls=%d, want 1 still", adapter.Calls())
 	}
 }
 
@@ -113,7 +136,7 @@ func TestMaybeCollectRunsAfterThrottleExpires(t *testing.T) {
 
 	now := mustTime(t, "2026-05-06T12:00:00Z")
 	clock := &now
-	mgr := NewManager(registry, store, DefaultLimits, func() time.Time { return *clock })
+	mgr := NewManager(registry, store, func() time.Time { return *clock })
 
 	if _, err := mgr.MaybeCollect(context.Background(), 30*time.Second); err != nil {
 		t.Fatalf("first: %v", err)
@@ -122,7 +145,6 @@ func TestMaybeCollectRunsAfterThrottleExpires(t *testing.T) {
 		t.Fatalf("after first: calls=%d, want 1", adapter.Calls())
 	}
 
-	// Advance clock past the throttle window — adapters should run again.
 	*clock = now.Add(31 * time.Second)
 	ran, err := mgr.MaybeCollect(context.Background(), 30*time.Second)
 	if err != nil {
@@ -136,38 +158,30 @@ func TestMaybeCollectRunsAfterThrottleExpires(t *testing.T) {
 	}
 }
 
-func TestMaybeCollectSwallowsAdapterError(t *testing.T) {
+func TestMaybeCollectSurfacesAdapterError(t *testing.T) {
 	t.Parallel()
 
 	now := mustTime(t, "2026-05-06T12:00:00Z")
 	adapter := &countingAdapter{name: "claude", err: errors.New("network down")}
-	mgr, dir := newTestManager(t, adapter, now)
+	mgr, _ := newTestManager(t, adapter, now)
 
 	ran, err := mgr.MaybeCollect(context.Background(), 30*time.Second)
 	if !ran {
-		t.Fatalf("ran=false, want true even on adapter error")
+		t.Fatalf("ran=false, want true")
 	}
-	// MaybeCollect surfaces the joined error so callers (the CLI) can route
-	// it to PROJMUX_USAGE_DEBUG. The status segment must still write the
-	// marker so a permanently-failing adapter doesn't loop on every redraw.
 	if err == nil {
-		t.Fatalf("err = nil, want adapter error surfaced for debug logging")
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, collectMarkerName)); statErr != nil {
-		t.Fatalf("marker missing after failed adapter: %v", statErr)
+		t.Fatalf("err=nil, want adapter error surfaced for debug logging")
 	}
 	if adapter.Calls() != 1 {
 		t.Fatalf("calls = %d, want 1", adapter.Calls())
 	}
 
-	// Subsequent call inside the throttle window is still a no-op despite
-	// the prior failure — the marker mtime gates retries.
+	// Subsequent call within throttle is still a no-op despite prior error.
+	// The persisted last_collect is what gates retries — even with empty
+	// snapshots, the file was written on the failure path.
 	ran, _ = mgr.MaybeCollect(context.Background(), 30*time.Second)
 	if ran {
-		t.Fatalf("ran=true on second call, want throttled")
-	}
-	if adapter.Calls() != 1 {
-		t.Fatalf("retried failing adapter: calls=%d", adapter.Calls())
+		t.Fatalf("second ran=true, want throttled after a failure")
 	}
 }
 
@@ -184,10 +198,32 @@ func TestMaybeCollectZeroThrottleAlwaysRuns(t *testing.T) {
 			t.Fatalf("iter %d: %v", i, err)
 		}
 		if !ran {
-			t.Fatalf("iter %d: ran=false, want true with zero throttle", i)
+			t.Fatalf("iter %d: ran=false, want true", i)
 		}
 	}
 	if adapter.Calls() != 3 {
-		t.Fatalf("calls = %d, want 3 (zero throttle bypasses gate)", adapter.Calls())
+		t.Fatalf("calls = %d, want 3", adapter.Calls())
+	}
+}
+
+func TestLoadAllReadsCacheWithoutAdapters(t *testing.T) {
+	t.Parallel()
+
+	now := mustTime(t, "2026-05-06T12:00:00Z")
+	dir := t.TempDir()
+	store := NewStore(dir)
+	want := []Snapshot{
+		{Model: "claude", Window: Window5h, Pct: 9, UpdatedAt: now},
+	}
+	if err := store.SaveAll(want, now); err != nil {
+		t.Fatalf("SaveAll: %v", err)
+	}
+	mgr := NewManager(NewRegistry(), store, func() time.Time { return now })
+	got, err := mgr.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	if len(got) != 1 || got[0].Pct != 9 {
+		t.Fatalf("got = %+v, want one at 9%%", got)
 	}
 }
