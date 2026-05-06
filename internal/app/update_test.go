@@ -385,7 +385,7 @@ func TestUpdateApplyRejectsUnsupportedInstallers(t *testing.T) {
 		installer string
 		want      string
 	}{
-		{name: "unknown", installer: "", want: "requires PROJMUX_INSTALLER"},
+		{name: "unknown", installer: "", want: "PROJMUX_INSTALLER=github-release"},
 		{name: "source", installer: "source", want: "not supported"},
 	}
 	for _, tc := range tests {
