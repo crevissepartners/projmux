@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -123,6 +124,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
+	latest := testVersionTag(t, 1)
 	update.getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "go"
@@ -132,8 +134,8 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
 		Version:   1,
 		CheckedAt: now.Add(-time.Hour),
-		TagName:   "v0.4.1",
-		HTMLURL:   "https://github.com/crevissepartners/projmux/releases/tag/v0.4.1",
+		TagName:   latest,
+		HTMLURL:   "https://github.com/crevissepartners/projmux/releases/tag/" + latest,
 	})
 
 	var calls int
@@ -190,11 +192,11 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		"https://github.com/crevissepartners/projmux",
 		"Update Now",
 		"Check Updates",
-		"v0.4.1",
+		latest,
 		"update_available",
 		"Installer",
 		"Installed with Go tooling",
-		"https://github.com/crevissepartners/projmux/releases/tag/v0.4.1",
+		"https://github.com/crevissepartners/projmux/releases/tag/" + latest,
 		"sidebar, sessions, projects",
 		"new window, rename window/pane",
 		"terminal sends CSI-u keys",
@@ -266,8 +268,9 @@ func TestSettingsHubRunsUpdateCheckAction(t *testing.T) {
 
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	update, _ := testUpdateCommand(t, now)
+	latest := testVersionTag(t, 2)
 	update.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		body := `{"tag_name":"v0.4.2","name":"v0.4.2","html_url":"https://github.com/crevissepartners/projmux/releases/tag/v0.4.2","published_at":"2026-05-06T10:00:00Z"}`
+		body := fmt.Sprintf(`{"tag_name":%q,"name":%q,"html_url":"https://github.com/crevissepartners/projmux/releases/tag/%s","published_at":"2026-05-06T10:00:00Z"}`, latest, latest, latest)
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(body)),
@@ -307,11 +310,11 @@ func TestSettingsHubRunsUpdateCheckAction(t *testing.T) {
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(stdout.String(), "latest: v0.4.2") {
-		t.Fatalf("stdout = %q, want update check output", stdout.String())
+	if want := "latest: " + latest; !strings.Contains(stdout.String(), want) {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
-	if !hasEntryLabelContaining(refreshedAbout.Entries, "v0.4.2") {
-		t.Fatalf("refreshed about entries = %#v, want latest v0.4.2", refreshedAbout.Entries)
+	if !hasEntryLabelContaining(refreshedAbout.Entries, latest) {
+		t.Fatalf("refreshed about entries = %#v, want latest %s", refreshedAbout.Entries, latest)
 	}
 }
 
