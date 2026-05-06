@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,30 +11,47 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 )
 
 const (
 	defaultAppSocket  = "projmux"
 	defaultAppSession = "main"
+
+	shellUpdateApply = "update:apply"
+	shellUpdateLater = "update:later"
+	shellUpdateSkip  = "update:skip"
 )
 
 type shellCommand struct {
-	executable func() (string, error)
-	lookupEnv  func(string) string
-	homeDir    func() (string, error)
-	getwd      func() (string, error)
-	writeFile  func(string, []byte, os.FileMode) error
-	runCommand func(ctx context.Context, env []string, name string, args ...string) error
+	executable         func() (string, error)
+	lookupEnv          func(string) string
+	homeDir            func() (string, error)
+	getwd              func() (string, error)
+	writeFile          func(string, []byte, os.FileMode) error
+	runCommand         func(ctx context.Context, env []string, name string, args ...string) error
+	update             *updateCommand
+	updatePromptRunner intfzf.Runner
 }
 
-func newShellCommand() *shellCommand {
+type shellUpdateSkipState struct {
+	Version   int       `json:"version"`
+	TagName   string    `json:"tag_name"`
+	SkippedAt time.Time `json:"skipped_at"`
+}
+
+func newShellCommand(update *updateCommand) *shellCommand {
 	return &shellCommand{
-		executable: os.Executable,
-		lookupEnv:  os.Getenv,
-		homeDir:    os.UserHomeDir,
-		getwd:      os.Getwd,
-		writeFile:  os.WriteFile,
-		runCommand: runForegroundCommand,
+		executable:         os.Executable,
+		lookupEnv:          os.Getenv,
+		homeDir:            os.UserHomeDir,
+		getwd:              os.Getwd,
+		writeFile:          os.WriteFile,
+		runCommand:         runForegroundCommand,
+		update:             update,
+		updatePromptRunner: intfzf.NewRunner(),
 	}
 }
 
@@ -61,6 +79,10 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("projmux shell cannot run inside the %q projmux tmux server", socketName)
 	}
 
+	if err := c.promptForUpdate(stdout, stderr); err != nil {
+		return err
+	}
+
 	binaryPath, err := c.resolveBinary(*binaryOverride)
 	if err != nil {
 		return err
@@ -80,6 +102,134 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		runArgs = append(runArgs, "-c", cwd)
 	}
 	return c.run(context.Background(), "tmux", runArgs...)
+}
+
+func (c *shellCommand) promptForUpdate(stdout, stderr io.Writer) error {
+	if c.update == nil || c.updatePromptRunner == nil {
+		return nil
+	}
+	status, err := c.update.status()
+	if err != nil || !shouldPromptShellUpdate(status) || c.updatePromptSkipped(status) {
+		return nil
+	}
+	result, err := c.updatePromptRunner.Run(shellUpdatePromptOptions(status))
+	if err != nil {
+		if stderr != nil {
+			_, _ = fmt.Fprintf(stderr, "skipped update prompt: %v\n", err)
+		}
+		return nil
+	}
+
+	switch strings.TrimSpace(result.Value) {
+	case shellUpdateApply:
+		if err := c.update.Run([]string{"apply"}, stdout, stderr); err != nil {
+			return fmt.Errorf("run shell update: %w", err)
+		}
+	case shellUpdateSkip:
+		if err := c.writeUpdateSkip(status); err != nil {
+			return err
+		}
+	case "", shellUpdateLater:
+		return nil
+	default:
+		return fmt.Errorf("unknown shell update action: %s", result.Value)
+	}
+	return nil
+}
+
+func shouldPromptShellUpdate(status updateStatus) bool {
+	if status.UpdateState != "update_available" {
+		return false
+	}
+	if status.CacheState != "fresh" {
+		return false
+	}
+	switch status.Installer.Source {
+	case "npm", "go", "github-release":
+		return strings.TrimSpace(status.LatestVersion) != ""
+	default:
+		return false
+	}
+}
+
+func shellUpdatePromptOptions(status updateStatus) intfzf.Options {
+	latest := strings.TrimSpace(status.LatestVersion)
+	current := strings.TrimSpace(status.CurrentVersion)
+	return intfzf.Options{
+		UI:     "shell-update",
+		Prompt: "Update > ",
+		Header: fmt.Sprintf("projmux %s is available (current %s)", latest, current),
+		Footer: "Enter: choose  |  Esc: continue shell",
+		Entries: []intfzf.Entry{
+			{
+				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Update Now", "run projmux update apply"),
+				Value: shellUpdateApply,
+			},
+			{
+				Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Later", "continue without updating"),
+				Value: shellUpdateLater,
+			},
+			{
+				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Skip This Version", latest),
+				Value: shellUpdateSkip,
+			},
+			{
+				Label: settingsLabelInfo("Installer", status.Installer.Source, status.Installer.Note),
+				Value: shellUpdateLater,
+			},
+		},
+		Bindings: settingsCloseBindings(),
+	}
+}
+
+func (c *shellCommand) updatePromptSkipped(status updateStatus) bool {
+	path, err := c.updateSkipPath()
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var skip shellUpdateSkipState
+	if err := json.Unmarshal(data, &skip); err != nil {
+		return false
+	}
+	return strings.TrimSpace(skip.TagName) == strings.TrimSpace(status.LatestVersion)
+}
+
+func (c *shellCommand) writeUpdateSkip(status updateStatus) error {
+	path, err := c.updateSkipPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create update skip dir: %w", err)
+	}
+	skip := shellUpdateSkipState{
+		Version:   1,
+		TagName:   strings.TrimSpace(status.LatestVersion),
+		SkippedAt: c.update.clock().UTC(),
+	}
+	data, err := json.MarshalIndent(skip, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode update skip state: %w", err)
+	}
+	if err := c.writeFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write update skip state: %w", err)
+	}
+	return nil
+}
+
+func (c *shellCommand) updateSkipPath() (string, error) {
+	if c.update == nil {
+		return "", errors.New("shell update prompt is not configured")
+	}
+	cachePath, err := c.update.cachePath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(cachePath), "update-skip.json"), nil
 }
 
 func (c *shellCommand) insideAppSocket(socketName string) bool {

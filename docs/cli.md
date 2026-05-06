@@ -295,6 +295,12 @@ safe for interactive use and shell startup paths.
 latest/update/cache result. `--json` emits the same machine-readable
 status shape for both subcommands.
 
+`projmux shell` reads the same cache before opening the isolated tmux app.
+When the cache is fresh, an update is available, and the installer supports
+`update apply`, shell startup shows a small picker with Update Now, Later,
+and Skip This Version actions. This startup prompt never reaches the network;
+run `projmux update check` first when you want it to see the newest release.
+
 Installer detection honors
 `PROJMUX_INSTALLER=npm|go|github-release|source`. When unset or invalid,
 the source is reported as `unknown` with guidance to set the variable.
