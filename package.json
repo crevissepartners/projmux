@@ -1,0 +1,34 @@
+{
+  "name": "projmux",
+  "version": "0.4.0",
+  "description": "tmux project session manager",
+  "license": "MIT",
+  "homepage": "https://github.com/crevissepartners/projmux#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crevissepartners/projmux.git"
+  },
+  "bugs": {
+    "url": "https://github.com/crevissepartners/projmux/issues"
+  },
+  "type": "commonjs",
+  "bin": {
+    "projmux": "npm/projmux.js"
+  },
+  "files": [
+    "npm/projmux.js",
+    "README.md",
+    "README-ko.md",
+    "LICENSE"
+  ],
+  "optionalDependencies": {
+    "@projmux/darwin-arm64": "0.4.0",
+    "@projmux/darwin-x64": "0.4.0",
+    "@projmux/linux-arm64": "0.4.0",
+    "@projmux/linux-x64": "0.4.0"
+  },
+  "scripts": {
+    "package:npm": "scripts/package-npm.sh",
+    "package:npm:pack": "scripts/package-npm.sh --pack"
+  }
+}
