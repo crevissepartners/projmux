@@ -61,6 +61,12 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"set -g status 2",
+		"range=user|notify",
+		"range=user|usage",
+		"align=left",
+		"align=right",
+		"set -gu status-format[2]",
 	} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("config = %q, want substring %q", config, want)
@@ -68,6 +74,14 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 	}
 	if strings.Contains(config, "#[bold,fg=colour16,bg=colour45] app #[default]") {
 		t.Fatalf("config = %q, did not expect duplicate app status badge", config)
+	}
+	for _, banned := range []string{
+		"set -g status 3",
+		"set -g status-format[2] \"",
+	} {
+		if strings.Contains(config, banned) {
+			t.Fatalf("config = %q, did not expect substring %q", config, banned)
+		}
 	}
 
 	wantArgs := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "main", "-c", "/tmp/work tree"}

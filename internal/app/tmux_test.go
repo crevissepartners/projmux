@@ -417,9 +417,23 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"#[bold,fg=colour16,bg=colour45] projmux #[default]",
 		"'/tmp/proj mux/bin/projmux' status kube",
 		"'/tmp/proj mux/bin/projmux' status git",
+		"set -g status 2",
+		"range=user|notify",
+		"range=user|usage",
+		"align=left",
+		"align=right",
+		"set -gu status-format[2]",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
+		}
+	}
+	for _, banned := range []string{
+		"set -g status 3",
+		"set -g status-format[2] \"",
+	} {
+		if strings.Contains(output, banned) {
+			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)
 		}
 	}
 }
@@ -552,6 +566,12 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"%Y-%m-%d %H:%M#[default]",
+		"set -g status 2",
+		"range=user|notify",
+		"range=user|usage",
+		"align=left",
+		"align=right",
+		"set -gu status-format[2]",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
@@ -559,6 +579,14 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 	}
 	if strings.Contains(output, "#[bold,fg=colour16,bg=colour45] app #[default]") {
 		t.Fatalf("print-app-config output = %q, did not expect duplicate app status badge", output)
+	}
+	for _, banned := range []string{
+		"set -g status 3",
+		"set -g status-format[2] \"",
+	} {
+		if strings.Contains(output, banned) {
+			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)
+		}
 	}
 }
 
