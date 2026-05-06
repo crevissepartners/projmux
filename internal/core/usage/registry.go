@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Adapter is the pluggable contract for an AI-usage data source.
@@ -21,6 +22,30 @@ import (
 type Adapter interface {
 	Name() string
 	Collect(ctx context.Context) ([]Snapshot, error)
+}
+
+// ThrottleHinter is an optional interface adapters may implement to
+// declare their preferred minimum interval between Collect calls. The
+// Manager honours this hint per-adapter; adapters that do not implement
+// the interface inherit the caller-supplied default (currently 30s).
+type ThrottleHinter interface {
+	ThrottleHint() time.Duration
+}
+
+// BackoffStater is an optional interface adapters may implement to
+// expose persisted exponential-backoff state. The Manager round-trips
+// the value through the on-disk snapshots file so a CLI restart does
+// not lose backoff progress. Adapters that do not implement this
+// interface have no persistent backoff bookkeeping (errors are still
+// surfaced for diagnostics).
+type BackoffStater interface {
+	// LoadBackoff installs persisted backoff state from disk. Called
+	// exactly once per Manager Collect cycle, before Collect is invoked.
+	LoadBackoff(state BackoffState)
+	// SaveBackoff returns the current in-memory backoff state for
+	// persistence. Called after Collect so a fresh 429 (or success) is
+	// reflected in the next file write.
+	SaveBackoff() BackoffState
 }
 
 // Registry stores adapters keyed by Name(). It is safe for concurrent use.
