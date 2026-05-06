@@ -538,6 +538,131 @@ func TestStatusbarClickNotifyStoreErrorFallsBackToMessage(t *testing.T) {
 	}
 }
 
+// TestStatusbarClickWindowRangeWithEmptyMouseWindowIsNoop is the direct
+// regression for the parser bug where stdlib `flag.Parse` stopped at the first
+// non-flag token. With args `["window", "--mouse-window", ""]` the package
+// previously produced 3 positionals and rejected the click as a UsageError,
+// which made tmux flash the run-shell error popup on every window-list click.
+func TestStatusbarClickWindowRangeWithEmptyMouseWindowIsNoop(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "window", "--mouse-window", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("unknown range + empty mouse-window must be a noop, got %d calls", len(runner.calls))
+	}
+}
+
+// TestStatusbarClickPositionalThenFlagSelectsWindow verifies that the natural
+// tmux invocation order — the positional range id first, then the
+// `--mouse-window` flag — actually triggers the window-list passthrough rather
+// than failing parser checks.
+func TestStatusbarClickPositionalThenFlagSelectsWindow(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "window", "--mouse-window", "3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@3"}) {
+		t.Fatalf("missing select-window -t @3; calls = %#v", runner.calls)
+	}
+}
+
+// TestStatusbarClickFlagThenPositionalSelectsWindow verifies the symmetric
+// "flags first, positional last" order also works.
+func TestStatusbarClickFlagThenPositionalSelectsWindow(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "--mouse-window", "3", "window"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@3"}) {
+		t.Fatalf("missing select-window -t @3; calls = %#v", runner.calls)
+	}
+}
+
+// TestStatusbarClickEqualsFormSelectsWindow verifies the `--flag=value` form
+// is accepted in addition to the `--flag value` form.
+func TestStatusbarClickEqualsFormSelectsWindow(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "--mouse-window=3", "window"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@3"}) {
+		t.Fatalf("missing select-window -t @3; calls = %#v", runner.calls)
+	}
+}
+
+// TestStatusbarClickEmptyPositionalAndEmptyMouseWindowIsNoop covers the
+// `click "" --mouse-window ""` shape (positional first then flag) which the
+// previous parser also mishandled when the flag value was empty.
+func TestStatusbarClickEmptyPositionalAndEmptyMouseWindowIsNoop(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "", "--mouse-window", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("empty positional + empty mouse-window must be a noop, got %d calls", len(runner.calls))
+	}
+}
+
+// TestStatusbarClickNotifyWithMouseWindowIgnoresFlag checks that when a known
+// projmux range is clicked, the `--mouse-window` flag is ignored regardless of
+// argument order — the range handler always wins.
+func TestStatusbarClickNotifyWithMouseWindowIgnoresFlag(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	store := &stubNotifyStore{listEntries: nil}
+	cmd := newStatusbarTestCommand(runner, store)
+
+	if err := cmd.Run([]string{"click", "notify", "--mouse-window", "3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, call := range runner.calls {
+		if call.name == "tmux" && len(call.args) >= 1 && call.args[0] == "select-window" {
+			t.Fatalf("known range must not trigger select-window passthrough; calls = %#v", runner.calls)
+		}
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "no notifications") {
+		t.Fatalf("notify handler did not run; calls = %#v", runner.calls)
+	}
+}
+
+// TestStatusbarClickRejectsMultiplePositionals ensures a stray second
+// positional still fails fast rather than getting silently dropped.
+func TestStatusbarClickRejectsMultiplePositionals(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStatusbarTestCommand(&statusbarFakeRunner{}, &stubNotifyStore{})
+
+	err := cmd.Run([]string{"click", "a", "b"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !IsUsageError(err) {
+		t.Fatalf("expected UsageError, got %T: %v", err, err)
+	}
+}
+
 func TestStatusbarRunRejectsMissingSubcommand(t *testing.T) {
 	t.Parallel()
 
