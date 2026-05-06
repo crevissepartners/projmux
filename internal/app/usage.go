@@ -37,6 +37,12 @@ func newUsageCommand() *usageCommand {
 	return c
 }
 
+// staleAfter is the age at which a snapshot is considered stale and
+// flagged for the user. Aligned with the longest expected adapter
+// throttle (Claude, 60s) plus the worst-case backoff window (15m) so a
+// marker only appears when something is genuinely wrong.
+const staleAfter = 10 * time.Minute
+
 // Run implements `projmux usage [...]`.
 func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
@@ -59,6 +65,11 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if c.env(usageDebugEnvVar) != "" {
+		mgr.SetDebug(func(format string, args ...any) {
+			fmt.Fprintf(stderr, format+"\n", args...)
+		})
+	}
 	snaps, collectErr := mgr.Collect(context.Background())
 	// collectErr is informational — adapters that fail still keep the rest
 	// of the rendering pipeline working. We surface a single warning to
@@ -71,15 +82,18 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	filtered = usage.SortedSnapshots(filtered)
 
 	if *asJSON {
-		return writeUsageJSON(stdout, filtered)
+		state, _ := mgr.LoadState()
+		return writeUsageJSON(stdout, filtered, state, c.now())
 	}
-	return writeUsageTable(stdout, filtered)
+	return writeUsageTable(stdout, filtered, c.now())
 }
 
 // statusRefreshThrottle is the minimum interval between adapter walks
 // triggered by `projmux status usage`. tmux refreshes the status line every
 // 5s by default; 30s gives the cache enough breathing room while keeping
-// the displayed numbers fresh on a human timescale.
+// the displayed numbers fresh on a human timescale. Adapters that
+// implement ThrottleHinter (e.g. Claude → 60s) override this floor on a
+// per-adapter basis inside the Manager.
 const statusRefreshThrottle = 30 * time.Second
 
 // usageDebugEnvVar gates whether MaybeCollect's swallowed adapter error is
@@ -111,6 +125,11 @@ func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 		// Status segment must never fail loudly — silently emit nothing.
 		return nil
 	}
+	if c.env(usageDebugEnvVar) != "" {
+		mgr.SetDebug(func(format string, args ...any) {
+			fmt.Fprintf(stderr, format+"\n", args...)
+		})
+	}
 
 	// Opportunistic refresh. Errors here are non-fatal; on debug builds we
 	// echo to stderr so the user can investigate why the cache is stale.
@@ -125,7 +144,7 @@ func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 		return nil
 	}
 
-	out := formatStatusUsage(snaps, *maxWidth)
+	out := formatStatusUsage(snaps, *maxWidth, c.now())
 	if out == "" {
 		return nil
 	}
@@ -210,18 +229,62 @@ func filterSnapshots(snaps []usage.Snapshot, model, window string) []usage.Snaps
 	return out
 }
 
-func writeUsageJSON(w io.Writer, snaps []usage.Snapshot) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if snaps == nil {
-		return enc.Encode([]usage.Snapshot{})
-	}
-	return enc.Encode(snaps)
+// jsonSnapshot is the wire shape emitted by `projmux usage --json`. It
+// extends the core Snapshot with a per-row `stale` boolean so callers
+// (e.g. dashboards, tmux modules) can flag stale data without
+// re-implementing the staleness rule.
+type jsonSnapshot struct {
+	usage.Snapshot
+	Stale bool `json:"stale"`
 }
 
-func writeUsageTable(w io.Writer, snaps []usage.Snapshot) error {
+// jsonBackoff is the wire shape for per-model backoff state surfaced
+// alongside the snapshots. Omitted when no backoff is active so the
+// healthy-case payload stays compact.
+type jsonBackoff struct {
+	Until       time.Time `json:"until"`
+	Consecutive int       `json:"consecutive"`
+}
+
+// jsonOutput is the top-level wrapper when callers ask for --json AND
+// per-model state is non-empty (backoff active). When everything is
+// healthy we emit just the snapshot array for backwards compatibility.
+type jsonOutput struct {
+	Snapshots []jsonSnapshot         `json:"snapshots"`
+	Backoff   map[string]jsonBackoff `json:"backoff,omitempty"`
+}
+
+func writeUsageJSON(w io.Writer, snaps []usage.Snapshot, state usage.State, now time.Time) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+
+	rows := make([]jsonSnapshot, 0, len(snaps))
+	for _, s := range snaps {
+		rows = append(rows, jsonSnapshot{Snapshot: s, Stale: isStale(s, now)})
+	}
+
+	backoff := map[string]jsonBackoff{}
+	for k, v := range state.Backoff {
+		if v.Until.IsZero() {
+			continue
+		}
+		backoff[k] = jsonBackoff{Until: v.Until, Consecutive: v.Consecutive}
+	}
+
+	if len(backoff) == 0 {
+		// Healthy case: stay backwards-compatible with prior --json
+		// consumers that expected a bare array.
+		if len(rows) == 0 {
+			return enc.Encode([]jsonSnapshot{})
+		}
+		return enc.Encode(rows)
+	}
+	return enc.Encode(jsonOutput{Snapshots: rows, Backoff: backoff})
+}
+
+func writeUsageTable(w io.Writer, snaps []usage.Snapshot, now time.Time) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "MODEL\tWINDOW\tPCT\tRESETS_AT"); err != nil {
+	if _, err := fmt.Fprintln(tw, "MODEL\tWINDOW\tPCT\tRESETS_AT\tSTALE"); err != nil {
 		return err
 	}
 	for _, s := range snaps {
@@ -232,11 +295,26 @@ func writeUsageTable(w io.Writer, snaps []usage.Snapshot) error {
 		if !s.ResetsAt.IsZero() {
 			resets = s.ResetsAt.Local().Format(time.RFC3339)
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", s.Model, s.Window, pct, resets); err != nil {
+		stale := ""
+		if isStale(s, now) {
+			stale = "*"
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Model, s.Window, pct, resets, stale); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
+}
+
+// isStale reports whether a snapshot's UpdatedAt is far enough in the
+// past that the user should be warned. now=zero disables the check (used
+// by callers that don't have a reliable clock — they get fresh
+// rendering, which is the safe default).
+func isStale(s usage.Snapshot, now time.Time) bool {
+	if now.IsZero() || s.UpdatedAt.IsZero() {
+		return false
+	}
+	return now.Sub(s.UpdatedAt) > staleAfter
 }
 
 // HUD layout constants. Separators are constant runes so visualLen can
@@ -246,6 +324,7 @@ const (
 	statusInnerSeparator = " · " // between 5h and wk inside a model.
 	statusModelSeparator = "   " // 3 spaces between Claude and Codex blocks.
 	statusDefaultReset   = "#[default]"
+	staleMarker          = "#[fg=colour245]~#[default]"
 )
 
 // modelDisplay is the in-memory representation of a single model's
@@ -257,8 +336,10 @@ type modelDisplay struct {
 	shortLabel string // legacy single-letter (C / X / ...).
 	hasFive    bool
 	fivePct    float64
+	fiveStale  bool
 	hasWeek    bool
 	weekPct    float64
+	weekStale  bool
 }
 
 // formatStatusUsage produces the HUD-style tmux status segment. The output
@@ -273,8 +354,11 @@ type modelDisplay struct {
 // maxWidth is measured in display cells; tmux color escapes (`#[...]`) are
 // stripped before counting so adding color does not push the segment over
 // the budget.
-func formatStatusUsage(snaps []usage.Snapshot, maxWidth int) string {
-	models := buildModelDisplays(snaps)
+//
+// `now` is the wall-clock used for staleness detection. Pass time.Time{}
+// to disable the marker (e.g. in tests that don't care).
+func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) string {
+	models := buildModelDisplays(snaps, now)
 	if len(models) == 0 {
 		return ""
 	}
@@ -312,7 +396,7 @@ func renderTierLongHUD(models []modelDisplay) string {
 		first := true
 		if m.hasFive {
 			b.WriteByte(' ')
-			b.WriteString(renderHUDPair("5h", m.fivePct))
+			b.WriteString(renderHUDPair("5h", m.fivePct, m.fiveStale))
 			first = false
 		}
 		if m.hasWeek {
@@ -321,7 +405,7 @@ func renderTierLongHUD(models []modelDisplay) string {
 			} else {
 				b.WriteString(statusInnerSeparator)
 			}
-			b.WriteString(renderHUDPair("wk", m.weekPct))
+			b.WriteString(renderHUDPair("wk", m.weekPct, m.weekStale))
 		}
 		b.WriteString(statusDefaultReset)
 		blocks = append(blocks, b.String())
@@ -344,7 +428,7 @@ func renderTierFiveHOnlyHUD(models []modelDisplay) string {
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		b.WriteByte(' ')
-		b.WriteString(renderHUDPair("5h", m.fivePct))
+		b.WriteString(renderHUDPair("5h", m.fivePct, m.fiveStale))
 		b.WriteString(statusDefaultReset)
 		blocks = append(blocks, b.String())
 	}
@@ -389,10 +473,10 @@ func renderTierTextShort(models []modelDisplay) string {
 func renderTextPair(m modelDisplay, label string) string {
 	parts := make([]string, 0, 2)
 	if m.hasFive {
-		parts = append(parts, fmt.Sprintf("5h:%s", percentText(m.fivePct)))
+		parts = append(parts, fmt.Sprintf("5h:%s%s", percentText(m.fivePct), staleSuffix(m.fiveStale)))
 	}
 	if m.hasWeek {
-		parts = append(parts, fmt.Sprintf("wk:%s", percentText(m.weekPct)))
+		parts = append(parts, fmt.Sprintf("wk:%s%s", percentText(m.weekPct), staleSuffix(m.weekStale)))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -402,14 +486,27 @@ func renderTextPair(m modelDisplay, label string) string {
 
 // renderHUDPair renders a single `<window> [bar] N%` substring with color
 // escapes. Used for both 5h and wk pairs in the HUD tiers.
-func renderHUDPair(window string, pct float64) string {
+func renderHUDPair(window string, pct float64, stale bool) string {
 	color := usage.BarColorForPct(pct)
 	bar := usage.RenderColoredBar(pct, color, usage.BarEmptyColor)
+	suffix := ""
+	if stale {
+		suffix = staleMarker
+	}
 	// `#[default]` after the bar restores label fg before the wk text. The
 	// percent number then re-applies the same color as the bar fill so the
 	// numeric matches visually (a red bar's 90% reads red too).
-	return fmt.Sprintf("%s%s #[fg=%s]%s%s",
-		window+" ", bar, color, percentText(pct), statusDefaultReset)
+	return fmt.Sprintf("%s%s #[fg=%s]%s%s%s",
+		window+" ", bar, color, percentText(pct), statusDefaultReset, suffix)
+}
+
+// staleSuffix returns the text-tier stale marker. Plain `~` (no color
+// escapes) since the text tiers run uncolored.
+func staleSuffix(stale bool) string {
+	if !stale {
+		return ""
+	}
+	return "~"
 }
 
 // percentText formats a percentage. Negative values are clamped to 0.
@@ -429,7 +526,7 @@ func percentText(pct float64) string {
 // ResetsAt is the zero time — those are placeholders that represent "no
 // data" rather than a genuine 0% (e.g. when the upstream returned
 // `seven_day_oauth_apps: null`).
-func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
+func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 	byModel := make(map[string]*modelDisplay)
 	order := make([]string, 0, 2)
 	for i := range snaps {
@@ -447,13 +544,16 @@ func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 			byModel[s.Model] = row
 			order = append(order, s.Model)
 		}
+		stale := isStale(s, now)
 		switch s.Window {
 		case usage.Window5h:
 			row.hasFive = true
 			row.fivePct = s.Pct
+			row.fiveStale = stale
 		case usage.WindowWeekly:
 			row.hasWeek = true
 			row.weekPct = s.Pct
+			row.weekStale = stale
 		}
 	}
 	canonical := []string{"claude", "codex"}
