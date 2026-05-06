@@ -1,6 +1,8 @@
 package app
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +41,14 @@ type updateCommand struct {
 	apiURL      string
 	executable  func() (string, error)
 	runExternal func(name string, args []string, stdout, stderr io.Writer) error
+	goos        string
+	goarch      string
+	mkdirTemp   func(dir, pattern string) (string, error)
+	removeAll   func(path string) error
+	rename      func(oldpath, newpath string) error
+	chmod       func(name string, mode os.FileMode) error
+	remove      func(name string) error
+	copyFile    func(src, dst string) error
 }
 
 type updateCache struct {
@@ -66,10 +77,16 @@ type updateInstaller struct {
 }
 
 type githubRelease struct {
-	TagName     string    `json:"tag_name"`
-	Name        string    `json:"name"`
-	HTMLURL     string    `json:"html_url"`
-	PublishedAt time.Time `json:"published_at"`
+	TagName     string               `json:"tag_name"`
+	Name        string               `json:"name"`
+	HTMLURL     string               `json:"html_url"`
+	PublishedAt time.Time            `json:"published_at"`
+	Assets      []githubReleaseAsset `json:"assets"`
+}
+
+type githubReleaseAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
 func newUpdateCommand() *updateCommand {
@@ -81,6 +98,14 @@ func newUpdateCommand() *updateCommand {
 		apiURL:      updateReleaseURL,
 		executable:  os.Executable,
 		runExternal: runUpdateExternal,
+		goos:        runtime.GOOS,
+		goarch:      runtime.GOARCH,
+		mkdirTemp:   os.MkdirTemp,
+		removeAll:   os.RemoveAll,
+		rename:      os.Rename,
+		chmod:       os.Chmod,
+		remove:      os.Remove,
+		copyFile:    copyRegularFile,
 	}
 }
 
@@ -116,6 +141,13 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 	}
 
 	installer := c.detectInstaller()
+	if installer.Source == "github-release" {
+		if *dryRun {
+			return c.runGitHubReleaseApplyDryRun(*noApply, stdout)
+		}
+		return c.runGitHubReleaseApply(*noApply, stdout, stderr)
+	}
+
 	commands, err := c.applyCommands(installer.Source, *noApply)
 	if err != nil {
 		return err
@@ -169,12 +201,166 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 		}
 		return []updateApplyCommand{{Name: exe, Args: args}}, nil
 	case "github-release":
-		return nil, errors.New("update apply for github-release installs is not implemented yet; download from GitHub Releases")
+		return nil, errors.New("update apply for github-release installs is handled by direct release binary replacement")
 	case "source":
 		return nil, errors.New("update apply for source installs is not supported; update the source checkout and rebuild")
 	default:
 		return nil, errors.New("update apply requires PROJMUX_INSTALLER=npm or PROJMUX_INSTALLER=go")
 	}
+}
+
+func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writer) error {
+	target, err := c.currentExecutable()
+	if err != nil {
+		return err
+	}
+	goos, goarch := c.targetPlatform()
+	archive := releaseArchiveName("latest", goos, goarch)
+	if _, err := fmt.Fprintf(stdout, "would fetch: %s\n", c.releaseAPIURL()); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "would download: %s\n", archive); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "would replace: %s (atomic via temp file)\n", target); err != nil {
+		return err
+	}
+	if !noApply {
+		if _, err := fmt.Fprintf(stdout, "would run: %s tmux apply\n", target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Writer) error {
+	target, err := c.currentExecutable()
+	if err != nil {
+		return err
+	}
+	rel, err := c.fetchLatestRelease(context.Background())
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(rel.TagName) == "" {
+		return errors.New("update apply: latest release response did not include tag_name")
+	}
+	goos, goarch := c.targetPlatform()
+	asset, err := findReleaseAsset(rel, goos, goarch)
+	if err != nil {
+		return err
+	}
+
+	tmpDir, err := c.createReleaseScratchDir(target)
+	if err != nil {
+		return err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup && c.removeAll != nil {
+			_ = c.removeAll(tmpDir)
+		}
+	}()
+
+	extracted := filepath.Join(tmpDir, "projmux")
+	if _, err := fmt.Fprintf(stdout, ">> downloading %s\n", asset.Name); err != nil {
+		return err
+	}
+	if err := c.downloadAndExtractReleaseAsset(context.Background(), asset.BrowserDownloadURL, extracted); err != nil {
+		return err
+	}
+	if err := c.atomicReplaceRelease(extracted, target); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, ">> atomically replaced %s\n", target); err != nil {
+		return err
+	}
+
+	if c.removeAll != nil {
+		_ = c.removeAll(tmpDir)
+	}
+	cleanup = false
+
+	if noApply {
+		return nil
+	}
+	if _, err := fmt.Fprintln(stdout, ">> applying live config..."); err != nil {
+		return err
+	}
+	if err := c.externalRunner()(target, []string{"tmux", "apply"}, stdout, stderr); err != nil {
+		return fmt.Errorf("apply live config via %s tmux apply: %w", target, err)
+	}
+	return nil
+}
+
+func (c *updateCommand) createReleaseScratchDir(target string) (string, error) {
+	if c.mkdirTemp == nil {
+		return "", errors.New("configure update mkdirTemp: temp directory factory is not configured")
+	}
+	tmpDir, err := c.mkdirTemp(filepath.Dir(target), ".projmux-release-*")
+	if err != nil {
+		return "", fmt.Errorf("create release update scratch directory: %w", err)
+	}
+	return tmpDir, nil
+}
+
+func (c *updateCommand) downloadAndExtractReleaseAsset(ctx context.Context, url, dst string) error {
+	if c.client == nil {
+		return errors.New("update apply: HTTP client is not configured")
+	}
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return errors.New("update apply: release asset did not include browser_download_url")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("update apply: build release asset request: %w", err)
+	}
+	req.Header.Set("Accept", "application/octet-stream")
+	req.Header.Set("User-Agent", "projmux/"+version.String())
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("update apply: download release asset: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update apply: release asset request returned status %d", resp.StatusCode)
+	}
+	if err := extractProjmuxBinary(resp.Body, dst); err != nil {
+		return fmt.Errorf("update apply: extract release asset: %w", err)
+	}
+	return nil
+}
+
+func (c *updateCommand) atomicReplaceRelease(src, target string) error {
+	upgrade := upgradeCommand{
+		rename:        c.rename,
+		chmod:         c.chmod,
+		remove:        c.remove,
+		copyFile:      c.copyFile,
+		tempSuffixGen: defaultTempSuffix,
+	}
+	return upgrade.atomicReplace(src, target)
+}
+
+func (c *updateCommand) targetPlatform() (string, string) {
+	goos := strings.TrimSpace(c.goos)
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	goarch := strings.TrimSpace(c.goarch)
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	return goos, goarch
+}
+
+func (c *updateCommand) releaseAPIURL() string {
+	if c.apiURL != "" {
+		return c.apiURL
+	}
+	return updateReleaseURL
 }
 
 func (c *updateCommand) runStatus(args []string, stdout, stderr io.Writer) error {
@@ -285,10 +471,7 @@ func (c *updateCommand) fetchLatestRelease(ctx context.Context) (githubRelease, 
 	if c.client == nil {
 		return githubRelease{}, errors.New("update check: HTTP client is not configured")
 	}
-	url := c.apiURL
-	if url == "" {
-		url = updateReleaseURL
-	}
+	url := c.releaseAPIURL()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return githubRelease{}, fmt.Errorf("update check: build release request: %w", err)
@@ -309,6 +492,69 @@ func (c *updateCommand) fetchLatestRelease(ctx context.Context) (githubRelease, 
 		return githubRelease{}, fmt.Errorf("update check: parse latest release: %w", err)
 	}
 	return rel, nil
+}
+
+func findReleaseAsset(rel githubRelease, goos, goarch string) (githubReleaseAsset, error) {
+	want := releaseArchiveName(rel.TagName, goos, goarch)
+	for _, asset := range rel.Assets {
+		if asset.Name == want {
+			if strings.TrimSpace(asset.BrowserDownloadURL) == "" {
+				return githubReleaseAsset{}, fmt.Errorf("update apply: release asset %s did not include browser_download_url", want)
+			}
+			return asset, nil
+		}
+	}
+	return githubReleaseAsset{}, fmt.Errorf("update apply: release %s does not include asset %s", strings.TrimSpace(rel.TagName), want)
+}
+
+func releaseArchiveName(tag, goos, goarch string) string {
+	return fmt.Sprintf("projmux_%s_%s_%s.tar.gz", releaseArchiveVersion(tag), strings.TrimSpace(goos), strings.TrimSpace(goarch))
+}
+
+func releaseArchiveVersion(tag string) string {
+	version := strings.TrimPrefix(strings.TrimSpace(tag), "v")
+	if version == "" {
+		return "latest"
+	}
+	return version
+}
+
+func extractProjmuxBinary(r io.Reader, dst string) error {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return fmt.Errorf("open gzip stream: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("read tar entry: %w", err)
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			continue
+		}
+		if filepath.Base(header.Name) != "projmux" {
+			continue
+		}
+		out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+		if err != nil {
+			return fmt.Errorf("create extracted binary: %w", err)
+		}
+		if _, err := io.Copy(out, tr); err != nil {
+			_ = out.Close()
+			return fmt.Errorf("write extracted binary: %w", err)
+		}
+		if err := out.Close(); err != nil {
+			return fmt.Errorf("close extracted binary: %w", err)
+		}
+		return nil
+	}
+	return errors.New("release archive did not contain a projmux binary")
 }
 
 func (c *updateCommand) loadCache() (updateCache, bool, error) {
@@ -396,7 +642,7 @@ func (c *updateCommand) detectInstaller() updateInstaller {
 	case "go":
 		return updateInstaller{Source: source, Note: "Installed with Go tooling; update apply delegates to projmux upgrade."}
 	case "github-release":
-		return updateInstaller{Source: source, Note: "Installed from a GitHub release binary; update apply support is future work."}
+		return updateInstaller{Source: source, Note: "Installed from a GitHub release binary; update apply replaces the current binary atomically."}
 	case "source":
 		return updateInstaller{Source: source, Note: "Installed from source; update from the source checkout until update apply exists."}
 	case "":

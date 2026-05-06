@@ -301,9 +301,12 @@ the source is reported as `unknown` with guidance to set the variable.
 `apply` is installer-aware and only runs after explicit user selection.
 For npm installs, it runs `npm update -g projmux` and then
 `projmux tmux apply` unless `--no-apply` is set. For Go installs, it
-delegates to the existing atomic `projmux upgrade` flow. `github-release`
-and `source` installs report actionable errors until direct release-binary
-replacement is implemented.
+delegates to the existing atomic `projmux upgrade` flow. For
+`github-release` installs, it downloads the latest matching
+`projmux_<version>_<goos>_<goarch>.tar.gz` release asset, extracts the
+binary, atomically replaces the current executable, then applies tmux
+configuration unless `--no-apply` is set. `source` installs report an
+actionable error because they must be updated from the source checkout.
 
 ## upgrade
 
