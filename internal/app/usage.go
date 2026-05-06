@@ -76,9 +76,22 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	return writeUsageTable(stdout, filtered)
 }
 
-// runStatus implements the `projmux status usage` subcommand. It reads from
-// the persisted cache (no adapter walk) so it is safe to call from the
-// tmux status interval.
+// statusRefreshThrottle is the minimum interval between adapter walks
+// triggered by `projmux status usage`. tmux refreshes the status line every
+// 5s by default; 30s gives the cache enough breathing room while keeping
+// the displayed numbers fresh on a human timescale.
+const statusRefreshThrottle = 30 * time.Second
+
+// usageDebugEnvVar gates whether MaybeCollect's swallowed adapter error is
+// echoed to stderr. Off by default — the status segment must stay silent on
+// a healthy install.
+const usageDebugEnvVar = "PROJMUX_USAGE_DEBUG"
+
+// runStatus implements the `projmux status usage` subcommand. It triggers
+// an opportunistic, throttled cache refresh (so a fresh install or a stale
+// cache self-heals on the next tmux redraw) and then reads the persisted
+// cache to render the HUD segment. Adapter failures during this hot path
+// are swallowed unless PROJMUX_USAGE_DEBUG is set.
 func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("status usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -98,6 +111,15 @@ func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 		// Status segment must never fail loudly — silently emit nothing.
 		return nil
 	}
+
+	// Opportunistic refresh. Errors here are non-fatal; on debug builds we
+	// echo to stderr so the user can investigate why the cache is stale.
+	if _, refreshErr := mgr.MaybeCollect(context.Background(), statusRefreshThrottle); refreshErr != nil {
+		if c.env(usageDebugEnvVar) != "" {
+			fmt.Fprintf(stderr, "usage: refresh: %v\n", refreshErr)
+		}
+	}
+
 	snaps, err := mgr.LoadAll()
 	if err != nil {
 		return nil

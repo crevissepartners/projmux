@@ -317,3 +317,92 @@ func TestUsageStatusManagerErrorIsSilent(t *testing.T) {
 	}
 }
 
+func TestUsageStatusMaybeCollectThrottledOnSecondCall(t *testing.T) {
+	t.Parallel()
+
+	c := newUsageCommand()
+	mgr, err := newStubManager(t, []usage.Snapshot{
+		{Model: "claude", Tokens: 100},
+		{Model: "codex", Tokens: 100},
+	})
+	if err != nil {
+		t.Fatalf("newStubManager: %v", err)
+	}
+	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	// First call refreshes the cache (no marker yet → MaybeCollect runs).
+	if err := c.runStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("first runStatus: %v", err)
+	}
+	first := stdout.String()
+	stdout.Reset()
+	// Second call within the throttle window: MaybeCollect short-circuits
+	// but the segment still renders by reading the cache.
+	if err := c.runStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("second runStatus: %v", err)
+	}
+	second := stdout.String()
+	if first == "" || second == "" {
+		t.Fatalf("expected non-empty status output, got %q / %q", first, second)
+	}
+}
+
+func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
+	t.Parallel()
+
+	c := newUsageCommand()
+	dir := t.TempDir()
+	registry := usage.NewRegistry()
+	_ = registry.Replace(&stubAdapter{
+		name: "claude",
+		err:  errors.New("network down"),
+	})
+	store := usage.NewStore(dir)
+	mgr := usage.NewManager(registry, store, usage.DefaultLimits, func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	})
+	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.runStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty (adapter failures must be silent)", stderr.String())
+	}
+}
+
+func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
+	t.Parallel()
+
+	c := newUsageCommand()
+	c.lookupEnv = func(name string) string {
+		if name == usageDebugEnvVar {
+			return "1"
+		}
+		return ""
+	}
+	dir := t.TempDir()
+	registry := usage.NewRegistry()
+	_ = registry.Replace(&stubAdapter{
+		name: "claude",
+		err:  errors.New("network down"),
+	})
+	store := usage.NewStore(dir)
+	mgr := usage.NewManager(registry, store, usage.DefaultLimits, func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	})
+	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.runStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "network down") {
+		t.Fatalf("stderr = %q, want adapter error surfaced under PROJMUX_USAGE_DEBUG", stderr.String())
+	}
+}
