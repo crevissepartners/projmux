@@ -49,6 +49,7 @@ type updateCache struct {
 type updateStatus struct {
 	CurrentVersion string          `json:"current_version"`
 	LatestVersion  string          `json:"latest_version,omitempty"`
+	ReleaseURL     string          `json:"release_url,omitempty"`
 	CheckedAt      *time.Time      `json:"checked_at,omitempty"`
 	CacheState     string          `json:"cache_state"`
 	UpdateState    string          `json:"update_state"`
@@ -190,6 +191,7 @@ func (c *updateCommand) statusFromCache(cache updateCache) (updateStatus, error)
 	return updateStatus{
 		CurrentVersion: version.String(),
 		LatestVersion:  strings.TrimSpace(cache.TagName),
+		ReleaseURL:     strings.TrimSpace(cache.HTMLURL),
 		CheckedAt:      &checked,
 		CacheState:     cacheState,
 		UpdateState:    compareUpdateState(version.String(), cache.TagName),

@@ -2,10 +2,13 @@ package app
 
 import (
 	"bytes"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
@@ -118,11 +121,27 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 func TestSettingsHubShowsAboutSection(t *testing.T) {
 	t.Parallel()
 
+	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "go"
+		}
+		return ""
+	}
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:   1,
+		CheckedAt: now.Add(-time.Hour),
+		TagName:   "v0.4.1",
+		HTMLURL:   "https://github.com/crevissepartners/projmux/releases/tag/v0.4.1",
+	})
+
 	var calls int
 	var aboutOptions intfzf.Options
 	cmd := &settingsCommand{
 		ai:       testAICommand(t.TempDir()),
 		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		update:   update,
 		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 			calls++
 			switch calls {
@@ -154,13 +173,24 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	if got, want := aboutOptions.Prompt, "Settings > About > "; got != want {
 		t.Fatalf("settings about prompt = %q, want %q", got, want)
 	}
+	if got, want := aboutOptions.Footer, "Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+		t.Fatalf("settings about footer = %q, want %q", got, want)
+	}
 	if !hasEntryValue(aboutOptions.Entries, settingsBackValue) {
 		t.Fatalf("settings about entries = %#v, want back entry", aboutOptions.Entries)
+	}
+	if !hasEntryValue(aboutOptions.Entries, settingsUpdateCheck) {
+		t.Fatalf("settings about entries = %#v, want update check action", aboutOptions.Entries)
 	}
 	for _, want := range []string{
 		"projmux " + version.String(),
 		"https://github.com/crevissepartners/projmux",
-		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+		"Check Updates",
+		"v0.4.1",
+		"update_available",
+		"Installer",
+		"Installed with Go tooling",
+		"https://github.com/crevissepartners/projmux/releases/tag/v0.4.1",
 		"sidebar, sessions, projects",
 		"new window, rename window/pane",
 		"terminal sends CSI-u keys",
@@ -172,6 +202,60 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		if !hasEntryLabelContaining(aboutOptions.Entries, want) {
 			t.Fatalf("settings about entries = %#v, want label containing %q", aboutOptions.Entries, want)
 		}
+	}
+}
+
+func TestSettingsHubRunsUpdateCheckAction(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
+	update, _ := testUpdateCommand(t, now)
+	update.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"tag_name":"v0.4.2","name":"v0.4.2","html_url":"https://github.com/crevissepartners/projmux/releases/tag/v0.4.2","published_at":"2026-05-06T10:00:00Z"}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	var calls int
+	var refreshedAbout intfzf.Options
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		update:   update,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionAbout}, nil
+			case 2:
+				if !hasEntryValue(options.Entries, settingsUpdateCheck) {
+					t.Fatalf("settings about entries = %#v, want update check action", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsUpdateCheck}, nil
+			case 3:
+				refreshedAbout = options
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 4:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "latest: v0.4.2") {
+		t.Fatalf("stdout = %q, want update check output", stdout.String())
+	}
+	if !hasEntryLabelContaining(refreshedAbout.Entries, "v0.4.2") {
+		t.Fatalf("refreshed about entries = %#v, want latest v0.4.2", refreshedAbout.Entries)
 	}
 }
 
