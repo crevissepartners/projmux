@@ -223,12 +223,41 @@ func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) err
 	_ = opts.MouseX
 	_ = opts.MouseY
 
+	// tmux's built-in window-list ranges (the tabs on row 0) set
+	// `#{mouse_status_range}` to `window|<idx>` — *not* a user-defined range
+	// id and *not* empty. We must detect the `window` / `window|N` shape
+	// directly and route to the window-list handler, otherwise the click
+	// falls through unrecognized. Two important details:
+	//
+	//   1. Some tmux versions populate `#{mouse_window}` for window-list
+	//      clicks, others leave it empty and only encode the index in the
+	//      range token. Parsing the index out of `window|N` makes the
+	//      handler robust across both shapes.
+	//   2. We do this *before* the user-defined range dispatch so a hostile
+	//      user range named "window" can't shadow the built-in.
+	if isWindowListRangeToken(raw) {
+		// Prefer the `#{mouse_window}` value (a unique window id like `3`,
+		// addressed via `@3`) when populated. Some tmux versions / layouts
+		// leave it empty for built-in window-range clicks and only encode
+		// the winlink index in the range token (`window|<idx>`); in that
+		// case we fall back to the index, addressed via `:<idx>` so tmux
+		// resolves it against the current session's window list rather
+		// than as a (different) window-id lookup.
+		if opts.MouseWindow != "" {
+			return c.handleWindowListClick(opts, stderr)
+		}
+		if idx := windowIndexFromRangeToken(raw); idx != "" {
+			return c.runTmux(stderr, "select-window", "-t", ":"+idx)
+		}
+		return nil
+	}
+
 	if raw == "" {
 		// tmux emits an empty `#{mouse_status_range}` when the click lands
-		// outside any user-defined range — typically on a window-list entry
-		// or status-bar whitespace. If `--mouse-window` is non-empty we
-		// fall back to tmux's default `select-window` behavior so users can
-		// still click a tab to switch to it; otherwise the click is a noop.
+		// outside any range — typically on status-bar whitespace. If
+		// `--mouse-window` is non-empty we fall back to tmux's default
+		// `select-window` behavior so users can still click a tab to switch
+		// to it; otherwise the click is a noop.
 		if opts.MouseWindow != "" {
 			return c.handleWindowListClick(opts, stderr)
 		}
@@ -249,6 +278,28 @@ func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) err
 		return nil
 	}
 	return handler(opts, stdout, stderr)
+}
+
+// isWindowListRangeToken reports whether `raw` (the value of
+// `#{mouse_status_range}` for the click) refers to tmux's built-in window-list
+// range. tmux encodes these as `window|<idx>` (e.g. `window|3`) and, for the
+// edge case where no index is attached, as the bare string `window`.
+func isWindowListRangeToken(raw string) bool {
+	if raw == "window" {
+		return true
+	}
+	return strings.HasPrefix(raw, "window|")
+}
+
+// windowIndexFromRangeToken extracts the `<idx>` portion of a `window|<idx>`
+// range token. Returns "" for the bare `window` form (no index encoded) or any
+// non-window-list token.
+func windowIndexFromRangeToken(raw string) string {
+	const prefix = "window|"
+	if !strings.HasPrefix(raw, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(raw[len(prefix):])
 }
 
 // handleWindowListClick restores tmux's default window-list click behavior
