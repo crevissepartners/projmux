@@ -940,14 +940,31 @@ func tmuxAppKeyBindings() []string {
 // ranges. Without this, overriding `MouseDown1Status` would silently disable
 // click-to-switch-window in the window list.
 //
+// IMPORTANT: empirically (tmux 3.4+ on `-L projmux`), a click on the window
+// list fires `MouseDown1Status` with `#{mouse_status_range}` set to the bare
+// string `"window"` and `#{mouse_window}` empty. The mouse-target idiom
+// `select-window -t =` only resolves through tmux's *internal* mouse context,
+// which is not preserved across a `run-shell` subprocess — so projmux's Go
+// dispatcher cannot recover the clicked window from those inputs alone. We
+// therefore short-circuit the `range == "window"` case to a native
+// `select-window -t =` inside the same tmux command-chain via `if-shell -F`,
+// and only fall through to `run-shell` for projmux-managed ranges. The Go
+// fallback (`isWindowListRangeToken`) is left in place as defense-in-depth
+// for any future tmux that does populate the index.
+//
 // The `prefix s` chord uses tmux's `switch-client -T <table>` mechanism so
 // keyboard users get the same handlers as mouse clickers without re-defining
 // each handler twice.
 func tmuxStatusbarKeyBindings(binaryPath string) []string {
 	bin := tmuxShellQuote(binaryPath)
+	clickCmd := bin + " statusbar click \"#{mouse_status_range}\" --mouse-window \"#{mouse_window}\""
+	mouseDownBind := "bind-key -n MouseDown1Status if-shell -F " +
+		tmuxConfigQuote("#{==:#{mouse_status_range},window}") + " " +
+		tmuxConfigQuote("select-window -t =") + " " +
+		tmuxConfigQuote("run-shell "+tmuxConfigQuote(clickCmd))
 	return []string{
 		"unbind-key -q -n MouseDown1Status",
-		"bind-key -n MouseDown1Status run-shell " + tmuxConfigQuote(bin+" statusbar click \"#{mouse_status_range}\" --mouse-window \"#{mouse_window}\""),
+		mouseDownBind,
 		"bind-key s switch-client -T projmux-status",
 		"bind-key -T projmux-status u run-shell " + tmuxConfigQuote(bin+" statusbar click usage"),
 		"bind-key -T projmux-status n run-shell " + tmuxConfigQuote(bin+" statusbar click notify"),

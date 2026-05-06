@@ -438,6 +438,45 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	}
 }
 
+func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *testing.T) {
+	t.Parallel()
+
+	// Empirically tmux 3.4+ fires `MouseDown1Status` with
+	// `#{mouse_status_range}` set to the bare string "window" and an empty
+	// `#{mouse_window}` for window-list clicks. The `select-window -t =`
+	// idiom only resolves through tmux's internal mouse context, which a
+	// `run-shell` subprocess cannot see — so the projmux dispatcher would
+	// no-op silently. The bind must short-circuit that case via
+	// `if-shell -F` to a native `select-window -t =` *before* invoking
+	// projmux. This test pins the rendered config so the regression cannot
+	// silently come back.
+	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		// Must short-circuit the bare "window" range to native select-window.
+		"bind-key -n MouseDown1Status if-shell -F \"#{==:#{mouse_status_range},window}\" \"select-window -t =\"",
+		// Projmux fallback path for non-window ranges still goes through run-shell.
+		`run-shell \"'/tmp/proj mux/bin/projmux' statusbar click \\"#{mouse_status_range}\\" --mouse-window \\"#{mouse_window}\\"\"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-config output = %q, want substring %q", output, want)
+		}
+	}
+	// The previous unconditional `run-shell` bind (no if-shell guard) must be gone.
+	for _, banned := range []string{
+		"bind-key -n MouseDown1Status run-shell ",
+	} {
+		if strings.Contains(output, banned) {
+			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)
+		}
+	}
+}
+
 func TestTmuxRebalancePanesSelectsMultiPaneWindows(t *testing.T) {
 	t.Parallel()
 
