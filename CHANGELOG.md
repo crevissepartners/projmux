@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.1](https://github.com/crevissepartners/projmux/compare/v0.4.0...v0.4.1) (2026-05-06)
+
+
+### Features
+
+* add npm binary package scaffold ([#47](https://github.com/crevissepartners/projmux/issues/47)) ([71252e3](https://github.com/crevissepartners/projmux/commit/71252e33bcafc31526af69d6d0a561ac6cfff01a))
+* add update status check ([#44](https://github.com/crevissepartners/projmux/issues/44)) ([b32317a](https://github.com/crevissepartners/projmux/commit/b32317a08ec985b62fb6efc5f2c26be671b94c30))
+* apply installer updates ([#49](https://github.com/crevissepartners/projmux/issues/49)) ([fb5a797](https://github.com/crevissepartners/projmux/commit/fb5a7971f6ad1a8de481230efbde13fd6eea038e))
+* install missing doctor deps ([#50](https://github.com/crevissepartners/projmux/issues/50)) ([bfe431d](https://github.com/crevissepartners/projmux/commit/bfe431d32d8c74ae8c1194ee0f62d9446f6914ba))
+* show updates in settings ([#46](https://github.com/crevissepartners/projmux/issues/46)) ([da1ebb7](https://github.com/crevissepartners/projmux/commit/da1ebb75e1d220cbf526883fcbacd808446a76ab))
+* update from GitHub releases ([#51](https://github.com/crevissepartners/projmux/issues/51)) ([acea5eb](https://github.com/crevissepartners/projmux/commit/acea5ebb978092ce1a8ceff29d4fb3f5588c6bc3))
+
+
+### Bug Fixes
+
+* include release installer update guidance ([#52](https://github.com/crevissepartners/projmux/issues/52)) ([525698f](https://github.com/crevissepartners/projmux/commit/525698fe86709a74c0f2e2f1d1b377fd2724d218))
+* keep update tests release-safe ([#54](https://github.com/crevissepartners/projmux/issues/54)) ([560375f](https://github.com/crevissepartners/projmux/commit/560375f8701ec357db459eefcb1760185eadad82))
+
 ## [0.4.0](https://github.com/crevissepartners/projmux/compare/v0.3.0...v0.4.0) (2026-05-06)
 
 
