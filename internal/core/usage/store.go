@@ -54,6 +54,16 @@ func (s *Store) FilePath(model string) string {
 	return filepath.Join(s.baseDir, sanitizeModel(model)+".json")
 }
 
+// BaseDir returns the directory the Store is rooted at. Used by the Manager
+// to locate the MaybeCollect throttle marker so the marker stays colocated
+// with the per-model cache files.
+func (s *Store) BaseDir() string {
+	if s == nil {
+		return ""
+	}
+	return s.baseDir
+}
+
 // Load reads the cache for a given model. A missing file reads as an empty
 // cache (no error) so first-run callers see []Bucket{}.
 func (s *Store) Load(model string) ([]Bucket, error) {
