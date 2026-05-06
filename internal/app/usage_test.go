@@ -553,6 +553,276 @@ func TestUsageJSONHealthyOmitsBackoff(t *testing.T) {
 	}
 }
 
+// forceTrackingAdapter records whether ForceCollect was the entry
+// point: `--force` clears the persisted backoff via the Manager, so
+// the adapter sees an empty BackoffState even when one was on disk.
+// Save echoes whatever was loaded so the on-disk state round-trips
+// (mirroring how the real claude adapter preserves backoff during a
+// short-circuit).
+type forceTrackingAdapter struct {
+	stubAdapter
+	loadedBackoff usage.BackoffState
+	collectCalls  int
+}
+
+func (a *forceTrackingAdapter) LoadBackoff(state usage.BackoffState) {
+	a.loadedBackoff = state
+}
+func (a *forceTrackingAdapter) SaveBackoff() usage.BackoffState {
+	return a.loadedBackoff
+}
+func (a *forceTrackingAdapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
+	a.collectCalls++
+	return a.snaps, a.err
+}
+
+func TestUsageRunForceBypassesBackoffAndThrottle(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	store := usage.NewStore(dir)
+	// Seed: claude in active backoff.
+	if err := store.SaveState(usage.State{
+		Backoff: map[string]usage.BackoffState{
+			"claude": {Until: now.Add(30 * time.Minute), Consecutive: 4},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	registry := usage.NewRegistry()
+	claudeAd := &forceTrackingAdapter{
+		stubAdapter: stubAdapter{
+			name: "claude",
+			snaps: []usage.Snapshot{
+				{Model: "claude", Window: usage.Window5h, Pct: 9.0, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+			},
+		},
+	}
+	if err := registry.Replace(claudeAd); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	mgr := usage.NewManager(registry, store, func() time.Time { return now })
+
+	c := newUsageCommand()
+	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+	c.now = func() time.Time { return now }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--force"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	if claudeAd.collectCalls != 1 {
+		t.Fatalf("collect calls = %d, want 1 (--force must invoke despite backoff)", claudeAd.collectCalls)
+	}
+	if !claudeAd.loadedBackoff.Until.IsZero() {
+		t.Fatalf("LoadBackoff received Until=%v, want zero (--force clears)", claudeAd.loadedBackoff.Until)
+	}
+	if claudeAd.loadedBackoff.Consecutive != 0 {
+		t.Fatalf("LoadBackoff received Consecutive=%d, want 0 (--force clears)", claudeAd.loadedBackoff.Consecutive)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "claude") || !strings.Contains(out, "9%") {
+		t.Fatalf("expected refreshed claude row in output: %q", out)
+	}
+}
+
+func TestUsageRunDefaultRespectsBackoff(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	store := usage.NewStore(dir)
+	prior := usage.Snapshot{Model: "claude", Window: usage.Window5h, Pct: 18.0, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-time.Minute)}
+	if err := store.SaveState(usage.State{
+		Snapshots: []usage.Snapshot{prior},
+		Backoff: map[string]usage.BackoffState{
+			"claude": {Until: now.Add(30 * time.Minute), Consecutive: 1},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	registry := usage.NewRegistry()
+	claudeAd := &forceTrackingAdapter{
+		stubAdapter: stubAdapter{name: "claude"},
+	}
+	if err := registry.Replace(claudeAd); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	mgr := usage.NewManager(registry, store, func() time.Time { return now })
+
+	c := newUsageCommand()
+	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+	c.now = func() time.Time { return now }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run(nil, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	if !claudeAd.loadedBackoff.Until.Equal(now.Add(30 * time.Minute)) {
+		t.Fatalf("LoadBackoff Until = %v, want preserved 30m (no --force)", claudeAd.loadedBackoff.Until)
+	}
+	out := stdout.String()
+	// Output should still show prior 18% (preserved during backoff
+	// short-circuit) AND a backoff note pointing at --force.
+	if !strings.Contains(out, "18%") {
+		t.Fatalf("expected preserved 18%% in output: %q", out)
+	}
+	if !strings.Contains(out, "claude is in backoff") {
+		t.Fatalf("expected backoff note in output: %q", out)
+	}
+	if !strings.Contains(out, "--force") {
+		t.Fatalf("backoff note must mention --force: %q", out)
+	}
+}
+
+func TestWriteBackoffNoteEmitsWhenActive(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	state := usage.State{
+		Backoff: map[string]usage.BackoffState{
+			"claude": {Until: now.Add(12 * time.Minute), Consecutive: 2},
+		},
+	}
+	out := &bytes.Buffer{}
+	writeBackoffNote(out, state, now)
+	got := out.String()
+	if !strings.Contains(got, "claude is in backoff") {
+		t.Fatalf("missing backoff note: %q", got)
+	}
+	if !strings.Contains(got, "12m") {
+		t.Fatalf("missing remaining duration: %q", got)
+	}
+	if !strings.Contains(got, "--force") {
+		t.Fatalf("must point at --force: %q", got)
+	}
+}
+
+func TestWriteBackoffNoteSilentWhenHealthy(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	state := usage.State{Backoff: map[string]usage.BackoffState{}}
+	out := &bytes.Buffer{}
+	writeBackoffNote(out, state, now)
+	if out.Len() != 0 {
+		t.Fatalf("expected silent on healthy state, got %q", out.String())
+	}
+
+	// Expired backoff (Until in the past) is also no-op.
+	state = usage.State{Backoff: map[string]usage.BackoffState{
+		"claude": {Until: now.Add(-time.Minute), Consecutive: 1},
+	}}
+	out = &bytes.Buffer{}
+	writeBackoffNote(out, state, now)
+	if out.Len() != 0 {
+		t.Fatalf("expected silent on expired backoff, got %q", out.String())
+	}
+}
+
+func TestFormatBackoffDurationShapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{0, "1s"},
+		{45 * time.Second, "45s"},
+		{2 * time.Minute, "2m"},
+		{12 * time.Minute, "12m"},
+		{60 * time.Minute, "1h"},
+		{75 * time.Minute, "1h15m"},
+	}
+	for _, tc := range cases {
+		if got := formatBackoffDuration(tc.in); got != tc.want {
+			t.Fatalf("formatBackoffDuration(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestFormatStatusUsageMarksVeryStaleSnapshot(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	veryStale := now.Add(-90 * time.Minute) // > veryStaleAfter (1h)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: veryStale},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	// Very-stale → `~~` marker present in HUD form.
+	if !strings.Contains(got, "18%#[default]#[fg=colour245]~~#[default]") {
+		t.Fatalf("missing very-stale ~~ marker: %q", got)
+	}
+}
+
+func TestFormatStatusUsageVeryStaleTextTier(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	veryStale := now.Add(-90 * time.Minute)
+	stale := now.Add(-15 * time.Minute) // stale but not very-stale
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: veryStale},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: stale},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
+	}
+	tier3 := formatStatusUsage(snaps, 45, now)
+	if !strings.Contains(tier3, "5h:42%~~") {
+		t.Fatalf("text tier missing very-stale ~~ marker on claude 5h: %q", tier3)
+	}
+	if !strings.Contains(tier3, "wk:18%~") {
+		t.Fatalf("text tier missing stale ~ marker on claude wk: %q", tier3)
+	}
+	// Don't double-mark the merely-stale row as ~~.
+	if strings.Contains(tier3, "wk:18%~~") {
+		t.Fatalf("merely-stale row got ~~ marker: %q", tier3)
+	}
+}
+
+func TestStaleLevelCorrectness(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		age  time.Duration
+		want int
+	}{
+		{"fresh", 1 * time.Minute, 0},
+		{"just under stale", 9 * time.Minute, 0},
+		{"stale", 30 * time.Minute, 1},
+		{"just under very stale", 59 * time.Minute, 1},
+		{"very stale", 2 * time.Hour, 2},
+	}
+	for _, tc := range cases {
+		s := usage.Snapshot{UpdatedAt: now.Add(-tc.age)}
+		if got := staleLevel(s, now); got != tc.want {
+			t.Fatalf("staleLevel(%s) = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestUsageHelpDocumentsForceFlag(t *testing.T) {
+	t.Parallel()
+
+	out := &bytes.Buffer{}
+	printUsageHelp(out)
+	body := out.String()
+	if !strings.Contains(body, "--force") {
+		t.Fatalf("help missing --force flag: %s", body)
+	}
+	if !strings.Contains(body, "-f") {
+		t.Fatalf("help missing -f shorthand: %s", body)
+	}
+}
+
 func TestResolveStateDirHonoursEnvOverride(t *testing.T) {
 	t.Parallel()
 

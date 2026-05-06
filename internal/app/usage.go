@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -38,10 +39,21 @@ func newUsageCommand() *usageCommand {
 }
 
 // staleAfter is the age at which a snapshot is considered stale and
-// flagged for the user. Aligned with the longest expected adapter
-// throttle (Claude, 60s) plus the worst-case backoff window (15m) so a
-// marker only appears when something is genuinely wrong.
+// flagged for the user with a single `~` marker. This is the single
+// source of truth for the HUD and the table — a snapshot older than
+// this triggers the marker everywhere staleness is rendered.
+//
+// The value is aligned with the longest expected adapter throttle
+// (Claude, 5min) plus enough headroom that a healthy install never
+// trips the marker on the hot path.
 const staleAfter = 10 * time.Minute
+
+// veryStaleAfter is the age at which a snapshot is considered VERY
+// stale and the marker doubles to `~~` (still rendered in dim color).
+// This nudges the user to manually `--force` if they care about the
+// exact value: by this point the data is likely from a different
+// 5-hour window than the one currently active.
+const veryStaleAfter = 1 * time.Hour
 
 // Run implements `projmux usage [...]`.
 func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -50,6 +62,11 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	model := fs.String("model", "all", "filter by model: codex | claude | all")
 	window := fs.String("window", "all", "filter by window: 5h | weekly | all")
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the tab-aligned table")
+	// --force / -f bypasses the per-adapter throttle floor AND clears
+	// any active backoff before invoking adapters. Useful when bound
+	// to a tmux key as a "force refresh now" gesture.
+	force := fs.Bool("force", false, "bypass per-adapter throttle and clear active backoff before refreshing")
+	fs.BoolVar(force, "f", false, "shorthand for --force")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -70,7 +87,15 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintf(stderr, format+"\n", args...)
 		})
 	}
-	snaps, collectErr := mgr.Collect(context.Background())
+	var (
+		snaps      []usage.Snapshot
+		collectErr error
+	)
+	if *force {
+		snaps, collectErr = mgr.ForceCollect(context.Background())
+	} else {
+		snaps, collectErr = mgr.Collect(context.Background())
+	}
 	// collectErr is informational — adapters that fail still keep the rest
 	// of the rendering pipeline working. We surface a single warning to
 	// stderr so the user knows partial data was used.
@@ -81,11 +106,19 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	filtered := filterSnapshots(snaps, *model, *window)
 	filtered = usage.SortedSnapshots(filtered)
 
+	state, _ := mgr.LoadState()
+
 	if *asJSON {
-		state, _ := mgr.LoadState()
 		return writeUsageJSON(stdout, filtered, state, c.now())
 	}
-	return writeUsageTable(stdout, filtered, c.now())
+	if err := writeUsageTable(stdout, filtered, c.now()); err != nil {
+		return err
+	}
+	// Surface backoff status in the human-readable table form so users
+	// can see why their numbers aren't refreshing. The --json form
+	// already includes a `backoff` block.
+	writeBackoffNote(stdout, state, c.now())
+	return nil
 }
 
 // statusRefreshThrottle is the minimum interval between adapter walks
@@ -110,6 +143,11 @@ func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 	fs := flag.NewFlagSet("status usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	maxWidth := fs.Int("max-width", 0, "truncate output to N runes (0 = no truncation)")
+	// --force / -f mirrors the `projmux usage` flag: bypass throttle
+	// and clear active backoff. Suitable for tmux key bindings that
+	// trigger an explicit "refresh now" gesture.
+	force := fs.Bool("force", false, "bypass per-adapter throttle and clear active backoff before refreshing")
+	fs.BoolVar(force, "f", false, "shorthand for --force")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -131,11 +169,21 @@ func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 		})
 	}
 
-	// Opportunistic refresh. Errors here are non-fatal; on debug builds we
-	// echo to stderr so the user can investigate why the cache is stale.
-	if _, refreshErr := mgr.MaybeCollect(context.Background(), statusRefreshThrottle); refreshErr != nil {
-		if c.env(usageDebugEnvVar) != "" {
-			fmt.Fprintf(stderr, "usage: refresh: %v\n", refreshErr)
+	// Force path: always run every adapter, ignoring throttle/backoff.
+	// Default path: opportunistic, throttled refresh. Errors here are
+	// non-fatal; on debug builds we echo to stderr so the user can
+	// investigate why the cache is stale.
+	if *force {
+		if _, refreshErr := mgr.ForceCollect(context.Background()); refreshErr != nil {
+			if c.env(usageDebugEnvVar) != "" {
+				fmt.Fprintf(stderr, "usage: refresh: %v\n", refreshErr)
+			}
+		}
+	} else {
+		if _, refreshErr := mgr.MaybeCollect(context.Background(), statusRefreshThrottle); refreshErr != nil {
+			if c.env(usageDebugEnvVar) != "" {
+				fmt.Fprintf(stderr, "usage: refresh: %v\n", refreshErr)
+			}
 		}
 	}
 
@@ -309,12 +357,29 @@ func writeUsageTable(w io.Writer, snaps []usage.Snapshot, now time.Time) error {
 // isStale reports whether a snapshot's UpdatedAt is far enough in the
 // past that the user should be warned. now=zero disables the check (used
 // by callers that don't have a reliable clock — they get fresh
-// rendering, which is the safe default).
+// rendering, which is the safe default). Returns true for any age
+// >staleAfter; callers that need the very-stale level use
+// staleLevel directly.
 func isStale(s usage.Snapshot, now time.Time) bool {
+	return staleLevel(s, now) > 0
+}
+
+// staleLevel returns 0 (fresh), 1 (stale, >staleAfter) or 2 (very
+// stale, >veryStaleAfter) for the supplied snapshot. The renderer
+// uses this to pick between `~` and `~~` markers.
+func staleLevel(s usage.Snapshot, now time.Time) int {
 	if now.IsZero() || s.UpdatedAt.IsZero() {
-		return false
+		return 0
 	}
-	return now.Sub(s.UpdatedAt) > staleAfter
+	age := now.Sub(s.UpdatedAt)
+	switch {
+	case age > veryStaleAfter:
+		return 2
+	case age > staleAfter:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // HUD layout constants. Separators are constant runes so visualLen can
@@ -324,22 +389,32 @@ const (
 	statusInnerSeparator = " · " // between 5h and wk inside a model.
 	statusModelSeparator = "   " // 3 spaces between Claude and Codex blocks.
 	statusDefaultReset   = "#[default]"
-	staleMarker          = "#[fg=colour245]~#[default]"
+	// staleMarker (`~`) flags snapshots older than staleAfter (10m).
+	// staleMarkerVery (`~~`) flags snapshots older than veryStaleAfter
+	// (1h) — rendered in the same dim color so the user sees a stronger
+	// nudge to manually `--force` without the segment shifting visual
+	// weight.
+	staleMarker     = "#[fg=colour245]~#[default]"
+	staleMarkerVery = "#[fg=colour245]~~#[default]"
 )
 
 // modelDisplay is the in-memory representation of a single model's
 // snapshots. Pct values are floats so the >100% over-limit branch can
 // surface the actual number (e.g. `319%`) instead of capping at 100%.
+//
+// Staleness is captured as a level so the renderer can emit `~` for
+// stale rows (>staleAfter) and `~~` for very-stale rows
+// (>veryStaleAfter): 0 = fresh, 1 = stale, 2 = very stale.
 type modelDisplay struct {
 	model      string // canonical lowercase key.
 	label      string // user-facing label (Claude / Codex / ...).
 	shortLabel string // legacy single-letter (C / X / ...).
 	hasFive    bool
 	fivePct    float64
-	fiveStale  bool
+	fiveStale  int
 	hasWeek    bool
 	weekPct    float64
-	weekStale  bool
+	weekStale  int
 }
 
 // formatStatusUsage produces the HUD-style tmux status segment. The output
@@ -486,12 +561,15 @@ func renderTextPair(m modelDisplay, label string) string {
 
 // renderHUDPair renders a single `<window> [bar] N%` substring with color
 // escapes. Used for both 5h and wk pairs in the HUD tiers.
-func renderHUDPair(window string, pct float64, stale bool) string {
+func renderHUDPair(window string, pct float64, staleLevel int) string {
 	color := usage.BarColorForPct(pct)
 	bar := usage.RenderColoredBar(pct, color, usage.BarEmptyColor)
 	suffix := ""
-	if stale {
+	switch staleLevel {
+	case 1:
 		suffix = staleMarker
+	case 2:
+		suffix = staleMarkerVery
 	}
 	// `#[default]` after the bar restores label fg before the wk text. The
 	// percent number then re-applies the same color as the bar fill so the
@@ -500,13 +578,18 @@ func renderHUDPair(window string, pct float64, stale bool) string {
 		window+" ", bar, color, percentText(pct), statusDefaultReset, suffix)
 }
 
-// staleSuffix returns the text-tier stale marker. Plain `~` (no color
-// escapes) since the text tiers run uncolored.
-func staleSuffix(stale bool) string {
-	if !stale {
+// staleSuffix returns the text-tier stale marker. Plain `~`/`~~` (no
+// color escapes) since the text tiers run uncolored. Levels match
+// staleLevel: 1 = stale (`~`), 2 = very stale (`~~`).
+func staleSuffix(staleLevel int) string {
+	switch staleLevel {
+	case 1:
+		return "~"
+	case 2:
+		return "~~"
+	default:
 		return ""
 	}
-	return "~"
 }
 
 // percentText formats a percentage. Negative values are clamped to 0.
@@ -544,16 +627,16 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 			byModel[s.Model] = row
 			order = append(order, s.Model)
 		}
-		stale := isStale(s, now)
+		level := staleLevel(s, now)
 		switch s.Window {
 		case usage.Window5h:
 			row.hasFive = true
 			row.fivePct = s.Pct
-			row.fiveStale = stale
+			row.fiveStale = level
 		case usage.WindowWeekly:
 			row.hasWeek = true
 			row.weekPct = s.Pct
-			row.weekStale = stale
+			row.weekStale = level
 		}
 	}
 	canonical := []string{"claude", "codex"}
@@ -666,6 +749,62 @@ func runeLen(s string) int {
 
 func printUsageHelp(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux usage [--model codex|claude|all] [--window 5h|weekly|all] [--json]")
-	fmt.Fprintln(w, "  projmux status usage [--max-width N]")
+	fmt.Fprintln(w, "  projmux usage [--model codex|claude|all] [--window 5h|weekly|all] [--json] [--force|-f]")
+	fmt.Fprintln(w, "  projmux status usage [--max-width N] [--force|-f]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Flags:")
+	fmt.Fprintln(w, "  --force, -f   bypass per-adapter throttle and clear active backoff before refreshing.")
+	fmt.Fprintln(w, "                Useful when bound to a tmux key as a manual 'refresh now' gesture.")
+}
+
+// writeBackoffNote appends a one-line note to stdout when an adapter
+// is currently in backoff. The note tells the user how long until the
+// adapter's next attempt and points them at `--force`. No-op when no
+// adapter is in backoff so healthy installs see a clean table.
+func writeBackoffNote(w io.Writer, state usage.State, now time.Time) {
+	if now.IsZero() {
+		return
+	}
+	// Stable ordering across runs.
+	names := make([]string, 0, len(state.Backoff))
+	for name := range state.Backoff {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		bs := state.Backoff[name]
+		if bs.Until.IsZero() || !now.Before(bs.Until) {
+			continue
+		}
+		remaining := bs.Until.Sub(now).Round(time.Minute)
+		if remaining <= 0 {
+			remaining = bs.Until.Sub(now).Round(time.Second)
+		}
+		fmt.Fprintf(w, "%s is in backoff, try again in %s (use --force to bypass)\n", name, formatBackoffDuration(remaining))
+	}
+}
+
+// formatBackoffDuration renders a duration in compact form (e.g. "12m",
+// "1h3m", "45s"). Designed to round-trip through both the table note
+// and the HUD without ever emitting the noisy default Go form.
+func formatBackoffDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		secs := int(d.Round(time.Second).Seconds())
+		if secs < 1 {
+			secs = 1
+		}
+		return fmt.Sprintf("%ds", secs)
+	}
+	hours := int(d / time.Hour)
+	mins := int((d % time.Hour) / time.Minute)
+	if hours == 0 {
+		return fmt.Sprintf("%dm", mins)
+	}
+	if mins == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, mins)
 }
