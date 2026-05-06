@@ -773,12 +773,19 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"set-hook -g after-kill-pane " + tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
 		"set -g window-status-format " + tmuxConfigQuote("#[fg=colour245,bg=colour235] #("+bin+" attention window #{window_id})#[fg=colour245] #I #W #[default]"),
 		"set -g window-status-current-format " + tmuxConfigQuote("#[bold,fg=colour231,bg=colour238] #("+bin+" attention window #{window_id})#[fg=colour231] #I #W #[default]"),
-		"set -g status 3",
+		"set -g status 2",
 		"set -g status-right-length 140",
 		"set -g status-left " + tmuxConfigQuote("#[range=user|session][#S] #[norange]"),
 		"set -g status-right " + tmuxConfigQuote("#[range=user|pwd]#[fg=colour242]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]  %Y-%m-%d %H:%M #[bold,fg=colour16,bg=colour45] projmux #[default]"),
-		"set -g status-format[1] " + tmuxConfigQuote("#[align=left range=user|usage]#("+bin+" status usage --max-width 200)#[norange]"),
-		"set -g status-format[2] " + tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 200)#[norange]"),
+		// Two-line status bar: line 0 is the existing session/window/path row;
+		// line 1 splits notify (left, capped at 80 cells) and the AI usage HUD
+		// (right, capped at 120 cells). Caps assume a 200+ col terminal — the
+		// HUD's full form is ~100 cells, so 120 leaves headroom while still
+		// fitting alongside an 80-cell notify segment.
+		"set -g status-format[1] " + tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 80)#[norange]#[align=right range=user|usage]#("+bin+" status usage --max-width 120)#[norange]"),
+		// Clear any stale index-2 row a previous projmux build may have left on
+		// the running tmux server (older config used three lines).
+		"set -gu status-format[2]",
 		"unbind-key -q -n M-1",
 		"unbind-key -q -n M-2",
 		"unbind-key -q -n M-3",
@@ -870,21 +877,23 @@ func tmuxAppConfig(binaryPath string) string {
 	}
 	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfig(binaryPath)), "\n")[1:]...)
 	lines = append(lines, tmuxAppKeyBindings()...)
-	// Three-line status bar:
+	// Two-line status bar:
 	//   [0] existing session/window/path/git/kube/clock row
-	//   [1] AI usage segment (codex / claude × 5h+weekly)
-	//   [2] persistent notification segment
-	// We re-assert `status 3` here because `tmuxStandaloneConfig` already
+	//   [1] notify (left, --max-width 80) + AI usage HUD (right, --max-width 120)
+	// We re-assert `status 2` here because `tmuxStandaloneConfig` already
 	// sets it, but a tmux server that previously ran an older projmux build
 	// may have stuck a leftover `status-format[1]` showing pane debug info —
-	// we explicitly overwrite both extra lines so they always reflect this
-	// build's intent.
+	// we explicitly overwrite the line so it always reflects this build's
+	// intent. `set -gu status-format[2]` clears any stale third row inherited
+	// from the previous three-line layout. Width caps (80/120) target typical
+	// 200+ col terminals; the HUD's full form is ~100 cells, so 120 leaves a
+	// small buffer while still fitting alongside notify.
 	lines = append(lines,
-		"set -g status 3",
+		"set -g status 2",
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
 		"set -g status-right "+tmuxConfigQuote("#[range=user|pwd]#[fg=colour242]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]  %Y-%m-%d %H:%M#[default]"),
-		"set -g status-format[1] "+tmuxConfigQuote("#[align=left range=user|usage]#("+bin+" status usage --max-width 200)#[norange]"),
-		"set -g status-format[2] "+tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 200)#[norange]"),
+		"set -g status-format[1] "+tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 80)#[norange]#[align=right range=user|usage]#("+bin+" status usage --max-width 120)#[norange]"),
+		"set -gu status-format[2]",
 	)
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -923,7 +932,7 @@ func tmuxAppKeyBindings() []string {
 //
 // Note: `MouseDown1Status` fires for *any* line of a multi-line status bar,
 // and `#{mouse_status_range}` returns whichever user-defined range we wrapped
-// under the cursor — so a single bind covers all three lines.
+// under the cursor — so a single bind covers both lines.
 //
 // The `prefix s` chord uses tmux's `switch-client -T <table>` mechanism so
 // keyboard users get the same handlers as mouse clickers without re-defining
