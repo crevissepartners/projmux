@@ -7,7 +7,7 @@ the repo, exporting a Kubernetes context, kicking off a background sync, etc.
 projmux never ships behavior specific to any of those — that lives in the
 hook.
 
-## Where it lives
+## Global Hook
 
 ```
 ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/post-create
@@ -21,6 +21,27 @@ no log. There is no enable flag.
 mkdir -p ~/.config/projmux/hooks
 chmod +x ~/.config/projmux/hooks/post-create
 ```
+
+The global hook is automatic and remains the stable public API.
+
+## Project-Local Hooks
+
+Project-local hooks are opt-in because they execute code from the repository.
+Enable them for a launch environment with:
+
+```sh
+PROJMUX_PROJECT_HOOKS=1 projmux shell
+```
+
+When enabled, projmux walks from the new session working directory to the Git
+repo root and runs the first executable candidate it finds:
+
+1. `<repo>/.projmux/post-create`
+2. `<repo>/.projmux/hooks/post-create`
+
+The global hook runs first when present, then the project-local hook runs.
+Project-local hooks are still limited to session creation; status rendering and
+other status-bar hot paths never discover or execute hooks.
 
 ## When it runs
 

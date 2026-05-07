@@ -417,6 +417,11 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"#[bold,fg=colour16,bg=colour45] projmux #[default]",
 		"'/tmp/proj mux/bin/projmux' status kube",
 		"'/tmp/proj mux/bin/projmux' status git",
+		"#[range=user|projmux-project]",
+		"#[range=user|projmux-kube]",
+		"#[range=user|projmux-git]",
+		"bind-key -n MouseDown1StatusRight run-shell -b",
+		"'/tmp/proj mux/bin/projmux' tmux status-click --client '#{client_tty}' '#{mouse_status_range}'",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
@@ -548,8 +553,11 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"bind-key R command-prompt",
 		"bind-key M if -F \"#{mouse}\"",
 		"set -g status-left-length 20",
-		"set -g status-left \"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]\"",
+		"set -g status-left \"#[range=user|projmux-session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
+		"#[range=user|projmux-project]",
+		"#[range=user|projmux-kube]",
+		"#[range=user|projmux-git]",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"%Y-%m-%d %H:%M#[default]",
 	} {
@@ -559,6 +567,95 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 	}
 	if strings.Contains(output, "#[bold,fg=colour16,bg=colour45] app #[default]") {
 		t.Fatalf("print-app-config output = %q, did not expect duplicate app status badge", output)
+	}
+}
+
+func TestTmuxStatusClickDispatchesProjectAndSessionRanges(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		rangeName string
+		wantMode  string
+		wantArgs  string
+	}{
+		{name: "session", rangeName: "user|projmux-session", wantMode: "session-popup", wantArgs: "'sessions' '--ui=popup'"},
+		{name: "project", rangeName: "user|projmux-project", wantMode: "sessionizer-sidebar", wantArgs: "'switch' '--ui=sidebar'"},
+		{name: "git", rangeName: "projmux-git", wantMode: "sessionizer-sidebar", wantArgs: "'switch' '--ui=sidebar'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			marker := popupMarkerPath(sanitizePopupKey("/dev/pts/status-click-"+tt.name), tt.wantMode)
+			_ = os.Remove(marker)
+			defer os.Remove(marker)
+
+			runner := &recordingTmuxRunner{formats: map[string]string{
+				"#{client_tty}":        "/dev/pts/status-click-" + tt.name,
+				"#{pane_id}":           "%1",
+				"#S":                   "work",
+				"#{pane_current_path}": "/repo",
+				"#{client_width}":      "180",
+				"#{client_height}":     "44",
+			}}
+			cmd := &tmuxCommand{
+				runner:     runner,
+				executable: func() (string, error) { return "/tmp/projmux", nil },
+			}
+
+			if err := cmd.Run([]string{"status-click", "--client", "/dev/pts/status-click-" + tt.name, tt.rangeName}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			got := runner.calls[len(runner.calls)-1]
+			command := got.args[len(got.args)-1]
+			if !strings.Contains(command, "'/tmp/projmux'") || !strings.Contains(command, tt.wantArgs) {
+				t.Fatalf("status-click command = %q, want args %q", command, tt.wantArgs)
+			}
+		})
+	}
+}
+
+func TestTmuxStatusClickOpensKubeStatusPopup(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":    "/dev/pts/status-click-kube",
+		"#{pane_id}":       "%9",
+		"#S":               "dev",
+		"#{client_width}":  "180",
+		"#{client_height}": "44",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"status-click", "user|projmux-kube"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := runner.calls[len(runner.calls)-1]
+	wantPrefix := []string{"display-popup", "-t", "%9", "-E", "-w", "81", "-h", "11", "-T", "projmux kube"}
+	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
+	}
+	command := got.args[len(got.args)-1]
+	for _, want := range []string{"Kubernetes status", "'/tmp/projmux' status kube 'dev'", "Press Enter to close"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("kube popup command = %q, want substring %q", command, want)
+		}
+	}
+}
+
+func TestTmuxStatusClickIgnoresForeignRanges(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingTmuxRunner{}
+	cmd := &tmuxCommand{runner: runner, executable: func() (string, error) { return "/tmp/projmux", nil }}
+	if err := cmd.Run([]string{"status-click", "user|foreign"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("calls = %#v, want none", runner.calls)
 	}
 }
 

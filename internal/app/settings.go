@@ -16,6 +16,10 @@ import (
 // osStat is a package-level indirection so tests can stub filesystem checks.
 var osStat = os.Stat
 
+// osExecutable is a package-level indirection so tests can stub binary-path
+// rendering without depending on the test runner's temporary executable.
+var osExecutable = os.Executable
+
 type settingsCommand struct {
 	ai       *aiCommand
 	switcher *switchCommand
@@ -140,7 +144,7 @@ func (c *settingsCommand) rootEntries() []intfzf.Entry {
 			Value: settingsSectionProject,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "About", "version, source, common keys"),
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "About / Update", "version, source, upgrade target"),
 			Value: settingsSectionAbout,
 		},
 	}
@@ -173,7 +177,7 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			UI:         "settings-about",
 			Entries:    settingsAboutEntries(),
 			Prompt:     "Settings > About > ",
-			Header:     "projmux app information",
+			Header:     "projmux app and update information",
 			Footer:     projmuxFooter("Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -671,10 +675,20 @@ func (c *settingsCommand) aiEntries() []intfzf.Entry {
 }
 
 func settingsAboutEntries() []intfzf.Entry {
+	binaryPath := "(unavailable)"
+	if osExecutable != nil {
+		if resolved, err := osExecutable(); err == nil && strings.TrimSpace(resolved) != "" {
+			binaryPath = resolved
+		}
+	}
 	rows := []struct{ name, value string }{
 		{"Version", "projmux " + version.String()},
-		{"Source", "https://github.com/crevissepartners/projmux"},
-		{"Update", "go install github.com/crevissepartners/projmux/cmd/projmux@latest"},
+		{"Source", defaultUpgradeModule},
+		{"Repository", "https://github.com/crevissepartners/projmux"},
+		{"Installed Binary", binaryPath},
+		{"Update Target", binaryPath},
+		{"Upgrade Command", "projmux upgrade --target " + binaryPath},
+		{"Preview Update", "projmux upgrade --dry-run --target " + binaryPath},
 		{"App", "sidebar, sessions, projects, AI picker, settings"},
 		{"Tmux actions", "new window, rename window/pane, previous/next window"},
 		{"Key model", "terminal sends CSI-u keys; tmux runs projmux actions"},

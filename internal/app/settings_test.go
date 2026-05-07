@@ -116,7 +116,9 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 }
 
 func TestSettingsHubShowsAboutSection(t *testing.T) {
-	t.Parallel()
+	oldExecutable := osExecutable
+	osExecutable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+	t.Cleanup(func() { osExecutable = oldExecutable })
 
 	var calls int
 	var aboutOptions intfzf.Options
@@ -159,8 +161,11 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	}
 	for _, want := range []string{
 		"projmux " + version.String(),
+		defaultUpgradeModule,
 		"https://github.com/crevissepartners/projmux",
-		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+		"/usr/local/bin/projmux",
+		"projmux upgrade --target /usr/local/bin/projmux",
+		"projmux upgrade --dry-run --target /usr/local/bin/projmux",
 		"sidebar, sessions, projects",
 		"new window, rename window/pane",
 		"terminal sends CSI-u keys",

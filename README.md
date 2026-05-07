@@ -67,6 +67,9 @@ Open the app once, then use its generated tmux bindings to:
 
 Desktop notifications: Linux uses `notify-send`; WSL routes Windows toasts via
 `powershell.exe`. Override either with `PROJMUX_NOTIFY_HOOK`.
+Attention is live pane state; desktop notification recovery is pane-option
+based. Use `projmux attention list` to inspect attention/AI/notify state and
+`projmux ai notify reset [pane]` to clear notification dedupe markers.
 
 ## Install
 
@@ -147,7 +150,9 @@ projmux shell
 
 projmux owns this tmux server, its generated config, status bar, and popup
 bindings. The left status badge shows the current project name; the right side
-shows path, kube segment, git segment, and clock.
+shows path, kube segment, git segment, and clock. On tmux versions with status
+mouse ranges, clicking the project/session or git areas opens the project or
+session picker, and clicking kube opens a focused kube status popup.
 
 If a key does not fire, run `projmux setup` to see which sequences your
 terminal swallows, then `projmux init [terminal] --apply` (auto-detects when
@@ -175,6 +180,8 @@ projmux upgrade --dry-run                        # print the steps only
 The upgrade reads `PROJMUX_PROJDIR` from the calling shell and memoizes the
 primary (first) path to `~/.config/projmux/projdir`, so the new binary keeps
 the same project root context as the one it replaces.
+`projmux settings` shows the same version, source module, installed binary, and
+upgrade command under `About / Update`.
 
 Pass a new project root inline to atomically switch the binary and the saved
 projdir in one step:
@@ -226,8 +233,13 @@ projmux runs an optional user script at `~/.config/projmux/hooks/post-create`
 whenever it creates a new tmux session. Use it to inject per-session env via
 `tmux set-environment` (e.g. picking a `GH_TOKEN` based on the project path).
 Missing or non-executable hooks are skipped silently; failures never block
-session creation. See [Hooks](docs/hooks.md) for the env contract, examples,
-and troubleshooting.
+session creation.
+
+Project-local post-create hooks are available at `<repo>/.projmux/post-create`
+or `<repo>/.projmux/hooks/post-create`, but only run when explicitly enabled
+with `PROJMUX_PROJECT_HOOKS=1`. The global hook runs first; status rendering
+never discovers or executes hooks. See [Hooks](docs/hooks.md) for the env
+contract, examples, and troubleshooting.
 
 ## Environment Variables
 
@@ -236,6 +248,7 @@ and troubleshooting.
 | `PROJMUX_PROJDIR` | Default project root for the current shell. Accepts an OS-native PATH-style multi-value: the first entry is the primary repo root (memoized to `~/.config/projmux/projdir`), and any additional entries are prepended to the managed-roots search list. |
 | `PROJMUX_MANAGED_ROOTS` | Colon-separated list of search roots. Overrides the saved/default list. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in sender. |
+| `PROJMUX_PROJECT_HOOKS` | Set to `1`, `true`, `yes`, or `on` to allow project-local post-create hooks from the Git repo root. |
 
 ## Scope
 

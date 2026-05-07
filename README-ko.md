@@ -66,6 +66,9 @@ projmux shell
 
 데스크톱 알림: Linux 는 `notify-send`, WSL 은 `powershell.exe` 토스트를 사용합니다.
 다른 실행 파일로 보내려면 `PROJMUX_NOTIFY_HOOK` 을 설정하세요.
+attention 은 live pane state 이고, desktop notification 복구는 pane option 기반입니다.
+`projmux attention list` 로 attention/AI/notify 상태를 확인하고
+`projmux ai notify reset [pane]` 으로 notification dedupe marker 를 지울 수 있습니다.
 
 ## 설치
 
@@ -143,6 +146,8 @@ projmux shell
 
 projmux가 이 tmux 서버, 생성된 설정, status bar, popup binding을 직접 소유합니다.
 하단 좌측 뱃지에는 현재 프로젝트 이름이, 우측에는 경로/kube/git/시간이 표시됩니다.
+tmux가 status mouse range 를 지원하면 project/session 또는 git 영역 클릭은
+project/session picker 를 열고, kube 영역 클릭은 kube status popup 을 엽니다.
 
 키가 동작하지 않으면 `projmux setup` 으로 터미널이 어떤 시퀀스를 swallow 하는지
 진단한 뒤, `projmux init [terminal] --apply` (terminal 생략 시 자동 감지) 로
@@ -167,6 +172,8 @@ projmux upgrade --dry-run                        # 실행 없이 단계만 출�
 upgrade 는 호출 shell 의 `PROJMUX_PROJDIR` 을 읽어 primary (첫 번째) 경로를
 `~/.config/projmux/projdir` 에 memoize 하므로, 새 binary 도 같은 프로젝트 루트
 컨텍스트를 유지합니다.
+`projmux settings` 의 `About / Update` 에서 version, source module, 설치된
+binary, upgrade command 를 확인할 수 있습니다.
 
 업그레이드와 동시에 새 프로젝트 루트로 전환하고 싶다면 env 와 함께 호출하세요:
 
@@ -217,8 +224,13 @@ projmux는 새 tmux 세션을 만들 때마다 선택적 사용자 스크립트
 `~/.config/projmux/hooks/post-create`를 실행합니다. `tmux set-environment`로
 세션별 환경 변수를 주입하거나(예: 프로젝트 경로별 `GH_TOKEN` 선택) 다른
 부수 효과를 걸 때 활용하세요. 파일이 없거나 실행 비트가 빠져 있으면 조용히
-건너뛰며, hook 실패는 세션 생성을 막지 않습니다. 환경 변수 계약, 예시,
-문제 해결은 [Hooks](docs/hooks.md)를 참고하세요.
+건너뛰며, hook 실패는 세션 생성을 막지 않습니다.
+
+프로젝트별 post-create hook 은 `<repo>/.projmux/post-create` 또는
+`<repo>/.projmux/hooks/post-create`에 둘 수 있지만, 명시적으로
+`PROJMUX_PROJECT_HOOKS=1`을 설정한 경우에만 실행됩니다. global hook 이 먼저
+실행되고, status rendering 은 hook 을 탐색하거나 실행하지 않습니다. 환경 변수
+계약, 예시, 문제 해결은 [Hooks](docs/hooks.md)를 참고하세요.
 
 ## 환경 변수
 
@@ -227,6 +239,7 @@ projmux는 새 tmux 세션을 만들 때마다 선택적 사용자 스크립트
 | `PROJMUX_PROJDIR` | 현재 shell 의 기본 프로젝트 루트. OS-native PATH 형식 multi-value 지원: 첫 항목이 primary repo root (saved 파일에 memoize), 이후 항목은 managed-roots 검색 목록 앞에 prepend. |
 | `PROJMUX_MANAGED_ROOTS` | 콜론 구분 검색 root 목록. saved/default 보다 우선. |
 | `PROJMUX_NOTIFY_HOOK` | AI desktop notification 을 내장 sender 대신 받는 외부 실행 파일. |
+| `PROJMUX_PROJECT_HOOKS` | `1`, `true`, `yes`, `on` 중 하나로 설정하면 Git repo root 의 프로젝트별 post-create hook 을 허용. |
 
 ## 범위
 

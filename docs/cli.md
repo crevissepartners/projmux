@@ -34,11 +34,21 @@
 - `projmux attention toggle [pane]`
 - `projmux attention clear [pane]`
 - `projmux attention window [window]`
+- `projmux attention list [--all]`
+
+`attention` is live pane state: busy/reply markers, AI pane metadata, and the
+pane-local desktop notification dedupe fields. It is not a persistent reminder
+queue. `projmux attention list` shows panes with live attention/AI/notify state;
+use `--all` to include quiet panes too.
 
 ### Tmux AI status
 - `projmux ai status set <thinking|waiting|idle> [pane]`
 - `projmux ai notify [notify|reset] [pane]`
 - `projmux ai watch-title [pane]`
+
+`projmux ai notify reset [pane]` clears the pane-local desktop notification
+dedupe options so watcher recovery can notify again. `projmux ai notify notify
+[pane]` forces a notification for the current pane state.
 
 Set `PROJMUX_NOTIFY_HOOK` to route AI desktop notifications through a custom
 executable. The hook receives summary, body, urgency, app name, tag, group, and
@@ -53,6 +63,11 @@ the `projmux.TmuxCodex` AppUserModelID automatically on first use.
 - `projmux status git [path]`
 - `projmux status kube [session]`
 
+Generated tmux config marks project/session, kube, and git segments with tmux
+`#[range=user|...]` ranges. `projmux tmux status-click <range>` dispatches
+mouse clicks: project/git open the project sidebar, session opens the session
+popup, and kube opens a small kube status popup.
+
 ### Tmux-facing helper entrypoints
 - `projmux tmux popup-toggle <mode>`
 - `projmux tmux rebalance-panes`
@@ -64,6 +79,7 @@ the `projmux.TmuxCodex` AppUserModelID automatically on first use.
 - `projmux tmux popup-switch`
 - `projmux tmux popup-sessions`
 - `projmux tmux popup-preview <session>`
+- `projmux tmux status-click [--client <key>] <range>`
 
 ## Suggested mode mapping
 

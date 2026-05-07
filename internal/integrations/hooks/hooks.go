@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -36,31 +37,43 @@ type PostCreateContext struct {
 // A nil receiver, an empty HookPath, or a missing/non-executable file all
 // degrade to a silent no-op so the caller can always invoke Run unconditionally.
 type PostCreateRunner struct {
-	HookPath string
-	Logger   io.Writer
-	Timeout  time.Duration
-	Version  string
+	HookPath            string
+	Logger              io.Writer
+	Timeout             time.Duration
+	Version             string
+	ProjectHooksEnabled bool
 }
 
 // Run executes the post-create hook for c if one is configured. Hook failures
 // (missing file, non-executable, non-zero exit, exec error, timeout) are
 // recorded as a single warning line on Logger and never returned.
 func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
-	if r == nil || strings.TrimSpace(r.HookPath) == "" {
+	if r == nil {
 		return
 	}
 
-	info, err := os.Stat(r.HookPath)
-	if err != nil {
-		return
+	for _, hookPath := range r.hookPaths(c) {
+		r.runHook(ctx, c, hookPath)
 	}
-	if info.IsDir() {
-		return
-	}
-	if info.Mode().Perm()&0o100 == 0 {
-		return
-	}
+}
 
+func (r *PostCreateRunner) hookPaths(c PostCreateContext) []string {
+	paths := []string{}
+	if hookPath := strings.TrimSpace(r.HookPath); hookPath != "" {
+		paths = append(paths, hookPath)
+	}
+	if r.ProjectHooksEnabled {
+		if hookPath := projectLocalPostCreateHookPath(c.CWD); hookPath != "" {
+			paths = append(paths, hookPath)
+		}
+	}
+	return paths
+}
+
+func (r *PostCreateRunner) runHook(ctx context.Context, c PostCreateContext, hookPath string) {
+	if !isExecutableHook(hookPath) {
+		return
+	}
 	timeout := r.Timeout
 	if timeout <= 0 {
 		timeout = DefaultPostCreateTimeout
@@ -69,7 +82,7 @@ func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.HookPath)
+	cmd := exec.CommandContext(runCtx, hookPath)
 	cmd.Stdin = nil
 	cmd.Dir = c.CWD
 	cmd.Env = buildHookEnv(c, r.Version)
@@ -83,21 +96,29 @@ func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 	cmd.Stdout = prefixed
 	cmd.Stderr = prefixed
 
-	err = cmd.Run()
+	err := cmd.Run()
 	prefixed.Flush()
 
 	if runCtx.Err() == context.DeadlineExceeded {
-		warnf(logger, "hook %q timed out after %s", r.HookPath, timeout)
+		warnf(logger, "hook %q timed out after %s", hookPath, timeout)
 		return
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			warnf(logger, "hook %q exited with status %d", r.HookPath, exitErr.ExitCode())
+			warnf(logger, "hook %q exited with status %d", hookPath, exitErr.ExitCode())
 			return
 		}
-		warnf(logger, "hook %q: %v", r.HookPath, err)
+		warnf(logger, "hook %q: %v", hookPath, err)
 	}
+}
+
+func isExecutableHook(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode().Perm()&0o100 != 0
 }
 
 func buildHookEnv(c PostCreateContext, fallbackVersion string) []string {
@@ -116,6 +137,55 @@ func buildHookEnv(c PostCreateContext, fallbackVersion string) []string {
 		env = append(env, "PROJMUX_SOCKET="+c.Socket)
 	}
 	return env
+}
+
+func ProjectLocalPostCreateHooksEnabledFromEnv(getenv func(string) string) bool {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("PROJMUX_PROJECT_HOOKS"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func projectLocalPostCreateHookPath(cwd string) string {
+	root := gitRepoRootFromPath(cwd)
+	if root == "" {
+		return ""
+	}
+	for _, candidate := range []string{
+		filepath.Join(root, ".projmux", "post-create"),
+		filepath.Join(root, ".projmux", "hooks", "post-create"),
+	} {
+		if isExecutableHook(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func gitRepoRootFromPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	abs, err := os.Getwd()
+	if err == nil && !filepath.IsAbs(path) {
+		path = filepath.Join(abs, path)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path || parent == "." || parent == "" {
+			return ""
+		}
+		path = parent
+	}
 }
 
 // linePrefixer wraps a destination writer and rewrites bytes into newline
@@ -166,7 +236,7 @@ func (p *linePrefixer) Flush() {
 	p.buf.Reset()
 }
 
-func warnf(w io.Writer, format string, args ...interface{}) {
+func warnf(w io.Writer, format string, args ...any) {
 	if w == nil {
 		return
 	}

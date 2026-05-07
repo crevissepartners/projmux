@@ -79,7 +79,6 @@ func TestWTAdapterDetect(t *testing.T) {
 		{name: "empty", env: map[string]string{}, want: false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := a.Detect(envFn(tc.env)); got != tc.want {

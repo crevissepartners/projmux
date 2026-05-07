@@ -270,6 +270,84 @@ func TestAttentionWindowFallsBackToBlank(t *testing.T) {
 	}
 }
 
+func TestAttentionListShowsLivePaneAndNotifyState(t *testing.T) {
+	t.Parallel()
+
+	format := strings.Join([]string{
+		"#{session_name}",
+		"#{window_index}",
+		"#{pane_index}",
+		"#{pane_id}",
+		"#{?pane_active,1,0}",
+		"#{pane_title}",
+		"#{@projmux_attention_state}",
+		"#{@projmux_ai_state}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_desktop_notified}",
+		"#{@projmux_desktop_notification_key}",
+		"#{@projmux_desktop_notification_at}",
+	}, "\t")
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux list-panes -a -F " + format: []byte(
+				"dev\t0\t0\t%1\t1\tshell\t\t\t\t\t\t\t\n" +
+					"dev\t0\t1\t%2\t0\tcodex\treply\twaiting\tcodex\tfix tests\t1\treply:fix\t1710000000\n",
+			),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := stdout.String()
+	if strings.Contains(got, "%1") {
+		t.Fatalf("attention list output = %q, default should hide empty-state panes", got)
+	}
+	for _, want := range []string{"TARGET", "%2", "reply", "waiting", "codex", "fix tests", "reply:fix", "1710000000"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("attention list output = %q, want substring %q", got, want)
+		}
+	}
+}
+
+func TestAttentionListAllIncludesEmptyStatePanes(t *testing.T) {
+	t.Parallel()
+
+	format := strings.Join([]string{
+		"#{session_name}",
+		"#{window_index}",
+		"#{pane_index}",
+		"#{pane_id}",
+		"#{?pane_active,1,0}",
+		"#{pane_title}",
+		"#{@projmux_attention_state}",
+		"#{@projmux_ai_state}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_desktop_notified}",
+		"#{@projmux_desktop_notification_key}",
+		"#{@projmux_desktop_notification_at}",
+	}, "\t")
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux list-panes -a -F " + format: []byte("dev\t0\t0\t%1\t1\tshell\t\t\t\t\t\t\t\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--all"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "%1") || strings.Contains(got, "(no live attention") {
+		t.Fatalf("attention list --all output = %q, want empty-state pane", got)
+	}
+}
+
 func TestAttentionRejectsInvalidUsage(t *testing.T) {
 	t.Parallel()
 

@@ -116,6 +116,119 @@ func TestPostCreateRunnerHappyPathInjectsEnvAndPrefixesOutput(t *testing.T) {
 	}
 }
 
+func TestPostCreateRunnerRunsProjectLocalHookOnlyWhenEnabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixtures require POSIX")
+	}
+
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".git"), []byte("gitdir: actual.git\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(repo, "service")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hookDir := filepath.Join(repo, ".projmux")
+	if err := os.MkdirAll(hookDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(hookDir, "post-create")
+	if err := os.WriteFile(hookPath, []byte("#!/usr/bin/env bash\necho project-local:$PROJMUX_SESSION:$PWD\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var disabled bytes.Buffer
+	(&PostCreateRunner{ProjectHooksEnabled: false, Logger: &disabled}).Run(context.Background(), PostCreateContext{
+		SessionName: "workspace",
+		CWD:         projectDir,
+		Version:     "0.0.0-test",
+	})
+	if disabled.Len() != 0 {
+		t.Fatalf("disabled logger output = %q, want empty", disabled.String())
+	}
+
+	var enabled bytes.Buffer
+	(&PostCreateRunner{ProjectHooksEnabled: true, Logger: &enabled}).Run(context.Background(), PostCreateContext{
+		SessionName: "workspace",
+		CWD:         projectDir,
+		Version:     "0.0.0-test",
+	})
+	if got := enabled.String(); !strings.Contains(got, "[post-create] project-local:workspace:"+projectDir) {
+		t.Fatalf("enabled logger output = %q, want project-local hook output", got)
+	}
+}
+
+func TestPostCreateRunnerRunsGlobalThenFirstExecutableProjectHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixtures require POSIX")
+	}
+
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	globalHook := filepath.Join(repo, "global")
+	if err := os.WriteFile(globalHook, []byte("#!/usr/bin/env bash\necho global\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".projmux", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".projmux", "post-create"), []byte("#!/usr/bin/env bash\necho non-exec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".projmux", "hooks", "post-create"), []byte("#!/usr/bin/env bash\necho project\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var logger bytes.Buffer
+	(&PostCreateRunner{
+		HookPath:            globalHook,
+		ProjectHooksEnabled: true,
+		Logger:              &logger,
+		Version:             "0.0.0-test",
+	}).Run(context.Background(), PostCreateContext{
+		SessionName: "workspace",
+		CWD:         repo,
+	})
+
+	got := logger.String()
+	globalIdx := strings.Index(got, "[post-create] global")
+	projectIdx := strings.Index(got, "[post-create] project")
+	if globalIdx < 0 || projectIdx < 0 || globalIdx > projectIdx {
+		t.Fatalf("logger output = %q, want global then project hook", got)
+	}
+	if strings.Contains(got, "non-exec") {
+		t.Fatalf("logger output = %q, non-executable project hook should be skipped", got)
+	}
+}
+
+func TestProjectLocalPostCreateHooksEnabledFromEnv(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "1", want: true},
+		{value: "true", want: true},
+		{value: "yes", want: true},
+		{value: "on", want: true},
+		{value: "", want: false},
+		{value: "0", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			t.Parallel()
+			got := ProjectLocalPostCreateHooksEnabledFromEnv(func(string) string { return tt.value })
+			if got != tt.want {
+				t.Fatalf("enabled = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPostCreateRunnerOmitsSocketWhenEmpty(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")

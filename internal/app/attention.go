@@ -3,9 +3,11 @@ package app
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"strings"
+	"text/tabwriter"
 	"unicode/utf8"
 
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -42,6 +44,8 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runArm(args[1:], stderr)
 	case "window":
 		return c.runWindow(args[1:], stdout, stderr)
+	case "list":
+		return c.runList(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printAttentionUsage(stdout)
 		return nil
@@ -138,6 +142,49 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 	return err
 }
 
+func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("attention list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	all := fs.Bool("all", false, "include panes without attention, AI, or notification state")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printAttentionUsage(stderr)
+		return errors.New("attention list does not accept positional arguments")
+	}
+
+	rows := c.attentionListRows()
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TARGET\tSESSION\tWIN\tPANE\tACTIVE\tATTENTION\tAI\tAGENT\tTOPIC\tNOTIFIED\tKEY\tAT\tTITLE")
+	wrote := false
+	for _, row := range rows {
+		if !*all && !row.HasState() {
+			continue
+		}
+		wrote = true
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.Target,
+			row.Session,
+			row.WindowIndex,
+			row.PaneIndex,
+			row.Active,
+			row.Attention,
+			row.AIState,
+			row.Agent,
+			row.Topic,
+			row.Notified,
+			row.NotificationKey,
+			row.NotificationAt,
+			row.Title,
+		)
+	}
+	if !wrote {
+		fmt.Fprintln(tw, "(no live attention, AI, or notification state)")
+	}
+	return tw.Flush()
+}
+
 func parseOptionalAttentionTarget(args []string, command string, stderr io.Writer) (string, error) {
 	if len(args) > 1 {
 		printAttentionUsage(stderr)
@@ -152,6 +199,32 @@ func parseOptionalAttentionTarget(args []string, command string, stderr io.Write
 type attentionWindowRow struct {
 	Title string
 	State string
+}
+
+type attentionListRow struct {
+	Session         string
+	WindowIndex     string
+	PaneIndex       string
+	Target          string
+	Active          string
+	Title           string
+	Attention       string
+	AIState         string
+	Agent           string
+	Topic           string
+	Notified        string
+	NotificationKey string
+	NotificationAt  string
+}
+
+func (r attentionListRow) HasState() bool {
+	return strings.TrimSpace(r.Attention) != "" ||
+		strings.TrimSpace(r.AIState) != "" ||
+		strings.TrimSpace(r.Agent) != "" ||
+		strings.TrimSpace(r.Topic) != "" ||
+		strings.TrimSpace(r.Notified) != "" ||
+		strings.TrimSpace(r.NotificationKey) != "" ||
+		strings.TrimSpace(r.NotificationAt) != ""
 }
 
 func (c *attentionCommand) paneTitle(paneID string) string {
@@ -196,6 +269,56 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 			row.State = strings.TrimSpace(fields[1])
 		}
 		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (c *attentionCommand) attentionListRows() []attentionListRow {
+	format := strings.Join([]string{
+		"#{session_name}",
+		"#{window_index}",
+		"#{pane_index}",
+		"#{pane_id}",
+		"#{?pane_active,1,0}",
+		"#{pane_title}",
+		"#{@projmux_attention_state}",
+		"#{@projmux_ai_state}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_desktop_notified}",
+		"#{@projmux_desktop_notification_key}",
+		"#{@projmux_desktop_notification_at}",
+	}, "\t")
+	output, err := c.run("tmux", "list-panes", "-a", "-F", format)
+	if err != nil {
+		return nil
+	}
+
+	lines := strings.Split(strings.TrimRight(string(output), "\r\n"), "\n")
+	rows := make([]attentionListRow, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		for len(fields) < 13 {
+			fields = append(fields, "")
+		}
+		rows = append(rows, attentionListRow{
+			Session:         fields[0],
+			WindowIndex:     fields[1],
+			PaneIndex:       fields[2],
+			Target:          fields[3],
+			Active:          fields[4],
+			Title:           fields[5],
+			Attention:       fields[6],
+			AIState:         fields[7],
+			Agent:           fields[8],
+			Topic:           fields[9],
+			Notified:        fields[10],
+			NotificationKey: fields[11],
+			NotificationAt:  fields[12],
+		})
 	}
 	return rows
 }
@@ -253,4 +376,9 @@ func printAttentionUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux attention clear [pane]")
 	fmt.Fprintln(w, "  projmux attention arm [pane]")
 	fmt.Fprintln(w, "  projmux attention window [window]")
+	fmt.Fprintln(w, "  projmux attention list [--all]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Attention is live pane state. AI notification reset/recovery uses pane")
+	fmt.Fprintln(w, "options: `projmux ai notify reset [pane]` clears the desktop notification")
+	fmt.Fprintln(w, "dedupe marker, and `projmux ai notify notify [pane]` forces a send.")
 }

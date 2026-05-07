@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -324,9 +325,7 @@ func (w *WindowsTerminalAdapter) PlanMerge(currentConfig string, fileExists bool
 				for k := range existingAction {
 					delete(existingAction, k)
 				}
-				for k, v := range desiredAction {
-					existingAction[k] = v
-				}
+				maps.Copy(existingAction, desiredAction)
 				actionChanged = true
 				dirty = true
 			}
@@ -344,9 +343,7 @@ func (w *WindowsTerminalAdapter) PlanMerge(currentConfig string, fileExists bool
 				for k := range existingKB {
 					delete(existingKB, k)
 				}
-				for k, v := range desiredKB {
-					existingKB[k] = v
-				}
+				maps.Copy(existingKB, desiredKB)
 				kbChanged = true
 				dirty = true
 			}
