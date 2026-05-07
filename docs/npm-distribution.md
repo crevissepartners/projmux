@@ -16,7 +16,9 @@ package scaffold uses this package layout:
 
 The shim sets `PROJMUX_INSTALLER=npm` before executing the real binary so
 `projmux update status` and the Settings About screen can present
-npm-specific guidance.
+npm-specific guidance. npm is only an update/install source label here; the
+keybinding flow remains `projmux shell` first, then `projmux setup` and
+`projmux init` only for terminals that swallow shortcuts.
 
 ## Local Packaging
 
@@ -80,4 +82,5 @@ dry-run packing fail before release.
 
 The npm installer must not install system dependencies, edit shell startup
 files, or mutate tmux config. Those actions stay behind explicit
-`projmux doctor`, `projmux init`, or future opt-in install commands.
+`projmux doctor`, `projmux init`, Settings About update actions, or future
+opt-in install commands.

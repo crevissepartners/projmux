@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -17,6 +19,20 @@ const (
 	attentionFocusArmedOption = "@projmux_attention_focus_armed"
 	attentionStateBusy        = "busy"
 	attentionStateReply       = "reply"
+)
+
+const (
+	attentionListSeparator = "\x1f"
+	attentionListFormat    = "#{session_name}" + attentionListSeparator +
+		"#{window_id}" + attentionListSeparator +
+		"#{pane_id}" + attentionListSeparator +
+		"#{pane_active}" + attentionListSeparator +
+		"#{pane_title}" + attentionListSeparator +
+		"#{" + attentionStateOption + "}" + attentionListSeparator +
+		"#{" + aiPaneStateOption + "}" + attentionListSeparator +
+		"#{" + aiPaneAgentOption + "}" + attentionListSeparator +
+		"#{" + aiPaneTopicOption + "}" + attentionListSeparator +
+		"#{socket_path}"
 )
 
 type attentionCommand struct {
@@ -84,6 +100,8 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runClear(args[1:], stderr)
 	case "arm":
 		return c.runArm(args[1:], stderr)
+	case "list":
+		return c.runList(args[1:], stdout, stderr)
 	case "window":
 		return c.runWindow(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
@@ -93,6 +111,43 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printAttentionUsage(stderr)
 		return fmt.Errorf("unknown attention subcommand: %s", args[0])
 	}
+}
+
+func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("attention list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() { printAttentionListUsage(stderr) }
+	asJSON := fs.Bool("json", false, "emit json instead of tabular output")
+	all := fs.Bool("all", false, "include panes without attention state")
+
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return fmt.Errorf("parse attention list flags: %w", err)
+	}
+	if fs.NArg() != 0 {
+		printAttentionUsage(stderr)
+		return fmt.Errorf("attention list does not accept positional arguments")
+	}
+
+	rows, err := c.listAttentionPanes()
+	if err != nil {
+		return err
+	}
+	if !*all {
+		rows = filterAttentionRows(rows)
+	}
+
+	if *asJSON {
+		if rows == nil {
+			rows = []attentionPaneRow{}
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rows)
+	}
+	return writeAttentionTable(stdout, rows)
 }
 
 func (c *attentionCommand) runToggle(args []string, stderr io.Writer) error {
@@ -201,6 +256,19 @@ type attentionWindowRow struct {
 	State string
 }
 
+type attentionPaneRow struct {
+	Session        string `json:"session"`
+	Window         string `json:"window"`
+	Pane           string `json:"pane"`
+	Active         bool   `json:"active"`
+	Title          string `json:"title"`
+	AttentionState string `json:"attention_state"`
+	AIState        string `json:"ai_state"`
+	Agent          string `json:"agent"`
+	Topic          string `json:"topic"`
+	Socket         string `json:"socket"`
+}
+
 func (c *attentionCommand) paneTitle(paneID string) string {
 	output, err := c.run("tmux", "display-message", "-p", "-t", paneID, "#{pane_title}")
 	if err != nil {
@@ -245,6 +313,95 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
+	output, err := c.run("tmux", "list-panes", "-a", "-F", attentionListFormat)
+	if err != nil {
+		return nil, fmt.Errorf("tmux list-panes: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(string(output), "\r\n"), "\n")
+	rows := make([]attentionPaneRow, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, attentionListSeparator)
+		if len(fields) < 10 {
+			continue
+		}
+		row := attentionPaneRow{
+			Session:        strings.TrimSpace(fields[0]),
+			Window:         strings.TrimSpace(fields[1]),
+			Pane:           strings.TrimSpace(fields[2]),
+			Active:         strings.TrimSpace(fields[3]) == "1",
+			Title:          strings.TrimSpace(fields[4]),
+			AttentionState: strings.TrimSpace(fields[5]),
+			AIState:        strings.TrimSpace(fields[6]),
+			Agent:          strings.TrimSpace(fields[7]),
+			Topic:          strings.TrimSpace(fields[8]),
+			Socket:         strings.TrimSpace(fields[9]),
+		}
+		if row.Session == "" || row.Pane == "" {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func filterAttentionRows(rows []attentionPaneRow) []attentionPaneRow {
+	out := make([]attentionPaneRow, 0, len(rows))
+	for _, row := range rows {
+		if row.AttentionState != "" || hasAttentionPrefix(row.Title) || hasBraillePrefix(row.Title) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+func writeAttentionTable(w io.Writer, rows []attentionPaneRow) error {
+	if _, err := fmt.Fprintln(w, "SESSION\tWINDOW\tPANE\tACTIVE\tATTENTION\tAI\tAGENT\tTOPIC\tTITLE"); err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(
+			w,
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			attentionTableCell(row.Session),
+			attentionTableCell(row.Window),
+			attentionTableCell(row.Pane),
+			formatAttentionActive(row.Active),
+			attentionTableCell(row.AttentionState),
+			attentionTableCell(row.AIState),
+			attentionTableCell(row.Agent),
+			attentionTableCell(row.Topic),
+			attentionTableCell(row.Title),
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func attentionTableCell(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	value = strings.ReplaceAll(value, "\t", " ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return value
+}
+
+func formatAttentionActive(active bool) string {
+	if active {
+		return "yes"
+	}
+	return "no"
 }
 
 func (c *attentionCommand) setPaneOption(paneID, option, value string) {
@@ -299,5 +456,13 @@ func printAttentionUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux attention toggle [pane]")
 	fmt.Fprintln(w, "  projmux attention clear [pane]")
 	fmt.Fprintln(w, "  projmux attention arm [pane]")
+	fmt.Fprintln(w, "  projmux attention list [--json] [--all]")
 	fmt.Fprintln(w, "  projmux attention window [window]")
+}
+
+func printAttentionListUsage(w io.Writer) {
+	fmt.Fprintln(w, "Live tmux pane attention state; does not read or mutate the notify queue.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  projmux attention list [--json] [--all]")
 }

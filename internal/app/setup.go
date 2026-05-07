@@ -90,7 +90,7 @@ func defaultProbeKeys() []probeKey {
 		{Label: "Alt-2", Action: "Open session popup (User2)", Plain: "\x1b2", CSIu: "\x1b[9003u", UserKey: "User2"},
 		{Label: "Alt-3", Action: "Open sessionizer (User3)", Plain: "\x1b3", CSIu: "\x1b[9004u", UserKey: "User3"},
 		{Label: "Alt-4", Action: "AI split picker right (User5)", Plain: "\x1b4", CSIu: "\x1b[9006u", UserKey: "User5"},
-		{Label: "Alt-5", Action: "AI split settings (User6)", Plain: "\x1b5", CSIu: "\x1b[9007u", UserKey: "User6"},
+		{Label: "Alt-5", Action: "Settings (User6)", Plain: "\x1b5", CSIu: "\x1b[9007u", UserKey: "User6"},
 		{Label: "Ctrl-N", Action: "New window (User7)", Plain: "\x0e", CSIu: "\x1b[9008u", UserKey: "User7"},
 		{Label: "Ctrl-Shift-R", Action: "No projmux binding by default", Plain: "", CSIu: "", UserKey: ""},
 		{Label: "Ctrl-Shift-L", Action: "No projmux binding by default", Plain: "", CSIu: "", UserKey: ""},
@@ -129,6 +129,8 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	terminal := detectTerminal(c.lookupEnv)
 	fmt.Fprintf(stdout, "Detected terminal: %s\n", terminal.Display())
+	fmt.Fprintln(stdout, "projmux shell works with zero terminal config when these keys reach tmux.")
+	fmt.Fprintln(stdout, "This probe only diagnoses keys your terminal intercepts before tmux can see them.")
 	fmt.Fprintln(stdout, "We will ask you to press a series of keys. Each has a", timeout.String(), "window.")
 	fmt.Fprintln(stdout, "Press the key, or wait for the timeout to mark it as undelivered. Ctrl-C aborts.")
 	fmt.Fprintln(stdout)
@@ -234,7 +236,7 @@ func renderProbeSummary(w io.Writer, terminal terminalInfo, results []probeResul
 	fmt.Fprintln(w)
 
 	if fail == 0 {
-		fmt.Fprintln(w, "All probed keys reach this process. Your terminal will not block projmux bindings.")
+		fmt.Fprintln(w, "All probed keys reach this process. Alt-1..5 and the probed shortcuts should work in `projmux shell` with zero terminal config.")
 		return
 	}
 
@@ -252,12 +254,16 @@ func renderProbeSummary(w io.Writer, terminal terminalInfo, results []probeResul
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Next steps:")
-	if hint := terminal.RemediationHint(); hint != "" {
-		fmt.Fprintln(w, "  -", hint)
+	fmt.Fprintln(w, "  - Keep the keys marked OK as-is; they already work without terminal config.")
+	if cmd := terminal.InitCommand(); cmd != "" {
+		fmt.Fprintln(w, "  - Preview the terminal-specific fallback with:", strings.TrimSuffix(cmd, " --apply"))
+		fmt.Fprintln(w, "  - Apply it with:", cmd)
 	}
-	fmt.Fprintln(w, "  - For each failing key, bind it in your terminal to send the matching CSI-u sequence")
-	fmt.Fprintln(w, "    (see `projmux setup --non-interactive` for the table).")
-	fmt.Fprintln(w, "  - If your terminal supports automated init, try: projmux init", terminal.Slug)
+	if hint := terminal.RemediationHint(); hint != "" {
+		fmt.Fprintln(w, "  - Manual fallback:", hint)
+	}
+	fmt.Fprintln(w, "  - For unsupported terminals, bind each failing key to the matching CSI-u sequence")
+	fmt.Fprintln(w, "    from `projmux setup --non-interactive`.")
 }
 
 // terminalInfo carries the best-effort terminal identification we managed to
@@ -285,8 +291,20 @@ func (t terminalInfo) Display() string {
 	return t.Name + " [" + src + "=" + t.Raw + "]" + suffix
 }
 
+// InitCommand returns the supported terminal-config fallback command, when
+// projmux knows how to apply one for the detected terminal.
+func (t terminalInfo) InitCommand() string {
+	switch t.Slug {
+	case "ghostty":
+		return "projmux init ghostty --apply"
+	case "windows-terminal":
+		return "projmux init windows-terminal --apply"
+	}
+	return ""
+}
+
 // RemediationHint returns a short suggestion tailored to the detected
-// terminal, when projmux ships init flow knowledge for it.
+// terminal for users who need or prefer a manual fallback.
 func (t terminalInfo) RemediationHint() string {
 	switch t.Slug {
 	case "ghostty":

@@ -17,10 +17,11 @@ func defaultTmuxClient() *inttmux.Client {
 	opts := []inttmux.ClientOption{}
 	if hookPath := defaultPostCreateHookPath(); hookPath != "" {
 		opts = append(opts, inttmux.WithPostCreateRunner(&hooks.PostCreateRunner{
-			HookPath: hookPath,
-			Logger:   os.Stderr,
-			Timeout:  hooks.DefaultPostCreateTimeout,
-			Version:  version.String(),
+			HookPath:             hookPath,
+			DiscoverProjectHooks: true,
+			Logger:               os.Stderr,
+			Timeout:              hooks.DefaultPostCreateTimeout,
+			Version:              version.String(),
 		}))
 	}
 	return inttmux.NewClient(inttmux.ExecRunner{}, opts...)

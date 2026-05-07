@@ -31,9 +31,9 @@ for a daily terminal workspace:
 
 ## What's new in 0.4
 
-- **`projmux setup` / `projmux init`** — diagnose terminal key delivery,
-  then auto-merge the right CSI-u bindings into Ghostty or Windows
-  Terminal configs.
+- **`projmux setup` / `projmux init`** — keep zero-config keybindings first:
+  diagnose terminal key delivery, then apply a terminal-specific fallback
+  only when Ghostty or Windows Terminal swallows a shortcut.
 - **`projmux doctor`** — runtime dependency report with minimum-version
   enforcement (tmux 3.4, fzf 0.55).
 - **`projmux focus`** — unified switch-client dispatch shared by the
@@ -92,8 +92,9 @@ Open the app once, then use its generated tmux bindings to:
 Desktop notifications: Linux uses `notify-send`; WSL routes Windows toasts via
 `powershell.exe`. Override either with `PROJMUX_NOTIFY_HOOK`.
 
-Run `projmux doctor` any time to verify everything is on `PATH` and that
-tmux/fzf meet the minimum supported versions.
+Run `projmux doctor` any time to verify runtime dependencies are on `PATH`
+and that tmux/fzf meet the minimum supported versions. Terminal key delivery
+is diagnosed separately with `projmux setup`.
 
 ## Install
 
@@ -173,13 +174,15 @@ projmux shell
 ```
 
 projmux owns this tmux server, its generated config, status bar, and popup
-bindings. The left status badge shows the current project name; the right side
-shows path, kube segment, git segment, and clock.
+bindings. Cooperative terminals get `Alt-1`..`Alt-5` immediately, with no
+terminal config. The left status badge shows the current project name; the
+right side shows path, kube segment, git segment, and clock.
 
-If a key does not fire, run `projmux setup` to see which sequences your
-terminal swallows, then `projmux init [terminal] --apply` (auto-detects when
-no terminal is given) to merge the right CSI-u bindings into your terminal
-config. Dotfiles users on multi-machine setups should pass
+If a key does not fire, run `projmux setup` outside tmux to see which
+sequences your terminal swallows. For supported terminals, preview the
+fallback with `projmux init [terminal]`, then apply it with
+`projmux init [terminal] --apply` (auto-detects when no terminal is given).
+Dotfiles users on multi-machine setups should pass
 `--allow-symlink` or `--config <path>` to make their intent explicit. Full
 flow and the manual CSI-u fallback are in
 [Terminal Keybindings](docs/keybindings.md).
@@ -189,6 +192,11 @@ missing or stale and how to install it. See [Requirements](#requirements)
 for the supported versions.
 
 ## Upgrading
+
+The Settings About screen is the normal interactive update surface: it shows
+cached release status, installer source, Check Updates, Update Now, and
+release notes. The startup update prompt uses the same cache and never reaches
+the network.
 
 `projmux upgrade` reinstalls the binary via `go install`, atomically replaces
 the active file, and reapplies the live tmux config so a running `-L projmux`

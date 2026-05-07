@@ -88,9 +88,13 @@ func (p reconcilePane) text() string {
 func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("notify reconcile", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() { printNotifyReconcileUsage(stderr) }
 	asJSON := fs.Bool("json", false, "emit json instead of human output")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return usageError(fmt.Sprintf("parse notify reconcile flags: %v", err))
 	}
 	if fs.NArg() != 0 {

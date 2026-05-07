@@ -20,14 +20,14 @@ projmux <command> [args...]
 | Command | Purpose |
 | --- | --- |
 | `ai` | Manage tmux AI splits (Codex/Claude) and per-pane status. |
-| `attention` | Manage `✳` pane attention badges. |
+| `attention` | View and manage live tmux pane attention state. |
 | `attach` | Open tmux lifecycle entry helpers. |
 | `current` | Resolve the active tmux pane path. |
 | `doctor` | Diagnose runtime dependencies. |
 | `focus` | Switch the active client to a session/window/pane target. |
-| `init` | Merge projmux keybindings into a terminal config. |
+| `init` | Apply supported terminal keybinding fallbacks. |
 | `kill` | Terminate tagged tmux sessions. |
-| `notify` | Persist status-bar notifications (push/list/ack/reconcile). |
+| `notify` | Manage the pending AI notify queue (push/list/ack/reconcile). |
 | `pin` | Manage pinned project directories. |
 | `preview` | Manage persisted tmux preview selection. |
 | `prune` | Trim stale tmux lifecycle state. |
@@ -70,7 +70,9 @@ Probes which projmux key sequences (`Alt-1..5`, `Ctrl-N`, `Ctrl-Shift-{R,L,M}`,
 `Ctrl-M`, `Alt-Shift-{Left,Right}`) reach this process and which the
 terminal swallows. Reports `plain`, `csi-u`, `unknown`, or `timeout` for
 each. `--non-interactive` skips the TTY probe and prints the expected key
-map. Default `--timeout` is `5s`.
+map. Default `--timeout` is `5s`. Run it outside tmux after trying
+`projmux shell`; keys reported as `plain` or `csi-u` already work with zero
+terminal config.
 
 ## init
 
@@ -79,13 +81,15 @@ projmux init [terminal] [--apply | --dry-run] [--config <path>]
              [--allow-symlink]
 ```
 
-Merges projmux's CSI-u + chord bindings into a terminal config. When
-`terminal` is omitted, autodetects from `$TERM_PROGRAM`/`$TERMINAL_EMULATOR`.
+Applies a terminal-specific fallback for shortcuts that `projmux setup`
+reports as swallowed. When `terminal` is omitted, autodetects from
+`$TERM_PROGRAM`/`$TERMINAL_EMULATOR`.
 Known terminals: `ghostty`, `windows-terminal`. Default is dry-run; pass
 `--apply` to write (timestamped `.bak.<timestamp>` is created). Refuses to
 write through a symlink unless `--allow-symlink` is passed (dotfiles repos).
 `--config <path>` overrides the candidate list when the adapter has more
-than one default location (Ghostty `config` vs `config.ghostty`).
+than one default location (Ghostty `config` vs `config.ghostty`). If setup
+shows every key arriving, skip init.
 
 ## doctor
 
@@ -103,7 +107,8 @@ opt-in and runs generated install commands only for missing or stale required
 dependencies. `--dry-run` prints those commands without executing them.
 `--include-optional` also includes optional missing dependencies such as
 `kubectl` when an install command is available. Install flags cannot be
-combined with `--json`.
+combined with `--json`. Doctor does not diagnose terminal key delivery; use
+`projmux setup` for that.
 
 ## focus
 
@@ -130,8 +135,10 @@ Exit codes:
 
 ## notify
 
-Persistent notification queue. See [notify-queue.md](notify-queue.md) for
-the full data model.
+Pending AI notify queue. This is the short-lived actionable reminder set
+used by the status-bar notify segment; it is not a complete view of all
+live pane attention. See [notify-queue.md](notify-queue.md) for the full
+data model.
 
 ```
 projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]>
@@ -147,14 +154,15 @@ projmux notify reconcile [--json]
 - `push` — append (or refresh, with `--id`) one entry. `--ttl` defaults to
   `600` seconds; entries past TTL are dropped on the next read. `--text`
   is hard-capped to 80 runes (longer text is truncated server-side).
-- `list` — newest-first table `ID AGE SEV SRC TARGET TEXT` (or JSON).
-  `--severity` and `--source` are repeatable filters.
+- `list` — newest-first pending queue table `ID AGE SEV SRC TARGET TEXT`
+  (or JSON). `--severity` and `--source` are repeatable filters.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
   panes whose attention state is `reply` AND whose AI agent option is
   set, dropping stale `ai:` entries that no longer match a live pane.
   Soft-fails (no error, populated `errors` field in the summary) when
-  tmux is not running.
+  tmux is not running. Use this as the recovery path when the queue and
+  live pane state drift.
 
 ## usage
 
@@ -212,9 +220,10 @@ Click/keyboard dispatcher for the two-line status bar. Range ids:
 `window|<idx>` token (tmux's built-in window-list range) and the empty
 range fall through to `select-window -t @<mouse_window>` so the native
 click-to-switch tab affordance is preserved on row 0. Unknown range ids
-are no-ops. `MouseDown1Status` errors are swallowed and surfaced as
-`display-message` toasts so a transient focus failure does not raise a
-tmux error popup. See [statusbar.md](statusbar.md).
+are no-ops. `session` opens the existing-session popup; `kube` and
+`git` open the project switcher popup. `MouseDown1Status` errors are
+swallowed and surfaced as `display-message` toasts so a transient
+failure does not raise a tmux error popup. See [statusbar.md](statusbar.md).
 
 ## attention
 
@@ -222,6 +231,7 @@ tmux error popup. See [statusbar.md](statusbar.md).
 projmux attention toggle [pane]
 projmux attention clear  [pane]
 projmux attention arm    [pane]
+projmux attention list   [--json] [--all]
 projmux attention window [window]
 ```
 
@@ -230,8 +240,11 @@ option. `toggle` flips between cleared and `reply`; `clear` always
 clears; `arm` sets a pre-reply armed state used by the AI flow. The
 producer side pushes/acks the matching entry in the notify queue when
 the pane has an associated AI agent option (manual toggles on shell
-panes do not push). `window` bulk-clears every pane in the supplied (or
-current) window.
+panes do not push). `list` reads `tmux list-panes -a` and shows live pane
+attention state without reading or mutating the notify queue; by default
+it shows panes with an attention option or title marker, and `--all`
+includes every pane. `window` renders the status-bar window badge for the
+supplied window.
 
 ## ai
 
@@ -357,7 +370,9 @@ flags with the top-level `switch` UX:
   splits, the switcher's saved workdirs list, and About/Update status.
   The About section reads the cached update status without network access;
   selecting Check Updates runs `projmux update check`, and Update Now runs
-  `projmux update apply`.
+  `projmux update apply`. The same About section also lists the keybinding
+  diagnostic path: zero-config first, `setup` for swallowed keys, `init` for
+  supported terminal fallbacks, and `doctor` for dependencies.
 
 ## See also
 

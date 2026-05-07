@@ -330,12 +330,11 @@ func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarCl
 	}
 }
 
-// handleSession surfaces the active session name for now. TODO: open a session
-// picker (see `projmux switch --ui=popup`) so the click maps to a meaningful
-// navigation action. For now we keep parity with the other "todo" segments.
+// handleSession opens the existing session picker. It uses the same
+// popup-toggle surface as the keyboard bindings so a second click/chord closes
+// the scoped popup instead of stacking another one.
 func (c *statusbarCommand) handleSession(_ statusbarClickOptions, _, stderr io.Writer) error {
-	// TODO: replace with a session picker popup once the picker UI hardens.
-	return c.runTmux(stderr, "display-message", "session: #{session_name}")
+	return c.handlePopupToggle(stderr, "session", "session-popup")
 }
 
 // handlePwd shows the current pane's path. This mirrors what tmux already
@@ -344,20 +343,33 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 	return c.runTmux(stderr, "display-message", "#{pane_current_path}")
 }
 
-// handleKube is a placeholder for the "switch to a session whose kube context
-// matches a filter" action. TODO: wire to `projmux switch --filter=kube`.
+// handleKube opens the project switcher. There is no kube-specific filter
+// surface yet; the switch picker is the existing navigation surface that
+// already renders kube metadata for candidates.
 func (c *statusbarCommand) handleKube(_ statusbarClickOptions, _, stderr io.Writer) error {
-	// TODO: wire to `projmux switch --filter=kube` once the switcher exposes
-	// filter flags.
-	return c.runTmux(stderr, "display-message", "kube clicker - TODO: wire to switch --filter=kube")
+	return c.handlePopupToggle(stderr, "kube", "sessionizer")
 }
 
-// handleGit is a placeholder for the "switch to a dirty git session" action.
-// TODO: wire to `projmux switch --filter=git-dirty`.
+// handleGit opens the project switcher. There is no git-specific filter
+// surface yet; the switch picker is the existing navigation surface that
+// already renders git metadata for candidates.
 func (c *statusbarCommand) handleGit(_ statusbarClickOptions, _, stderr io.Writer) error {
-	// TODO: wire to `projmux switch --filter=git-dirty` once the switcher
-	// exposes filter flags.
-	return c.runTmux(stderr, "display-message", "git clicker - TODO: wire to switch --filter=git-dirty")
+	return c.handlePopupToggle(stderr, "git", "sessionizer")
+}
+
+func (c *statusbarCommand) handlePopupToggle(stderr io.Writer, label, mode string) error {
+	binaryPath, err := c.resolveBinary()
+	if err != nil {
+		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: cannot resolve projmux binary", label))
+	}
+	if c.runner == nil {
+		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: runner unavailable", label))
+	}
+	if _, err := c.runner.Run(context.Background(), binaryPath, "tmux", "popup-toggle", mode); err != nil {
+		fmt.Fprintf(stderr, "statusbar %s: popup-toggle %s: %v\n", label, mode, err)
+		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: popup failed", label))
+	}
+	return nil
 }
 
 // handleUsage opens the full `projmux usage` table inside a popup so users can

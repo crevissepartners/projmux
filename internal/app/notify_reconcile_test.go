@@ -452,6 +452,19 @@ func TestNotifyReconcileRejectsPositionalArgs(t *testing.T) {
 	}
 }
 
+func TestNotifyReconcileHelpDescribesRecoveryPath(t *testing.T) {
+	t.Parallel()
+
+	cmd := newReconcileCmd(&memNotifyStore{}, &reconcileTmuxRunner{})
+	var stderr bytes.Buffer
+	if err := cmd.Run([]string{"reconcile", "--help"}, &bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Repair the pending AI notify queue") {
+		t.Fatalf("stderr = %q, want recovery path", stderr.String())
+	}
+}
+
 // errFakeTmux is a sentinel for the reconcile soft-error path.
 var errFakeTmux = errFakeTmuxImpl{}
 

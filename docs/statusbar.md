@@ -28,7 +28,8 @@ row 1  #[range=user|notify] <notify HUD pill> #[norange]
   The session, pwd, kube, and git segments on this row are wrapped
   in `#[range=user|<id>]` ranges and dispatched through the projmux
   handler.
-- Row 1 splits the line with `#[align=left]` (notify, capped at 80
+- Row 1 splits the line with `#[align=left]` (the pending AI notify
+  queue, capped at 80
   cells) and `#[align=right]` (usage, capped at 120 cells). Both
   segments degrade gracefully when the cell budget is tight; see
   [notify-queue.md](notify-queue.md) and [usage-tracking.md](usage-tracking.md)
@@ -49,12 +50,15 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 
 | Range id | Row | Click action                              | Keyboard      |
 | -------- | --- | ----------------------------------------- | ------------- |
-| `session` | 0 | `display-message session: #{session_name}` (TODO: picker) | `prefix s s` |
+| `session` | 0 | `projmux tmux popup-toggle session-popup` | `prefix s s` |
 | `pwd`     | 0 | `display-message #{pane_current_path}`    | `prefix s p`  |
-| `kube`    | 0 | TODO (`switch --filter=kube`) — placeholder toast today | `prefix s k`  |
-| `git`     | 0 | TODO (`switch --filter=git-dirty`) — placeholder toast today | `prefix s g`  |
+| `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
+| `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `usage`   | 1 | `display-popup -E -h 60% -w 80% -- projmux usage` | `prefix s u`  |
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on success | `prefix s n`  |
+
+`notify` reads the pending queue only. For a live pane-state view that is
+independent of queued reminders, use `projmux attention list`.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,
@@ -86,6 +90,8 @@ them as `display-message` toasts:
   ack the entry, toast `notify target gone, dropping entry`.
 - Any other focus failure: keep the entry, toast `focus failed:
   <reason>`.
+- `session`, `kube`, or `git` popup launch failure: toast
+  `statusbar <range>: popup failed`.
 - `usage` popup failure: fall back to inlining the rendered table
   into a single `display-message`.
 

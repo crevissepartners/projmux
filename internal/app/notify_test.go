@@ -359,4 +359,26 @@ func TestNotifyHelpPrintsUsage(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage:") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Pending AI notify queue") {
+		t.Fatalf("stdout = %q, want pending queue boundary", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "notify reconcile") {
+		t.Fatalf("stdout = %q, want reconcile recovery path", stdout.String())
+	}
+}
+
+func TestNotifyListHelpDescribesPendingQueueBoundary(t *testing.T) {
+	t.Parallel()
+
+	cmd := newCmd(&stubNotifyStore{})
+	var stderr bytes.Buffer
+	if err := cmd.Run([]string{"list", "--help"}, &bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Pending AI notify queue entries only") {
+		t.Fatalf("stderr = %q, want pending queue boundary", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "projmux attention list") {
+		t.Fatalf("stderr = %q, want live attention pointer", stderr.String())
+	}
 }
