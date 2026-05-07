@@ -169,10 +169,10 @@ single `bind -n MouseDown1Status` covers both lines because tmux fires
 
 | Range id | Line | Click action                              | Keybinding   |
 |----------|------|-------------------------------------------|--------------|
-| session  | 0    | display session name (TODO: picker)       | prefix+s s   |
-| pwd      | 0    | display pane_current_path                 | prefix+s p   |
-| kube     | 0    | (TODO: kube filter picker)                | prefix+s k   |
-| git      | 0    | (TODO: git filter picker)                 | prefix+s g   |
+| session  | 0    | popup `projmux sessions --ui=popup`       | prefix+s s   |
+| pwd      | 0    | copy pane_current_path and show path popup | prefix+s p   |
+| kube     | 0    | popup `projmux switch --ui=popup`         | prefix+s k   |
+| git      | 0    | popup `projmux switch --ui=popup`         | prefix+s g   |
 | usage    | 1    | popup `projmux usage`                     | prefix+s u   |
 | notify   | 1    | focus origin pane of newest notification  | prefix+s n   |
 

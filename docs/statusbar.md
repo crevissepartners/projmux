@@ -8,7 +8,7 @@ segment only requires one wiring point.
 ## Layout
 
 ```
-row 0  [#S] #{pane_current_path}  k8s:<ctx>/<ns>  <git>          %H:%M
+row 0  [#S] cwd #{pane_current_path}  k8s:<ctx>/<ns>  <git>          %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
 row 1  #[range=user|notify] <notify HUD pill> #[norange]
                                            #[range=user|usage] <usage HUD bar> #[norange]
@@ -51,7 +51,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | Range id | Row | Click action                              | Keyboard      |
 | -------- | --- | ----------------------------------------- | ------------- |
 | `session` | 0 | `projmux tmux popup-toggle session-popup` | `prefix s s` |
-| `pwd`     | 0 | `display-message #{pane_current_path}`    | `prefix s p`  |
+| `pwd`     | 0 | copy `#{pane_current_path}` to tmux buffer and show a compact path popup | `prefix s p`  |
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `usage`   | 1 | `display-popup -E -h 60% -w 80% -- projmux usage` | `prefix s u`  |
@@ -92,6 +92,8 @@ them as `display-message` toasts:
   <reason>`.
 - `session`, `kube`, or `git` popup launch failure: toast
   `statusbar <range>: popup failed`.
+- `pwd` path popup failure: keep the copied path in the tmux paste
+  buffer when possible and fall back to a short `display-message`.
 - `usage` popup failure: fall back to inlining the rendered table
   into a single `display-message`.
 

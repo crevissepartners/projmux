@@ -337,10 +337,44 @@ func (c *statusbarCommand) handleSession(_ statusbarClickOptions, _, stderr io.W
 	return c.handlePopupToggle(stderr, "session", "session-popup")
 }
 
-// handlePwd shows the current pane's path. This mirrors what tmux already
-// stores in #{pane_current_path} but surfaces it in a place users can copy.
+// handlePwd shows the current pane's path in a small popup and copies it into
+// tmux's paste buffer. A plain display-message toast is too easy to miss and
+// reads like a failure because tmux styles messages with the warning palette.
 func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Writer) error {
-	return c.runTmux(stderr, "display-message", "#{pane_current_path}")
+	if c.runner == nil {
+		return c.runTmux(stderr, "display-message", "statusbar pwd: runner unavailable")
+	}
+	out, err := c.runner.Run(context.Background(), "tmux", "display-message", "-p", "-F", "#{pane_current_path}")
+	if err != nil {
+		fmt.Fprintf(stderr, "statusbar pwd: read pane path: %v\n", err)
+		return c.runTmux(stderr, "display-message", "statusbar pwd: path unavailable")
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return c.runTmux(stderr, "display-message", "statusbar pwd: path unavailable")
+	}
+
+	copied := true
+	if err := c.runTmuxNoFallback(stderr, "set-buffer", path); err != nil {
+		copied = false
+		fmt.Fprintf(stderr, "statusbar pwd: set-buffer: %v\n", err)
+	}
+	if err := c.runTmuxNoFallback(stderr,
+		"display-popup",
+		"-E",
+		"-w", "80%",
+		"-h", "7",
+		"-T", "projmux path",
+		statusbarPathPopupCommand(path, copied),
+	); err == nil {
+		return nil
+	}
+
+	message := "path: " + shortenStatusbarToast(path, 180)
+	if copied {
+		message = "copied path: " + shortenStatusbarToast(path, 172)
+	}
+	return c.runTmux(stderr, "display-message", message)
 }
 
 // handleKube opens the project switcher. There is no kube-specific filter
@@ -510,6 +544,29 @@ func focusFailureSummary(err error) string {
 		return "unknown"
 	}
 	return msg
+}
+
+func statusbarPathPopupCommand(path string, copied bool) string {
+	title := "Current pane path:"
+	if copied {
+		title = "Copied current pane path to tmux paste buffer:"
+	}
+	return "printf '%s\\n\\n%s\\n\\n%s\\n' " +
+		tmuxShellQuote(title) + " " +
+		tmuxShellQuote(path) + " " +
+		tmuxShellQuote("Press Enter to close.") +
+		"; IFS= read -r _"
+}
+
+func shortenStatusbarToast(value string, max int) string {
+	value = strings.TrimSpace(value)
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return "..." + value[len(value)-(max-3):]
 }
 
 func (c *statusbarCommand) resolveBinary() (string, error) {

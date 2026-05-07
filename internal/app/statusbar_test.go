@@ -212,17 +212,55 @@ func TestStatusbarClickSessionOpensSessionPopup(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickPwdDisplaysPanePath(t *testing.T) {
+func TestStatusbarClickPwdOpensPathPopupAndCopiesBuffer(t *testing.T) {
 	t.Parallel()
 
-	runner := &statusbarFakeRunner{}
+	runner := &statusbarFakeRunner{
+		respond: func(name string, args []string) ([]byte, error) {
+			if name == "tmux" && equalStringSlices(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}) {
+				return []byte("/home/es5h/source/repos/projmux\n"), nil
+			}
+			return nil, nil
+		},
+	}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
 	if err := cmd.Run([]string{"click", "pwd"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawTmuxDisplayMessage(runner.calls, "#{pane_current_path}") {
-		t.Fatalf("missing display-message; calls = %#v", runner.calls)
+	if !sawTmuxArgs(runner.calls, []string{"set-buffer", "/home/es5h/source/repos/projmux"}) {
+		t.Fatalf("missing set-buffer with pane path; calls = %#v", runner.calls)
+	}
+	if !sawTmuxSubcommand(runner.calls, "display-popup") {
+		t.Fatalf("missing path display-popup; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Copied current pane path to tmux paste buffer:") {
+		t.Fatalf("missing copied path popup body; calls = %#v", runner.calls)
+	}
+}
+
+func TestStatusbarClickPwdFallsBackToToastWhenPopupFails(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{
+		respond: func(name string, args []string) ([]byte, error) {
+			switch {
+			case name == "tmux" && equalStringSlices(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+				return []byte("/tmp/project\n"), nil
+			case name == "tmux" && len(args) > 0 && args[0] == "display-popup":
+				return nil, errors.New("popup unavailable")
+			default:
+				return nil, nil
+			}
+		},
+	}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "pwd"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "copied path: /tmp/project") {
+		t.Fatalf("missing fallback copied-path toast; calls = %#v", runner.calls)
 	}
 }
 
@@ -838,6 +876,18 @@ func sawTmuxDisplayMessage(calls []statusbarFakeCall, want string) bool {
 			continue
 		}
 		if c.args[1] == want {
+			return true
+		}
+	}
+	return false
+}
+
+func sawTmuxPopupCommandContaining(calls []statusbarFakeCall, want string) bool {
+	for _, c := range calls {
+		if c.name != "tmux" || len(c.args) < 2 || c.args[0] != "display-popup" {
+			continue
+		}
+		if strings.Contains(c.args[len(c.args)-1], want) {
 			return true
 		}
 	}

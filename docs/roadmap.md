@@ -1,6 +1,6 @@
 # Roadmap
 
-## Done (0.4.0)
+## Done (0.4.x)
 
 The 0.4 line filled in the operational surface around the session-management
 core that 0.3 had landed.
@@ -56,6 +56,9 @@ core that 0.3 had landed.
 - `projmux statusbar click` — single dispatcher for both mouse clicks
   and the `prefix s {u,n,g,k,p,s}` keyboard chord. Window-list clicks
   on tabs short-circuit to native `select-window`.
+- `pwd` status click copies the current pane path into the tmux paste
+  buffer and shows a compact path popup instead of a transient
+  warning-coloured toast.
 - HUD-style notify segment with severity+agent badge, midpoint dot
   separators, and an age field.
 - HUD-style usage segment with bars, last-sync age indicator (Claude),
@@ -79,9 +82,3 @@ v0.4 shipped.
 
 - Picker-agnostic popup close/toggle handling so AI picker dismissal
   does not depend on fzf-specific key bindings.
-
-### Statusbar follow-ups
-
-- Wire the `session` / `kube` / `git` click ranges to real pickers
-  (`switch --filter=...`). They currently surface the active context
-  via `display-message` as a placeholder.
