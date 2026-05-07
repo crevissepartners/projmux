@@ -198,7 +198,7 @@ func TestStatusbarClickUnknownRangeWithMouseWindowSelectsWindow(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickSessionDisplaysMessage(t *testing.T) {
+func TestStatusbarClickSessionOpensSessionPopup(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
@@ -207,8 +207,8 @@ func TestStatusbarClickSessionDisplaysMessage(t *testing.T) {
 	if err := cmd.Run([]string{"click", "session"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawTmuxDisplayMessage(runner.calls, "session: #{session_name}") {
-		t.Fatalf("missing display-message; calls = %#v", runner.calls)
+	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "session-popup"}) {
+		t.Fatalf("missing session popup-toggle; calls = %#v", runner.calls)
 	}
 }
 
@@ -226,7 +226,7 @@ func TestStatusbarClickPwdDisplaysPanePath(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickKubeDisplaysTodoMessage(t *testing.T) {
+func TestStatusbarClickKubeOpensProjectSwitcher(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
@@ -235,16 +235,12 @@ func TestStatusbarClickKubeDisplaysTodoMessage(t *testing.T) {
 	if err := cmd.Run([]string{"click", "kube"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	got, ok := lastDisplayMessage(runner.calls)
-	if !ok {
-		t.Fatalf("missing display-message; calls = %#v", runner.calls)
-	}
-	if !strings.Contains(got, "kube clicker") {
-		t.Fatalf("display-message = %q, want substring 'kube clicker'", got)
+	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "sessionizer"}) {
+		t.Fatalf("missing project switcher popup-toggle; calls = %#v", runner.calls)
 	}
 }
 
-func TestStatusbarClickGitDisplaysTodoMessage(t *testing.T) {
+func TestStatusbarClickGitOpensProjectSwitcher(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
@@ -253,12 +249,63 @@ func TestStatusbarClickGitDisplaysTodoMessage(t *testing.T) {
 	if err := cmd.Run([]string{"click", "git"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	got, ok := lastDisplayMessage(runner.calls)
-	if !ok {
-		t.Fatalf("missing display-message; calls = %#v", runner.calls)
+	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "sessionizer"}) {
+		t.Fatalf("missing project switcher popup-toggle; calls = %#v", runner.calls)
 	}
-	if !strings.Contains(got, "git clicker") {
-		t.Fatalf("display-message = %q, want substring 'git clicker'", got)
+}
+
+func TestStatusbarClickPopupActionFailuresShowToast(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		rangeID string
+		want    string
+	}{
+		{name: "session", rangeID: "session", want: "statusbar session: popup failed"},
+		{name: "kube", rangeID: "kube", want: "statusbar kube: popup failed"},
+		{name: "git", rangeID: "git", want: "statusbar git: popup failed"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			runner := &statusbarFakeRunner{
+				respond: func(name string, _ []string) ([]byte, error) {
+					if name == "/usr/local/bin/projmux" {
+						return nil, errors.New("popup unavailable")
+					}
+					return nil, nil
+				},
+			}
+			cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+			if err := cmd.Run([]string{"click", tt.rangeID}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v, want nil", err)
+			}
+			if !sawTmuxDisplayMessage(runner.calls, tt.want) {
+				t.Fatalf("missing fallback display-message %q; calls = %#v", tt.want, runner.calls)
+			}
+		})
+	}
+}
+
+func TestStatusbarClickPopupActionBinaryResolutionFailureShowsToast(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	cmd.executable = func() (string, error) { return "", errors.New("missing binary") }
+
+	if err := cmd.Run([]string{"click", "session"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "statusbar session: cannot resolve projmux binary") {
+		t.Fatalf("missing binary-resolution fallback display-message; calls = %#v", runner.calls)
+	}
+	if sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "session-popup"}) {
+		t.Fatalf("binary-resolution failure must not invoke popup-toggle; calls = %#v", runner.calls)
 	}
 }
 
@@ -764,6 +811,18 @@ func sawTmuxSubcommand(calls []statusbarFakeCall, sub string) bool {
 func sawTmuxArgs(calls []statusbarFakeCall, want []string) bool {
 	for _, c := range calls {
 		if c.name != "tmux" {
+			continue
+		}
+		if equalStringSlices(c.args, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func sawProjmuxArgs(calls []statusbarFakeCall, want []string) bool {
+	for _, c := range calls {
+		if c.name != "/usr/local/bin/projmux" {
 			continue
 		}
 		if equalStringSlices(c.args, want) {

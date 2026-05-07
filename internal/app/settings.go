@@ -145,7 +145,7 @@ func (c *settingsCommand) rootEntries() []intfzf.Entry {
 			Value: settingsSectionProject,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "About", "version, updates, source, common keys"),
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "About", "version, updates, key setup"),
 			Value: settingsSectionAbout,
 		},
 	}
@@ -178,7 +178,7 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			UI:         "settings-about",
 			Entries:    c.aboutEntries(),
 			Prompt:     "Settings > About > ",
-			Header:     "projmux app information and updates",
+			Header:     "projmux app information, key setup, and updates",
 			Footer:     projmuxFooter("Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -686,7 +686,10 @@ func (c *settingsCommand) aboutEntries() []intfzf.Entry {
 		{"Source", "https://github.com/crevissepartners/projmux"},
 		{"App", "sidebar, sessions, projects, AI picker, settings"},
 		{"Tmux actions", "new window, rename window/pane, previous/next window"},
-		{"Key model", "terminal sends CSI-u keys; tmux runs projmux actions"},
+		{"Key setup", "Alt-1..5 work zero-config when the terminal forwards Meta"},
+		{"Diagnose keys", "projmux setup reports swallowed shortcuts"},
+		{"Terminal fallback", "projmux init applies supported terminal key mappings"},
+		{"Dependencies", "projmux doctor checks tmux, fzf, git, stty, kubectl"},
 		{"Rename key", "Ctrl-M sends 9011u, tmux maps User10 to rename"},
 		{"Ghostty", "bind alt/ctrl keys to csi:9001u..9012u"},
 		{"Windows Term.", "actions sendInput tmux/meta sequences; keybindings attach keys"},
@@ -710,7 +713,7 @@ func (c *settingsCommand) aboutEntries() []intfzf.Entry {
 				Value: settingsUpdateApply,
 			},
 			intfzf.Entry{
-				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Check Updates", "fetch latest GitHub release metadata"),
+				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Check Updates", "refresh cached GitHub release metadata"),
 				Value: settingsUpdateCheck,
 			},
 			intfzf.Entry{

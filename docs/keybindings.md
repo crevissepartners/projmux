@@ -8,13 +8,13 @@ The recommended path when a key does not fire:
 
 1. Press the key inside `projmux shell` and see what works on your terminal
    out of the box ([Quick start](#quick-start-no-setup)).
-2. If something is swallowed, run [`projmux setup`](#diagnose-projmux-setup) —
-   it tells you exactly which sequences reach the process and which the
-   terminal is eating.
+2. If something is swallowed, run [`projmux setup`](#diagnose-projmux-setup)
+   outside tmux — it tells you exactly which sequences reach the process and
+   which the terminal is eating.
 3. For terminals projmux knows how to configure, run
-   [`projmux init [terminal]`](#auto-config-projmux-init) to merge the right
-   bindings into your terminal config (dry-run by default, `--apply` writes a
-   timestamped backup).
+   [`projmux init [terminal]`](#auto-config-projmux-init) as the fallback:
+   preview first, then add `--apply` to merge the right bindings into your
+   terminal config with a timestamped backup.
 4. If your terminal is not in the init list (or you prefer to edit configs by
    hand), use the [Manual fallback / advanced (CSI-u)](#manual-fallback--advanced-csi-u)
    section.
@@ -115,8 +115,8 @@ result:
 The summary at the end lists the failing keys and a remediation hint
 tailored to the detected terminal (Ghostty, WezTerm, kitty, iTerm2,
 Alacritty, Windows Terminal, foot, VS Code, …). When projmux ships an init
-adapter for the terminal, the hint ends with the exact command to run, e.g.
-`projmux init ghostty`.
+adapter for the terminal, the summary gives both the dry-run preview and the
+exact apply command, e.g. `projmux init ghostty --apply`.
 
 Useful flags:
 
@@ -137,10 +137,11 @@ about.
 
 ## Auto-config: `projmux init`
 
-`projmux init` merges the projmux CSI-u keybindings into a terminal
-emulator's config file. Default mode is **dry-run** — nothing is written
-until you pass `--apply`. Applying the merge always creates a timestamped
-backup of the previous file.
+`projmux init` is the supported fallback when `projmux setup` shows that a
+terminal swallows shortcuts projmux already binds in tmux. It merges the
+projmux CSI-u keybindings into a terminal emulator's config file. Default
+mode is **dry-run** — nothing is written until you pass `--apply`. Applying
+the merge always creates a timestamped backup of the previous file.
 
 ```sh
 projmux init                              # auto-detect + dry-run preview

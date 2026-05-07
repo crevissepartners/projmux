@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -270,6 +271,89 @@ func TestAttentionWindowFallsBackToBlank(t *testing.T) {
 	}
 }
 
+func TestAttentionListShowsLiveAttentionRows(t *testing.T) {
+	t.Parallel()
+
+	output := strings.Join([]string{
+		attentionListTestRow("dev", "@1", "%1", "1", "server", "", "idle", "codex", "plain work", "/tmp/tmux"),
+		attentionListTestRow("dev", "@1", "%2", "0", "✳ review", "", "", "", "", "/tmp/tmux"),
+		attentionListTestRow("ops", "@3", "%7", "0", "worker", "busy", "thinking", "claude", "deploy", ""),
+	}, "\n") + "\n"
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux list-panes -a -F " + attentionListFormat: []byte(output),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	wantCalls := []attentionCall{
+		{name: "tmux", args: []string{"list-panes", "-a", "-F", attentionListFormat}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+	want := "SESSION\tWINDOW\tPANE\tACTIVE\tATTENTION\tAI\tAGENT\tTOPIC\tTITLE\n" +
+		"dev\t@1\t%2\tno\t-\t-\t-\t-\t✳ review\n" +
+		"ops\t@3\t%7\tno\tbusy\tthinking\tclaude\tdeploy\tworker\n"
+	if got := stdout.String(); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestAttentionListJSONAllIncludesPanesWithoutAttention(t *testing.T) {
+	t.Parallel()
+
+	output := strings.Join([]string{
+		attentionListTestRow("dev", "@1", "%1", "1", "server", "", "idle", "codex", "plain work", "/tmp/tmux"),
+		attentionListTestRow("dev", "@1", "%2", "0", "✳ review", "reply", "waiting", "codex", "needs input", "/tmp/tmux"),
+	}, "\n") + "\n"
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux list-panes -a -F " + attentionListFormat: []byte(output),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--json", "--all"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var rows []attentionPaneRow
+	if err := json.Unmarshal(stdout.Bytes(), &rows); err != nil {
+		t.Fatalf("json decode error = %v; stdout = %q", err, stdout.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %#v, want 2 entries", rows)
+	}
+	if rows[0].Pane != "%1" || !rows[0].Active || rows[0].AttentionState != "" {
+		t.Fatalf("rows[0] = %#v, want active pane without attention", rows[0])
+	}
+	if rows[1].Pane != "%2" || rows[1].AttentionState != "reply" || rows[1].AIState != "waiting" {
+		t.Fatalf("rows[1] = %#v, want reply pane", rows[1])
+	}
+}
+
+func TestAttentionListHelpDescribesLiveStateBoundary(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	if err := (&attentionCommand{}).Run([]string{"list", "--help"}, &bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Live tmux pane attention state") {
+		t.Fatalf("stderr = %q, want live-state boundary", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "does not read or mutate the notify queue") {
+		t.Fatalf("stderr = %q, want notify queue boundary", stderr.String())
+	}
+}
+
 func TestAttentionRejectsInvalidUsage(t *testing.T) {
 	t.Parallel()
 
@@ -281,6 +365,7 @@ func TestAttentionRejectsInvalidUsage(t *testing.T) {
 		{name: "missing command", args: nil, want: "attention requires a subcommand"},
 		{name: "unknown command", args: []string{"nope"}, want: "unknown attention subcommand: nope"},
 		{name: "too many args", args: []string{"clear", "%1", "%2"}, want: "attention clear accepts at most 1 target argument"},
+		{name: "list positional arg", args: []string{"list", "%1"}, want: "attention list does not accept positional arguments"},
 	}
 
 	for _, tt := range tests {
@@ -300,6 +385,10 @@ func TestAttentionRejectsInvalidUsage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func attentionListTestRow(fields ...string) string {
+	return strings.Join(fields, attentionListSeparator)
 }
 
 type attentionCall struct {

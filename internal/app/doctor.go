@@ -309,6 +309,7 @@ func (c *doctorCommand) evaluateDep(dep doctorDep, host string) doctorResult {
 func writeDoctorText(w io.Writer, results []doctorResult) error {
 	var buf bytes.Buffer
 	buf.WriteString("projmux doctor\n")
+	buf.WriteString("dependency diagnostics only; use `projmux setup` for terminal key delivery\n")
 
 	var ok, missing, stale, skipped, hints int
 	for _, r := range results {

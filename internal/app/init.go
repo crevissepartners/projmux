@@ -255,6 +255,9 @@ func (c *initCommand) printPlan(terminal string, plan MergePlan, stdout io.Write
 	if _, err := fmt.Fprintf(stdout, "config: %s\n", plan.ConfigPath); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintln(stdout, "purpose: terminal-specific fallback for keys `projmux setup` reports as swallowed"); err != nil {
+		return err
+	}
 	if plan.CreateNew {
 		if _, err := fmt.Fprintln(stdout, "note:   config file does not exist; would be created"); err != nil {
 			return err
@@ -291,6 +294,9 @@ func (c *initCommand) printApplyResult(terminal string, plan MergePlan, stdout i
 	if _, err := fmt.Fprintf(stdout, "config: %s\n", plan.ConfigPath); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintln(stdout, "purpose: terminal-specific fallback for keys `projmux setup` reports as swallowed"); err != nil {
+		return err
+	}
 	added := 0
 	skipped := 0
 	for _, ch := range plan.Changes {
@@ -309,6 +315,9 @@ func (c *initCommand) printApplyResult(terminal string, plan MergePlan, stdout i
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "wrote %d new keybindings (%d skipped due to user conflict)\n", added, skipped); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(stdout, "rerun `projmux setup` outside tmux to verify the failing keys now arrive"); err != nil {
 		return err
 	}
 	if !plan.CreateNew {

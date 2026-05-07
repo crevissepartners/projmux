@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,11 @@ import (
 const DefaultPostCreateTimeout = 5 * time.Second
 
 const postCreatePrefix = "[post-create] "
+
+var projectPostCreateCandidates = []string{
+	filepath.Join(".projmux", "post-create"),
+	filepath.Join(".projmux", "hooks", "post-create"),
+}
 
 // PostCreateContext describes the tmux session that was just created and is
 // passed to the hook script as PROJMUX_* environment variables.
@@ -32,32 +38,28 @@ type PostCreateContext struct {
 	Version string
 }
 
-// PostCreateRunner runs the optional post-create hook script at HookPath.
-// A nil receiver, an empty HookPath, or a missing/non-executable file all
-// degrade to a silent no-op so the caller can always invoke Run unconditionally.
+// PostCreateRunner runs the optional global post-create hook at HookPath, then
+// an optional project-local post-create hook when DiscoverProjectHooks is set.
+// A nil receiver, empty paths, and missing/non-executable files all degrade to
+// silent no-ops so the caller can always invoke Run unconditionally.
 type PostCreateRunner struct {
-	HookPath string
-	Logger   io.Writer
-	Timeout  time.Duration
-	Version  string
+	HookPath             string
+	DiscoverProjectHooks bool
+	Logger               io.Writer
+	Timeout              time.Duration
+	Version              string
 }
 
-// Run executes the post-create hook for c if one is configured. Hook failures
+// Run executes configured post-create hooks for c. Hook failures
 // (missing file, non-executable, non-zero exit, exec error, timeout) are
 // recorded as a single warning line on Logger and never returned.
 func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
-	if r == nil || strings.TrimSpace(r.HookPath) == "" {
+	if r == nil {
 		return
 	}
 
-	info, err := os.Stat(r.HookPath)
-	if err != nil {
-		return
-	}
-	if info.IsDir() {
-		return
-	}
-	if info.Mode().Perm()&0o100 == 0 {
+	paths := r.postCreateHookPaths(c.CWD)
+	if len(paths) == 0 {
 		return
 	}
 
@@ -66,10 +68,57 @@ func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 		timeout = DefaultPostCreateTimeout
 	}
 
+	for _, path := range paths {
+		r.runHook(ctx, c, path, timeout)
+	}
+}
+
+func (r *PostCreateRunner) postCreateHookPaths(cwd string) []string {
+	var paths []string
+	if path := strings.TrimSpace(r.HookPath); isExecutableHook(path) {
+		paths = append(paths, path)
+	}
+	if r.DiscoverProjectHooks {
+		if path := discoverProjectPostCreateHook(cwd); path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func discoverProjectPostCreateHook(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return ""
+	}
+	for _, candidate := range projectPostCreateCandidates {
+		path := filepath.Join(cwd, candidate)
+		if isExecutableHook(path) {
+			return path
+		}
+	}
+	return ""
+}
+
+func isExecutableHook(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return false
+	}
+	return info.Mode().Perm()&0o100 != 0
+}
+
+func (r *PostCreateRunner) runHook(ctx context.Context, c PostCreateContext, path string, timeout time.Duration) {
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.HookPath)
+	cmd := exec.CommandContext(runCtx, path)
 	cmd.Stdin = nil
 	cmd.Dir = c.CWD
 	cmd.Env = buildHookEnv(c, r.Version)
@@ -83,20 +132,20 @@ func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 	cmd.Stdout = prefixed
 	cmd.Stderr = prefixed
 
-	err = cmd.Run()
+	err := cmd.Run()
 	prefixed.Flush()
 
 	if runCtx.Err() == context.DeadlineExceeded {
-		warnf(logger, "hook %q timed out after %s", r.HookPath, timeout)
+		warnf(logger, "hook %q timed out after %s", path, timeout)
 		return
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			warnf(logger, "hook %q exited with status %d", r.HookPath, exitErr.ExitCode())
+			warnf(logger, "hook %q exited with status %d", path, exitErr.ExitCode())
 			return
 		}
-		warnf(logger, "hook %q: %v", r.HookPath, err)
+		warnf(logger, "hook %q: %v", path, err)
 	}
 }
 

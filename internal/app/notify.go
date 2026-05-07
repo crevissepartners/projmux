@@ -172,6 +172,7 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("notify list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() { printNotifyListUsage(stderr) }
 
 	var (
 		asJSON     = fs.Bool("json", false, "emit json instead of tabular output")
@@ -183,6 +184,9 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs.Var(&sources, "source", "filter by source (repeatable)")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return usageError(fmt.Sprintf("parse notify list flags: %v", err))
 	}
 	if fs.NArg() != 0 {
@@ -398,11 +402,28 @@ func (m *multiFlag) Set(value string) error {
 }
 
 func printNotifyUsage(w io.Writer) {
+	fmt.Fprintln(w, "Pending AI notify queue. Use `notify reconcile` to repair the queue from live tmux panes.")
+	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]")
 	fmt.Fprintln(w, "                        [--severity info|warn|critical] [--source ai|k8s|git|external]")
 	fmt.Fprintln(w, "                        [--ttl <seconds>] [--id <s>] [--json]")
 	fmt.Fprintln(w, "  projmux notify list  [--json] [--limit N] [--severity ...] [--source ...]")
-	fmt.Fprintln(w, "  projmux notify ack   <id> [--all]")
+	fmt.Fprintln(w, "  projmux notify ack   <id> | --all")
+	fmt.Fprintln(w, "  projmux notify reconcile [--json]")
+}
+
+func printNotifyListUsage(w io.Writer) {
+	fmt.Fprintln(w, "Pending AI notify queue entries only; not a full live attention view.")
+	fmt.Fprintln(w, "Use `projmux attention list` for live pane attention state.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  projmux notify list [--json] [--limit N] [--severity ...] [--source ...]")
+}
+
+func printNotifyReconcileUsage(w io.Writer) {
+	fmt.Fprintln(w, "Repair the pending AI notify queue from live tmux pane attention state.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux notify reconcile [--json]")
 }

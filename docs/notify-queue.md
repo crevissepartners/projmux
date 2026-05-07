@@ -1,9 +1,11 @@
 # Notify queue
 
-`projmux` keeps a persistent JSON queue of pending notifications. Each
-entry routes a click on the status-bar notify segment to the originating
-tmux pane via `projmux focus`, and feeds the HUD pill rendered by
-`projmux status notify`.
+`projmux` keeps a persistent JSON queue of pending AI notifications.
+This queue is the short-lived actionable reminder set used by the
+status-bar notify segment; it is not a complete inventory of live pane
+attention. Each entry routes a click on the status-bar notify segment
+to the originating tmux pane via `projmux focus`, and feeds the HUD pill
+rendered by `projmux status notify`.
 
 ## File layout
 
@@ -72,8 +74,10 @@ projmux notify list [--json] [--limit N]
                     [--severity ...] [--source ...]
 ```
 
-Newest-first. Default output is the tab-aligned table `ID AGE SEV SRC
-TARGET TEXT`. `--severity` / `--source` are repeatable filters.
+Newest-first pending queue entries. Default output is the tab-aligned
+table `ID AGE SEV SRC TARGET TEXT`. `--severity` / `--source` are
+repeatable filters. To inspect live pane attention instead of queued
+reminders, use `projmux attention list`.
 
 ### ack
 
@@ -102,7 +106,8 @@ path), then:
 
 Soft-fails when tmux is not running (returns a populated `errors`
 field rather than a non-zero exit) so the post-install hook does not
-break.
+break. Run this as the recovery path when the on-disk queue has drifted
+from live pane state.
 
 Output: `reconcile: pushed N, acked M, kept K`.
 

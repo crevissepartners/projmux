@@ -1,7 +1,7 @@
 # Hooks
 
 projmux runs an optional user script when it creates a new tmux session. The
-hook is the project-agnostic seam for things projmux itself stays out of:
+hook is the project-agnostic extension point for things projmux itself stays out of:
 injecting per-session env via `tmux set-environment`, picking a `GH_TOKEN` for
 the repo, exporting a Kubernetes context, kicking off a background sync, etc.
 projmux never ships behavior specific to any of those — that lives in the
@@ -9,12 +9,21 @@ hook.
 
 ## Where it lives
 
-```
+Global hook:
+
+```text
 ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/post-create
 ```
 
-The file must exist, be a regular file or symlink (not a directory), and have
-the owner-execute bit set. Anything else is silently skipped — no warning,
+Project-local hooks, discovered from the new session's `PROJMUX_CWD`:
+
+```text
+<repo>/.projmux/post-create
+<repo>/.projmux/hooks/post-create
+```
+
+Each hook file must exist, be a regular file or symlink (not a directory), and
+have the owner-execute bit set. Anything else is silently skipped — no warning,
 no log. There is no enable flag.
 
 ```sh
@@ -22,12 +31,21 @@ mkdir -p ~/.config/projmux/hooks
 chmod +x ~/.config/projmux/hooks/post-create
 ```
 
+For project-local hooks, projmux runs at most one file: first
+`.projmux/post-create` if executable, otherwise `.projmux/hooks/post-create` if
+executable. Discovery does not walk parent directories and does not run hooks
+from status, preview, or picker hot paths.
+
 ## When it runs
 
 After projmux creates a brand-new tmux session via `EnsureSession` (the
 persistent path used by `current` and `switch`) or `CreateEphemeralSession`
 (used by `attach`). It does **not** run when projmux attaches to an existing
 session.
+
+If both a global hook and a project-local hook exist, projmux runs the global
+hook first, then the project-local hook. A failure or timeout in either hook is
+logged once and does not block session creation or the other hook.
 
 The hook's exit code is ignored — session creation always succeeds.
 Hook stdout and stderr are forwarded to projmux's stderr line-by-line,
@@ -47,11 +65,22 @@ The hook inherits projmux's environment, plus:
 
 ## Examples
 
-### Stub
+### Global stub
 
 ```bash
 #!/usr/bin/env bash
 echo "session=$PROJMUX_SESSION cwd=$PROJMUX_CWD kind=$PROJMUX_SESSION_KIND"
+```
+
+### Project-local stub
+
+```bash
+mkdir -p .projmux
+cat > .projmux/post-create <<'EOF'
+#!/usr/bin/env bash
+echo "project hook for $PROJMUX_CWD"
+EOF
+chmod +x .projmux/post-create
 ```
 
 ### Per-session GH_TOKEN by repo
@@ -75,8 +104,10 @@ it does not retroactively change the current shell. Open new panes via tmux
 
 ## Troubleshooting
 
-- **Nothing happens.** Check the execute bit (`ls -l ~/.config/projmux/hooks/post-create`).
-  A missing bit makes projmux skip silently by design.
+- **Nothing happens.** Check the execute bit on the global hook
+  (`ls -l ~/.config/projmux/hooks/post-create`) or the project hook
+  (`ls -l .projmux/post-create .projmux/hooks/post-create`). A missing bit
+  makes projmux skip silently by design.
 - **`projmux: post-create hook: ... timed out after 5s`.** Long-running work
   belongs in a backgrounded child (`(slow-thing &) >/dev/null 2>&1`). The hook
   itself must return within 5s or projmux kills it.
