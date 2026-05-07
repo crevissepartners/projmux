@@ -7,6 +7,9 @@ sidebar navigation, generated keybindings, status metadata, and AI-pane
 attention signals. It can run as its own tmux app (`projmux shell`) or install
 the same behavior into your existing tmux server.
 
+[![npm version](https://img.shields.io/npm/v/projmux?logo=npm)](https://www.npmjs.com/package/projmux)
+[![CI](https://github.com/crevissepartners/projmux/actions/workflows/ci.yml/badge.svg)](https://github.com/crevissepartners/projmux/actions/workflows/ci.yml)
+
 [한국어 README](README-ko.md)
 
 ## Why projmux
@@ -28,26 +31,6 @@ for a daily terminal workspace:
 - **You can choose isolation or integration.** Use `projmux shell` as a
   self-contained tmux app, or install the generated snippet into your normal
   tmux server.
-
-## What's new in 0.4
-
-- **`projmux setup` / `projmux init`** — keep zero-config keybindings first:
-  diagnose terminal key delivery, then apply a terminal-specific fallback
-  only when Ghostty or Windows Terminal swallows a shortcut.
-- **`projmux doctor`** — runtime dependency report with minimum-version
-  enforcement (tmux 3.4, fzf 0.55).
-- **`projmux focus`** — unified switch-client dispatch shared by the
-  AI reply-ready flow and the status-bar notify click.
-- **Persistent notify queue** — `projmux notify push|list|ack|reconcile`
-  with TTL, severity, source, and target metadata. See
-  [notify-queue.md](docs/notify-queue.md).
-- **Authoritative usage tracking** — `projmux usage` reads Claude's
-  OAuth usage endpoint and Codex's local rollout `rate_limits`. See
-  [usage-tracking.md](docs/usage-tracking.md).
-- **Two-line clickable status bar** — row 0 keeps the native window
-  list (click a tab to switch), row 1 splits a notify HUD pill (left)
-  and a usage HUD bar (right). Both segments degrade gracefully on
-  narrow status budgets. See [statusbar.md](docs/statusbar.md).
 
 ## What It Does
 
@@ -81,7 +64,10 @@ Open the app once, then use its generated tmux bindings to:
 
 ## Requirements
 
-- [Go 1.24+](https://go.dev/dl/) — required to install or build the binary.
+- [Node.js](https://nodejs.org/) and npm — required for the recommended npm
+  install path.
+- [Go 1.24+](https://go.dev/dl/) — required only when installing with
+  `go install` or building from source.
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) **≥ 3.4** — the workspace runtime. Earlier versions miss `display-popup -T` and other features projmux depends on.
 - [fzf](https://github.com/junegunn/fzf#installation) **≥ 0.55** — interactive popup/sidebar pickers. The multiline picker uses `--marker-multi-line`, `--gap-line`, and `--highlight-line`, which landed by 0.55.
 - [zsh](https://zsh.sourceforge.io/) — default shell of the generated app config (`projmux shell`).
@@ -99,21 +85,28 @@ is diagnosed separately with `projmux setup`.
 ## Install
 
 ```sh
-go install github.com/crevissepartners/projmux/cmd/projmux@latest
+npm install -g projmux
 ```
 
-This drops the binary in `$(go env GOBIN)` (when set) or `$(go env GOPATH)/bin`
-(default `~/go/bin`). Make sure that directory is on your `PATH`:
-
-```sh
-export PATH="$(go env GOPATH)/bin:$PATH"
-```
+npm installs a small Node.js shim plus the matching platform binary package
+for Linux and macOS on x64 or arm64. The shim marks the install as npm-managed
+so `projmux update` and the Settings About screen can use the right upgrade
+path.
 
 Verify:
 
 ```sh
 projmux version
 ```
+
+If npm is not a fit for your machine, install with Go:
+
+```sh
+go install github.com/crevissepartners/projmux/cmd/projmux@latest
+```
+
+This drops the binary in `$(go env GOBIN)` (when set) or `$(go env GOPATH)/bin`
+(default `~/go/bin`). Make sure that directory is on your `PATH`.
 
 ### Optional: `PROJMUX_PROJDIR`
 
@@ -142,11 +135,10 @@ search list, so they participate in discovery just like
 export PROJMUX_PROJDIR="$HOME/source/repos:/srv/work/repos"
 ```
 
-#### Set the project root at install time
+#### Set the project root during setup
 
 ```sh
-PROJMUX_PROJDIR=/your/path go install github.com/crevissepartners/projmux/cmd/projmux@latest
-PROJMUX_PROJDIR=/your/path projmux tmux apply
+PROJMUX_PROJDIR=/your/path projmux shell
 ```
 
 The first invocation that sees the env var writes
@@ -197,40 +189,21 @@ The Settings About screen is the normal interactive update surface: it shows
 cached release status, installer source, Check Updates, Update Now, and
 release notes. The startup update prompt uses the same cache and never reaches
 the network.
-
-`projmux upgrade` reinstalls the binary via `go install`, atomically replaces
-the active file, and reapplies the live tmux config so a running `-L projmux`
-server picks up new bindings without a restart.
+To refresh the cached release status manually, run:
 
 ```sh
-projmux upgrade                                  # @latest, replace + apply
-projmux upgrade --ref @v0.2.0                    # pin a specific tag
-projmux upgrade --ref @main                      # track a branch
-projmux upgrade --target /usr/local/bin/projmux  # replace another path
-projmux upgrade --no-apply                       # skip 'projmux tmux apply'
-projmux upgrade --dry-run                        # print the steps only
+projmux update check
 ```
 
-The upgrade reads `PROJMUX_PROJDIR` from the calling shell and memoizes the
-primary (first) path to `~/.config/projmux/projdir`, so the new binary keeps
-the same project root context as the one it replaces.
-
-Pass a new project root inline to atomically switch the binary and the saved
-projdir in one step:
-
-```sh
-PROJMUX_PROJDIR=/new/path projmux upgrade
-
-# Multi-path also works; only the primary entry is persisted to the saved file.
-PROJMUX_PROJDIR="/main/repos:/secondary/repos" projmux upgrade   # Linux/macOS
-# Windows: PROJMUX_PROJDIR="C:\main\repos;C:\secondary\repos"
-```
+Use Settings > About > Update or `projmux update apply` to update through the
+detected installer. See [Upgrading](docs/upgrading.md) for npm, Go, GitHub
+Release, and source-checkout details.
 
 ## Usage
 
 Day-to-day, projmux is driven by tmux keybindings inside `projmux shell` — see
 [Terminal Keybindings](docs/keybindings.md). For the full CLI surface (pins,
-preview state, status helpers, `upgrade`, etc.), run `projmux help` or
+preview state, status helpers, updates, etc.), run `projmux help` or
 `<command> --help`.
 
 ## How It Finds Projects
@@ -324,6 +297,7 @@ More documentation:
 - [Statusbar](docs/statusbar.md)
 - [Notify queue](docs/notify-queue.md)
 - [Usage tracking](docs/usage-tracking.md)
+- [Upgrading](docs/upgrading.md)
 - [Hooks](docs/hooks.md)
 - [Migration Plan](docs/migration-plan.md)
 - [Repo Layout](docs/repo-layout.md)

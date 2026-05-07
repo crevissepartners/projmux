@@ -3,8 +3,8 @@
 `projmux` remains a Go CLI. npm is a distribution channel that installs a
 small Node.js shim plus one platform-specific Go binary package.
 
-The public npm name `projmux` is reserved as `0.0.0-reserved`. The source
-package scaffold uses this package layout:
+The public npm package `projmux` is the root shim package. Release builds use
+this package layout:
 
 | package | contents |
 | --- | --- |
