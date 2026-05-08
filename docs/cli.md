@@ -104,7 +104,7 @@ projmux doctor [--json]
 projmux doctor --install-missing [--dry-run] [--include-optional]
 ```
 
-Runs a dependency check: `tmux ≥ 3.4`, `fzf ≥ 0.55`, `git`, `stty` (POSIX
+Runs a dependency check: `tmux ≥ 3.4`, `fzf ≥ 0.65.0`, `git`, `stty` (POSIX
 only), and `kubectl` (optional). Exit code `0` even when optional deps are
 missing; non-zero only when a required dep is missing or stale. `--json`
 emits a machine-readable array; the default is the human report with
@@ -114,7 +114,10 @@ dependencies. `--dry-run` prints those commands without executing them.
 `--include-optional` also includes optional missing dependencies such as
 `kubectl` when an install command is available. Install flags cannot be
 combined with `--json`. Doctor does not diagnose terminal key delivery; use
-`projmux setup` for that.
+`projmux setup` for that. For fzf, doctor requires the junegunn/fzf CLI
+executable on `PATH` to report at least 0.65.0 from `fzf --version`; the npm
+package `fzf` is a JavaScript library and is not a valid CLI install path for
+projmux.
 
 ## focus
 

@@ -19,7 +19,7 @@ core that 0.3 had landed.
 ### Diagnostics
 
 - `projmux doctor` — runtime dependency report. Enforces minimum tmux
-  3.4 and fzf 0.55 (`stale` status when present but below the floor).
+  3.4 and fzf 0.65.0 (`stale` status when present but below the floor).
 
 ### Focus
 

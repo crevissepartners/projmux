@@ -59,6 +59,9 @@ type doctorDep struct {
 	// FallbackHint is a non-OS-specific extra suggestion appended after the
 	// detected install command (e.g. `go install` for fzf).
 	FallbackHint string
+	// ManualInstallHint is rendered as guidance but is never treated as an
+	// automatically runnable install command.
+	ManualInstallHint string
 	// OptionalNote is the human-readable explanation rendered for optional
 	// deps regardless of presence.
 	OptionalNote string
@@ -90,11 +93,14 @@ func doctorDeps() []doctorDep {
 	return []doctorDep{
 		{Name: "tmux", Required: true, Category: doctorCategoryCore, MinVersion: "3.4"},
 		{
-			Name:         "fzf",
-			Required:     true,
-			Category:     doctorCategoryCore,
-			FallbackHint: "or: go install github.com/junegunn/fzf@latest",
-			MinVersion:   "0.55",
+			Name:     "fzf",
+			Required: true,
+			Category: doctorCategoryCore,
+			ManualInstallHint: "install the junegunn/fzf CLI executable >= 0.65.0 from " +
+				"https://github.com/junegunn/fzf/releases, Homebrew, or another source that passes " +
+				"`fzf --version`; distro packages such as Ubuntu 24 apt may be too old; " +
+				"`npm i fzf` is a JavaScript library, not the CLI projmux executes",
+			MinVersion: "0.65.0",
 		},
 		{Name: "git", Required: true, Category: doctorCategoryWorkflow},
 		{Name: "stty", Required: true, Category: doctorCategoryWorkflow, SkipOnWindows: true},
@@ -159,18 +165,30 @@ type doctorInstallOptions struct {
 
 func (c *doctorCommand) installMissing(results []doctorResult, opts doctorInstallOptions, stdout, stderr io.Writer) error {
 	commands := doctorInstallCommands(results, opts.IncludeOptional)
+	manual := doctorManualInstallResults(results, opts.IncludeOptional)
+	unresolved := doctorUnresolvedInstallResults(results, opts.IncludeOptional)
 	if len(commands) == 0 {
-		if _, err := fmt.Fprintln(stdout, "no installable missing dependencies"); err != nil {
+		for _, r := range manual {
+			if _, err := fmt.Fprintf(stdout, "manual install required for %s: %s\n", r.Name, r.Install); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(stdout, "no automatically installable missing dependencies; follow the guidance above"); err != nil {
 			return err
 		}
-		for _, r := range results {
-			if r.Required && (r.Status == doctorStatusMissing || r.Status == doctorStatusStale) {
-				return fmt.Errorf("missing required dependencies; no install command was detected")
-			}
+		if hasRequiredDoctorResults(unresolved) {
+			return fmt.Errorf("missing required dependencies; manual install required for %s", doctorResultNames(unresolved))
 		}
 		return nil
 	}
 
+	if len(manual) > 0 {
+		for _, r := range manual {
+			if _, err := fmt.Fprintf(stdout, "manual install required for %s: %s\n", r.Name, r.Install); err != nil {
+				return err
+			}
+		}
+	}
 	for _, command := range commands {
 		if opts.DryRun {
 			if _, err := fmt.Fprintf(stdout, "would install %s: %s\n", command.Dep, command.String()); err != nil {
@@ -186,8 +204,12 @@ func (c *doctorCommand) installMissing(results []doctorResult, opts doctorInstal
 		}
 	}
 	if !opts.DryRun {
-		_, err := fmt.Fprintln(stdout, "install commands completed; rerun projmux doctor to verify")
-		return err
+		if _, err := fmt.Fprintln(stdout, "install commands completed; rerun projmux doctor to verify"); err != nil {
+			return err
+		}
+	}
+	if hasRequiredDoctorResults(unresolved) {
+		return fmt.Errorf("missing required dependencies; manual install required for %s", doctorResultNames(unresolved))
 	}
 	return nil
 }
@@ -220,9 +242,63 @@ func doctorInstallCommands(results []doctorResult, includeOptional bool) []docto
 	return out
 }
 
+func doctorManualInstallResults(results []doctorResult, includeOptional bool) []doctorResult {
+	var out []doctorResult
+	for _, r := range results {
+		if !doctorInstallEligible(r, includeOptional) {
+			continue
+		}
+		if _, ok := parseDoctorInstallCommand(r.Name, r.Install); !ok && strings.TrimSpace(r.Install) != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func doctorUnresolvedInstallResults(results []doctorResult, includeOptional bool) []doctorResult {
+	var out []doctorResult
+	for _, r := range results {
+		if !doctorInstallEligible(r, includeOptional) {
+			continue
+		}
+		if _, ok := parseDoctorInstallCommand(r.Name, r.Install); !ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func doctorInstallEligible(r doctorResult, includeOptional bool) bool {
+	installableStatus := r.Status == doctorStatusMissing || r.Status == doctorStatusStale
+	if includeOptional {
+		installableStatus = installableStatus || r.Status == doctorStatusHint
+	}
+	return installableStatus && (r.Required || includeOptional)
+}
+
+func hasRequiredDoctorResults(results []doctorResult) bool {
+	for _, r := range results {
+		if r.Required {
+			return true
+		}
+	}
+	return false
+}
+
+func doctorResultNames(results []doctorResult) string {
+	names := make([]string, 0, len(results))
+	for _, r := range results {
+		names = append(names, r.Name)
+	}
+	return strings.Join(names, ", ")
+}
+
 func parseDoctorInstallCommand(dep, hint string) (doctorInstallCommand, bool) {
 	command := strings.TrimSpace(hint)
 	if command == "" {
+		return doctorInstallCommand{}, false
+	}
+	if strings.HasPrefix(command, "manual:") {
 		return doctorInstallCommand{}, false
 	}
 	if before, _, ok := strings.Cut(command, ";"); ok {
@@ -375,6 +451,9 @@ func writeDoctorJSON(w io.Writer, results []doctorResult) error {
 func detectInstallHint(dep doctorDep, host string, lookPath func(string) (string, error)) string {
 	if lookPath == nil {
 		return ""
+	}
+	if dep.ManualInstallHint != "" {
+		return "manual: " + dep.ManualInstallHint
 	}
 	pkg := func(key string) string {
 		if name, ok := dep.PackageNames[key]; ok && name != "" {

@@ -316,18 +316,18 @@ func TestDetectInstallHintByOSAndPM(t *testing.T) {
 			want:    "scoop install git",
 		},
 		{
-			name:     "fzf appends go install fallback on linux apt",
-			dep:      doctorDep{Name: "fzf", FallbackHint: "or: go install github.com/junegunn/fzf@latest"},
-			host:     "linux",
-			present:  map[string]bool{"apt-get": true},
-			contains: []string{"sudo apt-get install -y fzf", "or: go install github.com/junegunn/fzf@latest"},
+			name:    "manual install hint suppresses linux apt command",
+			dep:     doctorDep{Name: "fzf", ManualInstallHint: "install the junegunn/fzf CLI >= 0.65.0"},
+			host:    "linux",
+			present: map[string]bool{"apt-get": true},
+			want:    "manual: install the junegunn/fzf CLI >= 0.65.0",
 		},
 		{
-			name:    "fzf falls back to go install when no PM detected",
-			dep:     doctorDep{Name: "fzf", FallbackHint: "or: go install github.com/junegunn/fzf@latest"},
+			name:    "manual install hint works without package manager",
+			dep:     doctorDep{Name: "fzf", ManualInstallHint: "install the junegunn/fzf CLI >= 0.65.0"},
 			host:    "linux",
 			present: map[string]bool{},
-			want:    "or: go install github.com/junegunn/fzf@latest",
+			want:    "manual: install the junegunn/fzf CLI >= 0.65.0",
 		},
 		{
 			name:    "linux no package manager returns empty",
@@ -370,7 +370,7 @@ func TestDetectInstallHintByOSAndPM(t *testing.T) {
 	}
 }
 
-func TestDoctorFzfHintAlwaysIncludesGoInstallFallback(t *testing.T) {
+func TestDoctorFzfHintIsManualCLIGuidance(t *testing.T) {
 	t.Parallel()
 
 	hosts := []struct {
@@ -407,8 +407,13 @@ func TestDoctorFzfHintAlwaysIncludesGoInstallFallback(t *testing.T) {
 				return "", errors.New("not found")
 			}
 			got := detectInstallHint(fzfDep, tc.host, lookPath)
-			if !strings.Contains(got, "go install github.com/junegunn/fzf@latest") {
-				t.Fatalf("fzf hint missing go install fallback on %s: %q", tc.name, got)
+			for _, want := range []string{"manual:", "junegunn/fzf CLI", "0.65.0", "`fzf --version`", "`npm i fzf`"} {
+				if !strings.Contains(got, want) {
+					t.Fatalf("fzf hint on %s missing %q: %q", tc.name, want, got)
+				}
+			}
+			if strings.Contains(got, "apt-get install") {
+				t.Fatalf("fzf hint should not imply apt installs a sufficient version: %q", got)
 			}
 		})
 	}
@@ -540,10 +545,10 @@ func TestVersionAtLeast(t *testing.T) {
 		{"3.4 >= 3.4", "3.4", "3.4", true, true},
 		{"3.3 < 3.4", "3.3", "3.4", false, true},
 		{"3.4a >= 3.4", "3.4a", "3.4", true, true},
-		{"0.55 >= 0.55", "0.55", "0.55", true, true},
-		{"0.54 < 0.55", "0.54", "0.55", false, true},
-		{"0.71.0 >= 0.55", "0.71.0", "0.55", true, true},
-		{"garbage lenient", "garbage", "0.55", true, false},
+		{"0.65.0 >= 0.65.0", "0.65.0", "0.65.0", true, true},
+		{"0.64.0 < 0.65.0", "0.64.0", "0.65.0", false, true},
+		{"0.71.0 >= 0.65.0", "0.71.0", "0.65.0", true, true},
+		{"garbage lenient", "garbage", "0.65.0", true, false},
 	}
 
 	for _, tc := range cases {
@@ -564,7 +569,7 @@ func TestDoctorStaleFzfFailsRequired(t *testing.T) {
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
 		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
-		map[string]string{"fzf": "0.54 (devel)"},
+		map[string]string{"fzf": "fzf 0.64.0 (distro build)"},
 	)
 
 	var stdout, stderr bytes.Buffer
@@ -576,13 +581,48 @@ func TestDoctorStaleFzfFailsRequired(t *testing.T) {
 		t.Fatalf("error = %v, want mention of missing required dependencies", err)
 	}
 	out := stdout.String()
-	for _, want := range []string{"[stale]", "fzf", "minimum 0.55; found 0.54 (devel)"} {
+	for _, want := range []string{"[stale]", "fzf", "minimum 0.65.0; found fzf 0.64.0 (distro build)", "junegunn/fzf CLI", "`npm i fzf`"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "sudo apt-get install -y fzf") {
+		t.Fatalf("stale fzf guidance should not imply apt install is enough:\n%s", out)
+	}
 	if !strings.Contains(out, "1 stale") {
 		t.Fatalf("summary line missing stale count:\n%s", out)
+	}
+}
+
+func TestDoctorInstallMissingStaleFzfRequiresManualInstall(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommandWithVersions(
+		"linux",
+		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
+		map[string]string{"fzf": "0.64.0 (Ubuntu package)"},
+	)
+
+	var stdout bytes.Buffer
+	err := cmd.Run([]string{"--install-missing", "--dry-run"}, &stdout, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want manual install failure")
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"manual install required for fzf",
+		"junegunn/fzf CLI executable >= 0.65.0",
+		"Ubuntu 24 apt may be too old",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "would install fzf: sudo apt-get install") {
+		t.Fatalf("install-missing should not dry-run apt for stale fzf:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "manual install required for fzf") {
+		t.Fatalf("Run() error = %v, want manual install mention", err)
 	}
 }
 
@@ -669,7 +709,7 @@ func TestDoctorStaleFzfSerializesToJSON(t *testing.T) {
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
 		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
-		map[string]string{"fzf": "0.54 (devel)"},
+		map[string]string{"fzf": "0.64.0 (devel)"},
 	)
 
 	var stdout bytes.Buffer

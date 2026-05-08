@@ -34,7 +34,7 @@ attention signal을 함께 제공합니다. 자체 tmux 앱(`projmux shell`)으�
   swallow 하는지 진단한 뒤, Ghostty 또는 Windows Terminal 설정에 맞는
   CSI-u 바인딩을 자동 머지한다.
 - **`projmux doctor`** — 런타임 의존성 점검 + 최소 버전 강제 (tmux 3.4,
-  fzf 0.55).
+  fzf 0.65.0).
 - **`projmux focus`** — AI reply-ready 와 status-bar notify 클릭이 공유하는
   통합 switch-client 디스패처.
 - **영속 notify queue** — `projmux notify push|list|ack|reconcile` 가 TTL,
@@ -81,7 +81,7 @@ projmux shell
 
 - [Go 1.24+](https://go.dev/dl/) — binary 설치/빌드에 필요.
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) **≥ 3.4** — workspace 런타임. 이전 버전은 `display-popup -T` 등 projmux 가 사용하는 기능이 없습니다.
-- [fzf](https://github.com/junegunn/fzf#installation) **≥ 0.55** — popup/sidebar picker. 멀티라인 피커가 `--marker-multi-line`, `--gap-line`, `--highlight-line` 을 사용하며 모두 0.55 까지 도입됐습니다.
+- [fzf](https://github.com/junegunn/fzf#installation) **≥ 0.65.0** — popup/sidebar picker. `PATH` 에 있는 `fzf` 실행 파일이 `fzf --version` 에서 0.65.0 이상을 보고해야 합니다. Ubuntu 24 apt 같은 distro package 는 너무 오래됐을 수 있으니 upstream GitHub Releases, Homebrew, 또는 버전을 확인할 수 있는 다른 설치 경로를 사용하세요. `npm i fzf` 는 JavaScript fuzzy-search library 이며 projmux 가 실행하는 junegunn/fzf CLI binary 가 아닙니다.
 - `bash`, `zsh`, `sh` 같은 Unix shell — `projmux shell` 이 만드는 앱 tmux
   설정은 절대 경로 `$SHELL` 을 사용하고, 없으면 `/bin/sh` 로 fallback 합니다.
 - [git](https://git-scm.com/downloads) — branch/status segment.
