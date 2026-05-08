@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -17,44 +19,54 @@ import (
 var osStat = os.Stat
 
 type settingsCommand struct {
-	ai       *aiCommand
-	switcher *switchCommand
-	update   *updateCommand
-	runner   intfzf.Runner
+	ai         *aiCommand
+	switcher   *switchCommand
+	update     *updateCommand
+	runner     intfzf.Runner
+	homeDir    func() (string, error)
+	lookupEnv  func(string) string
+	runCommand func(name string, args ...string) error
 }
 
 var errSettingsClosed = errors.New("settings closed")
 
 const (
-	settingsBackValue           = "__settings_back__"
-	settingsNoopValue           = "__settings_noop__"
-	settingsSectionAI           = "section:ai"
-	settingsSectionProject      = "section:project-picker"
-	settingsSectionAbout        = "section:about"
-	settingsActionPrefixAI      = "ai:"
-	settingsActionPrefixProjdir = "projdir:"
-	settingsActionPrefixSwitch  = "switch:"
-	settingsActionPrefixUpdate  = "update:"
-	settingsActionPrefixWorkdir = "workdir:"
-	settingsProjectAdd          = "project:add"
-	settingsProjectPins         = "project:pins"
-	settingsProjectRootManage   = "project-root:manage"
-	settingsProjdirClear        = "projdir:clear"
-	settingsProjdirSetCurrent   = "projdir:set-current"
-	settingsProjdirSetTyped     = "projdir:set-typed"
-	settingsUpdateApply         = "update:apply"
-	settingsUpdateCheck         = "update:check"
-	settingsWorkdirAdd          = "workdir:add"
-	settingsWorkdirList         = "workdir:list"
-	settingsWorkdirTyped        = "workdir:typed"
+	settingsBackValue             = "__settings_back__"
+	settingsNoopValue             = "__settings_noop__"
+	settingsSectionAI             = "section:ai"
+	settingsSectionProject        = "section:project-picker"
+	settingsSectionStatusbar      = "section:statusbar"
+	settingsSectionAbout          = "section:about"
+	settingsActionPrefixAI        = "ai:"
+	settingsActionPrefixProjdir   = "projdir:"
+	settingsActionPrefixStatusbar = "statusbar-decoration:"
+	settingsActionPrefixSwitch    = "switch:"
+	settingsActionPrefixUpdate    = "update:"
+	settingsActionPrefixWorkdir   = "workdir:"
+	settingsProjectAdd            = "project:add"
+	settingsProjectPins           = "project:pins"
+	settingsProjectRootManage     = "project-root:manage"
+	settingsProjdirClear          = "projdir:clear"
+	settingsProjdirSetCurrent     = "projdir:set-current"
+	settingsProjdirSetTyped       = "projdir:set-typed"
+	settingsUpdateApply           = "update:apply"
+	settingsUpdateCheck           = "update:check"
+	settingsWorkdirAdd            = "workdir:add"
+	settingsWorkdirList           = "workdir:list"
+	settingsWorkdirTyped          = "workdir:typed"
 )
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand) *settingsCommand {
 	return &settingsCommand{
-		ai:       ai,
-		switcher: switcher,
-		update:   update,
-		runner:   intfzf.NewRunner(),
+		ai:        ai,
+		switcher:  switcher,
+		update:    update,
+		runner:    intfzf.NewRunner(),
+		homeDir:   os.UserHomeDir,
+		lookupEnv: os.Getenv,
+		runCommand: func(name string, args ...string) error {
+			return exec.Command(name, args...).Run()
+		},
 	}
 }
 
@@ -150,6 +162,10 @@ func (c *settingsCommand) rootEntries() []intfzf.Entry {
 			Value: settingsSectionProject,
 		},
 		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Status Bar", "cwd/git leading decoration"),
+			Value: settingsSectionStatusbar,
+		},
+		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "About", "version, updates, key setup"),
 			Value: settingsSectionAbout,
 		},
@@ -174,6 +190,16 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			Entries:    c.projectPickerEntries(),
 			Prompt:     "Settings > Project Picker > ",
 			Header:     "Add projects to the picker and manage pinned projects",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		}, nil
+	case settingsSectionStatusbar:
+		return intfzf.Options{
+			UI:         "settings-statusbar",
+			Entries:    c.statusbarEntries(),
+			Prompt:     "Settings > Status Bar > ",
+			Header:     "Set cwd/git leading decoration",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -880,6 +906,56 @@ func (c *settingsCommand) aiEntries() []intfzf.Entry {
 	return entries
 }
 
+func (c *settingsCommand) statusbarEntries() []intfzf.Entry {
+	current := c.currentStatusbarDecoration()
+	modes := []struct {
+		mode config.StatusbarDecoration
+		desc string
+	}{
+		{config.StatusbarDecorationOff, "no cwd/git prefix; safest for all fonts"},
+		{config.StatusbarDecorationSymbol, "Nerd Font-style folder and git icons"},
+		{config.StatusbarDecorationEmoji, "emoji folder and branch icons"},
+	}
+
+	entries := make([]intfzf.Entry, 0, len(modes)+1)
+	entries = append(entries, settingsBackEntry())
+	for _, item := range modes {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if item.mode == current {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabel(glyph, color, string(item.mode), item.desc),
+			Value: settingsActionPrefixStatusbar + string(item.mode),
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) currentStatusbarDecoration() config.StatusbarDecoration {
+	return loadStatusbarDecoration(c.homeDir, c.lookupEnv)
+}
+
+func (c *settingsCommand) setStatusbarDecoration(value string) error {
+	mode := config.NormalizeStatusbarDecoration(value)
+	paths, err := statusbarConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+	if err := config.SaveStatusbarDecorationFile(paths.StatusbarDecorationFile(), mode); err != nil {
+		return err
+	}
+	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
+		if err := c.runCommand("tmux", "set-option", "-g", statusbarDecorationTmuxOption, string(mode)); err != nil {
+			return fmt.Errorf("set live tmux statusbar decoration: %w", err)
+		}
+		_ = c.runCommand("tmux", "display-message", "statusbar decoration: "+string(mode))
+	}
+	return nil
+}
+
 func (c *settingsCommand) aboutEntries() []intfzf.Entry {
 	status, statusErr := updateStatus{}, errors.New("update status is not configured")
 	if c.update != nil {
@@ -964,6 +1040,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return errors.New("project root settings are not configured")
 		}
 		return c.switcher.executeProjdirSettingsAction(action, stdout, stderr)
+	case strings.HasPrefix(value, settingsActionPrefixStatusbar):
+		return c.setStatusbarDecoration(strings.TrimPrefix(value, settingsActionPrefixStatusbar))
 	case strings.HasPrefix(value, settingsActionPrefixSwitch):
 		action := strings.TrimPrefix(value, settingsActionPrefixSwitch)
 		if c.switcher == nil {

@@ -8,7 +8,7 @@ segment only requires one wiring point.
 ## Layout
 
 ```
-row 0  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>   <git>           %H:%M
+row 0  [#S] #{pane_current_path}  ⎈ <ctx>/<ns>  <git>               %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
 row 1  #[range=user|notify] <notify HUD pill> #[norange]
                                            #[range=user|usage] <usage HUD bar> #[norange]
@@ -127,6 +127,13 @@ emits a deterministic block per segment), regenerate, and re-apply:
 ```sh
 projmux tmux apply
 ```
+
+Settings > Status Bar > cwd/git leading decoration controls the optional
+prefix before the path and git branch. The persisted enum lives at
+`~/.config/projmux/statusbar-decoration`; valid values are `off` (default,
+font-safe), `symbol` (Nerd Font-style folder/git icons), and `emoji`.
+Settings also updates tmux `@projmux_statusbar_decoration` for the live
+server when run inside tmux.
 
 To add a new clickable segment:
 

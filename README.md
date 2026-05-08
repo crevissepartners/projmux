@@ -249,6 +249,12 @@ filesystem scan. Use it for paths you do not want crawled, e.g. WSL mounts
 The saved file lives at `~/.config/projmux/workdirs` (one absolute path per
 line, `#` comments allowed). It is consulted only when the env vars are unset.
 
+Settings > Status Bar controls the optional cwd/git leading decoration. The
+default is `off` so terminals without icon fonts render cleanly; `symbol`
+restores the Nerd Font-style folder/git icons, and `emoji` uses emoji
+decorators. The saved value lives at
+`~/.config/projmux/statusbar-decoration`.
+
 ## Hooks
 
 projmux runs an optional user script at `~/.config/projmux/hooks/post-create`

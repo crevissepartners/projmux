@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -509,8 +510,9 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"#[bold,fg=colour16,bg=colour45] projmux #[default]",
 		"'/tmp/proj mux/bin/projmux' status kube",
 		"'/tmp/proj mux/bin/projmux' status git",
+		"set -g @projmux_statusbar_decoration off",
 		"set -g status 2",
-		"#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
+		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour244] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		" %Y-%m-%d %H:%M",
 		"range=user|notify",
 		"range=user|usage",
@@ -529,6 +531,33 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)
 		}
+	}
+}
+
+func TestTmuxPrintConfigUsesSavedStatusbarDecoration(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveStatusbarDecorationFile(paths.StatusbarDecorationFile(), config.StatusbarDecorationSymbol); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := stdout.String(), "set -g @projmux_statusbar_decoration symbol"; !strings.Contains(got, want) {
+		t.Fatalf("print-config output = %q, want substring %q", got, want)
 	}
 }
 
@@ -701,7 +730,8 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g status-left-length 20",
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
-		"#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
+		"set -g @projmux_statusbar_decoration off",
+		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour244] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		" %Y-%m-%d %H:%M#[default]",
 		"set -g status 2",
