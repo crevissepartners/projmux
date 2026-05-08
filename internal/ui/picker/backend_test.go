@@ -355,6 +355,51 @@ func TestNativeInteractiveFiltersWithPrintableInput(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveEditsTypedQueryAtCursor(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("abcd\x1b[D\x1b[DX\x1b[3~\r"), io.Discard, Options{
+		UI:          "settings-workdir-typed",
+		AcceptQuery: true,
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Query != "abXd" {
+		t.Fatalf("result = %#v, want cursor-edited query", result)
+	}
+}
+
+func TestNativeInteractiveSupportsQueryLineEditingKeys(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("bc\x01a\x05d\r"), io.Discard, Options{
+		UI:          "settings-workdir-typed",
+		AcceptQuery: true,
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Query != "abcd" {
+		t.Fatalf("result = %#v, want ctrl-a/ctrl-e edited query", result)
+	}
+}
+
+func TestNativeInteractiveCtrlUDeletesBeforeCursor(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("ab cd\x1b[D\x1b[D\x15\r"), io.Discard, Options{
+		UI:          "settings-workdir-typed",
+		AcceptQuery: true,
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Query != "cd" {
+		t.Fatalf("result = %#v, want ctrl-u to preserve suffix after cursor", result)
+	}
+}
+
 func TestNativeInteractiveSupportsCustomExpectKeys(t *testing.T) {
 	t.Parallel()
 

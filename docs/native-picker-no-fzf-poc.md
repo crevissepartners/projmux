@@ -23,6 +23,8 @@ The fzf compatibility surface for this POC is tracked in
   expect keys such as notify `Ctrl-A`, `start:pos(N)` initial focus, preview
   command output, preview cycle command bindings, and sidebar focus command
   bindings.
+- Typed-query prompts support cursor-aware insertion/deletion with Left/Right,
+  Ctrl-A/E, Delete, Backspace, Ctrl-U, and Ctrl-W for settings path entry.
 - The native key parser recognizes the app's CSI-u keybind-probe sequences
   such as `ESC [ 9005 u` for `Alt-1`, plus generic modified CSI-u forms such as
   `ESC [ 115 ; 7 u` for `Ctrl-Alt-S`.

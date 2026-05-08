@@ -313,6 +313,7 @@ type nativeKey struct {
 
 func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result, error) {
 	query := strings.TrimSpace(options.InitialQuery)
+	queryCursor := nativeRuneLen(query)
 	selected := options.InitialIndex
 	focusedValue := ""
 	previewOffset := 0
@@ -404,23 +405,37 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			}
 		case "shift-down":
 			previewOffset++
+		case "left":
+			if queryCursor > 0 {
+				queryCursor--
+			}
+		case "right":
+			if queryCursor < nativeRuneLen(query) {
+				queryCursor++
+			}
 		case "backspace":
-			query = trimLastRune(query)
+			query, queryCursor = deleteNativeQueryBeforeCursor(query, queryCursor)
 			selected = 0
 			previewOffset = 0
 		case "delete":
-			// The native picker has no cursor movement yet, so Delete is a no-op.
+			query, queryCursor = deleteNativeQueryAtCursor(query, queryCursor)
+			selected = 0
+			previewOffset = 0
+		case "ctrl-a":
+			queryCursor = 0
+		case "ctrl-e":
+			queryCursor = nativeRuneLen(query)
 		case "ctrl-u":
-			query = ""
+			query, queryCursor = deleteNativeQueryBeforeCursorN(query, queryCursor, queryCursor)
 			selected = 0
 			previewOffset = 0
 		case "ctrl-w":
-			query = trimLastWord(query)
+			query, queryCursor = trimNativeQueryWordBeforeCursor(query, queryCursor)
 			selected = 0
 			previewOffset = 0
 		default:
 			if key.Text != "" {
-				query += key.Text
+				query, queryCursor = insertNativeQueryText(query, queryCursor, key.Text)
 				selected = 0
 				previewOffset = 0
 			}
@@ -514,6 +529,8 @@ func readNativeKey(r io.Reader) (nativeKey, error) {
 		return nativeKey{Name: "ctrl-a"}, nil
 	case 0x03:
 		return nativeKey{Name: "ctrl-c"}, nil
+	case 0x05:
+		return nativeKey{Name: "ctrl-e"}, nil
 	case 0x0e:
 		return nativeKey{Name: "ctrl-n"}, nil
 	case 0x10:
@@ -818,29 +835,6 @@ func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 	return 0, false, nil
 }
 
-func trimLastRune(value string) string {
-	if value == "" {
-		return ""
-	}
-	_, size := utf8.DecodeLastRuneInString(value)
-	if size <= 0 {
-		return ""
-	}
-	return value[:len(value)-size]
-}
-
-func trimLastWord(value string) string {
-	value = strings.TrimRight(value, " \t")
-	if value == "" {
-		return ""
-	}
-	cut := strings.LastIndexAny(value, " \t")
-	if cut < 0 {
-		return ""
-	}
-	return value[:cut+1]
-}
-
 func readNativeLine(r io.Reader) (string, error) {
 	var b strings.Builder
 	buf := make([]byte, 1)
@@ -856,6 +850,82 @@ func readNativeLine(r io.Reader) (string, error) {
 			return b.String(), err
 		}
 	}
+}
+
+func nativeRuneLen(value string) int {
+	return utf8.RuneCountInString(value)
+}
+
+func insertNativeQueryText(query string, cursor int, text string) (string, int) {
+	runes := []rune(query)
+	cursor = clampNativeQueryCursor(runes, cursor)
+	insert := []rune(text)
+	next := make([]rune, 0, len(runes)+len(insert))
+	next = append(next, runes[:cursor]...)
+	next = append(next, insert...)
+	next = append(next, runes[cursor:]...)
+	return string(next), cursor + len(insert)
+}
+
+func deleteNativeQueryBeforeCursor(query string, cursor int) (string, int) {
+	return deleteNativeQueryBeforeCursorN(query, cursor, 1)
+}
+
+func deleteNativeQueryBeforeCursorN(query string, cursor, count int) (string, int) {
+	runes := []rune(query)
+	cursor = clampNativeQueryCursor(runes, cursor)
+	if cursor == 0 || count <= 0 {
+		return query, cursor
+	}
+	start := cursor - count
+	if start < 0 {
+		start = 0
+	}
+	next := make([]rune, 0, len(runes)-(cursor-start))
+	next = append(next, runes[:start]...)
+	next = append(next, runes[cursor:]...)
+	return string(next), start
+}
+
+func deleteNativeQueryAtCursor(query string, cursor int) (string, int) {
+	runes := []rune(query)
+	cursor = clampNativeQueryCursor(runes, cursor)
+	if cursor >= len(runes) {
+		return query, cursor
+	}
+	next := make([]rune, 0, len(runes)-1)
+	next = append(next, runes[:cursor]...)
+	next = append(next, runes[cursor+1:]...)
+	return string(next), cursor
+}
+
+func trimNativeQueryWordBeforeCursor(query string, cursor int) (string, int) {
+	runes := []rune(query)
+	cursor = clampNativeQueryCursor(runes, cursor)
+	if cursor == 0 {
+		return query, cursor
+	}
+	start := cursor
+	for start > 0 && (runes[start-1] == ' ' || runes[start-1] == '\t') {
+		start--
+	}
+	for start > 0 && runes[start-1] != ' ' && runes[start-1] != '\t' {
+		start--
+	}
+	next := make([]rune, 0, len(runes)-(cursor-start))
+	next = append(next, runes[:start]...)
+	next = append(next, runes[cursor:]...)
+	return string(next), start
+}
+
+func clampNativeQueryCursor(runes []rune, cursor int) int {
+	if cursor < 0 {
+		return 0
+	}
+	if cursor > len(runes) {
+		return len(runes)
+	}
+	return cursor
 }
 
 func renderNativeInteractive(w io.Writer, options Options, items []Item, query string, selected, previewOffset int, layout nativeLayout) {

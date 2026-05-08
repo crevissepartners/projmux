@@ -35,6 +35,7 @@ picker evidence. It is not a production dependency-policy change.
 | preview scrolling | long switch/session preview output | Covered approximately with `Shift-Up`/`Shift-Down` | `previewOffset`; `TestNativeInteractiveRendersPreviewOffset` |
 | `--query` | typed settings path defaults | Covered | `Options.InitialQuery`; settings tests |
 | `--print-query` accept-query mode | typed settings path prompts | Covered | `Options.AcceptQuery`; `TestNativeRunnerAcceptsTypedQuery` |
+| query cursor editing | typed settings path prompts | Covered | Left/Right, Ctrl-A/E, Delete, Backspace, Ctrl-U/W query editing; `TestNativeInteractiveEditsTypedQueryAtCursor`; `TestNativeInteractiveSupportsQueryLineEditingKeys`; `TestNativeInteractiveCtrlUDeletesBeforeCursor` |
 | terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; app TTY `/dev/tty` fallback |
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen` |
 
