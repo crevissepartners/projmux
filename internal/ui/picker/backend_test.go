@@ -64,6 +64,20 @@ func TestFilterItemsRanksBetterMatchesFirst(t *testing.T) {
 	}
 }
 
+func TestFilterItemsIgnoresANSIEscapeSequences(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "\x1b[36mCodex\x1b[0m split", Value: "codex"},
+		{Title: "\x1b[32mShell\x1b[0m split", Value: "shell"},
+	}
+
+	filtered := FilterItems(items, "codex")
+	if got, want := valuesOf(filtered), []string{"codex"}; !equalStringSlices(got, want) {
+		t.Fatalf("FilterItems(codex) values = %#v, want %#v", got, want)
+	}
+}
+
 func TestFilterItemsPreservesSearchKeyOrder(t *testing.T) {
 	t.Parallel()
 

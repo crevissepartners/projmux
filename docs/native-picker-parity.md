@@ -12,7 +12,7 @@ picker evidence. It is not a production dependency-policy change.
 | `--height 100%` / `--border` | all interactive picker screens | Covered approximately | `renderNativeFrame`; screen-height list budgeting; `TestNativeInteractiveRendersBorderFrame`; `TestNativeInteractiveUsesAvailableHeightForSimpleLists` |
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / `--footer-border line` | AI, settings, shell update, switch, sessions, notify | Covered for interactive native screens | `renderNativeInteractive` reserves bottom footer space and renders a separator line; `TestNativeInteractiveRendersFooterAtBottom` |
-| `--ansi` | colored row labels from render package | Covered | native writes row labels directly; Docker e2e shows ANSI rows |
+| `--ansi` | colored row labels from render package | Covered | native writes row labels directly and strips ANSI escapes from default search text; `TestFilterItemsIgnoresANSIEscapeSequences`; Docker e2e shows ANSI rows |
 | hidden value after tab delimiter | all picker selections | Covered by `picker.Item.Value` | `pickerItemsFromFZFEntries`; `TestNativeRunnerFiltersAndSelectsByNumber` |
 | plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickerItemsFromFZF`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
