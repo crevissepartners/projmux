@@ -112,6 +112,16 @@ func FilterItems(items []Item, query string) []Item {
 		return append([]Item(nil), items...)
 	}
 
+	if hasNativeSearchKey(items) {
+		filtered := make([]Item, 0, len(items))
+		for _, item := range items {
+			if _, ok := fuzzyScore(strings.ToLower(item.EffectiveSearchText()), query); ok {
+				filtered = append(filtered, item)
+			}
+		}
+		return filtered
+	}
+
 	filtered := make([]nativeScoredItem, 0, len(items))
 	for _, item := range items {
 		if score, ok := fuzzyScore(strings.ToLower(item.EffectiveSearchText()), query); ok {
@@ -130,6 +140,15 @@ func FilterItems(items []Item, query string) []Item {
 		items = append(items, item.Item)
 	}
 	return items
+}
+
+func hasNativeSearchKey(items []Item) bool {
+	for _, item := range items {
+		if strings.TrimSpace(item.SearchText) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type nativeScoredItem struct {
@@ -178,6 +197,10 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 	if restore, ok := enableRawTerminal(in); ok {
 		defer restore()
 		return runNativeInteractive(in, out, options)
+	}
+
+	if !allowNativeLineMode(in, os.Getenv) {
+		return Result{}, fmt.Errorf("native picker requires a TTY; run from an interactive terminal or set PROJMUX_NATIVE_LINE_MODE=1 for scripted line mode")
 	}
 
 	return runNativeLineMode(in, out, options)
@@ -274,6 +297,13 @@ func shouldOpenNativeTTYFallback(file *os.File, lookup func(string) string) bool
 		return true
 	}
 	return file.Fd() == os.Stdin.Fd()
+}
+
+func allowNativeLineMode(in io.Reader, lookup func(string) string) bool {
+	if _, ok := in.(*os.File); !ok {
+		return true
+	}
+	return strings.TrimSpace(lookup("PROJMUX_NATIVE_LINE_MODE")) != ""
 }
 
 type nativeKey struct {

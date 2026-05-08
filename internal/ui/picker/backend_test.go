@@ -53,14 +53,29 @@ func TestFilterItemsRanksBetterMatchesFirst(t *testing.T) {
 	t.Parallel()
 
 	items := []Item{
+		{Title: "bravo archived project index", Value: "1"},
+		{Title: "api", Value: "2"},
+		{Title: "api service", Value: "3"},
+	}
+
+	filtered := FilterItems(items, "api")
+	if got, want := valuesOf(filtered), []string{"2", "3", "1"}; !equalStringSlices(got, want) {
+		t.Fatalf("FilterItems(api) values = %#v, want %#v", got, want)
+	}
+}
+
+func TestFilterItemsPreservesSearchKeyOrder(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
 		{Title: "slow", Value: "1", SearchText: "bravo archived project index"},
 		{Title: "exact", Value: "2", SearchText: "api"},
 		{Title: "prefix", Value: "3", SearchText: "api service"},
 	}
 
 	filtered := FilterItems(items, "api")
-	if got, want := valuesOf(filtered), []string{"2", "3", "1"}; !equalStringSlices(got, want) {
-		t.Fatalf("FilterItems(api) values = %#v, want %#v", got, want)
+	if got, want := valuesOf(filtered), []string{"1", "2", "3"}; !equalStringSlices(got, want) {
+		t.Fatalf("FilterItems(api) values = %#v, want fzf reload-preserved order %#v", got, want)
 	}
 }
 
@@ -170,6 +185,49 @@ func TestNativeTTYFallbackIsEnabledForAppTTYContexts(t *testing.T) {
 	}
 	if shouldOpenNativeTTYFallback(f, func(string) string { return "" }) {
 		t.Fatal("non-stdin file without tmux/env should not force controlling TTY")
+	}
+}
+
+func TestNativeRunnerFailsFastWhenFileInputIsNotTTY(t *testing.T) {
+	t.Parallel()
+
+	tmp := filepath.Join(t.TempDir(), "stdin")
+	f, err := os.Create(tmp)
+	if err != nil {
+		t.Fatalf("create temp stdin: %v", err)
+	}
+	defer f.Close()
+
+	_, err = (NativeRunner{In: f, Out: io.Discard}).Run(Options{
+		UI:    "switch",
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "native picker requires a TTY") {
+		t.Fatalf("Run() error = %v, want non-TTY failure", err)
+	}
+}
+
+func TestNativeLineModeCanBeExplicitlyEnabledForFileInput(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "stdin")
+	if err := os.WriteFile(tmp, []byte("1\n"), 0o644); err != nil {
+		t.Fatalf("write temp stdin: %v", err)
+	}
+	f, err := os.Open(tmp)
+	if err != nil {
+		t.Fatalf("open temp stdin: %v", err)
+	}
+	defer f.Close()
+
+	t.Setenv("PROJMUX_NATIVE_LINE_MODE", "1")
+	result, err := (NativeRunner{In: f, Out: io.Discard}).Run(Options{
+		UI:    "switch",
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Value != "/repo/api" {
+		t.Fatalf("Run() = %#v, want selected api", result)
 	}
 }
 

@@ -5,6 +5,21 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf}"
 dockerfile="$root/test/docker/no-fzf-poc.Dockerfile"
 
+if [[ ! -t 0 || ! -t 1 || ! -t 2 ]]; then
+  cat >&2 <<'EOF'
+[poc/no-fzf] interactive sandbox requires a real TTY.
+
+Do not run this through `wt run`; `wt run` captures stdio, so Docker cannot
+attach an interactive terminal and the native picker will degrade into broken
+escape-sequence input.
+
+Run this one-liner from your normal terminal instead:
+
+  bash "$(wt path poc/native-picker-no-fzf)/scripts/poc-native-picker-no-fzf-sandbox.sh"
+EOF
+  exit 2
+fi
+
 echo "[poc/no-fzf] building dependency image $image"
 docker build --pull=false -f "$dockerfile" -t "$image" "$root"
 

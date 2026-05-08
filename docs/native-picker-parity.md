@@ -15,8 +15,8 @@ picker evidence. It is not a production dependency-policy change.
 | `--ansi` | colored row labels from render package | Covered | native writes row labels directly; Docker e2e shows ANSI rows |
 | hidden value after tab delimiter | all picker selections | Covered by `picker.Item.Value` | `pickerItemsFromFZFEntries`; `TestNativeRunnerFiltersAndSelectsByNumber` |
 | plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickerItemsFromFZF`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
-| search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata` |
-| fuzzy result ranking | switch/sessions/notify search UX | Covered approximately | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst` |
+| search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
+| fuzzy result ranking | simple non-search-key picker UX | Covered approximately | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst` |
 | `--scrollbar █` | long switch/session/settings lists | Covered approximately | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered approximately | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
@@ -62,8 +62,10 @@ picker evidence. It is not a production dependency-policy change.
 - Exact fzf preview-window parity is not complete: native has approximate
   right/down layout and keyboard preview scrolling, but not the full fzf sizing
   algorithm.
-- Exact fzf fuzzy scoring is not complete: native ranking is deterministic and
-  close enough for projmux search, but not an implementation of fzf's scorer.
+- Exact fzf fuzzy scoring is not complete for non-search-key simple pickers:
+  native ranking is deterministic and close enough for projmux search, but not
+  an implementation of fzf's scorer. Search-keyed app pickers preserve fzf's
+  `--disabled` reload order instead of score-sorting.
 - Mouse support is not implemented. projmux does not currently expose mouse
   picker workflows, so this is outside the required app surface unless new
   workflows depend on it.
@@ -85,3 +87,7 @@ Interactive no-fzf sandbox:
 ```sh
 bash "$(wt path poc/native-picker-no-fzf)/scripts/poc-native-picker-no-fzf-sandbox.sh"
 ```
+
+Do not run the interactive sandbox through `wt run`: current `wt run` captures
+child stdio instead of forwarding the caller's TTY, so Docker cannot attach
+`-it` and terminal picker input will not behave like a real session.
