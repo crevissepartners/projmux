@@ -240,7 +240,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 		listEntries: []notify.Notification{
 			{
 				ID:        "abc",
-				Text:      "codex: deploy ok",
+				Text:      "codex: reply ready",
 				Severity:  notify.SeverityWarn,
 				Source:    notify.SourceAI,
 				Socket:    "projmux",
@@ -285,16 +285,16 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(labelLines) != 2 {
 		t.Fatalf("sidebar label = %q, want two-line card", entry.Label)
 	}
-	if labelLines[0] != "codex: deploy ok" {
+	if labelLines[0] != "reply ready" {
 		t.Fatalf("sidebar first line = %q, want notification text", labelLines[0])
 	}
-	if meta := labelLines[1]; !strings.Contains(meta, " age 30s ") || !strings.Contains(meta, " main ") || !strings.Contains(meta, "window 1") || !strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " WARN ") || strings.Contains(meta, " ai ") {
-		t.Fatalf("sidebar metadata = %q, want age/project/window/pane without queued/status/source", meta)
+	if meta := labelLines[1]; !strings.Contains(meta, " age 30s ") || !strings.Contains(meta, " main ") || !strings.Contains(meta, " codex ") || !strings.Contains(meta, " WARN ") || !strings.Contains(meta, "window 1") || !strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
+		t.Fatalf("sidebar metadata = %q, want age/project/agent/status/window/pane without queued/source", meta)
 	}
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
 	}
-	for _, want := range []string{"abc", "codex: deploy ok", "warn", "ai", "main:1.0"} {
+	for _, want := range []string{"abc", "codex: reply ready", "warn", "ai", "main:1.0"} {
 		if !strings.Contains(entry.SearchKey, want) {
 			t.Fatalf("search key = %q, want %q", entry.SearchKey, want)
 		}
