@@ -168,7 +168,7 @@ func TestPushDedupeRefreshesExpiredEntry(t *testing.T) {
 	}
 }
 
-func TestListPrunesExpiredEntries(t *testing.T) {
+func TestListKeepsExpiredEntriesUntilAck(t *testing.T) {
 	t.Parallel()
 
 	store := newTestStore(t)
@@ -190,11 +190,11 @@ func TestListPrunesExpiredEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error = %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("len = %d, want 1", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("len = %d, want 2", len(entries))
 	}
-	if entries[0].Text != "new" {
-		t.Fatalf("Text = %q, want new", entries[0].Text)
+	if entries[0].Text != "new" || entries[1].Text != "old" {
+		t.Fatalf("order = %v, want new then old", []string{entries[0].Text, entries[1].Text})
 	}
 }
 
@@ -260,7 +260,7 @@ func TestAckAllClearsQueue(t *testing.T) {
 	t.Parallel()
 
 	store := newTestStore(t)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if _, _, err := store.Push(PushInput{Text: "x", Target: Target{Session: "s"}, TTL: time.Hour}); err != nil {
 			t.Fatalf("Push: %v", err)
 		}
@@ -364,7 +364,7 @@ func TestConcurrentPushFileLockContention(t *testing.T) {
 	wg.Add(goroutines)
 	var failures int32
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(i int) {
 			defer wg.Done()
 			_, _, err := store.Push(PushInput{

@@ -146,8 +146,6 @@ func (s *Store) Push(in PushInput) (Notification, PushResult, error) {
 			return err
 		}
 
-		entries = pruneExpired(entries, now)
-
 		// Dedupe by id when the caller supplied one. Auto-generated ids are
 		// random so collisions are vanishingly unlikely; we still pass the
 		// input through replaceOrAppend to keep behaviour uniform.
@@ -170,26 +168,17 @@ func (s *Store) Push(in PushInput) (Notification, PushResult, error) {
 	return entry, result, nil
 }
 
-// List returns all live entries in recency-desc order, after pruning anything
-// whose expires_at has passed.
+// List returns all pending entries in recency-desc order. Expiration metadata
+// is retained for freshness displays only; explicit ack is the only removal
+// path.
 func (s *Store) List() ([]Notification, error) {
-	now := s.clock()
 	var out []Notification
 	err := s.withLock(func() error {
 		entries, err := s.read()
 		if err != nil {
 			return err
 		}
-		live := pruneExpired(entries, now)
-		// Persist the pruned set so subsequent readers do not re-prune the
-		// same expired entries on every list. We only write when we actually
-		// dropped entries to avoid pointless churn.
-		if len(live) != len(entries) {
-			if err := s.write(live); err != nil {
-				return err
-			}
-		}
-		out = sortRecencyDesc(live)
+		out = sortRecencyDesc(entries)
 		return nil
 	})
 	if err != nil {
@@ -242,18 +231,6 @@ func (s *Store) Ack(id string) error {
 		}
 		return s.write(filtered)
 	})
-}
-
-// pruneExpired returns a new slice without entries that already expired.
-func pruneExpired(entries []Notification, now time.Time) []Notification {
-	out := entries[:0:0]
-	for _, e := range entries {
-		if !e.ExpiresAt.IsZero() && !e.ExpiresAt.After(now) {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
 }
 
 // replaceOrAppend writes entry into entries, replacing any existing entry

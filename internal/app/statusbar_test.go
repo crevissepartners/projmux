@@ -440,7 +440,7 @@ func TestStatusbarClickNotifyExecsFocusForNewestEntry(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickNotifyAcksEntryAfterSuccessfulFocus(t *testing.T) {
+func TestStatusbarClickNotifyKeepsEntryAfterSuccessfulFocus(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
@@ -461,8 +461,8 @@ func TestStatusbarClickNotifyAcksEntryAfterSuccessfulFocus(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if store.ackedID != "abc" {
-		t.Fatalf("store.ackedID = %q, want %q", store.ackedID, "abc")
+	if store.ackedID != "" {
+		t.Fatalf("store.ackedID = %q, want empty", store.ackedID)
 	}
 }
 
@@ -505,7 +505,7 @@ func TestStatusbarClickNotifyTransientFocusFailureSurfacesToastAndKeepsEntry(t *
 	}
 }
 
-func TestStatusbarClickNotifyTargetGoneAcksEntryAndShowsToast(t *testing.T) {
+func TestStatusbarClickNotifyTargetGoneKeepsEntryAndShowsToast(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{
@@ -532,10 +532,10 @@ func TestStatusbarClickNotifyTargetGoneAcksEntryAndShowsToast(t *testing.T) {
 	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v, want nil (target-gone must not surface as tmux error popup)", err)
 	}
-	if store.ackedID != "abc" {
-		t.Fatalf("store.ackedID = %q, want %q (target-gone must ack to drop the junk entry)", store.ackedID, "abc")
+	if store.ackedID != "" {
+		t.Fatalf("store.ackedID = %q, want empty (target-gone must keep entry until explicit ack)", store.ackedID)
 	}
-	if !sawTmuxDisplayMessage(runner.calls, "notify target gone, dropping entry") {
+	if !sawTmuxDisplayMessage(runner.calls, "notify target gone; ack to clear") {
 		t.Fatalf("missing 'notify target gone' display-message; calls = %#v", runner.calls)
 	}
 }
@@ -569,10 +569,10 @@ func TestStatusbarClickNotifyUsageErrorTreatedAsTargetGone(t *testing.T) {
 	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
-	if store.ackedID != "abc" {
-		t.Fatalf("store.ackedID = %q, want %q (UsageError should ack like target-gone)", store.ackedID, "abc")
+	if store.ackedID != "" {
+		t.Fatalf("store.ackedID = %q, want empty (UsageError should keep entry like target-gone)", store.ackedID)
 	}
-	if !sawTmuxDisplayMessage(runner.calls, "notify target gone, dropping entry") {
+	if !sawTmuxDisplayMessage(runner.calls, "notify target gone; ack to clear") {
 		t.Fatalf("missing target-gone display-message; calls = %#v", runner.calls)
 	}
 }

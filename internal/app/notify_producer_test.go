@@ -136,7 +136,7 @@ func TestStoreAttentionNotifyProducerSkipsWhenSessionMissing(t *testing.T) {
 	}
 }
 
-func TestStoreAttentionNotifyProducerAckReplyReadyAcksMatchingID(t *testing.T) {
+func TestStoreAttentionNotifyProducerAckReplyReadyDoesNotAck(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{}
@@ -149,8 +149,8 @@ func TestStoreAttentionNotifyProducerAckReplyReadyAcksMatchingID(t *testing.T) {
 
 	producer.AckReplyReady(attentionNotifyInput{PaneID: "%9", Lookup: lookup})
 
-	if store.ackedID != "ai:main:%9" {
-		t.Fatalf("ackedID = %q, want ai:main:%%9", store.ackedID)
+	if store.ackedID != "" {
+		t.Fatalf("ackedID = %q, want empty", store.ackedID)
 	}
 }
 
@@ -248,9 +248,9 @@ func TestAttentionToggleNotifiesQueueOnReply(t *testing.T) {
 	}
 }
 
-// TestAttentionToggleAcksQueueWhenClearingReply checks that toggling away
-// from reply (the prefix branch) acks the matching queue id.
-func TestAttentionToggleAcksQueueWhenClearingReply(t *testing.T) {
+// TestAttentionToggleKeepsQueueWhenClearingReply checks that toggling away
+// from reply does not consume the notification queue row.
+func TestAttentionToggleKeepsQueueWhenClearingReply(t *testing.T) {
 	t.Parallel()
 
 	runner := &recordingAttentionRunner{
@@ -270,14 +270,14 @@ func TestAttentionToggleAcksQueueWhenClearingReply(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if store.ackedID != "ai:main:%2" {
-		t.Fatalf("ackedID = %q, want ai:main:%%2", store.ackedID)
+	if store.ackedID != "" {
+		t.Fatalf("ackedID = %q, want empty", store.ackedID)
 	}
 }
 
-// TestAttentionClearAcksQueue checks that the explicit clear path also acks
+// TestAttentionClearKeepsQueue checks that clearing attention does not ack
 // the queue entry.
-func TestAttentionClearAcksQueue(t *testing.T) {
+func TestAttentionClearKeepsQueue(t *testing.T) {
 	t.Parallel()
 
 	runner := &recordingAttentionRunner{
@@ -299,8 +299,8 @@ func TestAttentionClearAcksQueue(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if store.ackedID != "ai:main:%3" {
-		t.Fatalf("ackedID = %q, want ai:main:%%3", store.ackedID)
+	if store.ackedID != "" {
+		t.Fatalf("ackedID = %q, want empty", store.ackedID)
 	}
 }
 
@@ -401,9 +401,9 @@ func TestAIStatusSetWaitingPushesQueueWhenInactive(t *testing.T) {
 	}
 }
 
-// TestAIStatusSetThinkingAcksQueue checks that the busy transition acks any
-// outstanding queue entry for the pane.
-func TestAIStatusSetThinkingAcksQueue(t *testing.T) {
+// TestAIStatusSetThinkingKeepsQueue checks that the busy transition does not
+// consume any outstanding queue entry for the pane.
+func TestAIStatusSetThinkingKeepsQueue(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -430,13 +430,14 @@ func TestAIStatusSetThinkingAcksQueue(t *testing.T) {
 		t.Fatalf("Run status set thinking error = %v", err)
 	}
 
-	if store.ackedID != "ai:main:%30" {
-		t.Fatalf("ackedID = %q, want ai:main:%%30", store.ackedID)
+	if store.ackedID != "" {
+		t.Fatalf("ackedID = %q, want empty", store.ackedID)
 	}
 }
 
-// TestAIStatusSetIdleAcksQueue checks the idle/empty transition path.
-func TestAIStatusSetIdleAcksQueue(t *testing.T) {
+// TestAIStatusSetIdleKeepsQueue checks the idle/empty transition path does
+// not consume the notification row.
+func TestAIStatusSetIdleKeepsQueue(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -463,7 +464,7 @@ func TestAIStatusSetIdleAcksQueue(t *testing.T) {
 		t.Fatalf("Run status set idle error = %v", err)
 	}
 
-	if store.ackedID != "ai:main:%30" {
-		t.Fatalf("ackedID = %q, want ai:main:%%30", store.ackedID)
+	if store.ackedID != "" {
+		t.Fatalf("ackedID = %q, want empty", store.ackedID)
 	}
 }

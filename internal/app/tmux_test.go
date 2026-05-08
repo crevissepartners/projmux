@@ -250,6 +250,49 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	}
 }
 
+func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
+	t.Parallel()
+
+	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-notify"), "notify-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":    "/dev/pts/projmux-test-notify",
+		"#{pane_id}":       "%1",
+		"#S":               "work",
+		"#{client_width}":  "200",
+		"#{client_height}": "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "notify-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	wantPrefix := []string{
+		"display-popup",
+		"-t", "%1",
+		"-E",
+		"-x", "R",
+		"-y", "0",
+		"-w", "64",
+		"-h", "50",
+		"-T", "projmux notify",
+	}
+	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
+	}
+	command := got.args[len(got.args)-1]
+	if !strings.Contains(command, "'/tmp/proj mux/bin/projmux' 'notify' 'list' '--ui=sidebar'") {
+		t.Fatalf("popup command = %q, want notify sidebar command", command)
+	}
+}
+
 func TestAppRunTmuxPopupToggleOpensSettingsHub(t *testing.T) {
 	t.Parallel()
 
@@ -390,12 +433,15 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	for _, want := range []string{
 		"bind-key -n M-1 run-shell",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"bind-key -n M-6 run-shell",
+		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} notify-sidebar",
 		"bind-key -n User2 run-shell",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} session-popup",
 		"bind-key -n User0 run-shell",
 		"'/tmp/proj mux/bin/projmux' ai split right",
 		"set -s user-keys[10] \"\\033[9011u\"",
 		"set -s user-keys[11] \"\\033[9012u\"",
+		"set -s user-keys[12] \"\\033[9013u\"",
 		"bind-key -n M-r command-prompt",
 		"rename-window -- '%%'",
 		"bind-key -n User10 command-prompt",

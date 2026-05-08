@@ -132,7 +132,7 @@ func TestNotifyReconcilePushesMissingEntryForReplyPane(t *testing.T) {
 	if in.Target.Socket != "/tmp/tmux-1000/projmux" {
 		t.Fatalf("Socket = %q", in.Target.Socket)
 	}
-	if got := stdout.String(); got != "reconcile: pushed 1, acked 0, kept 0\n" {
+	if got := stdout.String(); got != "reconcile: pushed 1, acked 0, kept 0, stale 0\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -151,12 +151,12 @@ func TestNotifyReconcileNoOpWhenQueueAndPanesAlreadyAgree(t *testing.T) {
 	if len(store.pushed) != 0 || len(store.acks) != 0 {
 		t.Fatalf("expected no-op, pushed=%d acks=%d", len(store.pushed), len(store.acks))
 	}
-	if got := stdout.String(); got != "reconcile: pushed 0, acked 0, kept 0\n" {
+	if got := stdout.String(); got != "reconcile: pushed 0, acked 0, kept 0, stale 0\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }
 
-func TestNotifyReconcileAcksStaleEntryWhenPaneNoLongerReply(t *testing.T) {
+func TestNotifyReconcileReportsStaleEntryWhenPaneNoLongerReply(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -184,18 +184,18 @@ func TestNotifyReconcileAcksStaleEntryWhenPaneNoLongerReply(t *testing.T) {
 	if err := cmd.Run([]string{"reconcile"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if len(store.acks) != 1 || store.acks[0] != "ai:main:%16" {
-		t.Fatalf("acks = %v", store.acks)
+	if len(store.acks) != 0 {
+		t.Fatalf("acks = %v, want none", store.acks)
 	}
-	if len(store.entries) != 0 {
-		t.Fatalf("entries = %+v, want empty", store.entries)
+	if len(store.entries) != 1 {
+		t.Fatalf("entries = %+v, want retained stale row", store.entries)
 	}
-	if got := stdout.String(); got != "reconcile: pushed 0, acked 1, kept 0\n" {
+	if got := stdout.String(); got != "reconcile: pushed 0, acked 0, kept 0, stale 1\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }
 
-func TestNotifyReconcileAcksStaleEntryWhenPaneGone(t *testing.T) {
+func TestNotifyReconcileReportsStaleEntryWhenPaneGone(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -221,8 +221,11 @@ func TestNotifyReconcileAcksStaleEntryWhenPaneGone(t *testing.T) {
 	if err := cmd.Run([]string{"reconcile"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if len(store.acks) != 1 || store.acks[0] != "ai:main:%99" {
-		t.Fatalf("acks = %v", store.acks)
+	if len(store.acks) != 0 {
+		t.Fatalf("acks = %v, want none", store.acks)
+	}
+	if len(store.entries) != 1 {
+		t.Fatalf("entries = %+v, want retained stale row", store.entries)
 	}
 }
 
@@ -259,7 +262,7 @@ func TestNotifyReconcileKeepsMatchingEntryWithoutDuplicatePush(t *testing.T) {
 	if len(store.acks) != 0 {
 		t.Fatalf("acks = %v, want none", store.acks)
 	}
-	if got := stdout.String(); got != "reconcile: pushed 0, acked 0, kept 1\n" {
+	if got := stdout.String(); got != "reconcile: pushed 0, acked 0, kept 1, stale 0\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -298,7 +301,7 @@ func TestNotifyReconcileRefreshesEntryWithStaleText(t *testing.T) {
 	if got := store.pushed[0].Text; got != "claude: reply ready · new topic" {
 		t.Fatalf("Text = %q", got)
 	}
-	if got := stdout.String(); got != "reconcile: pushed 1, acked 0, kept 0\n" {
+	if got := stdout.String(); got != "reconcile: pushed 1, acked 0, kept 0, stale 0\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -321,7 +324,7 @@ func TestNotifyReconcileSkipsPaneWithoutAgent(t *testing.T) {
 	if len(store.pushed) != 0 {
 		t.Fatalf("push count = %d, want 0", len(store.pushed))
 	}
-	if got := stdout.String(); got != "reconcile: pushed 0, acked 0, kept 0\n" {
+	if got := stdout.String(); got != "reconcile: pushed 0, acked 0, kept 0, stale 0\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -353,7 +356,7 @@ func TestNotifyReconcileLeavesNonAIQueueEntriesUntouched(t *testing.T) {
 	if len(store.acks) != 0 {
 		t.Fatalf("acks = %v, want none (non-AI entry must be left alone)", store.acks)
 	}
-	if got := stdout.String(); got != "reconcile: pushed 0, acked 0, kept 0\n" {
+	if got := stdout.String(); got != "reconcile: pushed 0, acked 0, kept 0, stale 0\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -371,7 +374,7 @@ func TestNotifyReconcileIdempotent(t *testing.T) {
 	if err := cmd.Run([]string{"reconcile"}, &first, &bytes.Buffer{}); err != nil {
 		t.Fatalf("first Run error = %v", err)
 	}
-	if got := first.String(); got != "reconcile: pushed 1, acked 0, kept 0\n" {
+	if got := first.String(); got != "reconcile: pushed 1, acked 0, kept 0, stale 0\n" {
 		t.Fatalf("first stdout = %q", got)
 	}
 
@@ -379,7 +382,7 @@ func TestNotifyReconcileIdempotent(t *testing.T) {
 	if err := cmd.Run([]string{"reconcile"}, &second, &bytes.Buffer{}); err != nil {
 		t.Fatalf("second Run error = %v", err)
 	}
-	if got := second.String(); got != "reconcile: pushed 0, acked 0, kept 1\n" {
+	if got := second.String(); got != "reconcile: pushed 0, acked 0, kept 1, stale 0\n" {
 		t.Fatalf("second stdout = %q", got)
 	}
 	if len(store.pushed) != 1 {

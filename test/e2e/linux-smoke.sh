@@ -54,3 +54,7 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/focus-hook.log" "session read
 
 status_notify="$("$bin" status notify --max-width 80)"
 smoke_assert_output_contains "$status_notify" "docker e2e"
+
+"$bin" statusbar click notify >"$PROJMUX_SMOKE_WORKDIR/statusbar-notify-click.out"
+"$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json" "docker e2e"

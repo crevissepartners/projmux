@@ -50,6 +50,7 @@ These open the projmux popups and the sidebar. No prefix needed.
 | `Alt-3` | Project switcher popup |
 | `Alt-4` | AI split picker |
 | `Alt-5` | Settings |
+| `Alt-6` | Notify sidebar |
 
 The same surfaces are also available from the prefix table:
 
@@ -256,6 +257,7 @@ action fires.
 | `ESC [ 9010 u` | `User9` | Next tmux window |
 | `ESC [ 9011 u` | `User10` | Rename the current tmux window |
 | `ESC [ 9012 u` | `User11` | Rename the current tmux pane label |
+| `ESC [ 9013 u` | `User12` | Notify sidebar |
 
 ### Ghostty (manual)
 
@@ -271,6 +273,7 @@ keybind = alt+2=csi:9003u
 keybind = alt+3=csi:9004u
 keybind = alt+4=csi:9006u
 keybind = alt+5=csi:9007u
+keybind = alt+6=csi:9013u
 
 keybind = ctrl+shift+r=csi:9001u
 keybind = ctrl+shift+l=csi:9002u
@@ -300,6 +303,7 @@ shortcuts, while the split actions can send tmux prefix sequences directly. Esca
     { "command": { "action": "sendInput", "input": "\u001b3" }, "id": "User.projmuxSwitch" },
     { "command": { "action": "sendInput", "input": "\u001b4" }, "id": "User.projmuxAIPicker" },
     { "command": { "action": "sendInput", "input": "\u001b5" }, "id": "User.projmuxSettings" },
+    { "command": { "action": "sendInput", "input": "\u001b6" }, "id": "User.projmuxNotifySidebar" },
     { "command": { "action": "sendInput", "input": "\u0002r" }, "id": "User.projmuxAISplitRight" },
     { "command": { "action": "sendInput", "input": "\u0002l" }, "id": "User.projmuxAISplitDown" },
     { "command": { "action": "sendInput", "input": "\u000e" }, "id": "User.projmuxNewWindow" },
@@ -314,6 +318,7 @@ shortcuts, while the split actions can send tmux prefix sequences directly. Esca
     { "id": "User.projmuxSwitch", "keys": "alt+3" },
     { "id": "User.projmuxAIPicker", "keys": "alt+4" },
     { "id": "User.projmuxSettings", "keys": "alt+5" },
+    { "id": "User.projmuxNotifySidebar", "keys": "alt+6" },
     { "id": "User.projmuxAISplitRight", "keys": "ctrl+shift+r" },
     { "id": "User.projmuxAISplitDown", "keys": "ctrl+shift+l" },
     { "id": "User.projmuxNewWindow", "keys": "ctrl+n" },

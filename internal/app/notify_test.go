@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 )
 
 type stubNotifyStore struct {
@@ -24,6 +26,17 @@ type stubNotifyStore struct {
 	ackErr   error
 	ackAll   int
 	ackAllOK bool
+}
+
+type stubNotifyPicker struct {
+	options intfzf.Options
+	result  intfzf.Result
+	err     error
+}
+
+func (p *stubNotifyPicker) Run(options intfzf.Options) (intfzf.Result, error) {
+	p.options = options
+	return p.result, p.err
 }
 
 func (s *stubNotifyStore) Push(in notify.PushInput) (notify.Notification, notify.PushResult, error) {
@@ -216,6 +229,117 @@ func TestNotifyListTable(t *testing.T) {
 	}
 	if !strings.Contains(out, "abc\t30s\twarn\tai\tmain:1.0\tdeploy ok") {
 		t.Fatalf("missing row: %q", out)
+	}
+}
+
+func TestNotifyListSidebarFocusesSelectedRowWithoutAck(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{
+				ID:        "abc",
+				Text:      "deploy ok",
+				Severity:  notify.SeverityWarn,
+				Source:    notify.SourceAI,
+				Socket:    "projmux",
+				Session:   "main",
+				Window:    "1",
+				Pane:      "0",
+				CreatedAt: now.Add(-30 * time.Second),
+				ExpiresAt: now.Add(time.Hour),
+			},
+		},
+	}
+	picker := &stubNotifyPicker{result: intfzf.Result{Value: "abc"}}
+	runner := &focusFakeRunner{}
+	cmd := newCmd(store)
+	cmd.picker = picker
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if picker.options.UI != "notify-sidebar" {
+		t.Fatalf("picker UI = %q, want notify-sidebar", picker.options.UI)
+	}
+	if len(picker.options.Entries) != 1 || picker.options.Entries[0].Value != "abc" {
+		t.Fatalf("entries = %#v", picker.options.Entries)
+	}
+	if !slices.Contains(picker.options.Bindings, "click:accept") {
+		t.Fatalf("bindings = %#v, want click:accept", picker.options.Bindings)
+	}
+	if store.ackedID != "" {
+		t.Fatalf("ackedID = %q, want empty", store.ackedID)
+	}
+	if len(runner.calls) != 1 || runner.calls[0].name != "/usr/local/bin/projmux" {
+		t.Fatalf("runner calls = %#v", runner.calls)
+	}
+	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux"}
+	if !equalStringSlices(runner.calls[0].args, wantArgs) {
+		t.Fatalf("focus args = %#v, want %#v", runner.calls[0].args, wantArgs)
+	}
+}
+
+func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
+	}
+	picker := &stubNotifyPicker{result: intfzf.Result{Key: "a", Value: "abc"}}
+	cmd := newCmd(store)
+	cmd.picker = picker
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if store.ackedID != "abc" {
+		t.Fatalf("ackedID = %q, want abc", store.ackedID)
+	}
+	if !strings.Contains(stdout.String(), "ack abc") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestNotifyListSidebarClearAll(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
+		ackAll:      1,
+	}
+	picker := &stubNotifyPicker{result: intfzf.Result{Key: "ctrl-a", Value: "abc"}}
+	cmd := newCmd(store)
+	cmd.picker = picker
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if !store.ackAllOK {
+		t.Fatal("AckAll was not called")
+	}
+	if !strings.Contains(stdout.String(), "cleared 1 notification") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestNotifyListSidebarRejectsJSONAndLive(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"list", "--ui=sidebar", "--json"},
+		{"list", "--ui=sidebar", "--live"},
+	} {
+		cmd := newCmd(&stubNotifyStore{})
+		err := cmd.Run(args, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !IsUsageError(err) {
+			t.Fatalf("Run(%v) err = %v, want usage error", args, err)
+		}
 	}
 }
 

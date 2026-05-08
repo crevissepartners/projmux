@@ -1,5 +1,5 @@
 // Package notify implements a small persistent notification queue used by the
-// projmux status bar. Entries are stored in a JSON file and pruned by TTL.
+// projmux status bar. Entries are stored in a JSON file until explicit ack.
 //
 // Note: the click handler in the status bar will call
 // `projmux focus --target=... --source=os-notification` — but this package
@@ -28,8 +28,9 @@ const (
 	SourceExternal = "external"
 )
 
-// DefaultTTL is the default time-to-live applied when the caller does not
-// supply --ttl.
+// DefaultTTL is the default freshness window applied when the caller does not
+// supply --ttl. Expiration is metadata only; it does not remove entries from
+// the pending queue.
 const DefaultTTL = 600 * time.Second
 
 // MaxTextLength caps the stored Text on push. Longer text is truncated
@@ -130,10 +131,10 @@ func ParseTarget(value string) (Target, error) {
 
 	hasDot := false
 	if hasSep {
-		if idx := strings.Index(rest, "."); idx >= 0 {
+		if before, after, ok := strings.Cut(rest, "."); ok {
 			hasDot = true
-			t.Window = rest[:idx]
-			t.Pane = rest[idx+1:]
+			t.Window = before
+			t.Pane = after
 		} else {
 			t.Window = rest
 		}

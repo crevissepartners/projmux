@@ -91,6 +91,7 @@ func defaultProbeKeys() []probeKey {
 		{Label: "Alt-3", Action: "Open sessionizer (User3)", Plain: "\x1b3", CSIu: "\x1b[9004u", UserKey: "User3"},
 		{Label: "Alt-4", Action: "AI split picker right (User5)", Plain: "\x1b4", CSIu: "\x1b[9006u", UserKey: "User5"},
 		{Label: "Alt-5", Action: "Settings (User6)", Plain: "\x1b5", CSIu: "\x1b[9007u", UserKey: "User6"},
+		{Label: "Alt-6", Action: "Notify sidebar (User12)", Plain: "\x1b6", CSIu: "\x1b[9013u", UserKey: "User12"},
 		{Label: "Ctrl-N", Action: "New window (User7)", Plain: "\x0e", CSIu: "\x1b[9008u", UserKey: "User7"},
 		{Label: "Ctrl-Shift-R", Action: "No projmux binding by default", Plain: "", CSIu: "", UserKey: ""},
 		{Label: "Ctrl-Shift-L", Action: "No projmux binding by default", Plain: "", CSIu: "", UserKey: ""},

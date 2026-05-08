@@ -1,12 +1,12 @@
 # Notify queue
 
 `projmux` keeps a persistent JSON queue of pending AI notifications.
-`attention` is live tmux pane state; `notify` is the short-lived actionable
-reminder set used by the status-bar notify segment. The queue is derived
-from live state and user pushes, but it is not the source of truth for every
-pane that currently has an attention badge. Each entry routes a click on the
-status-bar notify segment to the originating tmux pane via `projmux focus`,
-and feeds the HUD pill rendered by `projmux status notify`.
+`attention` is live tmux pane state; `notify` is the user's pending
+notification source of truth. The queue is derived from live state and user
+pushes, but an entry remains pending until explicit ack. Each entry can route
+the status-bar notify segment or notify sidebar to the originating tmux pane
+via `projmux focus`, and feeds the HUD pill rendered by
+`projmux status notify`.
 
 ## File layout
 
@@ -21,8 +21,8 @@ stale-after window so a crashed writer never permanently wedges the
 queue.
 
 The queue file is a pretty-printed JSON array of `Notification`
-objects, sorted newest-first on read. TTL'd entries are filtered out
-at read time, never at write time.
+objects, sorted newest-first on read. `expires_at` is freshness metadata;
+expired entries are not filtered or deleted by `list`.
 
 ## Data model
 
@@ -47,7 +47,8 @@ type Target struct {
 }
 ```
 
-Defaults: `DefaultTTL = 600s`, `MaxTextLength = 80`. `Severity` and
+Defaults: `DefaultTTL = 600s`, `MaxTextLength = 80`. TTL is retained as a
+freshness/display field, not a removal condition. `Severity` and
 `Source` are validated against the constants above; an invalid value
 returns `ErrInvalidSeverity` / `ErrInvalidSource` which the CLI maps to
 exit code 2.
@@ -71,7 +72,7 @@ number of seconds. `--json` prints `{id, queued}` for scripting.
 ### list
 
 ```
-projmux notify list [--live] [--json] [--limit N]
+projmux notify list [--live] [--json] [--limit N] [--ui table|sidebar]
                     [--severity ...] [--source ...]
 ```
 
@@ -79,6 +80,11 @@ Newest-first pending queue entries. Default output is the tab-aligned
 table `ID AGE SEV SRC TARGET TEXT`. `--severity` / `--source` are
 repeatable filters. Without `--live`, this command reads only the queue and
 preserves the stable JSON array used by scripts.
+
+`--ui=sidebar` opens the notify queue as an interactive right-side list when
+run inside the tmux popup surface. Enter or mouse click focuses the selected
+target pane without acking it. `a` acks the selected row. `Ctrl-A` clears all
+rows via `notify ack --all`.
 
 `--live` adds a non-mutating explanation view that reads
 `tmux list-panes -a` and compares the queue with live reply-state panes. It
@@ -93,7 +99,7 @@ output becomes `{queue, live, rows, errors}`. Typical states:
 - `live-ai-reply-missing-queue` — a live AI reply pane lacks the derived
   queue entry; run `projmux notify reconcile` to back-fill it.
 - `queue-stale` — an `ai:` queue entry exists, but the live pane no longer
-  matches reply+agent state; ack it or run `reconcile`.
+  matches reply+agent state; it remains pending until explicit ack.
 - `queue-only` — a non-AI/external queue entry is pending and has no live AI
   reply-pane requirement.
 
@@ -122,20 +128,20 @@ path), then:
 
 - pushes/refreshes one `ai:<session>:<pane>` entry for every pane
   whose attention state is `reply` AND whose agent option is non-empty;
-- acks every existing queue entry whose id starts with `ai:` and whose
-  pane no longer matches that condition.
+- reports every existing queue entry whose id starts with `ai:` and whose
+  pane no longer matches that condition as stale, without acking it.
 
 Soft-fails when tmux is not running (returns a populated `errors`
 field rather than a non-zero exit) so the post-install hook does not
 break. Run this as the recovery path when the on-disk queue has drifted
 from live pane state.
 
-Output: `reconcile: pushed N, acked M, kept K`.
+Output: `reconcile: pushed N, acked M, kept K, stale S`.
 
-TTL and ack behavior are intentionally queue-local: TTL removes expired
-entries on the next read, `ack` removes explicit ids immediately, and
-`reconcile` only repairs derived `ai:` entries. Manual attention badges
-without agent metadata remain live attention only.
+Ack behavior is intentionally queue-local: only `ack` removes explicit ids or
+flushes the queue. TTL is freshness metadata, and `reconcile` only repairs
+derived `ai:` entries. Manual attention badges without agent metadata remain
+live attention only.
 
 ## Producer (AI reply-ready)
 
@@ -147,12 +153,12 @@ an entry with:
 
 - id: `ai:<session>:<pane>`
 - text: `<agent>: <topic>` (or `<agent>: ready` when no topic is set)
-- severity: `info`, source: `ai`, TTL: 10 minutes
+- severity: `info`, source: `ai`, freshness TTL: 10 minutes
 
 When the pane leaves the reply state (manual `attention clear`,
-`status set idle`, or a window close), `AckReplyReady` removes the
-entry. Both paths swallow store errors so the live tmux UI never
-blocks on disk IO.
+`status set idle`, or a window close), `AckReplyReady` intentionally does not
+remove the entry. The user consumes it through explicit ack. Store errors are
+swallowed so the live tmux UI never blocks on disk IO.
 
 Manual `projmux attention toggle` on a pane without an agent option
 does NOT push — the queue is intentionally AI-driven; reconcile honours
@@ -169,11 +175,9 @@ projmux focus --target <target> --source status-bar --kind segment-click [--sock
 
 Outcomes:
 
-- **Focus succeeded** — the click is the consume signal: ack the entry
-  by id, swallow ack errors (the user has already been navigated).
-- **Focus exited 2 (target unresolved)** — the queue entry is junk
-  (session/pane gone). Ack and toast `notify target gone, dropping
-  entry`.
+- **Focus succeeded** — keep the entry pending. Navigation is not ack.
+- **Focus exited 2 (target unresolved)** — keep the entry pending and toast
+  `notify target gone; ack to clear`.
 - **Other failure** — keep the entry, toast `focus failed: <reason>`
   so the user can retry without losing the row.
 

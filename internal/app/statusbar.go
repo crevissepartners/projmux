@@ -428,7 +428,7 @@ func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Wri
 
 // handleNotify focuses the origin pane of the newest queued notification. If
 // the queue is empty we surface that fact in tmux rather than silently doing
-// nothing — that gives the keyboard shortcut a useful interactive ack.
+// nothing — that gives the keyboard shortcut useful feedback.
 //
 // This handler MUST NOT return an error to its caller (tmux's run-shell). A
 // non-zero exit from run-shell triggers a "...returned N" error popup, which
@@ -477,28 +477,16 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 	if _, runErr := c.runner.Run(context.Background(), binaryPath, args...); runErr != nil {
 		// The focus subprocess exits with a deterministic code 2 when the
 		// target session/window/pane cannot be resolved (see focus.go's
-		// focusExitNotResolved). Treat that as "the queue entry is junk":
-		// ack it so the next click moves on, and tell the user via a
-		// non-error toast. Any other exit code is treated as transient
-		// (network hiccup, tmux server churn, etc.) — keep the entry so
-		// the user can retry, and surface the reason as a toast instead
-		// of a tmux error popup.
+		// focusExitNotResolved). Under notify SOT semantics, even an
+		// unroutable row remains pending until explicit ack; show a toast
+		// instead of silently deleting it. Any other exit code is treated as
+		// transient (network hiccup, tmux server churn, etc.) — keep the entry
+		// so the user can retry, and surface the reason as a toast instead of a
+		// tmux error popup.
 		if isFocusTargetUnresolved(runErr) {
-			if ackErr := store.Ack(head.ID); ackErr != nil {
-				fmt.Fprintf(stderr, "statusbar notify: ack %s: %v\n", head.ID, ackErr)
-			}
-			return c.runTmux(stderr, "display-message", "notify target gone, dropping entry")
+			return c.runTmux(stderr, "display-message", "notify target gone; ack to clear")
 		}
 		return c.runTmux(stderr, "display-message", fmt.Sprintf("focus failed: %s", focusFailureSummary(runErr)))
-	}
-	// Click-to-focus has no separate producer to ack the entry, so the
-	// click itself is the consume signal: a successful focus dispatch is
-	// the user telling us "I have handled this notification". We swallow
-	// the ack error because the focus already succeeded — the user has
-	// been navigated to the pane, and a stale queue entry will be cleaned
-	// up by the next reconcile pass anyway.
-	if ackErr := store.Ack(head.ID); ackErr != nil {
-		fmt.Fprintf(stderr, "statusbar notify: ack %s: %v\n", head.ID, ackErr)
 	}
 	return nil
 }

@@ -31,6 +31,7 @@ type reconcileResult struct {
 	Pushed int      `json:"pushed"`
 	Acked  int      `json:"acked"`
 	Kept   int      `json:"kept"`
+	Stale  int      `json:"stale"`
 	Errors []string `json:"errors"`
 }
 
@@ -80,8 +81,9 @@ func (p reconcilePane) text() string {
 }
 
 // runReconcile walks every tmux pane on the host, compares the live state
-// against the persistent notify queue, and back-fills/clears entries so
-// the queue matches reality. Returns an error only for argument parsing
+// against the persistent notify queue, and back-fills entries whose derived
+// AI reply rows are missing or stale. It never removes unacknowledged rows:
+// ack is the user's consume signal. Returns an error only for argument parsing
 // or store failures; tmux call failures are surfaced through the
 // `errors` field of the summary so install scripts get a single
 // non-fatal pass.
@@ -162,8 +164,9 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 		result.Pushed++
 	}
 
-	// Ack pass: for every queue entry whose key starts with `ai:`, drop it
-	// if the pane is no longer reply-state with an agent.
+	// Stale pass: for every queue entry whose key starts with `ai:`, report it
+	// if the pane is no longer reply-state with an agent. Do not ack it; users
+	// must explicitly clear rows under the notify SOT contract.
 	for _, e := range existing {
 		if !strings.HasPrefix(e.ID, "ai:") {
 			continue
@@ -171,11 +174,7 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 		if _, ok := wantByID[e.ID]; ok {
 			continue
 		}
-		if err := store.Ack(e.ID); err != nil && !errors.Is(err, notify.ErrNotFound) {
-			result.Errors = append(result.Errors, fmt.Sprintf("ack %s: %v", e.ID, err))
-			continue
-		}
-		result.Acked++
+		result.Stale++
 	}
 
 	return writeReconcileSummary(stdout, result, *asJSON)
@@ -233,7 +232,7 @@ func writeReconcileSummary(w io.Writer, r reconcileResult, asJSON bool) error {
 	if asJSON {
 		return writeJSON(w, r)
 	}
-	_, err := fmt.Fprintf(w, "reconcile: pushed %d, acked %d, kept %d\n", r.Pushed, r.Acked, r.Kept)
+	_, err := fmt.Fprintf(w, "reconcile: pushed %d, acked %d, kept %d, stale %d\n", r.Pushed, r.Acked, r.Kept, r.Stale)
 	if err != nil {
 		return err
 	}
