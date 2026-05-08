@@ -228,9 +228,9 @@ projmux status notify [--max-width N]
   [bar] N% · weekly [bar] N%`. Degrades through six tiers as `--max-width`
   shrinks. Triggers an opportunistic, throttled refresh (per-adapter
   throttle, `30s` floor) so a stale cache self-heals.
-- `notify` — newest-first HUD pill `[ <agent|SEV> ] <text> · <target> ·
-  <age>   +<extras>`. Degrades through six tiers; default `--max-width`
-  is `200` runes.
+- `notify` — newest-first HUD pill with project, state, optional agent,
+  text, window/pane location, age, and `+<extras>`. Degrades through six
+  tiers; default `--max-width` is `200` runes.
 
 ## statusbar
 
