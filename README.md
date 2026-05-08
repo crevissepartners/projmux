@@ -1,5 +1,9 @@
 # projmux
 
+<p align="center">
+  <img src="docs/assets/projmux-icon.png" alt="projmux icon" width="112">
+</p>
+
 Project-aware tmux workspaces with fast switching, previews, status context,
 and AI-pane attention built in.
 
