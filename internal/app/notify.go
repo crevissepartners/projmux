@@ -361,13 +361,14 @@ func notifySidebarLabel(e notify.Notification, now time.Time) string {
 		text = "(empty notification)"
 	}
 	metaParts := []string{
+		notifySidebarAge(age),
 		notifySidebarProjectBadge(notifyProjectName(e.Session)),
-		notifySidebarConsumptionBadge("queued"),
-		notifySidebarStateBadge(notifyStateLabel(e, text)),
-		notifySidebarDim(age),
 	}
-	if target := notifySidebarTarget(e); target != "" {
-		metaParts = append(metaParts, notifySidebarDim(target))
+	if window := notifySidebarTargetPart("window", e.Window); window != "" {
+		metaParts = append(metaParts, window)
+	}
+	if pane := notifySidebarTargetPart("pane", e.Pane); pane != "" {
+		metaParts = append(metaParts, pane)
 	}
 	return text + "\n  " + strings.Join(metaParts, " ")
 }
@@ -396,11 +397,15 @@ const (
 	notifySidebarReset   = "\x1b[0m"
 	notifySidebarDimOpen = "\x1b[38;5;245m"
 	notifySidebarProject = "\x1b[1;38;5;231;48;5;90m"
-	notifySidebarQueued  = "\x1b[38;5;16;48;5;250m"
-	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;45m"
-	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;220m"
-	notifySidebarCrit    = "\x1b[1;38;5;231;48;5;160m"
 )
+
+func notifySidebarAge(age string) string {
+	age = strings.TrimSpace(age)
+	if age == "" {
+		age = "0s"
+	}
+	return "\x1b[1;38;5;45m age " + age + " " + notifySidebarReset
+}
 
 func notifySidebarProjectBadge(project string) string {
 	project = strings.TrimSpace(project)
@@ -410,46 +415,17 @@ func notifySidebarProjectBadge(project string) string {
 	return notifySidebarProject + " " + project + " " + notifySidebarReset
 }
 
-func notifySidebarConsumptionBadge(label string) string {
-	label = strings.ToLower(strings.TrimSpace(label))
-	if label == "" {
-		label = "queued"
-	}
-	return notifySidebarQueued + " " + label + " " + notifySidebarReset
-}
-
-func notifySidebarStateBadge(label string) string {
-	label = strings.ToUpper(strings.TrimSpace(label))
-	if label == "" {
-		label = "INFO"
-	}
-	open := notifySidebarInfo
-	switch label {
-	case "WARN":
-		open = notifySidebarWarn
-	case "CRIT":
-		open = notifySidebarCrit
-	}
-	return open + " " + label + " " + notifySidebarReset
-}
-
-func notifySidebarAgentBadge(agent string) string {
-	agent = strings.TrimSpace(agent)
-	if agent == "" {
+func notifySidebarTargetPart(label, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return ""
 	}
-	return notifySidebarAgentOpen(agent) + " " + agent + " " + notifySidebarReset
-}
-
-func notifySidebarAgentOpen(agent string) string {
-	switch strings.ToLower(strings.TrimSpace(agent)) {
-	case "claude":
-		return "\x1b[1;38;5;16;48;5;208m"
-	case "codex":
-		return "\x1b[1;38;5;231;48;5;33m"
-	default:
-		return "\x1b[1;38;5;16;48;5;51m"
+	value = strings.TrimLeft(value, "@%")
+	value = notifySidebarLabelCell(value)
+	if value == "" {
+		return ""
 	}
+	return notifySidebarDim(label + " " + value)
 }
 
 func notifySidebarDim(value string) string {
@@ -458,30 +434,6 @@ func notifySidebarDim(value string) string {
 		return ""
 	}
 	return notifySidebarDimOpen + value + notifySidebarReset
-}
-
-func shortNotifySeverity(severity string) string {
-	switch severity {
-	case notify.SeverityCritical:
-		return "crit"
-	case notify.SeverityWarn:
-		return "warn"
-	default:
-		return "info"
-	}
-}
-
-func shortNotifySource(source string) string {
-	switch source {
-	case notify.SourceAI:
-		return "ai"
-	case notify.SourceK8s:
-		return "k8s"
-	case notify.SourceGit:
-		return "git"
-	default:
-		return "ext"
-	}
 }
 
 func findNotificationByID(entries []notify.Notification, id string) (notify.Notification, bool) {
