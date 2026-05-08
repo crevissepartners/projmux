@@ -115,6 +115,62 @@ func TestPathsPostCreateHookPath(t *testing.T) {
 	}
 }
 
+func TestPathsStatusbarDecorationFile(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{ConfigDir: "/tmp/config/projmux"}
+	if got, want := paths.StatusbarDecorationFile(), filepath.Join(paths.ConfigDir, StatusbarDecorationFileName); got != want {
+		t.Fatalf("StatusbarDecorationFile() = %q, want %q", got, want)
+	}
+}
+
+func TestStatusbarDecorationRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", StatusbarDecorationFileName)
+	if got, err := LoadStatusbarDecorationFile(path); err != nil || got != StatusbarDecorationOff {
+		t.Fatalf("LoadStatusbarDecorationFile(missing) = %q, %v; want %q, nil", got, err, StatusbarDecorationOff)
+	}
+
+	if err := SaveStatusbarDecorationFile(path, StatusbarDecorationEmoji); err != nil {
+		t.Fatalf("SaveStatusbarDecorationFile() error = %v", err)
+	}
+	got, err := LoadStatusbarDecorationFile(path)
+	if err != nil {
+		t.Fatalf("LoadStatusbarDecorationFile() error = %v", err)
+	}
+	if got != StatusbarDecorationEmoji {
+		t.Fatalf("LoadStatusbarDecorationFile() = %q, want %q", got, StatusbarDecorationEmoji)
+	}
+}
+
+func TestStatusbarDecorationNormalizesInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), StatusbarDecorationFileName)
+	if err := os.WriteFile(path, []byte("broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadStatusbarDecorationFile(path)
+	if err != nil {
+		t.Fatalf("LoadStatusbarDecorationFile() error = %v", err)
+	}
+	if got != StatusbarDecorationOff {
+		t.Fatalf("LoadStatusbarDecorationFile() = %q, want %q", got, StatusbarDecorationOff)
+	}
+
+	if err := SaveStatusbarDecorationFile(path, StatusbarDecoration("also-broken")); err != nil {
+		t.Fatalf("SaveStatusbarDecorationFile() error = %v", err)
+	}
+	got, err = LoadStatusbarDecorationFile(path)
+	if err != nil {
+		t.Fatalf("LoadStatusbarDecorationFile() error = %v", err)
+	}
+	if got != StatusbarDecorationOff {
+		t.Fatalf("LoadStatusbarDecorationFile() after save = %q, want %q", got, StatusbarDecorationOff)
+	}
+}
+
 func TestProjdirFile(t *testing.T) {
 	t.Parallel()
 

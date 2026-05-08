@@ -103,8 +103,17 @@ func (c *statusCommand) runGit(args []string, stdout, stderr io.Writer) error {
 	if branch == "" {
 		return nil
 	}
-	_, err := fmt.Fprintf(stdout, " #[bold,fg=colour16,bg=colour45]  %s #[default]", branch)
+	_, err := fmt.Fprintf(stdout, " #[bold,fg=colour16,bg=colour45] %s%s #[default]", statusbarGitDecorator(c.statusbarDecoration()), branch)
 	return err
+}
+
+func (c *statusCommand) statusbarDecoration() config.StatusbarDecoration {
+	if c.env("TMUX") != "" {
+		if raw := c.readTrimmed("tmux", "show-option", "-gqv", statusbarDecorationTmuxOption); strings.TrimSpace(raw) != "" {
+			return config.NormalizeStatusbarDecoration(raw)
+		}
+	}
+	return loadStatusbarDecoration(c.homeDir, c.lookupEnv)
 }
 
 func (c *statusCommand) runKube(args []string, stdout, stderr io.Writer) error {

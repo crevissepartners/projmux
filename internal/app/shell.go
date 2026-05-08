@@ -265,7 +265,7 @@ func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create shell app config directory: %w", err)
 	}
-	if err := c.writeFile(path, []byte(tmuxAppConfig(binaryPath, c.defaultShell())), 0o644); err != nil {
+	if err := c.writeFile(path, []byte(tmuxAppConfig(binaryPath, c.defaultShell(), loadStatusbarDecoration(c.homeDir, c.lookupEnv))), 0o644); err != nil {
 		return fmt.Errorf("write shell app config: %w", err)
 	}
 	return nil

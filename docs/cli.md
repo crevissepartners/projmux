@@ -402,15 +402,18 @@ flags with the top-level `switch` UX:
 - `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI
-  splits, Project Root management, the switcher's saved workdirs list, and
-  About/Update status. In Project Picker, `Project Root` manages the saved
+  splits, Status Bar cwd/git decoration, Project Root management, the
+  switcher's saved workdirs list, and About/Update status. In Project Picker,
+  `Project Root` manages the saved
   primary root (`~/.config/projmux/projdir`) and displays whether the effective
   value comes from `PROJMUX_PROJDIR`, tmux `@projmux_projdir`, saved config, or
   no configured source. When no source is configured, the direct-set prompt
   starts with `$HOME` as an editable fallback, but `$HOME` is not used as the
   effective root unless saved. `Workdirs` remains separate: those entries are
-  additional search roots, not the primary root. The About section reads the
-  cached update status without network access;
+  additional search roots, not the primary root. Status Bar stores
+  `~/.config/projmux/statusbar-decoration` as `off` (default), `symbol`, or
+  `emoji` and updates the live tmux option when available. The About section
+  reads the cached update status without network access;
   selecting Check Updates runs `projmux update check`, and Update Now runs
   `projmux update apply`. The same About section also lists the keybinding
   diagnostic path: zero-config first, `setup` for swallowed keys, `init` for

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,9 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if !hasEntryValue(rootOptions.Entries, settingsSectionProject) {
 		t.Fatalf("root settings entries = %#v, want project picker section", rootOptions.Entries)
 	}
+	if !hasEntryValue(rootOptions.Entries, settingsSectionStatusbar) {
+		t.Fatalf("root settings entries = %#v, want statusbar section", rootOptions.Entries)
+	}
 	if !hasEntryValue(rootOptions.Entries, settingsSectionAbout) {
 		t.Fatalf("root settings entries = %#v, want about section", rootOptions.Entries)
 	}
@@ -75,6 +79,76 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}
 	if got, want := readModeFile(t, home), "codex\n"; got != want {
 		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	var statusbarOptions intfzf.Options
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		ai:       testAICommand(home),
+		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionStatusbar}, nil
+			case 2:
+				statusbarOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(config.StatusbarDecorationEmoji)}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := statusbarOptions.UI, "settings-statusbar"; got != want {
+		t.Fatalf("statusbar settings UI = %q, want %q", got, want)
+	}
+	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(config.StatusbarDecorationOff)) {
+		t.Fatalf("statusbar settings entries = %#v, want off row", statusbarOptions.Entries)
+	}
+	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(config.StatusbarDecorationSymbol)) {
+		t.Fatalf("statusbar settings entries = %#v, want symbol row", statusbarOptions.Entries)
+	}
+	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(config.StatusbarDecorationEmoji)) {
+		t.Fatalf("statusbar settings entries = %#v, want emoji row", statusbarOptions.Entries)
+	}
+
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.LoadStatusbarDecorationFile(paths.StatusbarDecorationFile())
+	if err != nil {
+		t.Fatalf("LoadStatusbarDecorationFile() error = %v", err)
+	}
+	if got != config.StatusbarDecorationEmoji {
+		t.Fatalf("statusbar decoration = %q, want %q", got, config.StatusbarDecorationEmoji)
+	}
+	if !reflect.DeepEqual(tmuxCalls, [][]string{
+		{"tmux", "set-option", "-g", statusbarDecorationTmuxOption, "emoji"},
+		{"tmux", "display-message", "statusbar decoration: emoji"},
+	}) {
+		t.Fatalf("tmux calls = %#v", tmuxCalls)
 	}
 }
 
