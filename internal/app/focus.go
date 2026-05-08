@@ -21,6 +21,8 @@ import (
 // in the spec so callers (status bar, notification dispatch) can branch on it.
 const focusExitNotResolved = 2
 
+const focusFieldSeparator = "__PROJMUX_FOCUS_SEP__"
+
 // focusCommandRunner abstracts shelling out so tests can stub tmux.
 type focusCommandRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -234,7 +236,8 @@ func (c *focusCommand) tmuxArgs(socket string, args ...string) []string {
 }
 
 func (c *focusCommand) listSessionInventory(ctx context.Context, socket string) ([]corefocus.Candidate, error) {
-	args := c.tmuxArgs(socket, "list-sessions", "-F", "#{session_activity}\t#{session_name}\t#{session_attached}")
+	format := strings.Join([]string{"#{session_activity}", "#{session_name}", "#{session_attached}"}, focusFieldSeparator)
+	args := c.tmuxArgs(socket, "list-sessions", "-F", format)
 	out, err := c.runner.Run(ctx, "tmux", args...)
 	if err != nil {
 		if isNoServerLikeError(err) {
@@ -246,7 +249,8 @@ func (c *focusCommand) listSessionInventory(ctx context.Context, socket string) 
 }
 
 func (c *focusCommand) listClients(ctx context.Context, socket string) ([]focusClient, error) {
-	args := c.tmuxArgs(socket, "list-clients", "-F", "#{client_name}\t#{client_session}")
+	format := strings.Join([]string{"#{client_name}", "#{client_session}"}, focusFieldSeparator)
+	args := c.tmuxArgs(socket, "list-clients", "-F", format)
 	out, err := c.runner.Run(ctx, "tmux", args...)
 	if err != nil {
 		if isNoServerLikeError(err) {
@@ -434,7 +438,10 @@ func parseFocusInventory(out []byte) ([]corefocus.Candidate, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 3)
+		fields := strings.SplitN(line, focusFieldSeparator, 3)
+		if len(fields) != 3 {
+			fields = strings.SplitN(line, "\t", 3)
+		}
 		if len(fields) != 3 {
 			return nil, fmt.Errorf("focus: parse list-sessions row %q", line)
 		}
@@ -479,7 +486,10 @@ func parseFocusClients(out []byte) []focusClient {
 		if line == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\t", 2)
+		fields := strings.SplitN(line, focusFieldSeparator, 2)
+		if len(fields) != 2 {
+			fields = strings.SplitN(line, "\t", 2)
+		}
 		name := strings.TrimSpace(fields[0])
 		session := ""
 		if len(fields) == 2 {
