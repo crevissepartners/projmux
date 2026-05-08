@@ -28,20 +28,20 @@ backend remains the fallback with full preview/cycle/sidebar behavior.
 
 Use this when you want to enter a Docker container and experience this POC build
 directly. It builds the no-fzf dependency image, mounts this worktree, builds
-`projmux` inside the container, sets `PROJMUX_PICKER_BACKEND=native`, and drops
-you into an interactive shell. This uses `wt path` instead of `wt run` because
-`docker run -it` needs the current terminal TTY:
+`projmux` inside the container, creates sample projects under
+`/workspace/projects`, sets `PROJMUX_PICKER_BACKEND=native`, and launches
+`projmux shell` so you can experience the POC directly. This uses `wt path`
+instead of `wt run` because `docker run -it` needs the current terminal TTY:
 
 ```sh
 bash "$(wt path poc/native-picker-no-fzf)/scripts/poc-native-picker-no-fzf-sandbox.sh"
 ```
 
-Inside the container, try:
+Inside the tmux shell, try:
 
 ```sh
-projmux shell --socket poc-no-fzf --session main
-projmux settings
 projmux switch
+projmux settings
 projmux doctor --json
 ```
 
