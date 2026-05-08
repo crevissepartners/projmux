@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -1000,6 +1001,242 @@ func TestProjectPickerEntriesShowsUnconfiguredProjdir(t *testing.T) {
 	}
 }
 
+func TestProjectRootEntriesShowShadowedSavedProjdir(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{
+		switcher: &switchCommand{
+			homeDir: func() (string, error) { return "/home/tester", nil },
+			lookupEnv: func(name string) string {
+				if name == projdirEnvVar {
+					return "/from/env"
+				}
+				return ""
+			},
+			tmuxProjdir: emptyTmuxOption,
+			loadProjdir: func(string) (string, error) { return "/from/saved", nil },
+			saveProjdir: func(string, string) error {
+				t.Fatalf("project root settings display must not memoize env values")
+				return nil
+			},
+		},
+	}
+
+	entries, err := cmd.projectRootEntries()
+	if err != nil {
+		t.Fatalf("projectRootEntries() error = %v", err)
+	}
+	if !hasEntryLabelContaining(entries, "Effective Project Root") {
+		t.Fatalf("project root entries = %#v, want effective row", entries)
+	}
+	if !hasEntryLabelContaining(entries, "/from/env") {
+		t.Fatalf("project root entries = %#v, want effective env value", entries)
+	}
+	if !hasEntryLabelContaining(entries, "("+projdirSourcePROJDIRenv+")") {
+		t.Fatalf("project root entries = %#v, want env source label", entries)
+	}
+	if !hasEntryLabelContaining(entries, "Saved Project Root") {
+		t.Fatalf("project root entries = %#v, want saved row", entries)
+	}
+	if !hasEntryLabelContaining(entries, "/from/saved") {
+		t.Fatalf("project root entries = %#v, want saved value", entries)
+	}
+	if !hasEntryLabelContaining(entries, "shadowed by "+projdirSourcePROJDIRenv) {
+		t.Fatalf("project root entries = %#v, want shadowed relationship", entries)
+	}
+	if !hasEntryValue(entries, settingsProjdirSetTyped) {
+		t.Fatalf("project root entries = %#v, want typed set action", entries)
+	}
+	if !hasEntryLabelContaining(entries, "Use Current Project as Root") {
+		t.Fatalf("project root entries = %#v, want current project row", entries)
+	}
+	if !hasEntryValue(entries, settingsProjdirClear) {
+		t.Fatalf("project root entries = %#v, want clear action", entries)
+	}
+}
+
+func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv(projdirEnvVar, "")
+
+	home := t.TempDir()
+	target := filepath.Join(home, "projects")
+	mkdirAll(t, target)
+
+	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher.lookupEnv = func(string) string { return "" }
+	switcher.loadProjdir = config.LoadProjdir
+	switcher.saveProjdir = config.SaveProjdir
+	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+
+	var typedOptions intfzf.Options
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				if !hasEntryValue(options.Entries, settingsProjectRootManage) {
+					t.Fatalf("project picker entries = %#v, want project root management row", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjectRootManage}, nil
+			case 3:
+				if got, want := options.UI, "settings-project-root"; got != want {
+					t.Fatalf("project root UI = %q, want %q", got, want)
+				}
+				if !strings.Contains(options.Header, "Workdirs are separate search roots") {
+					t.Fatalf("project root header = %q, want Workdirs distinction", options.Header)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjdirSetTyped}, nil
+			case 4:
+				typedOptions = options
+				return intfzf.Result{Key: "enter", Query: target}, nil
+			case 5:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 6:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 7:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := typedOptions.UI, "settings-project-root-typed"; got != want {
+		t.Fatalf("typed project root UI = %q, want %q", got, want)
+	}
+	if !typedOptions.AcceptQuery {
+		t.Fatalf("typed project root AcceptQuery = false, want true")
+	}
+	if got, want := readProjdirFile(t, home), target; got != want {
+		t.Fatalf("saved project root = %q, want %q", got, want)
+	}
+	if got, want := stdout.String(), "saved project root: "+target+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubUseCurrentProjectAsRootSavesProjdir(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv(projdirEnvVar, "")
+
+	home := t.TempDir()
+	currentProject := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, currentProject)
+
+	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher.lookupEnv = func(string) string { return "" }
+	switcher.loadProjdir = config.LoadProjdir
+	switcher.saveProjdir = config.SaveProjdir
+	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsProjectRootManage}, nil
+			case 3:
+				if !hasEntryLabelContaining(options.Entries, "Use Current Project as Root") {
+					t.Fatalf("project root entries = %#v, want current project action", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjdirSetCurrent}, nil
+			case 4:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 5:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 6:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := readProjdirFile(t, home), currentProject; got != want {
+		t.Fatalf("saved project root = %q, want %q", got, want)
+	}
+	if got, want := stdout.String(), "saved project root: "+currentProject+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubClearProjectRootRemovesSavedProjdir(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv(projdirEnvVar, "")
+
+	home := t.TempDir()
+	if err := config.SaveProjdir(home, "/saved/root"); err != nil {
+		t.Fatalf("SaveProjdir() error = %v", err)
+	}
+
+	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher.lookupEnv = func(string) string { return "" }
+	switcher.loadProjdir = config.LoadProjdir
+	switcher.saveProjdir = config.SaveProjdir
+	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+
+	var calls int
+	cmd := &settingsCommand{
+		ai:       testAICommand(t.TempDir()),
+		switcher: switcher,
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsProjectRootManage}, nil
+			case 3:
+				if !hasEntryLabelContaining(options.Entries, "/saved/root") {
+					t.Fatalf("project root entries = %#v, want saved value", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjdirClear}, nil
+			case 4:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 5:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 6:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := readProjdirFile(t, home); got != "" {
+		t.Fatalf("saved project root = %q, want empty", got)
+	}
+	if got, want := stdout.String(), "cleared saved project root\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
 func hasEntryValue(entries []intfzf.Entry, value string) bool {
 	for _, entry := range entries {
 		if entry.Value == value {
@@ -1044,6 +1281,19 @@ func readWorkdirsFile(t *testing.T, home string) ([]string, error) {
 		out = append(out, line)
 	}
 	return out, nil
+}
+
+func readProjdirFile(t *testing.T, home string) string {
+	t.Helper()
+	path := filepath.Join(home, ".config", "projmux", "projdir")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatalf("ReadFile(%q): %v", path, err)
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func loadSavedWorkdirsFromFile(home string) []string {
