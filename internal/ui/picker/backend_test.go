@@ -3,6 +3,8 @@ package picker
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -197,5 +199,34 @@ func TestNativeInteractiveRendersSelectedPreview(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "preview:/repo/api") {
 		t.Fatalf("native output = %q, want selected preview output", out.String())
+	}
+}
+
+func TestNativeInteractiveRunsCustomActionCommandAndRefreshes(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	result, err := runNativeInteractive(strings.NewReader("\x1b[C\r"), io.Discard, Options{
+		UI:    "switch",
+		Items: []Item{{Title: "api", Value: marker}},
+		Actions: []Action{{
+			Key:     "right",
+			Intent:  ActionCustom,
+			Command: "printf cycled > {2}",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != marker {
+		t.Fatalf("result = %#v, want selected marker", result)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	if string(data) != "cycled" {
+		t.Fatalf("marker = %q, want cycled", data)
 	}
 }

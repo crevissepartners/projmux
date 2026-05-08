@@ -68,10 +68,28 @@ func pickerActionsFromFZF(options intfzf.Options) []intpicker.Action {
 		case "abort":
 			actions = append(actions, intpicker.Action{Key: key, Intent: intpicker.ActionClose})
 		default:
-			actions = append(actions, intpicker.Action{Key: key, Intent: intpicker.ActionCustom})
+			actions = append(actions, intpicker.Action{
+				Key:     key,
+				Intent:  intpicker.ActionCustom,
+				Command: pickerCommandFromFZFBinding(action),
+			})
 		}
 	}
 	return actions
+}
+
+func pickerCommandFromFZFBinding(action string) string {
+	action = strings.TrimSpace(action)
+	const prefix = "execute-silent("
+	if !strings.HasPrefix(action, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(action, prefix)
+	idx := strings.Index(rest, ")")
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:idx])
 }
 
 func fzfResultFromPicker(result intpicker.Result) intfzf.Result {

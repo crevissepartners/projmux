@@ -30,9 +30,10 @@ const (
 )
 
 type Action struct {
-	Key    string
-	Intent ActionIntent
-	Label  string
+	Key     string
+	Intent  ActionIntent
+	Label   string
+	Command string
 }
 
 type Preview struct {
@@ -245,6 +246,10 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			case ActionClose:
 				return Result{Key: action.Key, Query: query, Closed: true}, nil
 			case ActionCustom:
+				if strings.TrimSpace(action.Command) != "" {
+					runNativeActionCommand(action.Command, selectedNativeValue(items, selected))
+					continue
+				}
 				return Result{Key: action.Key, Value: selectedNativeValue(items, selected), Query: query}, nil
 			case ActionAccept:
 				if options.AcceptQuery {
@@ -645,8 +650,7 @@ func renderNativePreview(w io.Writer, options Options, items []Item, selected in
 }
 
 func runNativePreviewCommand(command, target string) string {
-	command = strings.ReplaceAll(command, "{2}", shellQuoteNative(target))
-	command = strings.ReplaceAll(command, "{}", shellQuoteNative(target))
+	command = expandNativeCommand(command, target)
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
@@ -655,6 +659,19 @@ func runNativePreviewCommand(command, target string) string {
 		return ""
 	}
 	return string(out)
+}
+
+func runNativeActionCommand(command, target string) {
+	command = expandNativeCommand(command, target)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "sh", "-c", command).Run()
+}
+
+func expandNativeCommand(command, target string) string {
+	command = strings.ReplaceAll(command, "{2}", shellQuoteNative(target))
+	command = strings.ReplaceAll(command, "{}", shellQuoteNative(target))
+	return command
 }
 
 func limitedNativePreviewLines(output string, limit int) []string {

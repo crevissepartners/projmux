@@ -85,3 +85,18 @@ func TestSettingsNativeBackendDoesNotCallFZF(t *testing.T) {
 		t.Fatalf("native output = %q, want settings prompt", out.String())
 	}
 }
+
+func TestPickerActionsFromFZFPreservesExecuteSilentCommand(t *testing.T) {
+	t.Parallel()
+
+	options := pickerOptionsFromFZF(intfzf.Options{
+		Bindings: []string{"right:execute-silent(exec '/tmp/projmux' 'switch' 'cycle-window' {2} 'next')+refresh-preview"},
+	})
+	if len(options.Actions) != 1 {
+		t.Fatalf("actions = %#v, want one action", options.Actions)
+	}
+	action := options.Actions[0]
+	if action.Key != "right" || action.Command != "exec '/tmp/projmux' 'switch' 'cycle-window' {2} 'next'" {
+		t.Fatalf("action = %#v, want execute-silent command preserved", action)
+	}
+}

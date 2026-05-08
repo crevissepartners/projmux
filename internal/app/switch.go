@@ -1473,7 +1473,7 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 		fzfOptions := intfzf.OptionsFromPicker(options)
 		fzfOptions.Candidates = plan.Candidates
 		fzfOptions.Bindings = append(fzfOptions.Bindings, bindings...)
-		return c.runPickerBackend(fzfOptions, options)
+		return c.runPickerBackend(fzfOptions, pickerOptionsFromFZF(fzfOptions))
 	}
 
 	fzfOptions := intfzf.OptionsFromPicker(options)
