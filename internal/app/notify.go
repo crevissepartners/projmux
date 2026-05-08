@@ -342,13 +342,7 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intfzf
 			Window:  e.Window,
 			Pane:    e.Pane,
 		})
-		label := fmt.Sprintf("%-4s %-3s %-4s %-18s %s",
-			formatAge(now.Sub(e.CreatedAt)),
-			strings.ToUpper(shortNotifySeverity(e.Severity)),
-			shortNotifySource(e.Source),
-			target,
-			e.Text,
-		)
+		label := notifySidebarLabel(e, now)
 		out = append(out, intfzf.Entry{
 			Label:     notifyTableCell(label),
 			Value:     e.ID,
@@ -356,6 +350,18 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intfzf
 		})
 	}
 	return out
+}
+
+func notifySidebarLabel(e notify.Notification, now time.Time) string {
+	age := formatAge(now.Sub(e.CreatedAt))
+	text := strings.TrimSpace(e.Text)
+	if text == "" {
+		text = "(empty notification)"
+	}
+	if e.Severity == notify.SeverityInfo || strings.TrimSpace(e.Severity) == "" {
+		return fmt.Sprintf("%-4s %s", age, text)
+	}
+	return fmt.Sprintf("%-4s %-4s %s", age, strings.ToUpper(shortNotifySeverity(e.Severity)), text)
 }
 
 func shortNotifySeverity(severity string) string {

@@ -292,7 +292,7 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 	}
 }
 
-func TestAppRunTmuxPopupToggleClosesNotifySidebarWithoutPaneTarget(t *testing.T) {
+func TestAppRunTmuxPopupToggleClosesNotifySidebarWithMarkerPane(t *testing.T) {
 	t.Parallel()
 
 	clientKey := "/dev/pts/projmux-test-notify-close"
@@ -316,7 +316,7 @@ func TestAppRunTmuxPopupToggleClosesNotifySidebarWithoutPaneTarget(t *testing.T)
 	}
 
 	got := runner.calls[len(runner.calls)-1]
-	want := recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-C"}}
+	want := recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-t", "%original", "-C"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("close call = %#v, want %#v", got, want)
 	}

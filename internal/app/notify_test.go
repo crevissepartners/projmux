@@ -267,6 +267,9 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(picker.options.Entries) != 1 || picker.options.Entries[0].Value != "abc" {
 		t.Fatalf("entries = %#v", picker.options.Entries)
 	}
+	if label := picker.options.Entries[0].Label; !strings.Contains(label, "WARN deploy ok") || strings.Contains(label, "main:1.0") || strings.Contains(label, " ai ") {
+		t.Fatalf("sidebar label = %q, want compact age/severity/text without target/source columns", label)
+	}
 	if len(picker.options.Bindings) != 0 {
 		t.Fatalf("bindings = %#v, want none; fzf 0.71 rejects click bindings", picker.options.Bindings)
 	}
