@@ -32,7 +32,29 @@ docker run --rm \
     go test ./internal/ui/picker ./internal/app -run "Native|TestSettingsNativeBackendDoesNotCallFZF|TestSwitchCommandUsesNativePickerWhenRequested"
     echo "[poc/no-fzf] build projmux"
     go build -o /tmp/projmux ./cmd/projmux
+    echo "[poc/no-fzf] launch projmux shell under a PTY"
+    shell_log=/tmp/projmux-shell.log
+    shell_status=0
+    timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux shell --socket poc-no-fzf --session main" "$shell_log" || shell_status=$?
+    if [[ "$shell_status" != 0 && "$shell_status" != 124 ]]; then
+      cat "$shell_log"
+      exit "$shell_status"
+    fi
+    if ! tmux -L poc-no-fzf has-session -t main 2>/tmp/projmux-shell-tmux.err; then
+      cat "$shell_log"
+      cat /tmp/projmux-shell-tmux.err
+      exit 1
+    fi
+    tmux -L poc-no-fzf kill-server
+    echo "[poc/no-fzf] projmux shell launched tmux session"
     echo "[poc/no-fzf] exercise native settings picker"
-    printf "1\n4\n" | env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings
+    settings_stderr=/tmp/projmux-settings.stderr
+    printf "1\n4\n" | env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>"$settings_stderr"
+    if [[ -s "$settings_stderr" ]]; then
+      if grep -Ev "^error connecting to /tmp/tmux-[0-9]+/default \\(No such file or directory\\)$" "$settings_stderr"; then
+        exit 1
+      fi
+      echo "[poc/no-fzf] ignored expected tmux display-message miss in no-server container"
+    fi
     test "$(cat "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode")" = codex
     echo "[poc/no-fzf] passed"'

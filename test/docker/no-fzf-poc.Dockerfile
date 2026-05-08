@@ -18,6 +18,7 @@ RUN apt-get update \
     ncurses-bin \
     procps \
     tmux \
+    util-linux \
   && rm -rf /var/lib/apt/lists/*
 
 COPY go.mod /tmp/projmux-deps/

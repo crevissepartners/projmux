@@ -30,7 +30,8 @@ Run this from the repository root. It builds a Node-based no-fzf dependency
 image from `test/docker/no-fzf-poc.Dockerfile`, including Go module cache, then
 mounts the repository into an isolated `--network none` container, builds
 `projmux`, asserts `fzf` is not on `PATH`, runs the focused native-picker tests,
-and exercises the settings CLI picker through the native backend.
+launches `projmux shell` under a container PTY, verifies that it creates a tmux
+session, and exercises the settings CLI picker through the native backend.
 
 Short tmux-friendly form:
 
