@@ -718,7 +718,7 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 		listLines = append(listLines, fmt.Sprintf("  ... %d more below", len(items)-end))
 	}
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
-		renderNativeSplitPreview(w, listLines, previewLines, layout)
+		renderNativeSplitPreview(w, listLines, previewLines, layout, options.Preview.Window)
 		return
 	}
 	for _, line := range listLines {
@@ -883,8 +883,8 @@ func nativePreviewPercent(window string) int {
 	return 0
 }
 
-func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout) {
-	previewWidth := nativePreviewWidth(layout.Cols)
+func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout, window string) {
+	previewWidth := nativePreviewWidth(layout.Cols, window)
 	listWidth := layout.Cols - previewWidth - 3
 	if listWidth < 32 {
 		listWidth = 32
@@ -905,11 +905,15 @@ func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, lay
 	}
 }
 
-func nativePreviewWidth(cols int) int {
+func nativePreviewWidth(cols int, window string) int {
 	if cols <= 0 {
 		cols = defaultNativeCols
 	}
-	width := cols * 55 / 100
+	percent := nativePreviewPercent(window)
+	if percent <= 0 {
+		percent = 50
+	}
+	width := cols * percent / 100
 	if width < 36 {
 		return 36
 	}

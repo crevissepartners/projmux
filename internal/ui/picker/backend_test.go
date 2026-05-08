@@ -305,6 +305,14 @@ func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
 	}
 }
 
+func TestNativePreviewWidthUsesPreviewWindowPercent(t *testing.T) {
+	t.Parallel()
+
+	if got, want := nativePreviewWidth(120, "right,60%,border-left"), 72; got != want {
+		t.Fatalf("nativePreviewWidth() = %d, want %d", got, want)
+	}
+}
+
 func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
 	t.Parallel()
 
