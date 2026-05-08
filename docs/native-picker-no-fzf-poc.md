@@ -59,7 +59,7 @@ directly. It builds the no-fzf dependency image, mounts this worktree, builds
 `projmux` inside the container, creates sample projects under
 `/workspace/projects`, sets `PROJMUX_PICKER_BACKEND=native`, and launches
 `projmux shell` so you can experience the POC directly. It also forces UTF-8
-locale and the native TTY fallback inside the container. This uses `wt path`
+locale inside the container. This uses `wt path`
 instead of `wt run` because `docker run -it` needs the current terminal TTY:
 
 ```sh

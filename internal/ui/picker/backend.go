@@ -164,17 +164,19 @@ type NativeRunner struct {
 
 const nativePageSize = 12
 const (
-	defaultNativeRows  = 30
-	defaultNativeCols  = 100
-	nativeCurrentStart = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
-	nativePointer      = "\x1b[38;2;225;38;114m▌\x1b[0m "
-	nativeReset        = "\x1b[0m"
-	nativeCursorStart  = "\x1b[7m"
-	nativeScreenEnter  = "\x1b[?1049h\x1b[?25l"
-	nativeScreenLeave  = "\x1b[?25h\x1b[?1049l\r\n"
-	nativeScrollbar    = "█"
-	nativeGapLine      = "─"
-	nativeGapSentinel  = "\x00projmux-native-gap\x00"
+	defaultNativeRows       = 30
+	defaultNativeCols       = 100
+	nativeReadPollDelay     = 5 * time.Millisecond
+	nativeMaybeReadAttempts = 50
+	nativeCurrentStart      = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
+	nativePointer           = "\x1b[38;2;225;38;114m▌\x1b[0m "
+	nativeReset             = "\x1b[0m"
+	nativeCursorStart       = "\x1b[7m"
+	nativeScreenEnter       = "\x1b[?1049h\x1b[?25l"
+	nativeScreenLeave       = "\x1b[?25h\x1b[?1049l\r\n"
+	nativeScrollbar         = "█"
+	nativeGapLine           = "─"
+	nativeGapSentinel       = "\x00projmux-native-gap\x00"
 )
 
 func (r NativeRunner) Run(options Options) (Result, error) {
@@ -256,7 +258,7 @@ func enableRawTerminal(in io.Reader) (func(), bool) {
 		return func() {}, false
 	}
 	state := strings.TrimSpace(string(stateBytes))
-	rawCmd := exec.Command("stty", "raw", "-echo", "min", "0", "time", "1")
+	rawCmd := exec.Command("stty", "raw", "-echo", "min", "0", "time", "0")
 	rawCmd.Stdin = file
 	if err := rawCmd.Run(); err != nil {
 		return func() {}, false
@@ -815,12 +817,13 @@ func readNativeByte(r io.Reader) (byte, error) {
 		if err != nil {
 			return 0, err
 		}
+		time.Sleep(nativeReadPollDelay)
 	}
 }
 
 func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 	var buf [1]byte
-	for attempt := 0; attempt < 20; attempt++ {
+	for attempt := 0; attempt < nativeMaybeReadAttempts; attempt++ {
 		n, err := r.Read(buf[:])
 		if n > 0 {
 			return buf[0], true, nil
@@ -831,7 +834,7 @@ func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 		if err != nil {
 			return 0, false, err
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(nativeReadPollDelay)
 	}
 	return 0, false, nil
 }
@@ -1068,16 +1071,16 @@ func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 }
 
 func nativePromptLine(prompt, query string, matches, total, cols int) string {
-	return nativePromptLineWithRenderedQuery(prompt, query, matches, total, cols)
+	return nativePromptLineWithRenderedQuery(prompt, query, query, matches, total, cols)
 }
 
 func nativePromptLineWithCursor(prompt, query string, cursor, matches, total, cols int) string {
-	return nativePromptLineWithRenderedQuery(prompt, nativeQueryWithCursor(query, cursor), matches, total, cols)
+	return nativePromptLineWithRenderedQuery(prompt, query, nativeQueryWithCursor(query, cursor), matches, total, cols)
 }
 
-func nativePromptLineWithRenderedQuery(prompt, query string, matches, total, cols int) string {
+func nativePromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
 	prompt = strings.TrimRight(prompt, " ")
-	line := strings.TrimRight(prompt+" "+query, " ")
+	line := strings.TrimRight(prompt+" "+renderedQuery, " ")
 	info := strconv.Itoa(matches)
 	if query != "" || matches != total {
 		info = fmt.Sprintf("%d/%d", matches, total)

@@ -337,6 +337,21 @@ func TestNativeInteractiveConsumesShiftCSIKeys(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveWaitsForSplitEscapeSequences(t *testing.T) {
+	t.Parallel()
+
+	key, err := readNativeKey(&delayedByteReader{
+		zerosBeforeByte: 25,
+		data:            []byte("\x1b[B"),
+	})
+	if err != nil {
+		t.Fatalf("readNativeKey() error = %v", err)
+	}
+	if key.Name != "down" || key.Text != "" {
+		t.Fatalf("key = %#v, want down without query leakage", key)
+	}
+}
+
 func TestNativeInteractiveFiltersWithPrintableInput(t *testing.T) {
 	t.Parallel()
 
@@ -565,6 +580,15 @@ func TestNativePromptLineRendersEndCursor(t *testing.T) {
 	line := nativePromptLineWithCursor("› ", "api", 3, 1, 1, 20)
 	if !strings.Contains(line, "api"+nativeCursorStart+" "+nativeReset) {
 		t.Fatalf("nativePromptLineWithCursor() = %q, want visible end cursor", line)
+	}
+}
+
+func TestNativePromptLineCursorDoesNotForceFilteredInfo(t *testing.T) {
+	t.Parallel()
+
+	line := nativePromptLineWithCursor("› ", "", 0, 5, 5, 20)
+	if strings.Contains(line, "5/5") || !strings.HasSuffix(line, "5") {
+		t.Fatalf("nativePromptLineWithCursor() = %q, want unfiltered total count", line)
 	}
 }
 
@@ -863,4 +887,28 @@ func TestNativeInteractiveRunsFocusActionOnSelectionChange(t *testing.T) {
 	if got, want := string(data), "api\nweb\n"; got != want {
 		t.Fatalf("focus log = %q, want %q", got, want)
 	}
+}
+
+type delayedByteReader struct {
+	data            []byte
+	zerosBeforeByte int
+	index           int
+	zeros           int
+}
+
+func (r *delayedByteReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.index >= len(r.data) {
+		return 0, io.EOF
+	}
+	if r.index > 0 && r.zeros < r.zerosBeforeByte {
+		r.zeros++
+		return 0, nil
+	}
+	p[0] = r.data[r.index]
+	r.index++
+	r.zeros = 0
+	return 1, nil
 }
