@@ -142,6 +142,37 @@ func TestNativeRunnerAcceptsTypedQuery(t *testing.T) {
 	}
 }
 
+func TestNativeTTYFallbackIsEnabledForAppTTYContexts(t *testing.T) {
+	t.Parallel()
+
+	tmp := filepath.Join(t.TempDir(), "stdin")
+	f, err := os.Create(tmp)
+	if err != nil {
+		t.Fatalf("create temp stdin: %v", err)
+	}
+	defer f.Close()
+
+	if !shouldOpenNativeTTYFallback(f, func(name string) string {
+		if name == "TMUX" {
+			return "/tmp/tmux-1000/default,1,0"
+		}
+		return ""
+	}) {
+		t.Fatal("tmux context should force native picker through controlling TTY")
+	}
+	if !shouldOpenNativeTTYFallback(f, func(name string) string {
+		if name == "PROJMUX_NATIVE_TTY_FALLBACK" {
+			return "1"
+		}
+		return ""
+	}) {
+		t.Fatal("explicit native TTY fallback env should force controlling TTY")
+	}
+	if shouldOpenNativeTTYFallback(f, func(string) string { return "" }) {
+		t.Fatal("non-stdin file without tmux/env should not force controlling TTY")
+	}
+}
+
 func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 	t.Parallel()
 
@@ -448,6 +479,29 @@ func TestNativeInteractiveRendersPreviewOffset(t *testing.T) {
 	rendered := out.String()
 	if strings.Contains(rendered, "\none") || !strings.Contains(rendered, "two") || !strings.Contains(rendered, "three") || !strings.Contains(rendered, "─") {
 		t.Fatalf("native output = %q, want preview scrolled by one line", rendered)
+	}
+}
+
+func TestNativeInteractiveUsesScrollbarForLongLists(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 0, 24)
+	for i := 0; i < 24; i++ {
+		items = append(items, Item{Title: "item " + strconv.Itoa(i), Value: strconv.Itoa(i)})
+	}
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:    "switch",
+		Items: items,
+	}, items, "", 12, 0, nativeLayout{Rows: 10, Cols: 50})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, nativeScrollbar) {
+		t.Fatalf("native output = %q, want fzf-like scrollbar", rendered)
+	}
+	if strings.Contains(rendered, "more below") || strings.Contains(rendered, "more above") {
+		t.Fatalf("native output = %q, want scrollbar instead of textual overflow rows", rendered)
 	}
 }
 

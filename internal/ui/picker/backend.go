@@ -152,6 +152,7 @@ const (
 	nativeReset        = "\x1b[0m"
 	nativeScreenEnter  = "\x1b[?1049h\x1b[?25l"
 	nativeScreenLeave  = "\x1b[?25h\x1b[?1049l\r\n"
+	nativeScrollbar    = "█"
 )
 
 func (r NativeRunner) Run(options Options) (Result, error) {
@@ -164,17 +165,17 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 		out = io.Discard
 	}
 
-	if restore, ok := enableRawTerminal(in); ok {
-		defer restore()
-		return runNativeInteractive(in, out, options)
-	}
-
 	if tty, ok := openNativeTTYFallback(in); ok {
 		defer tty.Close()
 		if restore, ok := enableRawTerminal(tty); ok {
 			defer restore()
 			return runNativeInteractive(tty, tty, options)
 		}
+	}
+
+	if restore, ok := enableRawTerminal(in); ok {
+		defer restore()
+		return runNativeInteractive(in, out, options)
 	}
 
 	return runNativeLineMode(in, out, options)
@@ -246,10 +247,11 @@ func enableRawTerminal(in io.Reader) (func(), bool) {
 }
 
 func openNativeTTYFallback(in io.Reader) (*os.File, bool) {
-	if _, ok := in.(*os.File); !ok {
+	file, ok := in.(*os.File)
+	if !ok {
 		return nil, false
 	}
-	if strings.TrimSpace(os.Getenv("TMUX")) == "" && strings.TrimSpace(os.Getenv("PROJMUX_NATIVE_TTY_FALLBACK")) == "" {
+	if !shouldOpenNativeTTYFallback(file, os.Getenv) {
 		return nil, false
 	}
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
@@ -257,6 +259,19 @@ func openNativeTTYFallback(in io.Reader) (*os.File, bool) {
 		return nil, false
 	}
 	return tty, true
+}
+
+func shouldOpenNativeTTYFallback(file *os.File, lookup func(string) string) bool {
+	if file == nil {
+		return false
+	}
+	if strings.TrimSpace(lookup("PROJMUX_NATIVE_TTY_FALLBACK")) != "" {
+		return true
+	}
+	if strings.TrimSpace(lookup("TMUX")) != "" {
+		return true
+	}
+	return file.Fd() == os.Stdin.Fd()
 }
 
 type nativeKey struct {
@@ -870,16 +885,11 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		fmt.Fprintln(w, "  no matches")
 		return
 	}
-	if start > 0 {
-		listLines = append([]string{fmt.Sprintf("  ... %d more above", start)}, listLines...)
-	}
-	if end < len(items) {
-		listLines = append(listLines, fmt.Sprintf("  ... %d more below", len(items)-end))
-	}
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
-		renderNativeSplitPreview(w, listLines, previewLines, layout, options.Preview.Window)
+		renderNativeSplitPreview(w, listLines, previewLines, layout, options.Preview.Window, len(items), start, end)
 		return
 	}
+	listLines = nativeListLinesWithScrollbar(listLines, len(items), start, end, layout.Cols)
 	for _, line := range listLines {
 		fmt.Fprintln(w, line)
 	}
@@ -962,6 +972,26 @@ func nativeInteractiveListLines(items []Item, start, end, selected int, multiLin
 		lines = append(lines, nativeInteractiveItemLines(items[i], i == selected, multiLine)...)
 	}
 	return lines
+}
+
+func nativeListLinesWithScrollbar(lines []string, total, start, end, width int) []string {
+	visible := end - start
+	if total <= visible || len(lines) == 0 || width <= 1 {
+		return lines
+	}
+	scrollbarIndex := 0
+	if maxStart := total - visible; maxStart > 0 && len(lines) > 1 {
+		scrollbarIndex = start * (len(lines) - 1) / maxStart
+	}
+	rendered := make([]string, 0, len(lines))
+	for i, line := range lines {
+		marker := " "
+		if i == scrollbarIndex {
+			marker = nativeScrollbar
+		}
+		rendered = append(rendered, nativePadRight(nativeTruncateANSI(line, width-1), width-1)+marker)
+	}
+	return rendered
 }
 
 func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
@@ -1072,13 +1102,14 @@ func nativePreviewPercent(window string) int {
 	return 0
 }
 
-func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout, window string) {
+func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout, window string, total, start, end int) {
 	previewWidth := nativePreviewWidth(layout.Cols, window)
 	listWidth := layout.Cols - previewWidth - 3
 	if listWidth < 32 {
 		listWidth = 32
 		previewWidth = layout.Cols - listWidth - 3
 	}
+	listLines = nativeListLinesWithScrollbar(listLines, total, start, end, listWidth)
 	rows := maxInt(len(listLines), len(previewLines)+1)
 	fmt.Fprintf(w, "%s │ %s\n", nativePadRight("", listWidth), "preview")
 	for i := 0; i < rows; i++ {

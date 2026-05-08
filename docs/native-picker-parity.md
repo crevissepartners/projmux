@@ -17,6 +17,7 @@ picker evidence. It is not a production dependency-policy change.
 | plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickerItemsFromFZF`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata` |
 | fuzzy result ranking | switch/sessions/notify search UX | Covered approximately | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst` |
+| `--scrollbar █` | long switch/session/settings lists | Covered approximately | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | fzf current row colors | multi-line rows | Covered approximately | `nativeCurrentStart`, `nativePointer`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `pickerActionsFromFZF`; `TestNativeInteractiveSupportsCustomExpectKeys` |
@@ -33,7 +34,7 @@ picker evidence. It is not a production dependency-policy change.
 | preview scrolling | long switch/session preview output | Covered approximately with `Shift-Up`/`Shift-Down` | `previewOffset`; `TestNativeInteractiveRendersPreviewOffset` |
 | `--query` | typed settings path defaults | Covered | `Options.InitialQuery`; settings tests |
 | `--print-query` accept-query mode | typed settings path prompts | Covered | `Options.AcceptQuery`; `TestNativeRunnerAcceptsTypedQuery` |
-| terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; tmux `/dev/tty` fallback |
+| terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; app TTY `/dev/tty` fallback |
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen` |
 
 ## Verified Flows

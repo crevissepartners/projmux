@@ -20,7 +20,10 @@ docker run --rm -it \
   -e XDG_STATE_HOME=/tmp/projmux-state \
   -e GOCACHE=/tmp/projmux-gocache \
   -e GOTOOLCHAIN=local \
+  -e LANG=C.UTF-8 \
+  -e LC_ALL=C.UTF-8 \
   -e PROJMUX_PICKER_BACKEND=native \
+  -e PROJMUX_NATIVE_TTY_FALLBACK=1 \
   -e TERM=xterm-256color \
   -e SHELL=/bin/bash \
   "$image" \

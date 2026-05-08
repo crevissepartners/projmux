@@ -5,6 +5,8 @@ ENV GOPATH=/go
 ENV GOMODCACHE=/go/pkg/mod
 ENV GOTOOLCHAIN=local
 ENV PATH=/go/bin:$PATH
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 ENV SHELL=/bin/bash
 ENV TERM=xterm-256color
 
