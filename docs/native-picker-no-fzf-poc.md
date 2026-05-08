@@ -34,7 +34,7 @@ picker through the native backend.
 Short tmux-friendly form:
 
 ```sh
-wt run poc/native-picker-no-fzf -- scripts/poc-native-picker-no-fzf-e2e.sh
+bash "$(wt path poc/native-picker-no-fzf)/scripts/poc-native-picker-no-fzf-e2e.sh"
 ```
 
 The script contains the expanded Docker command:
