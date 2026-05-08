@@ -441,9 +441,12 @@ func TestStatusbarClickNotifyExecsFocusForNewestEntry(t *testing.T) {
 	if !equalStringSlices(focusCall.args, wantArgs) {
 		t.Fatalf("focus args = %#v, want %#v", focusCall.args, wantArgs)
 	}
+	if store.ackedID != "abc" {
+		t.Fatalf("store.ackedID = %q, want abc", store.ackedID)
+	}
 }
 
-func TestStatusbarClickNotifyKeepsEntryAfterSuccessfulFocus(t *testing.T) {
+func TestStatusbarClickNotifyAcksEntryAfterSuccessfulFocus(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
@@ -464,8 +467,8 @@ func TestStatusbarClickNotifyKeepsEntryAfterSuccessfulFocus(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if store.ackedID != "" {
-		t.Fatalf("store.ackedID = %q, want empty", store.ackedID)
+	if store.ackedID != "abc" {
+		t.Fatalf("store.ackedID = %q, want abc", store.ackedID)
 	}
 }
 

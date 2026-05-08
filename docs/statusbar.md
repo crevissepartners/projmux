@@ -57,7 +57,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `usage`   | 1 | `display-popup -E -h 60% -w 80% -- projmux usage`, then wait for Enter | `prefix s u`  |
-| `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, without acking | `prefix s n`  |
+| `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on focus success | `prefix s n`  |
 
 `notify` reads the pending queue only. For a live pane-state view that is
 independent of queued reminders, use `projmux attention list`. To explain why

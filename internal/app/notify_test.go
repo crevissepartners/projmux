@@ -288,8 +288,8 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if labelLines[0] != "codex: deploy ok" {
 		t.Fatalf("sidebar first line = %q, want notification text", labelLines[0])
 	}
-	if meta := labelLines[1]; !strings.Contains(meta, " main ") || !strings.Contains(meta, " queued ") || !strings.Contains(meta, " WARN ") || !strings.Contains(meta, "30s") || !strings.Contains(meta, "main:1.0") || strings.Contains(meta, " ai ") {
-		t.Fatalf("sidebar metadata = %q, want project/queued/status/age/target without source", meta)
+	if meta := labelLines[1]; !strings.Contains(meta, " age 30s ") || !strings.Contains(meta, " main ") || !strings.Contains(meta, "window 1") || !strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " WARN ") || strings.Contains(meta, " ai ") {
+		t.Fatalf("sidebar metadata = %q, want age/project/window/pane without queued/status/source", meta)
 	}
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
@@ -339,8 +339,8 @@ func TestNotifySidebarLabelDoesNotExposeRawPaneID(t *testing.T) {
 	if strings.Contains(label, "%42") {
 		t.Fatalf("sidebar label = %q, want raw pane id hidden", label)
 	}
-	if !strings.Contains(lines[1], "main:1") {
-		t.Fatalf("metadata = %q, want session/window target fallback", lines[1])
+	if !strings.Contains(lines[1], "window 1") || !strings.Contains(lines[1], "pane 42") {
+		t.Fatalf("metadata = %q, want readable window/pane labels", lines[1])
 	}
 }
 

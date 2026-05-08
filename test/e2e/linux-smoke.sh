@@ -57,4 +57,8 @@ smoke_assert_output_contains "$status_notify" "docker e2e"
 
 "$bin" statusbar click notify >"$PROJMUX_SMOKE_WORKDIR/statusbar-notify-click.out"
 "$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json" "docker e2e"
+if grep -Fq "docker e2e" "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"; then
+  echo "expected statusbar notify focus to ack docker e2e" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json" >&2
+  exit 1
+fi

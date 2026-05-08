@@ -85,8 +85,8 @@ preserves the stable JSON array used by scripts.
 run inside the tmux popup surface. Enter focuses the selected target pane and
 acks the row after focus succeeds. `a` acks the selected row. `Ctrl-A` clears
 all rows via `notify ack --all`. Rows are intentionally compact: the visible
-label keeps age, non-info severity, and text; id/source/target remain
-searchable.
+label keeps notification text first, then age, project, window, and pane
+metadata; id/source/severity/target remain searchable.
 
 `--live` adds a non-mutating explanation view that reads
 `tmux list-panes -a` and compares the queue with live reply-state panes. It
@@ -177,7 +177,8 @@ projmux focus --target <target> --source status-bar --kind segment-click [--sock
 
 Outcomes:
 
-- **Focus succeeded** — keep the entry pending. Navigation is not ack.
+- **Focus succeeded** — ack the entry. Focus is the single consume path for
+  routed notification clicks.
 - **Focus exited 2 (target unresolved)** — keep the entry pending and toast
   `notify target gone; ack to clear`.
 - **Other failure** — keep the entry, toast `focus failed: <reason>`

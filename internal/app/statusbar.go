@@ -426,8 +426,8 @@ func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Wri
 	return c.runTmux(stderr, "display-message", strings.TrimSpace(string(out)))
 }
 
-// handleNotify focuses the origin pane of the newest queued notification. If
-// the queue is empty we surface that fact in tmux rather than silently doing
+// handleNotify focuses and acknowledges the newest queued notification. If the
+// queue is empty we surface that fact in tmux rather than silently doing
 // nothing — that gives the keyboard shortcut useful feedback.
 //
 // This handler MUST NOT return an error to its caller (tmux's run-shell). A
@@ -487,6 +487,9 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 			return c.runTmux(stderr, "display-message", "notify target gone; ack to clear")
 		}
 		return c.runTmux(stderr, "display-message", fmt.Sprintf("focus failed: %s", focusFailureSummary(runErr)))
+	}
+	if err := store.Ack(head.ID); err != nil {
+		return c.runTmux(stderr, "display-message", fmt.Sprintf("focused; ack failed: %s", focusFailureSummary(err)))
 	}
 	return nil
 }

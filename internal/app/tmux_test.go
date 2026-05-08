@@ -282,7 +282,7 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 		"-x", "128",
 		"-y", "0",
 		"-w", "72",
-		"-h", "30",
+		"-h", "50",
 		"-T", "Notifications",
 	}
 	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {

@@ -182,8 +182,8 @@ projmux notify reconcile [--json]
   compact interactive notify list where Enter focuses and acks a target, `a`
   acks the selected row, and `Ctrl-A` clears all; opening or navigating the
   sidebar does not ack. The sidebar uses two-line cards with notification text
-  first and compact project/queued/state/age/target metadata below, while
-  keeping ids, source, and target details searchable.
+  first and compact age/project/window/pane metadata below, while keeping ids,
+  source, severity, and target details searchable.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
   panes whose attention state is `reply` AND whose AI agent option is
@@ -253,8 +253,8 @@ click-to-switch tab affordance is preserved on row 0. Unknown range ids are
 non-specialized placeholders and no-op. `session` opens the existing-session
 popup; `pwd` copies the current pane path to the tmux paste buffer and shows
 it in a compact popup; `kube` and `git` open the project switcher popup;
-`usage` opens the detailed `projmux usage` table popup; `notify` focuses the
-newest actionable queue target without acking it.
+`usage` opens the detailed `projmux usage` table popup; `notify` focuses and
+acks the newest actionable queue target.
 `MouseDown1Status` errors are
 swallowed and surfaced as `display-message` toasts so a transient
 failure does not raise a tmux error popup. See [statusbar.md](statusbar.md).
