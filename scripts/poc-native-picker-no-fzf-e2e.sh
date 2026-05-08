@@ -32,6 +32,29 @@ docker run --rm \
     go test ./internal/ui/picker ./internal/app -run "Native|TestSettingsNativeBackendDoesNotCallFZF|TestSwitchCommandUsesNativePickerWhenRequested"
     echo "[poc/no-fzf] build projmux"
     go build -o /tmp/projmux ./cmd/projmux
+    echo "[poc/no-fzf] exercise native switch picker under a PTY"
+    demo_root=/tmp/projmux-projects
+    mkdir -p "$demo_root/alpha-api" "$demo_root/bravo-web" "$demo_root/charlie-tools"
+    for project in alpha-api bravo-web charlie-tools; do
+      if [[ ! -d "$demo_root/$project/.git" ]]; then
+        git -C "$demo_root/$project" init -q
+      fi
+      printf "# %s\n" "$project" > "$demo_root/$project/README.md"
+    done
+    switch_log=/tmp/projmux-switch.log
+    switch_status=0
+    printf "bravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$switch_log" || switch_status=$?
+    if [[ "$switch_status" != 0 && "$switch_status" != 124 ]]; then
+      cat "$switch_log"
+      exit "$switch_status"
+    fi
+    if ! grep -q "/tmp/projmux-projects/bravo-web" "$switch_log"; then
+      cat "$switch_log"
+      echo "native switch did not open bravo-web" >&2
+      exit 1
+    fi
+    tmux kill-server 2>/dev/null || true
+    echo "[poc/no-fzf] native switch selected bravo-web"
     echo "[poc/no-fzf] launch projmux shell under a PTY"
     shell_log=/tmp/projmux-shell.log
     shell_status=0
@@ -51,7 +74,7 @@ docker run --rm \
     settings_stderr=/tmp/projmux-settings.stderr
     printf "1\n4\n" | env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>"$settings_stderr"
     if [[ -s "$settings_stderr" ]]; then
-      if grep -Ev "^error connecting to /tmp/tmux-[0-9]+/default \\(No such file or directory\\)$" "$settings_stderr"; then
+      if grep -Ev "^(error connecting to /tmp/tmux-[0-9]+/default \\(No such file or directory\\)|no server running on /tmp/tmux-[0-9]+/default)$" "$settings_stderr"; then
         exit 1
       fi
       echo "[poc/no-fzf] ignored expected tmux display-message miss in no-server container"
