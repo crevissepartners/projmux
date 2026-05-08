@@ -40,8 +40,10 @@ The fzf compatibility surface for this POC is tracked in
   right-side preview windows render beside the list, and sidebar-style
   `down,25%,border-top` previews render below the list, but exact fzf
   preview-window color and border parity is still missing.
-- Full switch preview cycle parity still needs hands-on validation against real
-  tmux sessions.
+- Exact preview cycle state parity still needs hands-on validation against real
+  tmux sessions. The Docker e2e now smokes the `Right` preview-cycle binding
+  before selecting a switch/session row, but does not assert the final preview
+  cursor state.
 - Public docs and doctor dependency policy still treat `fzf` as required.
 
 ## Interactive No-fzf Sandbox
@@ -76,10 +78,11 @@ mounts the repository into an isolated `--network none` container, builds
 `projmux`, asserts `fzf` is not on `PATH`, runs the focused native-picker tests,
 exercises `projmux switch --ui=sidebar` search/selection under a container PTY,
 exercises `projmux switch --ui=popup` and `projmux sessions --ui=popup` against
-existing tmux sessions, launches `projmux shell` under a container PTY, verifies
-that it creates a tmux session, exercises `notify list --ui=sidebar` with the
-printable `a` expect key, and exercises the settings picker under a PTY using
-Enter and arrow-key navigation through the native backend.
+existing tmux sessions, sends `Right` once to smoke the preview-cycle binding,
+launches `projmux shell` under a container PTY, verifies that it creates a tmux
+session, exercises `notify list --ui=sidebar` with the printable `a` expect key,
+and exercises the settings picker under a PTY using Enter and arrow-key
+navigation through the native backend.
 
 Short tmux-friendly form:
 

@@ -55,12 +55,12 @@ docker run --rm \
     fi
     tmux kill-server 2>/dev/null || true
     echo "[poc/no-fzf] native switch selected bravo-web"
-    echo "[poc/no-fzf] exercise native switch popup against existing sessions"
+    echo "[poc/no-fzf] exercise native switch popup preview cycle against existing sessions"
     tmux new-session -d -s projmux-projects-alpha-api -c "$demo_root/alpha-api"
     tmux new-session -d -s projmux-projects-bravo-web -c "$demo_root/bravo-web"
     popup_log=/tmp/projmux-switch-popup.log
     popup_status=0
-    printf "bravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=popup" "$popup_log" || popup_status=$?
+    printf "\033[Cbravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=popup" "$popup_log" || popup_status=$?
     if [[ "$popup_status" != 0 && "$popup_status" != 124 ]]; then
       cat "$popup_log"
       exit "$popup_status"
@@ -71,13 +71,13 @@ docker run --rm \
       exit 1
     fi
     tmux kill-server 2>/dev/null || true
-    echo "[poc/no-fzf] native switch popup selected existing bravo-web"
-    echo "[poc/no-fzf] exercise native sessions picker against existing sessions"
+    echo "[poc/no-fzf] native switch popup cycled preview and selected existing bravo-web"
+    echo "[poc/no-fzf] exercise native sessions picker preview cycle against existing sessions"
     tmux new-session -d -s projmux-projects-alpha-api -c "$demo_root/alpha-api"
     tmux new-session -d -s projmux-projects-bravo-web -c "$demo_root/bravo-web"
     sessions_log=/tmp/projmux-sessions.log
     sessions_status=0
-    printf "bravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux sessions --ui=popup" "$sessions_log" || sessions_status=$?
+    printf "\033[Cbravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux sessions --ui=popup" "$sessions_log" || sessions_status=$?
     if [[ "$sessions_status" != 0 && "$sessions_status" != 124 ]]; then
       cat "$sessions_log"
       exit "$sessions_status"
@@ -88,7 +88,7 @@ docker run --rm \
       exit 1
     fi
     tmux kill-server 2>/dev/null || true
-    echo "[poc/no-fzf] native sessions picker selected bravo-web"
+    echo "[poc/no-fzf] native sessions picker cycled preview and selected bravo-web"
     echo "[poc/no-fzf] launch projmux shell under a PTY"
     shell_log=/tmp/projmux-shell.log
     shell_status=0
