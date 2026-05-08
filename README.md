@@ -69,7 +69,7 @@ Open the app once, then use its generated tmux bindings to:
 - [Go 1.24+](https://go.dev/dl/) — required only when installing with
   `go install` or building from source.
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) **≥ 3.4** — the workspace runtime. Earlier versions miss `display-popup -T` and other features projmux depends on.
-- [fzf](https://github.com/junegunn/fzf#installation) **≥ 0.55** — interactive popup/sidebar pickers. The multiline picker uses `--marker-multi-line`, `--gap-line`, and `--highlight-line`, which landed by 0.55.
+- [fzf](https://github.com/junegunn/fzf#installation) **≥ 0.65.0** — interactive popup/sidebar pickers. The `fzf` executable on `PATH` must report at least 0.65.0 from `fzf --version`; distro packages such as Ubuntu 24 apt may be too old, so use upstream GitHub Releases, Homebrew, or another install method with a version check. `npm i fzf` installs a JavaScript fuzzy-search library, not the junegunn/fzf CLI binary that projmux executes.
 - A Unix shell such as `bash`, `zsh`, or `sh` — `projmux shell` uses your
   absolute `$SHELL` for the generated app config, falling back to `/bin/sh`.
 - [git](https://git-scm.com/downloads) — branch/status metadata.
