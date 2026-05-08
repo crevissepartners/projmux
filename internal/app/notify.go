@@ -277,6 +277,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 	now := c.clock()
 	fzfOptions := intfzf.Options{
 		UI:         "notify-sidebar",
+		Read0:      true,
 		Prompt:     "notilist> ",
 		Header:     "Enter: focus | a: ack selected | Ctrl-A: clear all | Esc: close",
 		Footer:     "focus acks the selected notification",
@@ -345,7 +346,7 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intfzf
 		})
 		label := notifySidebarLabel(e, now)
 		out = append(out, intfzf.Entry{
-			Label:     notifyTableCell(label),
+			Label:     label,
 			Value:     e.ID,
 			SearchKey: strings.Join([]string{e.ID, e.Text, e.Severity, e.Source, target}, " "),
 		})
@@ -355,26 +356,47 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intfzf
 
 func notifySidebarLabel(e notify.Notification, now time.Time) string {
 	age := formatAge(now.Sub(e.CreatedAt))
-	agent, text := splitAgentPrefix(e)
+	text := notifySidebarLabelCell(e.Text)
 	if text == "" {
 		text = "(empty notification)"
 	}
-	parts := []string{
-		fmt.Sprintf("%-4s", age),
+	metaParts := []string{
 		notifySidebarProjectBadge(notifyProjectName(e.Session)),
+		notifySidebarConsumptionBadge("queued"),
 		notifySidebarStateBadge(notifyStateLabel(e, text)),
+		notifySidebarDim(age),
 	}
-	if agent != "" {
-		parts = append(parts, notifySidebarAgentBadge(agent))
+	if target := notifySidebarTarget(e); target != "" {
+		metaParts = append(metaParts, notifySidebarDim(target))
 	}
-	parts = append(parts, text)
-	return strings.Join(parts, " ")
+	return text + "\n  " + strings.Join(metaParts, " ")
+}
+
+func notifySidebarLabelCell(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "\t", " ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return strings.TrimSpace(value)
+}
+
+func notifySidebarTarget(e notify.Notification) string {
+	pane := strings.TrimSpace(e.Pane)
+	if strings.HasPrefix(pane, "%") {
+		pane = ""
+	}
+	return notifySidebarLabelCell(notify.FormatTarget(notify.Target{
+		Session: e.Session,
+		Window:  e.Window,
+		Pane:    pane,
+	}))
 }
 
 const (
 	notifySidebarReset   = "\x1b[0m"
 	notifySidebarDimOpen = "\x1b[38;5;245m"
 	notifySidebarProject = "\x1b[1;38;5;231;48;5;90m"
+	notifySidebarQueued  = "\x1b[38;5;16;48;5;250m"
 	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;45m"
 	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;220m"
 	notifySidebarCrit    = "\x1b[1;38;5;231;48;5;160m"
@@ -386,6 +408,14 @@ func notifySidebarProjectBadge(project string) string {
 		project = "project"
 	}
 	return notifySidebarProject + " " + project + " " + notifySidebarReset
+}
+
+func notifySidebarConsumptionBadge(label string) string {
+	label = strings.ToLower(strings.TrimSpace(label))
+	if label == "" {
+		label = "queued"
+	}
+	return notifySidebarQueued + " " + label + " " + notifySidebarReset
 }
 
 func notifySidebarStateBadge(label string) string {
