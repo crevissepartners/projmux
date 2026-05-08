@@ -458,8 +458,11 @@ func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
 	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 24, Cols: 120})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, " │ preview") || !strings.Contains(rendered, "preview:/repo/api") {
+	if !strings.Contains(rendered, " │ preview:/repo/api") {
 		t.Fatalf("native output = %q, want side-by-side preview", rendered)
+	}
+	if strings.Contains(rendered, " │ preview\n") {
+		t.Fatalf("native output = %q, want fzf-like preview without synthetic title row", rendered)
 	}
 }
 
@@ -609,8 +612,11 @@ func TestNativeInteractiveRendersDownPreviewBelowList(t *testing.T) {
 	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "preview") || !strings.Contains(rendered, "preview:/repo/api") {
+	if !strings.Contains(rendered, "preview:/repo/api") {
 		t.Fatalf("native output = %q, want bottom preview", rendered)
+	}
+	if strings.Contains(rendered, "\npreview\n") {
+		t.Fatalf("native output = %q, want fzf-like bottom preview without synthetic title row", rendered)
 	}
 }
 

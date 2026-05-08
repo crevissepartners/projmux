@@ -1218,8 +1218,7 @@ func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, lay
 		previewWidth = layout.Cols - listWidth - 3
 	}
 	listLines = nativeListLinesWithScrollbar(listLines, total, start, end, listWidth)
-	rows := maxInt(len(listLines), len(previewLines)+1)
-	fmt.Fprintf(w, "%s │ %s\n", nativePadRight("", listWidth), "preview")
+	rows := maxInt(len(listLines), len(previewLines))
 	for i := 0; i < rows; i++ {
 		left := ""
 		if i < len(listLines) {
@@ -1255,7 +1254,6 @@ func renderNativeDownPreview(w io.Writer, previewLines []string, layout nativeLa
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, nativeTruncateANSI(strings.Repeat("─", width), width))
-	fmt.Fprintln(w, "preview")
 	for _, line := range previewLines {
 		fmt.Fprintln(w, nativeTruncateANSI(line, width))
 	}
