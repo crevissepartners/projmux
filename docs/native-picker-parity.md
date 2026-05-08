@@ -9,7 +9,7 @@ picker evidence. It is not a production dependency-policy change.
 | fzf surface | projmux usage | Native status | Evidence |
 | --- | --- | --- | --- |
 | `--prompt` | AI, settings, shell update, switch, sessions, notify | Covered | `renderNativeInteractive`, `renderNative`; `TestNativePromptLineIncludesInlineMatchCount` |
-| `--height 100%` / `--border` | all interactive picker screens | Covered approximately | `renderNativeFrame`; `TestNativeInteractiveRendersBorderFrame` |
+| `--height 100%` / `--border` | all interactive picker screens | Covered approximately | `renderNativeFrame`; screen-height list budgeting; `TestNativeInteractiveRendersBorderFrame`; `TestNativeInteractiveUsesAvailableHeightForSimpleLists` |
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / header fallback | AI, settings, shell update, switch, sessions, notify | Covered as footer text, not fzf footer border | `renderNativeInteractive`, `renderNative` |
 | `--ansi` | colored row labels from render package | Covered | native writes row labels directly; Docker e2e shows ANSI rows |
@@ -71,8 +71,8 @@ picker evidence. It is not a production dependency-policy change.
   workflows depend on it.
 - The public doctor/docs dependency policy still says `fzf` is required. This is
   intentional for the POC branch.
-- Draft PR creation is blocked by GitHub App permissions in this environment
-  (`403 Resource not accessible by integration`), although the branch is pushed.
+- Draft PR: https://github.com/crevissepartners/projmux/pull/98 (`DO NOT MERGE
+  / POC ONLY`).
 
 ## Commands
 

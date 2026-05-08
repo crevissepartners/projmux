@@ -900,17 +900,12 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 
 	placement := nativePreviewPlacement(options.Preview.Window)
 	previewHeight := nativePreviewHeight(layout.Rows, options.Preview.Window)
-	previewLimit := maxInt(4, layout.Rows-8)
+	previewLimit := maxInt(1, layout.Rows-nativeChromeLineCount(options))
 	if placement == "down" {
 		previewLimit = previewHeight
 	}
 	previewLines := nativePreviewLines(options, items, selected, previewOffset, previewLimit)
-	listLimit := nativePageSize
-	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
-		listLimit = maxInt(6, layout.Rows-7)
-	} else if len(previewLines) > 0 && placement == "down" {
-		listLimit = maxInt(4, layout.Rows-previewHeight-8)
-	}
+	listLimit := nativeListLimit(options, layout, placement, previewHeight, len(previewLines) > 0)
 	start, end := nativeVisibleRange(len(items), selected, listLimit)
 	if options.MultiLine {
 		start, end = nativeVisibleRangeByRenderedRows(items, selected, listLimit)
@@ -935,6 +930,36 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	if len(previewLines) > 0 {
 		renderNativeInlinePreview(w, previewLines)
 	}
+}
+
+func nativeListLimit(options Options, layout nativeLayout, previewPlacement string, previewHeight int, hasPreview bool) int {
+	available := layout.Rows - nativeChromeLineCount(options)
+	if hasPreview && previewPlacement == "down" {
+		available -= previewHeight + 1
+	}
+	if available < 1 {
+		return 1
+	}
+	return available
+}
+
+func nativeChromeLineCount(options Options) int {
+	lines := 1 // prompt
+	if header := strings.TrimSpace(options.Header); header != "" {
+		lines += nativeTextLineCount(header)
+	}
+	if footer := strings.TrimSpace(options.Footer); footer != "" {
+		lines += nativeTextLineCount(footer)
+	}
+	return lines + 1 // blank line between chrome and list
+}
+
+func nativeTextLineCount(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	return len(strings.Split(value, "\n"))
 }
 
 func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {

@@ -569,6 +569,41 @@ func TestNativeInteractiveUsesScrollbarForLongLists(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveUsesAvailableHeightForSimpleLists(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 0, 20)
+	for i := 0; i < 20; i++ {
+		items = append(items, Item{Title: "item " + strconv.Itoa(i), Value: strconv.Itoa(i)})
+	}
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:    "settings",
+		Items: items,
+	}, items, "", 0, 0, nativeLayout{Rows: 24, Cols: 60})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "item 19") {
+		t.Fatalf("native output = %q, want simple list to use full fzf-height surface", rendered)
+	}
+	if strings.Contains(rendered, nativeScrollbar) {
+		t.Fatalf("native output = %q, want no scrollbar when all rows fit", rendered)
+	}
+}
+
+func TestNativeListLimitAccountsForHeaderFooterAndDownPreview(t *testing.T) {
+	t.Parallel()
+
+	options := Options{
+		Header: "header",
+		Footer: "line 1\nline 2\nline 3",
+	}
+	if got, want := nativeListLimit(options, nativeLayout{Rows: 20, Cols: 80}, "down", 5, true), 8; got != want {
+		t.Fatalf("nativeListLimit() = %d, want %d", got, want)
+	}
+}
+
 func TestNativeVisibleRangeCountsMultilineRenderedRows(t *testing.T) {
 	t.Parallel()
 

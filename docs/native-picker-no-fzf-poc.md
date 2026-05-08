@@ -30,6 +30,8 @@ The fzf compatibility surface for this POC is tracked in
   match fzf fullscreen behavior and restore the tmux pane after exit.
 - Native interactive picker screens render inside a full-screen border frame to
   match the app's fzf `--height 100% --border` surface more closely.
+- Simple native lists use the available terminal height after header, prompt,
+  footer, and preview reservations instead of a fixed page-sized viewport.
 - In app TTY contexts, the native picker opens the controlling terminal
   (`/dev/tty`) before entering raw mode. This avoids stdin/stdout mismatch and
   line-mode escape leakage such as arrow keys appearing as `^[[`.
