@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultAppSocket  = "projmux"
-	defaultAppSession = "main"
+	defaultAppSession = "home"
 
 	shellUpdateApply = "update:apply"
 	shellUpdateLater = "update:later"
@@ -29,7 +29,6 @@ type shellCommand struct {
 	executable         func() (string, error)
 	lookupEnv          func(string) string
 	homeDir            func() (string, error)
-	getwd              func() (string, error)
 	writeFile          func(string, []byte, os.FileMode) error
 	runCommand         func(ctx context.Context, env []string, name string, args ...string) error
 	update             *updateCommand
@@ -47,7 +46,6 @@ func newShellCommand(update *updateCommand) *shellCommand {
 		executable:         os.Executable,
 		lookupEnv:          os.Getenv,
 		homeDir:            os.UserHomeDir,
-		getwd:              os.Getwd,
 		writeFile:          os.WriteFile,
 		runCommand:         runForegroundCommand,
 		update:             update,
@@ -96,7 +94,11 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
-	cwd, _ := c.getwdOrEmpty()
+	cwd, err := c.home()
+	if err != nil {
+		return fmt.Errorf("resolve shell home directory: %w", err)
+	}
+	cwd = filepath.Clean(cwd)
 	runArgs := []string{"-L", socketName, "-f", config, "new-session", "-A", "-s", nonEmpty(strings.TrimSpace(*session), defaultAppSession)}
 	if cwd != "" {
 		runArgs = append(runArgs, "-c", cwd)
@@ -310,13 +312,6 @@ func (c *shellCommand) home() (string, error) {
 		return "", errors.New("shell home directory resolver is not configured")
 	}
 	return c.homeDir()
-}
-
-func (c *shellCommand) getwdOrEmpty() (string, error) {
-	if c.getwd == nil {
-		return "", nil
-	}
-	return c.getwd()
 }
 
 func (c *shellCommand) env(name string) string {
