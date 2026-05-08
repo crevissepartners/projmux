@@ -48,20 +48,6 @@ for a daily terminal workspace:
 - Launches AI splits and keeps their agent name, topic, status, and
   notification state visible in tmux.
 
-## Typical Workflow
-
-```sh
-projmux shell
-```
-
-Open the app once, then use its generated tmux bindings to:
-
-- jump between projects from a sidebar or popup,
-- inspect sessions before attaching,
-- split Codex, Claude, or a plain shell into the current workspace,
-- rename windows and AI pane topics without losing metadata,
-- see which panes need review from badges and desktop notifications.
-
 ## Requirements
 
 - [Node.js](https://nodejs.org/) and npm — required for the recommended npm
@@ -176,23 +162,13 @@ Launch the isolated projmux tmux app:
 projmux shell
 ```
 
-projmux owns this tmux server, its generated config, status bar, and popup
-bindings. Cooperative terminals get `Alt-1`..`Alt-5` immediately, with no
-terminal config. The left status badge shows the current project name; the
-right side shows path, kube segment, git segment, and clock.
+Inside the app, use the generated keybindings for project switching, session
+previews, AI splits, settings, and notify/usage status surfaces. See
+[Terminal Keybindings](docs/keybindings.md) for the full map.
 
-If a key does not fire, run `projmux setup` outside tmux to see which
-sequences your terminal swallows. For supported terminals, preview the
-fallback with `projmux init [terminal]`, then apply it with
-`projmux init [terminal] --apply` (auto-detects when no terminal is given).
-Dotfiles users on multi-machine setups should pass
-`--allow-symlink` or `--config <path>` to make their intent explicit. Full
-flow and the manual CSI-u fallback are in
-[Terminal Keybindings](docs/keybindings.md).
-
-If anything looks off, `projmux doctor` reports which dependency is
-missing or stale and how to install it. See [Requirements](#requirements)
-for the supported versions.
+If keys do not fire, run `projmux setup` outside tmux and apply a supported
+terminal fallback with `projmux init [terminal] --apply`. If dependencies look
+wrong, run `projmux doctor`.
 
 ## Upgrading
 
@@ -322,7 +298,6 @@ More documentation:
 - [Usage tracking](docs/usage-tracking.md)
 - [Upgrading](docs/upgrading.md)
 - [Hooks](docs/hooks.md)
-- [Migration Plan](docs/migration-plan.md)
 - [Repo Layout](docs/repo-layout.md)
 - [Terminal Keybindings](docs/keybindings.md)
 - [Agent Workflow](docs/agent-workflow.md)
