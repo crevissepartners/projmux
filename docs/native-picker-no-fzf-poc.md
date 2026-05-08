@@ -16,13 +16,14 @@ backend remains the fallback with full preview/cycle/sidebar behavior.
 - The native picker supports search/filter, arrow-key selection in normal CSI
   and tmux application-cursor modes, Enter, Esc, Ctrl-C, Backspace, Ctrl-U,
   Ctrl-W, PageUp/PageDown, Home/End, modified CSI keys, custom expect keys such
-  as Ctrl-X/Alt-P, preview command output, preview cycle command bindings, and
-  sidebar focus command bindings.
+  as Ctrl-X/Alt-P, `start:pos(N)` initial focus, preview command output,
+  preview cycle command bindings, and sidebar focus command bindings.
 
 ## Explicit Follow-Up Gaps
 
 - Switch and sessions preview panes are approximate native previews. Wide
-  right-side preview windows render beside the list, but exact fzf
+  right-side preview windows render beside the list, and sidebar-style
+  `down,25%,border-top` previews render below the list, but exact fzf
   preview-window sizing, color, scrolling, and border parity is still missing.
 - Full switch preview cycle parity still needs hands-on validation against real
   tmux sessions.

@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
@@ -32,6 +33,7 @@ func pickerOptionsFromFZF(options intfzf.Options) intpicker.Options {
 		Actions:      pickerActionsFromFZF(options),
 		Preview:      intpicker.Preview{Command: options.PreviewCommand, Window: options.PreviewWindow},
 		InitialQuery: options.InitialQuery,
+		InitialIndex: pickerInitialIndexFromFZF(options),
 		AcceptQuery:  options.AcceptQuery,
 		MultiLine:    options.Read0,
 	}
@@ -64,6 +66,9 @@ func pickerActionsFromFZF(options intfzf.Options) []intpicker.Action {
 		if !ok || strings.TrimSpace(key) == "" {
 			continue
 		}
+		if strings.TrimSpace(key) == "start" {
+			continue
+		}
 		switch strings.TrimSpace(action) {
 		case "abort":
 			actions = append(actions, intpicker.Action{Key: key, Intent: intpicker.ActionClose})
@@ -76,6 +81,30 @@ func pickerActionsFromFZF(options intfzf.Options) []intpicker.Action {
 		}
 	}
 	return actions
+}
+
+func pickerInitialIndexFromFZF(options intfzf.Options) int {
+	for _, binding := range options.Bindings {
+		key, action, ok := strings.Cut(strings.TrimSpace(binding), ":")
+		if !ok || strings.TrimSpace(key) != "start" {
+			continue
+		}
+		action = strings.TrimSpace(action)
+		const prefix = "pos("
+		if !strings.HasPrefix(action, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(action, prefix)
+		idx := strings.Index(rest, ")")
+		if idx < 0 {
+			continue
+		}
+		pos, err := strconv.Atoi(strings.TrimSpace(rest[:idx]))
+		if err == nil && pos > 0 {
+			return pos - 1
+		}
+	}
+	return 0
 }
 
 func pickerCommandFromFZFBinding(action string) string {

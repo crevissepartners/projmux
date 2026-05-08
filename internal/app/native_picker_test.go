@@ -100,3 +100,22 @@ func TestPickerActionsFromFZFPreservesExecuteSilentCommand(t *testing.T) {
 		t.Fatalf("action = %#v, want execute-silent command preserved", action)
 	}
 }
+
+func TestPickerOptionsFromFZFMapsStartPosToInitialIndex(t *testing.T) {
+	t.Parallel()
+
+	options := pickerOptionsFromFZF(intfzf.Options{
+		Bindings: []string{
+			"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
+			"start:pos(3)",
+		},
+	})
+	if options.InitialIndex != 2 {
+		t.Fatalf("InitialIndex = %d, want 2", options.InitialIndex)
+	}
+	for _, action := range options.Actions {
+		if action.Key == "start" {
+			t.Fatalf("actions = %#v, want start binding consumed as initial index", options.Actions)
+		}
+	}
+}

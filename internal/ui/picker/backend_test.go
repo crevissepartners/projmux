@@ -258,6 +258,44 @@ func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveRendersDownPreviewBelowList(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI: "sidebar",
+		Preview: Preview{
+			Command: "printf 'preview:%s' {2}",
+			Window:  "down,25%,border-top",
+		},
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, nativeLayout{Rows: 24, Cols: 80})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "\npreview\npreview:/repo/api") {
+		t.Fatalf("native output = %q, want bottom preview", rendered)
+	}
+}
+
+func TestNativeInteractiveUsesInitialIndex(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\r"), io.Discard, Options{
+		UI:           "switch",
+		InitialIndex: 1,
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want initial index to select web", result)
+	}
+}
+
 func TestNativeInteractiveRunsCustomActionCommandAndRefreshes(t *testing.T) {
 	t.Parallel()
 

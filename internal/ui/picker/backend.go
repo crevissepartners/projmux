@@ -50,6 +50,7 @@ type Options struct {
 	Actions      []Action
 	Preview      Preview
 	InitialQuery string
+	InitialIndex int
 	AcceptQuery  bool
 	MultiLine    bool
 }
@@ -220,7 +221,7 @@ type nativeKey struct {
 
 func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result, error) {
 	query := strings.TrimSpace(options.InitialQuery)
-	selected := 0
+	selected := options.InitialIndex
 	focusedValue := ""
 	layout := detectNativeLayout(in)
 	fmt.Fprint(out, "\x1b[?25l")
@@ -671,10 +672,18 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 	}
 	fmt.Fprintln(w)
 
-	previewLines := nativePreviewLines(options, items, selected, maxInt(4, layout.Rows-8))
+	placement := nativePreviewPlacement(options.Preview.Window)
+	previewHeight := nativePreviewHeight(layout.Rows, options.Preview.Window)
+	previewLimit := maxInt(4, layout.Rows-8)
+	if placement == "down" {
+		previewLimit = previewHeight
+	}
+	previewLines := nativePreviewLines(options, items, selected, previewLimit)
 	listLimit := nativePageSize
-	if len(previewLines) > 0 && nativePreviewOnRight(options.Preview.Window) && layout.Cols >= 88 {
+	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
 		listLimit = maxInt(6, layout.Rows-7)
+	} else if len(previewLines) > 0 && placement == "down" {
+		listLimit = maxInt(4, layout.Rows-previewHeight-8)
 	}
 	start, end := nativeVisibleRange(len(items), selected, listLimit)
 	listLines := nativeInteractiveListLines(items, start, end, selected)
@@ -688,12 +697,16 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 	if end < len(items) {
 		listLines = append(listLines, fmt.Sprintf("  ... %d more below", len(items)-end))
 	}
-	if len(previewLines) > 0 && nativePreviewOnRight(options.Preview.Window) && layout.Cols >= 88 {
+	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
 		renderNativeSplitPreview(w, listLines, previewLines, layout)
 		return
 	}
 	for _, line := range listLines {
 		fmt.Fprintln(w, line)
+	}
+	if len(previewLines) > 0 && placement == "down" {
+		renderNativeDownPreview(w, previewLines, layout)
+		return
 	}
 	if len(previewLines) > 0 {
 		renderNativeInlinePreview(w, previewLines)
@@ -770,9 +783,48 @@ func nativePreviewLines(options Options, items []Item, selected, limit int) []st
 	return limitedNativePreviewLines(output, limit)
 }
 
-func nativePreviewOnRight(window string) bool {
+func nativePreviewPlacement(window string) string {
 	window = strings.ToLower(strings.TrimSpace(window))
-	return window == "" || strings.HasPrefix(window, "right")
+	switch {
+	case strings.HasPrefix(window, "down"):
+		return "down"
+	case strings.HasPrefix(window, "right"), window == "":
+		return "right"
+	default:
+		return "inline"
+	}
+}
+
+func nativePreviewHeight(rows int, window string) int {
+	if rows <= 0 {
+		rows = defaultNativeRows
+	}
+	percent := nativePreviewPercent(window)
+	if percent <= 0 {
+		percent = 25
+	}
+	height := rows * percent / 100
+	if height < 4 {
+		return 4
+	}
+	if height > rows-8 {
+		return maxInt(4, rows-8)
+	}
+	return height
+}
+
+func nativePreviewPercent(window string) int {
+	for _, part := range strings.Split(window, ",") {
+		part = strings.TrimSpace(part)
+		if !strings.HasSuffix(part, "%") {
+			continue
+		}
+		value, err := strconv.Atoi(strings.TrimSuffix(part, "%"))
+		if err == nil && value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout) {
@@ -806,6 +858,19 @@ func nativePreviewWidth(cols int) int {
 		return 36
 	}
 	return width
+}
+
+func renderNativeDownPreview(w io.Writer, previewLines []string, layout nativeLayout) {
+	width := layout.Cols
+	if width <= 0 {
+		width = defaultNativeCols
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, nativeTruncateANSI(strings.Repeat("-", width), width))
+	fmt.Fprintln(w, "preview")
+	for _, line := range previewLines {
+		fmt.Fprintln(w, nativeTruncateANSI(line, width))
+	}
 }
 
 func renderNativeInlinePreview(w io.Writer, previewLines []string) {
