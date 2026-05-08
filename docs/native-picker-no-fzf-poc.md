@@ -26,18 +26,19 @@ backend remains the fallback with full preview/cycle/sidebar behavior.
 
 ## No-fzf Docker E2E Command
 
-Run this from the repository root. It uses a Node base image, installs broad test
-dependencies only, does not install `fzf`, builds `projmux`, asserts `fzf` is not
-on `PATH`, runs the focused native-picker tests, and exercises the settings CLI
-picker through the native backend.
+Run this from the repository root. It builds a Node-based no-fzf dependency
+image from `test/docker/no-fzf-poc.Dockerfile`, including Go module cache, then
+mounts the repository into an isolated `--network none` container, builds
+`projmux`, asserts `fzf` is not on `PATH`, runs the focused native-picker tests,
+and exercises the settings CLI picker through the native backend.
 
 Short tmux-friendly form:
 
 ```sh
-bash "$(wt path poc/native-picker-no-fzf)/scripts/poc-native-picker-no-fzf-e2e.sh"
+wt run poc/native-picker-no-fzf -- scripts/poc-native-picker-no-fzf-e2e.sh
 ```
 
-The script contains the expanded Docker command:
+The script contains the Docker image build and isolated `docker run` command:
 
 ```sh
 scripts/poc-native-picker-no-fzf-e2e.sh
