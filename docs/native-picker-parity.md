@@ -25,6 +25,7 @@ picker evidence. It is not a production dependency-policy change.
 | `--preview` | switch, sessions | Covered by command output | `nativePreviewLines`; `TestNativeInteractiveRendersSelectedPreview` |
 | `--preview-window right,60%,border-left` | switch popup, sessions popup | Covered approximately | `renderNativeSplitPreview`; `TestNativeInteractiveRendersWidePreviewBesideList` |
 | `--preview-window down,25%,border-top` | switch sidebar | Covered approximately | `renderNativeDownPreview`; `TestNativeInteractiveRendersDownPreviewBelowList` |
+| preview scrolling | long switch/session preview output | Covered approximately with `Shift-Up`/`Shift-Down` | `previewOffset`; `TestNativeInteractiveRendersPreviewOffset` |
 | `--query` | typed settings path defaults | Covered | `Options.InitialQuery`; settings tests |
 | `--print-query` accept-query mode | typed settings path prompts | Covered | `Options.AcceptQuery`; `TestNativeRunnerAcceptsTypedQuery` |
 | terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests |
@@ -49,8 +50,8 @@ picker evidence. It is not a production dependency-policy change.
 ## Remaining Gaps Before Calling This Complete
 
 - Exact fzf preview-window parity is not complete: native has approximate
-  right/down layout, but no preview scrolling, exact borders, or fzf sizing
-  algorithm.
+  right/down layout and keyboard preview scrolling, but not exact fzf borders or
+  the full fzf sizing algorithm.
 - Exact fzf fuzzy scoring is not complete: native ranking is deterministic and
   close enough for projmux search, but not an implementation of fzf's scorer.
 - Mouse support is not implemented. projmux does not currently expose mouse

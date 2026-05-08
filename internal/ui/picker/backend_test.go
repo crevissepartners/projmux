@@ -201,6 +201,18 @@ func TestNativeInteractiveConsumesModifiedCSIKeys(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveConsumesShiftCSIKeys(t *testing.T) {
+	t.Parallel()
+
+	key, err := readNativeKey(strings.NewReader("\x1b[1;2B"))
+	if err != nil {
+		t.Fatalf("readNativeKey() error = %v", err)
+	}
+	if key.Name != "shift-down" || key.Text != "" {
+		t.Fatalf("key = %#v, want shift-down", key)
+	}
+}
+
 func TestNativeInteractiveFiltersWithPrintableInput(t *testing.T) {
 	t.Parallel()
 
@@ -297,11 +309,30 @@ func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
 			Window:  "right,60%,border-left",
 		},
 		Items: []Item{{Title: "api", Value: "/repo/api"}},
-	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, nativeLayout{Rows: 24, Cols: 120})
+	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 24, Cols: 120})
 
 	rendered := out.String()
 	if !strings.Contains(rendered, " | preview") || !strings.Contains(rendered, "preview:/repo/api") {
 		t.Fatalf("native output = %q, want side-by-side preview", rendered)
+	}
+}
+
+func TestNativeInteractiveRendersPreviewOffset(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI: "switch",
+		Preview: Preview{
+			Command: "printf 'one\ntwo\nthree'",
+			Window:  "down,25%,border-top",
+		},
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 1, nativeLayout{Rows: 24, Cols: 80})
+
+	rendered := out.String()
+	if strings.Contains(rendered, "\none\n") || !strings.Contains(rendered, "\ntwo\nthree\n") {
+		t.Fatalf("native output = %q, want preview scrolled by one line", rendered)
 	}
 }
 
@@ -327,7 +358,7 @@ func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
 	}, []Item{{
 		Label: "api\n  branch main",
 		Value: "/repo/api",
-	}}, "", 0, nativeLayout{Rows: 24, Cols: 80})
+	}}, "", 0, 0, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
 	if !strings.Contains(rendered, "▌") || !strings.Contains(rendered, "48;2;38;50;56") {
@@ -358,7 +389,7 @@ func TestNativeInteractiveRendersDownPreviewBelowList(t *testing.T) {
 			Window:  "down,25%,border-top",
 		},
 		Items: []Item{{Title: "api", Value: "/repo/api"}},
-	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, nativeLayout{Rows: 24, Cols: 80})
+	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
 	if !strings.Contains(rendered, "\npreview\npreview:/repo/api") {

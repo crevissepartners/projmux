@@ -27,7 +27,7 @@ The fzf compatibility surface for this POC is tracked in
 - Switch and sessions preview panes are approximate native previews. Wide
   right-side preview windows render beside the list, and sidebar-style
   `down,25%,border-top` previews render below the list, but exact fzf
-  preview-window sizing, color, scrolling, and border parity is still missing.
+  preview-window color and border parity is still missing.
 - Full switch preview cycle parity still needs hands-on validation against real
   tmux sessions.
 - Public docs and doctor dependency policy still treat `fzf` as required.

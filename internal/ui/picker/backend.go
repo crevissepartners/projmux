@@ -244,6 +244,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	query := strings.TrimSpace(options.InitialQuery)
 	selected := options.InitialIndex
 	focusedValue := ""
+	previewOffset := 0
 	layout := detectNativeLayout(in)
 	fmt.Fprint(out, "\x1b[?25l")
 	defer fmt.Fprint(out, "\x1b[?25h\r\n")
@@ -259,8 +260,9 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if value := selectedNativeValue(items, selected); value != focusedValue {
 			runNativeFocusAction(options.Actions, value)
 			focusedValue = value
+			previewOffset = 0
 		}
-		renderNativeInteractive(out, options, items, query, selected, layout)
+		renderNativeInteractive(out, options, items, query, selected, previewOffset, layout)
 
 		key, err := readNativeKey(in)
 		if err != nil {
@@ -326,21 +328,31 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			if selected >= len(items) {
 				selected = len(items) - 1
 			}
+		case "shift-up":
+			if previewOffset > 0 {
+				previewOffset--
+			}
+		case "shift-down":
+			previewOffset++
 		case "backspace":
 			query = trimLastRune(query)
 			selected = 0
+			previewOffset = 0
 		case "delete":
 			// The native picker has no cursor movement yet, so Delete is a no-op.
 		case "ctrl-u":
 			query = ""
 			selected = 0
+			previewOffset = 0
 		case "ctrl-w":
 			query = trimLastWord(query)
 			selected = 0
+			previewOffset = 0
 		default:
 			if key.Text != "" {
 				query += key.Text
 				selected = 0
+				previewOffset = 0
 			}
 		}
 	}
@@ -501,6 +513,8 @@ func nativeKeyFromCSI(seq []byte) nativeKey {
 	}
 	mod := nativeCSIModifier(params)
 	switch mod {
+	case "2":
+		return nativeKey{Name: "shift-" + name}
 	case "3":
 		return nativeKey{Name: "alt-" + name}
 	case "5":
@@ -677,7 +691,7 @@ func readNativeLine(r io.Reader) (string, error) {
 	}
 }
 
-func renderNativeInteractive(w io.Writer, options Options, items []Item, query string, selected int, layout nativeLayout) {
+func renderNativeInteractive(w io.Writer, options Options, items []Item, query string, selected, previewOffset int, layout nativeLayout) {
 	fmt.Fprint(w, "\x1b[2J\x1b[H")
 	if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(w, header)
@@ -698,7 +712,7 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 	if placement == "down" {
 		previewLimit = previewHeight
 	}
-	previewLines := nativePreviewLines(options, items, selected, previewLimit)
+	previewLines := nativePreviewLines(options, items, selected, previewOffset, previewLimit)
 	listLimit := nativePageSize
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
 		listLimit = maxInt(6, layout.Rows-7)
@@ -820,7 +834,7 @@ func nativeSelectedContent(value string) string {
 	return nativeCurrentStart + strings.ReplaceAll(value, nativeReset, nativeReset+nativeCurrentStart) + nativeReset
 }
 
-func nativePreviewLines(options Options, items []Item, selected, limit int) []string {
+func nativePreviewLines(options Options, items []Item, selected, offset, limit int) []string {
 	command := strings.TrimSpace(options.Preview.Command)
 	if command == "" || selected < 0 || selected >= len(items) {
 		return nil
@@ -836,7 +850,7 @@ func nativePreviewLines(options Options, items []Item, selected, limit int) []st
 	if strings.TrimSpace(output) == "" {
 		return nil
 	}
-	return limitedNativePreviewLines(output, limit)
+	return limitedNativePreviewLines(output, offset, limit)
 }
 
 func nativePreviewPlacement(window string) string {
@@ -1033,12 +1047,19 @@ func expandNativeCommand(command, target string) string {
 	return command
 }
 
-func limitedNativePreviewLines(output string, limit int) []string {
+func limitedNativePreviewLines(output string, offset, limit int) []string {
 	output = strings.TrimRight(output, "\r\n")
 	if output == "" {
 		return nil
 	}
 	lines := strings.Split(output, "\n")
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(lines) {
+		offset = len(lines)
+	}
+	lines = lines[offset:]
 	if limit > 0 && len(lines) > limit {
 		lines = append(lines[:limit], fmt.Sprintf("... %d more lines", len(lines)-limit))
 	}
