@@ -556,6 +556,11 @@ func isNativeCSIFinal(b byte) bool {
 func nativeKeyFromCSI(seq []byte) nativeKey {
 	final := seq[len(seq)-1]
 	params := string(seq[:len(seq)-1])
+	if final == 'u' {
+		if key := nativeKeyFromCSIu(params); key.Name != "" || key.Text != "" {
+			return key
+		}
+	}
 	name := nativeBaseCSIName(final, params)
 	if name == "" {
 		return nativeKey{Name: "esc"}
@@ -571,6 +576,72 @@ func nativeKeyFromCSI(seq []byte) nativeKey {
 	default:
 		return nativeKey{Name: name}
 	}
+}
+
+func nativeKeyFromCSIu(params string) nativeKey {
+	switch strings.TrimSpace(params) {
+	case "9003":
+		return nativeKey{Name: "alt-2"}
+	case "9004":
+		return nativeKey{Name: "alt-3"}
+	case "9005":
+		return nativeKey{Name: "alt-1"}
+	case "9006":
+		return nativeKey{Name: "alt-4"}
+	case "9007":
+		return nativeKey{Name: "alt-5"}
+	case "9008":
+		return nativeKey{Name: "ctrl-n"}
+	case "9013":
+		return nativeKey{Name: "alt-6"}
+	}
+
+	fields := strings.Split(params, ";")
+	if len(fields) == 0 {
+		return nativeKey{Name: "esc"}
+	}
+	codepoint, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+	if err != nil || codepoint <= 0 {
+		return nativeKey{Name: "esc"}
+	}
+	mod := ""
+	if len(fields) > 1 {
+		mod = strings.TrimSpace(fields[len(fields)-1])
+	}
+	if codepoint >= 'a' && codepoint <= 'z' {
+		letter := string(rune(codepoint))
+		switch mod {
+		case "3":
+			return nativeKey{Name: "alt-" + letter}
+		case "5":
+			return nativeKey{Name: "ctrl-" + letter}
+		case "7":
+			return nativeKey{Name: "ctrl-alt-" + letter}
+		}
+	}
+	if codepoint >= 'A' && codepoint <= 'Z' {
+		letter := strings.ToLower(string(rune(codepoint)))
+		switch mod {
+		case "3", "4":
+			return nativeKey{Name: "alt-" + letter}
+		case "5", "6":
+			return nativeKey{Name: "ctrl-" + letter}
+		case "7", "8":
+			return nativeKey{Name: "ctrl-alt-" + letter}
+		}
+	}
+	if codepoint >= '0' && codepoint <= '9' {
+		digit := string(rune(codepoint))
+		switch mod {
+		case "3", "4":
+			return nativeKey{Name: "alt-" + digit}
+		case "5", "6":
+			return nativeKey{Name: "ctrl-" + digit}
+		case "7", "8":
+			return nativeKey{Name: "ctrl-alt-" + digit}
+		}
+	}
+	return nativeKey{Name: "esc"}
 }
 
 func nativeBaseCSIName(final byte, params string) string {

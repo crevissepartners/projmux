@@ -330,6 +330,38 @@ func TestNativeInteractiveSupportsControlAltCloseKeys(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveSupportsCSIuAppKeyBindings(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "alt-1 custom csi", in: "\x1b[9005u", want: "alt-1"},
+		{name: "alt-2 custom csi", in: "\x1b[9003u", want: "alt-2"},
+		{name: "alt-5 custom csi", in: "\x1b[9007u", want: "alt-5"},
+		{name: "ctrl-n custom csi", in: "\x1b[9008u", want: "ctrl-n"},
+		{name: "ctrl-alt-s generic csi", in: "\x1b[115;7u", want: "ctrl-alt-s"},
+		{name: "alt-p generic csi", in: "\x1b[112;3u", want: "alt-p"},
+		{name: "ctrl-a generic csi", in: "\x1b[97;5u", want: "ctrl-a"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			key, err := readNativeKey(strings.NewReader(tc.in))
+			if err != nil {
+				t.Fatalf("readNativeKey() error = %v", err)
+			}
+			if key.Name != tc.want || key.Text != "" {
+				t.Fatalf("key = %#v, want %q", key, tc.want)
+			}
+		})
+	}
+}
+
 func TestNativeInteractiveSupportsPageNavigationAndEditing(t *testing.T) {
 	t.Parallel()
 

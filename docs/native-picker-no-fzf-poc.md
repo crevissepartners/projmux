@@ -23,6 +23,9 @@ The fzf compatibility surface for this POC is tracked in
   expect keys such as notify `Ctrl-A`, `start:pos(N)` initial focus, preview
   command output, preview cycle command bindings, and sidebar focus command
   bindings.
+- The native key parser recognizes the app's CSI-u keybind-probe sequences
+  such as `ESC [ 9005 u` for `Alt-1`, plus generic modified CSI-u forms such as
+  `ESC [ 115 ; 7 u` for `Ctrl-Alt-S`.
 - Native interactive picker screens use an alternate screen lifecycle to better
   match fzf fullscreen behavior and restore the tmux pane after exit.
 - Native interactive picker screens render inside a full-screen border frame to

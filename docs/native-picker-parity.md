@@ -22,6 +22,7 @@ picker evidence. It is not a production dependency-policy change.
 | printable expect keys | notify sidebar `a` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
 | control expect keys | notify sidebar `Ctrl-A`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
 | close `--bind key:abort` | Esc, Ctrl-C, Alt-N, Ctrl-Alt-S variants | Covered | `CloseActions`; `TestNativeRunnerUsesSharedCloseActions` |
+| terminal CSI-u key encoding | app keybind probe sequences, Ghostty/kitty-style modified keys | Covered | `TestNativeInteractiveSupportsCSIuAppKeyBindings` |
 | `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `pickerCommandFromFZFBinding`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes` |
 | `focus:execute-silent(...)` | switch sidebar focus | Covered | `runNativeFocusAction`; `TestNativeInteractiveRunsFocusActionOnSelectionChange` |
 | `start:pos(N)` | switch sidebar initial row | Covered | `pickerInitialIndexFromFZF`; `TestPickerOptionsFromFZFMapsStartPosToInitialIndex` |
