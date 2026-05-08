@@ -191,8 +191,8 @@ trigger a tmux error popup.
 
 `projmux status notify` is the HUD-style renderer wired to the tmux
 status interval. See [statusbar.md](statusbar.md) for the layout and
-the six degradation tiers. It shows the newest pending item with neutral
-project, state, and optional agent-colored outline badges, plus text,
-window/pane location, age, and an extra-count marker. The renderer is silent
-on every failure mode (no store, list error, empty queue) so the status line
-never carries a stack trace.
+degradation tiers. It shows the newest pending item as a single notification
+block with project, state, optional agent, text, age, and an extra-count
+marker. Window/pane ids remain routable metadata but are not displayed in the
+compact HUD. The renderer is silent on every failure mode (no store, list
+error, empty queue) so the status line never carries a stack trace.

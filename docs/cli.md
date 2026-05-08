@@ -178,7 +178,8 @@ projmux notify reconcile [--json]
   queue entries whose live pane no longer matches. `--ui=sidebar` opens the
   compact interactive notify list where Enter focuses and acks a target, `a`
   acks the selected row, and `Ctrl-A` clears all. The sidebar row keeps target
-  details searchable but displays only age, non-info severity, and text.
+  details searchable but displays only age, project, state, optional agent, and
+  text.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
   panes whose attention state is `reply` AND whose AI agent option is
@@ -228,9 +229,10 @@ projmux status notify [--max-width N]
   [bar] N% · weekly [bar] N%`. Degrades through six tiers as `--max-width`
   shrinks. Triggers an opportunistic, throttled refresh (per-adapter
   throttle, `30s` floor) so a stale cache self-heals.
-- `notify` — newest-first HUD pill with project, state, optional agent,
-  text, window/pane location, age, and `+<extras>`. Degrades through six
-  tiers; default `--max-width` is `200` runes.
+- `notify` — newest-first HUD block with project, state, optional agent, text,
+  age, and `+<extras>`. Window/pane ids remain routable metadata but are not
+  displayed in the compact HUD. Degrades through width tiers; default
+  `--max-width` is `200` runes.
 
 ## statusbar
 

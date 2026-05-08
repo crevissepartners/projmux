@@ -356,25 +356,27 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 	return c.notifyStoreFn()
 }
 
-// HUD-style design tokens for the notify status segment. The leading
-// project/state/agent badges use colored outlines rather than background
-// fills so they do not compete with the top-row project badge.
-// Reused dim color (`colour245`) keeps the metadata visually consistent
-// with the AI usage segment so the two read as one design family.
+// HUD-style design tokens for the notify status segment. The whole segment
+// carries a notification-colored background; badges are stronger blocks on top
+// of that same line instead of separate outline glyphs.
 const (
-	notifyDimColor     = "colour245"
-	notifyCountColor   = "colour244"
-	notifyProjectColor = "colour244"
-	notifyBadgeInfo    = "brightcyan"
-	notifyBadgeWarn    = "yellow"
-	notifyBadgeCrit    = "red"
-	notifySeverityInfo = "#[fg=brightcyan]"
-	notifySeverityWarn = "#[fg=yellow]"
-	notifySeverityCrit = "#[fg=red,bold]"
-	notifyIcon         = "●"
-	notifyMidDot       = "·"
-	notifyEllipsis     = "…"
-	notifyReset        = "#[default]"
+	notifyLineOpen      = "#[bg=colour24,fg=colour231]"
+	notifyLineDimOpen   = "#[bg=colour24,fg=colour117]"
+	notifyLineCountOpen = "#[bg=colour24,fg=colour153,bold]"
+	notifyProjectOpen   = "#[bg=colour31,fg=colour231,bold]"
+	notifyBadgeInfoOpen = "#[bg=brightcyan,fg=black,bold]"
+	notifyBadgeWarnOpen = "#[bg=yellow,fg=black,bold]"
+	notifyBadgeCritOpen = "#[bg=red,fg=white,bold]"
+	notifyAgentOpen     = "#[bg=colour51,fg=black,bold]"
+	notifyAgentClaude   = "#[bg=colour208,fg=black,bold]"
+	notifyAgentCodex    = "#[bg=colour33,fg=colour231,bold]"
+	notifySeverityInfo  = "#[bg=colour24,fg=brightcyan]"
+	notifySeverityWarn  = "#[bg=colour24,fg=yellow]"
+	notifySeverityCrit  = "#[bg=colour24,fg=red,bold]"
+	notifyIcon          = "●"
+	notifyMidDot        = "·"
+	notifyEllipsis      = "…"
+	notifyReset         = "#[default]"
 )
 
 // known agent prefixes recognised when stripping a leading `<agent>:` from
@@ -386,20 +388,18 @@ var notifyKnownAgents = []string{"claude", "codex"}
 // HUD-style tmux status segment. The output ends with a tmux `#[default]`
 // reset so adjacent segments are not stained by colors.
 //
-// Long form: `<project> <state> [agent] <text>  · <target> · <age>   +<N>`
+// Long form: `<project> <state> [agent] <text>  · <age>   +<N>`
 //
-// The leading badges are outline boxes with colored borders and default
-// interior text. The body text uses the terminal default foreground
-// (no dim, no bold) so it pops against the dim metadata that follows it.
+// The segment background carries the notification affordance. The body text
+// uses the line foreground so it stays readable next to the stronger badges.
 //
-// The renderer degrades through six tiers as `maxWidth` shrinks:
+// The renderer degrades through five tiers as `maxWidth` shrinks:
 //
-//  1. Full long form: outline badges + text + target + age + count.
+//  1. Full long form: line block + badges + text + age + count.
 //  2. Drop `<age>` (and its preceding `·`).
-//  3. Drop `<target>` (and its preceding `·`).
-//  4. Truncate `<text>` with a trailing `…`.
-//  5. Drop the badges entirely; fall back to a standalone `●` severity icon.
-//  6. Hard truncate everything (icon + count are still preserved).
+//  3. Truncate `<text>` with a trailing `…`.
+//  4. Drop the badges entirely; fall back to a standalone `●` severity icon.
+//  5. Hard truncate everything (icon + count are still preserved).
 //
 // `now` is the wall-clock used to compute the relative age. Pass the zero
 // time to suppress the age field entirely.
@@ -417,33 +417,30 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 		renderNotifyAgentBadge(agent),
 	)
 	icon := renderNotifyIcon(head.Severity)
-	target := notifyPaneTarget(head)
 	age := ""
 	if !now.IsZero() && !head.CreatedAt.IsZero() {
 		age = formatRelativeAge(now.Sub(head.CreatedAt))
 	}
 	plus := ""
 	if extras > 0 {
-		plus = fmt.Sprintf("   #[fg=%s]+%d%s", notifyCountColor, extras, notifyReset)
+		plus = fmt.Sprintf("   %s+%d%s", notifyLineCountOpen, extras, notifyLineOpen)
 	}
 
 	tiers := []func() string{
 		// Tier 1: full long form.
-		func() string { return assembleNotify(badge, text, target, age, plus) },
+		func() string { return assembleNotify(badge, text, age, plus) },
 		// Tier 2: drop age.
-		func() string { return assembleNotify(badge, text, target, "", plus) },
-		// Tier 3: drop target (and age).
-		func() string { return assembleNotify(badge, text, "", "", plus) },
-		// Tier 4: truncate text with trailing ellipsis.
+		func() string { return assembleNotify(badge, text, "", plus) },
+		// Tier 3: truncate text with trailing ellipsis.
 		func() string {
-			budget := tierBudget(maxWidth, badge, "", "", plus)
+			budget := tierBudget(maxWidth, badge, "", plus)
 			truncated := shrinkText(text, budget)
-			return assembleNotify(badge, truncated, "", "", plus)
+			return assembleNotify(badge, truncated, "", plus)
 		},
-		// Tier 5: drop badge — fall back to bare severity icon + text.
+		// Tier 4: drop badge — fall back to bare severity icon + text.
 		func() string {
 			iconLead := icon + "  "
-			budget := tierBudget(maxWidth, iconLead, "", "", plus)
+			budget := tierBudget(maxWidth, iconLead, "", plus)
 			truncated := shrinkText(text, budget)
 			if truncated == "" {
 				return iconLead + plus
@@ -457,7 +454,7 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 			continue
 		}
 		if maxWidth <= 0 || visualLen(out) <= maxWidth {
-			return out + notifyReset
+			return notifyLineOpen + out + notifyReset
 		}
 	}
 
@@ -465,44 +462,31 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 	// in between. The reset directive is appended unconditionally so we
 	// never leak color into the next segment.
 	short := icon + "  " + text + plus
-	return truncateWithEllipsis(short, maxWidth) + notifyReset
+	return notifyLineOpen + truncateWithEllipsis(short, maxWidth) + notifyReset
 }
 
 // assembleNotify glues the long-form parts together. Empty parts are
 // omitted along with their preceding separator so we can reuse this for
 // every degradation tier.
 //
-// Layout: `<badge> <text>  · <target> · <age><plus>`
+// Layout: `<badge> <text>  · <age><plus>`
 //
-// The badge group already carries its own fg styling and trailing `#[default]`,
-// so we just concatenate it. The body text inherits the terminal default
-// foreground (deliberately not dim) so it pops next to the dim metadata.
-func assembleNotify(badge, text, target, age, plus string) string {
+// The badge group already restores `notifyLineOpen`, so subsequent text stays
+// on the notification background.
+func assembleNotify(badge, text, age, plus string) string {
 	var b strings.Builder
 	b.WriteString(badge)
 	if text != "" {
 		b.WriteString(" ")
 		b.WriteString(text)
 	}
-	if target != "" {
-		b.WriteString("  ")
-		b.WriteString("#[fg=")
-		b.WriteString(notifyDimColor)
-		b.WriteString("]")
-		b.WriteString(notifyMidDot)
-		b.WriteString(" ")
-		b.WriteString(target)
-		b.WriteString(notifyReset)
-	}
 	if age != "" {
 		b.WriteString(" ")
-		b.WriteString("#[fg=")
-		b.WriteString(notifyDimColor)
-		b.WriteString("]")
+		b.WriteString(notifyLineDimOpen)
 		b.WriteString(notifyMidDot)
 		b.WriteString(" ")
 		b.WriteString(age)
-		b.WriteString(notifyReset)
+		b.WriteString(notifyLineOpen)
 	}
 	if plus != "" {
 		b.WriteString(plus)
@@ -516,17 +500,17 @@ func assembleNotify(badge, text, target, age, plus string) string {
 //
 // The text is rendered with a single leading space, which we charge back
 // here so callers don't need to know the assembly's gap rules.
-func tierBudget(maxWidth int, badge, target, age, plus string) int {
+func tierBudget(maxWidth int, badge, age, plus string) int {
 	if maxWidth <= 0 {
 		return 0
 	}
-	overhead := visualLen(assembleNotify(badge, "", target, age, plus))
+	overhead := visualLen(assembleNotify(badge, "", age, plus))
 	textGap := 1
 	room := max(maxWidth-overhead-textGap, 1)
 	return room
 }
 
-// assembleNotifyBadges joins the leading project/state/agent outline badges.
+// assembleNotifyBadges joins the leading project/state/agent block badges.
 func assembleNotifyBadges(badges ...string) string {
 	parts := make([]string, 0, len(badges))
 	for _, badge := range badges {
@@ -543,11 +527,11 @@ func renderNotifyProjectBadge(project string) string {
 	if project == "" {
 		return ""
 	}
-	return renderNotifyOutlineBadge(project, notifyProjectColor)
+	return renderNotifyBlockBadge(project, notifyProjectOpen)
 }
 
 func renderNotifyBadge(label, severity string) string {
-	return renderNotifyOutlineBadge(label, notifyBadgeColor(severity))
+	return renderNotifyBlockBadge(label, notifyBadgeOpen(severity))
 }
 
 func renderNotifyAgentBadge(agent string) string {
@@ -555,43 +539,43 @@ func renderNotifyAgentBadge(agent string) string {
 	if agent == "" {
 		return ""
 	}
-	return renderNotifyOutlineBadge(agent, notifyAgentColor(agent))
+	return renderNotifyBlockBadge(agent, notifyAgentOpenFor(agent))
 }
 
-func renderNotifyOutlineBadge(label, color string) string {
+func renderNotifyBlockBadge(label, open string) string {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return ""
 	}
-	color = strings.TrimSpace(color)
-	if color == "" {
-		color = notifyDimColor
+	open = strings.TrimSpace(open)
+	if open == "" {
+		open = notifyProjectOpen
 	}
-	return "#[fg=" + color + ",bold]⟦" + notifyReset + " " + label + " " + "#[fg=" + color + ",bold]⟧" + notifyReset
+	return open + " " + label + " " + notifyLineOpen
 }
 
-func notifyAgentColor(agent string) string {
+func notifyAgentOpenFor(agent string) string {
 	switch strings.ToLower(strings.TrimSpace(agent)) {
 	case "claude":
-		return "colour208"
+		return notifyAgentClaude
 	case "codex":
-		return "colour33"
+		return notifyAgentCodex
 	default:
-		return "colour51"
+		return notifyAgentOpen
 	}
 }
 
-// notifyBadgeColor maps a severity to the state outline color. Unknown
+// notifyBadgeOpen maps a severity to the state block color. Unknown
 // severities fall through to the info palette so we never emit a stripped
 // escape.
-func notifyBadgeColor(severity string) string {
+func notifyBadgeOpen(severity string) string {
 	switch severity {
 	case notify.SeverityWarn:
-		return notifyBadgeWarn
+		return notifyBadgeWarnOpen
 	case notify.SeverityCritical:
-		return notifyBadgeCrit
+		return notifyBadgeCritOpen
 	default:
-		return notifyBadgeInfo
+		return notifyBadgeInfoOpen
 	}
 }
 
@@ -640,7 +624,7 @@ func renderNotifyIcon(severity string) string {
 	case notify.SeverityCritical:
 		color = notifySeverityCrit
 	}
-	return color + notifyIcon + notifyReset
+	return color + notifyIcon + notifyLineOpen
 }
 
 // splitAgentPrefix extracts the leading `<agent>:` from the queue entry's
@@ -675,26 +659,6 @@ func isKnownAgent(name string) bool {
 	return slices.Contains(notifyKnownAgents, name)
 }
 
-// compactTarget renders the entry's target as `<sess>:<window>.<pane>`.
-// Empty session yields the empty string; empty window/pane segments are
-// dropped so we never emit dangling `:` or `.` separators.
-func compactTarget(n notify.Notification) string {
-	sess := strings.TrimSpace(n.Session)
-	if sess == "" {
-		return ""
-	}
-	out := sess
-	win := strings.TrimSpace(n.Window)
-	if win != "" {
-		out += ":" + win
-		pane := strings.TrimSpace(n.Pane)
-		if pane != "" {
-			out += "." + pane
-		}
-	}
-	return out
-}
-
 func notifyProjectName(session string) string {
 	session = strings.TrimSpace(session)
 	if session == "" {
@@ -704,21 +668,6 @@ func notifyProjectName(session string) string {
 		return strings.TrimSpace(after)
 	}
 	return session
-}
-
-func notifyPaneTarget(n notify.Notification) string {
-	win := strings.TrimSpace(n.Window)
-	pane := strings.TrimSpace(n.Pane)
-	switch {
-	case win != "" && pane != "":
-		return "w" + win + ".p" + pane
-	case win != "":
-		return "w" + win
-	case pane != "":
-		return "p" + pane
-	default:
-		return ""
-	}
 }
 
 // formatRelativeAge renders a duration as `just now`, `<N>s` (only via the
