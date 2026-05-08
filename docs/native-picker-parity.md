@@ -26,7 +26,7 @@ picker evidence. It is not a production dependency-policy change.
 | control expect keys | notify sidebar `Ctrl-A`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
 | close `--bind key:abort` | Esc, Ctrl-C, Alt-N, Ctrl-Alt-S variants | Covered | `CloseActions`; `TestNativeRunnerUsesSharedCloseActions` |
 | terminal CSI-u key encoding | app keybind probe sequences, Ghostty/kitty-style modified keys | Covered | `TestNativeInteractiveSupportsCSIuAppKeyBindings` |
-| `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `pickerCommandFromFZFBinding`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes`; Docker no-fzf e2e sends `Right` before selection |
+| `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `pickerCommandFromFZFBinding`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes`; Docker no-fzf e2e sends `Right` and `Alt-Down` before selection |
 | `focus:execute-silent(...)` | switch sidebar focus | Covered | `runNativeFocusAction`; `TestNativeInteractiveRunsFocusActionOnSelectionChange` |
 | `start:pos(N)` | switch sidebar initial row | Covered | `pickerInitialIndexFromFZF`; `TestPickerOptionsFromFZFMapsStartPosToInitialIndex` |
 | `--preview` | switch, sessions | Covered by command output | `nativePreviewLines`; `TestNativeInteractiveRendersSelectedPreview` |
@@ -48,11 +48,12 @@ picker evidence. It is not a production dependency-policy change.
 - `switch --ui=sidebar`: Docker no-fzf e2e creates sample projects, types
   `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
 - `switch --ui=popup`: Docker no-fzf e2e creates existing tmux sessions using
-  the app's session naming convention, sends `Right` to exercise preview cycle,
-  types `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
+  the app's session naming convention, sends `Right` and `Alt-Down` to exercise
+  preview window/pane cycle, types `bravo`, selects `bravo-web`, and confirms
+  the opened tmux shell path.
 - `sessions --ui=popup`: Docker no-fzf e2e creates existing tmux sessions,
-  sends `Right` to exercise preview cycle, types `bravo`, selects `bravo-web`,
-  and confirms the opened tmux shell path.
+  sends `Right` and `Alt-Down` to exercise preview window/pane cycle, types
+  `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
 - `notify sidebar`: native routing is unit-covered; Docker no-fzf e2e pushes a
   notification, presses printable expect key `a`, and verifies the row is acked.
 
