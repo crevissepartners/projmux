@@ -29,8 +29,16 @@ backend remains the fallback with full preview/cycle/sidebar behavior.
 Run this from the repository root. It uses a Node base image, installs broad test
 dependencies only, does not install `fzf`, builds `projmux`, asserts `fzf` is not
 on `PATH`, runs the focused native-picker tests, and exercises the settings CLI
-picker through the native backend:
+picker through the native backend.
+
+Short tmux-friendly form:
 
 ```sh
-docker run --rm -v "$PWD":/work -w /work node:24-trixie bash -lc 'apt-get update && apt-get install -y --no-install-recommends tmux git golang-go make ncurses-bin procps ca-certificates && ! command -v fzf && go test ./internal/ui/picker ./internal/app -run "Native|TestSettingsNativeBackendDoesNotCallFZF|TestSwitchCommandUsesNativePickerWhenRequested" && go build -o /tmp/projmux ./cmd/projmux && printf "1\n4\n" | env HOME=/tmp/projmux-home XDG_CONFIG_HOME=/tmp/projmux-home/.config PROJMUX_PICKER_BACKEND=native /tmp/projmux settings && test "$(cat /tmp/projmux-home/.config/projmux/tmux-ai-split-mode)" = codex'
+wt run poc/native-picker-no-fzf -- scripts/poc-native-picker-no-fzf-e2e.sh
+```
+
+The script contains the expanded Docker command:
+
+```sh
+scripts/poc-native-picker-no-fzf-e2e.sh
 ```
