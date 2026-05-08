@@ -1,11 +1,12 @@
 # Notify queue
 
 `projmux` keeps a persistent JSON queue of pending AI notifications.
-This queue is the short-lived actionable reminder set used by the
-status-bar notify segment; it is not a complete inventory of live pane
-attention. Each entry routes a click on the status-bar notify segment
-to the originating tmux pane via `projmux focus`, and feeds the HUD pill
-rendered by `projmux status notify`.
+`attention` is live tmux pane state; `notify` is the short-lived actionable
+reminder set used by the status-bar notify segment. The queue is derived
+from live state and user pushes, but it is not the source of truth for every
+pane that currently has an attention badge. Each entry routes a click on the
+status-bar notify segment to the originating tmux pane via `projmux focus`,
+and feeds the HUD pill rendered by `projmux status notify`.
 
 ## File layout
 
@@ -70,14 +71,34 @@ number of seconds. `--json` prints `{id, queued}` for scripting.
 ### list
 
 ```
-projmux notify list [--json] [--limit N]
+projmux notify list [--live] [--json] [--limit N]
                     [--severity ...] [--source ...]
 ```
 
 Newest-first pending queue entries. Default output is the tab-aligned
 table `ID AGE SEV SRC TARGET TEXT`. `--severity` / `--source` are
-repeatable filters. To inspect live pane attention instead of queued
-reminders, use `projmux attention list`.
+repeatable filters. Without `--live`, this command reads only the queue and
+preserves the stable JSON array used by scripts.
+
+`--live` adds a non-mutating explanation view that reads
+`tmux list-panes -a` and compares the queue with live reply-state panes. It
+does not push, ack, or otherwise repair anything. Human output keeps the
+queue table and adds a `STATE TARGET ID EXPLANATION TEXT` section; JSON
+output becomes `{queue, live, rows, errors}`. Typical states:
+
+- `live-manual-reply` — a live reply/green badge exists, but no queue entry
+  is expected because the pane has no AI agent metadata.
+- `live-ai-reply-queued` — a live AI reply pane has the matching actionable
+  queue entry.
+- `live-ai-reply-missing-queue` — a live AI reply pane lacks the derived
+  queue entry; run `projmux notify reconcile` to back-fill it.
+- `queue-stale` — an `ai:` queue entry exists, but the live pane no longer
+  matches reply+agent state; ack it or run `reconcile`.
+- `queue-only` — a non-AI/external queue entry is pending and has no live AI
+  reply-pane requirement.
+
+To inspect live pane attention without queue context, use
+`projmux attention list`.
 
 ### ack
 
@@ -110,6 +131,11 @@ break. Run this as the recovery path when the on-disk queue has drifted
 from live pane state.
 
 Output: `reconcile: pushed N, acked M, kept K`.
+
+TTL and ack behavior are intentionally queue-local: TTL removes expired
+entries on the next read, `ack` removes explicit ids immediately, and
+`reconcile` only repairs derived `ai:` entries. Manual attention badges
+without agent metadata remain live attention only.
 
 ## Producer (AI reply-ready)
 

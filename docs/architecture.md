@@ -97,6 +97,11 @@ following XDG). Writes go through an `O_CREATE|O_EXCL` lock file
 is safe across concurrent producers (the AI flow, the manual `attention
 toggle`, the `notify push` CLI) on a local filesystem.
 
+Attention and notify are intentionally separate surfaces: attention is live
+tmux pane state, while notify is the short-lived actionable queue derived from
+AI reply panes and explicit pushes. The queue helps clicks route to work; it
+does not own the truth of every live badge.
+
 - **Push** — `projmux notify push` (or the in-process producer in
   `internal/app/notify_producer.go`) appends an entry. Entries carry a
   stable id (caller-supplied or `ai:<session>:<pane>` for the producer
@@ -106,7 +111,10 @@ toggle`, the `notify push` CLI) on a local filesystem.
   refreshes the entry's text and timestamp.
 - **List** — `projmux notify list` returns newest-first. TTL'd entries
   are filtered out at read time, not at write time, so a slow ack pass
-  never resurrects stale rows.
+  never resurrects stale rows. `projmux notify list --live` adds a
+  read-only comparison against live pane state, explaining manual reply
+  badges without queue entries, live AI replies with/missing queue entries,
+  and stale `ai:` entries.
 - **Ack** — `projmux notify ack <id>` removes one entry; `--all`
   flushes everything. The status-bar click handler acks the entry
   it focused so the queue self-clears.

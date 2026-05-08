@@ -52,11 +52,18 @@ type focusOptions struct {
 }
 
 type focusResult struct {
-	OK       bool   `json:"ok"`
-	Fallback string `json:"fallback,omitempty"`
-	Target   string `json:"target,omitempty"`
-	Socket   string `json:"socket,omitempty"`
-	Note     string `json:"note,omitempty"`
+	OK              bool   `json:"ok"`
+	Fallback        string `json:"fallback,omitempty"`
+	Target          string `json:"target,omitempty"`
+	Socket          string `json:"socket,omitempty"`
+	ResolvedSession string `json:"resolved_session,omitempty"`
+	Client          string `json:"client,omitempty"`
+	Dispatch        string `json:"dispatch,omitempty"`
+	SessionState    string `json:"session_state,omitempty"`
+	WindowState     string `json:"window_state,omitempty"`
+	PaneState       string `json:"pane_state,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	Note            string `json:"note,omitempty"`
 }
 
 func newFocusCommand() *focusCommand {
@@ -92,6 +99,15 @@ func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	res, err := c.execute(context.Background(), target, socket)
 	res.Target = target.Raw
 	res.Socket = socket
+	if err != nil {
+		res.OK = false
+		if res.Reason == "" {
+			res.Reason = "dispatch-failed"
+		}
+		if res.Note == "" {
+			res.Note = err.Error()
+		}
+	}
 
 	if opts.JSON {
 		if writeErr := writeFocusJSON(stdout, res); writeErr != nil {
@@ -145,35 +161,49 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 
 	resolution, ok := corefocus.Resolve(target.Session, inventory)
 	if !ok {
-		return focusResult{},
+		return focusResult{
+				SessionState: "unresolved",
+				Reason:       "session-unresolved",
+			},
 			&focusUnresolvedError{session: target.Session, socket: socket}
 	}
 
 	clients, err := c.listClients(ctx, socket)
 	if err != nil {
-		return focusResult{}, err
+		return focusResult{
+			ResolvedSession: resolution.Name,
+			SessionState:    focusSessionState(resolution),
+			Reason:          "list-clients-failed",
+		}, err
 	}
 
-	// Decide whether any client on this socket can be redirected. If the
-	// resolved session is itself attached we still use switch-client on a
-	// client already viewing that session; otherwise pick any client and
-	// redirect it. We do not force-detach other clients — multi-client
-	// users may legitimately keep parallel views; a future config flag can
-	// promote this to a "force focus" behavior.
+	base := focusResult{
+		ResolvedSession: resolution.Name,
+		SessionState:    focusSessionState(resolution),
+	}
+
+	// Socket policy: an explicit --socket wins; otherwise $TMUX provides the
+	// socket path. Dispatch redirects one suitable attached client on that
+	// socket and never force-detaches other clients. If the socket has no
+	// attached clients, focus degrades to a desktop notification only.
 	if len(clients) == 0 {
 		if err := c.notifySessionReady(resolution.Name); err != nil {
 			fmt.Fprintf(c.stderr, "focus: notify failed: %v\n", err)
 		}
-		return focusResult{
-			OK:       true,
-			Fallback: combineFallback(resolution.Fallback, "notify-only"),
-			Note:     "no tmux client attached on socket; notification emitted",
-		}, nil
+		base.OK = true
+		base.Fallback = combineFallback(resolution.Fallback, "notify-only")
+		base.Dispatch = "notify-only"
+		base.Reason = "no-attached-client"
+		base.Note = "no tmux client attached on socket; notification emitted"
+		return base, nil
 	}
 
 	clientName := pickFocusClient(clients, resolution.Name)
+	base.Client = clientName
+	base.Dispatch = "switch-client"
 	if err := c.switchClient(ctx, socket, clientName, resolution.Name); err != nil {
-		return focusResult{}, err
+		base.Reason = "switch-client-failed"
+		return base, err
 	}
 
 	if target.HasWindow() {
@@ -183,34 +213,50 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 			// provided (split layout could have changed). With an explicit
 			// id we surface the error.
 			if target.WindowID != "" {
-				return focusResult{}, err
+				base.WindowState = "id-unresolved"
+				base.Reason = "window-id-unresolved"
+				return base, err
 			}
 			fmt.Fprintf(c.stderr, "focus: select-window %s failed: %v (stopping at session level)\n", windowTarget, err)
-			return focusResult{
-				OK:       true,
-				Fallback: combineFallback(resolution.Fallback, "session-only"),
-			}, nil
+			base.OK = true
+			base.Fallback = combineFallback(resolution.Fallback, "session-only")
+			base.WindowState = "index-fallback-session"
+			base.Reason = "window-index-unresolved"
+			base.Note = "window index did not resolve; focused the resolved session only"
+			return base, nil
 		}
+		base.WindowState = "selected"
 
 		if target.HasPane() {
 			paneTarget := fmt.Sprintf("%s.%s", windowTarget, target.PaneSelector())
 			if err := c.selectPane(ctx, socket, paneTarget); err != nil {
 				if target.PaneID != "" {
-					return focusResult{}, err
+					base.PaneState = "id-unresolved"
+					base.Reason = "pane-id-unresolved"
+					return base, err
 				}
 				fmt.Fprintf(c.stderr, "focus: select-pane %s failed: %v (stopping at window level)\n", paneTarget, err)
-				return focusResult{
-					OK:       true,
-					Fallback: combineFallback(resolution.Fallback, "window-only"),
-				}, nil
+				base.OK = true
+				base.Fallback = combineFallback(resolution.Fallback, "window-only")
+				base.PaneState = "index-fallback-window"
+				base.Reason = "pane-index-unresolved"
+				base.Note = "pane index did not resolve; focused the resolved window only"
+				return base, nil
 			}
+			base.PaneState = "selected"
 		}
 	}
 
-	return focusResult{
-		OK:       true,
-		Fallback: resolution.Fallback,
-	}, nil
+	base.OK = true
+	base.Fallback = resolution.Fallback
+	return base, nil
+}
+
+func focusSessionState(resolution corefocus.Resolution) string {
+	if resolution.Fallback != "" {
+		return "fallback"
+	}
+	return "exact"
 }
 
 func (c *focusCommand) resolveSocket(explicit string) string {

@@ -120,9 +120,11 @@ projmux focus --target SESSION[:WINDOW[.PANE]] [--socket <path>]
 ```
 
 Unified switch-client dispatch. Resolves the session against the live tmux
-inventory (with prefix/fuzzy fallback), then redirects an existing client
-to it; if no client is attached on the socket, emits the configured
-desktop notification instead.
+inventory (with prefix/fuzzy fallback), then redirects one suitable attached
+client on the selected socket. It never force-detaches other clients. If no
+client is attached on that socket, it emits the configured desktop
+notification instead. `--socket` is explicit; when omitted, the socket is
+derived from `$TMUX`.
 
 Exit codes:
 
@@ -130,22 +132,28 @@ Exit codes:
 - `2` — target session could not be resolved (`focusExitNotResolved`).
 
 `--source`/`--kind` are telemetry labels logged when
-`PROJMUX_FOCUS_DEBUG` is set. `--json` prints a single-line JSON
-`{ok, fallback, target, socket, note}` payload.
+`PROJMUX_FOCUS_DEBUG` is set. `--json` prints a single-line JSON payload
+with `{ok, fallback, target, socket, resolved_session, client, dispatch,
+session_state, window_state, pane_state, reason, note}`. Callers can
+distinguish unresolved sessions (`reason=session-unresolved`, exit 2),
+session rename/prefix fallback (`session_state=fallback`), window index
+fallback (`window_state=index-fallback-session`), pane index fallback
+(`pane_state=index-fallback-window`), and explicit id failures
+(`window-id-unresolved` / `pane-id-unresolved`).
 
 ## notify
 
-Pending AI notify queue. This is the short-lived actionable reminder set
-used by the status-bar notify segment; it is not a complete view of all
-live pane attention. See [notify-queue.md](notify-queue.md) for the full
-data model.
+Pending AI notify queue. `attention` is live tmux pane state; `notify` is
+the short-lived actionable reminder set used by the status-bar notify
+segment. It is not the source of truth for all live pane attention. See
+[notify-queue.md](notify-queue.md) for the full data model.
 
 ```
 projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]>
                      [--socket <s>] [--severity info|warn|critical]
                      [--source ai|k8s|git|external] [--ttl <seconds>]
                      [--id <s>] [--json]
-projmux notify list  [--json] [--limit N]
+projmux notify list  [--live] [--json] [--limit N]
                      [--severity ...] [--source ...]
 projmux notify ack   <id> | --all
 projmux notify reconcile [--json]
@@ -156,6 +164,11 @@ projmux notify reconcile [--json]
   is hard-capped to 80 runes (longer text is truncated server-side).
 - `list` — newest-first pending queue table `ID AGE SEV SRC TARGET TEXT`
   (or JSON). `--severity` and `--source` are repeatable filters.
+  `--live` adds a non-mutating explanation table (or JSON report) that
+  compares queued entries with live pane attention. It calls out manual
+  reply badges that do not queue because no AI agent is attached, live AI
+  reply panes missing a queue entry, matched AI reply entries, and stale
+  queue entries whose live pane no longer matches.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
   panes whose attention state is `reply` AND whose AI agent option is
@@ -215,14 +228,16 @@ projmux statusbar click <range-id> [--socket <s>] [--mouse-window <id>]
                                    [--mouse-x N] [--mouse-y N]
 ```
 
-Click/keyboard dispatcher for the two-line status bar. Range ids:
+Click/keyboard dispatcher for the two-line status bar. Implemented range ids:
 `session pwd kube git usage notify`. The bare `window` /
 `window|<idx>` token (tmux's built-in window-list range) and the empty
 range fall through to `select-window -t @<mouse_window>` so the native
-click-to-switch tab affordance is preserved on row 0. Unknown range ids
-are no-ops. `session` opens the existing-session popup; `pwd` copies
-the current pane path to the tmux paste buffer and shows it in a
-compact popup; `kube` and `git` open the project switcher popup.
+click-to-switch tab affordance is preserved on row 0. Unknown range ids are
+non-specialized placeholders and no-op. `session` opens the existing-session
+popup; `pwd` copies the current pane path to the tmux paste buffer and shows
+it in a compact popup; `kube` and `git` open the project switcher popup;
+`usage` opens the detailed `projmux usage` table popup; `notify` focuses the
+newest actionable queue target.
 `MouseDown1Status` errors are
 swallowed and surfaced as `display-message` toasts so a transient
 failure does not raise a tmux error popup. See [statusbar.md](statusbar.md).
