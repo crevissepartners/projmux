@@ -538,6 +538,31 @@ func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveRendersMultilineGapLine(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:        "switch",
+		MultiLine: true,
+		Items: []Item{
+			{Label: "api\n  branch main", Value: "/repo/api"},
+			{Label: "web\n  branch main", Value: "/repo/web"},
+		},
+	}, []Item{
+		{Label: "api\n  branch main", Value: "/repo/api"},
+		{Label: "web\n  branch main", Value: "/repo/web"},
+	}, "", 0, 0, nativeLayout{Rows: 24, Cols: 80})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "  "+strings.Repeat(nativeGapLine, 8)) {
+		t.Fatalf("native output = %q, want fzf-like multiline gap line", rendered)
+	}
+	if strings.Contains(rendered, nativeGapSentinel) {
+		t.Fatalf("native output leaked gap sentinel: %q", rendered)
+	}
+}
+
 func TestNativeSelectedContentKeepsCurrentStyleAfterReset(t *testing.T) {
 	t.Parallel()
 

@@ -153,6 +153,8 @@ const (
 	nativeScreenEnter  = "\x1b[?1049h\x1b[?25l"
 	nativeScreenLeave  = "\x1b[?25h\x1b[?1049l\r\n"
 	nativeScrollbar    = "█"
+	nativeGapLine      = "─"
+	nativeGapSentinel  = "\x00projmux-native-gap\x00"
 )
 
 func (r NativeRunner) Run(options Options) (Result, error) {
@@ -970,14 +972,18 @@ func nativeInteractiveListLines(items []Item, start, end, selected int, multiLin
 	lines := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
 		lines = append(lines, nativeInteractiveItemLines(items[i], i == selected, multiLine)...)
+		if multiLine && i < end-1 {
+			lines = append(lines, nativeGapSentinel)
+		}
 	}
 	return lines
 }
 
 func nativeListLinesWithScrollbar(lines []string, total, start, end, width int) []string {
 	visible := end - start
-	if total <= visible || len(lines) == 0 || width <= 1 {
-		return lines
+	hasScrollbar := total > visible && len(lines) > 0 && width > 1
+	if !hasScrollbar {
+		return nativeRenderableListLines(lines, width)
 	}
 	scrollbarIndex := 0
 	if maxStart := total - visible; maxStart > 0 && len(lines) > 1 {
@@ -989,9 +995,28 @@ func nativeListLinesWithScrollbar(lines []string, total, start, end, width int) 
 		if i == scrollbarIndex {
 			marker = nativeScrollbar
 		}
+		line = nativeRenderableListLine(line, width-1)
 		rendered = append(rendered, nativePadRight(nativeTruncateANSI(line, width-1), width-1)+marker)
 	}
 	return rendered
+}
+
+func nativeRenderableListLines(lines []string, width int) []string {
+	rendered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		rendered = append(rendered, nativeRenderableListLine(line, width))
+	}
+	return rendered
+}
+
+func nativeRenderableListLine(line string, width int) string {
+	if line != nativeGapSentinel {
+		return line
+	}
+	if width <= 4 {
+		return nativeGapLine
+	}
+	return "  " + strings.Repeat(nativeGapLine, width-2)
 }
 
 func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
