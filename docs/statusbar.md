@@ -30,7 +30,9 @@ row 1  #[range=user|notify] <notify HUD pill> #[norange]
   handler.
 - Row 1 splits the line with `#[align=left]` (the pending AI notify
   queue, capped at 80
-  cells) and `#[align=right]` (usage, capped at 120 cells). Both
+  cells) and `#[align=right]` (usage, capped at 120 cells). `notify` is the
+  short-lived actionable queue; live pane attention badges are a separate
+  state surface. Both
   segments degrade gracefully when the cell budget is tight; see
   [notify-queue.md](notify-queue.md) and [usage-tracking.md](usage-tracking.md)
   for the per-segment tier ladder.
@@ -58,11 +60,15 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on success | `prefix s n`  |
 
 `notify` reads the pending queue only. For a live pane-state view that is
-independent of queued reminders, use `projmux attention list`.
+independent of queued reminders, use `projmux attention list`. To explain why
+a live reply badge and the queue disagree, use `projmux notify list --live`.
+`usage` deliberately opens the detailed `projmux usage` table popup; it is the
+clear action surface for the compact HUD bar.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,
-otherwise it is a no-op.
+otherwise it is a no-op. Unknown user range ids are non-specialized
+placeholder surfaces and no-op until a handler is wired into the dispatcher.
 
 ## Keyboard chord
 

@@ -176,6 +176,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 
 	var (
 		asJSON     = fs.Bool("json", false, "emit json instead of tabular output")
+		live       = fs.Bool("live", false, "include live tmux pane attention explanations")
 		limit      = fs.Int("limit", 0, "limit number of returned entries (0 = no limit)")
 		severities multiFlag
 		sources    multiFlag
@@ -226,7 +227,21 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		if entries == nil {
 			entries = []notify.Notification{}
 		}
+		if *live {
+			report, err := c.buildNotifyLiveReport(entries)
+			if err != nil {
+				return err
+			}
+			return writeJSON(stdout, report)
+		}
 		return writeJSON(stdout, entries)
+	}
+	if *live {
+		report, err := c.buildNotifyLiveReport(entries)
+		if err != nil {
+			return err
+		}
+		return writeNotifyLiveTable(stdout, report, c.clock())
 	}
 	return writeNotifyTable(stdout, entries, c.clock())
 }
@@ -343,6 +358,221 @@ func writeNotifyTable(w io.Writer, entries []notify.Notification, now time.Time)
 	return nil
 }
 
+type notifyLiveReport struct {
+	Queue  []notify.Notification `json:"queue"`
+	Live   []notifyLivePane      `json:"live"`
+	Rows   []notifyLiveRow       `json:"rows"`
+	Errors []string              `json:"errors"`
+}
+
+type notifyLivePane struct {
+	ID             string `json:"id"`
+	Session        string `json:"session"`
+	Window         string `json:"window,omitempty"`
+	Pane           string `json:"pane"`
+	Socket         string `json:"socket,omitempty"`
+	Title          string `json:"title,omitempty"`
+	AttentionState string `json:"attention_state"`
+	AIState        string `json:"ai_state,omitempty"`
+	Agent          string `json:"agent,omitempty"`
+	Topic          string `json:"topic,omitempty"`
+	Target         string `json:"target"`
+	ShouldQueue    bool   `json:"should_queue"`
+}
+
+type notifyLiveRow struct {
+	State       string               `json:"state"`
+	ID          string               `json:"id,omitempty"`
+	Target      string               `json:"target"`
+	Text        string               `json:"text,omitempty"`
+	Explanation string               `json:"explanation"`
+	Queue       *notify.Notification `json:"queue,omitempty"`
+	Live        *notifyLivePane      `json:"live,omitempty"`
+}
+
+func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (notifyLiveReport, error) {
+	report := notifyLiveReport{
+		Queue:  nonNilNotifications(entries),
+		Live:   []notifyLivePane{},
+		Rows:   []notifyLiveRow{},
+		Errors: []string{},
+	}
+
+	panes, err := c.listNotifyLivePanes()
+	if err != nil {
+		report.Errors = append(report.Errors, err.Error())
+		for _, entry := range entries {
+			report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, "live-unavailable", "live tmux pane state could not be read; queue entry remains pending"))
+		}
+		return report, nil
+	}
+
+	liveByID := make(map[string]notifyLivePane, len(panes))
+	for _, live := range panes {
+		report.Live = append(report.Live, live)
+		if live.ShouldQueue {
+			liveByID[live.ID] = live
+		}
+	}
+
+	queueByID := make(map[string]notify.Notification, len(entries))
+	for _, entry := range entries {
+		queueByID[entry.ID] = entry
+	}
+
+	for _, live := range report.Live {
+		liveCopy := live
+		if !live.ShouldQueue {
+			state := "live-title-attention"
+			explanation := "live title attention badge exists but pane is not reply+agent state; title-only/manual attention does not create notify queue entries"
+			if live.AttentionState == attentionStateReply {
+				state = "live-manual-reply"
+				explanation = "live reply badge exists but no AI agent metadata is set; manual attention panes do not create notify queue entries"
+			}
+			report.Rows = append(report.Rows, notifyLiveRow{
+				State:       state,
+				ID:          live.ID,
+				Target:      live.Target,
+				Explanation: explanation,
+				Live:        &liveCopy,
+			})
+			continue
+		}
+		if entry, ok := queueByID[live.ID]; ok {
+			entryCopy := entry
+			report.Rows = append(report.Rows, notifyLiveRow{
+				State:       "live-ai-reply-queued",
+				ID:          live.ID,
+				Target:      live.Target,
+				Text:        entry.Text,
+				Explanation: "live AI reply pane has a matching actionable notify queue entry",
+				Queue:       &entryCopy,
+				Live:        &liveCopy,
+			})
+			continue
+		}
+		report.Rows = append(report.Rows, notifyLiveRow{
+			State:       "live-ai-reply-missing-queue",
+			ID:          live.ID,
+			Target:      live.Target,
+			Explanation: "live AI reply pane has no matching queue entry; run `projmux notify reconcile` to back-fill it",
+			Live:        &liveCopy,
+		})
+	}
+
+	for _, entry := range entries {
+		if _, ok := liveByID[entry.ID]; ok {
+			continue
+		}
+		state := "queue-only"
+		explanation := "queue entry is pending; no matching live AI reply pane was found"
+		if strings.HasPrefix(entry.ID, "ai:") {
+			state = "queue-stale"
+			explanation = "queue entry exists but live pane no longer matches reply+agent state; it will be removed by ack or reconcile"
+		}
+		report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, state, explanation))
+	}
+
+	return report, nil
+}
+
+func (c *notifyCommand) listNotifyLivePanes() ([]notifyLivePane, error) {
+	rows, err := (&attentionCommand{runner: c.runner}).listAttentionPanes()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]notifyLivePane, 0, len(rows))
+	for _, row := range rows {
+		live := notifyLivePane{
+			ID:             buildAttentionNotifyID(row.Session, row.Pane),
+			Session:        row.Session,
+			Window:         row.Window,
+			Pane:           row.Pane,
+			Socket:         row.Socket,
+			Title:          row.Title,
+			AttentionState: row.AttentionState,
+			AIState:        row.AIState,
+			Agent:          row.Agent,
+			Topic:          row.Topic,
+			Target: notify.FormatTarget(notify.Target{
+				Session: row.Session,
+				Window:  row.Window,
+				Pane:    row.Pane,
+			}),
+			ShouldQueue: row.AttentionState == attentionStateReply && strings.TrimSpace(row.Agent) != "",
+		}
+		if live.AttentionState == attentionStateReply || hasAttentionPrefix(live.Title) || hasBraillePrefix(live.Title) {
+			out = append(out, live)
+		}
+	}
+	return out, nil
+}
+
+func nonNilNotifications(entries []notify.Notification) []notify.Notification {
+	if entries == nil {
+		return []notify.Notification{}
+	}
+	return entries
+}
+
+func notifyLiveQueueOnlyRow(entry notify.Notification, state, explanation string) notifyLiveRow {
+	entryCopy := entry
+	return notifyLiveRow{
+		State: state,
+		ID:    entry.ID,
+		Target: notify.FormatTarget(notify.Target{
+			Socket:  entry.Socket,
+			Session: entry.Session,
+			Window:  entry.Window,
+			Pane:    entry.Pane,
+		}),
+		Text:        entry.Text,
+		Explanation: explanation,
+		Queue:       &entryCopy,
+	}
+}
+
+func writeNotifyLiveTable(w io.Writer, report notifyLiveReport, now time.Time) error {
+	if err := writeNotifyTable(w, report.Queue, now); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w, ""); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w, "STATE\tTARGET\tID\tEXPLANATION\tTEXT"); err != nil {
+		return err
+	}
+	for _, row := range report.Rows {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			notifyTableCell(row.State),
+			notifyTableCell(row.Target),
+			notifyTableCell(row.ID),
+			notifyTableCell(row.Explanation),
+			notifyTableCell(row.Text),
+		); err != nil {
+			return err
+		}
+	}
+	for _, e := range report.Errors {
+		if _, err := fmt.Fprintf(w, "live error\t-\t-\t%s\t-\n", notifyTableCell(e)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func notifyTableCell(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	value = strings.ReplaceAll(value, "\t", " ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return value
+}
+
 // formatAge renders a duration as a short age string (e.g. "12s", "5m").
 func formatAge(d time.Duration) string {
 	if d < 0 {
@@ -402,23 +632,25 @@ func (m *multiFlag) Set(value string) error {
 }
 
 func printNotifyUsage(w io.Writer) {
-	fmt.Fprintln(w, "Pending AI notify queue. Use `notify reconcile` to repair the queue from live tmux panes.")
+	fmt.Fprintln(w, "Pending AI notify queue. Attention is live pane state; notify is the short-lived actionable queue.")
+	fmt.Fprintln(w, "Use `notify list --live` to explain queue/live drift and `notify reconcile` to repair AI reply entries.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]")
 	fmt.Fprintln(w, "                        [--severity info|warn|critical] [--source ai|k8s|git|external]")
 	fmt.Fprintln(w, "                        [--ttl <seconds>] [--id <s>] [--json]")
-	fmt.Fprintln(w, "  projmux notify list  [--json] [--limit N] [--severity ...] [--source ...]")
+	fmt.Fprintln(w, "  projmux notify list  [--live] [--json] [--limit N] [--severity ...] [--source ...]")
 	fmt.Fprintln(w, "  projmux notify ack   <id> | --all")
 	fmt.Fprintln(w, "  projmux notify reconcile [--json]")
 }
 
 func printNotifyListUsage(w io.Writer) {
 	fmt.Fprintln(w, "Pending AI notify queue entries only; not a full live attention view.")
-	fmt.Fprintln(w, "Use `projmux attention list` for live pane attention state.")
+	fmt.Fprintln(w, "Use `--live` to explain queue entries against live pane attention state without mutating either surface.")
+	fmt.Fprintln(w, "Use `projmux attention list` for live pane attention state only.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux notify list [--json] [--limit N] [--severity ...] [--source ...]")
+	fmt.Fprintln(w, "  projmux notify list [--live] [--json] [--limit N] [--severity ...] [--source ...]")
 }
 
 func printNotifyReconcileUsage(w io.Writer) {

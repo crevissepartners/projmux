@@ -219,6 +219,145 @@ func TestNotifyListTable(t *testing.T) {
 	}
 }
 
+func TestNotifyListLiveHumanExplainsManualReplyWithoutQueue(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{}
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			if containsArg(args, "list-panes") {
+				return notifyLivePaneRows(
+					[]string{"main", "@1", "%2", "0", "✳ shell", "reply", "idle", "", "", "/tmp/tmux/default"},
+				), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newCmd(store)
+	cmd.runner = runner
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--live"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "STATE\tTARGET\tID\tEXPLANATION\tTEXT") {
+		t.Fatalf("missing live header: %q", out)
+	}
+	if !strings.Contains(out, "live-manual-reply") {
+		t.Fatalf("missing manual reply explanation row: %q", out)
+	}
+	if !strings.Contains(out, "manual attention panes do not create notify queue entries") {
+		t.Fatalf("missing queue-empty explanation: %q", out)
+	}
+}
+
+func TestNotifyListLiveHumanExplainsTitlePrefixWithoutQueue(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{}
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			if containsArg(args, "list-panes") {
+				return notifyLivePaneRows(
+					[]string{"main", "@1", "%2", "0", "✳ stale title", "", "idle", "", "", "/tmp/tmux/default"},
+				), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newCmd(store)
+	cmd.runner = runner
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--live"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "live-title-attention") {
+		t.Fatalf("missing title attention explanation row: %q", out)
+	}
+	if !strings.Contains(out, "title-only/manual attention does not create notify queue entries") {
+		t.Fatalf("missing title-only queue explanation: %q", out)
+	}
+}
+
+func TestNotifyListLiveJSONExplainsQueueAndLiveStates(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{
+				ID:        "ai:main:%2",
+				Text:      "codex: reply ready · topic",
+				Severity:  notify.SeverityInfo,
+				Source:    notify.SourceAI,
+				Session:   "main",
+				Window:    "@1",
+				Pane:      "%2",
+				CreatedAt: now,
+				ExpiresAt: now.Add(time.Hour),
+			},
+			{
+				ID:        "ai:gone:%9",
+				Text:      "stale",
+				Severity:  notify.SeverityInfo,
+				Source:    notify.SourceAI,
+				Session:   "gone",
+				Pane:      "%9",
+				CreatedAt: now,
+				ExpiresAt: now.Add(time.Hour),
+			},
+		},
+	}
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			if containsArg(args, "list-panes") {
+				return notifyLivePaneRows(
+					[]string{"main", "@1", "%2", "0", "codex", "reply", "waiting", "codex", "topic", "/tmp/tmux/default"},
+					[]string{"feat", "@2", "%3", "0", "claude", "reply", "waiting", "claude", "help", "/tmp/tmux/default"},
+					[]string{"shell", "@3", "%4", "0", "✳ shell", "reply", "idle", "", "", "/tmp/tmux/default"},
+					[]string{"title", "@4", "%5", "0", "✳ title-only", "", "idle", "codex", "topic", "/tmp/tmux/default"},
+				), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newCmd(store)
+	cmd.runner = runner
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--live", "--json"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	var report notifyLiveReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode: %v (raw=%q)", err, stdout.String())
+	}
+	states := map[string]bool{}
+	for _, row := range report.Rows {
+		states[row.State] = true
+	}
+	for _, state := range []string{
+		"live-ai-reply-queued",
+		"live-ai-reply-missing-queue",
+		"live-manual-reply",
+		"live-title-attention",
+		"queue-stale",
+	} {
+		if !states[state] {
+			t.Fatalf("missing state %q in rows: %+v", state, report.Rows)
+		}
+	}
+	if len(report.Queue) != 2 {
+		t.Fatalf("queue len = %d, want 2", len(report.Queue))
+	}
+	if len(report.Live) != 4 {
+		t.Fatalf("live len = %d, want 4", len(report.Live))
+	}
+}
+
 func TestNotifyListFiltersBySeverity(t *testing.T) {
 	t.Parallel()
 
@@ -381,4 +520,12 @@ func TestNotifyListHelpDescribesPendingQueueBoundary(t *testing.T) {
 	if !strings.Contains(stderr.String(), "projmux attention list") {
 		t.Fatalf("stderr = %q, want live attention pointer", stderr.String())
 	}
+}
+
+func notifyLivePaneRows(rows ...[]string) []byte {
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		lines = append(lines, strings.Join(row, attentionListSeparator))
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
 }

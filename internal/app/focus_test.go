@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -128,6 +129,9 @@ func TestFocus_FallbackPrefixMatch(t *testing.T) {
 	if !res.OK || res.Fallback != "prefix-match" {
 		t.Fatalf("result = %#v, want ok=true fallback=prefix-match", res)
 	}
+	if res.ResolvedSession != "foo-feat" || res.SessionState != "fallback" {
+		t.Fatalf("result = %#v, want resolved session fallback detail", res)
+	}
 }
 
 func TestFocus_NoClientNotifyOnly(t *testing.T) {
@@ -209,6 +213,163 @@ func TestFocus_UnresolvedSessionExitCode(t *testing.T) {
 	if res.OK {
 		t.Fatalf("result = %#v, want ok=false", res)
 	}
+	if res.Reason != "session-unresolved" || res.SessionState != "unresolved" {
+		t.Fatalf("result = %#v, want unresolved session diagnostics", res)
+	}
+	if !strings.Contains(res.Note, "session \"needle\" not found") {
+		t.Fatalf("result note = %q, want unresolved target explanation", res.Note)
+	}
+}
+
+func TestFocus_WindowIndexFailureFallsBackToSession(t *testing.T) {
+	t.Parallel()
+
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tworkspace\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tworkspace\n"), nil
+			case containsArg(args, "select-window"):
+				return nil, errors.New("can't find window: 9")
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"--target", "workspace:9", "--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	var res focusResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if !res.OK || res.Fallback != "session-only" || res.Reason != "window-index-unresolved" {
+		t.Fatalf("result = %#v, want session-only window-index fallback", res)
+	}
+	if res.WindowState != "index-fallback-session" {
+		t.Fatalf("WindowState = %q, want index-fallback-session", res.WindowState)
+	}
+	if sawSubcommand(runner.calls, "select-pane") {
+		t.Fatalf("did not expect pane selection after window fallback, calls=%#v", runner.calls)
+	}
+}
+
+func TestFocus_WindowIDFailureIsHardDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tworkspace\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tworkspace\n"), nil
+			case containsArg(args, "select-window"):
+				return nil, errors.New("can't find window: @99")
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := cmd.Run([]string{"--target", "workspace:@99", "--json"}, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected hard error for unresolved explicit window id")
+	}
+	var coded focusExitError
+	if errors.As(err, &coded) {
+		t.Fatalf("explicit window id failure must not use unresolved-target exit code: %v", err)
+	}
+
+	var res focusResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if res.OK || res.Reason != "window-id-unresolved" || res.WindowState != "id-unresolved" {
+		t.Fatalf("result = %#v, want hard window id diagnostics", res)
+	}
+}
+
+func TestFocus_PaneIndexFailureFallsBackToWindow(t *testing.T) {
+	t.Parallel()
+
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tworkspace\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tworkspace\n"), nil
+			case containsArg(args, "select-pane"):
+				return nil, errors.New("can't find pane: 9")
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"--target", "workspace:1.9", "--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	var res focusResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if !res.OK || res.Fallback != "window-only" || res.Reason != "pane-index-unresolved" {
+		t.Fatalf("result = %#v, want window-only pane-index fallback", res)
+	}
+	if res.WindowState != "selected" || res.PaneState != "index-fallback-window" {
+		t.Fatalf("result = %#v, want selected window and pane fallback detail", res)
+	}
+}
+
+func TestFocus_PaneIDFailureIsHardDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tworkspace\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tworkspace\n"), nil
+			case containsArg(args, "select-pane"):
+				return nil, errors.New("can't find pane: %99")
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := cmd.Run([]string{"--target", "workspace:1.%99", "--json"}, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected hard error for unresolved explicit pane id")
+	}
+	var coded focusExitError
+	if errors.As(err, &coded) {
+		t.Fatalf("explicit pane id failure must not use unresolved-target exit code: %v", err)
+	}
+
+	var res focusResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if res.OK || res.Reason != "pane-id-unresolved" || res.PaneState != "id-unresolved" {
+		t.Fatalf("result = %#v, want hard pane id diagnostics", res)
+	}
 }
 
 func TestFocus_SocketArgPropagates(t *testing.T) {
@@ -275,20 +436,13 @@ func TestFocus_AppDispatcherRoutesFocus(t *testing.T) {
 }
 
 func containsArg(args []string, needle string) bool {
-	for _, a := range args {
-		if a == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(args, needle)
 }
 
 func sawSubcommand(calls []focusFakeCall, sub string) bool {
 	for _, c := range calls {
-		for _, a := range c.args {
-			if a == sub {
-				return true
-			}
+		if slices.Contains(c.args, sub) {
+			return true
 		}
 	}
 	return false
