@@ -4,6 +4,9 @@ This note is POC-only. It does not change the public doctor dependency policy:
 `fzf` remains a required production dependency and the `internal/ui/fzf`
 backend remains the fallback with full preview/cycle/sidebar behavior.
 
+The fzf compatibility surface for this POC is tracked in
+[native-picker-parity.md](native-picker-parity.md).
+
 ## What This POC Covers
 
 - `internal/ui/picker` is the backend-neutral contract for native picker rows,
