@@ -31,7 +31,7 @@ row 1  #[range=user|notify] <notify HUD pill> #[norange]
 - Row 1 splits the line with `#[align=left]` (the pending AI notify
   queue, capped at 80
   cells) and `#[align=right]` (usage, capped at 120 cells). `notify` is the
-  short-lived actionable queue; live pane attention badges are a separate
+  explicit-ack pending queue; live pane attention badges are a separate
   state surface. Both
   segments degrade gracefully when the cell budget is tight; see
   [notify-queue.md](notify-queue.md) and [usage-tracking.md](usage-tracking.md)
@@ -57,7 +57,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `usage`   | 1 | `display-popup -E -h 60% -w 80% -- projmux usage`, then wait for Enter | `prefix s u`  |
-| `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on success | `prefix s n`  |
+| `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, without acking | `prefix s n`  |
 
 `notify` reads the pending queue only. For a live pane-state view that is
 independent of queued reminders, use `projmux attention list`. To explain why
@@ -93,7 +93,7 @@ click. Each handler therefore swallows runtime failures and surfaces
 them as `display-message` toasts:
 
 - `notify` click whose focus dispatch exits 2 (target unresolved):
-  ack the entry, toast `notify target gone, dropping entry`.
+  keep the entry pending, toast `notify target gone; ack to clear`.
 - Any other focus failure: keep the entry, toast `focus failed:
   <reason>`.
 - `session`, `kube`, or `git` popup launch failure: toast

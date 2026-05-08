@@ -1,7 +1,6 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,14 +9,14 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
-// attentionNotifyTTL is the lifetime of a "reply ready" queue entry. Stale
-// entries should never sit on the bar forever even if the ack path fails;
-// 10 minutes is the spec value.
+// attentionNotifyTTL is the freshness window of a "reply ready" queue entry.
+// It is display metadata only; pending rows remain until explicit ack.
 const attentionNotifyTTL = 10 * time.Minute
 
 // attentionNotifyProducer pushes "reply ready" entries into the projmux
-// notify queue when an AI pane transitions to the reply state, and acks the
-// matching entry when the pane leaves that state. Implementations are
+// notify queue when an AI pane transitions to the reply state. The clear
+// callback is intentionally a no-op: ack is the user's consume signal under
+// the notify SOT contract. Implementations are
 // best-effort: every queue or runner failure is swallowed so the
 // pane-attention state machine never blocks on disk IO.
 type attentionNotifyProducer interface {
@@ -125,30 +124,10 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	})
 }
 
-// AckReplyReady removes the matching queue entry. The session and pane id
-// are read off the lookup so the composite id matches whatever was queued.
-// A missing id is treated as a no-op since acking is advisory.
+// AckReplyReady is kept for the attention state-machine seam, but it no
+// longer removes rows. Leaving reply state does not mean the user consumed the
+// notification; only explicit `notify ack` does.
 func (p *storeAttentionNotifyProducer) AckReplyReady(in attentionNotifyInput) {
-	if p == nil || p.store == nil || in.Lookup == nil {
-		return
-	}
-	paneID := strings.TrimSpace(in.PaneID)
-	if paneID == "" {
-		return
-	}
-	session := strings.TrimSpace(in.Lookup.PaneFormat(paneID, "#S"))
-	resolvedPane := strings.TrimSpace(in.Lookup.PaneFormat(paneID, "#{pane_id}"))
-	if resolvedPane == "" {
-		resolvedPane = paneID
-	}
-	if session == "" {
-		return
-	}
-	id := buildAttentionNotifyID(session, resolvedPane)
-	if err := p.store.Ack(id); err != nil && !errors.Is(err, notify.ErrNotFound) {
-		// Best-effort: keep the attention flow going.
-		return
-	}
 }
 
 // buildAttentionNotifyID renders the composite id that pairs a push with its

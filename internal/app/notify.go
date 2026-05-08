@@ -1,16 +1,19 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 )
 
 // notifyStore is the subset of *notify.Store the CLI dispatcher needs. The
@@ -24,14 +27,21 @@ type notifyStore interface {
 }
 
 type notifyCommand struct {
-	store    notifyStore
-	storeErr error
-	now      func() time.Time
-	runner   tmuxRunner
+	store      notifyStore
+	storeErr   error
+	now        func() time.Time
+	runner     tmuxRunner
+	picker     intfzf.Runner
+	executable func() (string, error)
 }
 
 func newNotifyCommand() *notifyCommand {
-	cmd := &notifyCommand{now: time.Now, runner: reconcileDefaultRunner()}
+	cmd := &notifyCommand{
+		now:        time.Now,
+		runner:     reconcileDefaultRunner(),
+		picker:     intfzf.NewRunner(),
+		executable: os.Executable,
+	}
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
 		cmd.storeErr = fmt.Errorf("resolve default config paths: %w", err)
@@ -178,6 +188,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		asJSON     = fs.Bool("json", false, "emit json instead of tabular output")
 		live       = fs.Bool("live", false, "include live tmux pane attention explanations")
 		limit      = fs.Int("limit", 0, "limit number of returned entries (0 = no limit)")
+		ui         = fs.String("ui", "table", "table|sidebar")
 		severities multiFlag
 		sources    multiFlag
 	)
@@ -196,6 +207,15 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	}
 	if *limit < 0 {
 		return usageError("notify list --limit must be >= 0")
+	}
+	if *ui != "table" && *ui != "sidebar" {
+		return usageError("notify list --ui must be table or sidebar")
+	}
+	if *ui == "sidebar" && *asJSON {
+		return usageError("notify list --ui=sidebar cannot be combined with --json")
+	}
+	if *ui == "sidebar" && *live {
+		return usageError("notify list --ui=sidebar cannot be combined with --live")
 	}
 	for _, s := range severities {
 		if err := notify.ValidateSeverity(s); err != nil {
@@ -223,6 +243,10 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		entries = entries[:*limit]
 	}
 
+	if *ui == "sidebar" {
+		return c.runSidebar(entries, stdout, stderr)
+	}
+
 	if *asJSON {
 		if entries == nil {
 			entries = []notify.Notification{}
@@ -244,6 +268,151 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return writeNotifyLiveTable(stdout, report, c.clock())
 	}
 	return writeNotifyTable(stdout, entries, c.clock())
+}
+
+func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr io.Writer) error {
+	if c.picker == nil {
+		return errors.New("notify sidebar picker is not configured")
+	}
+	now := c.clock()
+	fzfOptions := intfzf.Options{
+		UI:         "notify-sidebar",
+		Prompt:     "notilist> ",
+		Header:     "Enter/click: focus | a: ack selected | Ctrl-A: clear all | Esc: close",
+		Footer:     "focus does not ack; notifications remain until explicit ack",
+		ExpectKeys: []string{"a", "ctrl-a"},
+		Bindings:   []string{"click:accept", "double-click:accept"},
+		Entries:    notifySidebarEntries(entries, now),
+	}
+	result, err := c.picker.Run(fzfOptions)
+	if err != nil {
+		return fmt.Errorf("run notify sidebar: %w", err)
+	}
+	id := strings.TrimSpace(result.Value)
+	if id == "" || id == notifySidebarEmptyValue {
+		return nil
+	}
+	store, err := c.requireStore()
+	if err != nil {
+		return err
+	}
+	switch result.Key {
+	case "ctrl-a":
+		removed, err := store.AckAll()
+		if err != nil {
+			return fmt.Errorf("clear all notifications: %w", err)
+		}
+		_, err = fmt.Fprintf(stdout, "cleared %d notification(s)\n", removed)
+		return err
+	case "a":
+		if err := store.Ack(id); err != nil {
+			return fmt.Errorf("ack notification: %w", err)
+		}
+		_, err = fmt.Fprintf(stdout, "ack %s\n", id)
+		return err
+	default:
+		entry, ok := findNotificationByID(entries, id)
+		if !ok {
+			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
+		}
+		return c.focusNotification(entry, "notify-sidebar", "row-select")
+	}
+}
+
+const notifySidebarEmptyValue = "__projmux_notify_empty__"
+
+func notifySidebarEntries(entries []notify.Notification, now time.Time) []intfzf.Entry {
+	if len(entries) == 0 {
+		return []intfzf.Entry{{
+			Label:     "No pending notifications",
+			Value:     notifySidebarEmptyValue,
+			SearchKey: "empty no pending notifications",
+		}}
+	}
+	out := make([]intfzf.Entry, 0, len(entries))
+	for _, e := range entries {
+		target := notify.FormatTarget(notify.Target{
+			Socket:  e.Socket,
+			Session: e.Session,
+			Window:  e.Window,
+			Pane:    e.Pane,
+		})
+		label := fmt.Sprintf("%-4s %-3s %-4s %-18s %s",
+			formatAge(now.Sub(e.CreatedAt)),
+			strings.ToUpper(shortNotifySeverity(e.Severity)),
+			shortNotifySource(e.Source),
+			target,
+			e.Text,
+		)
+		out = append(out, intfzf.Entry{
+			Label:     notifyTableCell(label),
+			Value:     e.ID,
+			SearchKey: strings.Join([]string{e.ID, e.Text, e.Severity, e.Source, target}, " "),
+		})
+	}
+	return out
+}
+
+func shortNotifySeverity(severity string) string {
+	switch severity {
+	case notify.SeverityCritical:
+		return "crit"
+	case notify.SeverityWarn:
+		return "warn"
+	default:
+		return "info"
+	}
+}
+
+func shortNotifySource(source string) string {
+	switch source {
+	case notify.SourceAI:
+		return "ai"
+	case notify.SourceK8s:
+		return "k8s"
+	case notify.SourceGit:
+		return "git"
+	default:
+		return "ext"
+	}
+}
+
+func findNotificationByID(entries []notify.Notification, id string) (notify.Notification, bool) {
+	for _, e := range entries {
+		if e.ID == id {
+			return e, true
+		}
+	}
+	return notify.Notification{}, false
+}
+
+func (c *notifyCommand) focusNotification(entry notify.Notification, source, kind string) error {
+	if c.runner == nil {
+		return errors.New("notify focus runner is not configured")
+	}
+	if c.executable == nil {
+		return errors.New("notify executable resolver is not configured")
+	}
+	binaryPath, err := c.executable()
+	if err != nil {
+		return fmt.Errorf("resolve notify executable: %w", err)
+	}
+	target := notify.FormatTarget(notify.Target{
+		Session: entry.Session,
+		Window:  entry.Window,
+		Pane:    entry.Pane,
+	})
+	if strings.TrimSpace(target) == "" {
+		return errors.New("notification has no routable target")
+	}
+	args := []string{"focus", "--target", target, "--source", source, "--kind", kind}
+	if socket := strings.TrimSpace(entry.Socket); socket != "" {
+		args = append(args, "--socket", socket)
+	}
+	if _, err := c.runner.Run(context.Background(), binaryPath, args...); err != nil {
+		return fmt.Errorf("focus notification: %w", err)
+	}
+	return nil
 }
 
 // --- ack ---------------------------------------------------------------------
@@ -468,7 +637,7 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 		explanation := "queue entry is pending; no matching live AI reply pane was found"
 		if strings.HasPrefix(entry.ID, "ai:") {
 			state = "queue-stale"
-			explanation = "queue entry exists but live pane no longer matches reply+agent state; it will be removed by ack or reconcile"
+			explanation = "queue entry exists but live pane no longer matches reply+agent state; it remains pending until explicit ack"
 		}
 		report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, state, explanation))
 	}
@@ -632,25 +801,26 @@ func (m *multiFlag) Set(value string) error {
 }
 
 func printNotifyUsage(w io.Writer) {
-	fmt.Fprintln(w, "Pending AI notify queue. Attention is live pane state; notify is the short-lived actionable queue.")
+	fmt.Fprintln(w, "Pending AI notify queue. Attention is live pane state; notify rows remain until explicit ack.")
 	fmt.Fprintln(w, "Use `notify list --live` to explain queue/live drift and `notify reconcile` to repair AI reply entries.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]")
 	fmt.Fprintln(w, "                        [--severity info|warn|critical] [--source ai|k8s|git|external]")
 	fmt.Fprintln(w, "                        [--ttl <seconds>] [--id <s>] [--json]")
-	fmt.Fprintln(w, "  projmux notify list  [--live] [--json] [--limit N] [--severity ...] [--source ...]")
+	fmt.Fprintln(w, "  projmux notify list  [--live] [--json] [--limit N] [--ui table|sidebar] [--severity ...] [--source ...]")
 	fmt.Fprintln(w, "  projmux notify ack   <id> | --all")
 	fmt.Fprintln(w, "  projmux notify reconcile [--json]")
 }
 
 func printNotifyListUsage(w io.Writer) {
-	fmt.Fprintln(w, "Pending AI notify queue entries only; not a full live attention view.")
+	fmt.Fprintln(w, "Pending AI notify queue entries only; rows remain until explicit ack.")
 	fmt.Fprintln(w, "Use `--live` to explain queue entries against live pane attention state without mutating either surface.")
+	fmt.Fprintln(w, "Use `--ui=sidebar` for the interactive right-side notify list.")
 	fmt.Fprintln(w, "Use `projmux attention list` for live pane attention state only.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux notify list [--live] [--json] [--limit N] [--severity ...] [--source ...]")
+	fmt.Fprintln(w, "  projmux notify list [--live] [--json] [--limit N] [--ui table|sidebar] [--severity ...] [--source ...]")
 }
 
 func printNotifyReconcileUsage(w io.Writer) {

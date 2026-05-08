@@ -345,7 +345,7 @@ func TestDefaultProbeKeysCoverSpec(t *testing.T) {
 	keys := defaultProbeKeys()
 	got := sortedProbeLabels(keys)
 	want := []string{
-		"Alt-1", "Alt-2", "Alt-3", "Alt-4", "Alt-5",
+		"Alt-1", "Alt-2", "Alt-3", "Alt-4", "Alt-5", "Alt-6",
 		"Alt-Shift-Left", "Alt-Shift-Right",
 		"Ctrl-M", "Ctrl-N", "Ctrl-Shift-L", "Ctrl-Shift-M", "Ctrl-Shift-R",
 	}

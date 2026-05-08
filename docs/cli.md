@@ -150,8 +150,8 @@ fallback (`window_state=index-fallback-session`), pane index fallback
 ## notify
 
 Pending AI notify queue. `attention` is live tmux pane state; `notify` is
-the short-lived actionable reminder set used by the status-bar notify
-segment. It is not the source of truth for all live pane attention. See
+the explicit-ack pending notification source of truth used by the status-bar
+notify segment and notify sidebar. It is not the source of truth for all live pane attention. See
 [notify-queue.md](notify-queue.md) for the full data model.
 
 ```
@@ -159,26 +159,30 @@ projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]>
                      [--socket <s>] [--severity info|warn|critical]
                      [--source ai|k8s|git|external] [--ttl <seconds>]
                      [--id <s>] [--json]
-projmux notify list  [--live] [--json] [--limit N]
+projmux notify list  [--live] [--json] [--limit N] [--ui table|sidebar]
                      [--severity ...] [--source ...]
 projmux notify ack   <id> | --all
 projmux notify reconcile [--json]
 ```
 
 - `push` — append (or refresh, with `--id`) one entry. `--ttl` defaults to
-  `600` seconds; entries past TTL are dropped on the next read. `--text`
-  is hard-capped to 80 runes (longer text is truncated server-side).
+  `600` seconds as freshness metadata; it does not remove rows from
+  `notify list`. `--text` is hard-capped to 80 runes (longer text is
+  truncated server-side).
 - `list` — newest-first pending queue table `ID AGE SEV SRC TARGET TEXT`
   (or JSON). `--severity` and `--source` are repeatable filters.
   `--live` adds a non-mutating explanation table (or JSON report) that
   compares queued entries with live pane attention. It calls out manual
   reply badges that do not queue because no AI agent is attached, live AI
   reply panes missing a queue entry, matched AI reply entries, and stale
-  queue entries whose live pane no longer matches.
+  queue entries whose live pane no longer matches. `--ui=sidebar` opens the
+  interactive notify list where Enter/click focuses a target, `a` acks the
+  selected row, and `Ctrl-A` clears all.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
   panes whose attention state is `reply` AND whose AI agent option is
-  set, dropping stale `ai:` entries that no longer match a live pane.
+  set, reporting stale `ai:` entries that no longer match a live pane without
+  acking them.
   Soft-fails (no error, populated `errors` field in the summary) when
   tmux is not running. Use this as the recovery path when the queue and
   live pane state drift.
@@ -243,7 +247,7 @@ non-specialized placeholders and no-op. `session` opens the existing-session
 popup; `pwd` copies the current pane path to the tmux paste buffer and shows
 it in a compact popup; `kube` and `git` open the project switcher popup;
 `usage` opens the detailed `projmux usage` table popup; `notify` focuses the
-newest actionable queue target.
+newest actionable queue target without acking it.
 `MouseDown1Status` errors are
 swallowed and surfaced as `display-message` toasts so a transient
 failure does not raise a tmux error popup. See [statusbar.md](statusbar.md).
@@ -261,9 +265,9 @@ projmux attention window [window]
 Toggles the `✳` pane title prefix and the `@projmux_attention_state` pane
 option. `toggle` flips between cleared and `reply`; `clear` always
 clears; `arm` sets a pre-reply armed state used by the AI flow. The
-producer side pushes/acks the matching entry in the notify queue when
-the pane has an associated AI agent option (manual toggles on shell
-panes do not push). `list` reads `tmux list-panes -a` and shows live pane
+producer side pushes the matching entry into the notify queue when the pane
+has an associated AI agent option; clearing attention does not ack the queue
+row (manual toggles on shell panes do not push). `list` reads `tmux list-panes -a` and shows live pane
 attention state without reading or mutating the notify queue; by default
 it shows panes with an attention option or title marker, and `--all`
 includes every pane. `window` renders the status-bar window badge for the

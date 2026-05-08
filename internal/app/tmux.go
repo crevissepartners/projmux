@@ -269,7 +269,7 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 	raw := strings.TrimSpace(fs.Arg(0))
 	client := strings.TrimSpace(*clientKey)
 	switch raw {
-	case "session-popup", "sessionizer", "sessionizer-sidebar", "ai-split-settings":
+	case "session-popup", "sessionizer", "sessionizer-sidebar", "notify-sidebar", "ai-split-settings":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: raw, ClientKey: client}, nil
 	case "ai-split-picker-right":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client}, nil
@@ -550,7 +550,7 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux popup-preview <session>")
 	fmt.Fprintln(w, "  projmux tmux popup-switch")
 	fmt.Fprintln(w, "  projmux tmux popup-sessions")
-	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
+	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
 	fmt.Fprintln(w, "  projmux tmux rebalance-panes")
 	fmt.Fprintln(w, "  projmux tmux rename-pane <pane> <title>")
 	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
@@ -650,6 +650,13 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 		env["TMUX_SESSIONIZER_CONTEXT_SESSION"] = ctx.OriginSession
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane
 		commandArgs = []string{"switch", "--ui=sidebar"}
+	case "notify-sidebar":
+		options.Width = popupSize(ctx.ClientWidth, 24, 64)
+		options.Height = popupSize(ctx.ClientHeight, 100, 20)
+		options.X = "R"
+		options.Y = "0"
+		options.Title = "projmux notify"
+		commandArgs = []string{"notify", "list", "--ui=sidebar"}
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 96)
 		options.Height = popupSize(ctx.ClientHeight, 45, 20)
@@ -770,6 +777,7 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"set -s user-keys[6] \"\\033[9007u\"",
 		"set -s user-keys[10] \"\\033[9011u\"",
 		"set -s user-keys[11] \"\\033[9012u\"",
+		"set -s user-keys[12] \"\\033[9013u\"",
 		"set-hook -g pane-focus-out " + tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane}")),
 		"set-hook -g pane-focus-in " + tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane}")),
 		"set-hook -g after-select-pane " + tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
@@ -795,6 +803,7 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"unbind-key -q -n M-3",
 		"unbind-key -q -n M-4",
 		"unbind-key -q -n M-5",
+		"unbind-key -q -n M-6",
 		"unbind-key -q -n M-r",
 		"unbind-key -q -n User0",
 		"unbind-key -q -n User1",
@@ -805,11 +814,13 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"unbind-key -q -n User6",
 		"unbind-key -q -n User10",
 		"unbind-key -q -n User11",
+		"unbind-key -q -n User12",
 		"bind-key -n M-1 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer-sidebar"),
 		"bind-key -n M-2 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} session-popup"),
 		"bind-key -n M-3 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer"),
 		"bind-key -n M-4 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-picker-right"),
 		"bind-key -n M-5 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-settings"),
+		"bind-key -n M-6 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} notify-sidebar"),
 		"bind-key -n M-r command-prompt -I \"#{window_name}\" " + tmuxConfigQuote("rename-window -- '%%'"),
 		"bind-key -n User11 command-prompt -p \"ai topic:\" -I \"#{pane_title}\" " + tmuxConfigQuote("select-pane -T '%1' \\; set-option -p "+aiPaneTopicOption+" '%1' \\; if-shell -F '#{==:#{"+aiPaneTopicOption+"},}' 'set-option -p -u "+aiPaneTopicManualOption+"' 'set-option -p "+aiPaneTopicManualOption+" 1'"),
 		"bind-key -n User0 run-shell " + tmuxConfigQuote(bin+" ai split right"),
@@ -820,6 +831,7 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"bind-key -n User5 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-picker-right"),
 		"bind-key -n User6 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} ai-split-settings"),
 		"bind-key -n User10 command-prompt -I \"#{window_name}\" " + tmuxConfigQuote("rename-window -- '%%'"),
+		"bind-key -n User12 run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} notify-sidebar"),
 		"bind-key b run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} session-popup"),
 		"bind-key f run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer"),
 		"bind-key F run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} sessionizer-sidebar"),

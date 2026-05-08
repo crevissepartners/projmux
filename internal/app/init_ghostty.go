@@ -24,6 +24,7 @@ var ghosttyDesiredBindings = []ghosttyBinding{
 	{Trigger: "alt+3", Action: "csi:9004u"},
 	{Trigger: "alt+4", Action: "csi:9006u"},
 	{Trigger: "alt+5", Action: "csi:9007u"},
+	{Trigger: "alt+6", Action: "csi:9013u"},
 	{Trigger: "ctrl+shift+r", Action: "csi:9001u"},
 	{Trigger: "ctrl+shift+l", Action: "csi:9002u"},
 	{Trigger: "ctrl+shift+n", Action: "csi:9008u"},
