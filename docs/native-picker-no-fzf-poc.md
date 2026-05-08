@@ -24,7 +24,30 @@ backend remains the fallback with full preview/cycle/sidebar behavior.
 - Full switch preview cycle parity is not implemented in the native picker.
 - Public docs and doctor dependency policy still treat `fzf` as required.
 
-## No-fzf Docker E2E Command
+## Interactive No-fzf Sandbox
+
+Use this when you want to enter a Docker container and experience this POC build
+directly. It builds the no-fzf dependency image, mounts this worktree, builds
+`projmux` inside the container, sets `PROJMUX_PICKER_BACKEND=native`, and drops
+you into an interactive shell. This uses `wt path` instead of `wt run` because
+`docker run -it` needs the current terminal TTY:
+
+```sh
+bash "$(wt path poc/native-picker-no-fzf)/scripts/poc-native-picker-no-fzf-sandbox.sh"
+```
+
+Inside the container, try:
+
+```sh
+projmux shell --socket poc-no-fzf --session main
+projmux settings
+projmux switch
+projmux doctor --json
+```
+
+`fzf` is intentionally not installed in the image.
+
+## Automated No-fzf Docker E2E Command
 
 Run this from the repository root. It builds a Node-based no-fzf dependency
 image from `test/docker/no-fzf-poc.Dockerfile`, including Go module cache, then
