@@ -582,13 +582,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 		Header:     "Set Ctrl+Shift+R/L default mode",
 		Footer:     projmuxFooter("Enter: set default  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
-		Bindings: []string{
-			"esc:abort",
-			"ctrl-c:abort",
-			"alt-5:abort",
-			"ctrl-alt-s:abort",
-			"alt-4:abort",
-		},
+		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-5", "ctrl-alt-s", "alt-4"),
 	})
 	if err != nil {
 		if isNoSelectionExit(err) {
@@ -613,13 +607,7 @@ func (c *aiCommand) runAgentPicker(direction string) (intfzf.Result, error) {
 		Header:     "Split Direction: " + direction + "  |  Choose runtime",
 		Footer:     projmuxFooter("Enter: launch  |  Esc/Alt+4/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
-		Bindings: []string{
-			"esc:abort",
-			"ctrl-c:abort",
-			"alt-4:abort",
-			"alt-5:abort",
-			"ctrl-alt-s:abort",
-		},
+		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-4", "alt-5", "ctrl-alt-s"),
 	})
 }
 

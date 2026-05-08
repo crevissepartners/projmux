@@ -20,6 +20,7 @@ import (
 	coretags "github.com/crevissepartners/projmux/internal/core/tags"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
@@ -126,6 +127,7 @@ type switchPlan struct {
 	UI            string
 	Candidates    []string
 	Rows          []intfzf.Entry
+	Items         []intpicker.Item
 	SessionNames  map[string]string
 	Action        string
 	Selection     string
@@ -1316,11 +1318,12 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 		return switchPlan{}, fmt.Errorf("switch session identity resolver is not configured")
 	}
 
-	rows, sessionNames, err := c.renderRows(context.Background(), plan.UI, plan.Candidates)
+	rows, items, sessionNames, err := c.renderRows(context.Background(), plan.UI, plan.Candidates)
 	if err != nil {
 		return switchPlan{}, err
 	}
 	plan.Rows = rows
+	plan.Items = items
 	plan.SessionNames = sessionNames
 
 	result, err := c.runPicker(plan)
@@ -1445,34 +1448,52 @@ func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Wr
 	return nil
 }
 
-func (c *switchCommand) runPicker(plan switchPlan) (intfzf.Result, error) {
+func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 	if c.runner == nil {
-		return intfzf.Result{}, fmt.Errorf("switch runner is not configured")
+		return intpicker.Result{}, fmt.Errorf("switch runner is not configured")
 	}
 
-	options := intfzf.Options{
-		UI:         plan.UI,
-		Candidates: plan.Candidates,
-		Entries:    plan.Rows,
-		Read0:      true,
-		Prompt:     "› ",
-		Footer:     switchPickerFooter(plan.UI),
-		ExpectKeys: []string{switchKillExpectKey, switchPinExpectKey},
+	options := intpicker.Options{
+		UI:        plan.UI,
+		Items:     plan.Items,
+		MultiLine: true,
+		Prompt:    "› ",
+		Footer:    switchPickerFooter(plan.UI),
+		Actions: append(
+			pickerCloseActions("esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+			intpicker.CustomActions(switchKillExpectKey, switchPinExpectKey)...,
+		),
 	}
 	if previewCommand, bindings, err := c.switchPickerSurface(plan); err != nil {
-		return intfzf.Result{}, err
+		return intpicker.Result{}, err
 	} else if previewCommand != "" {
-		options.PreviewCommand = previewCommand
-		options.PreviewWindow = switchPreviewWindow(plan.UI)
-		options.Bindings = bindings
+		options.Preview = intpicker.Preview{Command: previewCommand, Window: switchPreviewWindow(plan.UI)}
+		fzfOptions := intfzf.OptionsFromPicker(options)
+		fzfOptions.Candidates = plan.Candidates
+		fzfOptions.Bindings = append(fzfOptions.Bindings, bindings...)
+		return c.runPickerBackend(fzfOptions, options)
 	}
 
-	result, err := c.runner.Run(options)
+	fzfOptions := intfzf.OptionsFromPicker(options)
+	fzfOptions.Candidates = plan.Candidates
+	return c.runPickerBackend(fzfOptions, options)
+}
+
+func (c *switchCommand) runPickerBackend(fzfOptions intfzf.Options, pickerOptions intpicker.Options) (intpicker.Result, error) {
+	if intpicker.ResolveBackend(c.lookupEnv) == intpicker.BackendNative {
+		result, err := (intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout}).Run(pickerOptions)
+		if err != nil {
+			return intpicker.Result{}, fmt.Errorf("run native switch picker: %w", err)
+		}
+		return result, nil
+	}
+
+	result, err := c.runner.Run(fzfOptions)
 	if err != nil {
-		return intfzf.Result{}, fmt.Errorf("run switch picker: %w", err)
+		return intpicker.Result{}, fmt.Errorf("run switch picker: %w", err)
 	}
 
-	return result, nil
+	return intfzf.ResultToPicker(result), nil
 }
 
 func (c *switchCommand) switchPickerSurface(plan switchPlan) (string, []string, error) {
@@ -1507,7 +1528,7 @@ func (c *switchCommand) switchPickerSurface(plan switchPlan) (string, []string, 
 		return "", nil, fmt.Errorf("build switch pane-next command: %w", err)
 	}
 
-	bindings := pickerCloseBindings()
+	bindings := []string{}
 	if plan.UI == switchUISidebar {
 		sidebarFocus, err := inttmux.BuildSwitchSidebarFocusCommand(binaryPath)
 		if err != nil {
@@ -1530,14 +1551,16 @@ func (c *switchCommand) switchPickerSurface(plan switchPlan) (string, []string, 
 	return previewCommand, bindings, nil
 }
 
-func pickerCloseBindings() []string {
-	return []string{
-		"esc:abort",
-		"ctrl-n:abort",
-		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
+func pickerCloseActions(keys ...string) []intpicker.Action {
+	return intpicker.CloseActions(keys...)
+}
+
+func pickerCloseBindings(keys ...string) []string {
+	bindings := make([]string, 0, len(keys))
+	for _, action := range pickerCloseActions(keys...) {
+		bindings = append(bindings, action.Key+":abort")
 	}
+	return bindings
 }
 
 func switchPreviewWindow(ui string) string {
@@ -1740,20 +1763,20 @@ func (c *switchCommand) addPin(target string, stdout io.Writer) error {
 	return err
 }
 
-func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePaths []string) ([]intfzf.Entry, map[string]string, error) {
+func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePaths []string) ([]intfzf.Entry, []intpicker.Item, map[string]string, error) {
 	renderCandidates := make([]intrender.SwitchCandidate, 0, len(candidatePaths))
 	existingBySession, err := c.lookupExistingSessions(ctx, candidatePaths)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	homeDir, err := c.resolveHomeDir()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	repoRoot := c.switchRepoRoot(homeDir)
 	pinnedSet, err := c.loadPinnedSet()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	sessionNames := make(map[string]string, len(candidatePaths))
 	attentionRanks := map[string]int(nil)
@@ -1773,7 +1796,7 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 
 		sessionName, err := c.identity.SessionIdentityForPath(candidatePath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("render switch rows: resolve session identity for %q: %w", candidatePath, err)
+			return nil, nil, nil, fmt.Errorf("render switch rows: resolve session identity for %q: %w", candidatePath, err)
 		}
 		sessionNames[cleanOptionalPath(candidatePath)] = sessionName
 
@@ -1806,15 +1829,21 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 	sortSwitchCandidates(renderCandidates, homeDir)
 	rows := intrender.BuildSwitchRows(renderCandidates)
 	entries := make([]intfzf.Entry, 0, len(rows))
+	items := make([]intpicker.Item, 0, len(rows))
 	for _, row := range rows {
+		item := row.Item
+		if item.Label == "" {
+			item.Label = intrender.FormatSwitchCardLabel(row.Item)
+		}
+		items = append(items, item)
 		entries = append(entries, intfzf.Entry{
-			Label:     intrender.FormatSwitchCardLabel(row.Item),
+			Label:     item.EffectiveLabel(),
 			Value:     row.Value,
-			SearchKey: row.Item.EffectiveSearchText(),
+			SearchKey: item.EffectiveSearchText(),
 		})
 	}
 
-	return entries, sessionNames, nil
+	return entries, items, sessionNames, nil
 }
 
 func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, modeLabel string) []intrender.SwitchWindowTab {

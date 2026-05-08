@@ -136,7 +136,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			ExpectKeys:     []string{sessionsKillExpectKey},
 			PreviewCommand: previewCommand,
 			PreviewWindow:  sessionsPreviewWindow(*ui),
-			Bindings: append(pickerCloseBindings(),
+			Bindings: append(pickerCloseBindings("esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
 				"left:execute-silent("+cycleWindowPrev+")+refresh-preview",
 				"right:execute-silent("+cycleWindowNext+")+refresh-preview",
 				"alt-up:execute-silent("+cyclePanePrev+")+refresh-preview",
