@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -102,7 +103,7 @@ func (c *statusCommand) runGit(args []string, stdout, stderr io.Writer) error {
 	if branch == "" {
 		return nil
 	}
-	_, err := fmt.Fprintf(stdout, " #[bold,fg=colour16,bg=colour45] %s #[default]", branch)
+	_, err := fmt.Fprintf(stdout, " #[bold,fg=colour16,bg=colour45]  %s #[default]", branch)
 	return err
 }
 
@@ -153,7 +154,7 @@ func (c *statusCommand) kubeSegment(sessionName string) string {
 	if ns == "" {
 		ns = "default"
 	}
-	segment := fmt.Sprintf("k8s:#[fg=red]%s#[default]/#[fg=blue]%s#[default]", ctx, ns)
+	segment := fmt.Sprintf("⎈ #[fg=red]%s#[default]/#[fg=blue]%s#[default]", ctx, ns)
 	_ = os.MkdirAll(filepath.Dir(cacheFile), 0o755)
 	_ = os.WriteFile(cacheFile, []byte(segment), 0o644)
 	return segment
@@ -517,10 +518,7 @@ func tierBudget(maxWidth int, badge, target, age, plus string) int {
 	}
 	overhead := visualLen(assembleNotify(badge, "", target, age, plus))
 	textGap := 1
-	room := maxWidth - overhead - textGap
-	if room < 1 {
-		room = 1
-	}
+	room := max(maxWidth-overhead-textGap, 1)
 	return room
 }
 
@@ -627,12 +625,7 @@ func splitAgentPrefix(n notify.Notification) (string, string) {
 }
 
 func isKnownAgent(name string) bool {
-	for _, a := range notifyKnownAgents {
-		if name == a {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(notifyKnownAgents, name)
 }
 
 // compactTarget renders the entry's target as `<sess>:<window>.<pane>`.

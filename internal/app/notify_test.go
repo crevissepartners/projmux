@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -268,8 +267,8 @@ func TestNotifyListSidebarFocusesSelectedRowWithoutAck(t *testing.T) {
 	if len(picker.options.Entries) != 1 || picker.options.Entries[0].Value != "abc" {
 		t.Fatalf("entries = %#v", picker.options.Entries)
 	}
-	if !slices.Contains(picker.options.Bindings, "click:accept") {
-		t.Fatalf("bindings = %#v, want click:accept", picker.options.Bindings)
+	if len(picker.options.Bindings) != 0 {
+		t.Fatalf("bindings = %#v, want none; fzf 0.71 rejects click bindings", picker.options.Bindings)
 	}
 	if store.ackedID != "" {
 		t.Fatalf("ackedID = %q, want empty", store.ackedID)

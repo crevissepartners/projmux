@@ -26,7 +26,7 @@ func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
 	if !strings.Contains(got, "Claude") || !strings.Contains(got, "Codex") {
 		t.Fatalf("missing model labels: %q", got)
 	}
-	if !strings.Contains(got, "5h ") || !strings.Contains(got, "wk ") {
+	if !strings.Contains(got, "5h ") || !strings.Contains(got, "weekly ") {
 		t.Fatalf("missing window labels: %q", got)
 	}
 	if !strings.Contains(got, "█") || !strings.Contains(got, "░") {
@@ -115,14 +115,14 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 
 	// Tier 1: long HUD with both bars per model.
 	long := formatStatusUsage(snaps, 200, now)
-	if !strings.Contains(long, "Claude") || !strings.Contains(long, "wk ") {
-		t.Fatalf("tier1 long HUD missing wk bar: %q", long)
+	if !strings.Contains(long, "Claude") || !strings.Contains(long, "weekly ") {
+		t.Fatalf("tier1 long HUD missing weekly bar: %q", long)
 	}
 	if visualLen(long) > 200 {
 		t.Fatalf("tier1 visualLen=%d > 200", visualLen(long))
 	}
 
-	// Tier 2: drop wk bars (label + 5h only).
+	// Tier 2: drop weekly bars (label + 5h only).
 	tier2 := formatStatusUsage(snaps, 60, now)
 	if visualLen(tier2) > 60 {
 		t.Fatalf("tier2 visualLen=%d > 60: %q", visualLen(tier2), tier2)
@@ -133,16 +133,16 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	if !strings.Contains(tier2, "5h ") {
 		t.Fatalf("tier2 must keep 5h bar: %q", tier2)
 	}
-	if strings.Contains(tier2, "wk ") {
-		t.Fatalf("tier2 must drop wk bar: %q", tier2)
+	if strings.Contains(tier2, "weekly ") {
+		t.Fatalf("tier2 must drop weekly bar: %q", tier2)
 	}
 
 	// Tier 3: drop bars, keep long labels.
-	tier3 := formatStatusUsage(snaps, 45, now)
-	if visualLen(tier3) > 45 {
-		t.Fatalf("tier3 visualLen=%d > 45: %q", visualLen(tier3), tier3)
+	tier3 := formatStatusUsage(snaps, 50, now)
+	if visualLen(tier3) > 50 {
+		t.Fatalf("tier3 visualLen=%d > 50: %q", visualLen(tier3), tier3)
 	}
-	if !strings.Contains(tier3, "Claude 5h:42% wk:18%") {
+	if !strings.Contains(tier3, "Claude 5h:42% weekly:18%") {
 		t.Fatalf("tier3 long-label form missing: %q", tier3)
 	}
 	if strings.Contains(tier3, "█") || strings.Contains(tier3, "░") {
@@ -150,9 +150,9 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	}
 
 	// Tier 4: single-letter labels.
-	tier4 := formatStatusUsage(snaps, 30, now)
-	if visualLen(tier4) > 30 {
-		t.Fatalf("tier4 visualLen=%d > 30: %q", visualLen(tier4), tier4)
+	tier4 := formatStatusUsage(snaps, 45, now)
+	if visualLen(tier4) > 45 {
+		t.Fatalf("tier4 visualLen=%d > 45: %q", visualLen(tier4), tier4)
 	}
 	if !strings.Contains(tier4, "C 5h:42%") || !strings.Contains(tier4, "X 5h:71%") {
 		t.Fatalf("tier4 short-label form missing: %q", tier4)
@@ -865,8 +865,8 @@ func TestFormatStatusUsageAgeDropsOnTier2(t *testing.T) {
 	if strings.Contains(tier2, "(3m)") {
 		t.Fatalf("tier2 must drop age indicator: %q", tier2)
 	}
-	if !strings.Contains(tier2, "wk ") {
-		t.Fatalf("tier2 must keep the wk bar: %q", tier2)
+	if !strings.Contains(tier2, "weekly ") {
+		t.Fatalf("tier2 must keep the weekly bar: %q", tier2)
 	}
 	if visualLen(tier2) > budget {
 		t.Fatalf("tier2 visualLen=%d > budget=%d: %q", visualLen(tier2), budget, tier2)

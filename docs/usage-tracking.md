@@ -117,11 +117,11 @@ per-adapter throttle and active backoff). Errors are swallowed unless
 Output degrades through six tiers as `--max-width` shrinks:
 
 1. Long form with last-sync age + bars: `Claude (3m) 5h [████████░░]
-   80% · wk [...]   Codex 5h [...] 20% · wk [...]`
+   80% · weekly [...]   Codex 5h [...] 20% · weekly [...]`
 2. Drop the age indicator (legacy long form).
-3. Drop the wk bar.
-4. Drop bars entirely (`Claude 5h:80% wk:30%`).
-5. Single-letter labels (`C 5h:80% wk:30%`).
+3. Drop the weekly bar.
+4. Drop bars entirely (`Claude 5h:80% weekly:30%`).
+5. Single-letter labels (`C 5h:80% weekly:30%`).
 6. Hard rune-truncate with trailing `…`.
 
 The age indicator's colour ramps with staleness: dim grey

@@ -8,7 +8,7 @@ segment only requires one wiring point.
 ## Layout
 
 ```
-row 0  [#S] cwd #{pane_current_path}  k8s:<ctx>/<ns>  <git>          %H:%M
+row 0  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>   <git>           %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
 row 1  #[range=user|notify] <notify HUD pill> #[norange]
                                            #[range=user|usage] <usage HUD bar> #[norange]
