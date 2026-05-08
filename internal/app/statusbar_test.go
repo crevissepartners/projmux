@@ -199,7 +199,7 @@ func TestStatusbarClickUnknownRangeWithMouseWindowSelectsWindow(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickSessionOpensSessionPopup(t *testing.T) {
+func TestStatusbarClickSessionOpensProjectSidebar(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
@@ -208,8 +208,8 @@ func TestStatusbarClickSessionOpensSessionPopup(t *testing.T) {
 	if err := cmd.Run([]string{"click", "session"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "session-popup"}) {
-		t.Fatalf("missing session popup-toggle; calls = %#v", runner.calls)
+	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "sessionizer-sidebar"}) {
+		t.Fatalf("missing sessionizer-sidebar popup-toggle; calls = %#v", runner.calls)
 	}
 }
 
