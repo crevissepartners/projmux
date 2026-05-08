@@ -18,6 +18,7 @@
   "files": [
     "npm/projmux.js",
     "docs/*.md",
+    "docs/assets/*",
     "README.md",
     "README-ko.md",
     "LICENSE"
