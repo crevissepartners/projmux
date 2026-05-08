@@ -3,8 +3,11 @@ package picker
 import (
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const BackendEnv = "PROJMUX_PICKER_BACKEND"
@@ -128,6 +131,15 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 		out = io.Discard
 	}
 
+	if restore, ok := enableRawTerminal(in); ok {
+		defer restore()
+		return runNativeInteractive(in, out, options)
+	}
+
+	return runNativeLineMode(in, out, options)
+}
+
+func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, error) {
 	query := strings.TrimSpace(options.InitialQuery)
 	for {
 		items := FilterItems(options.Items, query)
@@ -163,6 +175,252 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 	}
 }
 
+func enableRawTerminal(in io.Reader) (func(), bool) {
+	file, ok := in.(*os.File)
+	if !ok {
+		return func() {}, false
+	}
+
+	stateCmd := exec.Command("stty", "-g")
+	stateCmd.Stdin = file
+	stateBytes, err := stateCmd.Output()
+	if err != nil {
+		return func() {}, false
+	}
+	state := strings.TrimSpace(string(stateBytes))
+	rawCmd := exec.Command("stty", "raw", "-echo", "min", "0", "time", "1")
+	rawCmd.Stdin = file
+	if err := rawCmd.Run(); err != nil {
+		return func() {}, false
+	}
+
+	return func() {
+		if state == "" {
+			return
+		}
+		restoreCmd := exec.Command("stty", state)
+		restoreCmd.Stdin = file
+		_ = restoreCmd.Run()
+	}, true
+}
+
+type nativeKey struct {
+	Name string
+	Text string
+}
+
+func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result, error) {
+	query := strings.TrimSpace(options.InitialQuery)
+	selected := 0
+	fmt.Fprint(out, "\x1b[?25l")
+	defer fmt.Fprint(out, "\x1b[?25h\r\n")
+
+	for {
+		items := FilterItems(options.Items, query)
+		if selected >= len(items) {
+			selected = len(items) - 1
+		}
+		if selected < 0 {
+			selected = 0
+		}
+		renderNativeInteractive(out, options, items, query, selected)
+
+		key, err := readNativeKey(in)
+		if err != nil {
+			if err == io.EOF {
+				return Result{Closed: true, Query: query}, nil
+			}
+			return Result{}, fmt.Errorf("read native picker key: %w", err)
+		}
+		if key.Name == "" && key.Text == "" {
+			continue
+		}
+
+		if action, ok := findAction(options.Actions, key.Name); ok {
+			switch action.Intent {
+			case ActionClose:
+				return Result{Key: action.Key, Query: query, Closed: true}, nil
+			case ActionCustom:
+				return Result{Key: action.Key, Value: selectedNativeValue(items, selected), Query: query}, nil
+			case ActionAccept:
+				if options.AcceptQuery {
+					return Result{Key: action.Key, Query: query}, nil
+				}
+				return Result{Key: action.Key, Value: selectedNativeValue(items, selected), Query: query}, nil
+			}
+		}
+
+		switch key.Name {
+		case "enter":
+			if options.AcceptQuery {
+				return Result{Key: "enter", Query: query}, nil
+			}
+			if len(items) == 0 {
+				continue
+			}
+			return Result{Key: "enter", Value: items[selected].Value, Query: query}, nil
+		case "esc", "ctrl-c":
+			return Result{Key: key.Name, Query: query, Closed: true}, nil
+		case "up":
+			if selected > 0 {
+				selected--
+			}
+		case "down":
+			if selected < len(items)-1 {
+				selected++
+			}
+		case "backspace":
+			query = trimLastRune(query)
+			selected = 0
+		default:
+			if key.Text != "" {
+				query += key.Text
+				selected = 0
+			}
+		}
+	}
+}
+
+func selectedNativeValue(items []Item, selected int) string {
+	if selected < 0 || selected >= len(items) {
+		return ""
+	}
+	return items[selected].Value
+}
+
+func readNativeKey(r io.Reader) (nativeKey, error) {
+	b, err := readNativeByte(r)
+	if err != nil {
+		return nativeKey{}, err
+	}
+	switch b {
+	case 0:
+		return nativeKey{}, nil
+	case '\r', '\n':
+		return nativeKey{Name: "enter"}, nil
+	case 0x03:
+		return nativeKey{Name: "ctrl-c"}, nil
+	case 0x0e:
+		return nativeKey{Name: "ctrl-n"}, nil
+	case 0x18:
+		return nativeKey{Name: "ctrl-x"}, nil
+	case 0x7f, 0x08:
+		return nativeKey{Name: "backspace"}, nil
+	case 0x1b:
+		return readNativeEscapeKey(r)
+	default:
+		return nativePrintableKey(b, r)
+	}
+}
+
+func readNativeEscapeKey(r io.Reader) (nativeKey, error) {
+	b, ok, err := readNativeByteMaybe(r)
+	if err != nil {
+		return nativeKey{}, err
+	}
+	if !ok {
+		return nativeKey{Name: "esc"}, nil
+	}
+	if b == '[' {
+		next, ok, err := readNativeByteMaybe(r)
+		if err != nil {
+			return nativeKey{}, err
+		}
+		if !ok {
+			return nativeKey{Name: "esc"}, nil
+		}
+		switch next {
+		case 'A':
+			return nativeKey{Name: "up"}, nil
+		case 'B':
+			return nativeKey{Name: "down"}, nil
+		case 'C':
+			return nativeKey{Name: "right"}, nil
+		case 'D':
+			return nativeKey{Name: "left"}, nil
+		case '3':
+			_, _, _ = readNativeByteMaybe(r)
+			return nativeKey{Name: "delete"}, nil
+		default:
+			return nativeKey{Name: "esc"}, nil
+		}
+	}
+	if b >= '1' && b <= '9' {
+		return nativeKey{Name: "alt-" + string([]byte{b})}, nil
+	}
+	if b >= 'a' && b <= 'z' {
+		return nativeKey{Name: "alt-" + string([]byte{b})}, nil
+	}
+	if b >= 'A' && b <= 'Z' {
+		return nativeKey{Name: "alt-" + strings.ToLower(string([]byte{b}))}, nil
+	}
+	return nativeKey{Name: "esc"}, nil
+}
+
+func nativePrintableKey(first byte, r io.Reader) (nativeKey, error) {
+	if first < 0x20 {
+		return nativeKey{}, nil
+	}
+	if first < utf8.RuneSelf {
+		return nativeKey{Text: string([]byte{first})}, nil
+	}
+
+	buf := []byte{first}
+	for !utf8.FullRune(buf) && len(buf) < utf8.UTFMax {
+		b, ok, err := readNativeByteMaybe(r)
+		if err != nil {
+			return nativeKey{}, err
+		}
+		if !ok {
+			break
+		}
+		buf = append(buf, b)
+	}
+	if !utf8.Valid(buf) {
+		return nativeKey{}, nil
+	}
+	return nativeKey{Text: string(buf)}, nil
+}
+
+func readNativeByte(r io.Reader) (byte, error) {
+	var buf [1]byte
+	for {
+		n, err := r.Read(buf[:])
+		if n > 0 {
+			return buf[0], nil
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+}
+
+func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
+	var buf [1]byte
+	n, err := r.Read(buf[:])
+	if n > 0 {
+		return buf[0], true, nil
+	}
+	if err == io.EOF {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return 0, false, nil
+}
+
+func trimLastRune(value string) string {
+	if value == "" {
+		return ""
+	}
+	_, size := utf8.DecodeLastRuneInString(value)
+	if size <= 0 {
+		return ""
+	}
+	return value[:len(value)-size]
+}
+
 func readNativeLine(r io.Reader) (string, error) {
 	var b strings.Builder
 	buf := make([]byte, 1)
@@ -176,6 +434,80 @@ func readNativeLine(r io.Reader) (string, error) {
 		}
 		if err != nil {
 			return b.String(), err
+		}
+	}
+}
+
+func renderNativeInteractive(w io.Writer, options Options, items []Item, query string, selected int) {
+	fmt.Fprint(w, "\x1b[2J\x1b[H")
+	if header := strings.TrimSpace(options.Header); header != "" {
+		fmt.Fprintln(w, header)
+	}
+	prompt := strings.TrimSpace(options.Prompt)
+	if prompt == "" {
+		prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
+	}
+	fmt.Fprintf(w, "%s %s\n", prompt, query)
+	fmt.Fprintln(w, "Type to search | Up/Down select | Enter choose | Esc close")
+	if footer := strings.TrimSpace(options.Footer); footer != "" {
+		fmt.Fprintln(w, footer)
+	}
+	fmt.Fprintln(w)
+
+	start, end := nativeVisibleRange(len(items), selected, 12)
+	if len(items) == 0 {
+		fmt.Fprintln(w, "  no matches")
+		return
+	}
+	if start > 0 {
+		fmt.Fprintf(w, "  ... %d more above\n", start)
+	}
+	for i := start; i < end; i++ {
+		renderNativeInteractiveItem(w, items[i], i == selected)
+	}
+	if end < len(items) {
+		fmt.Fprintf(w, "  ... %d more below\n", len(items)-end)
+	}
+}
+
+func nativeVisibleRange(total, selected, limit int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	if limit <= 0 || total <= limit {
+		return 0, total
+	}
+	start := selected - limit/2
+	if start < 0 {
+		start = 0
+	}
+	if start+limit > total {
+		start = total - limit
+	}
+	return start, start + limit
+}
+
+func renderNativeInteractiveItem(w io.Writer, item Item, selected bool) {
+	lines := strings.Split(item.EffectiveLabel(), "\n")
+	prefix := "  "
+	if selected {
+		prefix = "> "
+		fmt.Fprint(w, "\x1b[7m")
+	}
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	fmt.Fprintf(w, "%s%s", prefix, strings.TrimRight(lines[0], "\r"))
+	if selected {
+		fmt.Fprint(w, "\x1b[0m")
+	}
+	fmt.Fprintln(w)
+	for _, line := range lines[1:] {
+		fmt.Fprintf(w, "    %s\n", strings.TrimRight(line, "\r"))
+	}
+	for _, meta := range item.MetaLines {
+		if meta = strings.TrimSpace(meta); meta != "" {
+			fmt.Fprintf(w, "    %s\n", meta)
 		}
 	}
 }

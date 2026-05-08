@@ -2,6 +2,7 @@ package picker
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 )
@@ -100,5 +101,45 @@ func TestNativeRunnerAcceptsTypedQuery(t *testing.T) {
 	}
 	if result.Key != "enter" || result.Query != "/tmp/work" || result.Value != "" {
 		t.Fatalf("Run() = %#v, want typed query result", result)
+	}
+}
+
+func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	result, err := runNativeInteractive(strings.NewReader("\x1b[B\r"), &out, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want second item selected", result)
+	}
+	if strings.Contains(out.String(), "^[[") {
+		t.Fatalf("native output leaked escape input: %q", out.String())
+	}
+}
+
+func TestNativeInteractiveFiltersWithPrintableInput(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("we\r"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api", SearchText: "api"},
+			{Title: "web", Value: "/repo/web", SearchText: "web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "/repo/web" || result.Query != "we" {
+		t.Fatalf("result = %#v, want filtered web selection", result)
 	}
 }
