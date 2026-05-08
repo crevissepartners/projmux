@@ -40,7 +40,7 @@ The current target is a standalone app that can generate the tmux bindings and p
 
 ## What stays outside standalone projmux
 
-- zsh startup hooks
+- shell startup hooks
 - machine-specific install behavior
 - optional OS or terminal integration scripts that are not session-management features
 

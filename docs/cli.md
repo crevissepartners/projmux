@@ -365,7 +365,8 @@ flags with the top-level `switch` UX:
 - `current` — print `pane_current_path` for the active tmux pane (used
   by the shell jump binding).
 - `shell` — boot the isolated `-L projmux` tmux server with the
-  generated config.
+  generated config. The generated app config uses absolute `$SHELL` as the
+  tmux default shell when set, otherwise `/bin/sh`.
 - `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI

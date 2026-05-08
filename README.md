@@ -70,7 +70,8 @@ Open the app once, then use its generated tmux bindings to:
   `go install` or building from source.
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) **≥ 3.4** — the workspace runtime. Earlier versions miss `display-popup -T` and other features projmux depends on.
 - [fzf](https://github.com/junegunn/fzf#installation) **≥ 0.55** — interactive popup/sidebar pickers. The multiline picker uses `--marker-multi-line`, `--gap-line`, and `--highlight-line`, which landed by 0.55.
-- [zsh](https://zsh.sourceforge.io/) — default shell of the generated app config (`projmux shell`).
+- A Unix shell such as `bash`, `zsh`, or `sh` — `projmux shell` uses your
+  absolute `$SHELL` for the generated app config, falling back to `/bin/sh`.
 - [git](https://git-scm.com/downloads) — branch/status metadata.
 - `stty` — POSIX terminal control, used by `projmux setup`. Already shipped by every macOS / Linux base system; not applicable on Windows hosts.
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) — optional, only for the Kubernetes status segment.
@@ -120,7 +121,7 @@ sessions, saved workdirs, and weak common-folder probes (`~/source`, `~/work`,
 export PROJMUX_PROJDIR="/your/path"
 ```
 
-Add the line to `~/.zshrc` (or your shell's rc file). The resolved value is
+Add the line to `~/.bashrc`, `~/.zshrc`, or your shell's rc file. The resolved value is
 memoized to `~/.config/projmux/projdir` after first use, so later shells keep
 the same root even without the env var.
 

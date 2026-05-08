@@ -632,7 +632,7 @@ func (c *aiCommand) settingsRows() []intfzf.Entry {
 		{aiModeSelective, "show picker each time"},
 		{aiModeClaude, "always run Claude split"},
 		{aiModeCodex, "always run Codex split"},
-		{aiModeShell, "always open zsh split"},
+		{aiModeShell, "always open plain shell split"},
 	}
 	rows := make([]intfzf.Entry, 0, len(modes))
 	for _, item := range modes {
@@ -653,7 +653,7 @@ func (c *aiCommand) agentRows() []intfzf.Entry {
 		c.agentRow(aiModeClaude, "Anthropic CLI split"),
 		c.agentRow(aiModeCodex, "OpenAI Codex split"),
 		{
-			Label: fmt.Sprintf("%-8s \x1b[34m[READY]\x1b[0m Plain zsh split (\x1b[90mno agent\x1b[0m)", aiModeShell),
+			Label: fmt.Sprintf("%-8s \x1b[34m[READY]\x1b[0m Plain shell split (\x1b[90mno agent\x1b[0m)", aiModeShell),
 			Value: aiModeShell,
 		},
 	}
@@ -754,8 +754,9 @@ func (c *aiCommand) runAgentSplit(mode, direction string) error {
 	contextDir := c.resolveAgentContextDir(mode)
 	title := c.buildAgentTitle(mode, contextDir)
 	command := c.agentLaunchCommand(mode, agentBin, contextDir, title)
+	commandShell := posixCommandShell(c.lookupEnv)
 	if targetPane == "" {
-		return c.run("zsh", "-lc", command)
+		return c.run(commandShell, "-lc", command)
 	}
 
 	splitFlag := "-h"
@@ -766,7 +767,7 @@ func (c *aiCommand) runAgentSplit(mode, direction string) error {
 	if contextDir != "" {
 		args = append(args, "-c", contextDir)
 	}
-	args = append(args, "zsh", "-lc", command)
+	args = append(args, commandShell, "-lc", command)
 	out, err := c.read("tmux", args...)
 	if err != nil {
 		return err
@@ -793,7 +794,7 @@ func (c *aiCommand) runShellSplit(direction string) error {
 	if contextDir != "" {
 		args = append(args, "-c", contextDir)
 	}
-	args = append(args, "zsh", "-l")
+	args = append(args, loginShellCommand(defaultInteractiveShell(c.lookupEnv))...)
 	if err := c.run("tmux", args...); err != nil {
 		return err
 	}
@@ -1031,7 +1032,9 @@ func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
 func (c *aiCommand) agentLaunchCommand(mode, agentBin, contextDir, title string) string {
 	titleVar := "__" + mode + "_title"
 	parts := []string{}
-	// nvm/fnm/asdf/volta colocate `node` with the agent CLI; `zsh -lc` does not source their init scripts, so without this prepend the agent's `env node` shebang fails and the pane exits immediately.
+	// nvm/fnm/asdf/volta colocate `node` with the agent CLI; non-interactive
+	// login shells may not source their init scripts, so without this prepend
+	// the agent's `env node` shebang can fail and the pane exits immediately.
 	if binDir := filepath.Dir(agentBin); binDir != "" && binDir != "." && binDir != "/" {
 		parts = append(parts, "export PATH="+shellQuote(binDir)+`":$PATH"`)
 	}

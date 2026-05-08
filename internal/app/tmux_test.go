@@ -561,7 +561,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g @projmux_app 1",
 		"set -g history-limit 10000",
 		"set -g set-clipboard on",
-		"set -g default-shell /usr/bin/zsh",
+		"set -g default-shell \"/bin/sh\"",
 		"set -g default-command \"\"",
 		"set -ga update-environment \"WSL_DISTRO_NAME\"",
 		"set -ga update-environment \"VSCODE_IPC_HOOK_CLI\"",
