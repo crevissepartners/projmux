@@ -882,6 +882,9 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		listLimit = maxInt(4, layout.Rows-previewHeight-8)
 	}
 	start, end := nativeVisibleRange(len(items), selected, listLimit)
+	if options.MultiLine {
+		start, end = nativeVisibleRangeByRenderedRows(items, selected, listLimit)
+	}
 	listLines := nativeInteractiveListLines(items, start, end, selected, options.MultiLine)
 	if len(items) == 0 {
 		fmt.Fprintln(w, "  no matches")
@@ -966,6 +969,86 @@ func nativeVisibleRange(total, selected, limit int) (int, int) {
 		start = total - limit
 	}
 	return start, start + limit
+}
+
+func nativeVisibleRangeByRenderedRows(items []Item, selected, limit int) (int, int) {
+	total := len(items)
+	if total <= 0 {
+		return 0, 0
+	}
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= total {
+		selected = total - 1
+	}
+	if limit <= 0 {
+		return selected, selected + 1
+	}
+
+	start, end := nativeVisibleRange(total, selected, limit)
+	for nativeRenderedListLineCount(items, start, end, true) > limit {
+		left := selected - start
+		right := end - selected - 1
+		switch {
+		case left > right && start < selected:
+			start++
+		case end-1 > selected:
+			end--
+		case start < selected:
+			start++
+		default:
+			return start, end
+		}
+	}
+
+	for {
+		expanded := false
+		if start > 0 && nativeRenderedListLineCount(items, start-1, end, true) <= limit {
+			start--
+			expanded = true
+		}
+		if end < total && nativeRenderedListLineCount(items, start, end+1, true) <= limit {
+			end++
+			expanded = true
+		}
+		if !expanded {
+			return start, end
+		}
+	}
+}
+
+func nativeRenderedListLineCount(items []Item, start, end int, multiLine bool) int {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(items) {
+		end = len(items)
+	}
+	if start >= end {
+		return 0
+	}
+	total := 0
+	for i := start; i < end; i++ {
+		total += nativeItemLineCount(items[i])
+	}
+	if multiLine {
+		total += end - start - 1
+	}
+	return total
+}
+
+func nativeItemLineCount(item Item) int {
+	count := len(strings.Split(item.EffectiveLabel(), "\n"))
+	if count == 0 {
+		count = 1
+	}
+	for _, meta := range item.MetaLines {
+		if strings.TrimSpace(meta) != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func nativeInteractiveListLines(items []Item, start, end, selected int, multiLine bool) []string {

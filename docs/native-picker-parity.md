@@ -19,7 +19,7 @@ picker evidence. It is not a production dependency-policy change.
 | fuzzy result ranking | switch/sessions/notify search UX | Covered approximately | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst` |
 | `--scrollbar █` | long switch/session/settings lists | Covered approximately | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
-| `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered approximately | `nativeGapLine`; `TestNativeInteractiveRendersMultilineGapLine` |
+| `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered approximately | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
 | fzf current row colors | multi-line rows | Covered approximately | `nativeCurrentStart`, `nativePointer`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `pickerActionsFromFZF`; `TestNativeInteractiveSupportsCustomExpectKeys` |
 | printable expect keys | notify sidebar `a` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |

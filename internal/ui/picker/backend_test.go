@@ -505,6 +505,29 @@ func TestNativeInteractiveUsesScrollbarForLongLists(t *testing.T) {
 	}
 }
 
+func TestNativeVisibleRangeCountsMultilineRenderedRows(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 0, 10)
+	for i := 0; i < 10; i++ {
+		items = append(items, Item{
+			Label: "item " + strconv.Itoa(i) + "\n  detail",
+			Value: strconv.Itoa(i),
+		})
+	}
+
+	start, end := nativeVisibleRangeByRenderedRows(items, 5, 8)
+	if start > 5 || end <= 5 {
+		t.Fatalf("range = %d:%d, want selected item included", start, end)
+	}
+	if got := nativeRenderedListLineCount(items, start, end, true); got > 8 {
+		t.Fatalf("rendered line count = %d for range %d:%d, want <= 8", got, start, end)
+	}
+	if got := end - start; got >= 8 {
+		t.Fatalf("range item count = %d, want multiline rows to reduce visible items below row budget", got)
+	}
+}
+
 func TestNativePreviewWidthUsesPreviewWindowPercent(t *testing.T) {
 	t.Parallel()
 
