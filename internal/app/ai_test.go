@@ -225,6 +225,8 @@ func TestAISplitCodexRunsNativeTmuxSplitAndStartsWatcher(t *testing.T) {
 			return home
 		case "TMUX":
 			return "/tmp/tmux"
+		case "SHELL":
+			return "/bin/bash"
 		default:
 			return ""
 		}
@@ -254,7 +256,7 @@ func TestAISplitCodexRunsNativeTmuxSplitAndStartsWatcher(t *testing.T) {
 	}
 
 	commands := cmdRecorder(cmd).commands
-	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%7", "-c", work, "zsh", "-lc"}) {
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%7", "-c", work, "/bin/bash", "-lc"}) {
 		t.Fatalf("commands = %#v, want native tmux split-window", commands)
 	}
 	for _, want := range [][]string{
@@ -357,6 +359,8 @@ func TestAISplitShellUsesTmuxSplitWindow(t *testing.T) {
 			return work
 		case "TMUX_SPLIT_TARGET_PANE":
 			return "%9"
+		case "SHELL":
+			return "/bin/bash"
 		default:
 			return ""
 		}
@@ -377,13 +381,24 @@ func TestAISplitShellUsesTmuxSplitWindow(t *testing.T) {
 
 	want := []recordedAICommand{
 		{name: "tmux", args: []string{"display-message", "ai split default: shell"}},
-		{name: "tmux", args: []string{"split-window", "-v", "-t", "%9", "-c", work, "zsh", "-l"}},
+		{name: "tmux", args: []string{"split-window", "-v", "-t", "%9", "-c", work, "/bin/bash", "-l"}},
 		{name: "tmux", args: []string{"resize-pane", "-t", "%1", "-y", "7"}},
 		{name: "tmux", args: []string{"resize-pane", "-t", "%9", "-y", "7"}},
 		{name: "tmux", args: []string{"resize-pane", "-t", "%10", "-y", "6"}},
 	}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAILabelsSayPlainShellNotZsh(t *testing.T) {
+	t.Parallel()
+
+	cmd := testAICommand(t.TempDir())
+	for _, row := range append(cmd.agentRows(), cmd.settingsRows()...) {
+		if strings.Contains(strings.ToLower(row.Label), "zsh") {
+			t.Fatalf("AI row label = %q, did not expect zsh-specific copy", row.Label)
+		}
 	}
 }
 

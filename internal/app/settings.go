@@ -654,7 +654,7 @@ func (c *settingsCommand) aiEntries() []intfzf.Entry {
 		{aiModeSelective, "show picker each time"},
 		{aiModeClaude, "always run Claude split"},
 		{aiModeCodex, "always run Codex split"},
-		{aiModeShell, "always open zsh split"},
+		{aiModeShell, "always open plain shell split"},
 	}
 
 	entries := make([]intfzf.Entry, 0, len(modes)+1)

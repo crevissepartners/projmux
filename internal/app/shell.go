@@ -265,10 +265,14 @@ func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create shell app config directory: %w", err)
 	}
-	if err := c.writeFile(path, []byte(tmuxAppConfig(binaryPath)), 0o644); err != nil {
+	if err := c.writeFile(path, []byte(tmuxAppConfig(binaryPath, c.defaultShell())), 0o644); err != nil {
 		return fmt.Errorf("write shell app config: %w", err)
 	}
 	return nil
+}
+
+func (c *shellCommand) defaultShell() string {
+	return defaultInteractiveShell(c.lookupEnv)
 }
 
 func (c *shellCommand) defaultConfigPath() string {
@@ -354,6 +358,38 @@ func nonEmpty(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+const fallbackInteractiveShell = "/bin/sh"
+
+func defaultInteractiveShell(lookupEnv func(string) string) string {
+	if lookupEnv == nil {
+		return fallbackInteractiveShell
+	}
+	shell := strings.TrimSpace(lookupEnv("SHELL"))
+	if shell == "" || !filepath.IsAbs(shell) || strings.ContainsAny(shell, "\x00\r\n") {
+		return fallbackInteractiveShell
+	}
+	return shell
+}
+
+func posixCommandShell(lookupEnv func(string) string) string {
+	shell := defaultInteractiveShell(lookupEnv)
+	switch filepath.Base(shell) {
+	case "bash", "dash", "ksh", "mksh", "sh", "zsh":
+		return shell
+	default:
+		return fallbackInteractiveShell
+	}
+}
+
+func loginShellCommand(shell string) []string {
+	switch filepath.Base(shell) {
+	case "bash", "ksh", "mksh", "zsh":
+		return []string{shell, "-l"}
+	default:
+		return []string{shell}
+	}
 }
 
 func printShellUsage(w io.Writer) {

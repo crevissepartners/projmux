@@ -82,7 +82,8 @@ projmux shell
 - [Go 1.24+](https://go.dev/dl/) — binary 설치/빌드에 필요.
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) **≥ 3.4** — workspace 런타임. 이전 버전은 `display-popup -T` 등 projmux 가 사용하는 기능이 없습니다.
 - [fzf](https://github.com/junegunn/fzf#installation) **≥ 0.55** — popup/sidebar picker. 멀티라인 피커가 `--marker-multi-line`, `--gap-line`, `--highlight-line` 을 사용하며 모두 0.55 까지 도입됐습니다.
-- [zsh](https://zsh.sourceforge.io/) — `projmux shell` 이 만드는 앱 tmux 설정의 기본 shell.
+- `bash`, `zsh`, `sh` 같은 Unix shell — `projmux shell` 이 만드는 앱 tmux
+  설정은 절대 경로 `$SHELL` 을 사용하고, 없으면 `/bin/sh` 로 fallback 합니다.
 - [git](https://git-scm.com/downloads) — branch/status segment.
 - `stty` — POSIX 터미널 제어, `projmux setup` 에서 사용. macOS/Linux 기본 시스템에 이미 포함, Windows 호스트에선 해당 없음.
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) — 선택, Kubernetes status segment 사용 시에만.
@@ -124,7 +125,7 @@ primary 프로젝트 루트입니다. 설정하지 않으면 projmux 는 canonic
 export PROJMUX_PROJDIR="/your/path"
 ```
 
-`~/.zshrc` (또는 사용 중인 shell rc 파일) 에 한 줄 추가하면 됩니다. 첫 실행
+`~/.bashrc`, `~/.zshrc` 또는 사용 중인 shell rc 파일에 한 줄 추가하면 됩니다. 첫 실행
 이후에는 `~/.config/projmux/projdir` 에 memoize 되므로, 이후 env 가 없어도 같은
 루트가 유지됩니다.
 

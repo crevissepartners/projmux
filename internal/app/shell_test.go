@@ -28,6 +28,9 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 			if name == "XDG_CONFIG_HOME" {
 				return ""
 			}
+			if name == "SHELL" {
+				return "/bin/bash"
+			}
 			return os.Getenv(name)
 		},
 		homeDir:    func() (string, error) { return home, nil },
@@ -51,7 +54,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"set -g @projmux_app 1",
 		"set -g history-limit 10000",
 		"set -g set-clipboard on",
-		"set -g default-shell /usr/bin/zsh",
+		"set -g default-shell \"/bin/bash\"",
 		"set -ga update-environment \"WSL_DISTRO_NAME\"",
 		"set -g pane-border-status top",
 		"set -s user-keys[7] \"\\033[9008u\"",
@@ -96,6 +99,53 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		if strings.HasPrefix(env, "TMUX=") {
 			t.Fatalf("runner env contains TMUX: %#v", recorder.env)
 		}
+	}
+}
+
+func TestShellAppConfigFallsBackToPortableShell(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "HOME" {
+				return home
+			}
+			return ""
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		getwd:      func() (string, error) { return "", nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "set -g default-shell \"/bin/sh\"") {
+		t.Fatalf("config = %q, want portable fallback shell", string(content))
+	}
+}
+
+func TestDefaultInteractiveShellKeepsConfiguredZsh(t *testing.T) {
+	t.Parallel()
+
+	got := defaultInteractiveShell(func(name string) string {
+		if name == "SHELL" {
+			return "/usr/bin/zsh"
+		}
+		return ""
+	})
+	if got != "/usr/bin/zsh" {
+		t.Fatalf("defaultInteractiveShell = %q, want configured zsh", got)
 	}
 }
 

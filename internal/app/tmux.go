@@ -370,7 +370,7 @@ func (c *tmuxCommand) runPrintAppConfig(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, tmuxAppConfig(binaryPath))
+	_, err = io.WriteString(stdout, tmuxAppConfig(binaryPath, c.defaultShell()))
 	return err
 }
 
@@ -459,7 +459,7 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 	if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {
 		return "", fmt.Errorf("create tmux app config directory: %w", err)
 	}
-	if err := c.writeFile(config, []byte(tmuxAppConfig(binaryPath)), 0o644); err != nil {
+	if err := c.writeFile(config, []byte(tmuxAppConfig(binaryPath, c.defaultShell())), 0o644); err != nil {
 		return "", fmt.Errorf("write tmux app config: %w", err)
 	}
 	return config, nil
@@ -753,6 +753,10 @@ func (c *tmuxCommand) expandHome(path string) string {
 	return path
 }
 
+func (c *tmuxCommand) defaultShell() string {
+	return defaultInteractiveShell(c.lookupEnv)
+}
+
 func tmuxStandaloneConfig(binaryPath string) string {
 	bin := tmuxShellQuote(binaryPath)
 	lines := []string{
@@ -828,8 +832,9 @@ func tmuxStandaloneConfig(binaryPath string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func tmuxAppConfig(binaryPath string) string {
+func tmuxAppConfig(binaryPath, defaultShell string) string {
 	bin := tmuxShellQuote(binaryPath)
+	shell := tmuxConfigQuote(nonEmpty(strings.TrimSpace(defaultShell), fallbackInteractiveShell))
 	shellPaneLabelFormat := "#{?#{||:#{||:#{||:#{==:#{pane_current_command},zsh},#{==:#{pane_current_command},bash}},#{||:#{==:#{pane_current_command},fish},#{==:#{pane_current_command},sh}}},#{||:#{==:#{pane_current_command},nu},#{==:#{pane_current_command},xonsh}}},#{pane_current_command},#{pane_title}}"
 	paneLabelFormat := "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + shellPaneLabelFormat + "}"
 	paneBusyFormat := "#{||:#{==:#{@projmux_attention_state},busy},#{==:#{@projmux_ai_state},thinking}}"
@@ -843,7 +848,7 @@ func tmuxAppConfig(binaryPath string) string {
 		"set -g mouse on",
 		"set -g history-limit 10000",
 		"set -g set-clipboard on",
-		"set -g default-shell /usr/bin/zsh",
+		"set -g default-shell " + shell,
 		"set -g default-command \"\"",
 		"set -ga update-environment \"WSL_DISTRO_NAME\"",
 		"set -ga update-environment \"WSL_INTEROP\"",
