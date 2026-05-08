@@ -20,7 +20,7 @@ RUN apt-get update \
     tmux \
   && rm -rf /var/lib/apt/lists/*
 
-COPY go.mod go.sum /tmp/projmux-deps/
+COPY go.mod /tmp/projmux-deps/
 RUN cd /tmp/projmux-deps && go mod download
 
 WORKDIR /work
