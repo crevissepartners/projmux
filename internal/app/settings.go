@@ -32,11 +32,16 @@ const (
 	settingsSectionProject      = "section:project-picker"
 	settingsSectionAbout        = "section:about"
 	settingsActionPrefixAI      = "ai:"
+	settingsActionPrefixProjdir = "projdir:"
 	settingsActionPrefixSwitch  = "switch:"
 	settingsActionPrefixUpdate  = "update:"
 	settingsActionPrefixWorkdir = "workdir:"
 	settingsProjectAdd          = "project:add"
 	settingsProjectPins         = "project:pins"
+	settingsProjectRootManage   = "project-root:manage"
+	settingsProjdirClear        = "projdir:clear"
+	settingsProjdirSetCurrent   = "projdir:set-current"
+	settingsProjdirSetTyped     = "projdir:set-typed"
 	settingsUpdateApply         = "update:apply"
 	settingsUpdateCheck         = "update:check"
 	settingsWorkdirAdd          = "workdir:add"
@@ -217,6 +222,10 @@ func (c *settingsCommand) runProjectPickerSection(stdout, stderr io.Writer) erro
 			if err := c.runPinnedProjects(stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsProjectRootManage:
+			if err := c.runProjectRootSettings(stdout, stderr); err != nil {
+				return err
+			}
 		case action == settingsWorkdirAdd:
 			if err := c.runAddWorkdir(stdout, stderr); err != nil {
 				return err
@@ -226,6 +235,10 @@ func (c *settingsCommand) runProjectPickerSection(stdout, stderr io.Writer) erro
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixSwitch):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixProjdir):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err
 			}
@@ -271,6 +284,83 @@ func (c *settingsCommand) runAddProject(stdout, stderr io.Writer) error {
 		return nil
 	}
 	return c.execute(action, stdout, stderr)
+}
+
+func (c *settingsCommand) runProjectRootSettings(stdout, stderr io.Writer) error {
+	for {
+		entries, err := c.projectRootEntries()
+		if err != nil {
+			return err
+		}
+
+		result, err := c.runPicker(intfzf.Options{
+			UI:         "settings-project-root",
+			Entries:    entries,
+			Prompt:     "Settings > Project Picker > Project Root > ",
+			Header:     "Manage the primary Project Root; Workdirs are separate search roots",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		if action == settingsProjdirSetTyped {
+			if err := c.runSetProjectRootTyped(stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := c.execute(action, stdout, stderr); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *settingsCommand) runSetProjectRootTyped(stdout, stderr io.Writer) error {
+	if c.switcher == nil {
+		return errors.New("project root settings are not configured")
+	}
+
+	result, err := c.runPicker(intfzf.Options{
+		UI:          "settings-project-root-typed",
+		Entries:     nil,
+		AcceptQuery: true,
+		Prompt:      "Type project root path > ",
+		Header:      "Type one absolute primary root path. Use Workdirs for additional search roots.",
+		Footer:      projmuxFooter("Enter: save  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys:  []string{"enter"},
+		Bindings:    settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+
+	typed := strings.TrimSpace(result.Query)
+	if typed == "" {
+		return nil
+	}
+
+	expanded, err := c.expandTypedPath(typed, "project root")
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return nil
+	}
+	if !filepath.IsAbs(expanded) {
+		fmt.Fprintf(stderr, "project root must be an absolute path: %s\n", typed)
+		return nil
+	}
+	return c.switcher.saveSavedProjdir(expanded, stdout)
 }
 
 func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
@@ -375,9 +465,13 @@ func (c *settingsCommand) runAddWorkdirTyped(stdout, stderr io.Writer) error {
 // expandTypedWorkdir trims and home-expands a typed workdir path. The home
 // expansion mirrors how the typed flow's UX hint advertises "~" support.
 func (c *settingsCommand) expandTypedWorkdir(typed string) (string, error) {
+	return c.expandTypedPath(typed, "workdir")
+}
+
+func (c *settingsCommand) expandTypedPath(typed, label string) (string, error) {
 	typed = strings.TrimSpace(typed)
 	if typed == "" {
-		return "", errors.New("workdir path is empty")
+		return "", fmt.Errorf("%s path is empty", label)
 	}
 	if typed == "~" || strings.HasPrefix(typed, "~/") {
 		homeDir, err := c.switcher.resolveHomeDir()
@@ -529,8 +623,8 @@ func (c *settingsCommand) projectPickerEntries() []intfzf.Entry {
 	return entries
 }
 
-// projectRootEntry renders the resolved PROJMUX_PROJDIR path with its source label.
-// The row is read-only (settingsNoopValue) and never triggers memoization.
+// projectRootEntry renders the resolved primary root with its source label.
+// Opening it manages the saved project root; rendering never memoizes env state.
 func (c *settingsCommand) projectRootEntry() intfzf.Entry {
 	if c.switcher == nil {
 		return intfzf.Entry{
@@ -542,12 +636,12 @@ func (c *settingsCommand) projectRootEntry() intfzf.Entry {
 	if err != nil || value == "" {
 		return intfzf.Entry{
 			Label: settingsLabelDim("Project Root", "not configured"),
-			Value: settingsNoopValue,
+			Value: settingsProjectRootManage,
 		}
 	}
 	return intfzf.Entry{
 		Label: settingsLabelInfo("Project Root", value, source),
-		Value: settingsNoopValue,
+		Value: settingsProjectRootManage,
 	}
 }
 
@@ -555,8 +649,103 @@ func (c *settingsCommand) projectRootHintEntry() intfzf.Entry {
 	// Keep the entire hint in one dim run so search substrings such as
 	// "Set PROJMUX_PROJDIR" stay contiguous in the rendered label.
 	return intfzf.Entry{
-		Label: "  " + settingsColorDim + "Set PROJMUX_PROJDIR (multi-path with `:` on Linux/`;` on Windows), set -g @projmux_projdir, or ~/.config/projmux/projdir; use Workdirs for search roots" + settingsColorReset,
+		Label: "  " + settingsColorDim + "Project Root is the primary root. Workdirs are extra search roots. Set PROJMUX_PROJDIR, @projmux_projdir, or the saved ~/.config/projmux/projdir value." + settingsColorReset,
 		Value: settingsNoopValue,
+	}
+}
+
+func (c *settingsCommand) projectRootEntries() ([]intfzf.Entry, error) {
+	entries := []intfzf.Entry{settingsBackEntry()}
+	if c.switcher == nil {
+		return append(entries, intfzf.Entry{
+			Label: settingsLabelDim("Project Root", "unavailable"),
+			Value: settingsNoopValue,
+		}), nil
+	}
+
+	info, err := c.switcher.projdirSettingsInfo()
+	if err != nil {
+		return nil, err
+	}
+	if info.EffectiveValue == "" {
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabelInfo("Effective Project Root", "not configured", "no env, tmux option, or saved value"),
+			Value: settingsNoopValue,
+		})
+	} else {
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabelInfo("Effective Project Root", info.EffectiveValue, info.EffectiveSource),
+			Value: settingsNoopValue,
+		})
+	}
+
+	switch {
+	case info.SavedValue == "":
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabelInfo("Saved Project Root", "not set", "~/.config/projmux/projdir"),
+			Value: settingsNoopValue,
+		})
+	case info.EffectiveSource == projdirSourceSaved:
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabelInfo("Saved Project Root", info.SavedValue, "active"),
+			Value: settingsNoopValue,
+		})
+	case info.EffectiveSource == projdirSourceUnresolved:
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabelInfo("Saved Project Root", info.SavedValue, "saved"),
+			Value: settingsNoopValue,
+		})
+	default:
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabelInfo("Saved Project Root", info.SavedValue, "shadowed by "+info.EffectiveSource),
+			Value: settingsNoopValue,
+		})
+	}
+
+	entries = append(entries,
+		intfzf.Entry{
+			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Set Project Root...", "save one primary root path directly"),
+			Value: settingsProjdirSetTyped,
+		},
+		c.setCurrentProjectRootEntry(),
+		intfzf.Entry{
+			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Clear Saved Project Root", "remove ~/.config/projmux/projdir"),
+			Value: settingsProjdirClear,
+		},
+		intfzf.Entry{
+			Label: "  " + settingsColorDim + "Env PROJMUX_PROJDIR and tmux @projmux_projdir override the saved value until unset." + settingsColorReset,
+			Value: settingsNoopValue,
+		},
+	)
+	return entries, nil
+}
+
+func (c *settingsCommand) setCurrentProjectRootEntry() intfzf.Entry {
+	if c.switcher == nil {
+		return intfzf.Entry{
+			Label: settingsLabelDim("Use Current Project as Root", "unavailable"),
+			Value: settingsNoopValue,
+		}
+	}
+
+	homeDir, err := c.switcher.resolveHomeDir()
+	if err != nil {
+		return intfzf.Entry{
+			Label: settingsLabelDim("Use Current Project as Root", "home unavailable"),
+			Value: settingsNoopValue,
+		}
+	}
+	repoRoot, _, _ := c.switcher.currentProjdirInfo()
+	currentTarget, err := c.switcher.resolveSwitchTargetNoMemoize(nil, "settings project root")
+	if err != nil || currentTarget == "" || currentTarget == switchSettingsSentinel {
+		return intfzf.Entry{
+			Label: settingsLabelDim("Use Current Project as Root", "no project context"),
+			Value: settingsNoopValue,
+		}
+	}
+	return intfzf.Entry{
+		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Use Current Project as Root", intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
+		Value: settingsProjdirSetCurrent,
 	}
 }
 
@@ -752,6 +941,12 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return errors.New("ai settings are not configured")
 		}
 		return c.ai.setMode(mode)
+	case strings.HasPrefix(value, settingsActionPrefixProjdir):
+		action := strings.TrimPrefix(value, settingsActionPrefixProjdir)
+		if c.switcher == nil {
+			return errors.New("project root settings are not configured")
+		}
+		return c.switcher.executeProjdirSettingsAction(action, stdout, stderr)
 	case strings.HasPrefix(value, settingsActionPrefixSwitch):
 		action := strings.TrimPrefix(value, settingsActionPrefixSwitch)
 		if c.switcher == nil {

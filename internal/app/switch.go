@@ -522,6 +522,14 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 }
 
 func (c *switchCommand) candidateInputs(currentPath string) (candidates.Inputs, error) {
+	return c.candidateInputsWithMemoize(currentPath, true)
+}
+
+func (c *switchCommand) candidateInputsNoMemoize(currentPath string) (candidates.Inputs, error) {
+	return c.candidateInputsWithMemoize(currentPath, false)
+}
+
+func (c *switchCommand) candidateInputsWithMemoize(currentPath string, memoize bool) (candidates.Inputs, error) {
 	homeDir, err := c.resolveHomeDir()
 	if err != nil {
 		return candidates.Inputs{}, err
@@ -539,7 +547,12 @@ func (c *switchCommand) candidateInputs(currentPath string) (candidates.Inputs, 
 		}
 	}
 
-	repoRoot := c.switchRepoRoot(homeDir)
+	var repoRoot string
+	if memoize {
+		repoRoot = c.switchRepoRoot(homeDir)
+	} else {
+		repoRoot, _ = resolveProjdir(homeDir, c.lookupEnv, c.tmuxProjdir, c.loadProjdir)
+	}
 	extraRoots := extraProjdirRoots(c.lookupEnv)
 	return candidates.Inputs{
 		HomeDir:      homeDir,
@@ -615,7 +628,20 @@ func (c *switchCommand) resolveSwitchTarget(args []string, command string) (stri
 		return "", err
 	}
 
-	inputs, err := c.candidateInputs(inputPath)
+	return c.resolveSwitchTargetFromInput(inputPath, true)
+}
+
+func (c *switchCommand) resolveSwitchTargetNoMemoize(args []string, command string) (string, error) {
+	inputPath, err := c.resolveSwitchInput(args, command)
+	if err != nil {
+		return "", err
+	}
+
+	return c.resolveSwitchTargetFromInput(inputPath, false)
+}
+
+func (c *switchCommand) resolveSwitchTargetFromInput(inputPath string, memoize bool) (string, error) {
+	inputs, err := c.candidateInputsWithMemoize(inputPath, memoize)
 	if err != nil {
 		return "", err
 	}
@@ -899,6 +925,12 @@ const (
 	projdirSourceUnresolved = ""
 )
 
+type projdirSettingsInfo struct {
+	EffectiveValue  string
+	EffectiveSource string
+	SavedValue      string
+}
+
 func (c *switchCommand) switchRepoRoot(homeDir string) string {
 	return switchRepoRoot(homeDir, c.lookupEnv, c.tmuxProjdir, c.loadProjdir, c.saveProjdir)
 }
@@ -970,6 +1002,89 @@ func (c *switchCommand) currentProjdirInfo() (string, string, error) {
 	}
 	value, source := resolveProjdir(homeDir, c.lookupEnv, c.tmuxProjdir, c.loadProjdir)
 	return value, source, nil
+}
+
+func (c *switchCommand) projdirSettingsInfo() (projdirSettingsInfo, error) {
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return projdirSettingsInfo{}, err
+	}
+	value, source := resolveProjdir(homeDir, c.lookupEnv, c.tmuxProjdir, c.loadProjdir)
+	info := projdirSettingsInfo{
+		EffectiveValue:  value,
+		EffectiveSource: source,
+	}
+	if c.loadProjdir != nil && homeDir != "" {
+		saved, err := c.loadProjdir(homeDir)
+		if err != nil {
+			return projdirSettingsInfo{}, fmt.Errorf("load saved project root: %w", err)
+		}
+		info.SavedValue = cleanOptionalPath(saved)
+	}
+	return info, nil
+}
+
+func (c *switchCommand) saveSavedProjdir(target string, stdout io.Writer) error {
+	target = cleanOptionalPath(target)
+	if target == "" {
+		return fmt.Errorf("project root is empty")
+	}
+	if !filepath.IsAbs(target) {
+		return fmt.Errorf("project root must be an absolute path: %s", target)
+	}
+
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return err
+	}
+	if c.saveProjdir == nil {
+		return fmt.Errorf("project root persistence is not configured")
+	}
+	if err := c.saveProjdir(homeDir, target); err != nil {
+		return fmt.Errorf("save project root: %w", err)
+	}
+	if stdout == nil {
+		return nil
+	}
+	_, err = fmt.Fprintf(stdout, "saved project root: %s\n", target)
+	return err
+}
+
+func (c *switchCommand) clearSavedProjdir(stdout io.Writer) error {
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return err
+	}
+	if c.saveProjdir == nil {
+		return fmt.Errorf("project root persistence is not configured")
+	}
+	if err := c.saveProjdir(homeDir, ""); err != nil {
+		return fmt.Errorf("clear saved project root: %w", err)
+	}
+	if stdout == nil {
+		return nil
+	}
+	_, err = fmt.Fprintln(stdout, "cleared saved project root")
+	return err
+}
+
+func (c *switchCommand) executeProjdirSettingsAction(action string, stdout, stderr io.Writer) error {
+	switch action {
+	case "set-current":
+		target, err := c.resolveSwitchTargetNoMemoize(nil, "settings project root")
+		if err != nil {
+			return err
+		}
+		if target == "" || target == switchSettingsSentinel {
+			return fmt.Errorf("no current project context to save as project root")
+		}
+		return c.saveSavedProjdir(target, stdout)
+	case "clear":
+		return c.clearSavedProjdir(stdout)
+	default:
+		printSwitchUsage(stderr)
+		return fmt.Errorf("unknown project root settings action: %s", action)
+	}
 }
 
 // preferredProjdirEnv returns the effective env value for the repo root and

@@ -147,6 +147,13 @@ The first invocation that sees the env var writes
 `~/.config/projmux/projdir`, so later shells without the env var still
 resolve the same root.
 
+You can also manage the saved value interactively with
+`projmux settings > Project Picker > Project Root`. That screen shows the
+effective primary root and source (`PROJMUX_PROJDIR`, `@projmux_projdir`,
+saved, or not configured), shows when a saved value is shadowed by env/tmux,
+and lets you set a path directly, use the current project context, or clear the
+saved value.
+
 ### From source
 
 ```sh
@@ -222,6 +229,9 @@ so a project keeps the same tmux session name across launches.
 For permanent search-root customization, the Project Picker section also
 includes:
 
+- `Project Root` - set, change, or clear the saved primary root. This is the
+  one root used as the primary project context; env `PROJMUX_PROJDIR` and tmux
+  `@projmux_projdir` override the saved value until unset.
 - `+ Add Workdir...` - append a single directory to the saved workdirs list.
 - `Workdirs` - review and remove saved workdirs. The same picker also surfaces
   any active `PROJMUX_MANAGED_ROOTS` / `TMUX_SESSIONIZER_ROOTS` env values as

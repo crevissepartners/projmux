@@ -149,6 +149,12 @@ PROJMUX_PROJDIR=/your/path projmux tmux apply
 env 가 살아있는 첫 실행이 `~/.config/projmux/projdir` 에 값을 기록하므로,
 이후 새 shell 에서 env 없이도 같은 루트가 유지됩니다.
 
+저장된 값은 `projmux settings > Project Picker > Project Root` 에서도 관리할
+수 있습니다. 이 화면은 현재 effective primary root 와 source
+(`PROJMUX_PROJDIR`, `@projmux_projdir`, saved, not configured)를 보여주고,
+saved 값이 env/tmux 값에 shadow 되는 상황을 따로 표시합니다. 경로를 직접
+입력하거나 현재 project context 를 저장하거나 saved 값을 지울 수 있습니다.
+
 ### 소스에서 빌드
 
 ```sh
@@ -230,6 +236,9 @@ root를 depth 3까지 스캔하므로 약한 probe 밖의 프로젝트도 picker
 탐색 root를 영구적으로 커스터마이즈하려면 Project Picker 섹션의 다음 항목을
 사용하세요:
 
+- `Project Root` - saved primary root 를 설정/변경/해제합니다. Project Root 는
+  primary project context 로 쓰는 한 개의 루트이며, `PROJMUX_PROJDIR` env 와
+  tmux `@projmux_projdir` 값이 있으면 saved 값보다 우선됩니다.
 - `+ Add Workdir...` - 디렉터리 하나를 saved workdirs 목록에 누적 추가.
 - `Workdirs` - 저장된 workdir 검토/삭제. 환경변수 `PROJMUX_MANAGED_ROOTS` /
   `TMUX_SESSIONIZER_ROOTS`가 설정되어 있으면 read-only 행으로 함께 표시되어
