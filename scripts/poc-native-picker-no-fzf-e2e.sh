@@ -55,6 +55,23 @@ docker run --rm \
     fi
     tmux kill-server 2>/dev/null || true
     echo "[poc/no-fzf] native switch selected bravo-web"
+    echo "[poc/no-fzf] exercise native switch popup against existing sessions"
+    tmux new-session -d -s projmux-projects-alpha-api -c "$demo_root/alpha-api"
+    tmux new-session -d -s projmux-projects-bravo-web -c "$demo_root/bravo-web"
+    popup_log=/tmp/projmux-switch-popup.log
+    popup_status=0
+    printf "bravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=popup" "$popup_log" || popup_status=$?
+    if [[ "$popup_status" != 0 && "$popup_status" != 124 ]]; then
+      cat "$popup_log"
+      exit "$popup_status"
+    fi
+    if ! grep -q "/tmp/projmux-projects/bravo-web" "$popup_log"; then
+      cat "$popup_log"
+      echo "native switch popup did not open bravo-web" >&2
+      exit 1
+    fi
+    tmux kill-server 2>/dev/null || true
+    echo "[poc/no-fzf] native switch popup selected existing bravo-web"
     echo "[poc/no-fzf] launch projmux shell under a PTY"
     shell_log=/tmp/projmux-shell.log
     shell_status=0

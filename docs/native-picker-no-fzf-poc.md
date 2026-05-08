@@ -62,8 +62,9 @@ image from `test/docker/no-fzf-poc.Dockerfile`, including Go module cache, then
 mounts the repository into an isolated `--network none` container, builds
 `projmux`, asserts `fzf` is not on `PATH`, runs the focused native-picker tests,
 exercises `projmux switch --ui=sidebar` search/selection under a container PTY,
-launches `projmux shell` under a container PTY, verifies that it creates a tmux
-session, and exercises the settings CLI picker through the native backend.
+exercises `projmux switch --ui=popup` against existing tmux sessions, launches
+`projmux shell` under a container PTY, verifies that it creates a tmux session,
+and exercises the settings CLI picker through the native backend.
 
 Short tmux-friendly form:
 

@@ -38,9 +38,9 @@ picker evidence. It is not a production dependency-policy change.
 - `settings`: native backend exercised in unit tests and Docker e2e.
 - `switch --ui=sidebar`: Docker no-fzf e2e creates sample projects, types
   `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
-- `switch --ui=popup`: unit coverage covers preview command/window/bindings and
-  native rendering for right-side preview; hands-on popup parity still needs a
-  real tmux session run with existing sessions.
+- `switch --ui=popup`: Docker no-fzf e2e creates existing tmux sessions using
+  the app's session naming convention, types `bravo`, selects `bravo-web`, and
+  confirms the opened tmux shell path.
 - `sessions`: native routing, preview command/window, and preview-cycle
   bindings are unit-covered; hands-on validation still needs a real tmux session
   inventory with multiple windows/panes.
