@@ -963,18 +963,16 @@ func nativeContentLayout(layout nativeLayout) nativeLayout {
 }
 
 func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
+	var screen strings.Builder
 	if header := strings.TrimSpace(options.Header); header != "" {
-		fmt.Fprintln(w, header)
+		fmt.Fprintln(&screen, header)
 	}
 	prompt := strings.TrimSpace(options.Prompt)
 	if prompt == "" {
 		prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
 	}
-	fmt.Fprintln(w, nativePromptLineWithCursor(prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
-	if footer := strings.TrimSpace(options.Footer); footer != "" {
-		fmt.Fprintln(w, footer)
-	}
-	fmt.Fprintln(w)
+	fmt.Fprintln(&screen, nativePromptLineWithCursor(prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
+	fmt.Fprintln(&screen)
 
 	placement := nativePreviewPlacement(options.Preview.Window)
 	previewHeight := nativePreviewHeight(layout.Rows, options.Preview.Window)
@@ -989,25 +987,30 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		start, end = nativeVisibleRangeByRenderedRows(items, selected, listLimit)
 	}
 	listLines := nativeInteractiveListLines(items, start, end, selected, options.MultiLine)
+	var main strings.Builder
 	if len(items) == 0 {
-		fmt.Fprintln(w, "  no matches")
+		fmt.Fprintln(&main, "  no matches")
+		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
-		renderNativeSplitPreview(w, listLines, previewLines, layout, options.Preview.Window, len(items), start, end)
+		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, len(items), start, end)
+		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
 	listLines = nativeListLinesWithScrollbar(listLines, len(items), start, end, layout.Cols)
 	for _, line := range listLines {
-		fmt.Fprintln(w, line)
+		fmt.Fprintln(&main, line)
 	}
 	if len(previewLines) > 0 && placement == "down" {
-		renderNativeDownPreview(w, previewLines, layout)
+		renderNativeDownPreview(&main, previewLines, layout)
+		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
 	if len(previewLines) > 0 {
-		renderNativeInlinePreview(w, previewLines)
+		renderNativeInlinePreview(&main, previewLines)
 	}
+	writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
 }
 
 func nativeListLimit(options Options, layout nativeLayout, previewPlacement string, previewHeight int, hasPreview bool) int {
@@ -1026,10 +1029,11 @@ func nativeChromeLineCount(options Options) int {
 	if header := strings.TrimSpace(options.Header); header != "" {
 		lines += nativeTextLineCount(header)
 	}
+	lines++ // blank line between chrome and list
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
-		lines += nativeTextLineCount(footer)
+		lines += 1 + nativeTextLineCount(footer) // fzf footer border + footer text
 	}
-	return lines + 1 // blank line between chrome and list
+	return lines
 }
 
 func nativeTextLineCount(value string) int {
@@ -1068,6 +1072,48 @@ func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 		fmt.Fprintf(w, "│%s│\n", nativePadRight(line, innerWidth))
 	}
 	fmt.Fprintf(w, "└%s┘\n", strings.Repeat("─", innerWidth))
+}
+
+func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {
+	var screen strings.Builder
+	screen.WriteString(top)
+	screen.WriteString(main)
+	footerLines := nativeFooterBlockLines(footer, layout.Cols)
+	if len(footerLines) == 0 {
+		fmt.Fprint(w, screen.String())
+		return
+	}
+	remaining := layout.Rows - nativeRenderedTextLineCount(screen.String()) - len(footerLines)
+	for i := 0; i < remaining; i++ {
+		fmt.Fprintln(&screen)
+	}
+	for _, line := range footerLines {
+		fmt.Fprintln(&screen, line)
+	}
+	fmt.Fprint(w, screen.String())
+}
+
+func nativeFooterBlockLines(footer string, cols int) []string {
+	footer = strings.TrimSpace(footer)
+	if footer == "" {
+		return nil
+	}
+	if cols <= 0 {
+		cols = defaultNativeCols
+	}
+	lines := []string{nativeTruncateANSI(strings.Repeat("─", cols), cols)}
+	for _, line := range strings.Split(footer, "\n") {
+		lines = append(lines, nativeTruncateANSI(strings.TrimRight(line, "\r"), cols))
+	}
+	return lines
+}
+
+func nativeRenderedTextLineCount(value string) int {
+	value = strings.TrimSuffix(value, "\n")
+	if value == "" {
+		return 0
+	}
+	return len(strings.Split(value, "\n"))
 }
 
 func nativePromptLine(prompt, query string, matches, total, cols int) string {

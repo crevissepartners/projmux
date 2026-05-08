@@ -689,8 +689,51 @@ func TestNativeListLimitAccountsForHeaderFooterAndDownPreview(t *testing.T) {
 		Header: "header",
 		Footer: "line 1\nline 2\nline 3",
 	}
-	if got, want := nativeListLimit(options, nativeLayout{Rows: 20, Cols: 80}, "down", 5, true), 8; got != want {
+	if got, want := nativeListLimit(options, nativeLayout{Rows: 20, Cols: 80}, "down", 5, true), 7; got != want {
 		t.Fatalf("nativeListLimit() = %d, want %d", got, want)
+	}
+}
+
+func TestNativeInteractiveRendersFooterAtBottom(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:     "settings",
+		Footer: "Enter: open",
+		Items: []Item{
+			{Title: "AI Settings", Value: "ai"},
+			{Title: "Project Picker", Value: "project"},
+		},
+	}, []Item{
+		{Title: "AI Settings", Value: "ai"},
+		{Title: "Project Picker", Value: "project"},
+	}, "", 0, 0, nativeLayout{Rows: 12, Cols: 40})
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) < 4 {
+		t.Fatalf("native output = %q, want framed footer", out.String())
+	}
+	footerLine := lines[len(lines)-2]
+	separatorLine := lines[len(lines)-3]
+	if !strings.Contains(footerLine, "Enter: open") {
+		t.Fatalf("footer line = %q, want footer above bottom border", footerLine)
+	}
+	if !strings.Contains(separatorLine, nativeGapLine) {
+		t.Fatalf("separator line = %q, want fzf-like footer border", separatorLine)
+	}
+	promptIndex := -1
+	footerIndex := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Settings") {
+			promptIndex = i
+		}
+		if strings.Contains(line, "Enter: open") {
+			footerIndex = i
+		}
+	}
+	if promptIndex < 0 || footerIndex <= promptIndex+2 {
+		t.Fatalf("native output = %q, want footer separated from prompt/list", out.String())
 	}
 }
 
