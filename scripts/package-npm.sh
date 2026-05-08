@@ -68,9 +68,11 @@ NODE
 stage_main() {
   local dir="$out/projmux"
   mkdir -p "$dir/npm"
+  mkdir -p "$dir/docs"
   cp "$root/package.json" "$dir/package.json"
   cp "$root/npm/projmux.js" "$dir/npm/projmux.js"
   cp "$root/README.md" "$root/README-ko.md" "$root/LICENSE" "$dir/"
+  cp "$root"/docs/*.md "$dir/docs/"
   chmod 0755 "$dir/npm/projmux.js"
   patch_version "$dir/package.json"
 }
