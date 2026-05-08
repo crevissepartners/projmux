@@ -114,13 +114,14 @@ projmux version
 
 ### 선택: `PROJMUX_PROJDIR`
 
-`PROJMUX_PROJDIR` 은 projmux 가 picker/탐색에서 기본으로 사용할 프로젝트
-루트입니다. 설정하지 않으면 projmux 가 내장된 source-root 탐색(`~/source`,
-`~/work`, `~/projects`, `~/src`, `~/code`, `~/source/repos`) 으로 자동
-fallback 합니다.
+`PROJMUX_PROJDIR` 은 명시적으로 설정했을 때 projmux 가 picker/탐색에서 사용할
+primary 프로젝트 루트입니다. 설정하지 않으면 projmux 는 canonical repo root 를
+가정하지 않습니다. 탐색은 pin, 살아 있는 session, saved workdirs, 그리고 존재할
+때만 참고하는 약한 common-folder probe(`~/source`, `~/work`, `~/projects`,
+`~/src`, `~/code`) 를 사용합니다.
 
 ```sh
-export PROJMUX_PROJDIR="$HOME/source/repos"
+export PROJMUX_PROJDIR="/your/path"
 ```
 
 `~/.zshrc` (또는 사용 중인 shell rc 파일) 에 한 줄 추가하면 됩니다. 첫 실행
@@ -134,7 +135,7 @@ prepend 됩니다. saved 파일에는 primary 만 memoize 됩니다.
 
 ```sh
 # Linux/macOS — primary repo + 보조 검색 root
-export PROJMUX_PROJDIR="$HOME/source/repos:/srv/work/repos"
+export PROJMUX_PROJDIR="/main/repos:/srv/work/repos"
 ```
 
 #### 최초 설치 시 projdir 지정
@@ -217,12 +218,13 @@ PROJMUX_PROJDIR="/main/repos:/secondary/repos" projmux upgrade   # Linux/macOS
 ## 프로젝트 탐색 방식
 
 `projmux switch`는 pinned directory, 현재 살아 있는 tmux session, 발견된
-project root를 합쳐 후보를 만듭니다. 기본 탐색은 존재하는 경우 `~/source`,
-`~/work`, `~/projects`, `~/src`, `~/code`, `~/source/repos` 같은 일반적인
-소스 디렉터리를 우선합니다. `projmux settings`의 `Project Picker > Add
-Project...`는 이 filesystem root를 depth 3까지 스캔하므로 `~`나 `~rp` 밖의
-프로젝트도 picker 후보로 추가할 수 있습니다. 세션 이름은 정규화된 디렉터리
-경로에서 만들어지므로 같은 프로젝트는 다시 실행해도 같은 tmux 세션으로 연결됩니다.
+project root를 합쳐 후보를 만듭니다. 명시적인 검색 root 가 없으면 기본 탐색은
+존재하는 경우 `~/source`, `~/work`, `~/projects`, `~/src`, `~/code` 같은 약한
+common-folder probe 를 참고합니다. canonical `~/source/repos` root 는 가정하지
+않습니다. `projmux settings`의 `Project Picker > Add Project...`는 filesystem
+root를 depth 3까지 스캔하므로 약한 probe 밖의 프로젝트도 picker 후보로 추가할
+수 있습니다. 세션 이름은 정규화된 디렉터리 경로에서 만들어지므로 같은 프로젝트는
+다시 실행해도 같은 tmux 세션으로 연결됩니다.
 
 탐색 root를 영구적으로 커스터마이즈하려면 Project Picker 섹션의 다음 항목을
 사용하세요:
@@ -253,8 +255,8 @@ projmux는 새 tmux 세션을 만들 때마다 선택적 사용자 스크립트
 
 | 변수 | 용도 |
 | --- | --- |
-| `PROJMUX_PROJDIR` | 현재 shell 의 기본 프로젝트 루트. OS-native PATH 형식 multi-value 지원: 첫 항목이 primary repo root (saved 파일에 memoize), 이후 항목은 managed-roots 검색 목록 앞에 prepend. |
-| `PROJMUX_MANAGED_ROOTS` | 콜론 구분 검색 root 목록. saved/default 보다 우선. |
+| `PROJMUX_PROJDIR` | 현재 shell 의 명시적 primary 프로젝트 루트. OS-native PATH 형식 multi-value 지원: 첫 항목이 primary repo root (saved 파일에 memoize), 이후 항목은 managed-roots 검색 목록 앞에 prepend. |
+| `PROJMUX_MANAGED_ROOTS` | 콜론 구분 검색 root 목록. saved/heuristic 목록보다 우선. |
 | `PROJMUX_NOTIFY_HOOK` | AI desktop notification 을 내장 sender 대신 받는 외부 실행 파일. |
 | `PROJMUX_USAGE_STATE_DIR` | AI 사용량 snapshot 캐시 디렉터리. 기본값은 `<state>/projmux/usage`. Dropbox/iCloud 같은 동기화 위치를 가리키게 하면 여러 머신 사이에서 authoritative 사용량을 공유할 수 있다. |
 | `PROJMUX_USAGE_DEBUG` | 비어 있지 않으면 `projmux status usage` 의 adapter 오류를 swallow 하지 않고 stderr 로 surface 한다. |

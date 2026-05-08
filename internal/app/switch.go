@@ -896,7 +896,6 @@ const (
 	projdirSourcePROJDIRenv = "PROJMUX_PROJDIR env"
 	projdirSourceTmuxOption = "@projmux_projdir tmux"
 	projdirSourceSaved      = "saved"
-	projdirSourceDefault    = "default"
 	projdirSourceUnresolved = ""
 )
 
@@ -957,10 +956,7 @@ func resolveProjdir(
 		}
 	}
 
-	if homeDir == "" {
-		return "", projdirSourceUnresolved
-	}
-	return cleanOptionalPath(filepath.Join(homeDir, "source", "repos")), projdirSourceDefault
+	return "", projdirSourceUnresolved
 }
 
 // currentProjdirInfo returns the currently resolved repo root path and the
@@ -1130,7 +1126,7 @@ func switchManagedRoots(homeDir, repoRoot string, extraProjdirRoots []string, lo
 }
 
 func defaultManagedRoots(homeDir, repoRoot string) []string {
-	roots := make([]string, 0, 7)
+	roots := make([]string, 0, 6)
 	for _, root := range []string{
 		filepath.Join(homeDir, "source"),
 		filepath.Join(homeDir, "work"),

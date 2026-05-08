@@ -469,7 +469,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	}
 }
 
-func TestNewSwitchCommandInfersRepoRootFromHomeSourceRepos(t *testing.T) {
+func TestNewSwitchCommandDoesNotInferRepoRootFromHomeSourceRepos(t *testing.T) {
 	fixture := newSwitchFixture(t)
 	fixture.mkdir("home")
 	fixture.mkdir("home/source/repos/app/nested")
@@ -494,8 +494,6 @@ func TestNewSwitchCommandInfersRepoRootFromHomeSourceRepos(t *testing.T) {
 
 	wantCandidates := []string{
 		fixture.path("home"),
-		fixture.path("home/source/repos/app"),
-		fixture.path("home/source/repos/lib"),
 		fixture.path("home/source/repos"),
 	}
 	if got := fakeRunner.last.Candidates; !equalStrings(got, wantCandidates) {
@@ -504,9 +502,7 @@ func TestNewSwitchCommandInfersRepoRootFromHomeSourceRepos(t *testing.T) {
 
 	wantEntries := []intfzf.Entry{
 		{Label: "\x1b[1mhome\x1b[0m\n  \x1b[38;5;242m~\x1b[0m", Value: fixture.path("home")},
-		{Label: "\x1b[1mapp\x1b[0m\n  \x1b[38;5;242m~rp/app\x1b[0m", Value: fixture.path("home/source/repos/app")},
-		{Label: "\x1b[1mlib\x1b[0m\n  \x1b[38;5;242m~rp/lib\x1b[0m", Value: fixture.path("home/source/repos/lib")},
-		{Label: "\x1b[1mrepos\x1b[0m\n  \x1b[38;5;242m~rp\x1b[0m", Value: fixture.path("home/source/repos")},
+		{Label: "\x1b[1mrepos\x1b[0m\n  \x1b[38;5;242m~/source/repos\x1b[0m", Value: fixture.path("home/source/repos")},
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
@@ -721,7 +717,7 @@ func TestSwitchCommandToggleTagUsesCurrentSnappedCandidate(t *testing.T) {
 	}
 }
 
-func TestSwitchCommandUsesDefaultManagedRootsWhenEnvUnset(t *testing.T) {
+func TestSwitchCommandUsesWeakManagedRootHeuristicsWhenEnvUnset(t *testing.T) {
 	t.Parallel()
 
 	var gotInputs candidates.Inputs
@@ -750,7 +746,6 @@ func TestSwitchCommandUsesDefaultManagedRootsWhenEnvUnset(t *testing.T) {
 		"/home/tester/projects",
 		"/home/tester/src",
 		"/home/tester/code",
-		"/home/tester/source/repos",
 	}; !equalStrings(got, want) {
 		t.Fatalf("inputs.ManagedRoots = %q, want %q", got, want)
 	}

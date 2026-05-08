@@ -3,7 +3,6 @@ package app
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -83,7 +82,7 @@ func TestSwitchRepoRootUsesSavedFileWhenEnvUnset(t *testing.T) {
 	}
 }
 
-func TestSwitchRepoRootFallsBackToHomeDirWhenAllUnset(t *testing.T) {
+func TestSwitchRepoRootEmptyWhenAllUnset(t *testing.T) {
 	t.Parallel()
 
 	lookup := func(string) string { return "" }
@@ -91,13 +90,12 @@ func TestSwitchRepoRootFallsBackToHomeDirWhenAllUnset(t *testing.T) {
 	save := func(string, string) error { return nil }
 
 	got := switchRepoRoot("/home/tester", lookup, emptyTmuxOption, load, save)
-	want := filepath.Clean(filepath.Join("/home/tester", "source", "repos"))
-	if got != want {
-		t.Fatalf("switchRepoRoot() = %q, want %q", got, want)
+	if got != "" {
+		t.Fatalf("switchRepoRoot() = %q, want empty", got)
 	}
 }
 
-func TestSwitchRepoRootIgnoresLoadErrorAndUsesFallback(t *testing.T) {
+func TestSwitchRepoRootIgnoresLoadErrorAndReturnsEmpty(t *testing.T) {
 	t.Parallel()
 
 	lookup := func(string) string { return "" }
@@ -105,9 +103,8 @@ func TestSwitchRepoRootIgnoresLoadErrorAndUsesFallback(t *testing.T) {
 	save := func(string, string) error { return nil }
 
 	got := switchRepoRoot("/home/tester", lookup, emptyTmuxOption, load, save)
-	want := filepath.Clean(filepath.Join("/home/tester", "source", "repos"))
-	if got != want {
-		t.Fatalf("switchRepoRoot() = %q, want %q", got, want)
+	if got != "" {
+		t.Fatalf("switchRepoRoot() = %q, want empty", got)
 	}
 }
 

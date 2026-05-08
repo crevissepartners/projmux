@@ -110,13 +110,14 @@ This drops the binary in `$(go env GOBIN)` (when set) or `$(go env GOPATH)/bin`
 
 ### Optional: `PROJMUX_PROJDIR`
 
-`PROJMUX_PROJDIR` is the default project root projmux uses for picker and
-discovery. It is optional — when unset, projmux falls back to its built-in
-source-root discovery (`~/source`, `~/work`, `~/projects`, `~/src`, `~/code`,
-`~/source/repos`).
+`PROJMUX_PROJDIR` is the primary project root projmux uses for picker and
+discovery when you explicitly configure it. It is optional; when unset,
+projmux does not assume a canonical repo root. Discovery still uses pins, live
+sessions, saved workdirs, and weak common-folder probes (`~/source`, `~/work`,
+`~/projects`, `~/src`, `~/code`) when they exist.
 
 ```sh
-export PROJMUX_PROJDIR="$HOME/source/repos"
+export PROJMUX_PROJDIR="/your/path"
 ```
 
 Add the line to `~/.zshrc` (or your shell's rc file). The resolved value is
@@ -132,7 +133,7 @@ search list, so they participate in discovery just like
 
 ```sh
 # Linux/macOS — primary repo + secondary search root
-export PROJMUX_PROJDIR="$HOME/source/repos:/srv/work/repos"
+export PROJMUX_PROJDIR="/main/repos:/srv/work/repos"
 ```
 
 #### Set the project root during setup
@@ -209,12 +210,13 @@ preview state, status helpers, updates, etc.), run `projmux help` or
 ## How It Finds Projects
 
 `projmux switch` combines pinned directories, live tmux sessions, and discovered
-project roots. The default discovery logic favors common source locations such
-as `~/source`, `~/work`, `~/projects`, `~/src`, `~/code`, and `~/source/repos`
-when they exist. `projmux settings` also has `Project Picker > Add Project...`,
-which scans those filesystem roots up to depth 3 so projects outside `~` and
-`~rp` can be added to the picker. Session names are derived from normalized
-directory paths, so a project keeps the same tmux session name across launches.
+project roots. When no explicit search roots are configured, discovery uses
+weak common-folder probes such as `~/source`, `~/work`, `~/projects`, `~/src`,
+and `~/code` if they exist; it does not assume a canonical `~/source/repos`
+root. `projmux settings` also has `Project Picker > Add Project...`, which
+scans filesystem roots up to depth 3 so projects outside the weak probes can be
+added to the picker. Session names are derived from normalized directory paths,
+so a project keeps the same tmux session name across launches.
 
 For permanent search-root customization, the Project Picker section also
 includes:
@@ -245,8 +247,8 @@ and troubleshooting.
 
 | Variable | Purpose |
 | --- | --- |
-| `PROJMUX_PROJDIR` | Default project root for the current shell. Accepts an OS-native PATH-style multi-value: the first entry is the primary repo root (memoized to `~/.config/projmux/projdir`), and any additional entries are prepended to the managed-roots search list. |
-| `PROJMUX_MANAGED_ROOTS` | Colon-separated list of search roots. Overrides the saved/default list. |
+| `PROJMUX_PROJDIR` | Explicit primary project root for the current shell. Accepts an OS-native PATH-style multi-value: the first entry is the primary repo root (memoized to `~/.config/projmux/projdir`), and any additional entries are prepended to the managed-roots search list. |
+| `PROJMUX_MANAGED_ROOTS` | Colon-separated list of search roots. Overrides the saved/heuristic list. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in sender. |
 | `PROJMUX_USAGE_STATE_DIR` | Override directory for the AI-usage snapshot cache. Defaults to `<state>/projmux/usage`. Point this at a synced location (Dropbox, iCloud Drive, etc) to share authoritative usage between machines. |
 | `PROJMUX_USAGE_DEBUG` | When non-empty, surfaces adapter errors from `projmux status usage` to stderr instead of swallowing them. |
