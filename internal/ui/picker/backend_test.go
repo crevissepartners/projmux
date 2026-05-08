@@ -272,6 +272,18 @@ func TestNativeInteractiveRendersSelectedPreview(t *testing.T) {
 	if !strings.Contains(out.String(), "preview:/repo/api") {
 		t.Fatalf("native output = %q, want selected preview output", out.String())
 	}
+	if strings.Contains(out.String(), "Type to search") {
+		t.Fatalf("native output = %q, want fzf-like prompt without generic help row", out.String())
+	}
+}
+
+func TestNativePromptLineIncludesInlineMatchCount(t *testing.T) {
+	t.Parallel()
+
+	line := nativePromptLine("› ", "api", 2, 8, 20)
+	if !strings.Contains(line, "› api") || !strings.HasSuffix(line, "2/8") {
+		t.Fatalf("nativePromptLine() = %q, want prompt and inline count", line)
+	}
 }
 
 func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {

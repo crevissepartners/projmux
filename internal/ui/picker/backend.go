@@ -683,8 +683,7 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 	if prompt == "" {
 		prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
 	}
-	fmt.Fprintf(w, "%s %s\n", prompt, query)
-	fmt.Fprintln(w, "Type to search | Up/Down select | Enter choose | Esc close")
+	fmt.Fprintln(w, nativePromptLine(prompt, query, len(items), len(options.Items), layout.Cols))
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		fmt.Fprintln(w, footer)
 	}
@@ -729,6 +728,23 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 	if len(previewLines) > 0 {
 		renderNativeInlinePreview(w, previewLines)
 	}
+}
+
+func nativePromptLine(prompt, query string, matches, total, cols int) string {
+	prompt = strings.TrimRight(prompt, " ")
+	line := strings.TrimRight(prompt+" "+query, " ")
+	info := strconv.Itoa(matches)
+	if query != "" || matches != total {
+		info = fmt.Sprintf("%d/%d", matches, total)
+	}
+	if cols <= 0 {
+		cols = defaultNativeCols
+	}
+	padding := cols - nativeVisibleLen(line) - len(info)
+	if padding < 2 {
+		return line + "  " + info
+	}
+	return line + strings.Repeat(" ", padding) + info
 }
 
 func nativeVisibleRange(total, selected, limit int) (int, int) {
