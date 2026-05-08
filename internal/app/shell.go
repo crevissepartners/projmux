@@ -14,6 +14,7 @@ import (
 	"time"
 
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 const (
@@ -33,6 +34,7 @@ type shellCommand struct {
 	runCommand         func(ctx context.Context, env []string, name string, args ...string) error
 	update             *updateCommand
 	updatePromptRunner intfzf.Runner
+	nativePicker       intpicker.Runner
 }
 
 type shellUpdateSkipState struct {
@@ -50,6 +52,7 @@ func newShellCommand(update *updateCommand) *shellCommand {
 		runCommand:         runForegroundCommand,
 		update:             update,
 		updatePromptRunner: intfzf.NewRunner(),
+		nativePicker:       intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 	}
 }
 
@@ -114,7 +117,7 @@ func (c *shellCommand) promptForUpdate(stdout, stderr io.Writer) error {
 	if err != nil || !shouldPromptShellUpdate(status) || c.updatePromptSkipped(status) {
 		return nil
 	}
-	result, err := c.updatePromptRunner.Run(shellUpdatePromptOptions(status))
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.updatePromptRunner, shellUpdatePromptOptions(status))
 	if err != nil {
 		if stderr != nil {
 			_, _ = fmt.Fprintf(stderr, "skipped update prompt: %v\n", err)

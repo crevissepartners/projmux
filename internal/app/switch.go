@@ -411,7 +411,7 @@ func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
 			return err
 		}
 
-		result, err := c.runner.Run(intfzf.Options{
+		result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 			UI:      "settings",
 			Entries: entries,
 		})
@@ -467,7 +467,7 @@ func (c *switchCommand) runAddPinInteractive(stdout io.Writer) error {
 		return nil
 	}
 
-	result, err := c.runner.Run(intfzf.Options{
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 		UI:      "pin",
 		Entries: entries,
 	})

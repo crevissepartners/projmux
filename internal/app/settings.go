@@ -11,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -19,13 +20,14 @@ import (
 var osStat = os.Stat
 
 type settingsCommand struct {
-	ai         *aiCommand
-	switcher   *switchCommand
-	update     *updateCommand
-	runner     intfzf.Runner
-	homeDir    func() (string, error)
-	lookupEnv  func(string) string
-	runCommand func(name string, args ...string) error
+	ai           *aiCommand
+	switcher     *switchCommand
+	update       *updateCommand
+	runner       intfzf.Runner
+	nativePicker intpicker.Runner
+	homeDir      func() (string, error)
+	lookupEnv    func(string) string
+	runCommand   func(name string, args ...string) error
 }
 
 var errSettingsClosed = errors.New("settings closed")
@@ -58,12 +60,13 @@ const (
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand) *settingsCommand {
 	return &settingsCommand{
-		ai:        ai,
-		switcher:  switcher,
-		update:    update,
-		runner:    intfzf.NewRunner(),
-		homeDir:   os.UserHomeDir,
-		lookupEnv: os.Getenv,
+		ai:           ai,
+		switcher:     switcher,
+		update:       update,
+		runner:       intfzf.NewRunner(),
+		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		homeDir:      os.UserHomeDir,
+		lookupEnv:    os.Getenv,
 		runCommand: func(name string, args ...string) error {
 			return exec.Command(name, args...).Run()
 		},
@@ -141,7 +144,7 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 }
 
 func (c *settingsCommand) runPicker(options intfzf.Options) (intfzf.Result, error) {
-	result, err := c.runner.Run(options)
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, options)
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return intfzf.Result{}, errSettingsClosed

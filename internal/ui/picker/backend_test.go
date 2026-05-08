@@ -87,3 +87,18 @@ func TestNativeRunnerUsesSharedCloseActions(t *testing.T) {
 		t.Fatalf("Run() = %#v, want close action", result)
 	}
 }
+
+func TestNativeRunnerAcceptsTypedQuery(t *testing.T) {
+	t.Parallel()
+
+	result, err := (NativeRunner{In: strings.NewReader("/tmp/work\n")}).Run(Options{
+		UI:          "settings-workdir-typed",
+		AcceptQuery: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Key != "enter" || result.Query != "/tmp/work" || result.Value != "" {
+		t.Fatalf("Run() = %#v, want typed query result", result)
+	}
+}

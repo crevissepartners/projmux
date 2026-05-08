@@ -18,6 +18,7 @@ import (
 	"unicode/utf16"
 
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 const (
@@ -39,30 +40,32 @@ type aiCommandRunner interface {
 }
 
 type aiCommand struct {
-	runner      aiCommandRunner
-	executable  func() (string, error)
-	lookupEnv   func(string) string
-	homeDir     func() (string, error)
-	readFile    func(string) ([]byte, error)
-	runCommand  func(ctx context.Context, name string, args ...string) error
-	readCommand func(ctx context.Context, name string, args ...string) ([]byte, error)
-	now         func() time.Time
-	sleep       func(time.Duration)
-	producer    attentionNotifyProducer
+	runner       aiCommandRunner
+	nativePicker intpicker.Runner
+	executable   func() (string, error)
+	lookupEnv    func(string) string
+	homeDir      func() (string, error)
+	readFile     func(string) ([]byte, error)
+	runCommand   func(ctx context.Context, name string, args ...string) error
+	readCommand  func(ctx context.Context, name string, args ...string) ([]byte, error)
+	now          func() time.Time
+	sleep        func(time.Duration)
+	producer     attentionNotifyProducer
 }
 
 func newAICommand() *aiCommand {
 	return &aiCommand{
-		runner:      intfzf.NewRunner(),
-		executable:  os.Executable,
-		lookupEnv:   os.Getenv,
-		homeDir:     os.UserHomeDir,
-		readFile:    os.ReadFile,
-		runCommand:  runExternalCommand,
-		readCommand: readExternalCommand,
-		now:         time.Now,
-		sleep:       time.Sleep,
-		producer:    newAttentionNotifyProducer(),
+		runner:       intfzf.NewRunner(),
+		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		executable:   os.Executable,
+		lookupEnv:    os.Getenv,
+		homeDir:      os.UserHomeDir,
+		readFile:     os.ReadFile,
+		runCommand:   runExternalCommand,
+		readCommand:  readExternalCommand,
+		now:          time.Now,
+		sleep:        time.Sleep,
+		producer:     newAttentionNotifyProducer(),
 	}
 }
 
@@ -575,7 +578,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	if c.runner == nil {
 		return errors.New("ai settings runner is not configured")
 	}
-	result, err := c.runner.Run(intfzf.Options{
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 		UI:         "ai-settings",
 		Entries:    c.settingsRows(),
 		Prompt:     "AI Setting > ",
@@ -600,7 +603,7 @@ func (c *aiCommand) runAgentPicker(direction string) (intfzf.Result, error) {
 	if c.runner == nil {
 		return intfzf.Result{}, errors.New("ai picker runner is not configured")
 	}
-	return c.runner.Run(intfzf.Options{
+	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 		UI:         "ai-picker",
 		Entries:    c.agentRows(),
 		Prompt:     "AI Launch > ",

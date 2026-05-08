@@ -1,7 +1,6 @@
 package picker
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"strconv"
@@ -45,6 +44,7 @@ type Options struct {
 	Actions      []Action
 	Preview      Preview
 	InitialQuery string
+	AcceptQuery  bool
 	MultiLine    bool
 }
 
@@ -129,12 +129,11 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 	}
 
 	query := strings.TrimSpace(options.InitialQuery)
-	reader := bufio.NewReader(in)
 	for {
 		items := FilterItems(options.Items, query)
 		renderNative(out, options, items, query)
 
-		line, err := reader.ReadString('\n')
+		line, err := readNativeLine(in)
 		if err != nil && !strings.HasSuffix(line, "\n") {
 			if err == io.EOF && strings.TrimSpace(line) == "" {
 				return Result{Closed: true, Query: query}, nil
@@ -150,6 +149,9 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 		if action, ok := findAction(options.Actions, input); ok && action.Intent == ActionClose {
 			return Result{Key: action.Key, Query: query, Closed: true}, nil
 		}
+		if options.AcceptQuery {
+			return Result{Key: "enter", Query: input}, nil
+		}
 		if index, err := strconv.Atoi(input); err == nil {
 			if index < 1 || index > len(items) {
 				fmt.Fprintf(out, "invalid selection: %d\n", index)
@@ -158,6 +160,23 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 			return Result{Key: "enter", Value: items[index-1].Value, Query: query}, nil
 		}
 		query = input
+	}
+}
+
+func readNativeLine(r io.Reader) (string, error) {
+	var b strings.Builder
+	buf := make([]byte, 1)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			b.WriteByte(buf[0])
+			if buf[0] == '\n' {
+				return b.String(), nil
+			}
+		}
+		if err != nil {
+			return b.String(), err
+		}
 	}
 }
 
