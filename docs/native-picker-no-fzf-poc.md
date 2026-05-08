@@ -13,11 +13,11 @@ backend remains the fallback with full preview/cycle/sidebar behavior.
 - Picker flows covered by the native path include AI picker/settings, shell
   update prompt, settings hub sections, switch settings/add-pin, the main
   project switcher list, recent sessions, and notify sidebar.
-- The native picker supports search/filter, arrow-key selection in normal CSI
-  and tmux application-cursor modes, Enter, Esc, Ctrl-C, Backspace, Ctrl-U,
-  Ctrl-W, PageUp/PageDown, Home/End, modified CSI keys, custom expect keys such
-  as Ctrl-X/Alt-P, `start:pos(N)` initial focus, preview command output,
-  preview cycle command bindings, and sidebar focus command bindings.
+- The native picker supports ranked fuzzy search/filter, arrow-key selection in
+  normal CSI and tmux application-cursor modes, Enter, Esc, Ctrl-C, Backspace,
+  Ctrl-U, Ctrl-W, PageUp/PageDown, Home/End, modified CSI keys, custom expect
+  keys such as Ctrl-X/Alt-P, `start:pos(N)` initial focus, preview command
+  output, preview cycle command bindings, and sidebar focus command bindings.
 
 ## Explicit Follow-Up Gaps
 

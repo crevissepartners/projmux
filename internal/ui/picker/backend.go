@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -111,13 +112,30 @@ func FilterItems(items []Item, query string) []Item {
 		return append([]Item(nil), items...)
 	}
 
-	filtered := make([]Item, 0, len(items))
+	filtered := make([]nativeScoredItem, 0, len(items))
 	for _, item := range items {
-		if fuzzyMatch(strings.ToLower(item.EffectiveSearchText()), query) {
-			filtered = append(filtered, item)
+		if score, ok := fuzzyScore(strings.ToLower(item.EffectiveSearchText()), query); ok {
+			filtered = append(filtered, nativeScoredItem{Item: item, Score: score, Index: len(filtered)})
 		}
 	}
-	return filtered
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].Score != filtered[j].Score {
+			return filtered[i].Score < filtered[j].Score
+		}
+		return filtered[i].Index < filtered[j].Index
+	})
+
+	items = make([]Item, 0, len(filtered))
+	for _, item := range filtered {
+		items = append(items, item.Item)
+	}
+	return items
+}
+
+type nativeScoredItem struct {
+	Item  Item
+	Score int
+	Index int
 }
 
 type NativeRunner struct {
@@ -1029,16 +1047,32 @@ func findAction(actions []Action, key string) (Action, bool) {
 	return Action{}, false
 }
 
-func fuzzyMatch(source, query string) bool {
+func fuzzyScore(source, query string) (int, bool) {
 	if query == "" {
-		return true
+		return 0, true
+	}
+	if source == query {
+		return 0, true
+	}
+	if idx := strings.Index(source, query); idx >= 0 {
+		return idx*10 + len([]rune(source)) - len([]rune(query)), true
 	}
 	sourceRunes := []rune(source)
 	index := 0
+	first := -1
+	last := -1
+	gaps := 0
 	for _, ch := range query {
 		found := false
 		for index < len(sourceRunes) {
 			if sourceRunes[index] == ch {
+				if first < 0 {
+					first = index
+				}
+				if last >= 0 {
+					gaps += index - last - 1
+				}
+				last = index
 				index++
 				found = true
 				break
@@ -1046,8 +1080,8 @@ func fuzzyMatch(source, query string) bool {
 			index++
 		}
 		if !found {
-			return false
+			return 0, false
 		}
 	}
-	return true
+	return first*25 + gaps*10 + len(sourceRunes) - len([]rune(query)), true
 }

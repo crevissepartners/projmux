@@ -49,6 +49,21 @@ func TestFilterItemsUsesSearchTextNotMetadata(t *testing.T) {
 	}
 }
 
+func TestFilterItemsRanksBetterMatchesFirst(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "slow", Value: "1", SearchText: "bravo archived project index"},
+		{Title: "exact", Value: "2", SearchText: "api"},
+		{Title: "prefix", Value: "3", SearchText: "api service"},
+	}
+
+	filtered := FilterItems(items, "api")
+	if got, want := valuesOf(filtered), []string{"2", "3", "1"}; !equalStringSlices(got, want) {
+		t.Fatalf("FilterItems(api) values = %#v, want %#v", got, want)
+	}
+}
+
 func TestNativeRunnerFiltersAndSelectsByNumber(t *testing.T) {
 	t.Parallel()
 
@@ -75,6 +90,26 @@ func TestNativeRunnerFiltersAndSelectsByNumber(t *testing.T) {
 	if !strings.Contains(out.String(), "> query: api") {
 		t.Fatalf("native output = %q, want filtered query prompt", out.String())
 	}
+}
+
+func valuesOf(items []Item) []string {
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, item.Value)
+	}
+	return values
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestNativeRunnerUsesSharedCloseActions(t *testing.T) {
