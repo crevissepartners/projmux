@@ -38,7 +38,8 @@ picker evidence. It is not a production dependency-policy change.
 - `ai` picker/settings: native backend routing covered by app tests.
 - `shell` update prompt: native backend routing covered by shared fzf-to-native
   adapter and settings-style typed prompt tests.
-- `settings`: native backend exercised in unit tests and Docker e2e.
+- `settings`: native backend exercised in unit tests and Docker no-fzf e2e
+  using Enter plus arrow-key navigation under a PTY.
 - `switch --ui=sidebar`: Docker no-fzf e2e creates sample projects, types
   `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
 - `switch --ui=popup`: Docker no-fzf e2e creates existing tmux sessions using

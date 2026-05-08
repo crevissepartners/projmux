@@ -72,8 +72,8 @@ exercises `projmux switch --ui=sidebar` search/selection under a container PTY,
 exercises `projmux switch --ui=popup` and `projmux sessions --ui=popup` against
 existing tmux sessions, launches `projmux shell` under a container PTY, verifies
 that it creates a tmux session, exercises `notify list --ui=sidebar` with the
-printable `a` expect key, and exercises the settings CLI picker through the
-native backend.
+printable `a` expect key, and exercises the settings picker under a PTY using
+Enter and arrow-key navigation through the native backend.
 
 Short tmux-friendly form:
 

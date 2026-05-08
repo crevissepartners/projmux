@@ -119,9 +119,17 @@ docker run --rm \
       exit 1
     fi
     echo "[poc/no-fzf] native notify sidebar acked selected row"
-    echo "[poc/no-fzf] exercise native settings picker"
+    echo "[poc/no-fzf] exercise native settings picker with arrow keys under a PTY"
+    rm -f "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
+    settings_log=/tmp/projmux-settings.log
     settings_stderr=/tmp/projmux-settings.stderr
-    printf "1\n4\n" | env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>"$settings_stderr"
+    settings_status=0
+    printf "\r\033[B\033[B\033[B\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>$settings_stderr" "$settings_log" || settings_status=$?
+    if [[ "$settings_status" != 0 ]]; then
+      cat "$settings_log"
+      cat "$settings_stderr"
+      exit "$settings_status"
+    fi
     if [[ -s "$settings_stderr" ]]; then
       if grep -Ev "^(error connecting to /tmp/tmux-[0-9]+/default \\(No such file or directory\\)|no server running on /tmp/tmux-[0-9]+/default)$" "$settings_stderr"; then
         exit 1
