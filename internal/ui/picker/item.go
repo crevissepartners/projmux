@@ -28,7 +28,15 @@ func (i Item) EffectiveSearchText() string {
 	if search := strings.TrimSpace(i.SearchText); search != "" {
 		return search
 	}
-	return strings.TrimSpace(stripANSISequences(i.Title))
+	label := strings.TrimSpace(stripANSISequences(i.EffectiveLabel()))
+	value := strings.TrimSpace(i.Value)
+	if value == "" || value == label {
+		return label
+	}
+	if label == "" {
+		return value
+	}
+	return label + "\t" + value
 }
 
 func stripANSISequences(value string) string {

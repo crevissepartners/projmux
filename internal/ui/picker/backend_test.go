@@ -78,6 +78,20 @@ func TestFilterItemsIgnoresANSIEscapeSequences(t *testing.T) {
 	}
 }
 
+func TestFilterItemsSearchesHiddenValueWhenNoSearchKey(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "Update Now", Value: "apply"},
+		{Title: "Later", Value: "later"},
+	}
+
+	filtered := FilterItems(items, "apply")
+	if got, want := valuesOf(filtered), []string{"apply"}; !equalStringSlices(got, want) {
+		t.Fatalf("FilterItems(apply) values = %#v, want fzf hidden-value match %#v", got, want)
+	}
+}
+
 func TestFilterItemsUsesFZFSmartCase(t *testing.T) {
 	t.Parallel()
 
