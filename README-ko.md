@@ -8,8 +8,7 @@ attention까지 함께 다루는 터미널 workspace 도구입니다.
 
 [English README](README.md)
 
-> 데모: 현재 저장소에 포함된 demo asset은 없습니다. 앞으로는 `projmux shell`에서
-> sidebar가 열린 짧은 GIF나 screenshot이 가장 적절한 시각 자료입니다.
+![projmux shell project sidebar demo](docs/assets/projmux-shell-sidebar.gif)
 
 ## 무엇인가
 
@@ -53,6 +52,7 @@ projmux shell
 앱 안에서:
 
 - `Alt-1`: project sidebar.
+- `Alt-2`: notification list.
 - `Alt-3`: existing-session picker.
 - `Alt-4`: AI split picker.
 - `Alt-5`: settings.

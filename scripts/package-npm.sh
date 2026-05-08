@@ -73,6 +73,10 @@ stage_main() {
   cp "$root/npm/projmux.js" "$dir/npm/projmux.js"
   cp "$root/README.md" "$root/README-ko.md" "$root/LICENSE" "$dir/"
   cp "$root"/docs/*.md "$dir/docs/"
+  if [[ -d "$root/docs/assets" ]]; then
+    mkdir -p "$dir/docs/assets"
+    cp "$root"/docs/assets/* "$dir/docs/assets/"
+  fi
   chmod 0755 "$dir/npm/projmux.js"
   patch_version "$dir/package.json"
 }

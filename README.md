@@ -8,8 +8,7 @@ and AI-pane attention built in.
 
 [Korean README](README-ko.md)
 
-> Demo: there is no checked-in demo asset yet. A short GIF or screenshot of
-> `projmux shell` with the sidebar open would be the right future visual.
+![projmux shell project sidebar demo](docs/assets/projmux-shell-sidebar.gif)
 
 ## What It Is
 
@@ -55,6 +54,7 @@ projmux shell
 Inside the app:
 
 - `Alt-1` opens the project sidebar.
+- `Alt-2` opens the notification list.
 - `Alt-3` opens the existing-session picker.
 - `Alt-4` opens the AI split picker.
 - `Alt-5` opens settings.
