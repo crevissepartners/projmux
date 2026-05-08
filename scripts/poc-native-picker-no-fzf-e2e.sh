@@ -32,6 +32,17 @@ docker run --rm \
     go test ./internal/ui/picker ./internal/app -run "Native|TestSettingsNativeBackendDoesNotCallFZF|TestSwitchCommandUsesNativePickerWhenRequested"
     echo "[poc/no-fzf] build projmux"
     go build -o /tmp/projmux ./cmd/projmux
+    echo "[poc/no-fzf] exercise native AI settings simple picker with smart-case query"
+    rm -f "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
+    ai_settings_log=/tmp/projmux-ai-settings.log
+    ai_settings_status=0
+    printf "Codex\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux ai settings" "$ai_settings_log" || ai_settings_status=$?
+    if [[ "$ai_settings_status" != 0 ]]; then
+      cat "$ai_settings_log"
+      exit "$ai_settings_status"
+    fi
+    test "$(cat "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode")" = codex
+    echo "[poc/no-fzf] native AI settings simple picker selected codex via smart-case query"
     echo "[poc/no-fzf] exercise native switch picker under a PTY"
     demo_root=/tmp/projmux-projects
     mkdir -p "$demo_root/alpha-api" "$demo_root/bravo-web" "$demo_root/charlie-tools"

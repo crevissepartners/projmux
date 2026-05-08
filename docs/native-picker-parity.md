@@ -42,7 +42,9 @@ picker evidence. It is not a production dependency-policy change.
 
 ## Verified Flows
 
-- `ai` picker/settings: native backend routing covered by app tests.
+- `ai` picker/settings: native backend routing covered by app tests. Docker
+  no-fzf e2e also types `Codex` into `projmux ai settings` and verifies the
+  native simple picker writes the `codex` mode without fzf.
 - `shell` update prompt: native backend routing covered by shared fzf-to-native
   adapter and settings-style typed prompt tests.
 - `settings`: native backend exercised in unit tests and Docker no-fzf e2e
