@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.4](https://github.com/crevissepartners/projmux/compare/v0.4.3...v0.4.4) (2026-05-08)
+
+
+### Features
+
+* complete roadmap polish ([#59](https://github.com/crevissepartners/projmux/issues/59)) ([504921e](https://github.com/crevissepartners/projmux/commit/504921e1ce23cc6f161bf09c3dd65e9b85857aad))
+* improve statusbar click ux ([#63](https://github.com/crevissepartners/projmux/issues/63)) ([b6d8a3a](https://github.com/crevissepartners/projmux/commit/b6d8a3aa2a2e91d944eed3158052b6e0ebea7b5d))
+* support bash shell config ([#67](https://github.com/crevissepartners/projmux/issues/67)) ([e146d36](https://github.com/crevissepartners/projmux/commit/e146d36f23a83fcde24cf9a2988e077b8ba89fa4))
+
+
+### Bug Fixes
+
+* depersonalize project root defaults ([#65](https://github.com/crevissepartners/projmux/issues/65)) ([206a14f](https://github.com/crevissepartners/projmux/commit/206a14f37f62b801ef99b900b72a032df391355c))
+* require enter to close usage hud popup ([#64](https://github.com/crevissepartners/projmux/issues/64)) ([8a8b915](https://github.com/crevissepartners/projmux/commit/8a8b915fa84da3d58d1b2f7ff25820e8ee8082a1))
+
 ## [0.4.3](https://github.com/crevissepartners/projmux/compare/v0.4.2...v0.4.3) (2026-05-06)
 
 
