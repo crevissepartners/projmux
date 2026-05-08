@@ -216,14 +216,20 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	popupCtx := c.popupContext(ctx)
 	if mode.ClientKey != "" {
 		popupCtx.ClientKey = sanitizePopupKey(mode.ClientKey)
+		popupCtx.TargetClient = strings.TrimSpace(mode.ClientKey)
 	}
 	marker := popupMarkerPath(popupCtx.ClientKey, mode.Canonical)
 	if _, err := os.Stat(marker); err == nil {
 		targetPane := strings.TrimSpace(popupCtx.OriginPane)
+		targetClient := ""
 		if content, readErr := os.ReadFile(marker); readErr == nil && strings.TrimSpace(string(content)) != "" {
 			targetPane = strings.TrimSpace(string(content))
 		}
-		if err := c.closePopup(ctx, targetPane); err != nil {
+		if mode.Canonical == "notify-sidebar" {
+			targetPane = ""
+			targetClient = popupCtx.TargetClient
+		}
+		if err := c.closePopup(ctx, targetPane, targetClient); err != nil {
 			return err
 		}
 		_ = os.Remove(marker)
@@ -569,6 +575,7 @@ type tmuxPopupToggleMode struct {
 
 type tmuxPopupContext struct {
 	ClientKey     string
+	TargetClient  string
 	OriginPane    string
 	OriginSession string
 	ContextDir    string
@@ -587,6 +594,7 @@ func (c *tmuxCommand) popupContext(ctx context.Context) tmuxPopupContext {
 
 	return tmuxPopupContext{
 		ClientKey:     sanitizePopupKey(clientKey),
+		TargetClient:  clientKey,
 		OriginPane:    c.tmuxFormat(ctx, "#{pane_id}"),
 		OriginSession: c.tmuxFormat(ctx, "#S"),
 		ContextDir:    c.tmuxFormat(ctx, "#{pane_current_path}"),
@@ -606,8 +614,11 @@ func (c *tmuxCommand) tmuxFormat(ctx context.Context, format string) string {
 	return strings.TrimSpace(string(output))
 }
 
-func (c *tmuxCommand) closePopup(ctx context.Context, targetPane string) error {
+func (c *tmuxCommand) closePopup(ctx context.Context, targetPane, targetClient string) error {
 	args := []string{"display-popup"}
+	if strings.TrimSpace(targetClient) != "" {
+		args = append(args, "-c", targetClient)
+	}
 	if strings.TrimSpace(targetPane) != "" {
 		args = append(args, "-t", targetPane)
 	}
@@ -651,6 +662,7 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane
 		commandArgs = []string{"switch", "--ui=sidebar"}
 	case "notify-sidebar":
+		options.Client = ctx.TargetClient
 		options.Target = ""
 		options.Width = popupSize(ctx.ClientWidth, 24, 64)
 		options.Height = popupSize(ctx.ClientHeight, 100, 20)

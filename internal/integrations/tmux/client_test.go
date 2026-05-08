@@ -1014,6 +1014,7 @@ func TestBuildDisplayPopupArgsMapsStandalonePopupOptions(t *testing.T) {
 	t.Parallel()
 
 	args, err := BuildDisplayPopupArgs("printf hello", PopupOptions{
+		Client: "/dev/pts/7",
 		Target: "%1",
 		Cwd:    "/tmp/work",
 		Env: map[string]string{
@@ -1033,6 +1034,7 @@ func TestBuildDisplayPopupArgsMapsStandalonePopupOptions(t *testing.T) {
 
 	want := []string{
 		"display-popup",
+		"-c", "/dev/pts/7",
 		"-t", "%1",
 		"-E",
 		"-d", "/tmp/work",
