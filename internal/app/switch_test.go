@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
@@ -144,6 +145,63 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}
 	if got, want := executor.ensureCWD, "/home/tester/workspace"; got != want {
 		t.Fatalf("ensure cwd = %q, want %q", got, want)
+	}
+	if got, want := executor.openSessionName, "workspace"; got != want {
+		t.Fatalf("open session = %q, want %q", got, want)
+	}
+}
+
+func TestAppRunSwitchNativeBackendUsesNativeRunner(t *testing.T) {
+	t.Parallel()
+
+	var fzfCalled bool
+	var gotNativeOptions intpicker.Options
+	executor := &capturingSwitchSessionExecutor{
+		exists: map[string]bool{"workspace": true},
+	}
+
+	app := &App{
+		switcher: &switchCommand{
+			discover: func(candidates.Inputs) ([]string, error) {
+				return []string{"/home/tester/workspace"}, nil
+			},
+			pinStore: func() (switchPinStore, error) {
+				return &stubSwitchPinStore{}, nil
+			},
+			runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+				fzfCalled = true
+				return intfzf.Result{}, nil
+			}),
+			nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+				gotNativeOptions = options
+				return intpicker.Result{Key: "enter", Value: "/home/tester/workspace"}, nil
+			}),
+			sessions:   executor,
+			executable: func() (string, error) { return "/tmp/projmux", nil },
+			identity:   stubSwitchIdentityResolver{name: "workspace"},
+			validate:   func(string) error { return nil },
+			homeDir:    func() (string, error) { return "/home/tester", nil },
+			workingDir: func() (string, error) { return "/home/tester/workspace", nil },
+			lookupEnv: func(name string) string {
+				if name == intpicker.BackendEnv {
+					return string(intpicker.BackendNative)
+				}
+				return ""
+			},
+		},
+	}
+
+	if err := app.Run([]string{"switch"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if fzfCalled {
+		t.Fatal("fzf runner was called for native backend")
+	}
+	if got, want := gotNativeOptions.UI, switchUIPopup; got != want {
+		t.Fatalf("native UI = %q, want %q", got, want)
+	}
+	if len(gotNativeOptions.Items) != 1 || gotNativeOptions.Items[0].Value != "/home/tester/workspace" {
+		t.Fatalf("native items = %#v, want switch picker item", gotNativeOptions.Items)
 	}
 	if got, want := executor.openSessionName, "workspace"; got != want {
 		t.Fatalf("open session = %q, want %q", got, want)
@@ -1763,6 +1821,12 @@ type switchIdentityResolverFunc func(path string) (string, error)
 
 func (f switchIdentityResolverFunc) SessionIdentityForPath(path string) (string, error) {
 	return f(path)
+}
+
+type pickerRunnerFunc func(options intpicker.Options) (intpicker.Result, error)
+
+func (f pickerRunnerFunc) Run(options intpicker.Options) (intpicker.Result, error) {
+	return f(options)
 }
 
 type capturingSwitchSessionExecutor struct {
