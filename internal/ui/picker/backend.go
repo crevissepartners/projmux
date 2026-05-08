@@ -167,6 +167,14 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 		return runNativeInteractive(in, out, options)
 	}
 
+	if tty, ok := openNativeTTYFallback(in); ok {
+		defer tty.Close()
+		if restore, ok := enableRawTerminal(tty); ok {
+			defer restore()
+			return runNativeInteractive(tty, tty, options)
+		}
+	}
+
 	return runNativeLineMode(in, out, options)
 }
 
@@ -233,6 +241,20 @@ func enableRawTerminal(in io.Reader) (func(), bool) {
 		restoreCmd.Stdin = file
 		_ = restoreCmd.Run()
 	}, true
+}
+
+func openNativeTTYFallback(in io.Reader) (*os.File, bool) {
+	if _, ok := in.(*os.File); !ok {
+		return nil, false
+	}
+	if strings.TrimSpace(os.Getenv("TMUX")) == "" && strings.TrimSpace(os.Getenv("PROJMUX_NATIVE_TTY_FALLBACK")) == "" {
+		return nil, false
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return nil, false
+	}
+	return tty, true
 }
 
 type nativeKey struct {
@@ -635,7 +657,7 @@ func readNativeByte(r io.Reader) (byte, error) {
 
 func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 	var buf [1]byte
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 20; attempt++ {
 		n, err := r.Read(buf[:])
 		if n > 0 {
 			return buf[0], true, nil

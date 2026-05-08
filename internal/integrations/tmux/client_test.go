@@ -127,6 +127,24 @@ func TestClientRecentSessionsSortsByActivityDescending(t *testing.T) {
 	}
 }
 
+func TestClientRecentSessionsAcceptsUnderscoreSeparatedRows(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("10_repo_with_underscores_0_1\n35_projmux-projects-bravo-web_1_2\n"), nil
+	}))
+
+	sessions, err := client.RecentSessions(context.Background())
+	if err != nil {
+		t.Fatalf("RecentSessions returned error: %v", err)
+	}
+
+	want := []string{"projmux-projects-bravo-web", "repo_with_underscores"}
+	if !reflect.DeepEqual(sessions, want) {
+		t.Fatalf("RecentSessions = %#v, want %#v", sessions, want)
+	}
+}
+
 func TestClientRecentSessionsReturnsEmptyListForNoOutput(t *testing.T) {
 	t.Parallel()
 
@@ -373,12 +391,27 @@ func TestClientRecentSessionSummariesIncludeAttachedPaneCountAndPath(t *testing.
 		call++
 		switch call {
 		case 1:
-			if got, want := args, []string{"list-sessions", "-F", "#{session_activity}\t#{session_name}\t#{session_attached}\t#{session_windows}"}; !reflect.DeepEqual(got, want) {
+			if got, want := args, []string{"list-sessions", "-F", tmuxFormat("#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}")}; !reflect.DeepEqual(got, want) {
 				t.Fatalf("list-sessions args = %#v, want %#v", got, want)
 			}
 			return []byte("10\tstale\t0\t1\n35\tfresh\t1\t3\n"), nil
 		case 2:
-			if got, want := args, []string{"list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{window_index}\t#{pane_index}\t#{?pane_active,1,0}\t#{pane_title}\t#{@projmux_attention_state}\t#{@projmux_ai_state}\t#{@projmux_ai_agent}\t#{@projmux_ai_topic}\t#{@projmux_attention_ack}\t#{@projmux_attention_focus_armed}\t#{pane_current_command}\t#{pane_current_path}"}; !reflect.DeepEqual(got, want) {
+			if got, want := args, []string{"list-panes", "-a", "-F", tmuxFormat(
+				"#{session_name}",
+				"#{pane_id}",
+				"#{window_index}",
+				"#{pane_index}",
+				"#{?pane_active,1,0}",
+				"#{pane_title}",
+				"#{@projmux_attention_state}",
+				"#{@projmux_ai_state}",
+				"#{@projmux_ai_agent}",
+				"#{@projmux_ai_topic}",
+				"#{@projmux_attention_ack}",
+				"#{@projmux_attention_focus_armed}",
+				"#{pane_current_command}",
+				"#{pane_current_path}",
+			)}; !reflect.DeepEqual(got, want) {
 				t.Fatalf("list-panes args = %#v, want %#v", got, want)
 			}
 			return []byte(
@@ -621,7 +654,7 @@ func TestClientListWindowPanesParsesRows(t *testing.T) {
 	}
 
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"list-panes", "-t", "workspace:2", "-F", "#{pane_index}\t#{?pane_active,1,0}"}},
+		{name: "tmux", args: []string{"list-panes", "-t", "workspace:2", "-F", tmuxFormat("#{pane_index}", "#{?pane_active,1,0}")}},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("unexpected calls %#v", runner.calls)

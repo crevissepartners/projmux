@@ -28,7 +28,7 @@ picker evidence. It is not a production dependency-policy change.
 | preview scrolling | long switch/session preview output | Covered approximately with `Shift-Up`/`Shift-Down` | `previewOffset`; `TestNativeInteractiveRendersPreviewOffset` |
 | `--query` | typed settings path defaults | Covered | `Options.InitialQuery`; settings tests |
 | `--print-query` accept-query mode | typed settings path prompts | Covered | `Options.AcceptQuery`; `TestNativeRunnerAcceptsTypedQuery` |
-| terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests |
+| terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; tmux `/dev/tty` fallback |
 
 ## Verified Flows
 
@@ -41,9 +41,8 @@ picker evidence. It is not a production dependency-policy change.
 - `switch --ui=popup`: Docker no-fzf e2e creates existing tmux sessions using
   the app's session naming convention, types `bravo`, selects `bravo-web`, and
   confirms the opened tmux shell path.
-- `sessions`: native routing, preview command/window, and preview-cycle
-  bindings are unit-covered; hands-on validation still needs a real tmux session
-  inventory with multiple windows/panes.
+- `sessions --ui=popup`: Docker no-fzf e2e creates existing tmux sessions,
+  types `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
 - `notify sidebar`: native routing is unit-covered; queue/focus behavior remains
   better validated in app tests than in Docker e2e.
 

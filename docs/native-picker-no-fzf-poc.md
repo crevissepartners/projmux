@@ -21,6 +21,9 @@ The fzf compatibility surface for this POC is tracked in
   Ctrl-U, Ctrl-W, PageUp/PageDown, Home/End, modified CSI keys, custom expect
   keys such as Ctrl-X/Alt-P, `start:pos(N)` initial focus, preview command
   output, preview cycle command bindings, and sidebar focus command bindings.
+- In tmux-triggered command paths where stdin is not the controlling terminal,
+  the native picker falls back to `/dev/tty` before entering raw mode. This
+  avoids line-mode escape leakage such as arrow keys appearing as `^[[`.
 
 ## Explicit Follow-Up Gaps
 
@@ -62,9 +65,10 @@ image from `test/docker/no-fzf-poc.Dockerfile`, including Go module cache, then
 mounts the repository into an isolated `--network none` container, builds
 `projmux`, asserts `fzf` is not on `PATH`, runs the focused native-picker tests,
 exercises `projmux switch --ui=sidebar` search/selection under a container PTY,
-exercises `projmux switch --ui=popup` against existing tmux sessions, launches
-`projmux shell` under a container PTY, verifies that it creates a tmux session,
-and exercises the settings CLI picker through the native backend.
+exercises `projmux switch --ui=popup` and `projmux sessions --ui=popup` against
+existing tmux sessions, launches `projmux shell` under a container PTY, verifies
+that it creates a tmux session, and exercises the settings CLI picker through
+the native backend.
 
 Short tmux-friendly form:
 

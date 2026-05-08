@@ -72,6 +72,23 @@ docker run --rm \
     fi
     tmux kill-server 2>/dev/null || true
     echo "[poc/no-fzf] native switch popup selected existing bravo-web"
+    echo "[poc/no-fzf] exercise native sessions picker against existing sessions"
+    tmux new-session -d -s projmux-projects-alpha-api -c "$demo_root/alpha-api"
+    tmux new-session -d -s projmux-projects-bravo-web -c "$demo_root/bravo-web"
+    sessions_log=/tmp/projmux-sessions.log
+    sessions_status=0
+    printf "bravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux sessions --ui=popup" "$sessions_log" || sessions_status=$?
+    if [[ "$sessions_status" != 0 && "$sessions_status" != 124 ]]; then
+      cat "$sessions_log"
+      exit "$sessions_status"
+    fi
+    if ! grep -q "/tmp/projmux-projects/bravo-web" "$sessions_log"; then
+      cat "$sessions_log"
+      echo "native sessions picker did not open bravo-web" >&2
+      exit 1
+    fi
+    tmux kill-server 2>/dev/null || true
+    echo "[poc/no-fzf] native sessions picker selected bravo-web"
     echo "[poc/no-fzf] launch projmux shell under a PTY"
     shell_log=/tmp/projmux-shell.log
     shell_status=0
