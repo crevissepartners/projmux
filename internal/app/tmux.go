@@ -220,7 +220,9 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	marker := popupMarkerPath(popupCtx.ClientKey, mode.Canonical)
 	if _, err := os.Stat(marker); err == nil {
 		targetPane := strings.TrimSpace(popupCtx.OriginPane)
-		if content, readErr := os.ReadFile(marker); readErr == nil && strings.TrimSpace(string(content)) != "" {
+		if mode.Canonical == "notify-sidebar" {
+			targetPane = ""
+		} else if content, readErr := os.ReadFile(marker); readErr == nil && strings.TrimSpace(string(content)) != "" {
 			targetPane = strings.TrimSpace(string(content))
 		}
 		if err := c.closePopup(ctx, targetPane); err != nil {
@@ -651,9 +653,10 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane
 		commandArgs = []string{"switch", "--ui=sidebar"}
 	case "notify-sidebar":
+		options.Target = ""
 		options.Width = popupSize(ctx.ClientWidth, 24, 64)
 		options.Height = popupSize(ctx.ClientHeight, 100, 20)
-		options.X = "R"
+		options.X = popupRightX(ctx.ClientWidth, options.Width)
 		options.Y = "0"
 		options.Title = "projmux notify"
 		commandArgs = []string{"notify", "list", "--ui=sidebar"}
@@ -788,7 +791,7 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"set -g status 2",
 		"set -g status-right-length 140",
 		"set -g status-left " + tmuxConfigQuote("#[range=user|session][#S] #[norange]"),
-		"set -g status-right " + tmuxConfigQuote("#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M #[bold,fg=colour16,bg=colour45] projmux #[default]"),
+		"set -g status-right " + tmuxConfigQuote("#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=-28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M #[bold,fg=colour16,bg=colour45] projmux #[default]"),
 		// Two-line status bar: line 0 is the existing session/window/path row;
 		// line 1 splits notify (left, capped at 80 cells) and the AI usage HUD
 		// (right, capped at 120 cells). Caps assume a 200+ col terminal — the
@@ -908,7 +911,7 @@ func tmuxAppConfig(binaryPath, defaultShell string) string {
 	lines = append(lines,
 		"set -g status 2",
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
-		"set -g status-right "+tmuxConfigQuote("#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M#[default]"),
+		"set -g status-right "+tmuxConfigQuote("#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=-28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M#[default]"),
 		"set -g status-format[1] "+tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 80)#[norange]#[align=right range=user|usage]#("+bin+" status usage --max-width 120)#[norange]"),
 		"set -gu status-format[2]",
 	)
@@ -1040,6 +1043,17 @@ func popupSize(total, percent, minimum int) string {
 	}
 	value := min(max(total*percent/100, minimum), total)
 	return fmt.Sprintf("%d", value)
+}
+
+func popupRightX(total int, width string) string {
+	if total <= 0 {
+		return "R"
+	}
+	popupWidth := parseTmuxPositiveInt(width)
+	if popupWidth <= 0 {
+		return "R"
+	}
+	return fmt.Sprintf("%d", max(total-popupWidth, 0))
 }
 
 func parseTmuxPositiveInt(value string) int {
