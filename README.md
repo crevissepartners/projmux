@@ -152,7 +152,9 @@ You can also manage the saved value interactively with
 effective primary root and source (`PROJMUX_PROJDIR`, `@projmux_projdir`,
 saved, or not configured), shows when a saved value is shadowed by env/tmux,
 and lets you set a path directly, use the current project context, or clear the
-saved value.
+saved value. When no Project Root is configured, the direct-set prompt starts
+with `$HOME` as an editable fallback; it is not treated as the effective root
+until you save it.
 
 ### From source
 
@@ -231,7 +233,9 @@ includes:
 
 - `Project Root` - set, change, or clear the saved primary root. This is the
   one root used as the primary project context; env `PROJMUX_PROJDIR` and tmux
-  `@projmux_projdir` override the saved value until unset.
+  `@projmux_projdir` override the saved value until unset. If no root is
+  configured, the direct-set prompt pre-fills `$HOME` so the picker remains
+  usable without inventing an implicit saved root.
 - `+ Add Workdir...` - append a single directory to the saved workdirs list.
 - `Workdirs` - review and remove saved workdirs. The same picker also surfaces
   any active `PROJMUX_MANAGED_ROOTS` / `TMUX_SESSIONIZER_ROOTS` env values as

@@ -374,7 +374,9 @@ flags with the top-level `switch` UX:
   About/Update status. In Project Picker, `Project Root` manages the saved
   primary root (`~/.config/projmux/projdir`) and displays whether the effective
   value comes from `PROJMUX_PROJDIR`, tmux `@projmux_projdir`, saved config, or
-  no configured source. `Workdirs` remains separate: those entries are
+  no configured source. When no source is configured, the direct-set prompt
+  starts with `$HOME` as an editable fallback, but `$HOME` is not used as the
+  effective root unless saved. `Workdirs` remains separate: those entries are
   additional search roots, not the primary root. The About section reads the
   cached update status without network access;
   selecting Check Updates runs `projmux update check`, and Update Now runs

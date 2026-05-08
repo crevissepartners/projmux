@@ -946,6 +946,54 @@ func TestCurrentProjdirInfoSourcePriority(t *testing.T) {
 	}
 }
 
+func TestProjectRootTypedInitialQueryUsesEffectiveRootOrHome(t *testing.T) {
+	t.Parallel()
+
+	const home = "/home/tester"
+
+	tests := []struct {
+		name       string
+		lookup     func(string) string
+		tmuxOption func() string
+		load       func(string) (string, error)
+		want       string
+	}{
+		{
+			name:       "effective root",
+			lookup:     func(string) string { return "" },
+			tmuxOption: emptyTmuxOption,
+			load:       func(string) (string, error) { return "/from/saved", nil },
+			want:       "/from/saved",
+		},
+		{
+			name:       "unconfigured root",
+			lookup:     func(string) string { return "" },
+			tmuxOption: emptyTmuxOption,
+			load:       func(string) (string, error) { return "", nil },
+			want:       home,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := &settingsCommand{
+				switcher: &switchCommand{
+					homeDir:     func() (string, error) { return home, nil },
+					lookupEnv:   tc.lookup,
+					tmuxProjdir: tc.tmuxOption,
+					loadProjdir: tc.load,
+				},
+			}
+
+			if got := cmd.projectRootTypedInitialQuery(); got != tc.want {
+				t.Fatalf("projectRootTypedInitialQuery() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProjectPickerEntriesIncludesProjdirRow(t *testing.T) {
 	t.Parallel()
 
@@ -1117,6 +1165,9 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 	}
 	if !typedOptions.AcceptQuery {
 		t.Fatalf("typed project root AcceptQuery = false, want true")
+	}
+	if got, want := typedOptions.InitialQuery, home; got != want {
+		t.Fatalf("typed project root InitialQuery = %q, want %q", got, want)
 	}
 	if got, want := readProjdirFile(t, home), target; got != want {
 		t.Fatalf("saved project root = %q, want %q", got, want)

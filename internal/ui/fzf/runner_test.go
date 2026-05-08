@@ -362,6 +362,40 @@ func TestRunnerRunAcceptQueryReturnsQueryOnly(t *testing.T) {
 	}
 }
 
+func TestRunnerRunPassesInitialQuery(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommand{stdout: "/home/tester\n"}
+
+	r := &runner{
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
+		newCommand: func(name string, args ...string) command {
+			if !containsString(args, "--query") {
+				t.Fatalf("command args = %q, want --query", args)
+			}
+			if !containsString(args, "/home/tester") {
+				t.Fatalf("command args = %q, want initial query value", args)
+			}
+			return fake
+		},
+	}
+
+	got, err := r.Run(Options{
+		UI:           "popup",
+		AcceptQuery:  true,
+		InitialQuery: "/home/tester",
+		ExpectKeys:   []string{"enter"},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := Result{Query: "/home/tester"}
+	if got != want {
+		t.Fatalf("Run() = %#v, want %#v", got, want)
+	}
+}
+
 func TestRunnerRunAcceptQueryReturnsQueryAndSelection(t *testing.T) {
 	t.Parallel()
 
