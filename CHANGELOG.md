@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.5](https://github.com/crevissepartners/projmux/compare/v0.4.4...v0.4.5) (2026-05-08)
+
+
+### Features
+
+* **notify:** explain live attention and focus dispatch state ([#71](https://github.com/crevissepartners/projmux/issues/71)) ([612ab76](https://github.com/crevissepartners/projmux/commit/612ab76a4f183f49d4daa36cf3a89e49bd618fa8))
+* **picker:** add backend-neutral picker contract ([#72](https://github.com/crevissepartners/projmux/issues/72)) ([77a3a9f](https://github.com/crevissepartners/projmux/commit/77a3a9faf3ce3b63c74a8b58a623b94a7950065d))
+* **settings:** add project root management UI ([#68](https://github.com/crevissepartners/projmux/issues/68)) ([0903881](https://github.com/crevissepartners/projmux/commit/0903881d8a011a57ed16166a221ed557dc0f26c4))
+
+
+### Bug Fixes
+
+* **settings:** prefill project root prompt when unconfigured ([#70](https://github.com/crevissepartners/projmux/issues/70)) ([59b7a0d](https://github.com/crevissepartners/projmux/commit/59b7a0d90d63b5a95e793401893d318cdc83f056))
+
 ## [0.4.4](https://github.com/crevissepartners/projmux/compare/v0.4.3...v0.4.4) (2026-05-08)
 
 
