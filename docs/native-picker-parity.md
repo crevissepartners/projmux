@@ -16,6 +16,7 @@ picker evidence. It is not a production dependency-policy change.
 | hidden value after tab delimiter | all picker selections | Covered by `picker.Item.Value` | `pickerItemsFromFZFEntries`; `TestNativeRunnerFiltersAndSelectsByNumber` |
 | plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickerItemsFromFZF`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
+| default `--smart-case` matching | all searchable picker rows | Covered | native filter keeps lower-case queries case-insensitive and uppercase queries case-sensitive; `TestFilterItemsUsesFZFSmartCase` |
 | fuzzy result ranking | simple non-search-key picker UX | Covered approximately | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst` |
 | `--scrollbar █` | long switch/session/settings lists | Covered approximately | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |

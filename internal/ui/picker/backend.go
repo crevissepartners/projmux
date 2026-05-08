@@ -107,15 +107,21 @@ func CustomActions(keys ...string) []Action {
 }
 
 func FilterItems(items []Item, query string) []Item {
-	query = strings.ToLower(strings.TrimSpace(query))
+	query = strings.TrimSpace(query)
 	if query == "" {
 		return append([]Item(nil), items...)
+	}
+	needle := query
+	caseSensitive := nativeSmartCaseSensitive(query)
+	if !caseSensitive {
+		needle = strings.ToLower(query)
 	}
 
 	if hasNativeSearchKey(items) {
 		filtered := make([]Item, 0, len(items))
 		for _, item := range items {
-			if _, ok := fuzzyScore(strings.ToLower(item.EffectiveSearchText()), query); ok {
+			source := nativeSearchSource(item, caseSensitive)
+			if _, ok := fuzzyScore(source, needle); ok {
 				filtered = append(filtered, item)
 			}
 		}
@@ -124,7 +130,8 @@ func FilterItems(items []Item, query string) []Item {
 
 	filtered := make([]nativeScoredItem, 0, len(items))
 	for _, item := range items {
-		if score, ok := fuzzyScore(strings.ToLower(item.EffectiveSearchText()), query); ok {
+		source := nativeSearchSource(item, caseSensitive)
+		if score, ok := fuzzyScore(source, needle); ok {
 			filtered = append(filtered, nativeScoredItem{Item: item, Score: score, Index: len(filtered)})
 		}
 	}
@@ -140,6 +147,23 @@ func FilterItems(items []Item, query string) []Item {
 		items = append(items, item.Item)
 	}
 	return items
+}
+
+func nativeSearchSource(item Item, caseSensitive bool) string {
+	source := item.EffectiveSearchText()
+	if caseSensitive {
+		return source
+	}
+	return strings.ToLower(source)
+}
+
+func nativeSmartCaseSensitive(query string) bool {
+	for _, r := range query {
+		if r >= 'A' && r <= 'Z' {
+			return true
+		}
+	}
+	return false
 }
 
 func hasNativeSearchKey(items []Item) bool {

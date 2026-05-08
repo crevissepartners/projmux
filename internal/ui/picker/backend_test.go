@@ -78,6 +78,26 @@ func TestFilterItemsIgnoresANSIEscapeSequences(t *testing.T) {
 	}
 }
 
+func TestFilterItemsUsesFZFSmartCase(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "codex", Value: "lower"},
+		{Title: "Codex", Value: "title"},
+		{Title: "CODEX", Value: "upper"},
+	}
+
+	lower := FilterItems(items, "codex")
+	if got, want := valuesOf(lower), []string{"lower", "title", "upper"}; !equalStringSlices(got, want) {
+		t.Fatalf("FilterItems(codex) values = %#v, want fzf smart-case insensitive %#v", got, want)
+	}
+
+	title := FilterItems(items, "Codex")
+	if got, want := valuesOf(title), []string{"title"}; !equalStringSlices(got, want) {
+		t.Fatalf("FilterItems(Codex) values = %#v, want fzf smart-case sensitive %#v", got, want)
+	}
+}
+
 func TestFilterItemsPreservesSearchKeyOrder(t *testing.T) {
 	t.Parallel()
 
