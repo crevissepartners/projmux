@@ -312,7 +312,7 @@ func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
 	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 24, Cols: 120})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, " | preview") || !strings.Contains(rendered, "preview:/repo/api") {
+	if !strings.Contains(rendered, " │ preview") || !strings.Contains(rendered, "preview:/repo/api") {
 		t.Fatalf("native output = %q, want side-by-side preview", rendered)
 	}
 }
@@ -331,7 +331,7 @@ func TestNativeInteractiveRendersPreviewOffset(t *testing.T) {
 	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 1, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
-	if strings.Contains(rendered, "\none\n") || !strings.Contains(rendered, "\ntwo\nthree\n") {
+	if strings.Contains(rendered, "\none\n") || !strings.Contains(rendered, "\ntwo\nthree\n") || !strings.Contains(rendered, "─") {
 		t.Fatalf("native output = %q, want preview scrolled by one line", rendered)
 	}
 }

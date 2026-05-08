@@ -905,7 +905,7 @@ func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, lay
 		previewWidth = layout.Cols - listWidth - 3
 	}
 	rows := maxInt(len(listLines), len(previewLines)+1)
-	fmt.Fprintf(w, "%s | %s\n", nativePadRight("", listWidth), "preview")
+	fmt.Fprintf(w, "%s │ %s\n", nativePadRight("", listWidth), "preview")
 	for i := 0; i < rows; i++ {
 		left := ""
 		if i < len(listLines) {
@@ -915,7 +915,7 @@ func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, lay
 		if i < len(previewLines) {
 			right = previewLines[i]
 		}
-		fmt.Fprintf(w, "%s | %s\n", nativePadRight(nativeTruncateANSI(left, listWidth), listWidth), nativeTruncateANSI(right, previewWidth))
+		fmt.Fprintf(w, "%s │ %s\n", nativePadRight(nativeTruncateANSI(left, listWidth), listWidth), nativeTruncateANSI(right, previewWidth))
 	}
 }
 
@@ -940,7 +940,7 @@ func renderNativeDownPreview(w io.Writer, previewLines []string, layout nativeLa
 		width = defaultNativeCols
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, nativeTruncateANSI(strings.Repeat("-", width), width))
+	fmt.Fprintln(w, nativeTruncateANSI(strings.Repeat("─", width), width))
 	fmt.Fprintln(w, "preview")
 	for _, line := range previewLines {
 		fmt.Fprintln(w, nativeTruncateANSI(line, width))
