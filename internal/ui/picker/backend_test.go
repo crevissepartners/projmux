@@ -3,6 +3,7 @@ package picker
 import (
 	"bytes"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -141,5 +142,41 @@ func TestNativeInteractiveFiltersWithPrintableInput(t *testing.T) {
 	}
 	if result.Value != "/repo/web" || result.Query != "we" {
 		t.Fatalf("result = %#v, want filtered web selection", result)
+	}
+}
+
+func TestNativeInteractiveSupportsCustomExpectKeys(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1bp"), io.Discard, Options{
+		UI:      "switch",
+		Items:   []Item{{Title: "api", Value: "/repo/api"}},
+		Actions: CustomActions("alt-p"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "alt-p" || result.Value != "/repo/api" {
+		t.Fatalf("result = %#v, want alt-p custom action on selected item", result)
+	}
+}
+
+func TestNativeInteractiveSupportsPageNavigationAndEditing(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 0, 20)
+	for i := 0; i < 20; i++ {
+		items = append(items, Item{Title: strconv.Itoa(i), Value: strconv.Itoa(i), SearchText: strconv.Itoa(i)})
+	}
+
+	result, err := runNativeInteractive(strings.NewReader("abc def\x17\x15\x1b[6~\r"), io.Discard, Options{
+		UI:    "switch",
+		Items: items,
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "12" || result.Query != "" {
+		t.Fatalf("result = %#v, want page-down selection after query editing", result)
 	}
 }

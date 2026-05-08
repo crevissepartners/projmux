@@ -121,6 +121,8 @@ type NativeRunner struct {
 	Out io.Writer
 }
 
+const nativePageSize = 12
+
 func (r NativeRunner) Run(options Options) (Result, error) {
 	in := r.In
 	if in == nil {
@@ -269,8 +271,32 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			if selected < len(items)-1 {
 				selected++
 			}
+		case "home":
+			selected = 0
+		case "end":
+			if len(items) > 0 {
+				selected = len(items) - 1
+			}
+		case "page-up":
+			selected -= nativePageSize
+			if selected < 0 {
+				selected = 0
+			}
+		case "page-down":
+			selected += nativePageSize
+			if selected >= len(items) {
+				selected = len(items) - 1
+			}
 		case "backspace":
 			query = trimLastRune(query)
+			selected = 0
+		case "delete":
+			// The native picker has no cursor movement yet, so Delete is a no-op.
+		case "ctrl-u":
+			query = ""
+			selected = 0
+		case "ctrl-w":
+			query = trimLastWord(query)
 			selected = 0
 		default:
 			if key.Text != "" {
@@ -302,6 +328,14 @@ func readNativeKey(r io.Reader) (nativeKey, error) {
 		return nativeKey{Name: "ctrl-c"}, nil
 	case 0x0e:
 		return nativeKey{Name: "ctrl-n"}, nil
+	case 0x10:
+		return nativeKey{Name: "ctrl-p"}, nil
+	case 0x13:
+		return nativeKey{Name: "ctrl-s"}, nil
+	case 0x15:
+		return nativeKey{Name: "ctrl-u"}, nil
+	case 0x17:
+		return nativeKey{Name: "ctrl-w"}, nil
 	case 0x18:
 		return nativeKey{Name: "ctrl-x"}, nil
 	case 0x7f, 0x08:
@@ -338,6 +372,18 @@ func readNativeEscapeKey(r io.Reader) (nativeKey, error) {
 			return nativeKey{Name: "right"}, nil
 		case 'D':
 			return nativeKey{Name: "left"}, nil
+		case 'H':
+			return nativeKey{Name: "home"}, nil
+		case 'F':
+			return nativeKey{Name: "end"}, nil
+		case '1':
+			return readNativeCSI1Key(r)
+		case '5':
+			_, _, _ = readNativeByteMaybe(r)
+			return nativeKey{Name: "page-up"}, nil
+		case '6':
+			_, _, _ = readNativeByteMaybe(r)
+			return nativeKey{Name: "page-down"}, nil
 		case '3':
 			_, _, _ = readNativeByteMaybe(r)
 			return nativeKey{Name: "delete"}, nil
@@ -355,6 +401,54 @@ func readNativeEscapeKey(r io.Reader) (nativeKey, error) {
 		return nativeKey{Name: "alt-" + strings.ToLower(string([]byte{b}))}, nil
 	}
 	return nativeKey{Name: "esc"}, nil
+}
+
+func readNativeCSI1Key(r io.Reader) (nativeKey, error) {
+	sep, ok, err := readNativeByteMaybe(r)
+	if err != nil {
+		return nativeKey{}, err
+	}
+	if !ok {
+		return nativeKey{Name: "esc"}, nil
+	}
+	if sep != ';' {
+		return nativeKey{Name: "esc"}, nil
+	}
+	mod, ok, err := readNativeByteMaybe(r)
+	if err != nil {
+		return nativeKey{}, err
+	}
+	if !ok {
+		return nativeKey{Name: "esc"}, nil
+	}
+	final, ok, err := readNativeByteMaybe(r)
+	if err != nil {
+		return nativeKey{}, err
+	}
+	if !ok {
+		return nativeKey{Name: "esc"}, nil
+	}
+	name := ""
+	switch final {
+	case 'A':
+		name = "up"
+	case 'B':
+		name = "down"
+	case 'C':
+		name = "right"
+	case 'D':
+		name = "left"
+	default:
+		return nativeKey{Name: "esc"}, nil
+	}
+	switch mod {
+	case '3':
+		return nativeKey{Name: "alt-" + name}, nil
+	case '5':
+		return nativeKey{Name: "ctrl-" + name}, nil
+	default:
+		return nativeKey{Name: name}, nil
+	}
 }
 
 func nativePrintableKey(first byte, r io.Reader) (nativeKey, error) {
@@ -421,6 +515,18 @@ func trimLastRune(value string) string {
 	return value[:len(value)-size]
 }
 
+func trimLastWord(value string) string {
+	value = strings.TrimRight(value, " \t")
+	if value == "" {
+		return ""
+	}
+	cut := strings.LastIndexAny(value, " \t")
+	if cut < 0 {
+		return ""
+	}
+	return value[:cut+1]
+}
+
 func readNativeLine(r io.Reader) (string, error) {
 	var b strings.Builder
 	buf := make([]byte, 1)
@@ -454,7 +560,7 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 	}
 	fmt.Fprintln(w)
 
-	start, end := nativeVisibleRange(len(items), selected, 12)
+	start, end := nativeVisibleRange(len(items), selected, nativePageSize)
 	if len(items) == 0 {
 		fmt.Fprintln(w, "  no matches")
 		return
