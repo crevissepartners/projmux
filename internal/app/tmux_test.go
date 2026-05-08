@@ -278,11 +278,11 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 		"display-popup",
 		"-c", "/dev/pts/projmux-test-notify",
 		"-E",
-		"-x", "136",
+		"-x", "128",
 		"-y", "0",
-		"-w", "64",
-		"-h", "50",
-		"-T", "projmux notify",
+		"-w", "72",
+		"-h", "30",
+		"-T", "Notifications",
 	}
 	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)

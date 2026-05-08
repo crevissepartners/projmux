@@ -235,7 +235,10 @@ func TestStatusbarClickPwdOpensPathPopupAndCopiesBuffer(t *testing.T) {
 	if !sawTmuxSubcommand(runner.calls, "display-popup") {
 		t.Fatalf("missing path display-popup; calls = %#v", runner.calls)
 	}
-	if !sawTmuxPopupCommandContaining(runner.calls, "Copied current pane path to tmux paste buffer:") {
+	if !sawTmuxArgsContainInOrder(runner.calls, []string{"display-popup", "-T", "Path copied"}) {
+		t.Fatalf("missing path popup title; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Current pane path is in the tmux paste buffer.") {
 		t.Fatalf("missing copied path popup body; calls = %#v", runner.calls)
 	}
 }
@@ -856,6 +859,24 @@ func sawTmuxArgs(calls []statusbarFakeCall, want []string) bool {
 			continue
 		}
 		if equalStringSlices(c.args, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func sawTmuxArgsContainInOrder(calls []statusbarFakeCall, want []string) bool {
+	for _, c := range calls {
+		if c.name != "tmux" {
+			continue
+		}
+		next := 0
+		for _, arg := range c.args {
+			if next < len(want) && arg == want[next] {
+				next++
+			}
+		}
+		if next == len(want) {
 			return true
 		}
 	}

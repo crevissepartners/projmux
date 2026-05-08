@@ -268,6 +268,15 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if !picker.options.Read0 {
 		t.Fatal("picker Read0 = false, want true")
 	}
+	if got, want := picker.options.Prompt, "Notify > "; got != want {
+		t.Fatalf("picker prompt = %q, want %q", got, want)
+	}
+	if got, want := picker.options.Header, "Pending notifications, newest first"; got != want {
+		t.Fatalf("picker header = %q, want %q", got, want)
+	}
+	if got, want := picker.options.Footer, "Enter: focus + ack  |  a: ack  |  Ctrl-A: clear all  |  Esc/Alt-2: close"; got != want {
+		t.Fatalf("picker footer = %q, want %q", got, want)
+	}
 	if len(picker.options.Entries) != 1 || picker.options.Entries[0].Value != "abc" {
 		t.Fatalf("entries = %#v", picker.options.Entries)
 	}

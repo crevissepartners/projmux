@@ -53,7 +53,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | Range id | Row | Click action                              | Keyboard      |
 | -------- | --- | ----------------------------------------- | ------------- |
 | `session` | 0 | `projmux tmux popup-toggle sessionizer-sidebar` | `prefix s s` |
-| `pwd`     | 0 | copy `#{pane_current_path}` to tmux buffer and show a compact path popup | `prefix s p`  |
+| `pwd`     | 0 | copy `#{pane_current_path}` to tmux buffer and show a compact `Path copied` popup | `prefix s p`  |
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `usage`   | 1 | `display-popup -E -h 60% -w 80% -- projmux usage`, then wait for Enter | `prefix s u`  |
@@ -68,6 +68,13 @@ age, and `+N` for older pending entries. Window/pane ids are not shown in the
 compact status segment.
 `usage` deliberately opens the detailed `projmux usage` table popup; it is the
 clear action surface for the compact HUD bar.
+
+The path popup uses a short title, one-line copy status, the current path, and
+an `Enter closes this popup` prompt. If the tmux buffer write fails, it keeps
+the same compact surface with `Current path` as the title and a copy-unavailable
+message. The notification HUD detail surface (`Alt-2` / `User2`) opens the
+right-side `Notifications` popup with newest-first rows; selecting a row still
+focuses and acknowledges that notification.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,
