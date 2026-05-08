@@ -10,16 +10,17 @@ backend remains the fallback with full preview/cycle/sidebar behavior.
   actions, filtering, and typed-query prompts.
 - `PROJMUX_PICKER_BACKEND=native` routes simple app pickers through the native
   runner instead of shelling out to `fzf`.
-- Simple picker flows covered by the native path include AI picker/settings,
-  shell update prompt, settings hub sections, switch settings/add-pin, and the
-  main project switcher list.
-- The main project switcher native path supports search/filter, numeric
-  selection, and close. It deliberately ignores fzf preview commands.
+- Picker flows covered by the native path include AI picker/settings, shell
+  update prompt, settings hub sections, switch settings/add-pin, the main
+  project switcher list, recent sessions, and notify sidebar.
+- The native picker supports search/filter, arrow-key selection, Enter, Esc,
+  Ctrl-C, Backspace, Ctrl-U, Ctrl-W, PageUp/PageDown, Home/End, custom expect
+  keys such as Ctrl-X/Alt-P, and inline preview command output.
 
 ## Explicit Follow-Up Gaps
 
-- `sessions` still depends on the fzf backend.
-- Switch preview panes still depend on fzf for production parity.
+- Switch and sessions preview panes are inline native previews, not fzf's split
+  preview-window layout.
 - Switch sidebar focus behavior is not implemented in the native picker.
 - Full switch preview cycle parity is not implemented in the native picker.
 - Public docs and doctor dependency policy still treat `fzf` as required.
