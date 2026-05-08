@@ -281,6 +281,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		Header:     "Enter: focus | a: ack selected | Ctrl-A: clear all | Esc: close",
 		Footer:     "focus acks the selected notification",
 		ExpectKeys: []string{"a", "ctrl-a"},
+		Bindings:   []string{"alt-2:abort"},
 		Entries:    notifySidebarEntries(entries, now),
 	}
 	result, err := c.picker.Run(fzfOptions)

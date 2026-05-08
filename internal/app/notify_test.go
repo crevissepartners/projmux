@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -270,8 +271,8 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if label := picker.options.Entries[0].Label; !strings.Contains(label, "WARN deploy ok") || strings.Contains(label, "main:1.0") || strings.Contains(label, " ai ") {
 		t.Fatalf("sidebar label = %q, want compact age/severity/text without target/source columns", label)
 	}
-	if len(picker.options.Bindings) != 0 {
-		t.Fatalf("bindings = %#v, want none; fzf 0.71 rejects click bindings", picker.options.Bindings)
+	if got, want := picker.options.Bindings, []string{"alt-2:abort"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("bindings = %#v, want %#v", got, want)
 	}
 	if store.ackedID != "abc" {
 		t.Fatalf("ackedID = %q, want abc", store.ackedID)
