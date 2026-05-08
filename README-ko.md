@@ -63,20 +63,6 @@ attention signal을 함께 제공합니다. 자체 tmux 앱(`projmux shell`)으�
 - Codex/Claude/plain shell split을 만들고 agent/topic/status/notification 상태를
   tmux UI에 표시.
 
-## 일반적인 사용 흐름
-
-```sh
-projmux shell
-```
-
-앱을 한 번 실행한 뒤, 생성된 tmux binding으로 다음 일을 합니다:
-
-- sidebar 또는 popup에서 프로젝트 이동,
-- attach 전에 session 내용을 미리 확인,
-- 현재 workspace에 Codex, Claude, plain shell split 추가,
-- window와 AI pane topic rename,
-- 확인이 필요한 pane을 badge와 desktop notification으로 파악.
-
 ## 요구 사항
 
 - [Go 1.24+](https://go.dev/dl/) — binary 설치/빌드에 필요.
@@ -177,17 +163,13 @@ make install
 projmux shell
 ```
 
-projmux가 이 tmux 서버, 생성된 설정, status bar, popup binding을 직접 소유합니다.
-하단 좌측 뱃지에는 현재 프로젝트 이름이, 우측에는 경로/kube/git/시간이 표시됩니다.
+앱 안에서는 생성된 keybinding으로 프로젝트 전환, session preview, AI split,
+settings, notify/usage status surface를 사용합니다. 전체 키맵은
+[터미널 키 설정](docs/keybindings.md)을 참고하세요.
 
-키가 동작하지 않으면 `projmux setup` 으로 터미널이 어떤 시퀀스를 swallow 하는지
-진단한 뒤, `projmux init [terminal] --apply` (terminal 생략 시 자동 감지) 로
-필요한 CSI-u 바인딩을 터미널 설정에 머지하세요. 여러 머신을 dotfiles 로
-관리하는 경우에는 `--allow-symlink` 또는 `--config <path>` 로 의도를 명시합니다.
-전체 흐름과 수동 CSI-u fallback 은 [터미널 키 설정](docs/keybindings.md) 참고.
-
-뭔가 동작이 이상하면 `projmux doctor` 가 어떤 의존성이 누락/구버전인지와
-설치 방법을 알려줍니다. 지원 버전은 [요구 사항](#요구-사항) 참고.
+키가 동작하지 않으면 tmux 밖에서 `projmux setup`을 실행하고,
+`projmux init [terminal] --apply`로 지원 터미널 fallback을 적용하세요.
+의존성이 이상하면 `projmux doctor`를 실행하세요.
 
 ## 업그레이드
 
@@ -322,7 +304,6 @@ make verify
 - [Notify queue](docs/notify-queue.md)
 - [Usage tracking](docs/usage-tracking.md)
 - [Hooks](docs/hooks.md)
-- [Migration Plan](docs/migration-plan.md)
 - [Repo Layout](docs/repo-layout.md)
 - [터미널 키 설정](docs/keybindings.md)
 - [Agent Workflow](docs/agent-workflow.md)
