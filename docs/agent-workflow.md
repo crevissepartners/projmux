@@ -33,9 +33,10 @@
 - Current focused unit coverage also includes strict notify SOT behavior
   (TTL does not remove rows, focus does not ack, reconcile reports stale
   rows), `notify list --live` queue/live explanations, notify sidebar
-  focus/ack/clear-all actions, and `focus` dispatch diagnostics for session
-  fallback, unresolved targets, window fallback, pane fallback, explicit id
-  failures, and notify-only fallback.
+  two-line card rendering with queued-state metadata plus focus/ack/clear-all
+  actions, and `focus` dispatch diagnostics for session fallback, unresolved
+  targets, window fallback, pane fallback, explicit id failures, and
+  notify-only fallback.
 - Picker focused unit coverage includes backend-neutral picker item/action mapping, fzf adapter output, native title-focused filtering, numeric selection, and shared close actions.
 - `make test-integration`: Docker-backed Linux integration smoke with real `tmux`, `fzf`, `git`, and `stty`; covers `doctor`, tmux config print/install/apply, and notify queue CRUD against isolated HOME/XDG paths.
 - `make test-install-smoke`: Docker-backed source install smoke; covers `make install`, atomic binary replacement, `tmux apply` against a live `projmux` socket, and post-install notify queue initialization.

@@ -177,9 +177,10 @@ projmux notify reconcile [--json]
   reply panes missing a queue entry, matched AI reply entries, and stale
   queue entries whose live pane no longer matches. `--ui=sidebar` opens the
   compact interactive notify list where Enter focuses and acks a target, `a`
-  acks the selected row, and `Ctrl-A` clears all. The sidebar row keeps target
-  details searchable but displays only age, project, state, optional agent, and
-  text.
+  acks the selected row, and `Ctrl-A` clears all; opening or navigating the
+  sidebar does not ack. The sidebar uses two-line cards with notification text
+  first and compact project/queued/state/age/target metadata below, while
+  keeping ids, source, and target details searchable.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
   panes whose attention state is `reply` AND whose AI agent option is

@@ -240,7 +240,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 		listEntries: []notify.Notification{
 			{
 				ID:        "abc",
-				Text:      "deploy ok",
+				Text:      "codex: deploy ok",
 				Severity:  notify.SeverityWarn,
 				Source:    notify.SourceAI,
 				Socket:    "projmux",
@@ -265,11 +265,30 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if picker.options.UI != "notify-sidebar" {
 		t.Fatalf("picker UI = %q, want notify-sidebar", picker.options.UI)
 	}
+	if !picker.options.Read0 {
+		t.Fatal("picker Read0 = false, want true")
+	}
 	if len(picker.options.Entries) != 1 || picker.options.Entries[0].Value != "abc" {
 		t.Fatalf("entries = %#v", picker.options.Entries)
 	}
-	if label := picker.options.Entries[0].Label; !strings.Contains(label, " main ") || !strings.Contains(label, " WARN ") || !strings.Contains(label, "deploy ok") || strings.Contains(label, "w1.p0") || strings.Contains(label, "main:1.0") || strings.Contains(label, " ai ") {
-		t.Fatalf("sidebar label = %q, want project/status/text without target/source columns", label)
+	entry := picker.options.Entries[0]
+	labelLines := strings.Split(entry.Label, "\n")
+	if len(labelLines) != 2 {
+		t.Fatalf("sidebar label = %q, want two-line card", entry.Label)
+	}
+	if labelLines[0] != "codex: deploy ok" {
+		t.Fatalf("sidebar first line = %q, want notification text", labelLines[0])
+	}
+	if meta := labelLines[1]; !strings.Contains(meta, " main ") || !strings.Contains(meta, " queued ") || !strings.Contains(meta, " WARN ") || !strings.Contains(meta, "30s") || !strings.Contains(meta, "main:1.0") || strings.Contains(meta, " ai ") {
+		t.Fatalf("sidebar metadata = %q, want project/queued/status/age/target without source", meta)
+	}
+	if strings.Contains(entry.Label, "abc") {
+		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
+	}
+	for _, want := range []string{"abc", "codex: deploy ok", "warn", "ai", "main:1.0"} {
+		if !strings.Contains(entry.SearchKey, want) {
+			t.Fatalf("search key = %q, want %q", entry.SearchKey, want)
+		}
 	}
 	if got, want := picker.options.Bindings, []string{"alt-2:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("bindings = %#v, want %#v", got, want)
@@ -283,6 +302,36 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux"}
 	if !equalStringSlices(runner.calls[0].args, wantArgs) {
 		t.Fatalf("focus args = %#v, want %#v", runner.calls[0].args, wantArgs)
+	}
+}
+
+func TestNotifySidebarLabelDoesNotExposeRawPaneID(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	label := notifySidebarLabel(notify.Notification{
+		ID:        "abc",
+		Text:      "deploy\nok",
+		Severity:  notify.SeverityInfo,
+		Source:    notify.SourceExternal,
+		Session:   "main",
+		Window:    "1",
+		Pane:      "%42",
+		CreatedAt: now.Add(-2 * time.Minute),
+	}, now)
+
+	lines := strings.Split(label, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("sidebar label = %q, want two lines", label)
+	}
+	if lines[0] != "deploy ok" {
+		t.Fatalf("first line = %q, want sanitized text", lines[0])
+	}
+	if strings.Contains(label, "%42") {
+		t.Fatalf("sidebar label = %q, want raw pane id hidden", label)
+	}
+	if !strings.Contains(lines[1], "main:1") {
+		t.Fatalf("metadata = %q, want session/window target fallback", lines[1])
 	}
 }
 
