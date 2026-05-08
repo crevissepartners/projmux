@@ -82,3 +82,11 @@ v0.4 shipped.
 
 - Picker-agnostic popup close/toggle handling so AI picker dismissal
   does not depend on fzf-specific key bindings.
+
+### Docker install and E2E harness
+
+- Initial Docker-backed Linux smoke suites are available through
+  `make test-integration`, `make test-install-smoke`, and `make test-e2e`.
+  They cover install/runtime substrate checks against real `tmux`; host-only
+  terminal, WSL, macOS, and GUI checks remain separate in
+  [docs/testing.md](testing.md).

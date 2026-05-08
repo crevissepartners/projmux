@@ -14,7 +14,7 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './.git/*' \
 	-not -path './.wt/*')
 
-.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-e2e e2e verify
+.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-install-smoke test-e2e e2e verify
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -61,23 +61,14 @@ test:
 	$(GO) test ./...
 
 test-integration:
-	@if [ -d ./test/integration ]; then \
-		$(GO) test -count=1 ./test/integration/...; \
-	elif [ -d ./tests/integration ]; then \
-		$(GO) test -count=1 ./tests/integration/...; \
-	else \
-		echo "no integration test suites yet"; \
-	fi
+	scripts/test-integration-docker.sh
+
+test-install-smoke:
+	scripts/test-install-smoke.sh
 
 test-e2e:
-	@if [ -d ./test/e2e ]; then \
-		$(GO) test -count=1 ./test/e2e/...; \
-	elif [ -d ./tests/e2e ]; then \
-		$(GO) test -count=1 ./tests/e2e/...; \
-	else \
-		echo "no e2e test suites yet"; \
-	fi
+	scripts/test-e2e-docker.sh
 
 e2e: test-e2e
 
-verify: fmt-check test test-integration test-e2e
+verify: fmt-check test test-integration test-install-smoke test-e2e
