@@ -220,8 +220,10 @@ Click/keyboard dispatcher for the two-line status bar. Range ids:
 `window|<idx>` token (tmux's built-in window-list range) and the empty
 range fall through to `select-window -t @<mouse_window>` so the native
 click-to-switch tab affordance is preserved on row 0. Unknown range ids
-are no-ops. `session` opens the existing-session popup; `kube` and
-`git` open the project switcher popup. `MouseDown1Status` errors are
+are no-ops. `session` opens the existing-session popup; `pwd` copies
+the current pane path to the tmux paste buffer and shows it in a
+compact popup; `kube` and `git` open the project switcher popup.
+`MouseDown1Status` errors are
 swallowed and surfaced as `display-message` toasts so a transient
 failure does not raise a tmux error popup. See [statusbar.md](statusbar.md).
 
