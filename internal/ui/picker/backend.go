@@ -169,6 +169,7 @@ const (
 	nativeCurrentStart = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
 	nativePointer      = "\x1b[38;2;225;38;114m▌\x1b[0m "
 	nativeReset        = "\x1b[0m"
+	nativeCursorStart  = "\x1b[7m"
 	nativeScreenEnter  = "\x1b[?1049h\x1b[?25l"
 	nativeScreenLeave  = "\x1b[?25h\x1b[?1049l\r\n"
 	nativeScrollbar    = "█"
@@ -334,7 +335,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			focusedValue = value
 			previewOffset = 0
 		}
-		renderNativeInteractive(out, options, items, query, selected, previewOffset, layout)
+		renderNativeInteractiveWithCursor(out, options, items, query, queryCursor, selected, previewOffset, layout)
 
 		key, err := readNativeKey(in)
 		if err != nil {
@@ -929,10 +930,14 @@ func clampNativeQueryCursor(runes []rune, cursor int) int {
 }
 
 func renderNativeInteractive(w io.Writer, options Options, items []Item, query string, selected, previewOffset int, layout nativeLayout) {
+	renderNativeInteractiveWithCursor(w, options, items, query, nativeRuneLen(query), selected, previewOffset, layout)
+}
+
+func renderNativeInteractiveWithCursor(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
 	fmt.Fprint(w, "\x1b[2J\x1b[H")
 	contentLayout := nativeContentLayout(layout)
 	var body strings.Builder
-	renderNativeInteractiveContent(&body, options, items, query, selected, previewOffset, contentLayout)
+	renderNativeInteractiveContent(&body, options, items, query, queryCursor, selected, previewOffset, contentLayout)
 	renderNativeFrame(w, body.String(), layout)
 }
 
@@ -954,7 +959,7 @@ func nativeContentLayout(layout nativeLayout) nativeLayout {
 	return nativeLayout{Rows: rows, Cols: cols}
 }
 
-func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, selected, previewOffset int, layout nativeLayout) {
+func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
 	if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(w, header)
 	}
@@ -962,7 +967,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	if prompt == "" {
 		prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
 	}
-	fmt.Fprintln(w, nativePromptLine(prompt, query, len(items), len(options.Items), layout.Cols))
+	fmt.Fprintln(w, nativePromptLineWithCursor(prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		fmt.Fprintln(w, footer)
 	}
@@ -1063,6 +1068,14 @@ func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 }
 
 func nativePromptLine(prompt, query string, matches, total, cols int) string {
+	return nativePromptLineWithRenderedQuery(prompt, query, matches, total, cols)
+}
+
+func nativePromptLineWithCursor(prompt, query string, cursor, matches, total, cols int) string {
+	return nativePromptLineWithRenderedQuery(prompt, nativeQueryWithCursor(query, cursor), matches, total, cols)
+}
+
+func nativePromptLineWithRenderedQuery(prompt, query string, matches, total, cols int) string {
 	prompt = strings.TrimRight(prompt, " ")
 	line := strings.TrimRight(prompt+" "+query, " ")
 	info := strconv.Itoa(matches)
@@ -1077,6 +1090,25 @@ func nativePromptLine(prompt, query string, matches, total, cols int) string {
 		return line + "  " + info
 	}
 	return line + strings.Repeat(" ", padding) + info
+}
+
+func nativeQueryWithCursor(query string, cursor int) string {
+	runes := []rune(query)
+	cursor = clampNativeQueryCursor(runes, cursor)
+	if cursor == len(runes) {
+		return string(runes) + nativeCursorStart + " " + nativeReset
+	}
+	var out strings.Builder
+	for i, r := range runes {
+		if i == cursor {
+			out.WriteString(nativeCursorStart)
+			out.WriteRune(r)
+			out.WriteString(nativeReset)
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 func nativeVisibleRange(total, selected, limit int) (int, int) {

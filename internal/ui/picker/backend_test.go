@@ -547,6 +547,27 @@ func TestNativePromptLineIncludesInlineMatchCount(t *testing.T) {
 	}
 }
 
+func TestNativePromptLineRendersQueryCursor(t *testing.T) {
+	t.Parallel()
+
+	line := nativePromptLineWithCursor("› ", "abcd", 2, 1, 1, 20)
+	if !strings.Contains(line, "ab"+nativeCursorStart+"c"+nativeReset+"d") {
+		t.Fatalf("nativePromptLineWithCursor() = %q, want styled cursor at query index", line)
+	}
+	if got, want := nativeVisibleLen(line), 20; got != want {
+		t.Fatalf("nativeVisibleLen(line) = %d, want padded width %d", got, want)
+	}
+}
+
+func TestNativePromptLineRendersEndCursor(t *testing.T) {
+	t.Parallel()
+
+	line := nativePromptLineWithCursor("› ", "api", 3, 1, 1, 20)
+	if !strings.Contains(line, "api"+nativeCursorStart+" "+nativeReset) {
+		t.Fatalf("nativePromptLineWithCursor() = %q, want visible end cursor", line)
+	}
+}
+
 func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
 	t.Parallel()
 
