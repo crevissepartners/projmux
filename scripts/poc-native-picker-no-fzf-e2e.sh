@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-docker run --rm -it \
+docker run --rm \
   -v "$root":/work \
   -w /work \
   -e TERM=xterm-256color \
