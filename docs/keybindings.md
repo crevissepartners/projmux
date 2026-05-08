@@ -46,11 +46,11 @@ These open the projmux popups and the sidebar. No prefix needed.
 | Shortcut | Action |
 | --- | --- |
 | `Alt-1` | Project sidebar |
-| `Alt-2` | Existing session popup |
-| `Alt-3` | Project switcher popup |
+| `Alt-2` | Notify sidebar |
+| `Alt-3` | Existing session popup |
 | `Alt-4` | AI split picker |
 | `Alt-5` | Settings |
-| `Alt-6` | Notify sidebar |
+| `Alt-6` | Project switcher popup |
 
 The same surfaces are also available from the prefix table:
 
@@ -247,8 +247,8 @@ action fires.
 | --- | --- | --- |
 | `ESC [ 9001 u` | `User0` | Open AI split to the right |
 | `ESC [ 9002 u` | `User1` | Open AI split below |
-| `ESC [ 9003 u` | `User2` | Existing session popup |
-| `ESC [ 9004 u` | `User3` | Project switcher popup |
+| `ESC [ 9003 u` | `User2` | Notify sidebar |
+| `ESC [ 9004 u` | `User3` | Existing session popup |
 | `ESC [ 9005 u` | `User4` | Project sidebar |
 | `ESC [ 9006 u` | `User5` | AI split picker |
 | `ESC [ 9007 u` | `User6` | Settings |
@@ -257,7 +257,7 @@ action fires.
 | `ESC [ 9010 u` | `User9` | Next tmux window |
 | `ESC [ 9011 u` | `User10` | Rename the current tmux window |
 | `ESC [ 9012 u` | `User11` | Rename the current tmux pane label |
-| `ESC [ 9013 u` | `User12` | Notify sidebar |
+| `ESC [ 9013 u` | `User12` | Project switcher popup |
 
 ### Ghostty (manual)
 
@@ -299,11 +299,11 @@ shortcuts, while the split actions can send tmux prefix sequences directly. Esca
 {
   "actions": [
     { "command": { "action": "sendInput", "input": "\u001b1" }, "id": "User.projmuxSidebar" },
-    { "command": { "action": "sendInput", "input": "\u001b2" }, "id": "User.projmuxSessions" },
-    { "command": { "action": "sendInput", "input": "\u001b3" }, "id": "User.projmuxSwitch" },
+    { "command": { "action": "sendInput", "input": "\u001b2" }, "id": "User.projmuxNotifySidebar" },
+    { "command": { "action": "sendInput", "input": "\u001b3" }, "id": "User.projmuxSessions" },
     { "command": { "action": "sendInput", "input": "\u001b4" }, "id": "User.projmuxAIPicker" },
     { "command": { "action": "sendInput", "input": "\u001b5" }, "id": "User.projmuxSettings" },
-    { "command": { "action": "sendInput", "input": "\u001b6" }, "id": "User.projmuxNotifySidebar" },
+    { "command": { "action": "sendInput", "input": "\u001b6" }, "id": "User.projmuxSwitch" },
     { "command": { "action": "sendInput", "input": "\u0002r" }, "id": "User.projmuxAISplitRight" },
     { "command": { "action": "sendInput", "input": "\u0002l" }, "id": "User.projmuxAISplitDown" },
     { "command": { "action": "sendInput", "input": "\u000e" }, "id": "User.projmuxNewWindow" },
@@ -314,11 +314,11 @@ shortcuts, while the split actions can send tmux prefix sequences directly. Esca
   ],
   "keybindings": [
     { "id": "User.projmuxSidebar", "keys": "alt+1" },
-    { "id": "User.projmuxSessions", "keys": "alt+2" },
-    { "id": "User.projmuxSwitch", "keys": "alt+3" },
+    { "id": "User.projmuxNotifySidebar", "keys": "alt+2" },
+    { "id": "User.projmuxSessions", "keys": "alt+3" },
     { "id": "User.projmuxAIPicker", "keys": "alt+4" },
     { "id": "User.projmuxSettings", "keys": "alt+5" },
-    { "id": "User.projmuxNotifySidebar", "keys": "alt+6" },
+    { "id": "User.projmuxSwitch", "keys": "alt+6" },
     { "id": "User.projmuxAISplitRight", "keys": "ctrl+shift+r" },
     { "id": "User.projmuxAISplitDown", "keys": "ctrl+shift+l" },
     { "id": "User.projmuxNewWindow", "keys": "ctrl+n" },
