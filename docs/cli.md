@@ -176,7 +176,7 @@ projmux notify reconcile [--json]
   reply badges that do not queue because no AI agent is attached, live AI
   reply panes missing a queue entry, matched AI reply entries, and stale
   queue entries whose live pane no longer matches. `--ui=sidebar` opens the
-  interactive notify list where Enter/click focuses a target, `a` acks the
+  interactive notify list where Enter focuses a target, `a` acks the
   selected row, and `Ctrl-A` clears all.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
@@ -219,12 +219,12 @@ projmux status notify [--max-width N]
 - `git` — `#[bold,fg=colour16,bg=colour45] <branch> #[default]` for the
   pane's `pane_current_path` (or the supplied path). Empty when not in a
   repo.
-- `kube` — `k8s:<context>/<namespace>` segment. Reads
+- `kube` — `⎈ <context>/<namespace>` segment. Reads
   `~/.cache/tmux/kube-segment-<session>.txt` first (TTL governed by
   `TMUX_KUBE_CACHE_TTL`, default `5s`). Picks up a per-session
   `KUBECONFIG` from `${XDG_RUNTIME_DIR:-~/.cache}/kube-sessions/<session>.yaml`.
-- `usage` — HUD-style `Claude (Nm) 5h [bar] N% · wk [bar] N%   Codex 5h
-  [bar] N% · wk [bar] N%`. Degrades through six tiers as `--max-width`
+- `usage` — HUD-style `Claude (Nm) 5h [bar] N% · weekly [bar] N%   Codex 5h
+  [bar] N% · weekly [bar] N%`. Degrades through six tiers as `--max-width`
   shrinks. Triggers an opportunistic, throttled refresh (per-adapter
   throttle, `30s` floor) so a stale cache self-heals.
 - `notify` — newest-first HUD pill `[ <agent|SEV> ] <text> · <target> ·

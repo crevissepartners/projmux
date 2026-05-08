@@ -788,7 +788,7 @@ func tmuxStandaloneConfig(binaryPath string) string {
 		"set -g status 2",
 		"set -g status-right-length 140",
 		"set -g status-left " + tmuxConfigQuote("#[range=user|session][#S] #[norange]"),
-		"set -g status-right " + tmuxConfigQuote("#[range=user|pwd]#[fg=colour244]cwd #[fg=colour250]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]  %Y-%m-%d %H:%M #[bold,fg=colour16,bg=colour45] projmux #[default]"),
+		"set -g status-right " + tmuxConfigQuote("#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M #[bold,fg=colour16,bg=colour45] projmux #[default]"),
 		// Two-line status bar: line 0 is the existing session/window/path row;
 		// line 1 splits notify (left, capped at 80 cells) and the AI usage HUD
 		// (right, capped at 120 cells). Caps assume a 200+ col terminal — the
@@ -908,7 +908,7 @@ func tmuxAppConfig(binaryPath, defaultShell string) string {
 	lines = append(lines,
 		"set -g status 2",
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
-		"set -g status-right "+tmuxConfigQuote("#[range=user|pwd]#[fg=colour244]cwd #[fg=colour250]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]  %Y-%m-%d %H:%M#[default]"),
+		"set -g status-right "+tmuxConfigQuote("#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=/28/...:pane_current_path}#[norange]#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M#[default]"),
 		"set -g status-format[1] "+tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 80)#[norange]#[align=right range=user|usage]#("+bin+" status usage --max-width 120)#[norange]"),
 		"set -gu status-format[2]",
 	)

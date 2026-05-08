@@ -386,7 +386,7 @@ func staleLevel(s usage.Snapshot, now time.Time) int {
 // reliably count cells without ever falling back to the tmux-escape
 // stripper.
 const (
-	statusInnerSeparator = " · " // between 5h and wk inside a model.
+	statusInnerSeparator = " · " // between 5h and weekly inside a model.
 	statusModelSeparator = "   " // 3 spaces between Claude and Codex blocks.
 	statusDefaultReset   = "#[default]"
 )
@@ -435,13 +435,13 @@ type modelDisplay struct {
 // formatStatusUsage produces the HUD-style tmux status segment. The output
 // degrades gracefully through six tiers:
 //
-//  1. Long form with age indicator + bars + wk:
-//     `Claude (3m) 5h [████████░░] 80% · wk [...]   Codex 5h [...] 20% · wk [...]`
-//  2. Drop the age indicator (the legacy `Claude 5h [bar] N% · wk [bar] N%`
+//  1. Long form with age indicator + bars + weekly:
+//     `Claude (3m) 5h [████████░░] 80% · weekly [...]   Codex 5h [...] 20% · weekly [...]`
+//  2. Drop the age indicator (the legacy `Claude 5h [bar] N% · weekly [bar] N%`
 //     form, current default).
-//  3. Drop the wk bar (label + 5h bar only).
-//  4. Drop bars entirely (`Claude 5h:80% wk:30%`).
-//  5. Single-letter labels (`C 5h:80% wk:30%`).
+//  3. Drop the weekly bar (label + 5h bar only).
+//  4. Drop bars entirely (`Claude 5h:80% weekly:30%`).
+//  5. Single-letter labels (`C 5h:80% weekly:30%`).
 //  6. Hard rune-truncation with trailing `…`.
 //
 // maxWidth is measured in display cells; tmux color escapes (`#[...]`) are
@@ -523,7 +523,7 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 			} else {
 				b.WriteString(statusInnerSeparator)
 			}
-			b.WriteString(renderHUDPair("wk", m.weekPct))
+			b.WriteString(renderHUDPair("weekly", m.weekPct))
 		}
 		b.WriteString(statusDefaultReset)
 		blocks = append(blocks, b.String())
@@ -534,7 +534,7 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 	return strings.Join(blocks, statusModelSeparator) + statusDefaultReset
 }
 
-// renderTierFiveHOnlyHUD drops the wk bar but keeps the 5h bar.
+// renderTierFiveHOnlyHUD drops the weekly bar but keeps the 5h bar.
 func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
 	_ = now
 	blocks := make([]string, 0, len(models))
@@ -589,7 +589,7 @@ func renderTierTextShort(models []modelDisplay, now time.Time) string {
 	return strings.Join(blocks, statusModelSeparator)
 }
 
-// renderTextPair builds a `<label> 5h:N% wk:N%` substring used by both
+// renderTextPair builds a `<label> 5h:N% weekly:N%` substring used by both
 // non-HUD tiers. Returns "" when the model has nothing to show. The
 // legacy `~` / `~~` stale markers are not emitted here — the long HUD
 // tier carries staleness via the age indicator. The non-JSON `usage`
@@ -600,7 +600,7 @@ func renderTextPair(m modelDisplay, label string) string {
 		parts = append(parts, fmt.Sprintf("5h:%s", percentText(m.fivePct)))
 	}
 	if m.hasWeek {
-		parts = append(parts, fmt.Sprintf("wk:%s", percentText(m.weekPct)))
+		parts = append(parts, fmt.Sprintf("weekly:%s", percentText(m.weekPct)))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -609,11 +609,11 @@ func renderTextPair(m modelDisplay, label string) string {
 }
 
 // renderHUDPair renders a single `<window> [bar] N%` substring with color
-// escapes. Used for both 5h and wk pairs in the HUD tiers.
+// escapes. Used for both 5h and weekly pairs in the HUD tiers.
 func renderHUDPair(window string, pct float64) string {
 	color := usage.BarColorForPct(pct)
 	bar := usage.RenderColoredBar(pct, color, usage.BarEmptyColor)
-	// `#[default]` after the bar restores label fg before the wk text. The
+	// `#[default]` after the bar restores label fg before the weekly text. The
 	// percent number then re-applies the same color as the bar fill so the
 	// numeric matches visually (a red bar's 90% reads red too).
 	return fmt.Sprintf("%s%s #[fg=%s]%s%s",
@@ -878,10 +878,7 @@ func formatBackoffDuration(d time.Duration) string {
 		d = 0
 	}
 	if d < time.Minute {
-		secs := int(d.Round(time.Second).Seconds())
-		if secs < 1 {
-			secs = 1
-		}
+		secs := max(int(d.Round(time.Second).Seconds()), 1)
 		return fmt.Sprintf("%ds", secs)
 	}
 	hours := int(d / time.Hour)
