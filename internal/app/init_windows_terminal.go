@@ -38,11 +38,11 @@ const wtIDPrefix = "User.projmux"
 // Update both sites together when CSI-u routing changes.
 var wtDesiredBindings = []wtBinding{
 	{ID: "User.projmuxSidebar", Keys: "alt+1", Input: "\x1b1"},
-	{ID: "User.projmuxSessions", Keys: "alt+2", Input: "\x1b2"},
-	{ID: "User.projmuxSwitch", Keys: "alt+3", Input: "\x1b3"},
+	{ID: "User.projmuxNotifySidebar", Keys: "alt+2", Input: "\x1b2"},
+	{ID: "User.projmuxSessions", Keys: "alt+3", Input: "\x1b3"},
 	{ID: "User.projmuxAIPicker", Keys: "alt+4", Input: "\x1b4"},
 	{ID: "User.projmuxSettings", Keys: "alt+5", Input: "\x1b5"},
-	{ID: "User.projmuxNotifySidebar", Keys: "alt+6", Input: "\x1b6"},
+	{ID: "User.projmuxSwitch", Keys: "alt+6", Input: "\x1b6"},
 	{ID: "User.projmuxAISplitRight", Keys: "ctrl+shift+r", Input: "\x02r"},
 	{ID: "User.projmuxAISplitDown", Keys: "ctrl+shift+l", Input: "\x02l"},
 	{ID: "User.projmuxNewWindow", Keys: "ctrl+n", Input: "\x0e"},

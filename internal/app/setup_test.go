@@ -192,7 +192,7 @@ func TestRenderProbeSummaryFlagsFailures(t *testing.T) {
 	terminal := terminalInfo{Slug: "ghostty", Name: "Ghostty", Source: "TERM_PROGRAM", Raw: "ghostty"}
 	results := []probeResult{
 		{Key: probeKey{Label: "Alt-1", Action: "sidebar"}, Status: probeStatusPlain, Sequence: []byte("\x1b1"), Reason: "ok"},
-		{Key: probeKey{Label: "Alt-2", Action: "session-popup"}, Status: probeStatusTimeout, Reason: "no bytes"},
+		{Key: probeKey{Label: "Alt-2", Action: "notify-sidebar"}, Status: probeStatusTimeout, Reason: "no bytes"},
 		{Key: probeKey{Label: "Ctrl-N", Action: "new-window"}, Status: probeStatusUnknown, Sequence: []byte("\x1b[1;5R"), Reason: "different sequence"},
 	}
 
@@ -274,7 +274,7 @@ func TestSetupCommandRunInteractiveUsesProbeReader(t *testing.T) {
 
 	keys := []probeKey{
 		{Label: "Alt-1", Action: "sidebar", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
-		{Label: "Alt-2", Action: "session-popup", Plain: "\x1b2", CSIu: "\x1b[9003u", UserKey: "User2"},
+		{Label: "Alt-2", Action: "notify-sidebar", Plain: "\x1b2", CSIu: "\x1b[9003u", UserKey: "User2"},
 		{Label: "Ctrl-N", Action: "new-window", Plain: "\x0e", CSIu: "\x1b[9008u", UserKey: "User7"},
 	}
 	queue := [][]byte{

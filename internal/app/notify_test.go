@@ -231,7 +231,7 @@ func TestNotifyListTable(t *testing.T) {
 	}
 }
 
-func TestNotifyListSidebarFocusesSelectedRowWithoutAck(t *testing.T) {
+func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -270,8 +270,8 @@ func TestNotifyListSidebarFocusesSelectedRowWithoutAck(t *testing.T) {
 	if len(picker.options.Bindings) != 0 {
 		t.Fatalf("bindings = %#v, want none; fzf 0.71 rejects click bindings", picker.options.Bindings)
 	}
-	if store.ackedID != "" {
-		t.Fatalf("ackedID = %q, want empty", store.ackedID)
+	if store.ackedID != "abc" {
+		t.Fatalf("ackedID = %q, want abc", store.ackedID)
 	}
 	if len(runner.calls) != 1 || runner.calls[0].name != "/usr/local/bin/projmux" {
 		t.Fatalf("runner calls = %#v", runner.calls)
@@ -279,6 +279,43 @@ func TestNotifyListSidebarFocusesSelectedRowWithoutAck(t *testing.T) {
 	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux"}
 	if !equalStringSlices(runner.calls[0].args, wantArgs) {
 		t.Fatalf("focus args = %#v, want %#v", runner.calls[0].args, wantArgs)
+	}
+}
+
+func TestNotifyListSidebarDoesNotAckWhenFocusFails(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{
+				ID:        "abc",
+				Text:      "deploy ok",
+				Severity:  notify.SeverityWarn,
+				Source:    notify.SourceAI,
+				Session:   "main",
+				Window:    "1",
+				Pane:      "0",
+				CreatedAt: now.Add(-30 * time.Second),
+				ExpiresAt: now.Add(time.Hour),
+			},
+		},
+	}
+	picker := &stubNotifyPicker{result: intfzf.Result{Value: "abc"}}
+	runner := &focusFakeRunner{respond: func([]string) ([]byte, error) {
+		return nil, errors.New("focus failed")
+	}}
+	cmd := newCmd(store)
+	cmd.picker = picker
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "focus failed") {
+		t.Fatalf("Run error = %v, want focus failure", err)
+	}
+	if store.ackedID != "" {
+		t.Fatalf("ackedID = %q, want empty", store.ackedID)
 	}
 }
 

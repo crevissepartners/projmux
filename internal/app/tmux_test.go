@@ -276,9 +276,8 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 	got := runner.calls[len(runner.calls)-1]
 	wantPrefix := []string{
 		"display-popup",
-		"-t", "%1",
 		"-E",
-		"-x", "R",
+		"-x", "136",
 		"-y", "0",
 		"-w", "64",
 		"-h", "50",
@@ -290,6 +289,50 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 	command := got.args[len(got.args)-1]
 	if !strings.Contains(command, "'/tmp/proj mux/bin/projmux' 'notify' 'list' '--ui=sidebar'") {
 		t.Fatalf("popup command = %q, want notify sidebar command", command)
+	}
+}
+
+func TestAppRunTmuxPopupToggleClosesNotifySidebarWithoutPaneTarget(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-notify-close"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "notify-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}": clientKey,
+		"#{pane_id}":    "%active",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "notify-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	want := recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-C"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("close call = %#v, want %#v", got, want)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want not exist", err)
+	}
+}
+
+func TestPopupRightXFallsBackWhenClientWidthUnknown(t *testing.T) {
+	t.Parallel()
+
+	if got, want := popupRightX(0, "64"), "R"; got != want {
+		t.Fatalf("popupRightX = %q, want %q", got, want)
+	}
+	if got, want := popupRightX(200, "64"), "136"; got != want {
+		t.Fatalf("popupRightX = %q, want %q", got, want)
 	}
 }
 
@@ -433,10 +476,12 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	for _, want := range []string{
 		"bind-key -n M-1 run-shell",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
-		"bind-key -n M-6 run-shell",
+		"bind-key -n M-2 run-shell",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} notify-sidebar",
-		"bind-key -n User2 run-shell",
+		"bind-key -n User3 run-shell",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} session-popup",
+		"bind-key -n User12 run-shell",
+		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer",
 		"bind-key -n User0 run-shell",
 		"'/tmp/proj mux/bin/projmux' ai split right",
 		"set -s user-keys[10] \"\\033[9011u\"",
@@ -464,7 +509,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' status kube",
 		"'/tmp/proj mux/bin/projmux' status git",
 		"set -g status 2",
-		"#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=/28/...:pane_current_path}#[norange]",
+		"#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		" %Y-%m-%d %H:%M",
 		"range=user|notify",
 		"range=user|usage",
@@ -655,7 +700,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g status-left-length 20",
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
-		"#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=/28/...:pane_current_path}#[norange]",
+		"#[range=user|pwd]#[fg=colour244] #[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		" %Y-%m-%d %H:%M#[default]",
 		"set -g status 2",

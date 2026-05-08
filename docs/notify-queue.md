@@ -82,9 +82,9 @@ repeatable filters. Without `--live`, this command reads only the queue and
 preserves the stable JSON array used by scripts.
 
 `--ui=sidebar` opens the notify queue as an interactive right-side list when
-run inside the tmux popup surface. Enter focuses the selected
-target pane without acking it. `a` acks the selected row. `Ctrl-A` clears all
-rows via `notify ack --all`.
+run inside the tmux popup surface. Enter focuses the selected target pane and
+acks the row after focus succeeds. `a` acks the selected row. `Ctrl-A` clears
+all rows via `notify ack --all`.
 
 `--live` adds a non-mutating explanation view that reads
 `tmux list-panes -a` and compares the queue with live reply-state panes. It

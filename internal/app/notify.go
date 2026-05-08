@@ -279,7 +279,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		UI:         "notify-sidebar",
 		Prompt:     "notilist> ",
 		Header:     "Enter: focus | a: ack selected | Ctrl-A: clear all | Esc: close",
-		Footer:     "focus does not ack; notifications remain until explicit ack",
+		Footer:     "focus acks the selected notification",
 		ExpectKeys: []string{"a", "ctrl-a"},
 		Entries:    notifySidebarEntries(entries, now),
 	}
@@ -314,7 +314,13 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		if !ok {
 			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
 		}
-		return c.focusNotification(entry, "notify-sidebar", "row-select")
+		if err := c.focusNotification(entry, "notify-sidebar", "row-select"); err != nil {
+			return err
+		}
+		if err := store.Ack(id); err != nil {
+			return fmt.Errorf("ack focused notification: %w", err)
+		}
+		return nil
 	}
 }
 
