@@ -664,11 +664,11 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 	case "notify-sidebar":
 		options.Client = ctx.TargetClient
 		options.Target = ""
-		options.Width = popupSize(ctx.ClientWidth, 24, 64)
-		options.Height = popupSize(ctx.ClientHeight, 100, 20)
+		options.Width = popupSize(ctx.ClientWidth, 32, 72)
+		options.Height = popupSize(ctx.ClientHeight, 60, 18)
 		options.X = popupRightX(ctx.ClientWidth, options.Width)
 		options.Y = "0"
-		options.Title = "projmux notify"
+		options.Title = "Notifications"
 		commandArgs = []string{"notify", "list", "--ui=sidebar"}
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 96)

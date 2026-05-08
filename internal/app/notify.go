@@ -278,9 +278,9 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 	fzfOptions := intfzf.Options{
 		UI:         "notify-sidebar",
 		Read0:      true,
-		Prompt:     "notilist> ",
-		Header:     "Enter: focus | a: ack selected | Ctrl-A: clear all | Esc: close",
-		Footer:     "focus acks the selected notification",
+		Prompt:     "Notify > ",
+		Header:     "Pending notifications, newest first",
+		Footer:     "Enter: focus + ack  |  a: ack  |  Ctrl-A: clear all  |  Esc/Alt-2: close",
 		ExpectKeys: []string{"a", "ctrl-a"},
 		Bindings:   []string{"alt-2:abort"},
 		Entries:    notifySidebarEntries(entries, now),

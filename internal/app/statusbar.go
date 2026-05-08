@@ -362,9 +362,9 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 	if err := c.runTmuxNoFallback(stderr,
 		"display-popup",
 		"-E",
-		"-w", "80%",
-		"-h", "7",
-		"-T", "projmux path",
+		"-w", "76%",
+		"-h", "8",
+		"-T", statusbarPathPopupTitle(copied),
 		statusbarPathPopupCommand(path, copied),
 	); err == nil {
 		return nil
@@ -535,15 +535,33 @@ func focusFailureSummary(err error) string {
 }
 
 func statusbarPathPopupCommand(path string, copied bool) string {
-	title := "Current pane path:"
+	title := "Current path"
+	body := "Path shown below; tmux paste buffer unavailable."
 	if copied {
-		title = "Copied current pane path to tmux paste buffer:"
+		title = "Path copied"
+		body = "Current pane path is in the tmux paste buffer."
 	}
-	return "printf '%s\\n\\n%s\\n\\n%s\\n' " +
-		tmuxShellQuote(title) + " " +
-		tmuxShellQuote(path) + " " +
-		tmuxShellQuote("Press Enter to close.") +
-		"; IFS= read -r _"
+
+	lines := []string{
+		"\033[1;38;5;45m" + title + "\033[0m",
+		"\033[38;5;245m" + body + "\033[0m",
+		"",
+		"\033[38;5;231m" + path + "\033[0m",
+		"",
+		"\033[38;5;245mEnter closes this popup.\033[0m",
+	}
+	quoted := make([]string, 0, len(lines))
+	for _, line := range lines {
+		quoted = append(quoted, tmuxShellQuote(line))
+	}
+	return "printf '%s\\n' " + strings.Join(quoted, " ") + "; IFS= read -r _"
+}
+
+func statusbarPathPopupTitle(copied bool) string {
+	if copied {
+		return "Path copied"
+	}
+	return "Current path"
 }
 
 func shortenStatusbarToast(value string, max int) string {
