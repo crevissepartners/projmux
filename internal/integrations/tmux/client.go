@@ -141,6 +141,7 @@ const (
 )
 
 type PopupOptions struct {
+	Client        string
 	Target        string
 	Cwd           string
 	Env           map[string]string
@@ -550,6 +551,9 @@ func BuildDisplayPopupArgs(command string, options PopupOptions) ([]string, erro
 	}
 
 	args := []string{"display-popup"}
+	if resolved.Client != "" {
+		args = append(args, "-c", resolved.Client)
+	}
 	if resolved.Target != "" {
 		args = append(args, "-t", resolved.Target)
 	}
@@ -854,6 +858,7 @@ func sessionPaneTarget(sessionName, windowIndex, paneIndex string) string {
 
 func resolvePopupOptions(options PopupOptions) (PopupOptions, error) {
 	resolved := PopupOptions{
+		Client:        strings.TrimSpace(options.Client),
 		Target:        strings.TrimSpace(options.Target),
 		Cwd:           strings.TrimSpace(options.Cwd),
 		Env:           cleanPopupEnv(options.Env),
