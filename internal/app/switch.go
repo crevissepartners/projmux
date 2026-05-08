@@ -115,6 +115,7 @@ type switchCommand struct {
 	saveProjdir     func(homeDir, value string) error
 	loadWorkdirs    func(homeDir string) ([]string, error)
 	tmuxProjdir     func() string
+	nativePicker    intpicker.Runner
 	focusSession    string
 }
 
@@ -162,6 +163,7 @@ func newSwitchCommand() *switchCommand {
 		saveProjdir:  config.SaveProjdir,
 		loadWorkdirs: config.LoadWorkdirs,
 		tmuxProjdir:  tmuxProjdirOption,
+		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -1481,7 +1483,10 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 
 func (c *switchCommand) runPickerBackend(fzfOptions intfzf.Options, pickerOptions intpicker.Options) (intpicker.Result, error) {
 	if intpicker.ResolveBackend(c.lookupEnv) == intpicker.BackendNative {
-		result, err := (intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout}).Run(pickerOptions)
+		if c.nativePicker == nil {
+			return intpicker.Result{}, fmt.Errorf("native switch picker is not configured")
+		}
+		result, err := c.nativePicker.Run(pickerOptions)
 		if err != nil {
 			return intpicker.Result{}, fmt.Errorf("run native switch picker: %w", err)
 		}
