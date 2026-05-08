@@ -742,6 +742,31 @@ func readNativeLine(r io.Reader) (string, error) {
 
 func renderNativeInteractive(w io.Writer, options Options, items []Item, query string, selected, previewOffset int, layout nativeLayout) {
 	fmt.Fprint(w, "\x1b[2J\x1b[H")
+	contentLayout := nativeContentLayout(layout)
+	var body strings.Builder
+	renderNativeInteractiveContent(&body, options, items, query, selected, previewOffset, contentLayout)
+	renderNativeFrame(w, body.String(), layout)
+}
+
+func nativeContentLayout(layout nativeLayout) nativeLayout {
+	if layout.Rows <= 0 {
+		layout.Rows = defaultNativeRows
+	}
+	if layout.Cols <= 0 {
+		layout.Cols = defaultNativeCols
+	}
+	rows := layout.Rows - 2
+	if rows < 1 {
+		rows = 1
+	}
+	cols := layout.Cols - 4
+	if cols < 20 {
+		cols = layout.Cols
+	}
+	return nativeLayout{Rows: rows, Cols: cols}
+}
+
+func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, selected, previewOffset int, layout nativeLayout) {
 	if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(w, header)
 	}
@@ -794,6 +819,36 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 	if len(previewLines) > 0 {
 		renderNativeInlinePreview(w, previewLines)
 	}
+}
+
+func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
+	width := layout.Cols
+	if width <= 0 {
+		width = defaultNativeCols
+	}
+	if width < 4 {
+		fmt.Fprint(w, content)
+		return
+	}
+	height := layout.Rows
+	if height <= 0 {
+		height = defaultNativeRows
+	}
+	innerWidth := width - 2
+	innerHeight := height - 2
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	fmt.Fprintf(w, "┌%s┐\n", strings.Repeat("─", innerWidth))
+	for i := 0; i < innerHeight; i++ {
+		line := ""
+		if i < len(lines) {
+			line = nativeTruncateANSI(strings.TrimRight(lines[i], "\r"), innerWidth)
+		}
+		fmt.Fprintf(w, "│%s│\n", nativePadRight(line, innerWidth))
+	}
+	fmt.Fprintf(w, "└%s┘\n", strings.Repeat("─", innerWidth))
 }
 
 func nativePromptLine(prompt, query string, matches, total, cols int) string {

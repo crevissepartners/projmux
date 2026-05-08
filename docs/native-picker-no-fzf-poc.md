@@ -25,6 +25,8 @@ The fzf compatibility surface for this POC is tracked in
   bindings.
 - Native interactive picker screens use an alternate screen lifecycle to better
   match fzf fullscreen behavior and restore the tmux pane after exit.
+- Native interactive picker screens render inside a full-screen border frame to
+  match the app's fzf `--height 100% --border` surface more closely.
 - In tmux-triggered command paths where stdin is not the controlling terminal,
   the native picker falls back to `/dev/tty` before entering raw mode. This
   avoids line-mode escape leakage such as arrow keys appearing as `^[[`.

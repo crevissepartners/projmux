@@ -9,6 +9,7 @@ picker evidence. It is not a production dependency-policy change.
 | fzf surface | projmux usage | Native status | Evidence |
 | --- | --- | --- | --- |
 | `--prompt` | AI, settings, shell update, switch, sessions, notify | Covered | `renderNativeInteractive`, `renderNative`; `TestNativePromptLineIncludesInlineMatchCount` |
+| `--height 100%` / `--border` | all interactive picker screens | Covered approximately | `renderNativeFrame`; `TestNativeInteractiveRendersBorderFrame` |
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / header fallback | AI, settings, shell update, switch, sessions, notify | Covered as footer text, not fzf footer border | `renderNativeInteractive`, `renderNative` |
 | `--ansi` | colored row labels from render package | Covered | native writes row labels directly; Docker e2e shows ANSI rows |

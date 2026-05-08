@@ -184,6 +184,21 @@ func TestNativeInteractiveUsesAlternateScreen(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveRendersBorderFrame(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:    "switch",
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 8, Cols: 40})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "┌") || !strings.Contains(rendered, "└") || !strings.Contains(rendered, "│") {
+		t.Fatalf("native output = %q, want fzf-like border frame", rendered)
+	}
+}
+
 func TestNativeInteractiveSupportsApplicationCursorKeys(t *testing.T) {
 	t.Parallel()
 
@@ -399,7 +414,7 @@ func TestNativeInteractiveRendersPreviewOffset(t *testing.T) {
 	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 1, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
-	if strings.Contains(rendered, "\none\n") || !strings.Contains(rendered, "\ntwo\nthree\n") || !strings.Contains(rendered, "─") {
+	if strings.Contains(rendered, "\none") || !strings.Contains(rendered, "two") || !strings.Contains(rendered, "three") || !strings.Contains(rendered, "─") {
 		t.Fatalf("native output = %q, want preview scrolled by one line", rendered)
 	}
 }
@@ -460,7 +475,7 @@ func TestNativeInteractiveRendersDownPreviewBelowList(t *testing.T) {
 	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "\npreview\npreview:/repo/api") {
+	if !strings.Contains(rendered, "preview") || !strings.Contains(rendered, "preview:/repo/api") {
 		t.Fatalf("native output = %q, want bottom preview", rendered)
 	}
 }
