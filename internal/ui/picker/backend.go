@@ -125,6 +125,10 @@ type NativeRunner struct {
 }
 
 const nativePageSize = 12
+const (
+	defaultNativeRows = 30
+	defaultNativeCols = 100
+)
 
 func (r NativeRunner) Run(options Options) (Result, error) {
 	in := r.In
@@ -218,6 +222,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	query := strings.TrimSpace(options.InitialQuery)
 	selected := 0
 	focusedValue := ""
+	layout := detectNativeLayout(in)
 	fmt.Fprint(out, "\x1b[?25l")
 	defer fmt.Fprint(out, "\x1b[?25h\r\n")
 
@@ -233,7 +238,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			runNativeFocusAction(options.Actions, value)
 			focusedValue = value
 		}
-		renderNativeInteractive(out, options, items, query, selected)
+		renderNativeInteractive(out, options, items, query, selected, layout)
 
 		key, err := readNativeKey(in)
 		if err != nil {
@@ -319,6 +324,38 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	}
 }
 
+type nativeLayout struct {
+	Rows int
+	Cols int
+}
+
+func detectNativeLayout(in io.Reader) nativeLayout {
+	layout := nativeLayout{Rows: defaultNativeRows, Cols: defaultNativeCols}
+	file, ok := in.(*os.File)
+	if !ok {
+		return layout
+	}
+	cmd := exec.Command("stty", "size")
+	cmd.Stdin = file
+	out, err := cmd.Output()
+	if err != nil {
+		return layout
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) != 2 {
+		return layout
+	}
+	rows, rowErr := strconv.Atoi(fields[0])
+	cols, colErr := strconv.Atoi(fields[1])
+	if rowErr == nil && rows > 0 {
+		layout.Rows = rows
+	}
+	if colErr == nil && cols > 0 {
+		layout.Cols = cols
+	}
+	return layout
+}
+
 func runNativeFocusAction(actions []Action, value string) {
 	if strings.TrimSpace(value) == "" {
 		return
@@ -387,33 +424,17 @@ func readNativeEscapeKey(r io.Reader) (nativeKey, error) {
 		if !ok {
 			return nativeKey{Name: "esc"}, nil
 		}
-		switch next {
-		case 'A':
-			return nativeKey{Name: "up"}, nil
-		case 'B':
-			return nativeKey{Name: "down"}, nil
-		case 'C':
-			return nativeKey{Name: "right"}, nil
-		case 'D':
-			return nativeKey{Name: "left"}, nil
-		case 'H':
-			return nativeKey{Name: "home"}, nil
-		case 'F':
-			return nativeKey{Name: "end"}, nil
-		case '1':
-			return readNativeCSI1Key(r)
-		case '5':
-			_, _, _ = readNativeByteMaybe(r)
-			return nativeKey{Name: "page-up"}, nil
-		case '6':
-			_, _, _ = readNativeByteMaybe(r)
-			return nativeKey{Name: "page-down"}, nil
-		case '3':
-			_, _, _ = readNativeByteMaybe(r)
-			return nativeKey{Name: "delete"}, nil
-		default:
+		return readNativeCSIKey(r, next)
+	}
+	if b == 'O' {
+		next, ok, err := readNativeByteMaybe(r)
+		if err != nil {
+			return nativeKey{}, err
+		}
+		if !ok {
 			return nativeKey{Name: "esc"}, nil
 		}
+		return nativeKeyFromSS3(next)
 	}
 	if b >= '1' && b <= '9' {
 		return nativeKey{Name: "alt-" + string([]byte{b})}, nil
@@ -427,51 +448,114 @@ func readNativeEscapeKey(r io.Reader) (nativeKey, error) {
 	return nativeKey{Name: "esc"}, nil
 }
 
-func readNativeCSI1Key(r io.Reader) (nativeKey, error) {
-	sep, ok, err := readNativeByteMaybe(r)
-	if err != nil {
-		return nativeKey{}, err
+func readNativeCSIKey(r io.Reader, first byte) (nativeKey, error) {
+	seq := []byte{first}
+	for !isNativeCSIFinal(seq[len(seq)-1]) && len(seq) < 16 {
+		next, ok, err := readNativeByteMaybe(r)
+		if err != nil {
+			return nativeKey{}, err
+		}
+		if !ok {
+			return nativeKey{Name: "esc"}, nil
+		}
+		seq = append(seq, next)
 	}
-	if !ok {
+	if !isNativeCSIFinal(seq[len(seq)-1]) {
 		return nativeKey{Name: "esc"}, nil
 	}
-	if sep != ';' {
-		return nativeKey{Name: "esc"}, nil
+	return nativeKeyFromCSI(seq), nil
+}
+
+func isNativeCSIFinal(b byte) bool {
+	return b >= 0x40 && b <= 0x7e
+}
+
+func nativeKeyFromCSI(seq []byte) nativeKey {
+	final := seq[len(seq)-1]
+	params := string(seq[:len(seq)-1])
+	name := nativeBaseCSIName(final, params)
+	if name == "" {
+		return nativeKey{Name: "esc"}
 	}
-	mod, ok, err := readNativeByteMaybe(r)
-	if err != nil {
-		return nativeKey{}, err
+	mod := nativeCSIModifier(params)
+	switch mod {
+	case "3":
+		return nativeKey{Name: "alt-" + name}
+	case "5":
+		return nativeKey{Name: "ctrl-" + name}
+	default:
+		return nativeKey{Name: name}
 	}
-	if !ok {
-		return nativeKey{Name: "esc"}, nil
-	}
-	final, ok, err := readNativeByteMaybe(r)
-	if err != nil {
-		return nativeKey{}, err
-	}
-	if !ok {
-		return nativeKey{Name: "esc"}, nil
-	}
-	name := ""
+}
+
+func nativeBaseCSIName(final byte, params string) string {
 	switch final {
 	case 'A':
-		name = "up"
+		return "up"
 	case 'B':
-		name = "down"
+		return "down"
 	case 'C':
-		name = "right"
+		return "right"
 	case 'D':
-		name = "left"
+		return "left"
+	case 'F':
+		return "end"
+	case 'H':
+		return "home"
+	case 'Z':
+		return "shift-tab"
+	case '~':
+		switch nativeCSIPrimaryParam(params) {
+		case "1", "7":
+			return "home"
+		case "3":
+			return "delete"
+		case "4", "8":
+			return "end"
+		case "5":
+			return "page-up"
+		case "6":
+			return "page-down"
+		default:
+			return ""
+		}
+	default:
+		return ""
+	}
+}
+
+func nativeCSIPrimaryParam(params string) string {
+	if params == "" {
+		return ""
+	}
+	primary, _, _ := strings.Cut(params, ";")
+	return primary
+}
+
+func nativeCSIModifier(params string) string {
+	fields := strings.Split(params, ";")
+	if len(fields) < 2 {
+		return ""
+	}
+	return fields[len(fields)-1]
+}
+
+func nativeKeyFromSS3(b byte) (nativeKey, error) {
+	switch b {
+	case 'A':
+		return nativeKey{Name: "up"}, nil
+	case 'B':
+		return nativeKey{Name: "down"}, nil
+	case 'C':
+		return nativeKey{Name: "right"}, nil
+	case 'D':
+		return nativeKey{Name: "left"}, nil
+	case 'F':
+		return nativeKey{Name: "end"}, nil
+	case 'H':
+		return nativeKey{Name: "home"}, nil
 	default:
 		return nativeKey{Name: "esc"}, nil
-	}
-	switch mod {
-	case '3':
-		return nativeKey{Name: "alt-" + name}, nil
-	case '5':
-		return nativeKey{Name: "ctrl-" + name}, nil
-	default:
-		return nativeKey{Name: name}, nil
 	}
 }
 
@@ -515,15 +599,18 @@ func readNativeByte(r io.Reader) (byte, error) {
 
 func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 	var buf [1]byte
-	n, err := r.Read(buf[:])
-	if n > 0 {
-		return buf[0], true, nil
-	}
-	if err == io.EOF {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, err
+	for attempt := 0; attempt < 3; attempt++ {
+		n, err := r.Read(buf[:])
+		if n > 0 {
+			return buf[0], true, nil
+		}
+		if err == io.EOF {
+			return 0, false, nil
+		}
+		if err != nil {
+			return 0, false, err
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	return 0, false, nil
 }
@@ -568,7 +655,7 @@ func readNativeLine(r io.Reader) (string, error) {
 	}
 }
 
-func renderNativeInteractive(w io.Writer, options Options, items []Item, query string, selected int) {
+func renderNativeInteractive(w io.Writer, options Options, items []Item, query string, selected int, layout nativeLayout) {
 	fmt.Fprint(w, "\x1b[2J\x1b[H")
 	if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(w, header)
@@ -584,21 +671,33 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 	}
 	fmt.Fprintln(w)
 
-	start, end := nativeVisibleRange(len(items), selected, nativePageSize)
+	previewLines := nativePreviewLines(options, items, selected, maxInt(4, layout.Rows-8))
+	listLimit := nativePageSize
+	if len(previewLines) > 0 && nativePreviewOnRight(options.Preview.Window) && layout.Cols >= 88 {
+		listLimit = maxInt(6, layout.Rows-7)
+	}
+	start, end := nativeVisibleRange(len(items), selected, listLimit)
+	listLines := nativeInteractiveListLines(items, start, end, selected)
 	if len(items) == 0 {
 		fmt.Fprintln(w, "  no matches")
 		return
 	}
 	if start > 0 {
-		fmt.Fprintf(w, "  ... %d more above\n", start)
-	}
-	for i := start; i < end; i++ {
-		renderNativeInteractiveItem(w, items[i], i == selected)
+		listLines = append([]string{fmt.Sprintf("  ... %d more above", start)}, listLines...)
 	}
 	if end < len(items) {
-		fmt.Fprintf(w, "  ... %d more below\n", len(items)-end)
+		listLines = append(listLines, fmt.Sprintf("  ... %d more below", len(items)-end))
 	}
-	renderNativePreview(w, options, items, selected)
+	if len(previewLines) > 0 && nativePreviewOnRight(options.Preview.Window) && layout.Cols >= 88 {
+		renderNativeSplitPreview(w, listLines, previewLines, layout)
+		return
+	}
+	for _, line := range listLines {
+		fmt.Fprintln(w, line)
+	}
+	if len(previewLines) > 0 {
+		renderNativeInlinePreview(w, previewLines)
+	}
 }
 
 func nativeVisibleRange(total, selected, limit int) (int, int) {
@@ -618,52 +717,170 @@ func nativeVisibleRange(total, selected, limit int) (int, int) {
 	return start, start + limit
 }
 
-func renderNativeInteractiveItem(w io.Writer, item Item, selected bool) {
+func nativeInteractiveListLines(items []Item, start, end, selected int) []string {
+	lines := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		lines = append(lines, nativeInteractiveItemLines(items[i], i == selected)...)
+	}
+	return lines
+}
+
+func nativeInteractiveItemLines(item Item, selected bool) []string {
 	lines := strings.Split(item.EffectiveLabel(), "\n")
 	prefix := "  "
 	if selected {
 		prefix = "> "
-		fmt.Fprint(w, "\x1b[7m")
 	}
 	if len(lines) == 0 {
 		lines = []string{""}
 	}
-	fmt.Fprintf(w, "%s%s", prefix, strings.TrimRight(lines[0], "\r"))
+	rendered := make([]string, 0, len(lines)+len(item.MetaLines))
+	first := fmt.Sprintf("%s%s", prefix, strings.TrimRight(lines[0], "\r"))
 	if selected {
-		fmt.Fprint(w, "\x1b[0m")
+		first = "\x1b[7m" + first + "\x1b[0m"
 	}
-	fmt.Fprintln(w)
+	rendered = append(rendered, first)
 	for _, line := range lines[1:] {
-		fmt.Fprintf(w, "    %s\n", strings.TrimRight(line, "\r"))
+		rendered = append(rendered, fmt.Sprintf("    %s", strings.TrimRight(line, "\r")))
 	}
 	for _, meta := range item.MetaLines {
 		if meta = strings.TrimSpace(meta); meta != "" {
-			fmt.Fprintf(w, "    %s\n", meta)
+			rendered = append(rendered, fmt.Sprintf("    %s", meta))
 		}
 	}
+	return rendered
 }
 
-func renderNativePreview(w io.Writer, options Options, items []Item, selected int) {
+func nativePreviewLines(options Options, items []Item, selected, limit int) []string {
 	command := strings.TrimSpace(options.Preview.Command)
 	if command == "" || selected < 0 || selected >= len(items) {
-		return
+		return nil
 	}
 	target := strings.TrimSpace(items[selected].PreviewTarget)
 	if target == "" {
 		target = items[selected].Value
 	}
 	if target == "" {
-		return
+		return nil
 	}
 	output := runNativePreviewCommand(command, target)
 	if strings.TrimSpace(output) == "" {
-		return
+		return nil
 	}
+	return limitedNativePreviewLines(output, limit)
+}
+
+func nativePreviewOnRight(window string) bool {
+	window = strings.ToLower(strings.TrimSpace(window))
+	return window == "" || strings.HasPrefix(window, "right")
+}
+
+func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout) {
+	previewWidth := nativePreviewWidth(layout.Cols)
+	listWidth := layout.Cols - previewWidth - 3
+	if listWidth < 32 {
+		listWidth = 32
+		previewWidth = layout.Cols - listWidth - 3
+	}
+	rows := maxInt(len(listLines), len(previewLines)+1)
+	fmt.Fprintf(w, "%s | %s\n", nativePadRight("", listWidth), "preview")
+	for i := 0; i < rows; i++ {
+		left := ""
+		if i < len(listLines) {
+			left = listLines[i]
+		}
+		right := ""
+		if i < len(previewLines) {
+			right = previewLines[i]
+		}
+		fmt.Fprintf(w, "%s | %s\n", nativePadRight(nativeTruncateANSI(left, listWidth), listWidth), nativeTruncateANSI(right, previewWidth))
+	}
+}
+
+func nativePreviewWidth(cols int) int {
+	if cols <= 0 {
+		cols = defaultNativeCols
+	}
+	width := cols * 55 / 100
+	if width < 36 {
+		return 36
+	}
+	return width
+}
+
+func renderNativeInlinePreview(w io.Writer, previewLines []string) {
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "──────────────── preview ────────────────")
-	for _, line := range limitedNativePreviewLines(output, 18) {
+	fmt.Fprintln(w, "--- preview ---")
+	for _, line := range previewLines {
 		fmt.Fprintln(w, line)
 	}
+}
+
+func nativePadRight(value string, width int) string {
+	length := nativeVisibleLen(value)
+	if length >= width {
+		return value
+	}
+	return value + strings.Repeat(" ", width-length)
+}
+
+func nativeTruncateANSI(value string, width int) string {
+	if width <= 0 || nativeVisibleLen(value) <= width {
+		return value
+	}
+	var out strings.Builder
+	visible := 0
+	for i := 0; i < len(value) && visible < width; {
+		if value[i] == '\x1b' {
+			end := i + 1
+			for end < len(value) && value[end] != 'm' {
+				end++
+			}
+			if end < len(value) {
+				out.WriteString(value[i : end+1])
+				i = end + 1
+				continue
+			}
+		}
+		r, size := utf8.DecodeRuneInString(value[i:])
+		if r == utf8.RuneError && size == 0 {
+			break
+		}
+		out.WriteRune(r)
+		visible++
+		i += size
+	}
+	return out.String()
+}
+
+func nativeVisibleLen(value string) int {
+	length := 0
+	for i := 0; i < len(value); {
+		if value[i] == '\x1b' {
+			i++
+			for i < len(value) && value[i] != 'm' {
+				i++
+			}
+			if i < len(value) {
+				i++
+			}
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(value[i:])
+		if size <= 0 {
+			break
+		}
+		length++
+		i += size
+	}
+	return length
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func runNativePreviewCommand(command, target string) string {

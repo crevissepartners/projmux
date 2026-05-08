@@ -129,6 +129,43 @@ func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveSupportsApplicationCursorKeys(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1bOB\r"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "/repo/web" || result.Query != "" {
+		t.Fatalf("result = %#v, want application-cursor down to select web", result)
+	}
+}
+
+func TestNativeInteractiveConsumesModifiedCSIKeys(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[1;5B\r"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+		Actions: []Action{{Key: "ctrl-down", Intent: ActionCustom}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "ctrl-down" || result.Value != "/repo/api" || result.Query != "" {
+		t.Fatalf("result = %#v, want ctrl-down custom action without query leakage", result)
+	}
+}
+
 func TestNativeInteractiveFiltersWithPrintableInput(t *testing.T) {
 	t.Parallel()
 
@@ -199,6 +236,25 @@ func TestNativeInteractiveRendersSelectedPreview(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "preview:/repo/api") {
 		t.Fatalf("native output = %q, want selected preview output", out.String())
+	}
+}
+
+func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI: "switch",
+		Preview: Preview{
+			Command: "printf 'preview:%s' {2}",
+			Window:  "right,60%,border-left",
+		},
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, nativeLayout{Rows: 24, Cols: 120})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, " | preview") || !strings.Contains(rendered, "preview:/repo/api") {
+		t.Fatalf("native output = %q, want side-by-side preview", rendered)
 	}
 }
 

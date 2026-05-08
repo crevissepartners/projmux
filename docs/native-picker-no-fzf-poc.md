@@ -13,15 +13,17 @@ backend remains the fallback with full preview/cycle/sidebar behavior.
 - Picker flows covered by the native path include AI picker/settings, shell
   update prompt, settings hub sections, switch settings/add-pin, the main
   project switcher list, recent sessions, and notify sidebar.
-- The native picker supports search/filter, arrow-key selection, Enter, Esc,
-  Ctrl-C, Backspace, Ctrl-U, Ctrl-W, PageUp/PageDown, Home/End, custom expect
-  keys such as Ctrl-X/Alt-P, inline preview command output, preview cycle
-  command bindings, and sidebar focus command bindings.
+- The native picker supports search/filter, arrow-key selection in normal CSI
+  and tmux application-cursor modes, Enter, Esc, Ctrl-C, Backspace, Ctrl-U,
+  Ctrl-W, PageUp/PageDown, Home/End, modified CSI keys, custom expect keys such
+  as Ctrl-X/Alt-P, preview command output, preview cycle command bindings, and
+  sidebar focus command bindings.
 
 ## Explicit Follow-Up Gaps
 
-- Switch and sessions preview panes are inline native previews, not fzf's split
-  preview-window layout.
+- Switch and sessions preview panes are approximate native previews. Wide
+  right-side preview windows render beside the list, but exact fzf
+  preview-window sizing, color, scrolling, and border parity is still missing.
 - Full switch preview cycle parity still needs hands-on validation against real
   tmux sessions.
 - Public docs and doctor dependency policy still treat `fzf` as required.
