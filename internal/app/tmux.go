@@ -220,9 +220,7 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	marker := popupMarkerPath(popupCtx.ClientKey, mode.Canonical)
 	if _, err := os.Stat(marker); err == nil {
 		targetPane := strings.TrimSpace(popupCtx.OriginPane)
-		if mode.Canonical == "notify-sidebar" {
-			targetPane = ""
-		} else if content, readErr := os.ReadFile(marker); readErr == nil && strings.TrimSpace(string(content)) != "" {
+		if content, readErr := os.ReadFile(marker); readErr == nil && strings.TrimSpace(string(content)) != "" {
 			targetPane = strings.TrimSpace(string(content))
 		}
 		if err := c.closePopup(ctx, targetPane); err != nil {
