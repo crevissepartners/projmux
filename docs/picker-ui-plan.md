@@ -10,7 +10,13 @@ or session title, instead of matching every contextual preview line.
 
 ## Current Contract
 
-`internal/ui/fzf` sends one logical row per item:
+The picker contract is split in two layers:
+
+- `internal/ui/picker` owns backend-neutral items, actions, preview metadata,
+  backend selection, title-focused filtering, and the opt-in native runner.
+- `internal/ui/fzf` adapts that model into the historical fzf command line.
+
+The default fzf backend still sends one logical row per item:
 
 ```text
 <visible label>\t<selection value>
@@ -82,19 +88,24 @@ This best matches the desired product direction:
 - preview/context fields can be visible but non-searchable
 - future key behavior can be tested without relying on fzf internals
 
-## Recommendation
+## Implemented Direction
 
 Do not extend the current fzf row format again as the main implementation. The
 previous hidden-field attempt showed that small fzf encoding changes can break
 selection and navigation in subtle ways.
 
-Proceed in two narrow branches:
+Current implementation:
 
-1. Add a picker-domain model:
-   `Title`, `Value`, `SearchText`, `MetaLines`, `Badges`, and `PreviewTarget`.
-   Keep the fzf backend rendering only the current one-line label first.
-2. Add a native picker backend behind an opt-in flag or config value, then port
-   the switcher sidebar/popup one surface at a time.
+- Picker-domain model exists as `picker.Item` with `Title`, `Value`,
+  `SearchText`, `MetaLines`, `Badges`, and `PreviewTarget`.
+- `picker.Options` carries backend-neutral actions, preview metadata, prompt,
+  footer, initial query, and multiline intent.
+- fzf remains the default backend and renders the same popup/sidebar surfaces.
+- `PROJMUX_PICKER_BACKEND=native` opts into the native runner. It supports
+  multiline item rendering, title-focused search via `SearchText`, numeric
+  selection, and shared close actions.
+- Switcher popup/sidebar still use the fzf backend for full preview and key
+  action parity. Native preview panes, raw-key navigation, and sidebar focus
+  tracking remain follow-up work.
 
 fzf can stay as the stable fallback while the native picker reaches parity.
-

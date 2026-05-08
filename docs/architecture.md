@@ -41,15 +41,18 @@ Responsibilities:
 - convert failures into typed errors
 
 ### 3. UI orchestration
-The first implementation can remain `fzf`-driven, but picker data should be
-modeled independently from fzf rows so richer backends can render multi-line
-cards without changing core selection behavior.
+Picker data is modeled independently from fzf rows. The app builds
+backend-neutral `picker.Item` values (`Title`, `Value`, `SearchText`,
+`MetaLines`, `Badges`, `PreviewTarget`) and then adapts them to the selected
+backend. `fzf` remains the default, stable backend; the native backend is
+opt-in through `PROJMUX_PICKER_BACKEND=native` while it reaches full parity.
 
 Responsibilities:
 - rows for popup and sidebar views
 - preview rendering
 - keybind-to-action dispatch
 - selection handoff into core actions
+- picker-agnostic close/dismiss actions
 
 Picker-specific display and search rules are tracked in
 [picker-ui-plan.md](picker-ui-plan.md).

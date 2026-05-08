@@ -72,16 +72,19 @@ v0.4 shipped.
 ### Picker UI
 
 - Picker-domain model separate from fzf row encoding (kept fzf as the
-  stable fallback backend).
+  stable fallback backend). Done in the 0.5 picker contract slice.
 - Opt-in native picker backend for multi-line card rows and
-  title-focused search.
+  title-focused search. Done in the 0.5 picker contract slice via
+  `PROJMUX_PICKER_BACKEND=native`.
 - Port switcher popup/sidebar surfaces after parity tests cover
   selection, preview, and key actions.
 
 ### Picker dismissal
 
 - Picker-agnostic popup close/toggle handling so AI picker dismissal
-  does not depend on fzf-specific key bindings.
+  does not depend on fzf-specific key bindings. Done in the 0.5 picker
+  contract slice; fzf maps close actions to `abort`, and the native runner
+  consumes the same close action keys.
 
 ### Docker install and E2E harness
 

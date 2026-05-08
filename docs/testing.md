@@ -7,6 +7,9 @@ and humans run the same entrypoints.
 
 - `make test` runs the fast Go unit suite. These tests avoid tmux, TTY, GUI,
   and host shell dependencies.
+- Picker unit coverage includes the backend-neutral item/action contract, fzf
+  adapter mapping, native title-focused filtering, numeric selection, and
+  shared close actions.
 - `make test-integration` builds `test/docker/Dockerfile` and runs
   `test/integration/linux-smoke.sh` in Docker. It validates Linux dependency
   discovery, tmux config generation/install, app config reload against a real

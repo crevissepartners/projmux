@@ -60,6 +60,12 @@ sub-verbs are entry hooks invoked by tmux keybindings (e.g.
 `sidebar-focus` is wired to the sidebar's focus binding so navigation keeps
 the active session in sync).
 
+`PROJMUX_PICKER_BACKEND=native` opts the switcher into the experimental native
+picker backend. fzf remains the default and the only backend with full preview
+pane, sidebar focus, and key-action parity. Native currently provides
+multiline card rendering, title-focused search, numeric selection, and the
+shared close-action contract.
+
 ## setup
 
 ```

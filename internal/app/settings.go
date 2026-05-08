@@ -1003,12 +1003,7 @@ func settingsBackEntry() intfzf.Entry {
 }
 
 func settingsCloseBindings() []string {
-	return []string{
-		"esc:abort",
-		"ctrl-c:abort",
-		"alt-5:abort",
-		"ctrl-alt-s:abort",
-	}
+	return pickerCloseBindings("esc", "ctrl-c", "alt-5", "ctrl-alt-s")
 }
 
 func printSettingsUsage(w io.Writer) {
