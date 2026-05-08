@@ -330,11 +330,11 @@ func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarCl
 	}
 }
 
-// handleSession opens the existing session picker. It uses the same
+// handleSession opens the project sidebar. It uses the same
 // popup-toggle surface as the keyboard bindings so a second click/chord closes
 // the scoped popup instead of stacking another one.
 func (c *statusbarCommand) handleSession(_ statusbarClickOptions, _, stderr io.Writer) error {
-	return c.handlePopupToggle(stderr, "session", "session-popup")
+	return c.handlePopupToggle(stderr, "session", "sessionizer-sidebar")
 }
 
 // handlePwd shows the current pane's path in a small popup and copies it into

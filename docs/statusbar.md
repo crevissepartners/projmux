@@ -52,7 +52,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 
 | Range id | Row | Click action                              | Keyboard      |
 | -------- | --- | ----------------------------------------- | ------------- |
-| `session` | 0 | `projmux tmux popup-toggle session-popup` | `prefix s s` |
+| `session` | 0 | `projmux tmux popup-toggle sessionizer-sidebar` | `prefix s s` |
 | `pwd`     | 0 | copy `#{pane_current_path}` to tmux buffer and show a compact path popup | `prefix s p`  |
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
