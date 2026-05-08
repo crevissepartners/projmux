@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.4.6](https://github.com/crevissepartners/projmux/compare/v0.4.5...v0.4.6) (2026-05-08)
+
+
+### Features
+
+* configure statusbar decorations ([#89](https://github.com/crevissepartners/projmux/issues/89)) ([13cb7ff](https://github.com/crevissepartners/projmux/commit/13cb7ffaa12957ace98102eaf23d179fd2807e38))
+* **notify:** add contextual sidebar badges ([#82](https://github.com/crevissepartners/projmux/issues/82)) ([8297385](https://github.com/crevissepartners/projmux/commit/8297385597615e5182452ac95a2d0755ca33c4ad))
+* **notify:** add strict queue sidebar ([#75](https://github.com/crevissepartners/projmux/issues/75)) ([989353d](https://github.com/crevissepartners/projmux/commit/989353d871da6651e282ed095d82cfb8d9aaa3fb))
+
+
+### Bug Fixes
+
+* **notify:** anchor sidebar to client right ([#78](https://github.com/crevissepartners/projmux/issues/78)) ([af87386](https://github.com/crevissepartners/projmux/commit/af8738611d70a19d546f14bd3f8598900885c4aa))
+* **notify:** let sidebar close on alt-2 ([#81](https://github.com/crevissepartners/projmux/issues/81)) ([f3cd46d](https://github.com/crevissepartners/projmux/commit/f3cd46d225d8acd3cc5c892d627b85189ca10f61))
+* **notify:** render compact HUD as notification block ([7b3b858](https://github.com/crevissepartners/projmux/commit/7b3b85848fac6dd434887e93796cfe1767408371))
+* **notify:** restore sidebar toggle ([#79](https://github.com/crevissepartners/projmux/issues/79)) ([95a03ac](https://github.com/crevissepartners/projmux/commit/95a03ac58fa7842c4cc00ea05a028032b4c0d493))
+* **notify:** target sidebar popup by client ([#80](https://github.com/crevissepartners/projmux/issues/80)) ([2f7e96e](https://github.com/crevissepartners/projmux/commit/2f7e96e57bea37f6aaef92b7253bfffa9e9c8dfe))
+* **notify:** use outline status badges ([e33dbcb](https://github.com/crevissepartners/projmux/commit/e33dbcb99cb0cab4c529b3ef16292d4ba19fa4dd))
+* polish statusbar popups ([#88](https://github.com/crevissepartners/projmux/issues/88)) ([0333af0](https://github.com/crevissepartners/projmux/commit/0333af0975886da9899130e3d44a2eb61cdb6237))
+* refine notify focus UI ([#90](https://github.com/crevissepartners/projmux/issues/90)) ([14222c0](https://github.com/crevissepartners/projmux/commit/14222c095087fe3e3ac9c5471aec6dced45f6586))
+* render notify sidebar cards ([#86](https://github.com/crevissepartners/projmux/issues/86)) ([fb1b48c](https://github.com/crevissepartners/projmux/commit/fb1b48c05593c0bb452cd2767b554504c9090273))
+* require fzf 0.65 ([#87](https://github.com/crevissepartners/projmux/issues/87)) ([73f86ce](https://github.com/crevissepartners/projmux/commit/73f86ce08f13c1666cbd1e86d0e8a416bd6a5451))
+* restore notify agent badges ([#91](https://github.com/crevissepartners/projmux/issues/91)) ([0dc8894](https://github.com/crevissepartners/projmux/commit/0dc8894f8bd2da3f8911a31229fc75aaae71b6e3))
+* start shell on home session ([#93](https://github.com/crevissepartners/projmux/issues/93)) ([9fc2fb9](https://github.com/crevissepartners/projmux/commit/9fc2fb941f405a8db18b95a832f9f95cbff890f4))
+* **statusbar:** clarify labels and notify sidebar ([#77](https://github.com/crevissepartners/projmux/issues/77)) ([6372ced](https://github.com/crevissepartners/projmux/commit/6372ced1986ce77b402e160d03ddddf4cc3e99a8))
+* **statusbar:** open project sidebar from session badge ([#83](https://github.com/crevissepartners/projmux/issues/83)) ([2fc6525](https://github.com/crevissepartners/projmux/commit/2fc65256ed64e97b25f2822ba0ddd14ba8c361b6))
+
 ## [0.4.5](https://github.com/crevissepartners/projmux/compare/v0.4.4...v0.4.5) (2026-05-08)
 
 
