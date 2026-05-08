@@ -15,14 +15,15 @@ backend remains the fallback with full preview/cycle/sidebar behavior.
   project switcher list, recent sessions, and notify sidebar.
 - The native picker supports search/filter, arrow-key selection, Enter, Esc,
   Ctrl-C, Backspace, Ctrl-U, Ctrl-W, PageUp/PageDown, Home/End, custom expect
-  keys such as Ctrl-X/Alt-P, and inline preview command output.
+  keys such as Ctrl-X/Alt-P, inline preview command output, preview cycle
+  command bindings, and sidebar focus command bindings.
 
 ## Explicit Follow-Up Gaps
 
 - Switch and sessions preview panes are inline native previews, not fzf's split
   preview-window layout.
-- Switch sidebar focus behavior is not implemented in the native picker.
-- Full switch preview cycle parity is not implemented in the native picker.
+- Full switch preview cycle parity still needs hands-on validation against real
+  tmux sessions.
 - Public docs and doctor dependency policy still treat `fzf` as required.
 
 ## Interactive No-fzf Sandbox

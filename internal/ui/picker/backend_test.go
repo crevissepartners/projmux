@@ -230,3 +230,35 @@ func TestNativeInteractiveRunsCustomActionCommandAndRefreshes(t *testing.T) {
 		t.Fatalf("marker = %q, want cycled", data)
 	}
 }
+
+func TestNativeInteractiveRunsFocusActionOnSelectionChange(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "focus.log")
+	result, err := runNativeInteractive(strings.NewReader("\x1b[B\r"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "api"},
+			{Title: "web", Value: "web"},
+		},
+		Actions: []Action{{
+			Key:     "focus",
+			Intent:  ActionCustom,
+			Command: "printf '%s\n' {2} >> " + shellQuoteNative(logPath),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "web" {
+		t.Fatalf("result = %#v, want web", result)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read focus log: %v", err)
+	}
+	if got, want := string(data), "api\nweb\n"; got != want {
+		t.Fatalf("focus log = %q, want %q", got, want)
+	}
+}

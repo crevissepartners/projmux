@@ -217,6 +217,7 @@ type nativeKey struct {
 func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result, error) {
 	query := strings.TrimSpace(options.InitialQuery)
 	selected := 0
+	focusedValue := ""
 	fmt.Fprint(out, "\x1b[?25l")
 	defer fmt.Fprint(out, "\x1b[?25h\r\n")
 
@@ -227,6 +228,10 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		}
 		if selected < 0 {
 			selected = 0
+		}
+		if value := selectedNativeValue(items, selected); value != focusedValue {
+			runNativeFocusAction(options.Actions, value)
+			focusedValue = value
 		}
 		renderNativeInteractive(out, options, items, query, selected)
 
@@ -310,6 +315,18 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 				query += key.Text
 				selected = 0
 			}
+		}
+	}
+}
+
+func runNativeFocusAction(actions []Action, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	for _, action := range actions {
+		if action.Key == "focus" && action.Intent == ActionCustom && strings.TrimSpace(action.Command) != "" {
+			runNativeActionCommand(action.Command, value)
+			return
 		}
 	}
 }
