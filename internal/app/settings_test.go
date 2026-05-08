@@ -903,12 +903,12 @@ func TestCurrentProjdirInfoSourcePriority(t *testing.T) {
 			wantSource: projdirSourceSaved,
 		},
 		{
-			name:       "default fallback when nothing set",
+			name:       "unresolved when nothing set",
 			lookup:     func(string) string { return "" },
 			tmuxOption: emptyTmuxOption,
 			load:       func(string) (string, error) { return "", nil },
-			wantValue:  filepath.Clean(filepath.Join(home, "source", "repos")),
-			wantSource: projdirSourceDefault,
+			wantValue:  "",
+			wantSource: projdirSourceUnresolved,
 		},
 	}
 
@@ -974,8 +974,29 @@ func TestProjectPickerEntriesIncludesProjdirRow(t *testing.T) {
 	if !hasEntryLabelContaining(entries, "("+projdirSourcePROJDIRenv+")") {
 		t.Fatalf("project picker entries = %#v, want source label", entries)
 	}
-	if !hasEntryLabelContaining(entries, "Override via PROJMUX_PROJDIR env") {
+	if !hasEntryLabelContaining(entries, "Set PROJMUX_PROJDIR") {
 		t.Fatalf("project picker entries = %#v, want override hint row", entries)
+	}
+}
+
+func TestProjectPickerEntriesShowsUnconfiguredProjdir(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{
+		switcher: &switchCommand{
+			homeDir:     func() (string, error) { return "/home/tester", nil },
+			lookupEnv:   func(string) string { return "" },
+			tmuxProjdir: emptyTmuxOption,
+			loadProjdir: func(string) (string, error) { return "", nil },
+		},
+	}
+
+	entries := cmd.projectPickerEntries()
+	if !hasEntryLabelContaining(entries, "Project Root") {
+		t.Fatalf("project picker entries = %#v, want Project Root row", entries)
+	}
+	if !hasEntryLabelContaining(entries, "not configured") {
+		t.Fatalf("project picker entries = %#v, want not configured label", entries)
 	}
 }
 
