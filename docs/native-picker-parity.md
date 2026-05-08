@@ -14,6 +14,7 @@ picker evidence. It is not a production dependency-policy change.
 | `--footer` / header fallback | AI, settings, shell update, switch, sessions, notify | Covered as footer text, not fzf footer border | `renderNativeInteractive`, `renderNative` |
 | `--ansi` | colored row labels from render package | Covered | native writes row labels directly; Docker e2e shows ANSI rows |
 | hidden value after tab delimiter | all picker selections | Covered by `picker.Item.Value` | `pickerItemsFromFZFEntries`; `TestNativeRunnerFiltersAndSelectsByNumber` |
+| plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickerItemsFromFZF`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata` |
 | fuzzy result ranking | switch/sessions/notify search UX | Covered approximately | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |

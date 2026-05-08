@@ -50,6 +50,25 @@ func TestRunPickerOptionBackendUsesNativeWhenRequested(t *testing.T) {
 	}
 }
 
+func TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty(t *testing.T) {
+	t.Parallel()
+
+	options := pickerOptionsFromFZF(intfzf.Options{
+		UI:         "legacy",
+		Candidates: []string{"/tmp/project-a", " ", "/tmp/project-b"},
+	})
+
+	if len(options.Items) != 2 {
+		t.Fatalf("Items = %#v, want two candidate-backed items", options.Items)
+	}
+	if options.Items[0].Value != "/tmp/project-a" || options.Items[0].SearchText != "/tmp/project-a" {
+		t.Fatalf("first item = %#v, want candidate as label/value/search text", options.Items[0])
+	}
+	if options.Items[1].Value != "/tmp/project-b" {
+		t.Fatalf("second item = %#v, want second candidate", options.Items[1])
+	}
+}
+
 func TestSettingsNativeBackendDoesNotCallFZF(t *testing.T) {
 	t.Parallel()
 

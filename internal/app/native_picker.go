@@ -26,7 +26,7 @@ func runPickerOptionBackend(lookupEnv func(string) string, native intpicker.Runn
 func pickerOptionsFromFZF(options intfzf.Options) intpicker.Options {
 	return intpicker.Options{
 		UI:           options.UI,
-		Items:        pickerItemsFromFZFEntries(options.Entries),
+		Items:        pickerItemsFromFZF(options),
 		Prompt:       options.Prompt,
 		Header:       options.Header,
 		Footer:       options.Footer,
@@ -37,6 +37,26 @@ func pickerOptionsFromFZF(options intfzf.Options) intpicker.Options {
 		AcceptQuery:  options.AcceptQuery,
 		MultiLine:    options.Read0,
 	}
+}
+
+func pickerItemsFromFZF(options intfzf.Options) []intpicker.Item {
+	if len(options.Entries) != 0 {
+		return pickerItemsFromFZFEntries(options.Entries)
+	}
+	items := make([]intpicker.Item, 0, len(options.Candidates))
+	for _, candidate := range options.Candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		items = append(items, intpicker.Item{
+			Label:      candidate,
+			Title:      candidate,
+			Value:      candidate,
+			SearchText: candidate,
+		})
+	}
+	return items
 }
 
 func pickerItemsFromFZFEntries(entries []intfzf.Entry) []intpicker.Item {
