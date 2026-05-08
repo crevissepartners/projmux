@@ -53,23 +53,26 @@ func TestStatusNotifyExternalEntryRendersInfoBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[bg=brightcyan,fg=black,bold] INFO #[default]") {
-		t.Fatalf("stdout = %q, want INFO badge prefix", got)
+	if !strings.HasPrefix(got, "#[bg=colour90,fg=colour231,bold] main #[default]") {
+		t.Fatalf("stdout = %q, want project badge prefix", got)
+	}
+	if !strings.Contains(got, "#[bg=brightcyan,fg=black,bold] INFO #[default]") {
+		t.Fatalf("stdout = %q, want INFO badge", got)
 	}
 	if !strings.Contains(got, "hello world") {
 		t.Fatalf("stdout = %q, want body 'hello world'", got)
 	}
-	if !strings.Contains(got, "main:1.0") {
-		t.Fatalf("stdout = %q, want compact target 'main:1.0'", got)
+	if !strings.Contains(got, "w1.p0") {
+		t.Fatalf("stdout = %q, want pane target 'w1.p0'", got)
 	}
 	if !strings.Contains(got, "2m") {
 		t.Fatalf("stdout = %q, want age '2m'", got)
 	}
 	// Body text appears after the badge reset and BEFORE any dim escape —
 	// so the literal " hello world  " region must contain no `#[fg=colour`.
-	bodyStart := strings.Index(got, "#[default]") + len("#[default]")
+	bodyStart := strings.Index(got, " hello world")
 	dimStart := strings.Index(got, "#[fg=colour245]")
-	if bodyStart <= 0 || dimStart <= bodyStart {
+	if bodyStart < 0 || dimStart <= bodyStart {
 		t.Fatalf("stdout = %q, expected default-styled body before dim metadata", got)
 	}
 	body := got[bodyStart:dimStart]
@@ -82,7 +85,7 @@ func TestStatusNotifyExternalEntryRendersInfoBadge(t *testing.T) {
 }
 
 // AI-source entry whose text begins with `claude:` strips the prefix and
-// renders the agent name inside a brightcyan badge.
+// renders project, reply-needed state, and agent badges.
 func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	t.Parallel()
 
@@ -106,8 +109,14 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[bg=brightcyan,fg=black,bold] claude #[default]") {
-		t.Fatalf("stdout = %q, want claude badge prefix", got)
+	for _, want := range []string{
+		"#[bg=colour90,fg=colour231,bold] s #[default]",
+		"#[bg=brightcyan,fg=black,bold] NEED #[default]",
+		"#[bg=colour51,fg=black,bold] claude #[default]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want badge %q", got, want)
+		}
 	}
 	if strings.Contains(got, "claude:") {
 		t.Fatalf("stdout = %q, agent prefix should have been stripped from text", got)
@@ -115,8 +124,8 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	if !strings.Contains(got, "reply ready · review") {
 		t.Fatalf("stdout = %q, want body 'reply ready · review'", got)
 	}
-	if !strings.Contains(got, "s:1.0") {
-		t.Fatalf("stdout = %q, want compact target", got)
+	if !strings.Contains(got, "w1.p0") {
+		t.Fatalf("stdout = %q, want pane target", got)
 	}
 	if !strings.Contains(got, "#[fg=colour245]") {
 		t.Fatalf("stdout = %q, want dim metadata", got)
@@ -135,8 +144,8 @@ func TestStatusNotifyWarnEntryRendersYellowBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[bg=yellow,fg=black,bold] WARN #[default]") {
-		t.Fatalf("stdout = %q, want yellow WARN badge prefix", got)
+	if !strings.HasPrefix(got, "#[bg=colour90,fg=colour231,bold] ops #[default]") || !strings.Contains(got, "#[bg=yellow,fg=black,bold] WARN #[default]") {
+		t.Fatalf("stdout = %q, want project + yellow WARN badges", got)
 	}
 }
 
@@ -152,8 +161,8 @@ func TestStatusNotifyCriticalEntryRendersRedBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[bg=red,fg=white,bold] CRIT #[default]") {
-		t.Fatalf("stdout = %q, want red CRIT badge prefix", got)
+	if !strings.HasPrefix(got, "#[bg=colour90,fg=colour231,bold] prod #[default]") || !strings.Contains(got, "#[bg=red,fg=white,bold] CRIT #[default]") {
+		t.Fatalf("stdout = %q, want project + red CRIT badges", got)
 	}
 }
 
@@ -171,8 +180,8 @@ func TestStatusNotifyUnknownSeverityFallsBackToInfoBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[bg=brightcyan,fg=black,bold] INFO #[default]") {
-		t.Fatalf("stdout = %q, want INFO fallback badge", got)
+	if !strings.HasPrefix(got, "#[bg=colour90,fg=colour231,bold] s #[default]") || !strings.Contains(got, "#[bg=brightcyan,fg=black,bold] INFO #[default]") {
+		t.Fatalf("stdout = %q, want project + INFO fallback badges", got)
 	}
 }
 
@@ -271,9 +280,11 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 		t.Fatalf("tier1 visualLen=%d > 80: %q", visualLen(out), out)
 	}
 	for _, want := range []string{
-		"#[bg=brightcyan,fg=black,bold] claude #[default]",
+		"#[bg=colour90,fg=colour231,bold] s #[default]",
+		"#[bg=brightcyan,fg=black,bold] NEED #[default]",
+		"#[bg=colour51,fg=black,bold] claude #[default]",
 		"reply ready · review",
-		"s:1.0",
+		"w1.p0",
 		"2m",
 		"+1",
 	} {
@@ -286,18 +297,18 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 func TestStatusNotifyWidthTier2DropsAge(t *testing.T) {
 	t.Parallel()
 
-	// With the canonical fixture the long form is 48 cells, so we pick a
-	// budget tight enough to force the tier-2 fallback (no age) but loose
-	// enough to keep the target.
+	// The project/state/agent badge stack makes this budget tight enough to
+	// drop both age and target while retaining the contextual badges.
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 45, now)
 	if visualLen(out) > 45 {
 		t.Fatalf("tier2 visualLen=%d > 45: %q", visualLen(out), out)
 	}
 	for _, want := range []string{
-		"#[bg=brightcyan,fg=black,bold] claude #[default]",
+		"#[bg=colour90,fg=colour231,bold] s #[default]",
+		"#[bg=brightcyan,fg=black,bold] NEED #[default]",
+		"#[bg=colour51,fg=black,bold] claude #[default]",
 		"reply ready · review",
-		"s:1.0",
 		"+1",
 	} {
 		if !strings.Contains(out, want) {
@@ -306,6 +317,9 @@ func TestStatusNotifyWidthTier2DropsAge(t *testing.T) {
 	}
 	if strings.Contains(out, "2m") {
 		t.Fatalf("tier2 must drop age: %q", out)
+	}
+	if strings.Contains(out, "w1.p0") {
+		t.Fatalf("tier2 must drop target: %q", out)
 	}
 }
 
@@ -318,15 +332,15 @@ func TestStatusNotifyWidthTier3DropsTarget(t *testing.T) {
 		t.Fatalf("tier3 visualLen=%d > 40: %q", visualLen(out), out)
 	}
 	for _, want := range []string{
-		"#[bg=brightcyan,fg=black,bold] claude #[default]",
-		"reply ready · review",
+		"#[bg=colour90,fg=colour231,bold] s #[default]",
+		"#[bg=brightcyan,fg=black,bold] NEED #[default]",
 		"+1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tier3 missing %q in %q", want, out)
 		}
 	}
-	if strings.Contains(out, "s:1.0") {
+	if strings.Contains(out, "w1.p0") {
 		t.Fatalf("tier3 must drop target: %q", out)
 	}
 	if strings.Contains(out, "2m") {
@@ -342,8 +356,8 @@ func TestStatusNotifyWidthTier4TruncatesText(t *testing.T) {
 	if visualLen(out) > 24 {
 		t.Fatalf("tier4 visualLen=%d > 24: %q", visualLen(out), out)
 	}
-	if !strings.Contains(out, "#[bg=brightcyan,fg=black,bold] claude #[default]") {
-		t.Fatalf("tier4 should still show badge: %q", out)
+	if strings.Contains(out, "bg=colour90") || strings.Contains(out, "bg=brightcyan") || strings.Contains(out, "bg=colour51") {
+		t.Fatalf("tier4 should drop badges before icon fallback at this width: %q", out)
 	}
 	if !strings.Contains(out, "+1") {
 		t.Fatalf("tier4 should still show count: %q", out)
@@ -399,28 +413,35 @@ func TestStatusNotifyAgentPrefixGracefulFallback(t *testing.T) {
 		name      string
 		text      string
 		wantAgent string // "" means INFO label badge
+		wantState string
 	}{
-		{name: "no colon", text: "reply ready", wantAgent: ""},
-		{name: "unknown agent", text: "gpt: reply ready", wantAgent: ""},
-		{name: "empty body after colon", text: "claude:", wantAgent: ""},
-		{name: "leading colon", text: ":hello", wantAgent: ""},
-		{name: "codex prefix", text: "codex: thought", wantAgent: "codex"},
-		{name: "claude prefix uppercase", text: "Claude: ready", wantAgent: "claude"},
+		{name: "no colon", text: "reply ready", wantAgent: "", wantState: "NEED"},
+		{name: "unknown agent", text: "gpt: reply ready", wantAgent: "", wantState: "NEED"},
+		{name: "empty body after colon", text: "claude:", wantAgent: "", wantState: "INFO"},
+		{name: "leading colon", text: ":hello", wantAgent: "", wantState: "INFO"},
+		{name: "codex prefix", text: "codex: thought", wantAgent: "codex", wantState: "INFO"},
+		{name: "claude prefix uppercase", text: "Claude: ready", wantAgent: "claude", wantState: "INFO"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			out := formatStatusNotify([]notify.Notification{{
 				ID: "a", Text: tc.text, Severity: notify.SeverityInfo,
 				Source: notify.SourceAI, Session: "s", CreatedAt: now,
 			}}, 0, now)
-			wantBadge := "#[bg=brightcyan,fg=black,bold] INFO #[default]"
-			if tc.wantAgent != "" {
-				wantBadge = "#[bg=brightcyan,fg=black,bold] " + tc.wantAgent + " #[default]"
+			if !strings.HasPrefix(out, "#[bg=colour90,fg=colour231,bold] s #[default]") {
+				t.Fatalf("expected project badge at start of %q", out)
 			}
-			if !strings.HasPrefix(out, wantBadge) {
-				t.Fatalf("expected badge %q at start of %q", wantBadge, out)
+			wantStateBadge := "#[bg=brightcyan,fg=black,bold] " + tc.wantState + " #[default]"
+			if !strings.Contains(out, wantStateBadge) {
+				t.Fatalf("expected state badge %q in %q", wantStateBadge, out)
+			}
+			wantAgentBadge := "#[bg=colour51,fg=black,bold] " + tc.wantAgent + " #[default]"
+			if tc.wantAgent != "" && !strings.Contains(out, wantAgentBadge) {
+				t.Fatalf("expected agent badge %q in %q", wantAgentBadge, out)
+			}
+			if tc.wantAgent == "" && strings.Contains(out, "bg=colour51") {
+				t.Fatalf("did not expect agent badge in %q", out)
 			}
 		})
 	}

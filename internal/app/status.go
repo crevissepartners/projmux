@@ -364,9 +364,11 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 const (
 	notifyDimColor      = "colour245"
 	notifyCountColor    = "colour244"
+	notifyProjectOpen   = "#[bg=colour90,fg=colour231,bold]"
 	notifyBadgeInfoOpen = "#[bg=brightcyan,fg=black,bold]"
 	notifyBadgeWarnOpen = "#[bg=yellow,fg=black,bold]"
 	notifyBadgeCritOpen = "#[bg=red,fg=white,bold]"
+	notifyAgentOpen     = "#[bg=colour51,fg=black,bold]"
 	notifySeverityInfo  = "#[fg=brightcyan]"
 	notifySeverityWarn  = "#[fg=yellow]"
 	notifySeverityCrit  = "#[fg=red,bold]"
@@ -410,10 +412,14 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 	head := entries[0]
 	extras := len(entries) - 1
 
-	badge := renderNotifyBadge(head)
+	agent, text := splitAgentPrefix(head)
+	badge := assembleNotifyBadges(
+		renderNotifyProjectBadge(notifyProjectName(head.Session)),
+		renderNotifyBadge(notifyStateLabel(head, text), head.Severity),
+		renderNotifyAgentBadge(agent),
+	)
 	icon := renderNotifyIcon(head.Severity)
-	_, text := splitAgentPrefix(head)
-	target := compactTarget(head)
+	target := notifyPaneTarget(head)
 	age := ""
 	if !now.IsZero() && !head.CreatedAt.IsZero() {
 		age = formatRelativeAge(now.Sub(head.CreatedAt))
@@ -528,10 +534,36 @@ func tierBudget(maxWidth int, badge, target, age, plus string) int {
 // (` INFO ` / ` WARN ` / ` CRIT `). The badge always carries a trailing
 // `#[default]` so subsequent body text reverts to the terminal default fg
 // (no dim, no bold).
-func renderNotifyBadge(n notify.Notification) string {
-	open := notifyBadgeOpen(n.Severity)
-	label := notifyBadgeLabel(n)
+func assembleNotifyBadges(badges ...string) string {
+	parts := make([]string, 0, len(badges))
+	for _, badge := range badges {
+		badge = strings.TrimSpace(badge)
+		if badge != "" {
+			parts = append(parts, badge)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func renderNotifyProjectBadge(project string) string {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return ""
+	}
+	return notifyProjectOpen + " " + project + " " + notifyReset
+}
+
+func renderNotifyBadge(label, severity string) string {
+	open := notifyBadgeOpen(severity)
 	return open + " " + label + " " + notifyReset
+}
+
+func renderNotifyAgentBadge(agent string) string {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return ""
+	}
+	return notifyAgentOpen + " " + agent + " " + notifyReset
 }
 
 // notifyBadgeOpen maps a severity to the bg/fg/bold opening directive for
@@ -548,21 +580,21 @@ func notifyBadgeOpen(severity string) string {
 	}
 }
 
-// notifyBadgeLabel returns the inner text of the badge: the agent name
-// when present, otherwise the severity label (`INFO`/`WARN`/`CRIT`).
-func notifyBadgeLabel(n notify.Notification) string {
-	agent, _ := splitAgentPrefix(n)
-	if agent != "" {
-		return agent
-	}
+func notifyStateLabel(n notify.Notification, text string) string {
 	switch n.Severity {
 	case notify.SeverityWarn:
 		return "WARN"
 	case notify.SeverityCritical:
 		return "CRIT"
-	default:
-		return "INFO"
 	}
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if n.Source == notify.SourceAI && (strings.Contains(normalized, "reply ready") ||
+		strings.Contains(normalized, "needs reply") ||
+		strings.Contains(normalized, "approval needed") ||
+		strings.Contains(normalized, "waiting for input")) {
+		return "NEED"
+	}
+	return "INFO"
 }
 
 // shrinkText shrinks s so its rune length is at most maxRunes, replacing
@@ -646,6 +678,32 @@ func compactTarget(n notify.Notification) string {
 		}
 	}
 	return out
+}
+
+func notifyProjectName(session string) string {
+	session = strings.TrimSpace(session)
+	if session == "" {
+		return ""
+	}
+	if _, after, ok := strings.Cut(session, "-"); ok && strings.TrimSpace(after) != "" {
+		return strings.TrimSpace(after)
+	}
+	return session
+}
+
+func notifyPaneTarget(n notify.Notification) string {
+	win := strings.TrimSpace(n.Window)
+	pane := strings.TrimSpace(n.Pane)
+	switch {
+	case win != "" && pane != "":
+		return "w" + win + ".p" + pane
+	case win != "":
+		return "w" + win
+	case pane != "":
+		return "p" + pane
+	default:
+		return ""
+	}
 }
 
 // formatRelativeAge renders a duration as `just now`, `<N>s` (only via the

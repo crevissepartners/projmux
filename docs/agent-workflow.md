@@ -39,7 +39,7 @@
 - Picker focused unit coverage includes backend-neutral picker item/action mapping, fzf adapter output, native title-focused filtering, numeric selection, and shared close actions.
 - `make test-integration`: Docker-backed Linux integration smoke with real `tmux`, `fzf`, `git`, and `stty`; covers `doctor`, tmux config print/install/apply, and notify queue CRUD against isolated HOME/XDG paths.
 - `make test-install-smoke`: Docker-backed source install smoke; covers `make install`, atomic binary replacement, `tmux apply` against a live `projmux` socket, and post-install notify queue initialization.
-- `make test-e2e`: Docker-backed real-tmux workflow smoke for session/pane setup, app config sourcing, reply-state notify reconciliation, focus notify fallback, and status notify rendering. Host-only terminal, WSL, macOS, and GUI notification behavior remains outside Docker; see [docs/testing.md](testing.md).
+- `make test-e2e`: Docker-backed real-tmux workflow smoke for session/pane setup, app config sourcing, reply-state notify reconciliation, focus notify fallback, and status notify rendering with contextual project/state/agent badges. Host-only terminal, WSL, macOS, and GUI notification behavior remains outside Docker; see [docs/testing.md](testing.md).
 
 ## When To Update This List
 - A feature moves between unit, integration, and e2e coverage levels.

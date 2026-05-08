@@ -355,14 +355,72 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intfzf
 
 func notifySidebarLabel(e notify.Notification, now time.Time) string {
 	age := formatAge(now.Sub(e.CreatedAt))
-	text := strings.TrimSpace(e.Text)
+	agent, text := splitAgentPrefix(e)
 	if text == "" {
 		text = "(empty notification)"
 	}
-	if e.Severity == notify.SeverityInfo || strings.TrimSpace(e.Severity) == "" {
-		return fmt.Sprintf("%-4s %s", age, text)
+	parts := []string{
+		fmt.Sprintf("%-4s", age),
+		notifySidebarProjectBadge(notifyProjectName(e.Session)),
+		notifySidebarStateBadge(notifyStateLabel(e, text)),
 	}
-	return fmt.Sprintf("%-4s %-4s %s", age, strings.ToUpper(shortNotifySeverity(e.Severity)), text)
+	if agent != "" {
+		parts = append(parts, notifySidebarAgentBadge(agent))
+	}
+	if target := notifyPaneTarget(e); target != "" {
+		parts = append(parts, notifySidebarDim(target))
+	}
+	parts = append(parts, text)
+	return strings.Join(parts, " ")
+}
+
+const (
+	notifySidebarReset   = "\x1b[0m"
+	notifySidebarDimOpen = "\x1b[38;5;245m"
+	notifySidebarProject = "\x1b[1;38;5;231;48;5;90m"
+	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;45m"
+	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;220m"
+	notifySidebarCrit    = "\x1b[1;38;5;231;48;5;160m"
+	notifySidebarAgent   = "\x1b[1;38;5;16;48;5;51m"
+)
+
+func notifySidebarProjectBadge(project string) string {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		project = "project"
+	}
+	return notifySidebarProject + " " + project + " " + notifySidebarReset
+}
+
+func notifySidebarStateBadge(label string) string {
+	label = strings.ToUpper(strings.TrimSpace(label))
+	if label == "" {
+		label = "INFO"
+	}
+	open := notifySidebarInfo
+	switch label {
+	case "WARN":
+		open = notifySidebarWarn
+	case "CRIT":
+		open = notifySidebarCrit
+	}
+	return open + " " + label + " " + notifySidebarReset
+}
+
+func notifySidebarAgentBadge(agent string) string {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return ""
+	}
+	return notifySidebarAgent + " " + agent + " " + notifySidebarReset
+}
+
+func notifySidebarDim(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return notifySidebarDimOpen + value + notifySidebarReset
 }
 
 func shortNotifySeverity(severity string) string {
