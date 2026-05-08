@@ -34,7 +34,6 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 			return os.Getenv(name)
 		},
 		homeDir:    func() (string, error) { return home, nil },
-		getwd:      func() (string, error) { return "/tmp/work tree", nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 	}
@@ -91,7 +90,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		}
 	}
 
-	wantArgs := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "main", "-c", "/tmp/work tree"}
+	wantArgs := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "home", "-c", home}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
 	}
@@ -116,7 +115,6 @@ func TestShellAppConfigFallsBackToPortableShell(t *testing.T) {
 			return ""
 		},
 		homeDir:    func() (string, error) { return home, nil },
-		getwd:      func() (string, error) { return "", nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 	}
@@ -156,7 +154,6 @@ func TestShellSupportsRuntimeOverrides(t *testing.T) {
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:  func(string) string { return "" },
 		homeDir:    func() (string, error) { return home, nil },
-		getwd:      func() (string, error) { return "", nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 	}
@@ -168,7 +165,30 @@ func TestShellSupportsRuntimeOverrides(t *testing.T) {
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("config was written despite --no-install: %v", err)
 	}
-	wantArgs := []string{"-L", "pmx-dev", "-f", configPath, "new-session", "-A", "-s", "dev"}
+	wantArgs := []string{"-L", "pmx-dev", "-f", configPath, "new-session", "-A", "-s", "dev", "-c", home}
+	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
+		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
+	}
+}
+
+func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "home", "-c", home}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
 	}
@@ -204,7 +224,6 @@ func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:  func(string) string { return "" },
 		homeDir:    func() (string, error) { return home, nil },
-		getwd:      func() (string, error) { return "", nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 		update:     update,
@@ -267,7 +286,6 @@ func TestShellUpdatePromptLaterContinuesWithoutApplying(t *testing.T) {
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:  func(string) string { return "" },
 		homeDir:    func() (string, error) { return home, nil },
-		getwd:      func() (string, error) { return "", nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 		update:     update,
@@ -308,7 +326,6 @@ func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:  func(string) string { return "" },
 		homeDir:    func() (string, error) { return home, nil },
-		getwd:      func() (string, error) { return "", nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 		update:     update,
@@ -366,7 +383,6 @@ func TestShellSkipsPromptWithoutFreshSupportedUpdate(t *testing.T) {
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:  func(string) string { return "" },
 		homeDir:    func() (string, error) { return home, nil },
-		getwd:      func() (string, error) { return "", nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 		update:     update,
@@ -393,7 +409,6 @@ func TestShellRejectsNestedProjmuxSocket(t *testing.T) {
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:  os.Getenv,
 		homeDir:    func() (string, error) { return home, nil },
-		getwd:      func() (string, error) { return "", nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 	}
