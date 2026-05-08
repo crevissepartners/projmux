@@ -145,8 +145,11 @@ type NativeRunner struct {
 
 const nativePageSize = 12
 const (
-	defaultNativeRows = 30
-	defaultNativeCols = 100
+	defaultNativeRows  = 30
+	defaultNativeCols  = 100
+	nativeCurrentStart = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
+	nativePointer      = "\x1b[38;2;225;38;114m▌\x1b[0m "
+	nativeReset        = "\x1b[0m"
 )
 
 func (r NativeRunner) Run(options Options) (Result, error) {
@@ -703,7 +706,7 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 		listLimit = maxInt(4, layout.Rows-previewHeight-8)
 	}
 	start, end := nativeVisibleRange(len(items), selected, listLimit)
-	listLines := nativeInteractiveListLines(items, start, end, selected)
+	listLines := nativeInteractiveListLines(items, start, end, selected, options.MultiLine)
 	if len(items) == 0 {
 		fmt.Fprintln(w, "  no matches")
 		return
@@ -764,19 +767,22 @@ func nativeVisibleRange(total, selected, limit int) (int, int) {
 	return start, start + limit
 }
 
-func nativeInteractiveListLines(items []Item, start, end, selected int) []string {
+func nativeInteractiveListLines(items []Item, start, end, selected int, multiLine bool) []string {
 	lines := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
-		lines = append(lines, nativeInteractiveItemLines(items[i], i == selected)...)
+		lines = append(lines, nativeInteractiveItemLines(items[i], i == selected, multiLine)...)
 	}
 	return lines
 }
 
-func nativeInteractiveItemLines(item Item, selected bool) []string {
+func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
 	lines := strings.Split(item.EffectiveLabel(), "\n")
 	prefix := "  "
 	if selected {
 		prefix = "> "
+		if multiLine {
+			prefix = nativePointer
+		}
 	}
 	if len(lines) == 0 {
 		lines = []string{""}
@@ -784,18 +790,34 @@ func nativeInteractiveItemLines(item Item, selected bool) []string {
 	rendered := make([]string, 0, len(lines)+len(item.MetaLines))
 	first := fmt.Sprintf("%s%s", prefix, strings.TrimRight(lines[0], "\r"))
 	if selected {
-		first = "\x1b[7m" + first + "\x1b[0m"
+		if multiLine {
+			first = prefix + nativeSelectedContent(strings.TrimRight(lines[0], "\r"))
+		} else {
+			first = "\x1b[7m" + first + nativeReset
+		}
 	}
 	rendered = append(rendered, first)
 	for _, line := range lines[1:] {
-		rendered = append(rendered, fmt.Sprintf("    %s", strings.TrimRight(line, "\r")))
+		line = fmt.Sprintf("    %s", strings.TrimRight(line, "\r"))
+		if selected && multiLine {
+			line = "  " + nativeSelectedContent(strings.TrimSpace(line))
+		}
+		rendered = append(rendered, line)
 	}
 	for _, meta := range item.MetaLines {
 		if meta = strings.TrimSpace(meta); meta != "" {
-			rendered = append(rendered, fmt.Sprintf("    %s", meta))
+			line := fmt.Sprintf("    %s", meta)
+			if selected && multiLine {
+				line = "  " + nativeSelectedContent(meta)
+			}
+			rendered = append(rendered, line)
 		}
 	}
 	return rendered
+}
+
+func nativeSelectedContent(value string) string {
+	return nativeCurrentStart + strings.ReplaceAll(value, nativeReset, nativeReset+nativeCurrentStart) + nativeReset
 }
 
 func nativePreviewLines(options Options, items []Item, selected, limit int) []string {

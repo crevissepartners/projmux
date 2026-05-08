@@ -305,6 +305,40 @@ func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:        "switch",
+		MultiLine: true,
+		Items: []Item{{
+			Label: "api\n  branch main",
+			Value: "/repo/api",
+		}},
+	}, []Item{{
+		Label: "api\n  branch main",
+		Value: "/repo/api",
+	}}, "", 0, nativeLayout{Rows: 24, Cols: 80})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "▌") || !strings.Contains(rendered, "48;2;38;50;56") {
+		t.Fatalf("native output = %q, want fzf-like pointer and current-row color", rendered)
+	}
+	if strings.Contains(rendered, "> api") {
+		t.Fatalf("native output = %q, want multiline selection to avoid legacy > pointer", rendered)
+	}
+}
+
+func TestNativeSelectedContentKeepsCurrentStyleAfterReset(t *testing.T) {
+	t.Parallel()
+
+	rendered := nativeSelectedContent("\x1b[1mapi\x1b[0m branch")
+	if !strings.Contains(rendered, nativeReset+nativeCurrentStart+" branch") {
+		t.Fatalf("nativeSelectedContent() = %q, want current style restored after reset", rendered)
+	}
+}
+
 func TestNativeInteractiveRendersDownPreviewBelowList(t *testing.T) {
 	t.Parallel()
 
