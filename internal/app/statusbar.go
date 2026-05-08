@@ -414,7 +414,7 @@ func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Wri
 	if err != nil {
 		return c.runTmux(stderr, "display-message", "statusbar usage: cannot resolve projmux binary")
 	}
-	popupShell := tmuxShellQuote(binaryPath) + " usage; read -n1 -s"
+	popupShell := tmuxShellQuote(binaryPath) + " usage; printf '\\nPress Enter to close.\\n'; IFS= read -r _"
 	if err := c.runTmuxNoFallback(stderr, "display-popup", "-E", "-h", "60%", "-w", "80%", popupShell); err == nil {
 		return nil
 	}

@@ -54,7 +54,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `pwd`     | 0 | copy `#{pane_current_path}` to tmux buffer and show a compact path popup | `prefix s p`  |
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
-| `usage`   | 1 | `display-popup -E -h 60% -w 80% -- projmux usage` | `prefix s u`  |
+| `usage`   | 1 | `display-popup -E -h 60% -w 80% -- projmux usage`, then wait for Enter | `prefix s u`  |
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on success | `prefix s n`  |
 
 `notify` reads the pending queue only. For a live pane-state view that is

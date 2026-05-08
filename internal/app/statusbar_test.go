@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -305,7 +306,6 @@ func TestStatusbarClickPopupActionFailuresShowToast(t *testing.T) {
 		{name: "git", rangeID: "git", want: "statusbar git: popup failed"},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -358,6 +358,12 @@ func TestStatusbarClickUsageOpensPopup(t *testing.T) {
 	}
 	if !sawTmuxSubcommand(runner.calls, "display-popup") {
 		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Press Enter to close.") {
+		t.Fatalf("missing enter-to-close prompt; calls = %#v", runner.calls)
+	}
+	if sawTmuxPopupCommandContaining(runner.calls, "read -n1 -s") {
+		t.Fatalf("usage popup should wait for Enter, not any key; calls = %#v", runner.calls)
 	}
 }
 
@@ -837,10 +843,8 @@ func sawTmuxSubcommand(calls []statusbarFakeCall, sub string) bool {
 		if c.name != "tmux" {
 			continue
 		}
-		for _, a := range c.args {
-			if a == sub {
-				return true
-			}
+		if slices.Contains(c.args, sub) {
+			return true
 		}
 	}
 	return false
