@@ -19,8 +19,12 @@ The fzf compatibility surface for this POC is tracked in
 - The native picker supports ranked fuzzy search/filter, arrow-key selection in
   normal CSI and tmux application-cursor modes, Enter, Esc, Ctrl-C, Backspace,
   Ctrl-U, Ctrl-W, PageUp/PageDown, Home/End, modified CSI keys, custom expect
-  keys such as Ctrl-X/Alt-P, `start:pos(N)` initial focus, preview command
-  output, preview cycle command bindings, and sidebar focus command bindings.
+  keys such as Ctrl-X/Alt-P, printable expect keys such as notify `a`, control
+  expect keys such as notify `Ctrl-A`, `start:pos(N)` initial focus, preview
+  command output, preview cycle command bindings, and sidebar focus command
+  bindings.
+- Native interactive picker screens use an alternate screen lifecycle to better
+  match fzf fullscreen behavior and restore the tmux pane after exit.
 - In tmux-triggered command paths where stdin is not the controlling terminal,
   the native picker falls back to `/dev/tty` before entering raw mode. This
   avoids line-mode escape leakage such as arrow keys appearing as `^[[`.
@@ -67,8 +71,9 @@ mounts the repository into an isolated `--network none` container, builds
 exercises `projmux switch --ui=sidebar` search/selection under a container PTY,
 exercises `projmux switch --ui=popup` and `projmux sessions --ui=popup` against
 existing tmux sessions, launches `projmux shell` under a container PTY, verifies
-that it creates a tmux session, and exercises the settings CLI picker through
-the native backend.
+that it creates a tmux session, exercises `notify list --ui=sidebar` with the
+printable `a` expect key, and exercises the settings CLI picker through the
+native backend.
 
 Short tmux-friendly form:
 

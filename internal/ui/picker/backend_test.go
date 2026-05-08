@@ -164,6 +164,26 @@ func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveUsesAlternateScreen(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	_, err := runNativeInteractive(strings.NewReader("\r"), &out, Options{
+		UI:    "switch",
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	rendered := out.String()
+	if !strings.HasPrefix(rendered, nativeScreenEnter) {
+		t.Fatalf("native output = %q, want alternate-screen enter prefix", rendered)
+	}
+	if !strings.HasSuffix(rendered, nativeScreenLeave) {
+		t.Fatalf("native output = %q, want alternate-screen leave suffix", rendered)
+	}
+}
+
 func TestNativeInteractiveSupportsApplicationCursorKeys(t *testing.T) {
 	t.Parallel()
 
@@ -244,6 +264,54 @@ func TestNativeInteractiveSupportsCustomExpectKeys(t *testing.T) {
 	}
 	if result.Key != "alt-p" || result.Value != "/repo/api" {
 		t.Fatalf("result = %#v, want alt-p custom action on selected item", result)
+	}
+}
+
+func TestNativeInteractiveSupportsPrintableExpectKeys(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("a"), io.Discard, Options{
+		UI:      "notify",
+		Items:   []Item{{Title: "deploy", Value: "notification-id"}},
+		Actions: CustomActions("a"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "a" || result.Value != "notification-id" || result.Query != "" {
+		t.Fatalf("result = %#v, want printable expect key action", result)
+	}
+}
+
+func TestNativeInteractiveSupportsControlExpectKeys(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x01"), io.Discard, Options{
+		UI:      "notify",
+		Items:   []Item{{Title: "deploy", Value: "notification-id"}},
+		Actions: CustomActions("ctrl-a"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "ctrl-a" || result.Value != "notification-id" {
+		t.Fatalf("result = %#v, want ctrl-a expect key action", result)
+	}
+}
+
+func TestNativeInteractiveSupportsControlAltCloseKeys(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b\x13"), io.Discard, Options{
+		UI:      "settings",
+		Items:   []Item{{Title: "AI", Value: "ai"}},
+		Actions: CloseActions("ctrl-alt-s"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if !result.Closed || result.Key != "ctrl-alt-s" {
+		t.Fatalf("result = %#v, want ctrl-alt-s close action", result)
 	}
 }
 

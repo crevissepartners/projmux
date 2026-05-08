@@ -150,6 +150,8 @@ const (
 	nativeCurrentStart = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
 	nativePointer      = "\x1b[38;2;225;38;114m▌\x1b[0m "
 	nativeReset        = "\x1b[0m"
+	nativeScreenEnter  = "\x1b[?1049h\x1b[?25l"
+	nativeScreenLeave  = "\x1b[?25h\x1b[?1049l\r\n"
 )
 
 func (r NativeRunner) Run(options Options) (Result, error) {
@@ -268,8 +270,8 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	focusedValue := ""
 	previewOffset := 0
 	layout := detectNativeLayout(in)
-	fmt.Fprint(out, "\x1b[?25l")
-	defer fmt.Fprint(out, "\x1b[?25h\r\n")
+	fmt.Fprint(out, nativeScreenEnter)
+	defer fmt.Fprint(out, nativeScreenLeave)
 
 	for {
 		items := FilterItems(options.Items, query)
@@ -298,20 +300,19 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		}
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
-			switch action.Intent {
-			case ActionClose:
-				return Result{Key: action.Key, Query: query, Closed: true}, nil
-			case ActionCustom:
-				if strings.TrimSpace(action.Command) != "" {
-					runNativeActionCommand(action.Command, selectedNativeValue(items, selected))
+			result, refresh := runNativePickerAction(action, options, items, selected, query)
+			if refresh {
+				continue
+			}
+			return result, nil
+		}
+		if key.Text != "" {
+			if action, ok := findAction(options.Actions, key.Text); ok {
+				result, refresh := runNativePickerAction(action, options, items, selected, query)
+				if refresh {
 					continue
 				}
-				return Result{Key: action.Key, Value: selectedNativeValue(items, selected), Query: query}, nil
-			case ActionAccept:
-				if options.AcceptQuery {
-					return Result{Key: action.Key, Query: query}, nil
-				}
-				return Result{Key: action.Key, Value: selectedNativeValue(items, selected), Query: query}, nil
+				return result, nil
 			}
 		}
 
@@ -380,6 +381,27 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	}
 }
 
+func runNativePickerAction(action Action, options Options, items []Item, selected int, query string) (Result, bool) {
+	value := selectedNativeValue(items, selected)
+	switch action.Intent {
+	case ActionClose:
+		return Result{Key: action.Key, Query: query, Closed: true}, false
+	case ActionCustom:
+		if strings.TrimSpace(action.Command) != "" {
+			runNativeActionCommand(action.Command, value)
+			return Result{}, true
+		}
+		return Result{Key: action.Key, Value: value, Query: query}, false
+	case ActionAccept:
+		if options.AcceptQuery {
+			return Result{Key: action.Key, Query: query}, false
+		}
+		return Result{Key: action.Key, Value: value, Query: query}, false
+	default:
+		return Result{}, false
+	}
+}
+
 type nativeLayout struct {
 	Rows int
 	Cols int
@@ -441,6 +463,8 @@ func readNativeKey(r io.Reader) (nativeKey, error) {
 		return nativeKey{}, nil
 	case '\r', '\n':
 		return nativeKey{Name: "enter"}, nil
+	case 0x01:
+		return nativeKey{Name: "ctrl-a"}, nil
 	case 0x03:
 		return nativeKey{Name: "ctrl-c"}, nil
 	case 0x0e:
@@ -500,6 +524,9 @@ func readNativeEscapeKey(r io.Reader) (nativeKey, error) {
 	}
 	if b >= 'A' && b <= 'Z' {
 		return nativeKey{Name: "alt-" + strings.ToLower(string([]byte{b}))}, nil
+	}
+	if b >= 0x01 && b <= 0x1a {
+		return nativeKey{Name: "ctrl-alt-" + string(rune('a'+b-1))}, nil
 	}
 	return nativeKey{Name: "esc"}, nil
 }

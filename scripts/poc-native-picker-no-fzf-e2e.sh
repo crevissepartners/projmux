@@ -104,6 +104,21 @@ docker run --rm \
     fi
     tmux -L poc-no-fzf kill-server
     echo "[poc/no-fzf] projmux shell launched tmux session"
+    echo "[poc/no-fzf] exercise native notify sidebar printable expect key"
+    /tmp/projmux notify push --text "deploy ok" --target main --source ai --id poc-notify
+    notify_log=/tmp/projmux-notify.log
+    notify_status=0
+    printf "a" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
+    if [[ "$notify_status" != 0 ]]; then
+      cat "$notify_log"
+      exit "$notify_status"
+    fi
+    if ! grep -q "ack poc-notify" "$notify_log"; then
+      cat "$notify_log"
+      echo "native notify sidebar did not ack with printable expect key" >&2
+      exit 1
+    fi
+    echo "[poc/no-fzf] native notify sidebar acked selected row"
     echo "[poc/no-fzf] exercise native settings picker"
     settings_stderr=/tmp/projmux-settings.stderr
     printf "1\n4\n" | env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>"$settings_stderr"

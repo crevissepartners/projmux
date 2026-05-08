@@ -18,6 +18,8 @@ picker evidence. It is not a production dependency-policy change.
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | fzf current row colors | multi-line rows | Covered approximately | `nativeCurrentStart`, `nativePointer`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `pickerActionsFromFZF`; `TestNativeInteractiveSupportsCustomExpectKeys` |
+| printable expect keys | notify sidebar `a` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
+| control expect keys | notify sidebar `Ctrl-A`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
 | close `--bind key:abort` | Esc, Ctrl-C, Alt-N, Ctrl-Alt-S variants | Covered | `CloseActions`; `TestNativeRunnerUsesSharedCloseActions` |
 | `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `pickerCommandFromFZFBinding`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes` |
 | `focus:execute-silent(...)` | switch sidebar focus | Covered | `runNativeFocusAction`; `TestNativeInteractiveRunsFocusActionOnSelectionChange` |
@@ -29,6 +31,7 @@ picker evidence. It is not a production dependency-policy change.
 | `--query` | typed settings path defaults | Covered | `Options.InitialQuery`; settings tests |
 | `--print-query` accept-query mode | typed settings path prompts | Covered | `Options.AcceptQuery`; `TestNativeRunnerAcceptsTypedQuery` |
 | terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; tmux `/dev/tty` fallback |
+| alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen` |
 
 ## Verified Flows
 
@@ -43,8 +46,8 @@ picker evidence. It is not a production dependency-policy change.
   confirms the opened tmux shell path.
 - `sessions --ui=popup`: Docker no-fzf e2e creates existing tmux sessions,
   types `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
-- `notify sidebar`: native routing is unit-covered; queue/focus behavior remains
-  better validated in app tests than in Docker e2e.
+- `notify sidebar`: native routing is unit-covered; Docker no-fzf e2e pushes a
+  notification, presses printable expect key `a`, and verifies the row is acked.
 
 ## Remaining Gaps Before Calling This Complete
 
