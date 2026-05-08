@@ -332,15 +332,17 @@ func (c *settingsCommand) runSetProjectRootTyped(stdout, stderr io.Writer) error
 		return errors.New("project root settings are not configured")
 	}
 
+	initialQuery := c.projectRootTypedInitialQuery()
 	result, err := c.runPicker(intfzf.Options{
-		UI:          "settings-project-root-typed",
-		Entries:     nil,
-		AcceptQuery: true,
-		Prompt:      "Type project root path > ",
-		Header:      "Type one absolute primary root path. Use Workdirs for additional search roots.",
-		Footer:      projmuxFooter("Enter: save  |  Esc/Alt+5/Ctrl+Alt+S: close"),
-		ExpectKeys:  []string{"enter"},
-		Bindings:    settingsCloseBindings(),
+		UI:           "settings-project-root-typed",
+		Entries:      nil,
+		AcceptQuery:  true,
+		InitialQuery: initialQuery,
+		Prompt:       "Type project root path > ",
+		Header:       "Type one absolute primary root path. If unconfigured, the prompt starts at $HOME; Workdirs are separate search roots.",
+		Footer:       projmuxFooter("Enter: save  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys:   []string{"enter"},
+		Bindings:     settingsCloseBindings(),
 	})
 	if err != nil {
 		return err
@@ -361,6 +363,21 @@ func (c *settingsCommand) runSetProjectRootTyped(stdout, stderr io.Writer) error
 		return nil
 	}
 	return c.switcher.saveSavedProjdir(expanded, stdout)
+}
+
+func (c *settingsCommand) projectRootTypedInitialQuery() string {
+	if c.switcher == nil {
+		return ""
+	}
+	value, _, err := c.switcher.currentProjdirInfo()
+	if err == nil && strings.TrimSpace(value) != "" {
+		return value
+	}
+	homeDir, err := c.switcher.resolveHomeDir()
+	if err != nil {
+		return ""
+	}
+	return homeDir
 }
 
 func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {

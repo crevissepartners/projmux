@@ -24,6 +24,7 @@ type Options struct {
 	PreviewCommand string
 	PreviewWindow  string
 	Bindings       []string
+	InitialQuery   string
 	// AcceptQuery surfaces the user-typed query alongside any selection.
 	// When true, the runner passes --print-query to fzf and Result.Query is
 	// populated from the first stdout line emitted by fzf. Existing callers
@@ -178,6 +179,9 @@ func runnerArgs(options Options, supportsFooter bool, filterFile string) []strin
 	)
 	if options.AcceptQuery {
 		args = append(args, "--print-query", "--bind", "enter:print-query+abort")
+	}
+	if options.InitialQuery != "" {
+		args = append(args, "--query", options.InitialQuery)
 	}
 	if options.Read0 {
 		args = append(args,
