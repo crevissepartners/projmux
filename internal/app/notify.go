@@ -356,7 +356,8 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intfzf
 
 func notifySidebarLabel(e notify.Notification, now time.Time) string {
 	age := formatAge(now.Sub(e.CreatedAt))
-	text := notifySidebarLabelCell(e.Text)
+	agent, text := splitAgentPrefix(e)
+	text = notifySidebarLabelCell(text)
 	if text == "" {
 		text = "(empty notification)"
 	}
@@ -364,6 +365,10 @@ func notifySidebarLabel(e notify.Notification, now time.Time) string {
 		notifySidebarAge(age),
 		notifySidebarProjectBadge(notifyProjectName(e.Session)),
 	}
+	if agent != "" {
+		metaParts = append(metaParts, notifySidebarAgentBadge(agent))
+	}
+	metaParts = append(metaParts, notifySidebarStateBadge(notifyStateLabel(e, text)))
 	if window := notifySidebarTargetPart("window", e.Window); window != "" {
 		metaParts = append(metaParts, window)
 	}
@@ -397,6 +402,9 @@ const (
 	notifySidebarReset   = "\x1b[0m"
 	notifySidebarDimOpen = "\x1b[38;5;245m"
 	notifySidebarProject = "\x1b[1;38;5;231;48;5;90m"
+	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;45m"
+	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;220m"
+	notifySidebarCrit    = "\x1b[1;38;5;231;48;5;160m"
 )
 
 func notifySidebarAge(age string) string {
@@ -426,6 +434,40 @@ func notifySidebarTargetPart(label, value string) string {
 		return ""
 	}
 	return notifySidebarDim(label + " " + value)
+}
+
+func notifySidebarStateBadge(label string) string {
+	label = strings.ToUpper(strings.TrimSpace(label))
+	if label == "" {
+		label = "INFO"
+	}
+	open := notifySidebarInfo
+	switch label {
+	case "WARN":
+		open = notifySidebarWarn
+	case "CRIT":
+		open = notifySidebarCrit
+	}
+	return open + " " + label + " " + notifySidebarReset
+}
+
+func notifySidebarAgentBadge(agent string) string {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return ""
+	}
+	return notifySidebarAgentOpen(agent) + " " + agent + " " + notifySidebarReset
+}
+
+func notifySidebarAgentOpen(agent string) string {
+	switch strings.ToLower(strings.TrimSpace(agent)) {
+	case "claude":
+		return "\x1b[1;38;5;16;48;5;208m"
+	case "codex":
+		return "\x1b[1;38;5;231;48;5;33m"
+	default:
+		return "\x1b[1;38;5;16;48;5;51m"
+	}
 }
 
 func notifySidebarDim(value string) string {
