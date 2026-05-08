@@ -1,12 +1,14 @@
 package picker
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -574,6 +576,7 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 	if end < len(items) {
 		fmt.Fprintf(w, "  ... %d more below\n", len(items)-end)
 	}
+	renderNativePreview(w, options, items, selected)
 }
 
 func nativeVisibleRange(total, selected, limit int) (int, int) {
@@ -616,6 +619,61 @@ func renderNativeInteractiveItem(w io.Writer, item Item, selected bool) {
 			fmt.Fprintf(w, "    %s\n", meta)
 		}
 	}
+}
+
+func renderNativePreview(w io.Writer, options Options, items []Item, selected int) {
+	command := strings.TrimSpace(options.Preview.Command)
+	if command == "" || selected < 0 || selected >= len(items) {
+		return
+	}
+	target := strings.TrimSpace(items[selected].PreviewTarget)
+	if target == "" {
+		target = items[selected].Value
+	}
+	if target == "" {
+		return
+	}
+	output := runNativePreviewCommand(command, target)
+	if strings.TrimSpace(output) == "" {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "──────────────── preview ────────────────")
+	for _, line := range limitedNativePreviewLines(output, 18) {
+		fmt.Fprintln(w, line)
+	}
+}
+
+func runNativePreviewCommand(command, target string) string {
+	command = strings.ReplaceAll(command, "{2}", shellQuoteNative(target))
+	command = strings.ReplaceAll(command, "{}", shellQuoteNative(target))
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "sh", "-c", command).CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return ""
+	}
+	return string(out)
+}
+
+func limitedNativePreviewLines(output string, limit int) []string {
+	output = strings.TrimRight(output, "\r\n")
+	if output == "" {
+		return nil
+	}
+	lines := strings.Split(output, "\n")
+	if limit > 0 && len(lines) > limit {
+		lines = append(lines[:limit], fmt.Sprintf("... %d more lines", len(lines)-limit))
+	}
+	return lines
+}
+
+func shellQuoteNative(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func renderNative(w io.Writer, options Options, items []Item, query string) {

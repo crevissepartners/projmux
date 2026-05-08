@@ -180,3 +180,22 @@ func TestNativeInteractiveSupportsPageNavigationAndEditing(t *testing.T) {
 		t.Fatalf("result = %#v, want page-down selection after query editing", result)
 	}
 }
+
+func TestNativeInteractiveRendersSelectedPreview(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	_, err := runNativeInteractive(strings.NewReader("\r"), &out, Options{
+		UI: "switch",
+		Preview: Preview{
+			Command: "printf 'preview:%s' {2}",
+		},
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "preview:/repo/api") {
+		t.Fatalf("native output = %q, want selected preview output", out.String())
+	}
+}
