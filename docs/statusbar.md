@@ -62,9 +62,10 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 `notify` reads the pending queue only. For a live pane-state view that is
 independent of queued reminders, use `projmux attention list`. To explain why
 a live reply badge and the queue disagree, use `projmux notify list --live`.
-The notify segment renders the newest queued item as contextual badges:
-purple project, state (`NEED`/`INFO`/`WARN`/`CRIT`), optional agent, text,
-window/pane location, age, and `+N` for older pending entries.
+The notify segment renders the newest queued item as contextual outline
+badges: neutral project, state (`NEED`/`INFO`/`WARN`/`CRIT`), optional
+agent-colored outline, text, window/pane location, age, and `+N` for older
+pending entries.
 `usage` deliberately opens the detailed `projmux usage` table popup; it is the
 clear action surface for the compact HUD bar.
 

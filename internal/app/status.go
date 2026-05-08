@@ -357,25 +357,24 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 }
 
 // HUD-style design tokens for the notify status segment. The leading
-// severity+agent block is rendered as a solid color "badge" (bg fill) so
-// the segment reads as an actual notification pill instead of dim text.
+// project/state/agent badges use colored outlines rather than background
+// fills so they do not compete with the top-row project badge.
 // Reused dim color (`colour245`) keeps the metadata visually consistent
 // with the AI usage segment so the two read as one design family.
 const (
-	notifyDimColor      = "colour245"
-	notifyCountColor    = "colour244"
-	notifyProjectOpen   = "#[bg=colour90,fg=colour231,bold]"
-	notifyBadgeInfoOpen = "#[bg=brightcyan,fg=black,bold]"
-	notifyBadgeWarnOpen = "#[bg=yellow,fg=black,bold]"
-	notifyBadgeCritOpen = "#[bg=red,fg=white,bold]"
-	notifyAgentOpen     = "#[bg=colour51,fg=black,bold]"
-	notifySeverityInfo  = "#[fg=brightcyan]"
-	notifySeverityWarn  = "#[fg=yellow]"
-	notifySeverityCrit  = "#[fg=red,bold]"
-	notifyIcon          = "●"
-	notifyMidDot        = "·"
-	notifyEllipsis      = "…"
-	notifyReset         = "#[default]"
+	notifyDimColor     = "colour245"
+	notifyCountColor   = "colour244"
+	notifyProjectColor = "colour244"
+	notifyBadgeInfo    = "brightcyan"
+	notifyBadgeWarn    = "yellow"
+	notifyBadgeCrit    = "red"
+	notifySeverityInfo = "#[fg=brightcyan]"
+	notifySeverityWarn = "#[fg=yellow]"
+	notifySeverityCrit = "#[fg=red,bold]"
+	notifyIcon         = "●"
+	notifyMidDot       = "·"
+	notifyEllipsis     = "…"
+	notifyReset        = "#[default]"
 )
 
 // known agent prefixes recognised when stripping a leading `<agent>:` from
@@ -387,20 +386,19 @@ var notifyKnownAgents = []string{"claude", "codex"}
 // HUD-style tmux status segment. The output ends with a tmux `#[default]`
 // reset so adjacent segments are not stained by colors.
 //
-// Long form: `[ <agent|LABEL> ] <text>  · <target> · <age>   +<N>`
+// Long form: `<project> <state> [agent] <text>  · <target> · <age>   +<N>`
 //
-// The leading block is a solid color badge (bg=severity, fg=black/white,
-// bold) padded with a single space on each side. The body text uses the
-// terminal default foreground (no dim, no bold) so it pops against the
-// dim metadata that follows it.
+// The leading badges are outline boxes with colored borders and default
+// interior text. The body text uses the terminal default foreground
+// (no dim, no bold) so it pops against the dim metadata that follows it.
 //
 // The renderer degrades through six tiers as `maxWidth` shrinks:
 //
-//  1. Full long form: badge + text + target + age + count.
+//  1. Full long form: outline badges + text + target + age + count.
 //  2. Drop `<age>` (and its preceding `·`).
 //  3. Drop `<target>` (and its preceding `·`).
 //  4. Truncate `<text>` with a trailing `…`.
-//  5. Drop the badge entirely; fall back to a standalone `●` severity icon.
+//  5. Drop the badges entirely; fall back to a standalone `●` severity icon.
 //  6. Hard truncate everything (icon + count are still preserved).
 //
 // `now` is the wall-clock used to compute the relative age. Pass the zero
@@ -476,7 +474,7 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 //
 // Layout: `<badge> <text>  · <target> · <age><plus>`
 //
-// The badge already carries its own bg/fg styling and trailing `#[default]`,
+// The badge group already carries its own fg styling and trailing `#[default]`,
 // so we just concatenate it. The body text inherits the terminal default
 // foreground (deliberately not dim) so it pops next to the dim metadata.
 func assembleNotify(badge, text, target, age, plus string) string {
@@ -528,12 +526,7 @@ func tierBudget(maxWidth int, badge, target, age, plus string) int {
 	return room
 }
 
-// renderNotifyBadge builds the leading severity+agent pill. For ai-source
-// entries with a recognised `<agent>:` prefix, the badge text is the agent
-// name (e.g. ` claude `). Otherwise we fall back to a severity label
-// (` INFO ` / ` WARN ` / ` CRIT `). The badge always carries a trailing
-// `#[default]` so subsequent body text reverts to the terminal default fg
-// (no dim, no bold).
+// assembleNotifyBadges joins the leading project/state/agent outline badges.
 func assembleNotifyBadges(badges ...string) string {
 	parts := make([]string, 0, len(badges))
 	for _, badge := range badges {
@@ -550,12 +543,11 @@ func renderNotifyProjectBadge(project string) string {
 	if project == "" {
 		return ""
 	}
-	return notifyProjectOpen + " " + project + " " + notifyReset
+	return renderNotifyOutlineBadge(project, notifyProjectColor)
 }
 
 func renderNotifyBadge(label, severity string) string {
-	open := notifyBadgeOpen(severity)
-	return open + " " + label + " " + notifyReset
+	return renderNotifyOutlineBadge(label, notifyBadgeColor(severity))
 }
 
 func renderNotifyAgentBadge(agent string) string {
@@ -563,20 +555,43 @@ func renderNotifyAgentBadge(agent string) string {
 	if agent == "" {
 		return ""
 	}
-	return notifyAgentOpen + " " + agent + " " + notifyReset
+	return renderNotifyOutlineBadge(agent, notifyAgentColor(agent))
 }
 
-// notifyBadgeOpen maps a severity to the bg/fg/bold opening directive for
-// the badge. Unknown severities fall through to the info palette so we
-// never emit a stripped escape.
-func notifyBadgeOpen(severity string) string {
+func renderNotifyOutlineBadge(label, color string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	color = strings.TrimSpace(color)
+	if color == "" {
+		color = notifyDimColor
+	}
+	return "#[fg=" + color + ",bold]⟦" + notifyReset + " " + label + " " + "#[fg=" + color + ",bold]⟧" + notifyReset
+}
+
+func notifyAgentColor(agent string) string {
+	switch strings.ToLower(strings.TrimSpace(agent)) {
+	case "claude":
+		return "colour208"
+	case "codex":
+		return "colour33"
+	default:
+		return "colour51"
+	}
+}
+
+// notifyBadgeColor maps a severity to the state outline color. Unknown
+// severities fall through to the info palette so we never emit a stripped
+// escape.
+func notifyBadgeColor(severity string) string {
 	switch severity {
 	case notify.SeverityWarn:
-		return notifyBadgeWarnOpen
+		return notifyBadgeWarn
 	case notify.SeverityCritical:
-		return notifyBadgeCritOpen
+		return notifyBadgeCrit
 	default:
-		return notifyBadgeInfoOpen
+		return notifyBadgeInfo
 	}
 }
 

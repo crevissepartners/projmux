@@ -53,10 +53,10 @@ func TestStatusNotifyExternalEntryRendersInfoBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[bg=colour90,fg=colour231,bold] main #[default]") {
+	if !strings.HasPrefix(got, "#[fg=colour244,bold]⟦#[default] main #[fg=colour244,bold]⟧#[default]") {
 		t.Fatalf("stdout = %q, want project badge prefix", got)
 	}
-	if !strings.Contains(got, "#[bg=brightcyan,fg=black,bold] INFO #[default]") {
+	if !strings.Contains(got, "#[fg=brightcyan,bold]⟦#[default] INFO #[fg=brightcyan,bold]⟧#[default]") {
 		t.Fatalf("stdout = %q, want INFO badge", got)
 	}
 	if !strings.Contains(got, "hello world") {
@@ -110,9 +110,9 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	}
 	got := stdout.String()
 	for _, want := range []string{
-		"#[bg=colour90,fg=colour231,bold] s #[default]",
-		"#[bg=brightcyan,fg=black,bold] NEED #[default]",
-		"#[bg=colour51,fg=black,bold] claude #[default]",
+		"#[fg=colour244,bold]⟦#[default] s #[fg=colour244,bold]⟧#[default]",
+		"#[fg=brightcyan,bold]⟦#[default] NEED #[fg=brightcyan,bold]⟧#[default]",
+		"#[fg=colour208,bold]⟦#[default] claude #[fg=colour208,bold]⟧#[default]",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want badge %q", got, want)
@@ -144,7 +144,7 @@ func TestStatusNotifyWarnEntryRendersYellowBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[bg=colour90,fg=colour231,bold] ops #[default]") || !strings.Contains(got, "#[bg=yellow,fg=black,bold] WARN #[default]") {
+	if !strings.HasPrefix(got, "#[fg=colour244,bold]⟦#[default] ops #[fg=colour244,bold]⟧#[default]") || !strings.Contains(got, "#[fg=yellow,bold]⟦#[default] WARN #[fg=yellow,bold]⟧#[default]") {
 		t.Fatalf("stdout = %q, want project + yellow WARN badges", got)
 	}
 }
@@ -161,7 +161,7 @@ func TestStatusNotifyCriticalEntryRendersRedBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[bg=colour90,fg=colour231,bold] prod #[default]") || !strings.Contains(got, "#[bg=red,fg=white,bold] CRIT #[default]") {
+	if !strings.HasPrefix(got, "#[fg=colour244,bold]⟦#[default] prod #[fg=colour244,bold]⟧#[default]") || !strings.Contains(got, "#[fg=red,bold]⟦#[default] CRIT #[fg=red,bold]⟧#[default]") {
 		t.Fatalf("stdout = %q, want project + red CRIT badges", got)
 	}
 }
@@ -180,7 +180,7 @@ func TestStatusNotifyUnknownSeverityFallsBackToInfoBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.HasPrefix(got, "#[bg=colour90,fg=colour231,bold] s #[default]") || !strings.Contains(got, "#[bg=brightcyan,fg=black,bold] INFO #[default]") {
+	if !strings.HasPrefix(got, "#[fg=colour244,bold]⟦#[default] s #[fg=colour244,bold]⟧#[default]") || !strings.Contains(got, "#[fg=brightcyan,bold]⟦#[default] INFO #[fg=brightcyan,bold]⟧#[default]") {
 		t.Fatalf("stdout = %q, want project + INFO fallback badges", got)
 	}
 }
@@ -280,10 +280,10 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 		t.Fatalf("tier1 visualLen=%d > 80: %q", visualLen(out), out)
 	}
 	for _, want := range []string{
-		"#[bg=colour90,fg=colour231,bold] s #[default]",
-		"#[bg=brightcyan,fg=black,bold] NEED #[default]",
-		"#[bg=colour51,fg=black,bold] claude #[default]",
-		"reply ready · review",
+		"#[fg=colour244,bold]⟦#[default] s #[fg=colour244,bold]⟧#[default]",
+		"#[fg=brightcyan,bold]⟦#[default] NEED #[fg=brightcyan,bold]⟧#[default]",
+		"#[fg=colour208,bold]⟦#[default] claude #[fg=colour208,bold]⟧#[default]",
+		"reply ready",
 		"w1.p0",
 		"2m",
 		"+1",
@@ -305,10 +305,10 @@ func TestStatusNotifyWidthTier2DropsAge(t *testing.T) {
 		t.Fatalf("tier2 visualLen=%d > 45: %q", visualLen(out), out)
 	}
 	for _, want := range []string{
-		"#[bg=colour90,fg=colour231,bold] s #[default]",
-		"#[bg=brightcyan,fg=black,bold] NEED #[default]",
-		"#[bg=colour51,fg=black,bold] claude #[default]",
-		"reply ready · review",
+		"#[fg=colour244,bold]⟦#[default] s #[fg=colour244,bold]⟧#[default]",
+		"#[fg=brightcyan,bold]⟦#[default] NEED #[fg=brightcyan,bold]⟧#[default]",
+		"#[fg=colour208,bold]⟦#[default] claude #[fg=colour208,bold]⟧#[default]",
+		"reply ready",
 		"+1",
 	} {
 		if !strings.Contains(out, want) {
@@ -332,8 +332,8 @@ func TestStatusNotifyWidthTier3DropsTarget(t *testing.T) {
 		t.Fatalf("tier3 visualLen=%d > 40: %q", visualLen(out), out)
 	}
 	for _, want := range []string{
-		"#[bg=colour90,fg=colour231,bold] s #[default]",
-		"#[bg=brightcyan,fg=black,bold] NEED #[default]",
+		"#[fg=colour244,bold]⟦#[default] s #[fg=colour244,bold]⟧#[default]",
+		"#[fg=brightcyan,bold]⟦#[default] NEED #[fg=brightcyan,bold]⟧#[default]",
 		"+1",
 	} {
 		if !strings.Contains(out, want) {
@@ -356,7 +356,7 @@ func TestStatusNotifyWidthTier4TruncatesText(t *testing.T) {
 	if visualLen(out) > 24 {
 		t.Fatalf("tier4 visualLen=%d > 24: %q", visualLen(out), out)
 	}
-	if strings.Contains(out, "bg=colour90") || strings.Contains(out, "bg=brightcyan") || strings.Contains(out, "bg=colour51") {
+	if strings.Contains(out, "⟦") {
 		t.Fatalf("tier4 should drop badges before icon fallback at this width: %q", out)
 	}
 	if !strings.Contains(out, "+1") {
@@ -367,8 +367,8 @@ func TestStatusNotifyWidthTier4TruncatesText(t *testing.T) {
 	}
 }
 
-// Tier 5 drops the bg-filled badge. The standalone severity-tinted `●`
-// icon (no bg fill) preserves a minimal severity hint for very narrow
+// Tier 5 drops the outline badges. The standalone severity-tinted `●`
+// icon preserves a minimal severity hint for very narrow
 // statuslines.
 func TestStatusNotifyWidthTier5DropsBadge(t *testing.T) {
 	t.Parallel()
@@ -378,8 +378,8 @@ func TestStatusNotifyWidthTier5DropsBadge(t *testing.T) {
 	if visualLen(out) > 14 {
 		t.Fatalf("tier5 visualLen=%d > 14: %q", visualLen(out), out)
 	}
-	if strings.Contains(out, "bg=brightcyan") {
-		t.Fatalf("tier5 must drop the bg-filled badge: %q", out)
+	if strings.Contains(out, "⟦") {
+		t.Fatalf("tier5 must drop the outline badges: %q", out)
 	}
 	if strings.Contains(out, "claude") {
 		t.Fatalf("tier5 must drop the agent label: %q", out)
@@ -429,18 +429,25 @@ func TestStatusNotifyAgentPrefixGracefulFallback(t *testing.T) {
 				ID: "a", Text: tc.text, Severity: notify.SeverityInfo,
 				Source: notify.SourceAI, Session: "s", CreatedAt: now,
 			}}, 0, now)
-			if !strings.HasPrefix(out, "#[bg=colour90,fg=colour231,bold] s #[default]") {
+			if !strings.HasPrefix(out, "#[fg=colour244,bold]⟦#[default] s #[fg=colour244,bold]⟧#[default]") {
 				t.Fatalf("expected project badge at start of %q", out)
 			}
-			wantStateBadge := "#[bg=brightcyan,fg=black,bold] " + tc.wantState + " #[default]"
+			wantStateBadge := "#[fg=brightcyan,bold]⟦#[default] " + tc.wantState + " #[fg=brightcyan,bold]⟧#[default]"
 			if !strings.Contains(out, wantStateBadge) {
 				t.Fatalf("expected state badge %q in %q", wantStateBadge, out)
 			}
-			wantAgentBadge := "#[bg=colour51,fg=black,bold] " + tc.wantAgent + " #[default]"
+			wantAgentColor := "colour51"
+			switch tc.wantAgent {
+			case "claude":
+				wantAgentColor = "colour208"
+			case "codex":
+				wantAgentColor = "colour33"
+			}
+			wantAgentBadge := "#[fg=" + wantAgentColor + ",bold]⟦#[default] " + tc.wantAgent + " #[fg=" + wantAgentColor + ",bold]⟧#[default]"
 			if tc.wantAgent != "" && !strings.Contains(out, wantAgentBadge) {
 				t.Fatalf("expected agent badge %q in %q", wantAgentBadge, out)
 			}
-			if tc.wantAgent == "" && strings.Contains(out, "bg=colour51") {
+			if tc.wantAgent == "" && (strings.Contains(out, "fg=colour51") || strings.Contains(out, "fg=colour208") || strings.Contains(out, "fg=colour33")) {
 				t.Fatalf("did not expect agent badge in %q", out)
 			}
 		})

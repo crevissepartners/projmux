@@ -377,11 +377,10 @@ func notifySidebarLabel(e notify.Notification, now time.Time) string {
 const (
 	notifySidebarReset   = "\x1b[0m"
 	notifySidebarDimOpen = "\x1b[38;5;245m"
-	notifySidebarProject = "\x1b[1;38;5;231;48;5;90m"
+	notifySidebarProject = "\x1b[1;38;5;250;48;5;236m"
 	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;45m"
 	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;220m"
 	notifySidebarCrit    = "\x1b[1;38;5;231;48;5;160m"
-	notifySidebarAgent   = "\x1b[1;38;5;16;48;5;51m"
 )
 
 func notifySidebarProjectBadge(project string) string {
@@ -412,7 +411,18 @@ func notifySidebarAgentBadge(agent string) string {
 	if agent == "" {
 		return ""
 	}
-	return notifySidebarAgent + " " + agent + " " + notifySidebarReset
+	return notifySidebarAgentOpen(agent) + " " + agent + " " + notifySidebarReset
+}
+
+func notifySidebarAgentOpen(agent string) string {
+	switch strings.ToLower(strings.TrimSpace(agent)) {
+	case "claude":
+		return "\x1b[1;38;5;16;48;5;208m"
+	case "codex":
+		return "\x1b[1;38;5;231;48;5;33m"
+	default:
+		return "\x1b[1;38;5;16;48;5;51m"
+	}
 }
 
 func notifySidebarDim(value string) string {
