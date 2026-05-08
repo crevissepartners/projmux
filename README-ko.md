@@ -1,5 +1,9 @@
 # projmux
 
+<p align="center">
+  <img src="docs/assets/projmux-icon.png" alt="projmux icon" width="112">
+</p>
+
 프로젝트별 tmux workspace를 빠르게 전환하고, preview/status context/AI pane
 attention까지 함께 다루는 터미널 workspace 도구입니다.
 
