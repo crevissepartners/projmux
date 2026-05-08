@@ -11,6 +11,7 @@ import (
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
@@ -42,7 +43,9 @@ type sessionsCommand struct {
 	opener     sessionsOpener
 	killer     sessionsKiller
 	runner     sessionsRunner
+	native     intpicker.Runner
 	executable func() (string, error)
+	lookupEnv  func(string) string
 }
 
 func newSessionsCommand() *sessionsCommand {
@@ -53,7 +56,9 @@ func newSessionsCommand() *sessionsCommand {
 		opener:     client,
 		killer:     client,
 		runner:     intfzf.NewRunner(),
+		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		executable: os.Executable,
+		lookupEnv:  os.Getenv,
 	}
 }
 
@@ -128,7 +133,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		result, err := c.runner.Run(intfzf.Options{
+		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.runner, intfzf.Options{
 			UI:             *ui,
 			Entries:        rowsToEntries(rows),
 			Prompt:         "› ",

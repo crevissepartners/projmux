@@ -9,6 +9,7 @@ import (
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
@@ -124,6 +125,49 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	}
 	if got, want := gotOptions.PreviewWindow, "right,60%,border-left"; got != want {
 		t.Fatalf("runner preview window = %q, want %q", got, want)
+	}
+}
+
+func TestSessionsCommandNativeBackendDoesNotCallFZF(t *testing.T) {
+	t.Parallel()
+
+	var fzfCalled bool
+	opener := &recordingSessionsOpener{}
+	cmd := &sessionsCommand{
+		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
+			return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
+		}),
+		runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			fzfCalled = true
+			return intfzf.Result{}, nil
+		}),
+		native: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			if options.UI != switchUIPopup {
+				t.Fatalf("native UI = %q, want %q", options.UI, switchUIPopup)
+			}
+			if len(options.Items) != 1 || options.Items[0].Value != "repo-b" {
+				t.Fatalf("native items = %#v, want repo-b", options.Items)
+			}
+			return intpicker.Result{Key: "enter", Value: "repo-b"}, nil
+		}),
+		lookupEnv: func(name string) string {
+			if name == intpicker.BackendEnv {
+				return string(intpicker.BackendNative)
+			}
+			return ""
+		},
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		opener:     opener,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if fzfCalled {
+		t.Fatal("fzf runner was called for native sessions backend")
+	}
+	if opener.openSessionName != "repo-b" {
+		t.Fatalf("open session = %q, want repo-b", opener.openSessionName)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 // notifyStore is the subset of *notify.Store the CLI dispatcher needs. The
@@ -32,6 +33,7 @@ type notifyCommand struct {
 	now        func() time.Time
 	runner     tmuxRunner
 	picker     intfzf.Runner
+	native     intpicker.Runner
 	executable func() (string, error)
 	lookupEnv  func(string) string
 	homeDir    func() (string, error)
@@ -42,6 +44,7 @@ func newNotifyCommand() *notifyCommand {
 		now:        time.Now,
 		runner:     reconcileDefaultRunner(),
 		picker:     intfzf.NewRunner(),
+		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		executable: os.Executable,
 		lookupEnv:  os.Getenv,
 		homeDir:    os.UserHomeDir,
@@ -290,7 +293,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		Entries:       notifySidebarEntries(entries, now),
 		DisableSearch: true,
 	}
-	result, err := c.picker.Run(fzfOptions)
+	result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.picker, fzfOptions)
 	if err != nil {
 		return fmt.Errorf("run notify sidebar: %w", err)
 	}

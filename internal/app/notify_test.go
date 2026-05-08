@@ -11,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 type stubNotifyStore struct {
@@ -37,6 +38,12 @@ type stubNotifyPicker struct {
 func (p *stubNotifyPicker) Run(options intfzf.Options) (intfzf.Result, error) {
 	p.options = options
 	return p.result, p.err
+}
+
+type notifyPickerFunc func(options intfzf.Options) (intfzf.Result, error)
+
+func (f notifyPickerFunc) Run(options intfzf.Options) (intfzf.Result, error) {
+	return f(options)
 }
 
 func (s *stubNotifyStore) Push(in notify.PushInput) (notify.Notification, notify.PushResult, error) {
@@ -388,6 +395,60 @@ func TestNotifySidebarLabelDoesNotExposeRawPaneID(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], "window 1") || !strings.Contains(lines[1], "pane 42") {
 		t.Fatalf("metadata = %q, want readable window/pane labels", lines[1])
+	}
+}
+
+func TestNotifySidebarNativeBackendDoesNotCallFZF(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{{
+			ID:        "abc",
+			Text:      "codex: deploy ok",
+			Severity:  notify.SeverityWarn,
+			Source:    notify.SourceAI,
+			Socket:    "projmux",
+			Session:   "main",
+			Window:    "1",
+			Pane:      "0",
+			CreatedAt: time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC),
+			ExpiresAt: time.Date(2026, time.May, 6, 13, 0, 0, 0, time.UTC),
+		}},
+	}
+	var fzfCalled bool
+	cmd := newCmd(store)
+	cmd.native = pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+		if options.UI != "notify-sidebar" {
+			t.Fatalf("native UI = %q, want notify-sidebar", options.UI)
+		}
+		if len(options.Items) != 1 || options.Items[0].Value != "abc" {
+			t.Fatalf("native items = %#v, want abc", options.Items)
+		}
+		return intpicker.Result{Key: "a", Value: "abc"}, nil
+	})
+	cmd.lookupEnv = func(name string) string {
+		if name == intpicker.BackendEnv {
+			return string(intpicker.BackendNative)
+		}
+		return ""
+	}
+	cmd.picker = notifyPickerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		fzfCalled = true
+		return intfzf.Result{}, nil
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if fzfCalled {
+		t.Fatal("fzf picker was called for native notify backend")
+	}
+	if store.ackedID != "abc" {
+		t.Fatalf("ackedID = %q, want abc", store.ackedID)
+	}
+	if !strings.Contains(stdout.String(), "ack abc") {
+		t.Fatalf("stdout = %q, want ack", stdout.String())
 	}
 }
 
