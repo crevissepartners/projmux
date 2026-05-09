@@ -349,6 +349,54 @@ func TestNativeRunnerUsesSharedCloseActions(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveIgnoresMatchingLaunchCloseKeyOnce(t *testing.T) {
+	t.Setenv(NativeLaunchKeyEnv, "alt-1")
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b1\r"), io.Discard, Options{
+		UI:      "switch",
+		Items:   []Item{{Title: "api", Value: "/repo/api"}},
+		Actions: CloseActions("alt-1"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Closed || result.Value != "/repo/api" || result.Key != "enter" {
+		t.Fatalf("result = %#v, want stale launcher ignored and api selected", result)
+	}
+}
+
+func TestNativeInteractiveIgnoresMatchingCSIuLaunchCloseKeyOnce(t *testing.T) {
+	t.Setenv(NativeLaunchKeyEnv, "alt-1")
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[9005u\r"), io.Discard, Options{
+		UI:      "switch",
+		Items:   []Item{{Title: "api", Value: "/repo/api"}},
+		Actions: CloseActions("alt-1"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Closed || result.Value != "/repo/api" || result.Key != "enter" {
+		t.Fatalf("result = %#v, want stale CSI-u launcher ignored and api selected", result)
+	}
+}
+
+func TestNativeInteractiveDoesNotIgnoreDifferentLaunchCloseKey(t *testing.T) {
+	t.Setenv(NativeLaunchKeyEnv, "alt-1")
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b2"), io.Discard, Options{
+		UI:      "notify",
+		Items:   []Item{{Title: "deploy", Value: "notification-id"}},
+		Actions: CloseActions("alt-2"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if !result.Closed || result.Key != "alt-2" {
+		t.Fatalf("result = %#v, want non-launch close key to close", result)
+	}
+}
+
 func TestNativeRunnerAcceptsTypedQuery(t *testing.T) {
 	t.Parallel()
 

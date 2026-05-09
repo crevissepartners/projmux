@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 type tmuxPopupClient interface {
@@ -693,10 +694,32 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 	default:
 		return "", inttmux.PopupOptions{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", mode.Raw)
 	}
+	if launchKey := nativeLaunchKeyForPopupMode(mode.Raw); launchKey != "" {
+		env[intpicker.NativeLaunchKeyEnv] = launchKey
+	}
 
 	options.Cwd = cwd
 	options.Env = env
 	return buildMarkedPopupCommand(binaryPath, commandArgs, marker, cwd, env), options, nil
+}
+
+func nativeLaunchKeyForPopupMode(mode string) string {
+	switch mode {
+	case "sessionizer-sidebar":
+		return "alt-1"
+	case "notify-sidebar":
+		return "alt-2"
+	case "session-popup":
+		return "alt-3"
+	case "ai-split-picker-right", "ai-split-picker-down":
+		return "alt-4"
+	case "ai-split-settings":
+		return "alt-5"
+	case "sessionizer":
+		return "alt-6"
+	default:
+		return ""
+	}
 }
 
 func (c *tmuxCommand) parseConfigBinary(args []string, name string, stderr io.Writer) (string, error) {

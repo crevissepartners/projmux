@@ -14,7 +14,10 @@ import (
 	"unicode/utf8"
 )
 
-const BackendEnv = "PROJMUX_PICKER_BACKEND"
+const (
+	BackendEnv         = "PROJMUX_PICKER_BACKEND"
+	NativeLaunchKeyEnv = "PROJMUX_NATIVE_LAUNCH_KEY"
+)
 
 type Backend string
 
@@ -339,6 +342,8 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	selected := options.InitialIndex
 	focusedValue := ""
 	previewOffset := 0
+	launchKey := strings.ToLower(strings.TrimSpace(os.Getenv(NativeLaunchKeyEnv)))
+	ignoredLaunchKey := false
 	layout := detectNativeLayout(in)
 	fmt.Fprint(out, nativeScreenEnter)
 	defer fmt.Fprint(out, nativeScreenLeave)
@@ -366,6 +371,10 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			return Result{}, fmt.Errorf("read native picker key: %w", err)
 		}
 		if key.Name == "" && key.Text == "" {
+			continue
+		}
+		if shouldIgnoreNativeLaunchKey(key, launchKey, options.Actions, ignoredLaunchKey) {
+			ignoredLaunchKey = true
 			continue
 		}
 
@@ -528,6 +537,14 @@ func runNativeFocusAction(actions []Action, value string) {
 			return
 		}
 	}
+}
+
+func shouldIgnoreNativeLaunchKey(key nativeKey, launchKey string, actions []Action, alreadyIgnored bool) bool {
+	if alreadyIgnored || launchKey == "" || strings.ToLower(key.Name) != launchKey {
+		return false
+	}
+	action, ok := findAction(actions, key.Name)
+	return ok && action.Intent == ActionClose
 }
 
 func selectedNativeValue(items []Item, selected int) string {

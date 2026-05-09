@@ -54,7 +54,7 @@ docker run --rm \
     done
     switch_log=/tmp/projmux-switch.log
     switch_status=0
-    printf "bravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$switch_log" || switch_status=$?
+    printf "\0331bravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-1 PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$switch_log" || switch_status=$?
     if [[ "$switch_status" != 0 && "$switch_status" != 124 ]]; then
       cat "$switch_log"
       exit "$switch_status"
@@ -140,7 +140,7 @@ docker run --rm \
     /tmp/projmux notify push --text "deploy ok" --target main --source ai --id poc-notify
     notify_log=/tmp/projmux-notify.log
     notify_status=0
-    printf "a" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
+    printf "\0332a" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-2 /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
     if [[ "$notify_status" != 0 ]]; then
       cat "$notify_log"
       exit "$notify_status"

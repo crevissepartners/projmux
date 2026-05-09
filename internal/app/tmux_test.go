@@ -221,6 +221,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-t", "%1",
 		"-E",
 		"-d", "/tmp/work tree",
+		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-1",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_PANE=%1",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_SESSION=work",
@@ -293,6 +294,7 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 				"display-popup",
 				"-c", clientKey,
 				"-E",
+				"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-2",
 				"-x", "128",
 				"-y", "0",
 				"-w", "72",
@@ -379,6 +381,9 @@ func TestAppRunTmuxPopupToggleOpensSettingsHub(t *testing.T) {
 	}
 
 	got := runner.calls[len(runner.calls)-1]
+	if !containsTmuxArgPair(got.args, "-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-5") {
+		t.Fatalf("display call = %#v, want native launch key env", got)
+	}
 	command := got.args[len(got.args)-1]
 	if !strings.Contains(command, "'/tmp/projmux' 'settings'") {
 		t.Fatalf("popup command = %q, want settings command", command)
@@ -417,6 +422,7 @@ func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
 		"-t", "%1",
 		"-E",
 		"-d", "/tmp/work tree",
+		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-4",
 		"-e", "TMUX_SPLIT_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SPLIT_TARGET_PANE=%1",
 		"-w", "96",
@@ -480,6 +486,35 @@ func TestAppRunTmuxPopupToggleTreatsClosedPopupAsNoOp(t *testing.T) {
 
 	if err := cmd.Run([]string{"popup-toggle", "session-popup"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
+	}
+}
+
+func TestNativeLaunchKeyForPopupMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{mode: "sessionizer-sidebar", want: "alt-1"},
+		{mode: "notify-sidebar", want: "alt-2"},
+		{mode: "session-popup", want: "alt-3"},
+		{mode: "ai-split-picker-right", want: "alt-4"},
+		{mode: "ai-split-picker-down", want: "alt-4"},
+		{mode: "ai-split-settings", want: "alt-5"},
+		{mode: "sessionizer", want: "alt-6"},
+		{mode: "unknown", want: ""},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.mode, func(t *testing.T) {
+			t.Parallel()
+
+			if got := nativeLaunchKeyForPopupMode(tt.mode); got != tt.want {
+				t.Fatalf("nativeLaunchKeyForPopupMode(%q) = %q, want %q", tt.mode, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1054,4 +1089,13 @@ func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string
 		return nil, r.err
 	}
 	return nil, nil
+}
+
+func containsTmuxArgPair(args []string, key, value string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == key && args[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
