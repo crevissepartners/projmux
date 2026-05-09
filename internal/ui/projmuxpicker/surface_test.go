@@ -139,6 +139,9 @@ func TestInteractiveRowLinesUsesContinuationMarkerForSelectedMultiline(t *testin
 		if !strings.HasPrefix(line, Continuation) {
 			t.Fatalf("selected continuation line = %q, want continuation marker", line)
 		}
+		if !strings.Contains(line, "┃┃┃") {
+			t.Fatalf("selected continuation line = %q, want fzf marker-multi-line glyphs", line)
+		}
 		if !strings.Contains(line, CurrentStart) {
 			t.Fatalf("selected continuation line = %q, want current-row style", line)
 		}
