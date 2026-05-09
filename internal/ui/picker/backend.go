@@ -460,11 +460,11 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		case "esc", "ctrl-c":
 			nativeDebugLogf("interactive ui=%q result=closed key=%q query=%q", options.UI, key.Name, query)
 			return Result{Key: key.Name, Query: query, Closed: true}, nil
-		case "up":
+		case "up", "ctrl-p", "ctrl-k":
 			if selected > 0 {
 				selected--
 			}
-		case "down":
+		case "down", "ctrl-n":
 			if selected < len(items)-1 {
 				selected++
 			}
@@ -647,6 +647,8 @@ func readNativeKey(r io.Reader) (nativeKey, error) {
 		return nativeKey{Name: "ctrl-c"}, nil
 	case 0x05:
 		return nativeKey{Name: "ctrl-e"}, nil
+	case 0x0b:
+		return nativeKey{Name: "ctrl-k"}, nil
 	case 0x0e:
 		return nativeKey{Name: "ctrl-n"}, nil
 	case 0x10:

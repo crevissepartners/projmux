@@ -609,6 +609,26 @@ func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveSupportsFZFNavigationKeys(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "api", Value: "/repo/api"},
+		{Title: "web", Value: "/repo/web"},
+		{Title: "tools", Value: "/repo/tools"},
+	}
+	result, err := runNativeInteractive(strings.NewReader("\x0e\x0e\x10\x0b\r"), io.Discard, Options{
+		UI:    "switch",
+		Items: items,
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "/repo/api" {
+		t.Fatalf("result = %#v, want Ctrl-N/Ctrl-P/Ctrl-K to navigate like fzf", result)
+	}
+}
+
 func TestNativeInteractiveUsesAlternateScreen(t *testing.T) {
 	t.Parallel()
 
