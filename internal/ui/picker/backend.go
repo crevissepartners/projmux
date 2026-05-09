@@ -1082,7 +1082,7 @@ func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 		innerHeight = 1
 	}
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	fmt.Fprintf(w, "┌%s┐\n", strings.Repeat("─", innerWidth))
+	fmt.Fprintf(w, "╭%s╮\n", strings.Repeat("─", innerWidth))
 	for i := 0; i < innerHeight; i++ {
 		line := ""
 		if i < len(lines) {
@@ -1090,7 +1090,7 @@ func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 		}
 		fmt.Fprintf(w, "│%s│\n", nativePadRight(line, innerWidth))
 	}
-	fmt.Fprintf(w, "└%s┘\n", strings.Repeat("─", innerWidth))
+	fmt.Fprintf(w, "╰%s╯\n", strings.Repeat("─", innerWidth))
 }
 
 func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {

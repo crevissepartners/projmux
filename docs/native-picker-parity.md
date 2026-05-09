@@ -9,7 +9,7 @@ picker evidence. It is not a production dependency-policy change.
 | fzf surface | projmux usage | Native status | Evidence |
 | --- | --- | --- | --- |
 | `--prompt` | AI, settings, shell update, switch, sessions, notify | Covered | `renderNativeInteractive`, `renderNative`; `TestNativePromptLineIncludesInlineMatchCount` |
-| `--height 100%` / `--border` | all interactive picker screens | Covered approximately | `renderNativeFrame`; screen-height list budgeting; `TestNativeInteractiveRendersBorderFrame`; `TestNativeInteractiveUsesAvailableHeightForSimpleLists` |
+| `--height 100%` / `--border` | all interactive picker screens | Covered for fullscreen rounded border frame | `renderNativeFrame`; screen-height list budgeting; `TestNativeInteractiveRendersBorderFrame`; `TestNativeInteractiveUsesAvailableHeightForSimpleLists` |
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / `--footer-border line` | AI, settings, shell update, switch, sessions, notify | Covered for interactive native screens | `renderNativeInteractive` reserves bottom footer space and renders a separator line; `TestNativeInteractiveRendersFooterAtBottom` |
 | `--ansi` | colored row labels from render package | Covered | native writes row labels directly and strips ANSI escapes from default search text; `TestFilterItemsIgnoresANSIEscapeSequences`; Docker e2e shows ANSI rows |

@@ -490,8 +490,8 @@ func TestNativeInteractiveRendersBorderFrame(t *testing.T) {
 	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 8, Cols: 40})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "┌") || !strings.Contains(rendered, "└") || !strings.Contains(rendered, "│") {
-		t.Fatalf("native output = %q, want fzf-like border frame", rendered)
+	if !strings.Contains(rendered, "╭") || !strings.Contains(rendered, "╰") || !strings.Contains(rendered, "│") {
+		t.Fatalf("native output = %q, want fzf-like rounded border frame", rendered)
 	}
 }
 
