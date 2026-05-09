@@ -45,6 +45,11 @@ docker run --rm \
       cat "$labs_stderr"
       exit "$labs_status"
     fi
+    if ! grep -q "Search" "$labs_log"; then
+      cat "$labs_log"
+      echo "native settings picker did not render explicit Search header" >&2
+      exit 1
+    fi
     if [[ -s "$labs_stderr" ]]; then
       cat "$labs_stderr"
       echo "Settings > Labs should not write tmux no-server noise outside tmux" >&2
@@ -61,6 +66,11 @@ docker run --rm \
       cat "$ai_settings_log"
       exit "$ai_settings_status"
     fi
+    if ! grep -q "Search" "$ai_settings_log"; then
+      cat "$ai_settings_log"
+      echo "native AI settings picker did not render explicit Search header" >&2
+      exit 1
+    fi
     test "$(cat "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode")" = codex
     echo "[poc/no-fzf] native AI settings simple picker selected codex via smart-case query"
     echo "[poc/no-fzf] exercise native single-click selection under a PTY"
@@ -71,6 +81,11 @@ docker run --rm \
     if [[ "$mouse_status" != 0 ]]; then
       cat "$mouse_log"
       exit "$mouse_status"
+    fi
+    if ! grep -q "Search" "$mouse_log"; then
+      cat "$mouse_log"
+      echo "native mouse picker did not render explicit Search header before click" >&2
+      exit 1
     fi
     test "$(cat "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode")" = codex
     echo "[poc/no-fzf] native single click selected codex"
