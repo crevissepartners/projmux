@@ -71,3 +71,27 @@ func TestSelectedContentKeepsCurrentStyleAfterReset(t *testing.T) {
 		t.Fatalf("SelectedContent() = %q, want current style restored after reset", rendered)
 	}
 }
+
+func TestInteractiveRowLinesUsesContinuationMarkerForSelectedMultiline(t *testing.T) {
+	t.Parallel()
+
+	lines := InteractiveRowLines(Row{
+		Label:     "api",
+		MetaLines: []string{"~rp/api", "master"},
+	}, true, true)
+
+	if len(lines) != 3 {
+		t.Fatalf("InteractiveRowLines() len = %d, want 3: %#v", len(lines), lines)
+	}
+	if !strings.HasPrefix(lines[0], Pointer) {
+		t.Fatalf("first selected line = %q, want pointer", lines[0])
+	}
+	for _, line := range lines[1:] {
+		if !strings.HasPrefix(line, Continuation) {
+			t.Fatalf("selected continuation line = %q, want continuation marker", line)
+		}
+		if !strings.Contains(line, CurrentStart) {
+			t.Fatalf("selected continuation line = %q, want current-row style", line)
+		}
+	}
+}

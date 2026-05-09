@@ -68,6 +68,8 @@ The fzf compatibility surface for the native engine is tracked in
 - Simple and multi-line native rows share the same projmux current-row style and
   pointer marker rather than falling back to terminal inverse video for simple
   pickers.
+- Selected multi-line rows use a continuation marker on metadata lines so
+  switch/session/notify cards read as one focused block.
 - Native redraws use terminal synchronized-update wrappers and row-diff updates
   after the first frame. The frame/redraw renderer lives in `projmuxpicker`
   rather than the backend loop, skips unchanged frames, and avoids a trailing

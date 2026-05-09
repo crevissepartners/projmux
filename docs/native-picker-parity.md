@@ -23,6 +23,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | `--scrollbar █` | long switch/session/settings lists | Covered for app lists | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered for app multiline rows | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
+| `--marker-multi-line` | selected switch/session/notify cards | Covered for app multiline rows | `nativeContinuation`; `TestNativeInteractiveRendersSelectedMultilineContinuationMarker` |
 | fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveUsesCurrentStyleForSimpleSelection` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `fzf.PickerOptions`; `TestNativeInteractiveSupportsCustomExpectKeys` |
 | printable expect keys | notify sidebar `x` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |

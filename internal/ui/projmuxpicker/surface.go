@@ -223,7 +223,7 @@ func InteractiveRowLines(row Row, selected, multiLine bool) []string {
 	for _, line := range lines[1:] {
 		line = fmt.Sprintf("    %s", strings.TrimRight(line, "\r"))
 		if selected && multiLine {
-			line = "  " + SelectedContent(strings.TrimSpace(line))
+			line = Continuation + SelectedContent(strings.TrimSpace(line))
 		}
 		rendered = append(rendered, line)
 	}
@@ -231,7 +231,7 @@ func InteractiveRowLines(row Row, selected, multiLine bool) []string {
 		if meta = strings.TrimSpace(meta); meta != "" {
 			line := fmt.Sprintf("    %s", meta)
 			if selected && multiLine {
-				line = "  " + SelectedContent(meta)
+				line = Continuation + SelectedContent(meta)
 			}
 			rendered = append(rendered, line)
 		}

@@ -215,6 +215,7 @@ const (
 	nativeCurrentStart      = projmuxpicker.CurrentStart
 	nativeHighlightStart    = projmuxpicker.HighlightStart
 	nativePointer           = projmuxpicker.Pointer
+	nativeContinuation      = projmuxpicker.Continuation
 	nativeReset             = projmuxpicker.Reset
 	nativeInverseStart      = projmuxpicker.InverseStart
 	nativeCursorStart       = projmuxpicker.CursorStart

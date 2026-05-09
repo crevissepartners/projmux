@@ -10,6 +10,7 @@ const (
 	CurrentStart   = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
 	HighlightStart = "\x1b[38;2;255;204;102m"
 	Pointer        = "\x1b[38;2;225;38;114m▌\x1b[0m "
+	Continuation   = "\x1b[38;2;225;38;114m┃\x1b[0m "
 	Reset          = "\x1b[0m"
 	InverseStart   = "\x1b[7m"
 	CursorStart    = "\x1b[7m"

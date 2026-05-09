@@ -1268,6 +1268,25 @@ func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveRendersSelectedMultilineContinuationMarker(t *testing.T) {
+	t.Parallel()
+
+	lines := nativeInteractiveItemLines(Item{
+		Title:     "api",
+		MetaLines: []string{"~rp/api", "master"},
+		Value:     "/repo/api",
+	}, true, true)
+
+	if len(lines) != 3 {
+		t.Fatalf("nativeInteractiveItemLines() len = %d, want 3: %#v", len(lines), lines)
+	}
+	for _, line := range lines[1:] {
+		if !strings.HasPrefix(line, nativeContinuation) || !strings.Contains(line, nativeCurrentStart) {
+			t.Fatalf("selected multiline continuation line = %q, want marker and current-row style", line)
+		}
+	}
+}
+
 func TestNativeInteractivePadsSelectedLineInsideStyle(t *testing.T) {
 	t.Parallel()
 
