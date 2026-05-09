@@ -478,6 +478,12 @@ func TestNativeInteractiveWrapsRedrawsInSynchronizedUpdates(t *testing.T) {
 	if strings.Index(rendered, nativeSyncUpdateEnter) > strings.Index(rendered, "╭") {
 		t.Fatalf("native synchronized update starts after frame render: %q", rendered)
 	}
+	if got := strings.Count(rendered, "╭"); got != 1 {
+		t.Fatalf("native redraw top-border count = %d, want one full frame then diff updates: %q", got, rendered)
+	}
+	if !strings.Contains(rendered, "\x1b[4;1H") {
+		t.Fatalf("native redraw output = %q, want cursor-addressed row diff", rendered)
+	}
 }
 
 func TestNativeRunnerAcceptsTypedQuery(t *testing.T) {

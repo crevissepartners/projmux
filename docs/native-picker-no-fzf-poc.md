@@ -58,10 +58,10 @@ The fzf compatibility surface for the native engine is tracked in
   expect/action keys still work.
 - Native frame content now uses the full inner border width so prompt/list/footer
   separators reach the right border like fzf.
-- Native redraws use terminal synchronized-update wrappers and the frame renderer
-  avoids a trailing newline after the bottom border. This reduces visible
-  keyboard-navigation flicker and prevents exact-height popups from scrolling the
-  top border off screen.
+- Native redraws use terminal synchronized-update wrappers and row-diff updates
+  after the first frame. The frame renderer also avoids a trailing newline after
+  the bottom border. This reduces visible keyboard-navigation flicker and
+  prevents exact-height popups from scrolling the top border off screen.
 - In app TTY contexts, the native picker opens the controlling terminal
   (`/dev/tty`) before entering raw mode. This avoids stdin/stdout mismatch and
   line-mode escape leakage such as arrow keys appearing as `^[[`.

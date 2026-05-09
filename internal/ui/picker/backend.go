@@ -392,6 +392,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	previewOffset := 0
 	launchKey := strings.ToLower(strings.TrimSpace(os.Getenv(NativeLaunchKeyEnv)))
 	layout := detectNativeLayout(in)
+	renderer := nativeFrameRenderer{}
 	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
 	fmt.Fprint(out, nativeScreenEnter)
 	defer fmt.Fprint(out, nativeScreenLeave)
@@ -409,7 +410,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			focusedValue = value
 			previewOffset = 0
 		}
-		renderNativeInteractiveWithCursor(out, options, items, query, queryCursor, selected, previewOffset, layout)
+		renderer.Render(out, options, items, query, queryCursor, selected, previewOffset, layout)
 
 		key, err := readNativeKey(in)
 		if err != nil {
@@ -1059,12 +1060,64 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 }
 
 func renderNativeInteractiveWithCursor(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
-	fmt.Fprint(w, nativeSyncUpdateEnter+"\x1b[H")
+	frame := nativeInteractiveFrame(options, items, query, queryCursor, selected, previewOffset, layout)
+	fmt.Fprint(w, nativeSyncUpdateEnter+"\x1b[H"+frame+nativeSyncUpdateLeave)
+}
+
+type nativeFrameRenderer struct {
+	previous string
+}
+
+func (r *nativeFrameRenderer) Render(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
+	frame := nativeInteractiveFrame(options, items, query, queryCursor, selected, previewOffset, layout)
+	fmt.Fprint(w, nativeSyncUpdateEnter)
 	defer fmt.Fprint(w, nativeSyncUpdateLeave)
+	if r.previous == "" {
+		fmt.Fprint(w, "\x1b[H"+frame)
+		r.previous = frame
+		return
+	}
+	writeNativeFrameDiff(w, r.previous, frame)
+	r.previous = frame
+}
+
+func nativeInteractiveFrame(options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) string {
 	contentLayout := nativeContentLayout(layout)
 	var body strings.Builder
 	renderNativeInteractiveContent(&body, options, items, query, queryCursor, selected, previewOffset, contentLayout)
-	renderNativeFrame(w, body.String(), layout)
+	var frame strings.Builder
+	renderNativeFrame(&frame, body.String(), layout)
+	return frame.String()
+}
+
+func writeNativeFrameDiff(w io.Writer, previous, next string) {
+	previousLines := splitNativeFrameLines(previous)
+	nextLines := splitNativeFrameLines(next)
+	limit := len(nextLines)
+	if len(previousLines) > limit {
+		limit = len(previousLines)
+	}
+	for i := 0; i < limit; i++ {
+		previousLine := ""
+		if i < len(previousLines) {
+			previousLine = previousLines[i]
+		}
+		nextLine := ""
+		if i < len(nextLines) {
+			nextLine = nextLines[i]
+		}
+		if previousLine == nextLine {
+			continue
+		}
+		fmt.Fprintf(w, "\x1b[%d;1H%s", i+1, nextLine)
+	}
+}
+
+func splitNativeFrameLines(frame string) []string {
+	if strings.Contains(frame, "\r\n") {
+		return strings.Split(frame, "\r\n")
+	}
+	return strings.Split(frame, "\n")
 }
 
 func nativeContentLayout(layout nativeLayout) nativeLayout {
