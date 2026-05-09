@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	BackendEnv         = "PROJMUX_PICKER_BACKEND"
-	NativeLaunchKeyEnv = "PROJMUX_NATIVE_LAUNCH_KEY"
-	NativeDebugLogEnv  = "PROJMUX_NATIVE_DEBUG_LOG"
+	BackendEnv           = "PROJMUX_PICKER_BACKEND"
+	NativeLaunchKeyEnv   = "PROJMUX_NATIVE_LAUNCH_KEY"
+	NativeDebugLogEnv    = "PROJMUX_NATIVE_DEBUG_LOG"
+	NativeTTYFallbackEnv = "PROJMUX_NATIVE_TTY_FALLBACK"
 )
 
 type Backend string
@@ -345,7 +346,10 @@ func shouldOpenNativeTTYFallback(file *os.File, lookup func(string) string) bool
 	if file == nil {
 		return false
 	}
-	if strings.TrimSpace(lookup("PROJMUX_NATIVE_TTY_FALLBACK")) != "" {
+	if raw := strings.ToLower(strings.TrimSpace(lookup(NativeTTYFallbackEnv))); raw != "" {
+		if raw == "0" || raw == "false" || raw == "no" || raw == "off" {
+			return false
+		}
 		return true
 	}
 	if strings.TrimSpace(lookup("TMUX")) != "" {

@@ -450,12 +450,24 @@ func TestNativeTTYFallbackIsEnabledForAppTTYContexts(t *testing.T) {
 		t.Fatal("tmux context should force native picker through controlling TTY")
 	}
 	if !shouldOpenNativeTTYFallback(f, func(name string) string {
-		if name == "PROJMUX_NATIVE_TTY_FALLBACK" {
+		if name == NativeTTYFallbackEnv {
 			return "1"
 		}
 		return ""
 	}) {
 		t.Fatal("explicit native TTY fallback env should force controlling TTY")
+	}
+	if shouldOpenNativeTTYFallback(f, func(name string) string {
+		switch name {
+		case NativeTTYFallbackEnv:
+			return "0"
+		case "TMUX":
+			return "/tmp/tmux-1000/default,1,0"
+		default:
+			return ""
+		}
+	}) {
+		t.Fatal("explicit native TTY fallback disable should override tmux context")
 	}
 	if shouldOpenNativeTTYFallback(f, func(string) string { return "" }) {
 		t.Fatal("non-stdin file without tmux/env should not force controlling TTY")

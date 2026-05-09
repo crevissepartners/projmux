@@ -705,7 +705,7 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 }
 
 func inheritPopupPickerEnv(env map[string]string) {
-	for _, key := range []string{intpicker.BackendEnv, intpicker.NativeDebugLogEnv, "PROJMUX_PROJDIR", "PROJMUX_MANAGED_ROOTS"} {
+	for _, key := range []string{intpicker.BackendEnv, intpicker.NativeDebugLogEnv, intpicker.NativeTTYFallbackEnv, "PROJMUX_PROJDIR", "PROJMUX_MANAGED_ROOTS"} {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 			env[key] = value
 		}
