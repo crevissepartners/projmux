@@ -18,6 +18,15 @@ func TestRendererRenderFrameUsesCRLFRowsForRawTTY(t *testing.T) {
 	}
 }
 
+func TestRendererContentLayoutUsesFrameInnerWidth(t *testing.T) {
+	t.Parallel()
+
+	layout := DefaultRenderer().ContentLayout(Layout{Rows: 10, Cols: 40})
+	if got, want := layout.Cols, 38; got != want {
+		t.Fatalf("ContentLayout().Cols = %d, want frame inner width %d", got, want)
+	}
+}
+
 func TestTruncateANSIClosesStyleWhenCutBeforeReset(t *testing.T) {
 	t.Parallel()
 

@@ -60,9 +60,9 @@ func (r Renderer) ContentLayout(layout Layout) Layout {
 	if rows < 1 {
 		rows = 1
 	}
-	cols := layout.Cols - 4
-	if cols < 20 {
-		cols = layout.Cols
+	cols := layout.Cols - 2
+	if cols < 1 {
+		cols = 1
 	}
 	return Layout{Rows: rows, Cols: cols}
 }

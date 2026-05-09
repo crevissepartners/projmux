@@ -53,6 +53,11 @@ The fzf compatibility surface for the native engine is tracked in
   match the app's fzf `--height 100% --border` surface more closely.
 - Simple native lists use the available terminal height after header, prompt,
   footer, and preview reservations instead of a fixed page-sized viewport.
+- Navigation-only native lists mirror fzf `--disabled --no-input`: the input
+  prompt is hidden, printable non-action keys do not alter the query, and
+  expect/action keys still work.
+- Native frame content now uses the full inner border width so prompt/list/footer
+  separators reach the right border like fzf.
 - In app TTY contexts, the native picker opens the controlling terminal
   (`/dev/tty`) before entering raw mode. This avoids stdin/stdout mismatch and
   line-mode escape leakage such as arrow keys appearing as `^[[`.

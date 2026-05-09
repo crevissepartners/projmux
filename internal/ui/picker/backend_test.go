@@ -711,6 +711,31 @@ func TestNativeInteractiveFiltersWithPrintableInput(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveDisableSearchIgnoresPrintableInput(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	result, err := runNativeInteractive(strings.NewReader("web\r"), &out, Options{
+		UI:            "notify-sidebar",
+		Prompt:        "Notify > ",
+		DisableSearch: true,
+		Items: []Item{
+			{Title: "deploy", Value: "deploy-id", SearchText: "deploy"},
+			{Title: "web", Value: "web-id", SearchText: "web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "deploy-id" || result.Query != "" {
+		t.Fatalf("result = %#v, want unfiltered first row with empty query", result)
+	}
+	rendered := out.String()
+	if strings.Contains(rendered, "Notify >") {
+		t.Fatalf("native output = %q, want disabled search to hide prompt/query input", rendered)
+	}
+}
+
 func TestNativeInteractiveEditsTypedQueryAtCursor(t *testing.T) {
 	t.Parallel()
 

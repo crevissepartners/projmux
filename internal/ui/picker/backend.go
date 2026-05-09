@@ -62,6 +62,7 @@ type Options struct {
 	InitialQuery    string
 	InitialIndex    int
 	InitialIndexSet bool
+	DisableSearch   bool
 	AcceptQuery     bool
 	MultiLine       bool
 }
@@ -263,8 +264,11 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 
 func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, error) {
 	query := strings.TrimSpace(options.InitialQuery)
+	if options.DisableSearch {
+		query = ""
+	}
 	for {
-		items := FilterItems(options.Items, query)
+		items := nativeFilteredItems(options, query)
 		renderNative(out, options, items, query)
 
 		line, err := readNativeLine(in)
@@ -480,41 +484,72 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		case "shift-down":
 			previewOffset++
 		case "left":
+			if options.DisableSearch {
+				continue
+			}
 			if queryCursor > 0 {
 				queryCursor--
 			}
 		case "right":
+			if options.DisableSearch {
+				continue
+			}
 			if queryCursor < nativeRuneLen(query) {
 				queryCursor++
 			}
 		case "backspace":
+			if options.DisableSearch {
+				continue
+			}
 			query, queryCursor = deleteNativeQueryBeforeCursor(query, queryCursor)
 			selected = 0
 			previewOffset = 0
 		case "delete":
+			if options.DisableSearch {
+				continue
+			}
 			query, queryCursor = deleteNativeQueryAtCursor(query, queryCursor)
 			selected = 0
 			previewOffset = 0
 		case "ctrl-a":
+			if options.DisableSearch {
+				continue
+			}
 			queryCursor = 0
 		case "ctrl-e":
+			if options.DisableSearch {
+				continue
+			}
 			queryCursor = nativeRuneLen(query)
 		case "ctrl-u":
+			if options.DisableSearch {
+				continue
+			}
 			query, queryCursor = deleteNativeQueryBeforeCursorN(query, queryCursor, queryCursor)
 			selected = 0
 			previewOffset = 0
 		case "ctrl-w":
+			if options.DisableSearch {
+				continue
+			}
 			query, queryCursor = trimNativeQueryWordBeforeCursor(query, queryCursor)
 			selected = 0
 			previewOffset = 0
 		default:
-			if key.Text != "" {
+			if key.Text != "" && !options.DisableSearch {
 				query, queryCursor = insertNativeQueryText(query, queryCursor, key.Text)
 				selected = 0
 				previewOffset = 0
 			}
 		}
 	}
+}
+
+func nativeFilteredItems(options Options, query string) []Item {
+	if options.DisableSearch {
+		return options.Items
+	}
+	return FilterItems(options.Items, query)
 }
 
 func runNativePickerAction(action Action, options Options, items []Item, selected int, query string) (Result, bool) {
@@ -1036,11 +1071,13 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(&screen, header)
 	}
-	prompt := strings.TrimSpace(options.Prompt)
-	if prompt == "" {
-		prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
+	if !options.DisableSearch {
+		prompt := strings.TrimSpace(options.Prompt)
+		if prompt == "" {
+			prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
+		}
+		fmt.Fprintln(&screen, nativePromptLineWithCursor(prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
 	}
-	fmt.Fprintln(&screen, nativePromptLineWithCursor(prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
 
 	placement := nativePreviewPlacement(options.Preview.Window)
 	previewHeight := nativePreviewHeight(layout.Rows, options.Preview.Window)
@@ -1093,7 +1130,10 @@ func nativeListLimit(options Options, layout nativeLayout, previewPlacement stri
 }
 
 func nativeChromeLineCount(options Options) int {
-	lines := 1 // prompt
+	lines := 0
+	if !options.DisableSearch {
+		lines++ // prompt
+	}
 	if header := strings.TrimSpace(options.Header); header != "" {
 		lines += nativeTextLineCount(header)
 	}

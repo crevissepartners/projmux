@@ -25,6 +25,8 @@ func OptionsFromPicker(options picker.Options) Options {
 		Header:         options.Header,
 		Footer:         options.Footer,
 		InitialQuery:   options.InitialQuery,
+		DisableSearch:  options.DisableSearch,
+		AcceptQuery:    options.AcceptQuery,
 		PreviewCommand: options.Preview.Command,
 		PreviewWindow:  options.Preview.Window,
 	}
@@ -96,6 +98,7 @@ func PickerOptions(options Options) picker.Options {
 		InitialQuery:    options.InitialQuery,
 		InitialIndex:    initialIndex,
 		InitialIndexSet: initialIndexSet,
+		DisableSearch:   options.DisableSearch,
 		AcceptQuery:     options.AcceptQuery,
 		MultiLine:       options.Read0,
 	}

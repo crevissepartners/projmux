@@ -228,6 +228,11 @@ docker run --rm \
       echo "native notify sidebar did not ack with printable expect key" >&2
       exit 1
     fi
+    if grep -q "Notify >" "$notify_log"; then
+      cat "$notify_log"
+      echo "native notify sidebar should hide the input prompt when search is disabled" >&2
+      exit 1
+    fi
     echo "[poc/no-fzf] native notify sidebar acked selected row"
     echo "[poc/no-fzf] exercise native settings picker with arrow keys under a PTY"
     rm -f "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"

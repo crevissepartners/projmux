@@ -19,6 +19,8 @@ func TestOptionsFromPickerMapsItemsActionsAndPreview(t *testing.T) {
 		Preview:         picker.Preview{Command: "preview {2}", Window: "right"},
 		InitialIndex:    0,
 		InitialIndexSet: true,
+		DisableSearch:   true,
+		AcceptQuery:     true,
 		Items: []picker.Item{{
 			Label:      "API\n  branch main",
 			Title:      "api",
@@ -36,6 +38,9 @@ func TestOptionsFromPickerMapsItemsActionsAndPreview(t *testing.T) {
 
 	if !options.Read0 {
 		t.Fatalf("Read0 = false, want true")
+	}
+	if !options.DisableSearch || !options.AcceptQuery {
+		t.Fatalf("DisableSearch/AcceptQuery = %t/%t, want true/true", options.DisableSearch, options.AcceptQuery)
 	}
 	if got, want := options.Entries, []Entry{{Label: "API\n  branch main", Value: "/repo/api", SearchKey: "api service"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Entries = %#v, want %#v", got, want)
@@ -60,10 +65,12 @@ func TestPickerOptionsMapsFZFBindingsToContractActions(t *testing.T) {
 	t.Parallel()
 
 	options := PickerOptions(Options{
-		UI:       "switch",
-		Entries:  []Entry{{Label: "api", Value: "/repo/api", SearchKey: "api service"}},
-		Read0:    true,
-		Bindings: []string{"esc:abort", "right:execute-silent(cycle {2})+refresh-preview", "start:pos(1)"},
+		UI:            "switch",
+		Entries:       []Entry{{Label: "api", Value: "/repo/api", SearchKey: "api service"}},
+		Read0:         true,
+		DisableSearch: true,
+		AcceptQuery:   true,
+		Bindings:      []string{"esc:abort", "right:execute-silent(cycle {2})+refresh-preview", "start:pos(1)"},
 	})
 
 	if got, want := options.UI, "switch"; got != want {
@@ -71,6 +78,9 @@ func TestPickerOptionsMapsFZFBindingsToContractActions(t *testing.T) {
 	}
 	if !options.MultiLine {
 		t.Fatal("MultiLine = false, want true")
+	}
+	if !options.DisableSearch || !options.AcceptQuery {
+		t.Fatalf("DisableSearch/AcceptQuery = %t/%t, want true/true", options.DisableSearch, options.AcceptQuery)
 	}
 	if len(options.Items) != 1 || options.Items[0].SearchText != "api service" {
 		t.Fatalf("Items = %#v, want fzf entry mapped to picker item", options.Items)

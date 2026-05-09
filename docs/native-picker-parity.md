@@ -17,6 +17,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | plain fzf candidates without structured entries | legacy runner call shape | Covered | `fzf.PickerOptions`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
 | default `--smart-case` matching | all searchable picker rows | Covered | native filter keeps lower-case queries case-insensitive and uppercase queries case-sensitive; `TestFilterItemsUsesFZFSmartCase` |
+| `--disabled --no-input` | navigation-only notify sidebar | Covered | native suppresses prompt/query editing and ignores printable non-action input; `TestNativeInteractiveDisableSearchIgnoresPrintableInput`; Docker no-fzf e2e asserts notify prompt is hidden |
 | fuzzy result ranking | simple non-search-key picker UX | Covered with fzf V2 dynamic scoring for normal app rows | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst`; `TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches`; `TestFuzzyScoreMatchesFZFV2ReferenceScores` |
 | `--scrollbar █` | long switch/session/settings lists | Covered for app lists | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
@@ -39,6 +40,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | query cursor editing | typed settings path prompts | Covered | Left/Right, Ctrl-A/E, Delete, Backspace, Ctrl-U/W query editing plus visible prompt cursor; `TestNativeInteractiveEditsTypedQueryAtCursor`; `TestNativeInteractiveSupportsQueryLineEditingKeys`; `TestNativeInteractiveCtrlUDeletesBeforeCursor`; `TestNativePromptLineRendersQueryCursor` |
 | terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; app TTY `/dev/tty` fallback; raw TTY EOF polling keeps split ESC sequences from leaking into the query |
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen` |
+| frame content width | fzf border inner width | Covered | `ContentLayout` uses the frame inner width so separators and rows reach the right border; `TestRendererContentLayoutUsesFrameInnerWidth` |
 
 ## Native Surface Architecture
 
