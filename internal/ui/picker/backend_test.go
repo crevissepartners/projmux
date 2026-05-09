@@ -647,6 +647,9 @@ func TestNativeInteractiveUsesAlternateScreen(t *testing.T) {
 	if !strings.HasSuffix(rendered, nativeScreenLeave) {
 		t.Fatalf("native output = %q, want alternate-screen leave suffix", rendered)
 	}
+	if !strings.Contains(rendered, "╯\r"+nativeSyncUpdateLeave+"\r\x1b[?25h\x1b[?1049l") {
+		t.Fatalf("native output = %q, want carriage returns before sync and alternate-screen leave", rendered)
+	}
 }
 
 func TestNativeInteractiveRendersBorderFrame(t *testing.T) {

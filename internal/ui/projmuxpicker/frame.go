@@ -63,7 +63,7 @@ func (r *FrameUpdateRenderer) Render(w io.Writer, frame string) {
 	if r.previous == "" {
 		fmt.Fprint(w, SyncUpdateEnter)
 		defer fmt.Fprint(w, SyncUpdateLeave)
-		fmt.Fprint(w, cursorHome+frame)
+		fmt.Fprint(w, cursorHome+frame+"\r")
 		r.previous = frame
 		return
 	}
@@ -73,11 +73,12 @@ func (r *FrameUpdateRenderer) Render(w io.Writer, frame string) {
 	fmt.Fprint(w, SyncUpdateEnter)
 	defer fmt.Fprint(w, SyncUpdateLeave)
 	writeFrameDiff(w, r.previous, frame)
+	fmt.Fprint(w, "\r")
 	r.previous = frame
 }
 
 func RenderFullFrameUpdate(w io.Writer, frame string) {
-	fmt.Fprint(w, SyncUpdateEnter+cursorHome+frame+SyncUpdateLeave)
+	fmt.Fprint(w, SyncUpdateEnter+cursorHome+frame+"\r"+SyncUpdateLeave)
 }
 
 func (r Renderer) ContentLayout(layout Layout) Layout {

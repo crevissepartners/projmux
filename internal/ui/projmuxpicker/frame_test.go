@@ -77,6 +77,9 @@ func TestFrameUpdateRendererDiffsAfterFirstFrame(t *testing.T) {
 	if !strings.Contains(rendered, "\x1b[2;1Htwo") {
 		t.Fatalf("rendered = %q, want cursor-addressed changed row", rendered)
 	}
+	if !strings.Contains(rendered, "bottom\r"+SyncUpdateLeave) {
+		t.Fatalf("rendered = %q, want carriage return before synchronized update leave", rendered)
+	}
 }
 
 func TestFrameUpdateRendererSkipsUnchangedFrame(t *testing.T) {
@@ -106,7 +109,7 @@ func TestRenderFullFrameUpdateAlwaysHomesAndWritesFrame(t *testing.T) {
 	if !strings.HasPrefix(rendered, SyncUpdateEnter+"\x1b[Hframe") {
 		t.Fatalf("RenderFullFrameUpdate() = %q, want sync wrapper and home cursor before frame", rendered)
 	}
-	if !strings.HasSuffix(rendered, SyncUpdateLeave) {
+	if !strings.HasSuffix(rendered, "\r"+SyncUpdateLeave) {
 		t.Fatalf("RenderFullFrameUpdate() = %q, want sync update leave suffix", rendered)
 	}
 }

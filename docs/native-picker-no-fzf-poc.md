@@ -52,7 +52,10 @@ The fzf compatibility surface for the native engine is tracked in
   such as `ESC [ 9005 u` for `Alt-1`, plus generic modified CSI-u forms such as
   `ESC [ 115 ; 7 u` for `Ctrl-Alt-S`.
 - Native interactive picker screens use an alternate screen lifecycle to better
-  match fzf fullscreen behavior and restore the tmux pane after exit.
+  match fzf fullscreen behavior and restore the tmux pane after exit. Frame
+  updates and screen exit both return to column 0 before emitting terminal
+  control sequences so restore/update escapes do not trail the bottom border in
+  tmux/script captures.
 - Native interactive picker screens render inside a full-screen border frame to
   match the app's fzf `--height 100% --border` surface more closely.
 - Popup-toggle commands use tmux `display-popup -B` when the native backend is
