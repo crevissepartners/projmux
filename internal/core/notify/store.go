@@ -354,7 +354,7 @@ func (s *Store) withLock(fn func() error) error {
 
 func (s *Store) acquireLock() error {
 	delay := defaultLockBaseDelay
-	for attempt := 0; attempt < defaultLockMaxAttempts; attempt++ {
+	for range defaultLockMaxAttempts {
 		f, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
 			_, _ = fmt.Fprintf(f, "pid=%d\n", os.Getpid())
