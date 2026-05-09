@@ -130,6 +130,14 @@ Inside tmux, try:
   cat /tmp/projmux-popup.log
   projmux doctor --json
 
+Manual UX checks:
+  Alt-1 opens with the top border/title visible, not clipped
+  vertical borders are continuous while moving Up/Down
+  after moving selection, Alt-1 closes the sidebar immediately
+  Alt-2, Alt-3, Alt-4, Alt-5 open their matching native popups and close on
+  the same Alt key after the first real input
+  arrow keys move selection without leaking ^[[ text into the query
+
 Environment:
   PROJMUX_PICKER_BACKEND=native
   PROJMUX_PROJDIR=/workspace/projects
