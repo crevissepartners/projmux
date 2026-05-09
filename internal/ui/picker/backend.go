@@ -111,17 +111,13 @@ func FilterItems(items []Item, query string) []Item {
 	if query == "" {
 		return append([]Item(nil), items...)
 	}
-	needle := query
 	caseSensitive := nativeSmartCaseSensitive(query)
-	if !caseSensitive {
-		needle = strings.ToLower(query)
-	}
+	needle := nativeSearchPattern(query, caseSensitive)
 
 	if hasNativeSearchKey(items) {
 		filtered := make([]Item, 0, len(items))
 		for _, item := range items {
-			source := nativeSearchSource(item, caseSensitive)
-			if _, ok := fuzzyScore(source, needle); ok {
+			if _, ok := fuzzyScore(item.EffectiveSearchText(), needle, caseSensitive); ok {
 				filtered = append(filtered, item)
 			}
 		}
@@ -130,14 +126,13 @@ func FilterItems(items []Item, query string) []Item {
 
 	filtered := make([]nativeScoredItem, 0, len(items))
 	for _, item := range items {
-		source := nativeSearchSource(item, caseSensitive)
-		if score, ok := fuzzyScore(source, needle); ok {
+		if score, ok := fuzzyScore(item.EffectiveSearchText(), needle, caseSensitive); ok {
 			filtered = append(filtered, nativeScoredItem{Item: item, Score: score, Index: len(filtered)})
 		}
 	}
 	sort.SliceStable(filtered, func(i, j int) bool {
 		if filtered[i].Score != filtered[j].Score {
-			return filtered[i].Score < filtered[j].Score
+			return filtered[i].Score > filtered[j].Score
 		}
 		return filtered[i].Index < filtered[j].Index
 	})
@@ -149,12 +144,11 @@ func FilterItems(items []Item, query string) []Item {
 	return items
 }
 
-func nativeSearchSource(item Item, caseSensitive bool) string {
-	source := item.EffectiveSearchText()
+func nativeSearchPattern(query string, caseSensitive bool) []rune {
 	if caseSensitive {
-		return source
+		return []rune(query)
 	}
-	return strings.ToLower(source)
+	return []rune(strings.ToLower(query))
 }
 
 func nativeSmartCaseSensitive(query string) bool {
@@ -1651,41 +1645,175 @@ func findAction(actions []Action, key string) (Action, bool) {
 	return Action{}, false
 }
 
-func fuzzyScore(source, query string) (int, bool) {
-	if query == "" {
+func fuzzyScore(source string, pattern []rune, caseSensitive bool) (int, bool) {
+	if len(pattern) == 0 {
 		return 0, true
-	}
-	if source == query {
-		return 0, true
-	}
-	if idx := strings.Index(source, query); idx >= 0 {
-		return idx*10 + len([]rune(source)) - len([]rune(query)), true
 	}
 	sourceRunes := []rune(source)
-	index := 0
-	first := -1
-	last := -1
-	gaps := 0
-	for _, ch := range query {
-		found := false
-		for index < len(sourceRunes) {
-			if sourceRunes[index] == ch {
-				if first < 0 {
-					first = index
-				}
-				if last >= 0 {
-					gaps += index - last - 1
-				}
-				last = index
-				index++
-				found = true
-				break
-			}
-			index++
+	if len(pattern) > len(sourceRunes) {
+		return 0, false
+	}
+
+	pidx := 0
+	start := -1
+	end := -1
+	for idx, r := range sourceRunes {
+		if nativeSearchRune(r, caseSensitive) != pattern[pidx] {
+			continue
 		}
-		if !found {
-			return 0, false
+		if start < 0 {
+			start = idx
+		}
+		pidx++
+		if pidx == len(pattern) {
+			end = idx + 1
+			break
 		}
 	}
-	return first*25 + gaps*10 + len(sourceRunes) - len([]rune(query)), true
+	if end < 0 {
+		return 0, false
+	}
+
+	pidx = len(pattern) - 1
+	for idx := end - 1; idx >= start; idx-- {
+		if nativeSearchRune(sourceRunes[idx], caseSensitive) != pattern[pidx] {
+			continue
+		}
+		pidx--
+		if pidx < 0 {
+			start = idx
+			break
+		}
+	}
+
+	score := nativeFZFLikeScore(sourceRunes, pattern, start, end, caseSensitive)
+	return score, true
+}
+
+func nativeSearchRune(r rune, caseSensitive bool) rune {
+	if caseSensitive {
+		return r
+	}
+	if r >= 'A' && r <= 'Z' {
+		return r + ('a' - 'A')
+	}
+	return r
+}
+
+const (
+	nativeScoreMatch               = 16
+	nativeScoreGapStart            = -3
+	nativeScoreGapExtension        = -1
+	nativeBonusBoundary            = nativeScoreMatch / 2
+	nativeBonusBoundaryWhite       = nativeBonusBoundary + 2
+	nativeBonusBoundaryDelimiter   = nativeBonusBoundary + 1
+	nativeBonusNonWord             = nativeScoreMatch / 2
+	nativeBonusCamel123            = nativeBonusBoundary + nativeScoreGapExtension
+	nativeBonusConsecutive         = -(nativeScoreGapStart + nativeScoreGapExtension)
+	nativeBonusFirstCharMultiplier = 2
+)
+
+type nativeCharClass int
+
+const (
+	nativeCharWhite nativeCharClass = iota
+	nativeCharNonWord
+	nativeCharDelimiter
+	nativeCharLower
+	nativeCharUpper
+	nativeCharLetter
+	nativeCharNumber
+)
+
+func nativeFZFLikeScore(source, pattern []rune, start, end int, caseSensitive bool) int {
+	score := 0
+	pidx := 0
+	inGap := false
+	consecutive := 0
+	firstBonus := 0
+	prevClass := nativeCharWhite
+	if start > 0 {
+		prevClass = nativeClassOf(source[start-1])
+	}
+	for idx := start; idx < end; idx++ {
+		r := source[idx]
+		class := nativeClassOf(r)
+		if nativeSearchRune(r, caseSensitive) == pattern[pidx] {
+			score += nativeScoreMatch
+			bonus := nativeBonusFor(prevClass, class)
+			if consecutive == 0 {
+				firstBonus = bonus
+			} else {
+				if bonus >= nativeBonusBoundary && bonus > firstBonus {
+					firstBonus = bonus
+				}
+				bonus = maxInt(bonus, maxInt(firstBonus, nativeBonusConsecutive))
+			}
+			if pidx == 0 {
+				score += bonus * nativeBonusFirstCharMultiplier
+			} else {
+				score += bonus
+			}
+			inGap = false
+			consecutive++
+			pidx++
+			if pidx == len(pattern) {
+				break
+			}
+		} else {
+			if inGap {
+				score += nativeScoreGapExtension
+			} else {
+				score += nativeScoreGapStart
+			}
+			inGap = true
+			consecutive = 0
+			firstBonus = 0
+		}
+		prevClass = class
+	}
+	return score
+}
+
+func nativeClassOf(r rune) nativeCharClass {
+	switch {
+	case r >= 'a' && r <= 'z':
+		return nativeCharLower
+	case r >= 'A' && r <= 'Z':
+		return nativeCharUpper
+	case r >= '0' && r <= '9':
+		return nativeCharNumber
+	case strings.ContainsRune(" \t\n\v\f\r\x85\u00a0", r):
+		return nativeCharWhite
+	case strings.ContainsRune("/,:;|", r):
+		return nativeCharDelimiter
+	case (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'):
+		return nativeCharLetter
+	default:
+		return nativeCharNonWord
+	}
+}
+
+func nativeBonusFor(prev, class nativeCharClass) int {
+	if class > nativeCharNonWord {
+		switch prev {
+		case nativeCharWhite:
+			return nativeBonusBoundaryWhite
+		case nativeCharDelimiter:
+			return nativeBonusBoundaryDelimiter
+		case nativeCharNonWord:
+			return nativeBonusBoundary
+		}
+	}
+	if prev == nativeCharLower && class == nativeCharUpper || prev != nativeCharNumber && class == nativeCharNumber {
+		return nativeBonusCamel123
+	}
+	switch class {
+	case nativeCharNonWord, nativeCharDelimiter:
+		return nativeBonusNonWord
+	case nativeCharWhite:
+		return nativeBonusBoundaryWhite
+	default:
+		return 0
+	}
 }

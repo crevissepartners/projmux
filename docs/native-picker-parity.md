@@ -17,7 +17,7 @@ picker evidence. It is not a production dependency-policy change.
 | plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickerItemsFromFZF`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
 | default `--smart-case` matching | all searchable picker rows | Covered | native filter keeps lower-case queries case-insensitive and uppercase queries case-sensitive; `TestFilterItemsUsesFZFSmartCase` |
-| fuzzy result ranking | simple non-search-key picker UX | Covered approximately | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst` |
+| fuzzy result ranking | simple non-search-key picker UX | Covered with fzf-derived scoring constants | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst`; `TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches` |
 | `--scrollbar █` | long switch/session/settings lists | Covered approximately | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered approximately | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
@@ -66,10 +66,12 @@ picker evidence. It is not a production dependency-policy change.
 - Exact fzf preview-window parity is not complete: native has approximate
   right/down layout and keyboard preview scrolling, but not the full fzf sizing
   algorithm.
-- Exact fzf fuzzy scoring is not complete for non-search-key simple pickers:
-  native ranking is deterministic and close enough for projmux search, but not
-  an implementation of fzf's scorer. Search-keyed app pickers preserve fzf's
-  `--disabled` reload order instead of score-sorting.
+- Exact fzf V2 dynamic-programming scoring is not complete for non-search-key
+  simple pickers. Native now mirrors fzf's core scoring constants and bonuses
+  for boundaries, delimiters, camelCase/number transitions, gap penalties, and
+  consecutive matches, but does not port the full V2 matrix search.
+  Search-keyed app pickers preserve fzf's `--disabled` reload order instead of
+  score-sorting.
 - Mouse support is not implemented. projmux does not currently expose mouse
   picker workflows, so this is outside the required app surface unless new
   workflows depend on it.

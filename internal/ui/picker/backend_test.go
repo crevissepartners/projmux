@@ -64,6 +64,22 @@ func TestFilterItemsRanksBetterMatchesFirst(t *testing.T) {
 	}
 }
 
+func TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "foob-r", Value: "late-boundary"},
+		{Title: "fo-bar", Value: "boundary"},
+		{Title: "FooBar", Value: "camel"},
+		{Title: "foobazbar", Value: "plain"},
+	}
+
+	filtered := FilterItems(items, "fb")
+	if got, want := valuesOf(filtered)[:3], []string{"boundary", "camel", "late-boundary"}; !equalStringSlices(got, want) {
+		t.Fatalf("FilterItems(fb) leading values = %#v, want fzf-like boundary/camel ranking %#v", got, want)
+	}
+}
+
 func TestFilterItemsIgnoresANSIEscapeSequences(t *testing.T) {
 	t.Parallel()
 
