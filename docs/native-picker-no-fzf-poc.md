@@ -75,6 +75,11 @@ The fzf compatibility surface for the native engine is tracked in
 - Native width/truncation uses terminal cell width for Korean/CJK text, emoji,
   and combining marks instead of raw rune count, so localized project names and
   decorated notify headers do not push the right frame border out of alignment.
+- Searchable native pickers draw a separator under the prompt/count line so the
+  query area reads as distinct chrome rather than the first row of the list.
+- Native interactive mode enables SGR mouse reporting while the alternate screen
+  is active. Primary click moves focus to a clicked row and mouse wheel moves
+  selection up/down, with reporting disabled again during screen restore.
 - When terminal size detection is unavailable, native picker falls back to a
   conservative 80x24 terminal instead of assuming a wider surface. Interactive
   tmux popups still use the detected popup size when `stty size` is available.

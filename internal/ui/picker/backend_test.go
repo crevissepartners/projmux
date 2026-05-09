@@ -647,7 +647,7 @@ func TestNativeInteractiveUsesAlternateScreen(t *testing.T) {
 	if !strings.HasSuffix(rendered, nativeScreenLeave) {
 		t.Fatalf("native output = %q, want alternate-screen leave suffix", rendered)
 	}
-	if !strings.Contains(rendered, "╯\r"+nativeSyncUpdateLeave+"\r\x1b[0m\x1b[H\x1b[J\x1b[?25h\x1b[?1049l") {
+	if !strings.Contains(rendered, "╯\r"+nativeSyncUpdateLeave+"\r\x1b[0m\x1b[?1006l\x1b[?1000l\x1b[H\x1b[J\x1b[?25h\x1b[?1049l") {
 		t.Fatalf("native output = %q, want reset and alternate-screen clear before leave", rendered)
 	}
 }
@@ -664,6 +664,30 @@ func TestNativeInteractiveRendersBorderFrame(t *testing.T) {
 	rendered := out.String()
 	if !strings.Contains(rendered, "╭") || !strings.Contains(rendered, "╰") || !strings.Contains(rendered, "│") {
 		t.Fatalf("native output = %q, want fzf-like rounded border frame", rendered)
+	}
+}
+
+func TestNativeInteractiveSeparatesSearchHeaderFromList(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:    "switch",
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 8, Cols: 40})
+
+	lines := strings.Split(out.String(), "\r\n")
+	if len(lines) < 5 {
+		t.Fatalf("native output = %q, want prompt, separator, and list rows", out.String())
+	}
+	if !strings.Contains(lines[1], "switch") {
+		t.Fatalf("prompt line = %q, want search prompt before separator", lines[1])
+	}
+	if !strings.Contains(lines[2], strings.Repeat(nativeGapLine, 8)) {
+		t.Fatalf("separator line = %q, want search/list divider", lines[2])
+	}
+	if !strings.Contains(lines[3], "api") {
+		t.Fatalf("first list line = %q, want item after search divider", lines[3])
 	}
 }
 
@@ -697,6 +721,42 @@ func TestNativeInteractiveSupportsApplicationCursorKeys(t *testing.T) {
 	}
 	if result.Key != "enter" || result.Value != "/repo/web" || result.Query != "" {
 		t.Fatalf("result = %#v, want application-cursor down to select web", result)
+	}
+}
+
+func TestNativeInteractiveSupportsMouseClickSelection(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5M\r"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want mouse click to focus web before enter", result)
+	}
+}
+
+func TestNativeInteractiveSupportsMouseWheelSelection(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[<65;3;4M\r"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want mouse wheel down to focus web before enter", result)
 	}
 }
 
@@ -1137,7 +1197,7 @@ func TestNativeListLimitAccountsForHeaderFooterAndDownPreview(t *testing.T) {
 		Header: "header",
 		Footer: "line 1\nline 2\nline 3",
 	}
-	if got, want := nativeListLimit(options, nativeLayout{Rows: 20, Cols: 80}, "down", 5, true), 8; got != want {
+	if got, want := nativeListLimit(options, nativeLayout{Rows: 20, Cols: 80}, "down", 5, true), 7; got != want {
 		t.Fatalf("nativeListLimit() = %d, want %d", got, want)
 	}
 }

@@ -220,8 +220,8 @@ const (
 	nativeReset             = projmuxpicker.Reset
 	nativeInverseStart      = projmuxpicker.InverseStart
 	nativeCursorStart       = projmuxpicker.CursorStart
-	nativeScreenEnter       = "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H"
-	nativeScreenLeave       = "\r\x1b[0m\x1b[H\x1b[J\x1b[?25h\x1b[?1049l\r\n"
+	nativeScreenEnter       = "\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?25l\x1b[2J\x1b[H"
+	nativeScreenLeave       = "\r\x1b[0m\x1b[?1006l\x1b[?1000l\x1b[H\x1b[J\x1b[?25h\x1b[?1049l\r\n"
 	nativeSyncUpdateEnter   = projmuxpicker.SyncUpdateEnter
 	nativeSyncUpdateLeave   = projmuxpicker.SyncUpdateLeave
 	nativeScrollbar         = projmuxpicker.Scrollbar
@@ -380,8 +380,17 @@ func allowNativeLineMode(in io.Reader, lookup func(string) string) bool {
 }
 
 type nativeKey struct {
-	Name string
-	Text string
+	Name     string
+	Text     string
+	Mouse    nativeMouseEvent
+	HasMouse bool
+}
+
+type nativeMouseEvent struct {
+	Button  int
+	X       int
+	Y       int
+	Release bool
 }
 
 func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result, error) {
@@ -431,6 +440,12 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		nativeDebugLogf("interactive ui=%q key name=%q text=%q query=%q selected=%d items=%d", options.UI, key.Name, key.Text, query, selected, len(items))
 		if key.Name == "" && key.Text == "" {
 			continue
+		}
+		if key.HasMouse {
+			if nextSelected, ok := nativeMouseSelection(options, items, selected, layout, key.Mouse); ok {
+				selected = nextSelected
+				continue
+			}
 		}
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
@@ -644,6 +659,96 @@ func selectedNativeValue(items []Item, selected int) string {
 	return items[selected].Value
 }
 
+func nativeMouseSelection(options Options, items []Item, selected int, layout nativeLayout, event nativeMouseEvent) (int, bool) {
+	if event.Release || len(items) == 0 {
+		return selected, false
+	}
+	switch event.Button {
+	case 64: // wheel up
+		if selected > 0 {
+			return selected - 1, true
+		}
+		return selected, true
+	case 65: // wheel down
+		if selected < len(items)-1 {
+			return selected + 1, true
+		}
+		return selected, true
+	case 0: // primary click
+		return nativeMouseItemIndex(options, items, selected, layout, event.X, event.Y)
+	default:
+		return selected, false
+	}
+}
+
+func nativeMouseItemIndex(options Options, items []Item, selected int, layout nativeLayout, x, y int) (int, bool) {
+	if x <= 1 || y <= 1 {
+		return selected, false
+	}
+	contentLayout := nativeContentLayout(layout)
+	contentX := x - 2
+	if contentX < 0 || contentX >= contentLayout.Cols {
+		return selected, false
+	}
+	contentRow := y - 2
+	if contentRow < 0 || contentRow >= contentLayout.Rows {
+		return selected, false
+	}
+
+	listStart := nativeListStartLine(options)
+	listRow := contentRow - listStart
+	if listRow < 0 {
+		return selected, false
+	}
+
+	placement := nativePreviewPlacement(options.Preview.Window)
+	hasPreview := strings.TrimSpace(options.Preview.Command) != "" && selected >= 0 && selected < len(items)
+	if hasPreview && placement == "right" && contentLayout.Cols >= 88 {
+		previewWidth := nativePreviewWidth(contentLayout.Cols, options.Preview.Window)
+		listWidth := contentLayout.Cols - previewWidth - 1
+		if listWidth < 32 {
+			listWidth = 32
+		}
+		if contentX >= listWidth {
+			return selected, false
+		}
+	}
+
+	previewHeight := nativePreviewHeight(contentLayout.Rows, options.Preview.Window)
+	listLimit := nativeListLimit(options, contentLayout, placement, previewHeight, hasPreview)
+	start, end := nativeVisibleRange(len(items), selected, listLimit)
+	if options.MultiLine {
+		start, end = nativeVisibleRangeByRenderedRows(items, selected, listLimit)
+	}
+
+	offset := 0
+	for index := start; index < end; index++ {
+		rowHeight := nativeItemLineCount(items[index])
+		if listRow >= offset && listRow < offset+rowHeight {
+			return index, true
+		}
+		offset += rowHeight
+		if options.MultiLine && index < end-1 {
+			if listRow == offset {
+				return selected, false
+			}
+			offset++
+		}
+	}
+	return selected, false
+}
+
+func nativeListStartLine(options Options) int {
+	lines := 0
+	if header := strings.TrimSpace(options.Header); header != "" {
+		lines += nativeTextLineCount(header)
+	}
+	if !options.DisableSearch {
+		lines += 2 // prompt plus search/list separator
+	}
+	return lines
+}
+
 func readNativeKey(r io.Reader) (nativeKey, error) {
 	b, err := readNativeByte(r)
 	if err != nil {
@@ -751,6 +856,9 @@ func isNativeCSIFinal(b byte) bool {
 func nativeKeyFromCSI(seq []byte) nativeKey {
 	final := seq[len(seq)-1]
 	params := string(seq[:len(seq)-1])
+	if strings.HasPrefix(params, "<") && (final == 'M' || final == 'm') {
+		return nativeMouseKey(params, final == 'm')
+	}
 	if final == 'u' {
 		if key := nativeKeyFromCSIu(params); key.Name != "" || key.Text != "" {
 			return key
@@ -770,6 +878,29 @@ func nativeKeyFromCSI(seq []byte) nativeKey {
 		return nativeKey{Name: "ctrl-" + name}
 	default:
 		return nativeKey{Name: name}
+	}
+}
+
+func nativeMouseKey(params string, release bool) nativeKey {
+	fields := strings.Split(strings.TrimPrefix(params, "<"), ";")
+	if len(fields) != 3 {
+		return nativeKey{Name: "mouse"}
+	}
+	button, buttonErr := strconv.Atoi(strings.TrimSpace(fields[0]))
+	x, xErr := strconv.Atoi(strings.TrimSpace(fields[1]))
+	y, yErr := strconv.Atoi(strings.TrimSpace(fields[2]))
+	if buttonErr != nil || xErr != nil || yErr != nil {
+		return nativeKey{Name: "mouse"}
+	}
+	return nativeKey{
+		Name: "mouse",
+		Mouse: nativeMouseEvent{
+			Button:  button,
+			X:       x,
+			Y:       y,
+			Release: release,
+		},
+		HasMouse: true,
 	}
 }
 
@@ -1105,6 +1236,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 			prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
 		}
 		fmt.Fprintln(&screen, nativePromptLineWithCursor(prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
+		fmt.Fprintln(&screen, nativeSearchSeparatorLine(layout.Cols))
 	}
 
 	placement := nativePreviewPlacement(options.Preview.Window)
@@ -1165,6 +1297,7 @@ func nativeChromeLineCount(options Options) int {
 	lines := 0
 	if !options.DisableSearch {
 		lines++ // prompt
+		lines++ // search/list separator
 	}
 	if header := strings.TrimSpace(options.Header); header != "" {
 		lines += nativeTextLineCount(header)
@@ -1181,6 +1314,13 @@ func nativeTextLineCount(value string) int {
 		return 0
 	}
 	return len(strings.Split(value, "\n"))
+}
+
+func nativeSearchSeparatorLine(cols int) string {
+	if cols <= 0 {
+		cols = defaultNativeCols
+	}
+	return nativeTruncateANSI(strings.Repeat(nativeGapLine, cols), cols)
 }
 
 func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {

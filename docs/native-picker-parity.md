@@ -9,6 +9,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | fzf surface | projmux usage | Native status | Evidence |
 | --- | --- | --- | --- |
 | `--prompt` | AI, settings, shell update, switch, sessions, notify | Covered | `renderNativeInteractive`, `renderNative`; `TestNativePromptLineIncludesInlineMatchCount` |
+| prompt/list separation | native searchable picker chrome | Covered | native renders a separator under searchable prompt/count lines; `TestNativeInteractiveSeparatesSearchHeaderFromList` |
 | `--height 100%` / `--border` | all interactive picker screens | Covered for fullscreen rounded border frame | `renderNativeFrame`; screen-height list budgeting; conservative 80x24 fallback only when terminal size detection is unavailable; `TestNativeInteractiveRendersBorderFrame`; `TestNativeInteractiveUsesAvailableHeightForSimpleLists` |
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / `--footer-border line` | AI, settings, shell update, switch, sessions, notify | Covered for interactive native screens | `renderNativeInteractive` reserves bottom footer space and renders a separator line; `TestNativeInteractiveRendersFooterAtBottom` |
@@ -41,6 +42,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | `--print-query` accept-query mode | typed settings path prompts | Covered | `Options.AcceptQuery`; `TestNativeRunnerAcceptsTypedQuery` |
 | query cursor editing | typed settings path prompts | Covered | Left/Right, Ctrl-A/E, Delete, Backspace, Ctrl-U/W query editing plus visible prompt cursor; `TestNativeInteractiveEditsTypedQueryAtCursor`; `TestNativeInteractiveSupportsQueryLineEditingKeys`; `TestNativeInteractiveCtrlUDeletesBeforeCursor`; `TestNativePromptLineRendersQueryCursor` |
 | terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; app TTY `/dev/tty` fallback; raw TTY EOF polling keeps split ESC sequences from leaking into the query |
+| mouse support | optional fzf mouse picker interaction | Partially covered | native enables SGR mouse reporting in interactive alternate-screen mode, primary click focuses a row, and wheel input moves selection; double-click accept and drag gestures remain outside this POC; `TestNativeInteractiveSupportsMouseClickSelection`; `TestNativeInteractiveSupportsMouseWheelSelection`; Docker no-fzf e2e clicks the AI settings row under a PTY |
 | fzf navigation keys | interactive selection in searchable lists | Covered | native maps `Ctrl-N` to down and `Ctrl-P`/`Ctrl-K` to up when not claimed by a custom action; `TestNativeInteractiveSupportsFZFNavigationKeys` |
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | native frame updates and screen exit return to column 0 before terminal control sequences, screen exit resets styles plus clears the alternate buffer from the home cursor before restore, and real TTY restores get a short settle window before caller handoff; `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen`; `TestRenderFullFrameUpdateAlwaysHomesAndWritesFrame` |
 | frame content width | fzf border inner width | Covered | `ContentLayout` uses the frame inner width so separators and rows reach the right border; `TestRendererContentLayoutUsesFrameInnerWidth` |
@@ -110,9 +112,9 @@ experimental native picker engine and is not a public dependency-policy change.
   gap, and consecutive bonuses. Very large `query * row` matrices intentionally
   fall back to the greedy scorer to avoid pathological memory use. Search-keyed
   app pickers preserve fzf's `--disabled` reload order instead of score-sorting.
-- Mouse support is not implemented. projmux does not currently expose mouse
-  picker workflows, so this is outside the required app surface unless new
-  workflows depend on it.
+- Mouse support is intentionally narrow in this POC: primary click focuses a
+  row and wheel input moves selection. Double-click accept, drag gestures, and
+  the full fzf mouse grammar are follow-up work.
 - The public doctor/docs dependency policy still says `fzf` is required. This
   is intentional while the native engine remains experimental.
 - Draft PR: https://github.com/crevissepartners/projmux/pull/98.
