@@ -245,6 +245,66 @@ func TestRunnerRunSupportsSearchKeyedEntries(t *testing.T) {
 	}
 }
 
+func TestRunnerRunDisableSearchKeepsNotifySidebarNavigationOnly(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeCommand{stdout: "workspace\n  ~/workspace\t/home/tester/workspace\x00"}
+
+	r := &runner{
+		lookupPath:     func(string) (string, error) { return "/usr/bin/fzf", nil },
+		supportsFooter: func(string) bool { return true },
+		newCommand: func(name string, args ...string) command {
+			want := []string{
+				"--prompt", "Notify > ",
+				"--height", "100%",
+				"--layout", "reverse",
+				"--border",
+				"--ansi",
+				"--delimiter", "\t",
+				"--with-nth", "1",
+				"--disabled",
+				"--no-input",
+				"--exit-0",
+				"--scrollbar", "█",
+				"--info", "inline-right",
+				"--read0",
+				"--print0",
+				"--highlight-line",
+				"--gap",
+				"--gap-line", "─",
+				"--pointer", "▌",
+				"--marker-multi-line", "┃┃┃",
+				"--color", "current-bg:#263238,current-fg:#ffffff,current-hl:#ffcc66,selected-bg:#1f292d,gutter:#263238,pointer:#e12672,marker:#e12672",
+				"--bind", "right:execute-silent(open {2})",
+			}
+			if got := args; !equalStrings(got, want) {
+				t.Fatalf("command args = %q, want %q", got, want)
+			}
+			return fake
+		},
+	}
+
+	got, err := r.Run(Options{
+		UI:            "notify-sidebar",
+		Read0:         true,
+		Prompt:        "Notify > ",
+		DisableSearch: true,
+		Bindings:      []string{"right:execute-silent(open {2})"},
+		Entries: []Entry{
+			{SearchKey: "workspace", Label: "workspace\n  ~/workspace", Value: "/home/tester/workspace"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got != (Result{Value: "/home/tester/workspace"}) {
+		t.Fatalf("Run() = %#v, want hidden value", got)
+	}
+	if got, want := fake.stdin.String(), "workspace\n  ~/workspace\t/home/tester/workspace"; got != want {
+		t.Fatalf("stdin = %q, want %q", got, want)
+	}
+}
+
 func TestRunnerRunRewritesSearchKeyedValuePlaceholders(t *testing.T) {
 	t.Parallel()
 

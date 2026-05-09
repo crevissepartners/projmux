@@ -83,10 +83,11 @@ preserves the stable JSON array used by scripts.
 
 `--ui=sidebar` opens the notify queue as an interactive right-side list when
 run inside the tmux popup surface. Enter focuses the selected target pane and
-acks the row after focus succeeds. `a` acks the selected row. `Ctrl-A` clears
+acks the row after focus succeeds. `x` acks the selected row. `Ctrl-X` clears
 all rows via `notify ack --all`. Rows are intentionally compact: the visible
 label keeps notification text first, then age, project, window, and pane
-metadata; id/source/severity/target remain searchable.
+metadata; hidden queue ids remain action values but the sidebar has no search
+input.
 
 `--live` adds a non-mutating explanation view that reads
 `tmux list-panes -a` and compares the queue with live reply-state panes. It
