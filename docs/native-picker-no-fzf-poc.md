@@ -39,7 +39,7 @@ The fzf compatibility surface for this POC is tracked in
   (`/dev/tty`) before entering raw mode. This avoids stdin/stdout mismatch and
   line-mode escape leakage such as arrow keys appearing as `^[[`.
 
-## Explicit Follow-Up Gaps
+## POC Boundaries
 
 - Switch and sessions preview panes are native previews for the concrete
   projmux option shapes. Wide right-side preview windows render beside the

@@ -62,7 +62,7 @@ picker evidence. It is not a production dependency-policy change.
 - `notify sidebar`: native routing is unit-covered; Docker no-fzf e2e pushes a
   notification, presses printable expect key `a`, and verifies the row is acked.
 
-## Remaining Gaps Before Calling This Complete
+## POC Boundaries
 
 - Preview-window parity is covered for the concrete projmux option shapes
   (`right,60%,border-left` and `down,25%,border-top`) with fzf-measured percent
