@@ -92,9 +92,9 @@ Manual UX checks for the Docker sandbox:
 
 - Alt-1 opens with the top border/title visible, not clipped.
 - Vertical borders stay continuous while moving Up/Down.
-- After moving selection, Alt-1 closes the sidebar immediately.
+- Alt-1 closes the sidebar immediately when pressed again.
 - Alt-2, Alt-3, Alt-4, and Alt-5 open their matching native popups and close
-  on the same Alt key after the first real input.
+  on the same Alt key immediately.
 - Arrow keys move selection without leaking `^[[` text into the query.
 
 `fzf` is intentionally not installed in the image.

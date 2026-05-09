@@ -26,6 +26,21 @@ func TestRenderableListLinePadsSelectedStyleBeforeReset(t *testing.T) {
 	}
 }
 
+func TestRenderableListLinePadsUnselectedStyleAfterReset(t *testing.T) {
+	t.Parallel()
+
+	line := "\x1b[90m~rp/web\x1b[0m \x1b[90mmaster\x1b[0m"
+	padding := strings.Repeat(" ", 24-VisibleLen(line))
+	rendered := RenderableListLine(line, 24)
+
+	if !strings.HasSuffix(rendered, Reset+padding) {
+		t.Fatalf("RenderableListLine() = %q, want inactive style reset before padding", rendered)
+	}
+	if strings.Contains(rendered, "master"+padding+Reset) {
+		t.Fatalf("RenderableListLine() = %q, want inactive branch style not stretched", rendered)
+	}
+}
+
 func TestInteractiveRowLinesKeepsSimpleSelectionAfterANSIReset(t *testing.T) {
 	t.Parallel()
 

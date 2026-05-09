@@ -380,8 +380,6 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	focusedValue := ""
 	previewOffset := 0
 	launchKey := strings.ToLower(strings.TrimSpace(os.Getenv(NativeLaunchKeyEnv)))
-	allowLaunchKeyIgnore := launchKey != ""
-	ignoredLaunchSuffix := ""
 	layout := detectNativeLayout(in)
 	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
 	fmt.Fprint(out, nativeScreenEnter)
@@ -415,19 +413,6 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if key.Name == "" && key.Text == "" {
 			continue
 		}
-		if ignoredLaunchSuffix != "" && key.Text == ignoredLaunchSuffix {
-			nativeDebugLogf("interactive ui=%q ignore_launch_suffix text=%q", options.UI, key.Text)
-			ignoredLaunchSuffix = ""
-			allowLaunchKeyIgnore = false
-			continue
-		}
-		if ignore, suffix := shouldIgnoreNativeLaunchKey(key, launchKey, options.Actions, allowLaunchKeyIgnore); ignore {
-			nativeDebugLogf("interactive ui=%q ignore_launch_key name=%q text=%q suffix=%q", options.UI, key.Name, key.Text, suffix)
-			allowLaunchKeyIgnore = suffix != ""
-			ignoredLaunchSuffix = suffix
-			continue
-		}
-		allowLaunchKeyIgnore = false
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
 			result, refresh := runNativePickerAction(action, options, items, selected, query)
@@ -593,32 +578,6 @@ func runNativeFocusAction(actions []Action, value string) {
 			return
 		}
 	}
-}
-
-func shouldIgnoreNativeLaunchKey(key nativeKey, launchKey string, actions []Action, allowed bool) (bool, string) {
-	if !allowed || launchKey == "" {
-		return false, ""
-	}
-	name := strings.ToLower(key.Name)
-	if name == launchKey {
-		action, ok := findAction(actions, key.Name)
-		return ok && action.Intent == ActionClose, ""
-	}
-	if name == "esc" && strings.HasPrefix(launchKey, "alt-") {
-		action, ok := findAction(actions, "esc")
-		if ok && action.Intent == ActionClose {
-			return true, nativeLaunchKeySuffix(launchKey)
-		}
-	}
-	return false, ""
-}
-
-func nativeLaunchKeySuffix(launchKey string) string {
-	suffix := strings.TrimPrefix(launchKey, "alt-")
-	if len([]rune(suffix)) == 1 {
-		return suffix
-	}
-	return ""
 }
 
 func selectedNativeValue(items []Item, selected int) string {
@@ -1058,7 +1017,7 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 }
 
 func renderNativeInteractiveWithCursor(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
-	fmt.Fprint(w, "\x1b[2J\x1b[H")
+	fmt.Fprint(w, "\x1b[H")
 	contentLayout := nativeContentLayout(layout)
 	var body strings.Builder
 	renderNativeInteractiveContent(&body, options, items, query, queryCursor, selected, previewOffset, contentLayout)

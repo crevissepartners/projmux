@@ -349,10 +349,10 @@ func TestNativeRunnerUsesSharedCloseActions(t *testing.T) {
 	}
 }
 
-func TestNativeInteractiveIgnoresMatchingLaunchCloseKeyOnce(t *testing.T) {
+func TestNativeInteractiveClosesOnMatchingLaunchCloseKey(t *testing.T) {
 	t.Setenv(NativeLaunchKeyEnv, "alt-1")
 
-	result, err := runNativeInteractive(strings.NewReader("\x1b1\r"), io.Discard, Options{
+	result, err := runNativeInteractive(strings.NewReader("\x1b1"), io.Discard, Options{
 		UI:      "switch",
 		Items:   []Item{{Title: "api", Value: "/repo/api"}},
 		Actions: CloseActions("alt-1"),
@@ -360,8 +360,8 @@ func TestNativeInteractiveIgnoresMatchingLaunchCloseKeyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
-	if result.Closed || result.Value != "/repo/api" || result.Key != "enter" {
-		t.Fatalf("result = %#v, want stale launcher ignored and api selected", result)
+	if !result.Closed || result.Key != "alt-1" {
+		t.Fatalf("result = %#v, want matching launch key to close immediately", result)
 	}
 }
 
@@ -384,10 +384,10 @@ func TestNativeInteractiveDoesNotIgnoreLaunchCloseKeyAfterFirstInput(t *testing.
 	}
 }
 
-func TestNativeInteractiveIgnoresMatchingCSIuLaunchCloseKeyOnce(t *testing.T) {
+func TestNativeInteractiveClosesOnMatchingCSIuLaunchCloseKey(t *testing.T) {
 	t.Setenv(NativeLaunchKeyEnv, "alt-1")
 
-	result, err := runNativeInteractive(strings.NewReader("\x1b[9005u\r"), io.Discard, Options{
+	result, err := runNativeInteractive(strings.NewReader("\x1b[9005u"), io.Discard, Options{
 		UI:      "switch",
 		Items:   []Item{{Title: "api", Value: "/repo/api"}},
 		Actions: CloseActions("alt-1"),
@@ -395,16 +395,16 @@ func TestNativeInteractiveIgnoresMatchingCSIuLaunchCloseKeyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
-	if result.Closed || result.Value != "/repo/api" || result.Key != "enter" {
-		t.Fatalf("result = %#v, want stale CSI-u launcher ignored and api selected", result)
+	if !result.Closed || result.Key != "alt-1" {
+		t.Fatalf("result = %#v, want matching CSI-u launch key to close immediately", result)
 	}
 }
 
-func TestNativeInteractiveIgnoresSplitLaunchEscapeAndSuffix(t *testing.T) {
+func TestNativeInteractiveClosesOnSplitLaunchEscape(t *testing.T) {
 	t.Setenv(NativeLaunchKeyEnv, "alt-1")
 
 	result, err := runNativeInteractive(&delayedByteReader{
-		data:            []byte("\x1b1\r"),
+		data:            []byte("\x1b1"),
 		zerosBeforeByte: nativeMaybeReadAttempts + 1,
 	}, io.Discard, Options{
 		UI:      "switch",
@@ -414,8 +414,8 @@ func TestNativeInteractiveIgnoresSplitLaunchEscapeAndSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
-	if result.Closed || result.Value != "/repo/api" || result.Query != "" {
-		t.Fatalf("result = %#v, want split stale launcher ignored and api selected", result)
+	if !result.Closed || result.Key != "esc" {
+		t.Fatalf("result = %#v, want split escape launch key to close immediately", result)
 	}
 }
 
@@ -432,6 +432,27 @@ func TestNativeInteractiveDoesNotIgnoreDifferentLaunchCloseKey(t *testing.T) {
 	}
 	if !result.Closed || result.Key != "alt-2" {
 		t.Fatalf("result = %#v, want non-launch close key to close", result)
+	}
+}
+
+func TestNativeInteractiveRedrawDoesNotClearWholeScreen(t *testing.T) {
+	var out bytes.Buffer
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[B\r"), &out, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want selected web item", result)
+	}
+	if strings.Contains(out.String(), "\x1b[2J") {
+		t.Fatalf("native interactive output contains full-screen clear: %q", out.String())
 	}
 }
 

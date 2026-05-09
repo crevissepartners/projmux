@@ -195,10 +195,14 @@ func PadStyledLine(line string, width int) string {
 		return line
 	}
 	padding := strings.Repeat(" ", width-VisibleLen(line))
-	if strings.HasSuffix(line, Reset) {
+	if strings.HasSuffix(line, Reset) && padsInsideFinalStyle(line) {
 		return strings.TrimSuffix(line, Reset) + padding + Reset
 	}
-	return line
+	return line + padding
+}
+
+func padsInsideFinalStyle(line string) bool {
+	return strings.Contains(line, CurrentStart) || strings.Contains(line, InverseStart)
 }
 
 func InteractiveRowLines(row Row, selected, multiLine bool) []string {

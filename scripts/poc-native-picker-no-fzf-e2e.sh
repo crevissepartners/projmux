@@ -55,7 +55,7 @@ docker run --rm \
     done
     switch_log=/tmp/projmux-switch.log
     switch_status=0
-    printf "\0331bravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-1 PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$switch_log" || switch_status=$?
+    printf "bravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-1 PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$switch_log" || switch_status=$?
     if [[ "$switch_status" != 0 && "$switch_status" != 124 ]]; then
       cat "$switch_log"
       exit "$switch_status"
@@ -174,11 +174,11 @@ docker run --rm \
     fi
     tmux -L poc-no-fzf-alt kill-server 2>/dev/null || true
     echo "[poc/no-fzf] projmux shell Alt-1 popup rendered native switch"
-    echo "[poc/no-fzf] exercise native launch key closes after first real input"
+    echo "[poc/no-fzf] exercise native launch key closes immediately"
     launch_close_log=/tmp/projmux-launch-close.log
     launch_close_debug=/tmp/projmux-launch-close.debug
     launch_close_status=0
-    printf "\0331\033[B\0331" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_DEBUG_LOG=$launch_close_debug PROJMUX_NATIVE_LAUNCH_KEY=alt-1 PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$launch_close_log" || launch_close_status=$?
+    printf "\0331" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_DEBUG_LOG=$launch_close_debug PROJMUX_NATIVE_LAUNCH_KEY=alt-1 PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$launch_close_log" || launch_close_status=$?
     if [[ "$launch_close_status" != 0 ]]; then
       cat "$launch_close_log"
       cat "$launch_close_debug"
@@ -189,27 +189,17 @@ docker run --rm \
       echo "native switch did not render full frame while checking launch-key close" >&2
       exit 1
     fi
-    if ! grep -q "ignore_launch_key name=\"alt-1\"" "$launch_close_debug"; then
-      cat "$launch_close_debug"
-      echo "native switch did not absorb initial Alt-1 launch key" >&2
-      exit 1
-    fi
-    if ! grep -q "key name=\"down\"" "$launch_close_debug"; then
-      cat "$launch_close_debug"
-      echo "native switch did not consume arrow key after launch" >&2
-      exit 1
-    fi
     if ! grep -q "action key=\"alt-1\" intent=\"close\"" "$launch_close_debug"; then
       cat "$launch_close_debug"
-      echo "native switch did not close on second Alt-1 after navigation" >&2
+      echo "native switch did not close on immediate Alt-1 toggle" >&2
       exit 1
     fi
-    echo "[poc/no-fzf] native launch key closes after first real input"
+    echo "[poc/no-fzf] native launch key closes immediately"
     echo "[poc/no-fzf] exercise native notify sidebar printable expect key"
     /tmp/projmux notify push --text "deploy ok" --target main --source ai --id poc-notify
     notify_log=/tmp/projmux-notify.log
     notify_status=0
-    printf "\0332a" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-2 /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
+    printf "a" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-2 /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
     if [[ "$notify_status" != 0 ]]; then
       cat "$notify_log"
       exit "$notify_status"
