@@ -1138,6 +1138,18 @@ func TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset(t *testing.T) {
 	}
 }
 
+func TestNativeTruncateANSIClosesStyleWhenCutBeforeReset(t *testing.T) {
+	t.Parallel()
+
+	got := nativeTruncateANSI("\x1b[90mProject Root is a long hint\x1b[0m", 12)
+	if !strings.HasSuffix(got, nativeReset) {
+		t.Fatalf("nativeTruncateANSI() = %q, want trailing reset after truncating styled text", got)
+	}
+	if gotLen := nativeVisibleLen(got); gotLen != 12 {
+		t.Fatalf("nativeVisibleLen(truncated) = %d, want 12; value = %q", gotLen, got)
+	}
+}
+
 func TestNativeInteractiveRendersMultilineGapLine(t *testing.T) {
 	t.Parallel()
 

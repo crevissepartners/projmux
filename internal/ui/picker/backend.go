@@ -1625,6 +1625,7 @@ func nativeTruncateANSI(value string, width int) string {
 	}
 	var out strings.Builder
 	visible := 0
+	sawANSI := false
 	for i := 0; i < len(value) && visible < width; {
 		if value[i] == '\x1b' {
 			end := i + 1
@@ -1633,6 +1634,7 @@ func nativeTruncateANSI(value string, width int) string {
 			}
 			if end < len(value) {
 				out.WriteString(value[i : end+1])
+				sawANSI = true
 				i = end + 1
 				continue
 			}
@@ -1644,6 +1646,9 @@ func nativeTruncateANSI(value string, width int) string {
 		out.WriteRune(r)
 		visible++
 		i += size
+	}
+	if sawANSI && !strings.HasSuffix(out.String(), nativeReset) {
+		out.WriteString(nativeReset)
 	}
 	return out.String()
 }
