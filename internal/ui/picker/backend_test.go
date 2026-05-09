@@ -381,6 +381,25 @@ func TestNativeInteractiveIgnoresMatchingCSIuLaunchCloseKeyOnce(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveIgnoresSplitLaunchEscapeAndSuffix(t *testing.T) {
+	t.Setenv(NativeLaunchKeyEnv, "alt-1")
+
+	result, err := runNativeInteractive(&delayedByteReader{
+		data:            []byte("\x1b1\r"),
+		zerosBeforeByte: nativeMaybeReadAttempts + 1,
+	}, io.Discard, Options{
+		UI:      "switch",
+		Items:   []Item{{Title: "api", Value: "/repo/api"}},
+		Actions: CloseActions("esc", "alt-1"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Closed || result.Value != "/repo/api" || result.Query != "" {
+		t.Fatalf("result = %#v, want split stale launcher ignored and api selected", result)
+	}
+}
+
 func TestNativeInteractiveDoesNotIgnoreDifferentLaunchCloseKey(t *testing.T) {
 	t.Setenv(NativeLaunchKeyEnv, "alt-1")
 

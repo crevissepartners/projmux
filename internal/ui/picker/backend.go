@@ -344,6 +344,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	previewOffset := 0
 	launchKey := strings.ToLower(strings.TrimSpace(os.Getenv(NativeLaunchKeyEnv)))
 	ignoredLaunchKey := false
+	ignoredLaunchSuffix := ""
 	layout := detectNativeLayout(in)
 	fmt.Fprint(out, nativeScreenEnter)
 	defer fmt.Fprint(out, nativeScreenLeave)
@@ -373,8 +374,13 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if key.Name == "" && key.Text == "" {
 			continue
 		}
-		if shouldIgnoreNativeLaunchKey(key, launchKey, options.Actions, ignoredLaunchKey) {
+		if ignoredLaunchSuffix != "" && key.Text == ignoredLaunchSuffix {
+			ignoredLaunchSuffix = ""
+			continue
+		}
+		if ignore, suffix := shouldIgnoreNativeLaunchKey(key, launchKey, options.Actions, ignoredLaunchKey); ignore {
 			ignoredLaunchKey = true
+			ignoredLaunchSuffix = suffix
 			continue
 		}
 
@@ -539,12 +545,30 @@ func runNativeFocusAction(actions []Action, value string) {
 	}
 }
 
-func shouldIgnoreNativeLaunchKey(key nativeKey, launchKey string, actions []Action, alreadyIgnored bool) bool {
-	if alreadyIgnored || launchKey == "" || strings.ToLower(key.Name) != launchKey {
-		return false
+func shouldIgnoreNativeLaunchKey(key nativeKey, launchKey string, actions []Action, alreadyIgnored bool) (bool, string) {
+	if alreadyIgnored || launchKey == "" {
+		return false, ""
 	}
-	action, ok := findAction(actions, key.Name)
-	return ok && action.Intent == ActionClose
+	name := strings.ToLower(key.Name)
+	if name == launchKey {
+		action, ok := findAction(actions, key.Name)
+		return ok && action.Intent == ActionClose, ""
+	}
+	if name == "esc" && strings.HasPrefix(launchKey, "alt-") {
+		action, ok := findAction(actions, "esc")
+		if ok && action.Intent == ActionClose {
+			return true, nativeLaunchKeySuffix(launchKey)
+		}
+	}
+	return false, ""
+}
+
+func nativeLaunchKeySuffix(launchKey string) string {
+	suffix := strings.TrimPrefix(launchKey, "alt-")
+	if len([]rune(suffix)) == 1 {
+		return suffix
+	}
+	return ""
 }
 
 func selectedNativeValue(items []Item, selected int) string {
