@@ -1118,6 +1118,26 @@ func TestNativeInteractivePadsSelectedLineInsideStyle(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset(t *testing.T) {
+	t.Parallel()
+
+	line := nativeInteractiveItemLines(Item{
+		Label: "\x1b[36mAI Settings\x1b[0m  \x1b[90mdefault split mode\x1b[0m",
+		Value: "ai",
+	}, true, false)[0]
+	rendered := nativeRenderableListLine(line, 48)
+
+	if got := strings.Count(rendered, nativeInverseStart); got < 3 {
+		t.Fatalf("rendered selected line = %q, want inverse style restored after embedded ANSI resets", rendered)
+	}
+	if !strings.Contains(rendered, "default split mode"+nativeReset+nativeInverseStart) {
+		t.Fatalf("rendered selected line = %q, want selected style restored after final label reset", rendered)
+	}
+	if !strings.HasSuffix(rendered, nativeReset) {
+		t.Fatalf("rendered selected line = %q, want final reset", rendered)
+	}
+}
+
 func TestNativeInteractiveRendersMultilineGapLine(t *testing.T) {
 	t.Parallel()
 

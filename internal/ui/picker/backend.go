@@ -210,6 +210,7 @@ const (
 	nativeCurrentStart      = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
 	nativePointer           = "\x1b[38;2;225;38;114m▌\x1b[0m "
 	nativeReset             = "\x1b[0m"
+	nativeInverseStart      = "\x1b[7m"
 	nativeCursorStart       = "\x1b[7m"
 	nativeScreenEnter       = "\x1b[?1049h\x1b[?25l"
 	nativeScreenLeave       = "\x1b[?25h\x1b[?1049l\r\n"
@@ -1453,7 +1454,7 @@ func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
 		if multiLine {
 			first = prefix + nativeSelectedContent(strings.TrimRight(lines[0], "\r"))
 		} else {
-			first = "\x1b[7m" + first + nativeReset
+			first = nativeInverseSelectedContent(first)
 		}
 	}
 	rendered = append(rendered, first)
@@ -1478,6 +1479,10 @@ func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
 
 func nativeSelectedContent(value string) string {
 	return nativeCurrentStart + strings.ReplaceAll(value, nativeReset, nativeReset+nativeCurrentStart) + nativeReset
+}
+
+func nativeInverseSelectedContent(value string) string {
+	return nativeInverseStart + strings.ReplaceAll(value, nativeReset, nativeReset+nativeInverseStart) + nativeReset
 }
 
 func nativePreviewLines(options Options, items []Item, selected, offset, limit int) []string {
