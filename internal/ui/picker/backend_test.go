@@ -697,6 +697,9 @@ func TestNativeInteractiveSeparatesSearchHeaderFromList(t *testing.T) {
 	if !strings.Contains(lines[1], "switch") {
 		t.Fatalf("prompt line = %q, want search prompt before separator", lines[1])
 	}
+	if !strings.Contains(lines[1], "Search") {
+		t.Fatalf("prompt line = %q, want explicit search header label", lines[1])
+	}
 	if !strings.Contains(lines[2], strings.Repeat(nativeGapLine, 8)) {
 		t.Fatalf("separator line = %q, want search/list divider", lines[2])
 	}
@@ -741,7 +744,7 @@ func TestNativeInteractiveSupportsApplicationCursorKeys(t *testing.T) {
 func TestNativeInteractiveSupportsMouseClickSelection(t *testing.T) {
 	t.Parallel()
 
-	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5M\r"), io.Discard, Options{
+	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5M"), io.Discard, Options{
 		UI: "switch",
 		Items: []Item{
 			{Title: "api", Value: "/repo/api"},
@@ -752,14 +755,14 @@ func TestNativeInteractiveSupportsMouseClickSelection(t *testing.T) {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
 	if result.Key != "enter" || result.Value != "/repo/web" {
-		t.Fatalf("result = %#v, want mouse click to focus web before enter", result)
+		t.Fatalf("result = %#v, want mouse click to select web", result)
 	}
 }
 
-func TestNativeInteractiveAcceptsSecondMouseClickOnFocusedRow(t *testing.T) {
+func TestNativeInteractiveIgnoresMouseReleaseBeforeClick(t *testing.T) {
 	t.Parallel()
 
-	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5M\x1b[<0;3;5m\x1b[<0;3;5M"), io.Discard, Options{
+	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5m\x1b[<0;3;5M"), io.Discard, Options{
 		UI: "switch",
 		Items: []Item{
 			{Title: "api", Value: "/repo/api"},
@@ -770,7 +773,7 @@ func TestNativeInteractiveAcceptsSecondMouseClickOnFocusedRow(t *testing.T) {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
 	if result.Key != "enter" || result.Value != "/repo/web" {
-		t.Fatalf("result = %#v, want second click on focused row to accept web", result)
+		t.Fatalf("result = %#v, want release ignored and next click to select web", result)
 	}
 }
 
@@ -1006,6 +1009,11 @@ func TestNativeInteractiveSupportsCSIuAppKeyBindings(t *testing.T) {
 		{name: "ctrl-alt-s generic csi", in: "\x1b[115;7u", want: "ctrl-alt-s"},
 		{name: "alt-p generic csi", in: "\x1b[112;3u", want: "alt-p"},
 		{name: "ctrl-a generic csi", in: "\x1b[97;5u", want: "ctrl-a"},
+		{name: "enter generic csi", in: "\x1b[13u", want: "enter"},
+		{name: "esc generic csi", in: "\x1b[27u", want: "esc"},
+		{name: "backspace generic csi", in: "\x1b[127u", want: "backspace"},
+		{name: "tab generic csi", in: "\x1b[9u", want: "tab"},
+		{name: "shift-tab generic csi", in: "\x1b[9;2u", want: "shift-tab"},
 	}
 
 	for _, tc := range cases {
@@ -1069,7 +1077,8 @@ func TestNativePromptLineIncludesInlineMatchCount(t *testing.T) {
 	t.Parallel()
 
 	line := nativePromptLine("› ", "api", 2, 8, 20)
-	if !strings.Contains(line, "› api") || !strings.HasSuffix(line, "2/8") {
+	plain := stripANSISequences(line)
+	if !strings.Contains(plain, "› api") || !strings.HasSuffix(plain, "2/8") {
 		t.Fatalf("nativePromptLine() = %q, want prompt and inline count", line)
 	}
 }
@@ -1099,7 +1108,8 @@ func TestNativePromptLineCursorDoesNotForceFilteredInfo(t *testing.T) {
 	t.Parallel()
 
 	line := nativePromptLineWithCursor("› ", "", 0, 5, 5, 20)
-	if strings.Contains(line, "5/5") || !strings.HasSuffix(line, "5") {
+	plain := stripANSISequences(line)
+	if strings.Contains(plain, "5/5") || !strings.HasSuffix(plain, "5") {
 		t.Fatalf("nativePromptLineWithCursor() = %q, want unfiltered total count", line)
 	}
 }

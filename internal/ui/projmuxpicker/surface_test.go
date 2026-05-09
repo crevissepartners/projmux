@@ -9,6 +9,9 @@ func TestPromptLineWithCursorRendersInlineCount(t *testing.T) {
 	t.Parallel()
 
 	line := PromptLineWithCursor("› ", "abcd", 2, 1, 1, 20)
+	if !strings.Contains(line, "Search") {
+		t.Fatalf("PromptLineWithCursor() = %q, want explicit search label", line)
+	}
 	if !strings.Contains(line, "ab"+CursorStart+"c"+Reset+"d") {
 		t.Fatalf("PromptLineWithCursor() = %q, want styled cursor at query index", line)
 	}

@@ -402,7 +402,6 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	selected := options.InitialIndex
 	focusedValue := ""
 	previewOffset := 0
-	lastMouseSelected := -1
 	launchKey := strings.ToLower(strings.TrimSpace(os.Getenv(NativeLaunchKeyEnv)))
 	layout := detectNativeLayout(in)
 	renderer := projmuxpicker.FrameUpdateRenderer{}
@@ -444,28 +443,18 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		}
 		if key.HasMouse {
 			if nextSelected, ok := nativeMouseSelection(options, items, selected, layout, key.Mouse); ok {
-				if key.Mouse.Button == 0 && nextSelected == selected && lastMouseSelected == selected {
-					if options.AcceptQuery {
-						nativeDebugLogf("interactive ui=%q result=accept_query mouse=double_click query=%q", options.UI, query)
-						return Result{Key: "enter", Query: query}, nil
-					}
-					nativeDebugLogf("interactive ui=%q result=select mouse=double_click value=%q query=%q", options.UI, selectedNativeValue(items, selected), query)
-					return Result{Key: "enter", Value: selectedNativeValue(items, selected), Query: query}, nil
-				}
 				selected = nextSelected
 				if key.Mouse.Button == 0 {
-					lastMouseSelected = selected
-				} else {
-					lastMouseSelected = -1
+					result := nativeAcceptSelectedResult(options, items, selected, query)
+					nativeDebugLogf("interactive ui=%q result=select mouse=click value=%q query=%q", options.UI, result.Value, result.Query)
+					return result, nil
 				}
 				continue
 			}
 			if key.Mouse.Release {
 				continue
 			}
-			lastMouseSelected = -1
 		}
-		lastMouseSelected = -1
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
 			result, refresh := runNativePickerAction(action, options, items, selected, query)
@@ -495,8 +484,9 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			if len(items) == 0 {
 				continue
 			}
-			nativeDebugLogf("interactive ui=%q result=select key=enter value=%q query=%q", options.UI, items[selected].Value, query)
-			return Result{Key: "enter", Value: items[selected].Value, Query: query}, nil
+			result := nativeAcceptSelectedResult(options, items, selected, query)
+			nativeDebugLogf("interactive ui=%q result=select key=enter value=%q query=%q", options.UI, result.Value, result.Query)
+			return result, nil
 		case "esc", "ctrl-c":
 			nativeDebugLogf("interactive ui=%q result=closed key=%q query=%q", options.UI, key.Name, query)
 			return Result{Key: key.Name, Query: query, Closed: true}, nil
@@ -590,6 +580,13 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			}
 		}
 	}
+}
+
+func nativeAcceptSelectedResult(options Options, items []Item, selected int, query string) Result {
+	if options.AcceptQuery {
+		return Result{Key: "enter", Query: query}
+	}
+	return Result{Key: "enter", Value: selectedNativeValue(items, selected), Query: query}
 }
 
 func leaveNativeInteractiveScreen(out io.Writer) {
@@ -949,6 +946,19 @@ func nativeKeyFromCSIu(params string) nativeKey {
 	mod := ""
 	if len(fields) > 1 {
 		mod = strings.TrimSpace(fields[len(fields)-1])
+	}
+	switch codepoint {
+	case 9:
+		if mod == "2" {
+			return nativeKey{Name: "shift-tab"}
+		}
+		return nativeKey{Name: "tab"}
+	case 13:
+		return nativeKey{Name: "enter"}
+	case 27:
+		return nativeKey{Name: "esc"}
+	case 127, 8:
+		return nativeKey{Name: "backspace"}
 	}
 	if codepoint >= 'a' && codepoint <= 'z' {
 		letter := string(rune(codepoint))

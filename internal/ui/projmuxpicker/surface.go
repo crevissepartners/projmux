@@ -73,15 +73,17 @@ func PromptLineWithCursor(prompt, query string, cursor, matches, total, cols int
 
 func PromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
 	prompt = strings.TrimRight(prompt, " ")
-	line := strings.TrimRight(prompt+" "+renderedQuery, " ")
+	input := strings.TrimRight(prompt+" "+renderedQuery, " ")
+	line := MutedStart + "Search" + Reset + " " + input
 	info := strconv.Itoa(matches)
 	if query != "" || matches != total {
 		info = fmt.Sprintf("%d/%d", matches, total)
 	}
+	info = MutedStart + info + Reset
 	if cols <= 0 {
 		cols = DefaultCols
 	}
-	padding := cols - VisibleLen(line) - len(info)
+	padding := cols - VisibleLen(line) - VisibleLen(info)
 	if padding < 2 {
 		return line + "  " + info
 	}
