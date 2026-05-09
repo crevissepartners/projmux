@@ -41,7 +41,7 @@ func TestRenderableListLinePadsUnselectedStyleAfterReset(t *testing.T) {
 	}
 }
 
-func TestInteractiveRowLinesKeepsSimpleSelectionAfterANSIReset(t *testing.T) {
+func TestInteractiveRowLinesUsesCurrentStyleForSimpleSelection(t *testing.T) {
 	t.Parallel()
 
 	line := InteractiveRowLines(Row{
@@ -49,11 +49,14 @@ func TestInteractiveRowLinesKeepsSimpleSelectionAfterANSIReset(t *testing.T) {
 	}, true, false)[0]
 	rendered := RenderableListLine(line, 48)
 
-	if got := strings.Count(rendered, InverseStart); got < 3 {
-		t.Fatalf("rendered selected line = %q, want inverse style restored after embedded ANSI resets", rendered)
+	if !strings.Contains(rendered, Pointer) || !strings.Contains(rendered, CurrentStart) {
+		t.Fatalf("rendered selected line = %q, want projmux pointer and current-row style", rendered)
 	}
-	if !strings.Contains(rendered, "default split mode"+Reset+InverseStart) {
-		t.Fatalf("rendered selected line = %q, want selected style restored after final label reset", rendered)
+	if strings.Contains(rendered, InverseStart) {
+		t.Fatalf("rendered selected line = %q, want no terminal inverse selection style", rendered)
+	}
+	if !strings.Contains(rendered, "default split mode"+Reset+CurrentStart) {
+		t.Fatalf("rendered selected line = %q, want current style restored after final label reset", rendered)
 	}
 	if !strings.HasSuffix(rendered, Reset) {
 		t.Fatalf("rendered selected line = %q, want final reset", rendered)

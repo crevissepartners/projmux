@@ -12,7 +12,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | `--height 100%` / `--border` | all interactive picker screens | Covered for fullscreen rounded border frame | `renderNativeFrame`; screen-height list budgeting; `TestNativeInteractiveRendersBorderFrame`; `TestNativeInteractiveUsesAvailableHeightForSimpleLists` |
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / `--footer-border line` | AI, settings, shell update, switch, sessions, notify | Covered for interactive native screens | `renderNativeInteractive` reserves bottom footer space and renders a separator line; `TestNativeInteractiveRendersFooterAtBottom` |
-| `--ansi` | colored row labels from render package | Covered | native writes row labels directly, strips ANSI escapes from default search text, and restores selected-row styling after embedded ANSI resets; `TestFilterItemsIgnoresANSIEscapeSequences`; `TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset`; Docker e2e shows ANSI rows |
+| `--ansi` | colored row labels from render package | Covered | native writes row labels directly, strips ANSI escapes from default search text, and restores selected-row styling after embedded ANSI resets; `TestFilterItemsIgnoresANSIEscapeSequences`; `TestNativeInteractiveUsesCurrentStyleForSimpleSelection`; Docker e2e shows ANSI rows |
 | hidden value after tab delimiter | all picker selections and default fzf matching | Covered by `picker.Item.Value` and default search text | `fzf.PickerOptions`; `TestNativeRunnerFiltersAndSelectsByNumber`; `TestFilterItemsSearchesHiddenValueWhenNoSearchKey` |
 | plain fzf candidates without structured entries | legacy runner call shape | Covered | `fzf.PickerOptions`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
@@ -23,7 +23,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | `--scrollbar █` | long switch/session/settings lists | Covered for app lists | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered for app multiline rows | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
-| fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; `nativeInverseSelectedContent`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset` |
+| fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveUsesCurrentStyleForSimpleSelection` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `fzf.PickerOptions`; `TestNativeInteractiveSupportsCustomExpectKeys` |
 | printable expect keys | notify sidebar `x` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
 | control expect keys | notify sidebar `Ctrl-X`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
@@ -44,7 +44,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen` |
 | frame content width | fzf border inner width | Covered | `ContentLayout` uses the frame inner width so separators and rows reach the right border; `TestRendererContentLayoutUsesFrameInnerWidth` |
 | tmux popup frame interaction | native picker popups launched through `popup-toggle` | Covered for native backend popups | `popup-toggle` passes tmux `display-popup -B` when `PROJMUX_PICKER_BACKEND=native`, so the native picker owns the visible frame instead of double-drawing with the tmux popup border; `TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend` |
-| redraw flicker/top clipping | keyboard navigation in exact-height tmux popup | Partially covered | native redraws use synchronized updates plus row diffs after the first frame, and frame rendering avoids trailing bottom-border CRLF; `TestNativeInteractiveWrapsRedrawsInSynchronizedUpdates`; `TestRendererRenderFrameUsesCRLFRowsForRawTTY` |
+| redraw flicker/top clipping | keyboard navigation in exact-height tmux popup | Partially covered | native redraws use synchronized updates plus row diffs after the first frame, skip unchanged frames, and frame rendering avoids trailing bottom-border CRLF; `TestNativeInteractiveWrapsRedrawsInSynchronizedUpdates`; `TestFrameUpdateRendererSkipsUnchangedFrame`; `TestRendererRenderFrameUsesCRLFRowsForRawTTY` |
 
 ## Native Surface Architecture
 

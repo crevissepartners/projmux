@@ -65,6 +65,9 @@ The fzf compatibility surface for the native engine is tracked in
   expect/action keys still work.
 - Native frame content now uses the full inner border width so prompt/list/footer
   separators reach the right border like fzf.
+- Simple and multi-line native rows share the same projmux current-row style and
+  pointer marker rather than falling back to terminal inverse video for simple
+  pickers.
 - Native redraws use terminal synchronized-update wrappers and row-diff updates
   after the first frame. The frame/redraw renderer lives in `projmuxpicker`
   rather than the backend loop, skips unchanged frames, and avoids a trailing
