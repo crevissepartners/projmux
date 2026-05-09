@@ -18,10 +18,10 @@ picker evidence. It is not a production dependency-policy change.
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
 | default `--smart-case` matching | all searchable picker rows | Covered | native filter keeps lower-case queries case-insensitive and uppercase queries case-sensitive; `TestFilterItemsUsesFZFSmartCase` |
 | fuzzy result ranking | simple non-search-key picker UX | Covered with fzf V2 dynamic scoring for normal app rows | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst`; `TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches`; `TestFuzzyScoreMatchesFZFV2ReferenceScores` |
-| `--scrollbar █` | long switch/session/settings lists | Covered approximately | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
+| `--scrollbar █` | long switch/session/settings lists | Covered for app lists | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
-| `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered approximately | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
-| fzf current row colors | multi-line rows | Covered approximately | `nativeCurrentStart`, `nativePointer`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset` |
+| `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered for app multiline rows | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
+| fzf current row colors | multi-line rows | Covered for app multiline rows | `nativeCurrentStart`, `nativePointer`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `pickerActionsFromFZF`; `TestNativeInteractiveSupportsCustomExpectKeys` |
 | printable expect keys | notify sidebar `a` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
 | control expect keys | notify sidebar `Ctrl-A`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
@@ -33,7 +33,7 @@ picker evidence. It is not a production dependency-policy change.
 | `--preview` | switch, sessions | Covered by command output | `nativePreviewLines`; `TestNativeInteractiveRendersSelectedPreview` |
 | `--preview-window right,60%,border-left` | switch popup, sessions popup | Covered for projmux option shape | `renderNativeSplitPreview` renders a single-column left border without a synthetic title row and uses fzf-measured percent sizing; `TestNativeInteractiveRendersWidePreviewBesideList`; `TestNativePreviewWidthUsesPreviewWindowPercent` |
 | `--preview-window down,25%,border-top` | switch sidebar | Covered for projmux option shape | `renderNativeDownPreview` renders an immediate top border without a synthetic title row and uses fzf-measured percent sizing; `TestNativeInteractiveRendersDownPreviewBelowList`; `TestNativePreviewHeightUsesPreviewWindowPercent` |
-| preview scrolling | long switch/session preview output | Covered approximately with `Shift-Up`/`Shift-Down` | `previewOffset`; `TestNativeInteractiveRendersPreviewOffset` |
+| preview scrolling | long switch/session preview output | Covered for keyboard preview scroll | `previewOffset`; `TestNativeInteractiveRendersPreviewOffset` |
 | `--query` | typed settings path defaults | Covered | `Options.InitialQuery`; settings tests |
 | `--print-query` accept-query mode | typed settings path prompts | Covered | `Options.AcceptQuery`; `TestNativeRunnerAcceptsTypedQuery` |
 | query cursor editing | typed settings path prompts | Covered | Left/Right, Ctrl-A/E, Delete, Backspace, Ctrl-U/W query editing plus visible prompt cursor; `TestNativeInteractiveEditsTypedQueryAtCursor`; `TestNativeInteractiveSupportsQueryLineEditingKeys`; `TestNativeInteractiveCtrlUDeletesBeforeCursor`; `TestNativePromptLineRendersQueryCursor` |
