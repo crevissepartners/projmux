@@ -41,11 +41,18 @@ func FooterBlockLines(footer string, cols int) []string {
 	if cols <= 0 {
 		cols = DefaultCols
 	}
-	lines := []string{TruncateANSI(strings.Repeat(GapLine, cols), cols)}
+	lines := []string{SeparatorLine(cols)}
 	for line := range strings.SplitSeq(footer, "\n") {
 		lines = append(lines, TruncateANSI(strings.TrimRight(line, "\r"), cols))
 	}
 	return lines
+}
+
+func SeparatorLine(cols int) string {
+	if cols <= 0 {
+		cols = DefaultCols
+	}
+	return MutedStart + strings.Repeat(GapLine, cols) + Reset
 }
 
 func RenderedTextLineCount(value string) int {
@@ -185,9 +192,9 @@ func RenderableListLine(line string, width int) string {
 		return PadStyledLine(line, width)
 	}
 	if width <= 4 {
-		return GapLine
+		return SeparatorLine(1)
 	}
-	return "  " + strings.Repeat(GapLine, width-2)
+	return "  " + SeparatorLine(width-2)
 }
 
 func PadStyledLine(line string, width int) string {

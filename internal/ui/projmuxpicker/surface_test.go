@@ -17,6 +17,33 @@ func TestPromptLineWithCursorRendersInlineCount(t *testing.T) {
 	}
 }
 
+func TestSeparatorLineUsesMutedChromeAtFullWidth(t *testing.T) {
+	t.Parallel()
+
+	line := SeparatorLine(12)
+	if !strings.HasPrefix(line, MutedStart) || !strings.HasSuffix(line, Reset) {
+		t.Fatalf("SeparatorLine() = %q, want muted styled separator", line)
+	}
+	if got := VisibleLen(line); got != 12 {
+		t.Fatalf("VisibleLen(SeparatorLine()) = %d, want 12", got)
+	}
+	if !strings.Contains(line, strings.Repeat(GapLine, 12)) {
+		t.Fatalf("SeparatorLine() = %q, want gap characters", line)
+	}
+}
+
+func TestFooterBlockLinesUsesMutedSeparator(t *testing.T) {
+	t.Parallel()
+
+	lines := FooterBlockLines("Enter: open", 16)
+	if len(lines) != 2 {
+		t.Fatalf("FooterBlockLines() len = %d, want 2: %#v", len(lines), lines)
+	}
+	if !strings.HasPrefix(lines[0], MutedStart) || VisibleLen(lines[0]) != 16 {
+		t.Fatalf("footer separator = %q, want muted full-width separator", lines[0])
+	}
+}
+
 func TestRenderableListLinePadsSelectedStyleBeforeReset(t *testing.T) {
 	t.Parallel()
 

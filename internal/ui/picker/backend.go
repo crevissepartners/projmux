@@ -1330,10 +1330,7 @@ func nativeTextLineCount(value string) int {
 }
 
 func nativeSearchSeparatorLine(cols int) string {
-	if cols <= 0 {
-		cols = defaultNativeCols
-	}
-	return nativeTruncateANSI(strings.Repeat(nativeGapLine, cols), cols)
+	return projmuxpicker.SeparatorLine(cols)
 }
 
 func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 func TestResolveBackendDefaultsToFZF(t *testing.T) {
@@ -1477,8 +1479,8 @@ func TestNativeInteractiveRendersMultilineGapLine(t *testing.T) {
 	}, "", 0, 0, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "  "+strings.Repeat(nativeGapLine, 8)) {
-		t.Fatalf("native output = %q, want fzf-like multiline gap line", rendered)
+	if !strings.Contains(rendered, "  "+projmuxpicker.MutedStart+strings.Repeat(nativeGapLine, 8)) {
+		t.Fatalf("native output = %q, want muted fzf-like multiline gap line", rendered)
 	}
 	if strings.Contains(rendered, nativeGapSentinel) {
 		t.Fatalf("native output leaked gap sentinel: %q", rendered)

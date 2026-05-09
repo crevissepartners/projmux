@@ -87,7 +87,7 @@ func RenderDownPreview(w io.Writer, previewLines []string, layout Layout) {
 	if width <= 0 {
 		width = DefaultCols
 	}
-	fmt.Fprintln(w, TruncateANSI(strings.Repeat(GapLine, width), width))
+	fmt.Fprintln(w, SeparatorLine(width))
 	for _, line := range previewLines {
 		fmt.Fprintln(w, PadRight(TruncateANSI(line, width), width))
 	}
