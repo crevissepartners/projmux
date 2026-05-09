@@ -1139,6 +1139,9 @@ func (c *aiCommand) displayMessage(message string) error {
 	if strings.TrimSpace(message) == "" {
 		return nil
 	}
+	if strings.TrimSpace(c.env("TMUX")) == "" {
+		return nil
+	}
 	return c.run("tmux", "display-message", message)
 }
 
