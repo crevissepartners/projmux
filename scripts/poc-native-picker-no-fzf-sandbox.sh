@@ -59,6 +59,28 @@ docker run --rm -it \
     export PROJMUX_PROJDIR="$demo_root"
     export PROJMUX_MANAGED_ROOTS="$demo_root"
     sandbox_config=/tmp/projmux-native-tmux.conf
+    popup_log=/tmp/projmux-popup.log
+    popup_wrapper=/tmp/projmux-popup-toggle
+    cat > "$popup_wrapper" <<'"'"'WRAPPER'"'"'
+#!/usr/bin/env bash
+set -u
+log=/tmp/projmux-popup.log
+client="${1:-}"
+mode="${2:-}"
+{
+  printf "[%s] popup-toggle client=%q mode=%q backend=%q projdir=%q roots=%q\n" \
+    "$(date -Is)" "$client" "$mode" "${PROJMUX_PICKER_BACKEND:-}" "${PROJMUX_PROJDIR:-}" "${PROJMUX_MANAGED_ROOTS:-}"
+} >> "$log"
+PROJMUX_PICKER_BACKEND="${PROJMUX_PICKER_BACKEND:-native}" \
+PROJMUX_PROJDIR="${PROJMUX_PROJDIR:-/workspace/projects}" \
+PROJMUX_MANAGED_ROOTS="${PROJMUX_MANAGED_ROOTS:-/workspace/projects}" \
+  /usr/local/bin/projmux tmux popup-toggle --client "$client" "$mode" >> "$log" 2>&1
+code=$?
+printf "[%s] popup-toggle exit=%s client=%q mode=%q\n" "$(date -Is)" "$code" "$client" "$mode" >> "$log"
+exit "$code"
+WRAPPER
+    chmod +x "$popup_wrapper"
+    : > "$popup_log"
     projmux tmux print-app-config --bin /usr/local/bin/projmux > "$sandbox_config"
     {
       printf "set-environment -g PROJMUX_PICKER_BACKEND native\n"
@@ -68,18 +90,20 @@ docker run --rm -it \
     } >> "$sandbox_config"
     printf -v popup_env "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=%q PROJMUX_MANAGED_ROOTS=%q" "$PROJMUX_PROJDIR" "$PROJMUX_MANAGED_ROOTS"
     {
-      printf "bind-key -n M-1 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
-      printf "bind-key -n M-2 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} notify-sidebar\"\n" "$popup_env"
-      printf "bind-key -n M-3 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} session-popup\"\n" "$popup_env"
-      printf "bind-key -n M-4 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} ai-split-picker-right\"\n" "$popup_env"
-      printf "bind-key -n M-5 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} ai-split-settings\"\n" "$popup_env"
-      printf "bind-key -n M-6 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} sessionizer\"\n" "$popup_env"
-      printf "bind-key -n User2 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} notify-sidebar\"\n" "$popup_env"
-      printf "bind-key -n User3 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} session-popup\"\n" "$popup_env"
-      printf "bind-key -n User4 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
-      printf "bind-key -n User5 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} ai-split-picker-right\"\n" "$popup_env"
-      printf "bind-key -n User6 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} ai-split-settings\"\n" "$popup_env"
-      printf "bind-key -n User12 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} sessionizer\"\n" "$popup_env"
+      printf "bind-key -n M-1 run-shell \"%s %s #{client_tty} sessionizer-sidebar\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n M-2 run-shell \"%s %s #{client_tty} notify-sidebar\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n M-3 run-shell \"%s %s #{client_tty} session-popup\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n M-4 run-shell \"%s %s #{client_tty} ai-split-picker-right\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n M-5 run-shell \"%s %s #{client_tty} ai-split-settings\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n M-6 run-shell \"%s %s #{client_tty} sessionizer\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n User2 run-shell \"%s %s #{client_tty} notify-sidebar\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n User3 run-shell \"%s %s #{client_tty} session-popup\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n User4 run-shell \"%s %s #{client_tty} sessionizer-sidebar\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n User5 run-shell \"%s %s #{client_tty} ai-split-picker-right\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n User6 run-shell \"%s %s #{client_tty} ai-split-settings\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n User12 run-shell \"%s %s #{client_tty} sessionizer\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n C-g run-shell \"%s %s #{client_tty} sessionizer-sidebar\"\n" "$popup_env" "$popup_wrapper"
+      printf "bind-key -n C-y run-shell \"%s %s #{client_tty} notify-sidebar\"\n" "$popup_env" "$popup_wrapper"
     } >> "$sandbox_config"
     projmux notify push --text "native no-fzf sandbox notification" --target main --source ai --id poc-native-sandbox >/dev/null
     cd "$demo_root/alpha-api"
@@ -96,15 +120,19 @@ Demo project root:
 Inside tmux, try:
   Alt-1 / User4: project switch sidebar
   Alt-2 / User2: notification sidebar
+  Ctrl-g: project switch sidebar fallback for nested tmux
+  Ctrl-y: notification sidebar fallback for nested tmux
   projmux switch
   projmux settings
   tmux show-environment -g PROJMUX_PICKER_BACKEND
+  cat /tmp/projmux-popup.log
   projmux doctor --json
 
 Environment:
   PROJMUX_PICKER_BACKEND=native
   PROJMUX_PROJDIR=/workspace/projects
   tmux global env also forces native picker for Alt popup bindings
+  popup binding stderr/stdout is logged to /tmp/projmux-popup.log
 
 Detach from tmux with Ctrl-b d. Exit the container shell to remove the sandbox.
 EOF
