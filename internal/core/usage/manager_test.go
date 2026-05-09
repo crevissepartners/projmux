@@ -193,7 +193,7 @@ func TestMaybeCollectZeroThrottleAlwaysRuns(t *testing.T) {
 	adapter := &countingAdapter{name: "claude"}
 	mgr, _ := newTestManager(t, adapter, now)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		ran, err := mgr.MaybeCollect(context.Background(), 0)
 		if err != nil {
 			t.Fatalf("iter %d: %v", i, err)

@@ -283,20 +283,15 @@ func (a *Adapter) recordBackoff(now time.Time, retryAfter time.Duration) {
 	a.consecutive429++
 	var dur time.Duration
 	if retryAfter > 0 {
-		dur = retryAfter
-		// Server told us a value but it's smaller than our anti-hammer
-		// floor: bump it up. This protects against pathological 429
-		// loops where Retry-After: 1 would otherwise let the CLI
-		// re-hit Anthropic once per second.
-		if dur < retryAfterFloor {
-			dur = retryAfterFloor
-		}
+		dur = max(
+			// Server told us a value but it's smaller than our anti-hammer
+			// floor: bump it up. This protects against pathological 429
+			// loops where Retry-After: 1 would otherwise let the CLI
+			// re-hit Anthropic once per second.
+			retryAfter, retryAfterFloor)
 	} else {
 		// 30m, 60m, 60m (cap). n=1 → 30m, n>=2 → 60m.
-		shift := a.consecutive429 - 1
-		if shift < 0 {
-			shift = 0
-		}
+		shift := max(a.consecutive429-1, 0)
 		if shift > 30 {
 			shift = 30 // guard against overflow on absurd streaks.
 		}

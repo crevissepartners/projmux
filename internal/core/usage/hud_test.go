@@ -26,7 +26,6 @@ func TestBarFillCountBoundaryCases(t *testing.T) {
 		{"one-fifty", 150, 10}, // saturates at full.
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := BarFillCount(tc.pct); got != tc.want {

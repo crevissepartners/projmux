@@ -215,7 +215,7 @@ func (p *linePrefixer) Flush() {
 	p.buf.Reset()
 }
 
-func warnf(w io.Writer, format string, args ...interface{}) {
+func warnf(w io.Writer, format string, args ...any) {
 	if w == nil {
 		return
 	}

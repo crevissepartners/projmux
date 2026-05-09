@@ -125,8 +125,8 @@ func Parse(spec string) (Target, error) {
 }
 
 func assignWindow(target *Target, raw string) error {
-	if strings.HasPrefix(raw, "@") {
-		body := strings.TrimPrefix(raw, "@")
+	if after, ok := strings.CutPrefix(raw, "@"); ok {
+		body := after
 		if body == "" {
 			return errors.New("window id '@' must be followed by digits")
 		}
@@ -150,8 +150,8 @@ func assignWindow(target *Target, raw string) error {
 }
 
 func assignPane(target *Target, raw string) error {
-	if strings.HasPrefix(raw, "%") {
-		body := strings.TrimPrefix(raw, "%")
+	if after, ok := strings.CutPrefix(raw, "%"); ok {
+		body := after
 		if body == "" {
 			return errors.New("pane id '%' must be followed by digits")
 		}

@@ -34,7 +34,6 @@ func TestGhosttyAdapterDetect(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			env := func(k string) string { return tc.env[k] }
@@ -340,7 +339,6 @@ func TestParseGhosttyKeybind(t *testing.T) {
 		{line: "font-size = 14", wantOk: false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.line, func(t *testing.T) {
 			t.Parallel()
 			gotTrigger, gotAction, gotOk := parseGhosttyKeybind(tc.line)

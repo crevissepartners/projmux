@@ -29,10 +29,7 @@ func BarFillCount(pct float64) int {
 	if pct >= 100 {
 		return BarCells
 	}
-	cells := int(pct/100.0*float64(BarCells) + 0.5)
-	if cells < 0 {
-		cells = 0
-	}
+	cells := max(int(pct/100.0*float64(BarCells)+0.5), 0)
 	if cells > BarCells {
 		cells = BarCells
 	}
@@ -47,7 +44,7 @@ func RenderBar(pct float64) string {
 	var b strings.Builder
 	b.Grow(BarCells + 2)
 	b.WriteByte('[')
-	for i := 0; i < BarCells; i++ {
+	for i := range BarCells {
 		if i < filled {
 			b.WriteRune(BarFilledRune)
 		} else {
@@ -72,7 +69,7 @@ func RenderColoredBar(pct float64, fillColor, emptyColor string) string {
 			b.WriteString(fillColor)
 			b.WriteByte(']')
 		}
-		for i := 0; i < filled; i++ {
+		for range filled {
 			b.WriteRune(BarFilledRune)
 		}
 	}
