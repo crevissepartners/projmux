@@ -96,5 +96,5 @@ func (r Renderer) RenderFrame(w io.Writer, content string, layout Layout) {
 		}
 		fmt.Fprintf(w, "%s%s%s\r\n", theme.Vertical, PadRight(line, innerWidth), theme.Vertical)
 	}
-	fmt.Fprintf(w, "%s%s%s\r\n", theme.BottomLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.BottomRight)
+	fmt.Fprintf(w, "%s%s%s", theme.BottomLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.BottomRight)
 }

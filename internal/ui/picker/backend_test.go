@@ -456,6 +456,30 @@ func TestNativeInteractiveClearsScreenOnlyOnEnter(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveWrapsRedrawsInSynchronizedUpdates(t *testing.T) {
+	var out bytes.Buffer
+
+	if _, err := runNativeInteractive(strings.NewReader("\x1b[B\r"), &out, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	}); err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	rendered := out.String()
+	if got, want := strings.Count(rendered, nativeSyncUpdateEnter), 2; got != want {
+		t.Fatalf("native synchronized update enter count = %d, want %d: %q", got, want, rendered)
+	}
+	if got, want := strings.Count(rendered, nativeSyncUpdateLeave), 2; got != want {
+		t.Fatalf("native synchronized update leave count = %d, want %d: %q", got, want, rendered)
+	}
+	if strings.Index(rendered, nativeSyncUpdateEnter) > strings.Index(rendered, "╭") {
+		t.Fatalf("native synchronized update starts after frame render: %q", rendered)
+	}
+}
+
 func TestNativeRunnerAcceptsTypedQuery(t *testing.T) {
 	t.Parallel()
 
@@ -718,6 +742,7 @@ func TestNativeInteractiveDisableSearchIgnoresPrintableInput(t *testing.T) {
 	result, err := runNativeInteractive(strings.NewReader("web\r"), &out, Options{
 		UI:            "notify-sidebar",
 		Prompt:        "Notify > ",
+		InitialQuery:  "web",
 		DisableSearch: true,
 		Items: []Item{
 			{Title: "deploy", Value: "deploy-id", SearchText: "deploy"},

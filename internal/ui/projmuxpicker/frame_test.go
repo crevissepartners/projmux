@@ -16,6 +16,9 @@ func TestRendererRenderFrameUsesCRLFRowsForRawTTY(t *testing.T) {
 	if !strings.Contains(rendered, "╮\r\n│") || !strings.Contains(rendered, "│\r\n╰") {
 		t.Fatalf("RenderFrame() = %q, want CRLF-delimited frame rows", rendered)
 	}
+	if strings.HasSuffix(rendered, "\r\n") {
+		t.Fatalf("RenderFrame() = %q, want no trailing CRLF after bottom border", rendered)
+	}
 }
 
 func TestRendererContentLayoutUsesFrameInnerWidth(t *testing.T) {

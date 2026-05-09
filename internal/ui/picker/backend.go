@@ -219,6 +219,8 @@ const (
 	nativeCursorStart       = projmuxpicker.CursorStart
 	nativeScreenEnter       = "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H"
 	nativeScreenLeave       = "\x1b[?25h\x1b[?1049l\r\n"
+	nativeSyncUpdateEnter   = "\x1b[?2026h"
+	nativeSyncUpdateLeave   = "\x1b[?2026l"
 	nativeScrollbar         = projmuxpicker.Scrollbar
 	nativeGapLine           = projmuxpicker.GapLine
 	nativeGapSentinel       = "\x00projmux-native-gap\x00"
@@ -381,6 +383,9 @@ type nativeKey struct {
 
 func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result, error) {
 	query := strings.TrimSpace(options.InitialQuery)
+	if options.DisableSearch {
+		query = ""
+	}
 	queryCursor := nativeRuneLen(query)
 	selected := options.InitialIndex
 	focusedValue := ""
@@ -392,7 +397,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	defer fmt.Fprint(out, nativeScreenLeave)
 
 	for {
-		items := FilterItems(options.Items, query)
+		items := nativeFilteredItems(options, query)
 		if selected >= len(items) {
 			selected = len(items) - 1
 		}
@@ -1054,7 +1059,8 @@ func renderNativeInteractive(w io.Writer, options Options, items []Item, query s
 }
 
 func renderNativeInteractiveWithCursor(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
-	fmt.Fprint(w, "\x1b[H")
+	fmt.Fprint(w, nativeSyncUpdateEnter+"\x1b[H")
+	defer fmt.Fprint(w, nativeSyncUpdateLeave)
 	contentLayout := nativeContentLayout(layout)
 	var body strings.Builder
 	renderNativeInteractiveContent(&body, options, items, query, queryCursor, selected, previewOffset, contentLayout)

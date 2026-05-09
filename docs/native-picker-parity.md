@@ -41,6 +41,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; app TTY `/dev/tty` fallback; raw TTY EOF polling keeps split ESC sequences from leaking into the query |
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen` |
 | frame content width | fzf border inner width | Covered | `ContentLayout` uses the frame inner width so separators and rows reach the right border; `TestRendererContentLayoutUsesFrameInnerWidth` |
+| redraw flicker/top clipping | keyboard navigation in exact-height tmux popup | Partially covered | native redraws use synchronized updates and frame rendering avoids trailing bottom-border CRLF; `TestNativeInteractiveWrapsRedrawsInSynchronizedUpdates`; `TestRendererRenderFrameUsesCRLFRowsForRawTTY` |
 
 ## Native Surface Architecture
 
