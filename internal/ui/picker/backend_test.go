@@ -617,7 +617,7 @@ func TestNativeInteractiveSupportsFZFNavigationKeys(t *testing.T) {
 		{Title: "web", Value: "/repo/web"},
 		{Title: "tools", Value: "/repo/tools"},
 	}
-	result, err := runNativeInteractive(strings.NewReader("\x0e\x0e\x10\x0b\r"), io.Discard, Options{
+	result, err := runNativeInteractive(strings.NewReader("\x1b[106;5u\x0e\x10\x0b\r"), io.Discard, Options{
 		UI:    "switch",
 		Items: items,
 	})
@@ -625,7 +625,21 @@ func TestNativeInteractiveSupportsFZFNavigationKeys(t *testing.T) {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
 	if result.Key != "enter" || result.Value != "/repo/api" {
-		t.Fatalf("result = %#v, want Ctrl-N/Ctrl-P/Ctrl-K to navigate like fzf", result)
+		t.Fatalf("result = %#v, want Ctrl-J/Ctrl-N/Ctrl-P/Ctrl-K to navigate like fzf", result)
+	}
+}
+
+func TestNativeInteractiveTreatsCarriageReturnAsEnter(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{"\r", "\n"} {
+		key, err := readNativeKey(strings.NewReader(input))
+		if err != nil {
+			t.Fatalf("readNativeKey() error = %v", err)
+		}
+		if key.Name != "enter" || key.Text != "" {
+			t.Fatalf("key = %#v for input %q, want Enter", key, input)
+		}
 	}
 }
 

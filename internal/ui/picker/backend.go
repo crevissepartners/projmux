@@ -504,7 +504,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			if selected > 0 {
 				selected--
 			}
-		case "down", "ctrl-n":
+		case "down", "ctrl-n", "ctrl-j":
 			if selected < len(items)-1 {
 				selected++
 			}
