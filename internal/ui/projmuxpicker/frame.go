@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	DefaultRows = 30
-	DefaultCols = 100
+	DefaultRows = 24
+	DefaultCols = 80
 )
 
 type Layout struct {

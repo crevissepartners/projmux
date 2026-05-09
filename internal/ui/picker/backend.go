@@ -220,7 +220,7 @@ const (
 	nativeInverseStart      = projmuxpicker.InverseStart
 	nativeCursorStart       = projmuxpicker.CursorStart
 	nativeScreenEnter       = "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H"
-	nativeScreenLeave       = "\r\x1b[?25h\x1b[?1049l\r\n"
+	nativeScreenLeave       = "\r\x1b[0m\x1b[H\x1b[J\x1b[?25h\x1b[?1049l\r\n"
 	nativeSyncUpdateEnter   = projmuxpicker.SyncUpdateEnter
 	nativeSyncUpdateLeave   = projmuxpicker.SyncUpdateLeave
 	nativeScrollbar         = projmuxpicker.Scrollbar

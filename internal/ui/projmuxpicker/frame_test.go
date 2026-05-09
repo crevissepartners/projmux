@@ -125,3 +125,29 @@ func TestTruncateANSIClosesStyleWhenCutBeforeReset(t *testing.T) {
 		t.Fatalf("VisibleLen(truncated) = %d, want 12; value = %q", gotLen, got)
 	}
 }
+
+func TestVisibleLenUsesTerminalCellWidth(t *testing.T) {
+	t.Parallel()
+
+	if got, want := VisibleLen("프로젝트"), 8; got != want {
+		t.Fatalf("VisibleLen(korean) = %d, want terminal cell width %d", got, want)
+	}
+	if got, want := VisibleLen("api🔔"), 5; got != want {
+		t.Fatalf("VisibleLen(emoji) = %d, want terminal cell width %d", got, want)
+	}
+	if got, want := VisibleLen("e\u0301"), 1; got != want {
+		t.Fatalf("VisibleLen(combining) = %d, want terminal cell width %d", got, want)
+	}
+}
+
+func TestTruncateANSIRespectsWideRuneCells(t *testing.T) {
+	t.Parallel()
+
+	got := TruncateANSI("프로젝트 api", 7)
+	if got != "프로젝" {
+		t.Fatalf("TruncateANSI(wide) = %q, want not to split past cell budget", got)
+	}
+	if gotLen := VisibleLen(got); gotLen != 6 {
+		t.Fatalf("VisibleLen(truncated wide) = %d, want 6", gotLen)
+	}
+}

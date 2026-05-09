@@ -54,8 +54,10 @@ The fzf compatibility surface for the native engine is tracked in
 - Native interactive picker screens use an alternate screen lifecycle to better
   match fzf fullscreen behavior and restore the tmux pane after exit. Frame
   updates and screen exit both return to column 0 before emitting terminal
-  control sequences so restore/update escapes do not trail the bottom border in
-  tmux/script captures.
+  control sequences, and screen exit resets styles plus clears the alternate
+  buffer from the home cursor before restore. This keeps restore/update escapes
+  and selected-session handoff output from visually trailing the bottom border
+  in tmux/script captures.
 - Native interactive picker screens render inside a full-screen border frame to
   match the app's fzf `--height 100% --border` surface more closely.
 - Popup-toggle commands use tmux `display-popup -B` when the native backend is
@@ -68,6 +70,12 @@ The fzf compatibility surface for the native engine is tracked in
   expect/action keys still work.
 - Native frame content now uses the full inner border width so prompt/list/footer
   separators reach the right border like fzf.
+- Native width/truncation uses terminal cell width for Korean/CJK text, emoji,
+  and combining marks instead of raw rune count, so localized project names and
+  decorated notify headers do not push the right frame border out of alignment.
+- When terminal size detection is unavailable, native picker falls back to a
+  conservative 80x24 terminal instead of assuming a wider surface. Interactive
+  tmux popups still use the detected popup size when `stty size` is available.
 - Simple and multi-line native rows share the same projmux current-row style and
   pointer marker rather than falling back to terminal inverse video for simple
   pickers.
