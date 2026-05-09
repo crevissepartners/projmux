@@ -57,7 +57,9 @@ The fzf compatibility surface for the native engine is tracked in
   control sequences, and screen exit resets styles plus clears the alternate
   buffer from the home cursor before restore. This keeps restore/update escapes
   and selected-session handoff output from visually trailing the bottom border
-  in tmux/script captures.
+  in tmux/script captures. Native also gives real TTY screen restore a short
+  settle window before returning to callers that may immediately draw a tmux
+  session.
 - Native interactive picker screens render inside a full-screen border frame to
   match the app's fzf `--height 100% --border` surface more closely.
 - Popup-toggle commands use tmux `display-popup -B` when the native backend is

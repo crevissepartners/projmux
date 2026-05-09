@@ -212,6 +212,7 @@ const (
 	defaultNativeCols       = projmuxpicker.DefaultCols
 	nativeReadPollDelay     = 5 * time.Millisecond
 	nativeMaybeReadAttempts = 50
+	nativeScreenLeaveDelay  = 10 * time.Millisecond
 	nativeCurrentStart      = projmuxpicker.CurrentStart
 	nativeHighlightStart    = projmuxpicker.HighlightStart
 	nativePointer           = projmuxpicker.Pointer
@@ -397,7 +398,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	renderer := projmuxpicker.FrameUpdateRenderer{}
 	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
 	fmt.Fprint(out, nativeScreenEnter)
-	defer fmt.Fprint(out, nativeScreenLeave)
+	defer leaveNativeInteractiveScreen(out)
 
 	for {
 		items := nativeFilteredItems(options, query)
@@ -554,6 +555,13 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 				previewOffset = 0
 			}
 		}
+	}
+}
+
+func leaveNativeInteractiveScreen(out io.Writer) {
+	fmt.Fprint(out, nativeScreenLeave)
+	if _, ok := out.(*os.File); ok {
+		time.Sleep(nativeScreenLeaveDelay)
 	}
 }
 
