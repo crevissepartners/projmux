@@ -919,6 +919,13 @@ func readNativeByte(r io.Reader) (byte, error) {
 		if n > 0 {
 			return buf[0], nil
 		}
+		if err == io.EOF {
+			if _, ok := r.(*os.File); ok {
+				time.Sleep(nativeReadPollDelay)
+				continue
+			}
+			return 0, err
+		}
 		if err != nil {
 			return 0, err
 		}
