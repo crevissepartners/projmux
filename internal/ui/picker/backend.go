@@ -213,6 +213,7 @@ const (
 	nativeReadPollDelay     = 5 * time.Millisecond
 	nativeMaybeReadAttempts = 50
 	nativeCurrentStart      = projmuxpicker.CurrentStart
+	nativeHighlightStart    = projmuxpicker.HighlightStart
 	nativePointer           = projmuxpicker.Pointer
 	nativeReset             = projmuxpicker.Reset
 	nativeInverseStart      = projmuxpicker.InverseStart
@@ -1150,7 +1151,11 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	if options.MultiLine {
 		start, end = nativeVisibleRangeByRenderedRows(items, selected, listLimit)
 	}
-	listLines := nativeInteractiveListLines(items, start, end, selected, options.MultiLine)
+	displayItems := items
+	if !options.MultiLine {
+		displayItems = nativeHighlightSimpleItems(options, items, query)
+	}
+	listLines := nativeInteractiveListLines(displayItems, start, end, selected, options.MultiLine)
 	var main strings.Builder
 	if len(items) == 0 {
 		fmt.Fprintln(&main, "  no matches")
@@ -1359,6 +1364,115 @@ func nativeRow(item Item) projmuxpicker.Row {
 		Label:     item.EffectiveLabel(),
 		MetaLines: item.MetaLines,
 	}
+}
+
+func nativeHighlightSimpleItems(options Options, items []Item, query string) []Item {
+	query = strings.TrimSpace(query)
+	if query == "" || options.DisableSearch || hasNativeSearchKey(options.Items) {
+		return items
+	}
+	caseSensitive := nativeSmartCaseSensitive(query)
+	pattern := nativeSearchPattern(query, caseSensitive)
+	highlighted := make([]Item, len(items))
+	copy(highlighted, items)
+	for i := range highlighted {
+		label := highlighted[i].EffectiveLabel()
+		positions, ok := nativeFuzzyMatchPositions(stripANSISequences(label), pattern, caseSensitive)
+		if !ok {
+			continue
+		}
+		highlighted[i].Label = nativeHighlightANSIVisiblePositions(label, positions)
+	}
+	return highlighted
+}
+
+func nativeFuzzyMatchPositions(source string, pattern []rune, caseSensitive bool) ([]int, bool) {
+	if len(pattern) == 0 {
+		return nil, true
+	}
+	sourceRunes := []rune(source)
+	if len(pattern) > len(sourceRunes) {
+		return nil, false
+	}
+	pidx := 0
+	end := -1
+	for idx, r := range sourceRunes {
+		if nativeSearchRune(r, caseSensitive) != pattern[pidx] {
+			continue
+		}
+		pidx++
+		if pidx == len(pattern) {
+			end = idx
+			break
+		}
+	}
+	if end < 0 {
+		return nil, false
+	}
+	positions := make([]int, len(pattern))
+	pidx = len(pattern) - 1
+	for idx := end; idx >= 0; idx-- {
+		if nativeSearchRune(sourceRunes[idx], caseSensitive) != pattern[pidx] {
+			continue
+		}
+		positions[pidx] = idx
+		pidx--
+		if pidx < 0 {
+			return positions, true
+		}
+	}
+	return nil, false
+}
+
+func nativeHighlightANSIVisiblePositions(value string, positions []int) string {
+	if len(positions) == 0 || value == "" {
+		return value
+	}
+	positionSet := make(map[int]struct{}, len(positions))
+	for _, position := range positions {
+		positionSet[position] = struct{}{}
+	}
+	var out strings.Builder
+	activeSGR := ""
+	visible := 0
+	for i := 0; i < len(value); {
+		if value[i] == '\x1b' {
+			end := i + 1
+			for end < len(value) && value[end] != 'm' {
+				end++
+			}
+			if end < len(value) {
+				seq := value[i : end+1]
+				out.WriteString(seq)
+				if nativeANSIReset(seq) {
+					activeSGR = ""
+				} else {
+					activeSGR += seq
+				}
+				i = end + 1
+				continue
+			}
+		}
+		r, size := utf8.DecodeRuneInString(value[i:])
+		if r == utf8.RuneError && size == 0 {
+			break
+		}
+		if _, ok := positionSet[visible]; ok {
+			out.WriteString(nativeHighlightStart)
+			out.WriteRune(r)
+			out.WriteString(nativeReset)
+			out.WriteString(activeSGR)
+		} else {
+			out.WriteRune(r)
+		}
+		visible++
+		i += size
+	}
+	return out.String()
+}
+
+func nativeANSIReset(seq string) bool {
+	return seq == "\x1b[0m" || seq == "\x1b[m"
 }
 
 func nativePreviewLines(options Options, items []Item, selected, offset, limit int) []string {

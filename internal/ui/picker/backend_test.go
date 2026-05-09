@@ -1277,6 +1277,50 @@ func TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveHighlightsSimpleQueryMatches(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI: "ai-picker",
+		Items: []Item{
+			{Label: "\x1b[36mCodex\x1b[0m  \x1b[90mOpenAI CLI\x1b[0m", Value: "codex"},
+			{Label: "\x1b[36mClaude\x1b[0m  \x1b[90mAnthropic CLI\x1b[0m", Value: "claude"},
+		},
+	}, []Item{
+		{Label: "\x1b[36mCodex\x1b[0m  \x1b[90mOpenAI CLI\x1b[0m", Value: "codex"},
+		{Label: "\x1b[36mClaude\x1b[0m  \x1b[90mAnthropic CLI\x1b[0m", Value: "claude"},
+	}, "Co", 1, 0, nativeLayout{Rows: 8, Cols: 56})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, nativeHighlightStart+"C"+nativeReset+"\x1b[36m") ||
+		!strings.Contains(rendered, nativeHighlightStart+"o"+nativeReset+"\x1b[36m") {
+		t.Fatalf("native output = %q, want fzf-like query highlight with original ANSI style restored", rendered)
+	}
+}
+
+func TestNativeInteractiveDoesNotHighlightSearchKeyReloadLists(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI: "switch",
+		Items: []Item{{
+			Label:      "bravo-web",
+			Value:      "/repo/bravo-web",
+			SearchText: "bravo web project",
+		}},
+	}, []Item{{
+		Label:      "bravo-web",
+		Value:      "/repo/bravo-web",
+		SearchText: "bravo web project",
+	}}, "bravo", 0, 0, nativeLayout{Rows: 8, Cols: 48})
+
+	if rendered := out.String(); strings.Contains(rendered, nativeHighlightStart) {
+		t.Fatalf("native output = %q, want search-key reload lists to preserve fzf disabled-filter rendering without match highlights", rendered)
+	}
+}
+
 func TestNativeTruncateANSIClosesStyleWhenCutBeforeReset(t *testing.T) {
 	t.Parallel()
 
