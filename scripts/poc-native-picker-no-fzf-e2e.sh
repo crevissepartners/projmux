@@ -189,7 +189,7 @@ docker run --rm \
     settings_log=/tmp/projmux-settings.log
     settings_stderr=/tmp/projmux-settings.stderr
     settings_status=0
-    printf "\r\033[B\033[B\033[B\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>$settings_stderr" "$settings_log" || settings_status=$?
+    { printf "\r\033[B\033[B\033[B\r"; sleep 0.3; printf "\0335"; } | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>$settings_stderr" "$settings_log" || settings_status=$?
     if [[ "$settings_status" != 0 ]]; then
       cat "$settings_log"
       cat "$settings_stderr"
