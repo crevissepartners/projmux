@@ -12,7 +12,7 @@ picker evidence. It is not a production dependency-policy change.
 | `--height 100%` / `--border` | all interactive picker screens | Covered for fullscreen rounded border frame | `renderNativeFrame`; screen-height list budgeting; `TestNativeInteractiveRendersBorderFrame`; `TestNativeInteractiveUsesAvailableHeightForSimpleLists` |
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / `--footer-border line` | AI, settings, shell update, switch, sessions, notify | Covered for interactive native screens | `renderNativeInteractive` reserves bottom footer space and renders a separator line; `TestNativeInteractiveRendersFooterAtBottom` |
-| `--ansi` | colored row labels from render package | Covered | native writes row labels directly and strips ANSI escapes from default search text; `TestFilterItemsIgnoresANSIEscapeSequences`; Docker e2e shows ANSI rows |
+| `--ansi` | colored row labels from render package | Covered | native writes row labels directly, strips ANSI escapes from default search text, and restores selected-row styling after embedded ANSI resets; `TestFilterItemsIgnoresANSIEscapeSequences`; `TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset`; Docker e2e shows ANSI rows |
 | hidden value after tab delimiter | all picker selections and default fzf matching | Covered by `picker.Item.Value` and default search text | `pickerItemsFromFZFEntries`; `TestNativeRunnerFiltersAndSelectsByNumber`; `TestFilterItemsSearchesHiddenValueWhenNoSearchKey` |
 | plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickerItemsFromFZF`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
@@ -21,7 +21,7 @@ picker evidence. It is not a production dependency-policy change.
 | `--scrollbar █` | long switch/session/settings lists | Covered for app lists | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered for app multiline rows | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
-| fzf current row colors | multi-line rows | Covered for app multiline rows | `nativeCurrentStart`, `nativePointer`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset` |
+| fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; `nativeInverseSelectedContent`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `pickerActionsFromFZF`; `TestNativeInteractiveSupportsCustomExpectKeys` |
 | printable expect keys | notify sidebar `a` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
 | control expect keys | notify sidebar `Ctrl-A`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
@@ -37,7 +37,7 @@ picker evidence. It is not a production dependency-policy change.
 | `--query` | typed settings path defaults | Covered | `Options.InitialQuery`; settings tests |
 | `--print-query` accept-query mode | typed settings path prompts | Covered | `Options.AcceptQuery`; `TestNativeRunnerAcceptsTypedQuery` |
 | query cursor editing | typed settings path prompts | Covered | Left/Right, Ctrl-A/E, Delete, Backspace, Ctrl-U/W query editing plus visible prompt cursor; `TestNativeInteractiveEditsTypedQueryAtCursor`; `TestNativeInteractiveSupportsQueryLineEditingKeys`; `TestNativeInteractiveCtrlUDeletesBeforeCursor`; `TestNativePromptLineRendersQueryCursor` |
-| terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; app TTY `/dev/tty` fallback |
+| terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; app TTY `/dev/tty` fallback; raw TTY EOF polling keeps split ESC sequences from leaking into the query |
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen` |
 
 ## Verified Flows

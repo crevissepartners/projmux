@@ -38,6 +38,9 @@ The fzf compatibility surface for this POC is tracked in
 - In app TTY contexts, the native picker opens the controlling terminal
   (`/dev/tty`) before entering raw mode. This avoids stdin/stdout mismatch and
   line-mode escape leakage such as arrow keys appearing as `^[[`.
+- Raw TTY reads keep polling briefly across empty reads while decoding
+  escape-key sequences, so split arrow/Alt key bytes are consumed by the picker
+  instead of leaking into the query or parent shell.
 
 ## POC Boundaries
 
