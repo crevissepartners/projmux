@@ -29,10 +29,7 @@ func BarFillCount(pct float64) int {
 	if pct >= 100 {
 		return BarCells
 	}
-	cells := max(int(pct/100.0*float64(BarCells)+0.5), 0)
-	if cells > BarCells {
-		cells = BarCells
-	}
+	cells := min(max(int(pct/100.0*float64(BarCells)+0.5), 0), BarCells)
 	return cells
 }
 

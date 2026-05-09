@@ -291,10 +291,9 @@ func (a *Adapter) recordBackoff(now time.Time, retryAfter time.Duration) {
 			retryAfter, retryAfterFloor)
 	} else {
 		// 30m, 60m, 60m (cap). n=1 → 30m, n>=2 → 60m.
-		shift := max(a.consecutive429-1, 0)
-		if shift > 30 {
-			shift = 30 // guard against overflow on absurd streaks.
-		}
+		shift := min(max(a.consecutive429-1, 0),
+			// guard against overflow on absurd streaks.
+			30)
 		dur = backoffDefault << shift
 	}
 	if dur > backoffCap {

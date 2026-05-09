@@ -92,7 +92,7 @@ func tokens(name string) []string {
 
 func sharedPrefixTokens(a, b []string) int {
 	limit := min(len(b), len(a))
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		if a[i] != b[i] {
 			return i
 		}
