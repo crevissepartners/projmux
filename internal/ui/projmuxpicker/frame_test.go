@@ -21,6 +21,32 @@ func TestRendererRenderFrameUsesCRLFRowsForRawTTY(t *testing.T) {
 	}
 }
 
+func TestRendererRenderFramePreservesExactGeometry(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	DefaultRenderer().RenderFrame(&out, "title\nrow", Layout{Rows: 5, Cols: 12})
+
+	lines := strings.Split(out.String(), "\r\n")
+	if got, want := len(lines), 5; got != want {
+		t.Fatalf("frame line count = %d, want exact layout rows %d: %q", got, want, out.String())
+	}
+	if !strings.HasPrefix(lines[0], "╭") || !strings.HasSuffix(lines[0], "╮") {
+		t.Fatalf("top frame row = %q, want visible top border", lines[0])
+	}
+	if !strings.HasPrefix(lines[len(lines)-1], "╰") || !strings.HasSuffix(lines[len(lines)-1], "╯") {
+		t.Fatalf("bottom frame row = %q, want visible bottom border", lines[len(lines)-1])
+	}
+	for i, line := range lines {
+		if got, want := VisibleLen(line), 12; got != want {
+			t.Fatalf("frame line %d width = %d, want %d: %q", i, got, want, line)
+		}
+		if i > 0 && i < len(lines)-1 && (!strings.HasPrefix(line, "│") || !strings.HasSuffix(line, "│")) {
+			t.Fatalf("content frame row %d = %q, want continuous vertical borders", i, line)
+		}
+	}
+}
+
 func TestRendererContentLayoutUsesFrameInnerWidth(t *testing.T) {
 	t.Parallel()
 
