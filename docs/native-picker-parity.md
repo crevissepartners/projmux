@@ -81,7 +81,9 @@ experimental native picker engine and is not a public dependency-policy change.
 - `shell` update prompt: native backend routing covered by shared fzf-to-native
   adapter and settings-style typed prompt tests.
 - `settings`: native backend exercised in unit tests and Docker no-fzf e2e
-  using Enter plus arrow-key navigation under a PTY.
+  using Enter plus arrow-key navigation under a PTY. The Docker e2e also fails
+  if the Settings flows write tmux no-server noise to stderr while running
+  outside tmux.
 - `settings > Labs`: unit-covered backend toggle writes
   `~/.config/projmux/picker-backend`, updates the tmux global
   `PROJMUX_PICKER_BACKEND`, and lets env override saved config.

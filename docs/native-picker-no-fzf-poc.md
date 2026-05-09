@@ -184,7 +184,9 @@ right-side preview layout instead of falling back to inline preview, launches
 that it creates a tmux session, verifies immediate launch-key close behavior for
 Alt-1 through Alt-5 native popup surfaces, exercises `notify list --ui=sidebar`
 with the printable `x` expect key, and exercises the settings picker under a PTY
-using Enter and arrow-key navigation through the native backend.
+using Enter and arrow-key navigation through the native backend. Settings flows
+must keep stderr clean in the no-tmux-server container; tmux no-server noise is
+treated as an e2e failure.
 
 Short tmux-friendly form:
 
