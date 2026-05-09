@@ -520,6 +520,7 @@ func TestNativeLaunchKeyForPopupMode(t *testing.T) {
 
 func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 	t.Setenv("PROJMUX_PICKER_BACKEND", "native")
+	t.Setenv("PROJMUX_NATIVE_DEBUG_LOG", "/tmp/projmux-popup.log")
 	t.Setenv("PROJMUX_PROJDIR", "/workspace/projects")
 	t.Setenv("PROJMUX_MANAGED_ROOTS", "/workspace/projects")
 
@@ -540,6 +541,7 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 	}
 	for _, want := range []string{
 		"PROJMUX_PICKER_BACKEND='native'",
+		"PROJMUX_NATIVE_DEBUG_LOG='/tmp/projmux-popup.log'",
 		"PROJMUX_PROJDIR='/workspace/projects'",
 		"PROJMUX_MANAGED_ROOTS='/workspace/projects'",
 	} {
@@ -548,9 +550,10 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		}
 	}
 	for key, want := range map[string]string{
-		"PROJMUX_PICKER_BACKEND": "native",
-		"PROJMUX_PROJDIR":        "/workspace/projects",
-		"PROJMUX_MANAGED_ROOTS":  "/workspace/projects",
+		"PROJMUX_PICKER_BACKEND":   "native",
+		"PROJMUX_NATIVE_DEBUG_LOG": "/tmp/projmux-popup.log",
+		"PROJMUX_PROJDIR":          "/workspace/projects",
+		"PROJMUX_MANAGED_ROOTS":    "/workspace/projects",
 	} {
 		if got := options.Env[key]; got != want {
 			t.Fatalf("options.Env[%q] = %q, want %q", key, got, want)
