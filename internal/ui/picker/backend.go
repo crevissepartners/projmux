@@ -214,7 +214,7 @@ const (
 	nativeReset             = projmuxpicker.Reset
 	nativeInverseStart      = projmuxpicker.InverseStart
 	nativeCursorStart       = projmuxpicker.CursorStart
-	nativeScreenEnter       = "\x1b[?1049h\x1b[?25l"
+	nativeScreenEnter       = "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H"
 	nativeScreenLeave       = "\x1b[?25h\x1b[?1049l\r\n"
 	nativeScrollbar         = projmuxpicker.Scrollbar
 	nativeGapLine           = projmuxpicker.GapLine
@@ -1039,7 +1039,6 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
 	}
 	fmt.Fprintln(&screen, nativePromptLineWithCursor(prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
-	fmt.Fprintln(&screen)
 
 	placement := nativePreviewPlacement(options.Preview.Window)
 	previewHeight := nativePreviewHeight(layout.Rows, options.Preview.Window)
@@ -1061,7 +1060,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		return
 	}
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
-		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, len(items), start, end)
+		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, len(items), start, end, listLimit)
 		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
@@ -1096,7 +1095,6 @@ func nativeChromeLineCount(options Options) int {
 	if header := strings.TrimSpace(options.Header); header != "" {
 		lines += nativeTextLineCount(header)
 	}
-	lines++ // blank line between chrome and list
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		lines += 1 + nativeTextLineCount(footer) // fzf footer border + footer text
 	}
@@ -1289,8 +1287,8 @@ func nativePreviewHeight(rows int, window string) int {
 	return projmuxpicker.PreviewHeight(rows, window)
 }
 
-func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout, window string, total, start, end int) {
-	projmuxpicker.RenderSplitPreview(w, listLines, previewLines, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols}, window, total, start, end)
+func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout, window string, total, start, end, rows int) {
+	projmuxpicker.RenderSplitPreviewRows(w, listLines, previewLines, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols}, window, total, start, end, rows)
 }
 
 func nativePreviewWidth(cols int, window string) int {

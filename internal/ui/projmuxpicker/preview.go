@@ -56,6 +56,10 @@ func PreviewWidth(cols int, window string) int {
 }
 
 func RenderSplitPreview(w io.Writer, listLines, previewLines []string, layout Layout, window string, total, start, end int) {
+	RenderSplitPreviewRows(w, listLines, previewLines, layout, window, total, start, end, 0)
+}
+
+func RenderSplitPreviewRows(w io.Writer, listLines, previewLines []string, layout Layout, window string, total, start, end, rowCount int) {
 	previewWidth := PreviewWidth(layout.Cols, window)
 	listWidth := layout.Cols - previewWidth - 1
 	if listWidth < 32 {
@@ -64,6 +68,9 @@ func RenderSplitPreview(w io.Writer, listLines, previewLines []string, layout La
 	}
 	listLines = ListLinesWithScrollbar(listLines, total, start, end, listWidth)
 	rows := maxInt(len(listLines), len(previewLines))
+	if rowCount > rows {
+		rows = rowCount
+	}
 	for i := 0; i < rows; i++ {
 		left := ""
 		if i < len(listLines) {

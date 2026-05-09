@@ -435,7 +435,7 @@ func TestNativeInteractiveDoesNotIgnoreDifferentLaunchCloseKey(t *testing.T) {
 	}
 }
 
-func TestNativeInteractiveRedrawDoesNotClearWholeScreen(t *testing.T) {
+func TestNativeInteractiveClearsScreenOnlyOnEnter(t *testing.T) {
 	var out bytes.Buffer
 
 	result, err := runNativeInteractive(strings.NewReader("\x1b[B\r"), &out, Options{
@@ -451,8 +451,8 @@ func TestNativeInteractiveRedrawDoesNotClearWholeScreen(t *testing.T) {
 	if result.Value != "/repo/web" {
 		t.Fatalf("result = %#v, want selected web item", result)
 	}
-	if strings.Contains(out.String(), "\x1b[2J") {
-		t.Fatalf("native interactive output contains full-screen clear: %q", out.String())
+	if got := strings.Count(out.String(), "\x1b[2J"); got != 1 {
+		t.Fatalf("native interactive full-screen clear count = %d, want one initial clear: %q", got, out.String())
 	}
 }
 
@@ -953,8 +953,36 @@ func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
 	if strings.Contains(rendered, " │ preview\n") {
 		t.Fatalf("native output = %q, want fzf-like preview without synthetic title row", rendered)
 	}
-	if strings.Contains(rendered, " │ ") {
-		t.Fatalf("native output = %q, want fzf-like single-column preview border", rendered)
+	if strings.Contains(rendered, "│ preview") {
+		t.Fatalf("native output = %q, want fzf-like preview border without padded title column", rendered)
+	}
+}
+
+func TestNativeInteractiveRendersSplitPreviewBorderThroughListArea(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	options := Options{
+		UI: "switch",
+		Preview: Preview{
+			Command: "printf 'preview:%s' {2}",
+			Window:  "right,60%,border-left",
+		},
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	}
+	layout := nativeLayout{Rows: 14, Cols: 116}
+	items := []Item{{Title: "api", Value: "/repo/api"}}
+	renderNativeInteractiveContent(&out, options, items, "", 0, 0, 0, layout)
+
+	listLimit := nativeListLimit(options, layout, "right", nativePreviewHeight(layout.Rows, options.Preview.Window), true)
+	separatorRows := 0
+	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+		if strings.Contains(line, "│") {
+			separatorRows++
+		}
+	}
+	if separatorRows != listLimit {
+		t.Fatalf("split preview separator rows = %d, want %d in output %q", separatorRows, listLimit, out.String())
 	}
 }
 
@@ -1030,7 +1058,7 @@ func TestNativeListLimitAccountsForHeaderFooterAndDownPreview(t *testing.T) {
 		Header: "header",
 		Footer: "line 1\nline 2\nline 3",
 	}
-	if got, want := nativeListLimit(options, nativeLayout{Rows: 20, Cols: 80}, "down", 5, true), 7; got != want {
+	if got, want := nativeListLimit(options, nativeLayout{Rows: 20, Cols: 80}, "down", 5, true), 8; got != want {
 		t.Fatalf("nativeListLimit() = %d, want %d", got, want)
 	}
 }

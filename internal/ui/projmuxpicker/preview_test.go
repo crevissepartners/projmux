@@ -1,6 +1,10 @@
 package projmuxpicker
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
 
 func TestPreviewWidthUsesWindowPercent(t *testing.T) {
 	t.Parallel()
@@ -37,5 +41,22 @@ func TestPreviewHeightUsesWindowPercent(t *testing.T) {
 		if got := PreviewHeight(tt.contentRows, "down,25%,border-top"); got != tt.want {
 			t.Fatalf("PreviewHeight(%d) = %d, want fzf-measured content height %d", tt.contentRows, got, tt.want)
 		}
+	}
+}
+
+func TestRenderSplitPreviewRowsExtendsSeparator(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	RenderSplitPreviewRows(&out, []string{"api"}, []string{"preview"}, Layout{Rows: 10, Cols: 80}, "right,60%,border-left", 1, 0, 1, 5)
+
+	separatorRows := 0
+	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+		if strings.Contains(line, "│") {
+			separatorRows++
+		}
+	}
+	if separatorRows != 5 {
+		t.Fatalf("separator rows = %d, want 5 in output %q", separatorRows, out.String())
 	}
 }
