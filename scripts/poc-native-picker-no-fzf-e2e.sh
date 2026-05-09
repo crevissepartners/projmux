@@ -167,6 +167,11 @@ docker run --rm \
       echo "projmux shell Alt-1 popup did not render bravo-web" >&2
       exit 1
     fi
+    if ! grep -q "╭" "$shell_alt_log" || ! grep -q "╰" "$shell_alt_log"; then
+      cat "$shell_alt_log"
+      echo "projmux shell Alt-1 popup did not render native frame borders" >&2
+      exit 1
+    fi
     tmux -L poc-no-fzf-alt kill-server 2>/dev/null || true
     echo "[poc/no-fzf] projmux shell Alt-1 popup rendered native switch"
     echo "[poc/no-fzf] exercise native launch key closes after first real input"
@@ -178,6 +183,11 @@ docker run --rm \
       cat "$launch_close_log"
       cat "$launch_close_debug"
       exit "$launch_close_status"
+    fi
+    if ! grep -q "╭" "$launch_close_log" || ! grep -q "╰" "$launch_close_log"; then
+      cat "$launch_close_log"
+      echo "native switch did not render full frame while checking launch-key close" >&2
+      exit 1
     fi
     if ! grep -q "ignore_launch_key name=\"alt-1\"" "$launch_close_debug"; then
       cat "$launch_close_debug"
