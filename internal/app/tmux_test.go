@@ -518,6 +518,46 @@ func TestNativeLaunchKeyForPopupMode(t *testing.T) {
 	}
 }
 
+func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
+	t.Setenv("PROJMUX_PICKER_BACKEND", "native")
+	t.Setenv("PROJMUX_PROJDIR", "/workspace/projects")
+	t.Setenv("PROJMUX_MANAGED_ROOTS", "/workspace/projects")
+
+	command, options, err := buildPopupToggle(
+		tmuxPopupToggleMode{Raw: "sessionizer-sidebar", Canonical: "sessionizer-sidebar"},
+		"/tmp/projmux",
+		"/tmp/marker",
+		tmuxPopupContext{
+			OriginPane:    "%1",
+			OriginSession: "main",
+			ContextDir:    "/workspace/projects/alpha-api",
+			ClientWidth:   200,
+			ClientHeight:  50,
+		},
+	)
+	if err != nil {
+		t.Fatalf("buildPopupToggle() error = %v", err)
+	}
+	for _, want := range []string{
+		"PROJMUX_PICKER_BACKEND='native'",
+		"PROJMUX_PROJDIR='/workspace/projects'",
+		"PROJMUX_MANAGED_ROOTS='/workspace/projects'",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("popup command = %q, want substring %q", command, want)
+		}
+	}
+	for key, want := range map[string]string{
+		"PROJMUX_PICKER_BACKEND": "native",
+		"PROJMUX_PROJDIR":        "/workspace/projects",
+		"PROJMUX_MANAGED_ROOTS":  "/workspace/projects",
+	} {
+		if got := options.Env[key]; got != want {
+			t.Fatalf("options.Env[%q] = %q, want %q", key, got, want)
+		}
+	}
+}
+
 func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	t.Parallel()
 

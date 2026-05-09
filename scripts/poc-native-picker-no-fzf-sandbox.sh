@@ -66,6 +66,22 @@ docker run --rm -it \
       printf "set-environment -g PROJMUX_MANAGED_ROOTS %q\n" "$PROJMUX_MANAGED_ROOTS"
       printf "set-environment -g SHELL /bin/bash\n"
     } >> "$sandbox_config"
+    printf -v popup_env "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=%q PROJMUX_MANAGED_ROOTS=%q" "$PROJMUX_PROJDIR" "$PROJMUX_MANAGED_ROOTS"
+    {
+      printf "bind-key -n M-1 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
+      printf "bind-key -n M-2 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} notify-sidebar\"\n" "$popup_env"
+      printf "bind-key -n M-3 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} session-popup\"\n" "$popup_env"
+      printf "bind-key -n M-4 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} ai-split-picker-right\"\n" "$popup_env"
+      printf "bind-key -n M-5 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} ai-split-settings\"\n" "$popup_env"
+      printf "bind-key -n M-6 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} sessionizer\"\n" "$popup_env"
+      printf "bind-key -n User2 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} notify-sidebar\"\n" "$popup_env"
+      printf "bind-key -n User3 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} session-popup\"\n" "$popup_env"
+      printf "bind-key -n User4 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
+      printf "bind-key -n User5 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} ai-split-picker-right\"\n" "$popup_env"
+      printf "bind-key -n User6 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} ai-split-settings\"\n" "$popup_env"
+      printf "bind-key -n User12 run-shell \"%s /usr/local/bin/projmux tmux popup-toggle --client #{client_tty} sessionizer\"\n" "$popup_env"
+    } >> "$sandbox_config"
+    projmux notify push --text "native no-fzf sandbox notification" --target main --source ai --id poc-native-sandbox >/dev/null
     cd "$demo_root/alpha-api"
     cat <<'"'"'EOF'"'"'
 
@@ -78,8 +94,11 @@ Demo project root:
   /workspace/projects
 
 Inside tmux, try:
+  Alt-1 / User4: project switch sidebar
+  Alt-2 / User2: notification sidebar
   projmux switch
   projmux settings
+  tmux show-environment -g PROJMUX_PICKER_BACKEND
   projmux doctor --json
 
 Environment:

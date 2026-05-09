@@ -130,6 +130,12 @@ docker run --rm \
       printf "set-environment -g PROJMUX_PROJDIR %q\n" "$demo_root"
       printf "set-environment -g PROJMUX_MANAGED_ROOTS %q\n" "$demo_root"
     } >> "$shell_config"
+    printf -v popup_env "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=%q PROJMUX_MANAGED_ROOTS=%q" "$demo_root" "$demo_root"
+    {
+      printf "bind-key -n M-1 run-shell \"%s /tmp/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
+      printf "bind-key -n User4 run-shell \"%s /tmp/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
+    } >> "$shell_config"
+    grep -q "PROJMUX_PICKER_BACKEND=native" "$shell_config"
     shell_log=/tmp/projmux-shell.log
     shell_status=0
     timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux shell --socket poc-no-fzf --session main --config $shell_config --no-install" "$shell_log" || shell_status=$?
@@ -148,6 +154,21 @@ docker run --rm \
     fi
     tmux -L poc-no-fzf kill-server
     echo "[poc/no-fzf] projmux shell launched tmux session with native picker env"
+    echo "[poc/no-fzf] exercise projmux shell Alt-1 popup binding"
+    shell_alt_log=/tmp/projmux-shell-alt.log
+    shell_alt_status=0
+    { printf "\0331"; sleep 0.5; printf "bravo\r"; sleep 0.5; } | timeout 10s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux shell --socket poc-no-fzf-alt --session main --config $shell_config --no-install" "$shell_alt_log" || shell_alt_status=$?
+    if [[ "$shell_alt_status" != 0 && "$shell_alt_status" != 124 ]]; then
+      cat "$shell_alt_log"
+      exit "$shell_alt_status"
+    fi
+    if ! grep -q "bravo-web" "$shell_alt_log"; then
+      cat "$shell_alt_log"
+      echo "projmux shell Alt-1 popup did not render bravo-web" >&2
+      exit 1
+    fi
+    tmux -L poc-no-fzf-alt kill-server 2>/dev/null || true
+    echo "[poc/no-fzf] projmux shell Alt-1 popup rendered native switch"
     echo "[poc/no-fzf] exercise native notify sidebar printable expect key"
     /tmp/projmux notify push --text "deploy ok" --target main --source ai --id poc-notify
     notify_log=/tmp/projmux-notify.log

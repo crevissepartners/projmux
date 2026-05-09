@@ -697,10 +697,19 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 	if launchKey := nativeLaunchKeyForPopupMode(mode.Raw); launchKey != "" {
 		env[intpicker.NativeLaunchKeyEnv] = launchKey
 	}
+	inheritPopupPickerEnv(env)
 
 	options.Cwd = cwd
 	options.Env = env
 	return buildMarkedPopupCommand(binaryPath, commandArgs, marker, cwd, env), options, nil
+}
+
+func inheritPopupPickerEnv(env map[string]string) {
+	for _, key := range []string{intpicker.BackendEnv, "PROJMUX_PROJDIR", "PROJMUX_MANAGED_ROOTS"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			env[key] = value
+		}
+	}
 }
 
 func nativeLaunchKeyForPopupMode(mode string) string {
