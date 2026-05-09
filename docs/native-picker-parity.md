@@ -17,7 +17,7 @@ picker evidence. It is not a production dependency-policy change.
 | plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickerItemsFromFZF`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
 | default `--smart-case` matching | all searchable picker rows | Covered | native filter keeps lower-case queries case-insensitive and uppercase queries case-sensitive; `TestFilterItemsUsesFZFSmartCase` |
-| fuzzy result ranking | simple non-search-key picker UX | Covered with fzf-derived scoring constants | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst`; `TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches` |
+| fuzzy result ranking | simple non-search-key picker UX | Covered with fzf V2 dynamic scoring for normal app rows | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst`; `TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches`; `TestFuzzyScoreMatchesFZFV2ReferenceScores` |
 | `--scrollbar █` | long switch/session/settings lists | Covered approximately | `nativeListLinesWithScrollbar`; `TestNativeInteractiveUsesScrollbarForLongLists` |
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered approximately | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
@@ -66,10 +66,10 @@ picker evidence. It is not a production dependency-policy change.
 - Exact fzf preview-window parity is not complete: native has approximate
   right/down layout and keyboard preview scrolling, but not the full fzf sizing
   algorithm.
-- Exact fzf V2 dynamic-programming scoring is not complete for non-search-key
-  simple pickers. Native now mirrors fzf's core scoring constants and bonuses
-  for boundaries, delimiters, camelCase/number transitions, gap penalties, and
-  consecutive matches, but does not port the full V2 matrix search.
+- fzf V2 dynamic scoring is now covered for normal app-length non-search-key
+  rows, including reference scores for boundary, delimiter, camelCase/number,
+  gap, and consecutive bonuses. Very large `query * row` matrices intentionally
+  fall back to the greedy scorer to avoid pathological memory use in this POC.
   Search-keyed app pickers preserve fzf's `--disabled` reload order instead of
   score-sorting.
 - Mouse support is not implemented. projmux does not currently expose mouse

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -1557,6 +1558,10 @@ func maxInt(a, b int) int {
 	return b
 }
 
+func maxInt3(a, b, c int) int {
+	return maxInt(maxInt(a, b), c)
+}
+
 func runNativePreviewCommand(command, target string) string {
 	command = expandNativeCommand(command, target)
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -1653,7 +1658,13 @@ func fuzzyScore(source string, pattern []rune, caseSensitive bool) (int, bool) {
 	if len(pattern) > len(sourceRunes) {
 		return 0, false
 	}
+	if len(pattern) > 1000 || len(pattern)*len(sourceRunes) > 1_000_000 {
+		return nativeFuzzyScoreGreedy(sourceRunes, pattern, caseSensitive)
+	}
+	return nativeFuzzyScoreV2(sourceRunes, pattern, caseSensitive)
+}
 
+func nativeFuzzyScoreGreedy(sourceRunes, pattern []rune, caseSensitive bool) (int, bool) {
 	pidx := 0
 	start := -1
 	end := -1
@@ -1697,6 +1708,9 @@ func nativeSearchRune(r rune, caseSensitive bool) rune {
 	if r >= 'A' && r <= 'Z' {
 		return r + ('a' - 'A')
 	}
+	if r > unicode.MaxASCII {
+		return unicode.ToLower(r)
+	}
 	return r
 }
 
@@ -1712,6 +1726,94 @@ const (
 	nativeBonusConsecutive         = -(nativeScoreGapStart + nativeScoreGapExtension)
 	nativeBonusFirstCharMultiplier = 2
 )
+
+func nativeFuzzyScoreV2(source, pattern []rune, caseSensitive bool) (int, bool) {
+	normalized := make([]rune, len(source))
+	bonuses := make([]int, len(source))
+	prevClass := nativeCharWhite
+	matched := 0
+	for idx, r := range source {
+		class := nativeClassOf(r)
+		normalized[idx] = nativeSearchRune(r, caseSensitive)
+		bonuses[idx] = nativeBonusFor(prevClass, class)
+		if matched < len(pattern) && normalized[idx] == pattern[matched] {
+			matched++
+		}
+		prevClass = class
+	}
+	if matched != len(pattern) {
+		return 0, false
+	}
+
+	width := len(source)
+	height := len(pattern)
+	scores := make([]int, width*height)
+	consecutive := make([]int, width*height)
+	maxScore := 0
+	for row := 0; row < height; row++ {
+		inGap := false
+		for col := 0; col < width; col++ {
+			leftScore := 0
+			if col > 0 {
+				leftScore = scores[row*width+col-1]
+			}
+			gapScore := 0
+			if leftScore > 0 {
+				if inGap {
+					gapScore = leftScore + nativeScoreGapExtension
+				} else {
+					gapScore = leftScore + nativeScoreGapStart
+				}
+			}
+
+			matchScore := 0
+			runLength := 0
+			if normalized[col] == pattern[row] {
+				if row == 0 {
+					bonus := bonuses[col]
+					matchScore = nativeScoreMatch + bonus*nativeBonusFirstCharMultiplier
+					runLength = 1
+				} else if col > 0 {
+					diag := scores[(row-1)*width+col-1]
+					if diag > 0 {
+						bonus := bonuses[col]
+						runLength = consecutive[(row-1)*width+col-1] + 1
+						if runLength > 1 {
+							firstBonus := bonuses[col-runLength+1]
+							if bonus >= nativeBonusBoundary && bonus > firstBonus {
+								runLength = 1
+							} else {
+								bonus = maxInt3(bonus, firstBonus, nativeBonusConsecutive)
+							}
+						}
+						matchScore = diag + nativeScoreMatch
+						if matchScore+bonus < gapScore {
+							matchScore += bonuses[col]
+							runLength = 0
+						} else {
+							matchScore += bonus
+						}
+					}
+				}
+			}
+
+			score := maxInt3(matchScore, gapScore, 0)
+			if score != matchScore {
+				runLength = 0
+			}
+			consecutive[row*width+col] = runLength
+			scores[row*width+col] = score
+			inGap = matchScore < gapScore
+			if row == height-1 && score > maxScore {
+				maxScore = score
+			}
+		}
+	}
+	if maxScore == 0 {
+		return 0, false
+	}
+	return maxScore, true
+}
 
 type nativeCharClass int
 
@@ -1787,8 +1889,16 @@ func nativeClassOf(r rune) nativeCharClass {
 		return nativeCharWhite
 	case strings.ContainsRune("/,:;|", r):
 		return nativeCharDelimiter
-	case (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'):
+	case unicode.IsLower(r):
+		return nativeCharLower
+	case unicode.IsUpper(r):
+		return nativeCharUpper
+	case unicode.IsNumber(r):
+		return nativeCharNumber
+	case unicode.IsLetter(r):
 		return nativeCharLetter
+	case unicode.IsSpace(r):
+		return nativeCharWhite
 	default:
 		return nativeCharNonWord
 	}

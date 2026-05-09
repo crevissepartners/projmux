@@ -36,7 +36,7 @@ docker run --rm \
     rm -f "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
     ai_settings_log=/tmp/projmux-ai-settings.log
     ai_settings_status=0
-    printf "Codex\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux ai settings" "$ai_settings_log" || ai_settings_status=$?
+    printf "Codex\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux ai settings" "$ai_settings_log" || ai_settings_status=$?
     if [[ "$ai_settings_status" != 0 ]]; then
       cat "$ai_settings_log"
       exit "$ai_settings_status"
@@ -54,7 +54,7 @@ docker run --rm \
     done
     switch_log=/tmp/projmux-switch.log
     switch_status=0
-    printf "bravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$switch_log" || switch_status=$?
+    printf "bravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$switch_log" || switch_status=$?
     if [[ "$switch_status" != 0 && "$switch_status" != 124 ]]; then
       cat "$switch_log"
       exit "$switch_status"
@@ -71,7 +71,7 @@ docker run --rm \
     tmux new-session -d -s projmux-projects-bravo-web -c "$demo_root/bravo-web"
     popup_log=/tmp/projmux-switch-popup.log
     popup_status=0
-    printf "\033[C\033[1;3Bbravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=popup" "$popup_log" || popup_status=$?
+    printf "\033[C\033[1;3Bbravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=popup" "$popup_log" || popup_status=$?
     if [[ "$popup_status" != 0 && "$popup_status" != 124 ]]; then
       cat "$popup_log"
       exit "$popup_status"
@@ -88,7 +88,7 @@ docker run --rm \
     tmux new-session -d -s projmux-projects-bravo-web -c "$demo_root/bravo-web"
     sessions_log=/tmp/projmux-sessions.log
     sessions_status=0
-    printf "\033[C\033[1;3Bbravo\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux sessions --ui=popup" "$sessions_log" || sessions_status=$?
+    printf "\033[C\033[1;3Bbravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux sessions --ui=popup" "$sessions_log" || sessions_status=$?
     if [[ "$sessions_status" != 0 && "$sessions_status" != 124 ]]; then
       cat "$sessions_log"
       exit "$sessions_status"
@@ -103,7 +103,7 @@ docker run --rm \
     echo "[poc/no-fzf] launch projmux shell under a PTY"
     shell_log=/tmp/projmux-shell.log
     shell_status=0
-    timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux shell --socket poc-no-fzf --session main" "$shell_log" || shell_status=$?
+    timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux shell --socket poc-no-fzf --session main" "$shell_log" || shell_status=$?
     if [[ "$shell_status" != 0 && "$shell_status" != 124 ]]; then
       cat "$shell_log"
       exit "$shell_status"
@@ -119,7 +119,7 @@ docker run --rm \
     /tmp/projmux notify push --text "deploy ok" --target main --source ai --id poc-notify
     notify_log=/tmp/projmux-notify.log
     notify_status=0
-    printf "a" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
+    printf "a" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
     if [[ "$notify_status" != 0 ]]; then
       cat "$notify_log"
       exit "$notify_status"
@@ -135,7 +135,7 @@ docker run --rm \
     settings_log=/tmp/projmux-settings.log
     settings_stderr=/tmp/projmux-settings.stderr
     settings_status=0
-    printf "\r\033[B\033[B\033[B\r" | timeout 8s script -q -e -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>$settings_stderr" "$settings_log" || settings_status=$?
+    printf "\r\033[B\033[B\033[B\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>$settings_stderr" "$settings_log" || settings_status=$?
     if [[ "$settings_status" != 0 ]]; then
       cat "$settings_log"
       cat "$settings_stderr"

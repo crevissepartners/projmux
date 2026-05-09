@@ -80,6 +80,149 @@ func TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches(t *testing.T) {
 	}
 }
 
+func TestFuzzyScoreMatchesFZFV2ReferenceScores(t *testing.T) {
+	t.Parallel()
+
+	// Reference cases mirror fzf src/algo/algo_test.go for projmux's fuzzy picker surface.
+	tests := []struct {
+		name          string
+		source        string
+		query         string
+		caseSensitive bool
+		want          int
+	}{
+		{
+			name:   "camel with gaps",
+			source: "fooBarbaz1",
+			query:  "oBZ",
+			want:   nativeScoreMatch*3 + nativeBonusCamel123 + nativeScoreGapStart + nativeScoreGapExtension*3,
+		},
+		{
+			name:   "word boundaries",
+			source: "foo bar baz",
+			query:  "fbb",
+			want: nativeScoreMatch*3 + nativeBonusBoundaryWhite*nativeBonusFirstCharMultiplier +
+				nativeBonusBoundaryWhite*2 + nativeScoreGapStart*2 + nativeScoreGapExtension*4,
+		},
+		{
+			name:   "delimiter boundaries",
+			source: "/man1/zshcompctl.1",
+			query:  "zshc",
+			want: nativeScoreMatch*4 + nativeBonusBoundaryDelimiter*nativeBonusFirstCharMultiplier +
+				nativeBonusBoundaryDelimiter*3,
+		},
+		{
+			name:   "camel and consecutive acronym",
+			source: "/AutomatorDocument.icns",
+			query:  "rdoc",
+			want:   nativeScoreMatch*4 + nativeBonusCamel123 + nativeBonusConsecutive*2,
+		},
+		{
+			name:   "compact dot path",
+			source: "/.oh-my-zsh/cache",
+			query:  "zshc",
+			want: nativeScoreMatch*4 + nativeBonusBoundary*nativeBonusFirstCharMultiplier +
+				nativeBonusBoundary*2 + nativeScoreGapStart + nativeBonusBoundaryDelimiter,
+		},
+		{
+			name:   "number run after digits",
+			source: "ab0123 456",
+			query:  "12356",
+			want:   nativeScoreMatch*5 + nativeBonusConsecutive*3 + nativeScoreGapStart + nativeScoreGapExtension,
+		},
+		{
+			name:   "number run after letters",
+			source: "abc123 456",
+			query:  "12356",
+			want: nativeScoreMatch*5 + nativeBonusCamel123*nativeBonusFirstCharMultiplier +
+				nativeBonusCamel123*2 + nativeBonusConsecutive + nativeScoreGapStart + nativeScoreGapExtension,
+		},
+		{
+			name:   "slash path acronym",
+			source: "foo/bar/baz",
+			query:  "fbb",
+			want: nativeScoreMatch*3 + nativeBonusBoundaryWhite*nativeBonusFirstCharMultiplier +
+				nativeBonusBoundaryDelimiter*2 + nativeScoreGapStart*2 + nativeScoreGapExtension*4,
+		},
+		{
+			name:   "camel acronym",
+			source: "fooBarBaz",
+			query:  "fbb",
+			want: nativeScoreMatch*3 + nativeBonusBoundaryWhite*nativeBonusFirstCharMultiplier +
+				nativeBonusCamel123*2 + nativeScoreGapStart*2 + nativeScoreGapExtension*2,
+		},
+		{
+			name:   "partial boundary acronym",
+			source: "foo barbaz",
+			query:  "fbb",
+			want: nativeScoreMatch*3 + nativeBonusBoundaryWhite*nativeBonusFirstCharMultiplier +
+				nativeBonusBoundaryWhite + nativeScoreGapStart*2 + nativeScoreGapExtension*3,
+		},
+		{
+			name:   "compact prefix beats later boundary",
+			source: "fooBar Baz",
+			query:  "foob",
+			want: nativeScoreMatch*4 + nativeBonusBoundaryWhite*nativeBonusFirstCharMultiplier +
+				nativeBonusBoundaryWhite*3,
+		},
+		{
+			name:          "case sensitive prefix plus camel",
+			source:        "FooBar Baz",
+			query:         "FooB",
+			caseSensitive: true,
+			want: nativeScoreMatch*4 + nativeBonusBoundaryWhite*nativeBonusFirstCharMultiplier +
+				nativeBonusBoundaryWhite*2 + maxInt(nativeBonusCamel123, nativeBonusBoundaryWhite),
+		},
+		{
+			name:          "consecutive bonus updated",
+			source:        "foo-bar",
+			query:         "o-ba",
+			caseSensitive: true,
+			want:          nativeScoreMatch*4 + nativeBonusBoundary*3,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := fuzzyScore(tt.source, nativeSearchPattern(tt.query, tt.caseSensitive), tt.caseSensitive)
+			if !ok {
+				t.Fatalf("fuzzyScore(%q, %q) did not match", tt.source, tt.query)
+			}
+			if got != tt.want {
+				t.Fatalf("fuzzyScore(%q, %q) = %d, want fzf V2 reference score %d", tt.source, tt.query, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFuzzyScoreRejectsFZFV2ReferenceNonMatches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		source        string
+		query         string
+		caseSensitive bool
+	}{
+		{name: "missing case-sensitive uppercase", source: "fooBarbaz", query: "oBZ", caseSensitive: true},
+		{name: "missing case-sensitive lowercase", source: "Foo Bar Baz", query: "fbb", caseSensitive: true},
+		{name: "query longer than source", source: "fooBarbaz", query: "fooBarbazz", caseSensitive: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := fuzzyScore(tt.source, nativeSearchPattern(tt.query, tt.caseSensitive), tt.caseSensitive)
+			if ok || got != 0 {
+				t.Fatalf("fuzzyScore(%q, %q) = (%d, %t), want no match", tt.source, tt.query, got, ok)
+			}
+		})
+	}
+}
+
 func TestFilterItemsIgnoresANSIEscapeSequences(t *testing.T) {
 	t.Parallel()
 
