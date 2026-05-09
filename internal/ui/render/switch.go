@@ -26,6 +26,8 @@ const (
 	ansiTabInactive       = "\x1b[38;5;245;48;5;235m"
 )
 
+const switchBranchBadgeMax = 24
+
 type SwitchRow struct {
 	Label string
 	Value string
@@ -179,7 +181,7 @@ func sanitizeCells(values []string) []string {
 
 func formatSwitchPathGitLine(candidate SwitchCandidate) string {
 	path := switchPickerPath(candidate)
-	branch := sanitizeCell(candidate.GitBranch)
+	branch := truncateSwitchBadge(sanitizeCell(candidate.GitBranch), switchBranchBadgeMax)
 	if path == "" && branch == "" {
 		return ""
 	}
@@ -195,6 +197,20 @@ func formatSwitchPathGitLine(candidate SwitchCandidate) string {
 		parts = append(parts, style+" "+branch+" "+ansiReset)
 	}
 	return strings.Join(parts, " ")
+}
+
+func truncateSwitchBadge(value string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
 }
 
 func formatSwitchWindowTabs(windows []SwitchWindowTab) string {
