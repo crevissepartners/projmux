@@ -399,8 +399,6 @@ func TestNotifySidebarLabelDoesNotExposeRawPaneID(t *testing.T) {
 }
 
 func TestNotifySidebarNativeBackendDoesNotCallFZF(t *testing.T) {
-	t.Parallel()
-
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{{
 			ID:        "abc",
@@ -416,15 +414,18 @@ func TestNotifySidebarNativeBackendDoesNotCallFZF(t *testing.T) {
 		}},
 	}
 	var fzfCalled bool
+	var nativeCalled bool
+	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
 	cmd.native = pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+		nativeCalled = true
 		if options.UI != "notify-sidebar" {
 			t.Fatalf("native UI = %q, want notify-sidebar", options.UI)
 		}
 		if len(options.Items) != 1 || options.Items[0].Value != "abc" {
 			t.Fatalf("native items = %#v, want abc", options.Items)
 		}
-		return intpicker.Result{Key: "a", Value: "abc"}, nil
+		return intpicker.Result{Value: "abc"}, nil
 	})
 	cmd.lookupEnv = func(name string) string {
 		if name == intpicker.BackendEnv {
@@ -436,6 +437,8 @@ func TestNotifySidebarNativeBackendDoesNotCallFZF(t *testing.T) {
 		fzfCalled = true
 		return intfzf.Result{}, nil
 	})
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -444,11 +447,21 @@ func TestNotifySidebarNativeBackendDoesNotCallFZF(t *testing.T) {
 	if fzfCalled {
 		t.Fatal("fzf picker was called for native notify backend")
 	}
+	if !nativeCalled {
+		t.Fatal("native picker was not called")
+	}
 	if store.ackedID != "abc" {
 		t.Fatalf("ackedID = %q, want abc", store.ackedID)
 	}
-	if !strings.Contains(stdout.String(), "ack abc") {
-		t.Fatalf("stdout = %q, want ack", stdout.String())
+	if len(runner.calls) != 1 || runner.calls[0].name != "/usr/local/bin/projmux" {
+		t.Fatalf("runner calls = %#v, want one focus call", runner.calls)
+	}
+	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux"}
+	if !equalStringSlices(runner.calls[0].args, wantArgs) {
+		t.Fatalf("focus args = %#v, want %#v", runner.calls[0].args, wantArgs)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want no output for focus + ack path", stdout.String())
 	}
 }
 
