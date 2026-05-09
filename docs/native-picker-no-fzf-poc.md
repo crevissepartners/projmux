@@ -12,11 +12,12 @@ The fzf compatibility surface for the native engine is tracked in
 - `internal/ui/picker` is the backend-neutral contract for native picker rows,
   actions, filtering, and typed-query prompts.
 - `internal/ui/projmuxpicker` is the projmux-specific native picker surface for
-  frame, theme tokens, ANSI width/truncation, prompt/footer/list rendering, and
-  preview pane layout. The POC keeps `picker` responsible for backend routing,
-  keyboard input, filtering, preview command execution, and result contracts,
-  while moving visual composition into `projmuxpicker` so projmux can evolve a
-  native picker design without coupling every visual tweak to the fzf adapter.
+  frame, redraw updates, theme tokens, ANSI width/truncation,
+  prompt/footer/list rendering, and preview pane layout. The POC keeps `picker`
+  responsible for backend routing, keyboard input, filtering, preview command
+  execution, and result contracts, while moving visual composition into
+  `projmuxpicker` so projmux can evolve a native picker design without coupling
+  every visual tweak to the fzf adapter.
 - `internal/ui/fzf` now owns the adapter between fzf's legacy option/result
   shape and the backend-neutral `picker.Options` contract. App code should
   describe picker intent as rows, actions, preview commands, and initial focus;
@@ -65,8 +66,9 @@ The fzf compatibility surface for the native engine is tracked in
 - Native frame content now uses the full inner border width so prompt/list/footer
   separators reach the right border like fzf.
 - Native redraws use terminal synchronized-update wrappers and row-diff updates
-  after the first frame. The frame renderer also avoids a trailing newline after
-  the bottom border. This reduces visible keyboard-navigation flicker and
+  after the first frame. The frame/redraw renderer lives in `projmuxpicker`
+  rather than the backend loop, and the frame renderer avoids a trailing newline
+  after the bottom border. This reduces visible keyboard-navigation flicker and
   prevents exact-height popups from scrolling the top border off screen.
 - In app TTY contexts, the native picker opens the controlling terminal
   (`/dev/tty`) before entering raw mode. This avoids stdin/stdout mismatch and
@@ -79,7 +81,9 @@ The fzf compatibility surface for the native engine is tracked in
 
 - The `projmuxpicker` package is intended as a foundation that can be carried
   forward, along with the fzf-to-picker adapter boundary in `internal/ui/fzf`.
-  Docker sandbox scripts and dependency-policy notes remain support scaffolding.
+  Its frame, row, preview, theme, ANSI, and redraw modules are foundation code;
+  Docker sandbox scripts and dependency-policy notes remain support
+  scaffolding.
 - Switch and sessions preview panes are native previews for the concrete
   projmux option shapes. Wide right-side preview windows render beside the
   list, and sidebar-style `down,25%,border-top` previews render below the list

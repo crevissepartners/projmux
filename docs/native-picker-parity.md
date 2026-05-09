@@ -52,8 +52,9 @@ experimental native picker engine and is not a public dependency-policy change.
   routing, keyboard input, fuzzy filtering, action dispatch, preview command
   execution, and result handling.
 - `internal/ui/projmuxpicker` owns projmux-native visual composition: frame,
-  ANSI width/truncation, theme tokens, prompt/footer/list rendering, selected
-  row styling, scrollbars/gap rows, and preview pane geometry/rendering.
+  redraw updates, ANSI width/truncation, theme tokens, prompt/footer/list
+  rendering, selected row styling, scrollbars/gap rows, and preview pane
+  geometry/rendering.
 - `internal/ui/fzf` owns the compatibility adapter in both directions:
   `picker.Options` becomes fzf flags/bindings for fallback, and legacy
   `fzf.Options` becomes `picker.Options` for the native backend. This keeps app

@@ -29,6 +29,16 @@ type Renderer struct {
 	Theme Theme
 }
 
+const (
+	SyncUpdateEnter = "\x1b[?2026h"
+	SyncUpdateLeave = "\x1b[?2026l"
+	cursorHome      = "\x1b[H"
+)
+
+type FrameUpdateRenderer struct {
+	previous string
+}
+
 var DefaultTheme = Theme{
 	TopLeft:     "╭",
 	TopRight:    "╮",
@@ -47,6 +57,22 @@ func NewRenderer(theme Theme) Renderer {
 
 func DefaultRenderer() Renderer {
 	return NewRenderer(DefaultTheme)
+}
+
+func (r *FrameUpdateRenderer) Render(w io.Writer, frame string) {
+	fmt.Fprint(w, SyncUpdateEnter)
+	defer fmt.Fprint(w, SyncUpdateLeave)
+	if r.previous == "" {
+		fmt.Fprint(w, cursorHome+frame)
+		r.previous = frame
+		return
+	}
+	writeFrameDiff(w, r.previous, frame)
+	r.previous = frame
+}
+
+func RenderFullFrameUpdate(w io.Writer, frame string) {
+	fmt.Fprint(w, SyncUpdateEnter+cursorHome+frame+SyncUpdateLeave)
 }
 
 func (r Renderer) ContentLayout(layout Layout) Layout {
@@ -97,4 +123,34 @@ func (r Renderer) RenderFrame(w io.Writer, content string, layout Layout) {
 		fmt.Fprintf(w, "%s%s%s\r\n", theme.Vertical, PadRight(line, innerWidth), theme.Vertical)
 	}
 	fmt.Fprintf(w, "%s%s%s", theme.BottomLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.BottomRight)
+}
+
+func writeFrameDiff(w io.Writer, previous, next string) {
+	previousLines := splitFrameLines(previous)
+	nextLines := splitFrameLines(next)
+	limit := len(nextLines)
+	if len(previousLines) > limit {
+		limit = len(previousLines)
+	}
+	for i := 0; i < limit; i++ {
+		previousLine := ""
+		if i < len(previousLines) {
+			previousLine = previousLines[i]
+		}
+		nextLine := ""
+		if i < len(nextLines) {
+			nextLine = nextLines[i]
+		}
+		if previousLine == nextLine {
+			continue
+		}
+		fmt.Fprintf(w, "\x1b[%d;1H%s", i+1, nextLine)
+	}
+}
+
+func splitFrameLines(frame string) []string {
+	if strings.Contains(frame, "\r\n") {
+		return strings.Split(frame, "\r\n")
+	}
+	return strings.Split(frame, "\n")
 }

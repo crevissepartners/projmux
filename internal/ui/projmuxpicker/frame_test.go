@@ -30,6 +30,44 @@ func TestRendererContentLayoutUsesFrameInnerWidth(t *testing.T) {
 	}
 }
 
+func TestFrameUpdateRendererDiffsAfterFirstFrame(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderer := FrameUpdateRenderer{}
+	renderer.Render(&out, "top\r\none\r\nbottom")
+	renderer.Render(&out, "top\r\ntwo\r\nbottom")
+
+	rendered := out.String()
+	if got, want := strings.Count(rendered, SyncUpdateEnter), 2; got != want {
+		t.Fatalf("synchronized update enter count = %d, want %d: %q", got, want, rendered)
+	}
+	if got, want := strings.Count(rendered, SyncUpdateLeave), 2; got != want {
+		t.Fatalf("synchronized update leave count = %d, want %d: %q", got, want, rendered)
+	}
+	if got := strings.Count(rendered, "top"); got != 1 {
+		t.Fatalf("top row render count = %d, want initial full frame only: %q", got, rendered)
+	}
+	if !strings.Contains(rendered, "\x1b[2;1Htwo") {
+		t.Fatalf("rendered = %q, want cursor-addressed changed row", rendered)
+	}
+}
+
+func TestRenderFullFrameUpdateAlwaysHomesAndWritesFrame(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	RenderFullFrameUpdate(&out, "frame")
+
+	rendered := out.String()
+	if !strings.HasPrefix(rendered, SyncUpdateEnter+"\x1b[Hframe") {
+		t.Fatalf("RenderFullFrameUpdate() = %q, want sync wrapper and home cursor before frame", rendered)
+	}
+	if !strings.HasSuffix(rendered, SyncUpdateLeave) {
+		t.Fatalf("RenderFullFrameUpdate() = %q, want sync update leave suffix", rendered)
+	}
+}
+
 func TestTruncateANSIClosesStyleWhenCutBeforeReset(t *testing.T) {
 	t.Parallel()
 
