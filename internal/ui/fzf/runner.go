@@ -25,6 +25,10 @@ type Options struct {
 	PreviewWindow  string
 	Bindings       []string
 	InitialQuery   string
+	// DisableSearch makes fzf a navigation-only list. It hides the input
+	// section, disables query matching, and suppresses projmux's SearchKey
+	// reload filter.
+	DisableSearch bool
 	// AcceptQuery surfaces the user-typed query alongside any selection.
 	// When true, the runner passes --print-query to fzf and Result.Query is
 	// populated from the first stdout line emitted by fzf. Existing callers
@@ -153,7 +157,7 @@ func selectedResultWithQuery(selection string, expectKeys []string) Result {
 }
 
 func runnerArgs(options Options, supportsFooter bool, filterFile string) []string {
-	searchKeyed := hasSearchKey(options)
+	searchKeyed := searchKeyEnabled(options)
 	args := []string{
 		"--prompt", resolvedPrompt(options),
 		"--height", "100%",
@@ -167,7 +171,9 @@ func runnerArgs(options Options, supportsFooter bool, filterFile string) []strin
 	} else {
 		args = append(args, "--with-nth", "1")
 	}
-	if filterFile != "" {
+	if options.DisableSearch {
+		args = append(args, "--disabled", "--no-input")
+	} else if filterFile != "" {
 		args = append(args, "--disabled", "--bind", "change:reload("+searchKeyFilterCommand(filterFile)+")")
 	}
 	if !options.AcceptQuery {
@@ -259,7 +265,7 @@ func renderedInput(options Options) string {
 
 func renderedEntries(options Options) []string {
 	if len(options.Entries) != 0 {
-		searchKeyed := hasSearchKey(options)
+		searchKeyed := searchKeyEnabled(options)
 		lines := make([]string, 0, len(options.Entries))
 		for _, entry := range options.Entries {
 			if searchKeyed {
@@ -340,7 +346,7 @@ func firstLine(value string) string {
 }
 
 func searchKeyFilterFile(options Options, input string) (string, func(), error) {
-	if !hasSearchKey(options) {
+	if !searchKeyEnabled(options) {
 		return "", func() {}, nil
 	}
 
@@ -370,6 +376,10 @@ func searchKeyFilterCommand(path string) string {
 
 func searchKeyValuePlaceholder(command string) string {
 	return strings.ReplaceAll(command, "{2}", "{3}")
+}
+
+func searchKeyEnabled(options Options) bool {
+	return !options.DisableSearch && hasSearchKey(options)
 }
 
 func shellQuote(value string) string {

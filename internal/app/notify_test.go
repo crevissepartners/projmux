@@ -268,14 +268,20 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if !picker.options.Read0 {
 		t.Fatal("picker Read0 = false, want true")
 	}
+	if !picker.options.DisableSearch {
+		t.Fatal("picker DisableSearch = false, want true")
+	}
 	if got, want := picker.options.Prompt, "Notify > "; got != want {
 		t.Fatalf("picker prompt = %q, want %q", got, want)
 	}
 	if got, want := picker.options.Header, "Pending notifications, newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Enter: focus + ack  |  a: ack  |  Ctrl-A: clear all  |  Esc/Alt-2: close"; got != want {
+	if got, want := picker.options.Footer, "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
+	}
+	if got, want := picker.options.ExpectKeys, []string{"x", "ctrl-x"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expect keys = %#v, want %#v", got, want)
 	}
 	if len(picker.options.Entries) != 1 || picker.options.Entries[0].Value != "abc" {
 		t.Fatalf("entries = %#v", picker.options.Entries)
@@ -294,10 +300,8 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
 	}
-	for _, want := range []string{"abc", "codex: reply ready", "warn", "ai", "main:1.0"} {
-		if !strings.Contains(entry.SearchKey, want) {
-			t.Fatalf("search key = %q, want %q", entry.SearchKey, want)
-		}
+	if entry.SearchKey != "" {
+		t.Fatalf("search key = %q, want empty for navigation-only sidebar", entry.SearchKey)
 	}
 	if got, want := picker.options.Bindings, []string{"alt-2:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("bindings = %#v, want %#v", got, want)
@@ -387,7 +391,7 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
 	}
-	picker := &stubNotifyPicker{result: intfzf.Result{Key: "a", Value: "abc"}}
+	picker := &stubNotifyPicker{result: intfzf.Result{Key: "x", Value: "abc"}}
 	cmd := newCmd(store)
 	cmd.picker = picker
 
@@ -410,7 +414,7 @@ func TestNotifyListSidebarClearAll(t *testing.T) {
 		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
 		ackAll:      1,
 	}
-	picker := &stubNotifyPicker{result: intfzf.Result{Key: "ctrl-a", Value: "abc"}}
+	picker := &stubNotifyPicker{result: intfzf.Result{Key: "ctrl-x", Value: "abc"}}
 	cmd := newCmd(store)
 	cmd.picker = picker
 

@@ -276,14 +276,15 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 	}
 	now := c.clock()
 	fzfOptions := intfzf.Options{
-		UI:         "notify-sidebar",
-		Read0:      true,
-		Prompt:     "Notify > ",
-		Header:     "Pending notifications, newest first",
-		Footer:     "Enter: focus + ack  |  a: ack  |  Ctrl-A: clear all  |  Esc/Alt-2: close",
-		ExpectKeys: []string{"a", "ctrl-a"},
-		Bindings:   []string{"alt-2:abort"},
-		Entries:    notifySidebarEntries(entries, now),
+		UI:            "notify-sidebar",
+		Read0:         true,
+		Prompt:        "Notify > ",
+		Header:        "Pending notifications, newest first",
+		Footer:        "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
+		ExpectKeys:    []string{"x", "ctrl-x"},
+		Bindings:      []string{"alt-2:abort"},
+		Entries:       notifySidebarEntries(entries, now),
+		DisableSearch: true,
 	}
 	result, err := c.picker.Run(fzfOptions)
 	if err != nil {
@@ -298,14 +299,14 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		return err
 	}
 	switch result.Key {
-	case "ctrl-a":
+	case "ctrl-x":
 		removed, err := store.AckAll()
 		if err != nil {
 			return fmt.Errorf("clear all notifications: %w", err)
 		}
 		_, err = fmt.Fprintf(stdout, "cleared %d notification(s)\n", removed)
 		return err
-	case "a":
+	case "x":
 		if err := store.Ack(id); err != nil {
 			return fmt.Errorf("ack notification: %w", err)
 		}
@@ -331,24 +332,16 @@ const notifySidebarEmptyValue = "__projmux_notify_empty__"
 func notifySidebarEntries(entries []notify.Notification, now time.Time) []intfzf.Entry {
 	if len(entries) == 0 {
 		return []intfzf.Entry{{
-			Label:     "No pending notifications",
-			Value:     notifySidebarEmptyValue,
-			SearchKey: "empty no pending notifications",
+			Label: "No pending notifications",
+			Value: notifySidebarEmptyValue,
 		}}
 	}
 	out := make([]intfzf.Entry, 0, len(entries))
 	for _, e := range entries {
-		target := notify.FormatTarget(notify.Target{
-			Socket:  e.Socket,
-			Session: e.Session,
-			Window:  e.Window,
-			Pane:    e.Pane,
-		})
 		label := notifySidebarLabel(e, now)
 		out = append(out, intfzf.Entry{
-			Label:     label,
-			Value:     e.ID,
-			SearchKey: strings.Join([]string{e.ID, e.Text, e.Severity, e.Source, target}, " "),
+			Label: label,
+			Value: e.ID,
 		})
 	}
 	return out
