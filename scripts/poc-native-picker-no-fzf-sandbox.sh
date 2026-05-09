@@ -2,7 +2,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf}"
+base_image="${PROJMUX_POC_NO_FZF_BASE_IMAGE:-golang:1.24-trixie}"
+image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf-go124-trixie}"
 dockerfile="$root/test/docker/no-fzf-poc.Dockerfile"
 
 if [[ ! -t 0 || ! -t 1 || ! -t 2 ]]; then
@@ -20,8 +21,8 @@ EOF
   exit 2
 fi
 
-echo "[poc/no-fzf] building dependency image $image"
-docker build --pull=false -f "$dockerfile" -t "$image" "$root"
+echo "[poc/no-fzf] building dependency image $image from $base_image"
+docker build --pull=false --build-arg "BASE_IMAGE=$base_image" -f "$dockerfile" -t "$image" "$root"
 
 echo "[poc/no-fzf] entering interactive no-fzf sandbox"
 docker run --rm -it \
@@ -57,6 +58,14 @@ docker run --rm -it \
     done
     export PROJMUX_PROJDIR="$demo_root"
     export PROJMUX_MANAGED_ROOTS="$demo_root"
+    sandbox_config=/tmp/projmux-native-tmux.conf
+    projmux tmux print-app-config --bin /usr/local/bin/projmux > "$sandbox_config"
+    {
+      printf "set-environment -g PROJMUX_PICKER_BACKEND native\n"
+      printf "set-environment -g PROJMUX_PROJDIR %q\n" "$PROJMUX_PROJDIR"
+      printf "set-environment -g PROJMUX_MANAGED_ROOTS %q\n" "$PROJMUX_MANAGED_ROOTS"
+      printf "set-environment -g SHELL /bin/bash\n"
+    } >> "$sandbox_config"
     cd "$demo_root/alpha-api"
     cat <<'"'"'EOF'"'"'
 
@@ -76,7 +85,8 @@ Inside tmux, try:
 Environment:
   PROJMUX_PICKER_BACKEND=native
   PROJMUX_PROJDIR=/workspace/projects
+  tmux global env also forces native picker for Alt popup bindings
 
 Detach from tmux with Ctrl-b d. Exit the container shell to remove the sandbox.
 EOF
-    exec projmux shell --socket poc-no-fzf --session main --bin /usr/local/bin/projmux'
+    exec projmux shell --socket poc-no-fzf --session main --bin /usr/local/bin/projmux --config "$sandbox_config" --no-install'

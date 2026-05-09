@@ -57,9 +57,10 @@ The fzf compatibility surface for this POC is tracked in
 Use this when you want to enter a Docker container and experience this POC build
 directly. It builds the no-fzf dependency image, mounts this worktree, builds
 `projmux` inside the container, creates sample projects under
-`/workspace/projects`, sets `PROJMUX_PICKER_BACKEND=native`, and launches
-`projmux shell` so you can experience the POC directly. It also forces UTF-8
-locale inside the container. This uses `wt path`
+`/workspace/projects`, sets `PROJMUX_PICKER_BACKEND=native`, writes a sandbox
+tmux config that also forces the tmux server environment to native picker mode,
+and launches `projmux shell` so you can experience the POC directly. It also
+forces UTF-8 locale inside the container. This uses `wt path`
 instead of `wt run` because `docker run -it` needs the current terminal TTY:
 
 ```sh
@@ -78,9 +79,9 @@ projmux doctor --json
 
 ## Automated No-fzf Docker E2E Command
 
-Run this from the repository root. It builds a Node-based no-fzf dependency
-image from `test/docker/no-fzf-poc.Dockerfile`, including Go module cache, then
-mounts the repository into an isolated `--network none` container, builds
+Run this from the repository root. It builds a Go 1.24 Trixie no-fzf
+dependency image from `test/docker/no-fzf-poc.Dockerfile`, including Go module
+cache, then mounts the repository into an isolated `--network none` container, builds
 `projmux`, asserts `fzf` is not on `PATH`, runs the focused native-picker tests,
 exercises `projmux switch --ui=sidebar` search/selection under a container PTY,
 exercises `projmux switch --ui=popup` and `projmux sessions --ui=popup` against
@@ -100,4 +101,10 @@ The script contains the Docker image build and isolated `docker run` command:
 
 ```sh
 scripts/poc-native-picker-no-fzf-e2e.sh
+```
+
+To compare another base image without editing the repo, override the build arg:
+
+```sh
+PROJMUX_POC_NO_FZF_BASE_IMAGE=golang:1.24-bookworm bash "$(wt path poc/native-picker-no-fzf)/scripts/poc-native-picker-no-fzf-sandbox.sh"
 ```

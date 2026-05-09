@@ -2,12 +2,13 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf}"
+base_image="${PROJMUX_POC_NO_FZF_BASE_IMAGE:-golang:1.24-trixie}"
+image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf-go124-trixie}"
 dockerfile="$root/test/docker/no-fzf-poc.Dockerfile"
 
 echo "[poc/no-fzf] starting Docker e2e from $root"
-echo "[poc/no-fzf] building dependency image $image"
-docker build --pull=false -f "$dockerfile" -t "$image" "$root"
+echo "[poc/no-fzf] building dependency image $image from $base_image"
+docker build --pull=false --build-arg "BASE_IMAGE=$base_image" -f "$dockerfile" -t "$image" "$root"
 
 echo "[poc/no-fzf] running isolated no-fzf test container"
 
@@ -122,9 +123,16 @@ docker run --rm \
     tmux kill-server 2>/dev/null || true
     echo "[poc/no-fzf] native sessions picker cycled window/pane preview and selected bravo-web"
     echo "[poc/no-fzf] launch projmux shell under a PTY"
+    shell_config=/tmp/projmux-native-tmux.conf
+    /tmp/projmux tmux print-app-config --bin /tmp/projmux > "$shell_config"
+    {
+      printf "set-environment -g PROJMUX_PICKER_BACKEND native\n"
+      printf "set-environment -g PROJMUX_PROJDIR %q\n" "$demo_root"
+      printf "set-environment -g PROJMUX_MANAGED_ROOTS %q\n" "$demo_root"
+    } >> "$shell_config"
     shell_log=/tmp/projmux-shell.log
     shell_status=0
-    timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux shell --socket poc-no-fzf --session main" "$shell_log" || shell_status=$?
+    timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux shell --socket poc-no-fzf --session main --config $shell_config --no-install" "$shell_log" || shell_status=$?
     if [[ "$shell_status" != 0 && "$shell_status" != 124 ]]; then
       cat "$shell_log"
       exit "$shell_status"
@@ -134,8 +142,12 @@ docker run --rm \
       cat /tmp/projmux-shell-tmux.err
       exit 1
     fi
+    if ! tmux -L poc-no-fzf show-environment -g PROJMUX_PICKER_BACKEND | grep -qx "PROJMUX_PICKER_BACKEND=native"; then
+      tmux -L poc-no-fzf show-environment -g
+      exit 1
+    fi
     tmux -L poc-no-fzf kill-server
-    echo "[poc/no-fzf] projmux shell launched tmux session"
+    echo "[poc/no-fzf] projmux shell launched tmux session with native picker env"
     echo "[poc/no-fzf] exercise native notify sidebar printable expect key"
     /tmp/projmux notify push --text "deploy ok" --target main --source ai --id poc-notify
     notify_log=/tmp/projmux-notify.log
