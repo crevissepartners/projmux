@@ -41,11 +41,11 @@ The fzf compatibility surface for this POC is tracked in
 
 ## Explicit Follow-Up Gaps
 
-- Switch and sessions preview panes are approximate native previews. Wide
-  right-side preview windows render beside the list, and sidebar-style
-  `down,25%,border-top` previews render below the list without a synthetic
-  preview title row, but exact fzf preview-window sizing parity is still
-  missing.
+- Switch and sessions preview panes are native previews for the concrete
+  projmux option shapes. Wide right-side preview windows render beside the
+  list, and sidebar-style `down,25%,border-top` previews render below the list
+  without a synthetic preview title row, using fzf-measured percent sizing.
+  The full fzf preview-window grammar remains outside this POC surface.
 - Exact preview cycle state parity still needs hands-on validation against real
   tmux sessions. The Docker e2e now smokes the `Right` and `Alt-Down`
   preview-cycle bindings before selecting a switch/session row, but does not

@@ -31,8 +31,8 @@ picker evidence. It is not a production dependency-policy change.
 | `focus:execute-silent(...)` | switch sidebar focus | Covered | `runNativeFocusAction`; `TestNativeInteractiveRunsFocusActionOnSelectionChange` |
 | `start:pos(N)` | switch sidebar initial row | Covered | `pickerInitialIndexFromFZF`; `TestPickerOptionsFromFZFMapsStartPosToInitialIndex` |
 | `--preview` | switch, sessions | Covered by command output | `nativePreviewLines`; `TestNativeInteractiveRendersSelectedPreview` |
-| `--preview-window right,60%,border-left` | switch popup, sessions popup | Covered approximately | `renderNativeSplitPreview` renders a single-column left border without a synthetic title row; `TestNativeInteractiveRendersWidePreviewBesideList` |
-| `--preview-window down,25%,border-top` | switch sidebar | Covered approximately | `renderNativeDownPreview` renders an immediate top border without a synthetic title row; `TestNativeInteractiveRendersDownPreviewBelowList` |
+| `--preview-window right,60%,border-left` | switch popup, sessions popup | Covered for projmux option shape | `renderNativeSplitPreview` renders a single-column left border without a synthetic title row and uses fzf-measured percent sizing; `TestNativeInteractiveRendersWidePreviewBesideList`; `TestNativePreviewWidthUsesPreviewWindowPercent` |
+| `--preview-window down,25%,border-top` | switch sidebar | Covered for projmux option shape | `renderNativeDownPreview` renders an immediate top border without a synthetic title row and uses fzf-measured percent sizing; `TestNativeInteractiveRendersDownPreviewBelowList`; `TestNativePreviewHeightUsesPreviewWindowPercent` |
 | preview scrolling | long switch/session preview output | Covered approximately with `Shift-Up`/`Shift-Down` | `previewOffset`; `TestNativeInteractiveRendersPreviewOffset` |
 | `--query` | typed settings path defaults | Covered | `Options.InitialQuery`; settings tests |
 | `--print-query` accept-query mode | typed settings path prompts | Covered | `Options.AcceptQuery`; `TestNativeRunnerAcceptsTypedQuery` |
@@ -63,9 +63,10 @@ picker evidence. It is not a production dependency-policy change.
 
 ## Remaining Gaps Before Calling This Complete
 
-- Exact fzf preview-window parity is not complete: native has approximate
-  right/down layout and keyboard preview scrolling, but not the full fzf sizing
-  algorithm.
+- Preview-window parity is covered for the concrete projmux option shapes
+  (`right,60%,border-left` and `down,25%,border-top`) with fzf-measured percent
+  sizing. The full fzf preview-window grammar, threshold alternatives, sticky
+  headers, and offset expressions are intentionally outside this POC surface.
 - fzf V2 dynamic scoring is now covered for normal app-length non-search-key
   rows, including reference scores for boundary, delimiter, camelCase/number,
   gap, and consecutive bonuses. Very large `query * row` matrices intentionally

@@ -1405,18 +1405,18 @@ func nativePreviewPlacement(window string) string {
 
 func nativePreviewHeight(rows int, window string) int {
 	if rows <= 0 {
-		rows = defaultNativeRows
+		rows = defaultNativeRows - 2
 	}
 	percent := nativePreviewPercent(window)
 	if percent <= 0 {
 		percent = 25
 	}
-	height := rows * percent / 100
-	if height < 4 {
-		return 4
+	height := nativePreviewRoundedPercent(rows+2, percent) - 2
+	if height < 1 {
+		return 1
 	}
-	if height > rows-8 {
-		return maxInt(4, rows-8)
+	if height > rows-2 {
+		return maxInt(1, rows-2)
 	}
 	return height
 }
@@ -1459,17 +1459,24 @@ func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, lay
 
 func nativePreviewWidth(cols int, window string) int {
 	if cols <= 0 {
-		cols = defaultNativeCols
+		cols = defaultNativeCols - 4
 	}
 	percent := nativePreviewPercent(window)
 	if percent <= 0 {
 		percent = 50
 	}
-	width := cols * percent / 100
-	if width < 36 {
-		return 36
+	width := nativePreviewRoundedPercent(cols+4, percent) - 6
+	if width < 1 {
+		return 1
+	}
+	if width > cols-1 {
+		return maxInt(1, cols-1)
 	}
 	return width
+}
+
+func nativePreviewRoundedPercent(size, percent int) int {
+	return (size*percent + 50) / 100
 }
 
 func renderNativeDownPreview(w io.Writer, previewLines []string, layout nativeLayout) {
