@@ -11,6 +11,12 @@ The fzf compatibility surface for this POC is tracked in
 
 - `internal/ui/picker` is the backend-neutral contract for native picker rows,
   actions, filtering, and typed-query prompts.
+- `internal/ui/projmuxpicker` is the projmux-specific native picker surface for
+  frame, theme tokens, ANSI width/truncation, prompt/footer/list rendering, and
+  preview pane layout. The POC keeps `picker` responsible for backend routing,
+  keyboard input, filtering, preview command execution, and result contracts,
+  while moving visual composition into `projmuxpicker` so projmux can evolve a
+  native picker design without coupling every visual tweak to the fzf adapter.
 - `PROJMUX_PICKER_BACKEND=native` routes simple app pickers through the native
   runner instead of shelling out to `fzf`.
 - Picker flows covered by the native path include AI picker/settings, shell
@@ -44,6 +50,10 @@ The fzf compatibility surface for this POC is tracked in
 
 ## POC Boundaries
 
+- The `projmuxpicker` package is intended as a foundation that can be carried
+  toward main after review. The Docker sandbox scripts, native debug logging,
+  and dependency-policy notes are POC support scaffolding and should be reviewed
+  separately before any production merge.
 - Switch and sessions preview panes are native previews for the concrete
   projmux option shapes. Wide right-side preview windows render beside the
   list, and sidebar-style `down,25%,border-top` previews render below the list

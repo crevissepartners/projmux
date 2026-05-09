@@ -40,6 +40,17 @@ picker evidence. It is not a production dependency-policy change.
 | terminal arrow key variants | interactive selection in tmux/docker | Covered | CSI, SS3/application cursor, modified CSI tests; app TTY `/dev/tty` fallback; raw TTY EOF polling keeps split ESC sequences from leaking into the query |
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen` |
 
+## Native Surface Architecture
+
+- `internal/ui/picker` remains the backend-neutral contract and owns fzf/native
+  routing, keyboard input, fuzzy filtering, action dispatch, preview command
+  execution, and result handling.
+- `internal/ui/projmuxpicker` owns projmux-native visual composition: frame,
+  ANSI width/truncation, theme tokens, prompt/footer/list rendering, selected
+  row styling, scrollbars/gap rows, and preview pane geometry/rendering.
+- The split is deliberate POC evidence that projmux can grow a first-party
+  picker design independently from the fzf compatibility adapter.
+
 ## Verified Flows
 
 - `ai` picker/settings: native backend routing covered by app tests. Docker
