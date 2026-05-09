@@ -1031,13 +1031,14 @@ func TestBuildDisplayPopupArgsMapsExplicitOptions(t *testing.T) {
 		Width:         "70%",
 		Height:        "20",
 		Title:         "proj popup",
+		NoBorder:      true,
 		CloseBehavior: PopupKeepOpen,
 	})
 	if err != nil {
 		t.Fatalf("BuildDisplayPopupArgs returned error: %v", err)
 	}
 
-	want := []string{"display-popup", "-w", "70%", "-h", "20", "-T", "proj popup", "printf hello"}
+	want := []string{"display-popup", "-B", "-w", "70%", "-h", "20", "-T", "proj popup", "printf hello"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("BuildDisplayPopupArgs = %#v, want %#v", args, want)
 	}

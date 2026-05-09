@@ -698,6 +698,9 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 		env[intpicker.NativeLaunchKeyEnv] = launchKey
 	}
 	inheritPopupPickerEnv(env)
+	if intpicker.ResolveBackend(func(key string) string { return env[key] }) == intpicker.BackendNative {
+		options.NoBorder = true
+	}
 
 	options.Cwd = cwd
 	options.Env = env

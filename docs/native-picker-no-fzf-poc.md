@@ -54,6 +54,9 @@ The fzf compatibility surface for the native engine is tracked in
   match fzf fullscreen behavior and restore the tmux pane after exit.
 - Native interactive picker screens render inside a full-screen border frame to
   match the app's fzf `--height 100% --border` surface more closely.
+- Popup-toggle commands use tmux `display-popup -B` when the native backend is
+  active so the native picker owns the visible frame and does not double-draw
+  with tmux's outer popup border.
 - Simple native lists use the available terminal height after header, prompt,
   footer, and preview reservations instead of a fixed page-sized viewport.
 - Navigation-only native lists mirror fzf `--disabled --no-input`: the input

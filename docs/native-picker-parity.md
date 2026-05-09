@@ -43,6 +43,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | fzf navigation keys | interactive selection in searchable lists | Covered | native maps `Ctrl-N` to down and `Ctrl-P`/`Ctrl-K` to up when not claimed by a custom action; `TestNativeInteractiveSupportsFZFNavigationKeys` |
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen` |
 | frame content width | fzf border inner width | Covered | `ContentLayout` uses the frame inner width so separators and rows reach the right border; `TestRendererContentLayoutUsesFrameInnerWidth` |
+| tmux popup frame interaction | native picker popups launched through `popup-toggle` | Covered for native backend popups | `popup-toggle` passes tmux `display-popup -B` when `PROJMUX_PICKER_BACKEND=native`, so the native picker owns the visible frame instead of double-drawing with the tmux popup border; `TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend` |
 | redraw flicker/top clipping | keyboard navigation in exact-height tmux popup | Partially covered | native redraws use synchronized updates plus row diffs after the first frame, and frame rendering avoids trailing bottom-border CRLF; `TestNativeInteractiveWrapsRedrawsInSynchronizedUpdates`; `TestRendererRenderFrameUsesCRLFRowsForRawTTY` |
 
 ## Native Surface Architecture

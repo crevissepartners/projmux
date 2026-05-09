@@ -253,6 +253,39 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	}
 }
 
+func TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend(t *testing.T) {
+	t.Setenv("PROJMUX_PICKER_BACKEND", "native")
+
+	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-native-border"), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":        "/dev/pts/projmux-test-native-border",
+		"#{pane_id}":           "%1",
+		"#S":                   "work",
+		"#{pane_current_path}": "/tmp/work tree",
+		"#{client_width}":      "200",
+		"#{client_height}":     "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	if !slices.Contains(got.args, "-B") {
+		t.Fatalf("display call = %#v, want -B for native backend popup so only native picker draws the frame", got)
+	}
+	if !containsTmuxArgPair(got.args, "-e", "PROJMUX_PICKER_BACKEND=native") {
+		t.Fatalf("display call = %#v, want native backend env propagated", got)
+	}
+}
+
 func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 	t.Parallel()
 
