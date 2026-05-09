@@ -27,7 +27,11 @@ row 1  #[range=user|notify] <notify HUD pill> #[norange]
   `isWindowListRangeToken` fallback is now defense-in-depth only.
   The session, pwd, kube, and git segments on this row are wrapped
   in `#[range=user|<id>]` ranges and dispatched through the projmux
-  handler.
+  handler. The git segment shows the current branch or detached commit,
+  then compact state indicators when available: `*` for local changes,
+  `+N` for staged entries, and `↑N`/`↓N` for ahead/behind counts. Each
+  state token gets its own compact foreground color while preserving the
+  existing branch block background.
 - Row 1 splits the line with `#[align=left]` (the pending AI notify
   queue, capped at 80
   cells) and `#[align=right]` (usage, capped at 120 cells). `notify` is the
@@ -73,9 +77,10 @@ The path popup uses a short title, one-line copy status, the current path, and
 an `Enter closes this popup` prompt. If the tmux buffer write fails, it keeps
 the same compact surface with `Current path` as the title and a copy-unavailable
 message. The notification HUD detail surface (`Alt-2` / `User2`) opens the
-right-side notification popup with newest-first rows; its popup title follows
-the decoration mode (`off` leaves it untitled, `symbol`/`emoji` show a bell).
-Selecting a row still focuses and acknowledges that notification.
+right-side notification popup with newest-first rows. The popup itself is
+untitled; when decoration mode is `symbol` or `emoji`, the bell appears before
+the fzf header text instead. Selecting a row still focuses and acknowledges
+that notification.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,
@@ -130,9 +135,9 @@ projmux tmux apply
 ```
 
 Settings > Icons & Decorations controls the optional decoration mode used by
-the path, git branch, and notification popup. The persisted enum lives at
+the path, git branch, and notification sidebar header. The persisted enum lives at
 `~/.config/projmux/statusbar-decoration`; valid values are `off` (default,
-font-safe), `symbol` (Nerd Font-style folder/git/bell icons), and `emoji`.
+font-safe), `symbol` (Nerd Font-style folder/GitHub/bell icons), and `emoji`.
 Settings also updates tmux `@projmux_statusbar_decoration` for the live
 server when run inside tmux.
 

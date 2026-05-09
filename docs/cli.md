@@ -222,9 +222,11 @@ projmux status usage  [--max-width N] [--force|-f]
 projmux status notify [--max-width N]
 ```
 
-- `git` — `#[bold,fg=colour16,bg=colour45] <branch> #[default]` for the
-  pane's `pane_current_path` (or the supplied path). Empty when not in a
-  repo.
+- `git` — `#[bold,fg=colour16,bg=colour45] <branch> <state> #[default]` for
+  the pane's `pane_current_path` (or the supplied path). Empty when not in a
+  repo. `<state>` is omitted when clean, otherwise it may include `*` for
+  local changes, `+N` staged entries, and `↑N`/`↓N` ahead/behind counts, with
+  compact per-token colors in tmux output.
 - `kube` — `⎈ <context>/<namespace>` segment. Reads
   `~/.cache/tmux/kube-segment-<session>.txt` first (TTL governed by
   `TMUX_KUBE_CACHE_TTL`, default `5s`). Picks up a per-session

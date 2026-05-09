@@ -132,7 +132,34 @@ func TestStatusGitPrintsConfiguredEmojiDecoratorFromConfig(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour17]🌿 #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour17]🐙 #[fg=colour16]main #[default]"
+	if got := stdout.String(); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestStatusGitPrintsStateIndicators(t *testing.T) {
+	t.Parallel()
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "rev-parse", "--is-inside-work-tree"}):
+			return []byte("true\n"), nil
+		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "symbolic-ref", "--quiet", "--short", "HEAD"}):
+			return []byte("main\n"), nil
+		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "status", "--porcelain=v1", "--branch"}):
+			return []byte("## main...origin/main [ahead 2, behind 1]\nM  staged.go\n M dirty.go\nA  added.go\n?? new.go\n"), nil
+		default:
+			return nil, os.ErrNotExist
+		}
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := " #[bold,fg=colour16,bg=colour45] main #[fg=colour88]*#[fg=colour16] #[fg=colour22]+2#[fg=colour16] #[fg=colour17]↑2#[fg=colour16] #[fg=colour94]↓1#[fg=colour16] #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}

@@ -47,7 +47,7 @@ func statusbarCwdSegmentFormat() string {
 }
 
 func statusbarCwdDecoratorFormat() string {
-	return "#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour244] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}"
+	return "#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour33] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}"
 }
 
 func statusbarGitDecorator(mode config.StatusbarDecoration) string {
@@ -55,18 +55,18 @@ func statusbarGitDecorator(mode config.StatusbarDecoration) string {
 	case config.StatusbarDecorationSymbol:
 		return "#[fg=colour17] #[fg=colour16]"
 	case config.StatusbarDecorationEmoji:
-		return "#[fg=colour17]🌿 #[fg=colour16]"
+		return "#[fg=colour17]🐙 #[fg=colour16]"
 	default:
 		return ""
 	}
 }
 
-func notificationPopupTitle(mode config.StatusbarDecoration) string {
+func notifyHeaderDecorator(mode config.StatusbarDecoration) string {
 	switch mode {
 	case config.StatusbarDecorationSymbol:
-		return ""
+		return " "
 	case config.StatusbarDecorationEmoji:
-		return "🔔"
+		return "🔔 "
 	default:
 		return ""
 	}

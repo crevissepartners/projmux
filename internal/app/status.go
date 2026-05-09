@@ -103,8 +103,75 @@ func (c *statusCommand) runGit(args []string, stdout, stderr io.Writer) error {
 	if branch == "" {
 		return nil
 	}
-	_, err := fmt.Fprintf(stdout, " #[bold,fg=colour16,bg=colour45] %s%s #[default]", statusbarGitDecorator(c.statusbarDecoration()), branch)
+	segment := branch
+	if state := parseGitPorcelainStatus(c.readTrimmed("git", "-C", path, "status", "--porcelain=v1", "--branch")); state != "" {
+		segment += " " + state
+	}
+	_, err := fmt.Fprintf(stdout, " #[bold,fg=colour16,bg=colour45] %s%s #[default]", statusbarGitDecorator(c.statusbarDecoration()), segment)
 	return err
+}
+
+func parseGitPorcelainStatus(raw string) string {
+	var (
+		staged      int
+		ahead       int
+		behind      int
+		hasWorktree bool
+	)
+	for line := range strings.SplitSeq(raw, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "## ") {
+			ahead, behind = parseGitAheadBehind(line)
+			continue
+		}
+		hasWorktree = true
+		if len(line) >= 2 && line[0] != ' ' && line[0] != '?' && line[0] != '!' {
+			staged++
+		}
+	}
+	parts := []string{}
+	if hasWorktree {
+		parts = append(parts, gitStateToken("colour88", "*"))
+	}
+	if staged > 0 {
+		parts = append(parts, gitStateToken("colour22", fmt.Sprintf("+%d", staged)))
+	}
+	if ahead > 0 {
+		parts = append(parts, gitStateToken("colour17", fmt.Sprintf("↑%d", ahead)))
+	}
+	if behind > 0 {
+		parts = append(parts, gitStateToken("colour94", fmt.Sprintf("↓%d", behind)))
+	}
+	return strings.Join(parts, " ")
+}
+
+func gitStateToken(color, label string) string {
+	return fmt.Sprintf("#[fg=%s]%s#[fg=colour16]", color, label)
+}
+
+func parseGitAheadBehind(line string) (int, int) {
+	start := strings.Index(line, "[")
+	end := strings.LastIndex(line, "]")
+	if start < 0 || end <= start {
+		return 0, 0
+	}
+	ahead := 0
+	behind := 0
+	for part := range strings.SplitSeq(line[start+1:end], ",") {
+		fields := strings.Fields(strings.TrimSpace(part))
+		if len(fields) != 2 {
+			continue
+		}
+		switch fields[0] {
+		case "ahead":
+			ahead = parsePositiveInt(fields[1])
+		case "behind":
+			behind = parsePositiveInt(fields[1])
+		}
+	}
+	return ahead, behind
 }
 
 func (c *statusCommand) statusbarDecoration() config.StatusbarDecoration {
