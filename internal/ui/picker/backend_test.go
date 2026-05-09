@@ -1308,8 +1308,11 @@ func TestNativeInteractiveUsesCurrentStyleForSimpleSelection(t *testing.T) {
 	if !strings.Contains(rendered, nativePointer) || !strings.Contains(rendered, nativeCurrentStart) {
 		t.Fatalf("rendered selected line = %q, want projmux pointer and current-row style", rendered)
 	}
-	if !strings.HasPrefix(rendered, nativePointer+nativeCurrentStart) {
+	if !strings.HasPrefix(rendered, nativePointer) {
 		t.Fatalf("rendered selected line = %q, want pointer in current-row gutter", rendered)
+	}
+	if strings.HasPrefix(rendered, nativePointer+nativeCurrentStart) {
+		t.Fatalf("rendered selected line = %q, want selected content to reuse pointer gutter style", rendered)
 	}
 	if strings.Contains(rendered, nativeInverseStart) {
 		t.Fatalf("rendered selected line = %q, want no terminal inverse selection style", rendered)

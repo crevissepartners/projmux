@@ -52,8 +52,11 @@ func TestInteractiveRowLinesUsesCurrentStyleForSimpleSelection(t *testing.T) {
 	if !strings.Contains(rendered, Pointer) || !strings.Contains(rendered, CurrentStart) {
 		t.Fatalf("rendered selected line = %q, want projmux pointer and current-row style", rendered)
 	}
-	if !strings.HasPrefix(rendered, Pointer+CurrentStart) {
+	if !strings.HasPrefix(rendered, Pointer) {
 		t.Fatalf("rendered selected line = %q, want pointer in current-row gutter", rendered)
+	}
+	if strings.HasPrefix(rendered, Pointer+CurrentStart) {
+		t.Fatalf("rendered selected line = %q, want selected content to reuse pointer gutter style", rendered)
 	}
 	if strings.Contains(rendered, InverseStart) {
 		t.Fatalf("rendered selected line = %q, want no terminal inverse selection style", rendered)
@@ -72,6 +75,22 @@ func TestSelectedContentKeepsCurrentStyleAfterReset(t *testing.T) {
 	rendered := SelectedContent("\x1b[1mapi\x1b[0m branch")
 	if !strings.Contains(rendered, Reset+CurrentStart+" branch") {
 		t.Fatalf("SelectedContent() = %q, want current style restored after reset", rendered)
+	}
+}
+
+func TestSelectedLineReusesStyledGutter(t *testing.T) {
+	t.Parallel()
+
+	rendered := SelectedLine(Pointer, "\x1b[36mAI\x1b[0m Settings")
+
+	if !strings.HasPrefix(rendered, Pointer) {
+		t.Fatalf("SelectedLine() = %q, want pointer prefix", rendered)
+	}
+	if strings.HasPrefix(rendered, Pointer+CurrentStart) {
+		t.Fatalf("SelectedLine() = %q, want no duplicated current style after pointer", rendered)
+	}
+	if !strings.Contains(rendered, Reset+CurrentStart+" Settings") {
+		t.Fatalf("SelectedLine() = %q, want current style restored after embedded reset", rendered)
 	}
 }
 

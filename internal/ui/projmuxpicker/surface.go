@@ -217,13 +217,13 @@ func InteractiveRowLines(row Row, selected, multiLine bool) []string {
 	rendered := make([]string, 0, len(lines)+len(row.MetaLines))
 	first := fmt.Sprintf("%s%s", prefix, strings.TrimRight(lines[0], "\r"))
 	if selected {
-		first = prefix + SelectedContent(strings.TrimRight(lines[0], "\r"))
+		first = SelectedLine(prefix, strings.TrimRight(lines[0], "\r"))
 	}
 	rendered = append(rendered, first)
 	for _, line := range lines[1:] {
 		line = fmt.Sprintf("    %s", strings.TrimRight(line, "\r"))
 		if selected && multiLine {
-			line = Continuation + SelectedContent(strings.TrimSpace(line))
+			line = SelectedLine(Continuation, strings.TrimSpace(line))
 		}
 		rendered = append(rendered, line)
 	}
@@ -231,12 +231,16 @@ func InteractiveRowLines(row Row, selected, multiLine bool) []string {
 		if meta = strings.TrimSpace(meta); meta != "" {
 			line := fmt.Sprintf("    %s", meta)
 			if selected && multiLine {
-				line = Continuation + SelectedContent(meta)
+				line = SelectedLine(Continuation, meta)
 			}
 			rendered = append(rendered, line)
 		}
 	}
 	return rendered
+}
+
+func SelectedLine(prefix, value string) string {
+	return prefix + strings.ReplaceAll(value, Reset, Reset+CurrentStart) + Reset
 }
 
 func SelectedContent(value string) string {
