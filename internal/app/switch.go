@@ -1466,14 +1466,16 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 			intpicker.CustomActions(switchKillExpectKey, switchPinExpectKey)...,
 		),
 	}
-	if previewCommand, bindings, err := c.switchPickerSurface(plan); err != nil {
+	if surface, err := c.switchPickerSurface(plan); err != nil {
 		return intpicker.Result{}, err
-	} else if previewCommand != "" {
-		options.Preview = intpicker.Preview{Command: previewCommand, Window: switchPreviewWindow(plan.UI)}
+	} else if surface.PreviewCommand != "" {
+		options.Preview = intpicker.Preview{Command: surface.PreviewCommand, Window: switchPreviewWindow(plan.UI)}
+		options.Actions = append(options.Actions, surface.Actions...)
+		options.InitialIndex = surface.InitialIndex
+		options.InitialIndexSet = surface.InitialIndexSet
 		fzfOptions := intfzf.OptionsFromPicker(options)
 		fzfOptions.Candidates = plan.Candidates
-		fzfOptions.Bindings = append(fzfOptions.Bindings, bindings...)
-		return c.runPickerBackend(fzfOptions, pickerOptionsFromFZF(fzfOptions))
+		return c.runPickerBackend(fzfOptions, options)
 	}
 
 	fzfOptions := intfzf.OptionsFromPicker(options)
@@ -1501,59 +1503,71 @@ func (c *switchCommand) runPickerBackend(fzfOptions intfzf.Options, pickerOption
 	return intfzf.ResultToPicker(result), nil
 }
 
-func (c *switchCommand) switchPickerSurface(plan switchPlan) (string, []string, error) {
+type switchPickerSurface struct {
+	PreviewCommand  string
+	Actions         []intpicker.Action
+	InitialIndex    int
+	InitialIndexSet bool
+}
+
+func (c *switchCommand) switchPickerSurface(plan switchPlan) (switchPickerSurface, error) {
 	if c.executable == nil {
-		return "", nil, nil
+		return switchPickerSurface{}, nil
 	}
 
 	binaryPath, err := c.executable()
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve switch preview executable: %w", err)
+		return switchPickerSurface{}, fmt.Errorf("resolve switch preview executable: %w", err)
 	}
 
 	previewCommand, err := inttmux.BuildSwitchPreviewCommand(binaryPath, plan.UI)
 	if err != nil {
-		return "", nil, fmt.Errorf("build switch preview command: %w", err)
+		return switchPickerSurface{}, fmt.Errorf("build switch preview command: %w", err)
 	}
 
 	windowPrev, err := inttmux.BuildSwitchCycleWindowCommand(binaryPath, string(corepreview.DirectionPrev))
 	if err != nil {
-		return "", nil, fmt.Errorf("build switch window-prev command: %w", err)
+		return switchPickerSurface{}, fmt.Errorf("build switch window-prev command: %w", err)
 	}
 	windowNext, err := inttmux.BuildSwitchCycleWindowCommand(binaryPath, string(corepreview.DirectionNext))
 	if err != nil {
-		return "", nil, fmt.Errorf("build switch window-next command: %w", err)
+		return switchPickerSurface{}, fmt.Errorf("build switch window-next command: %w", err)
 	}
 	panePrev, err := inttmux.BuildSwitchCyclePaneCommand(binaryPath, string(corepreview.DirectionPrev))
 	if err != nil {
-		return "", nil, fmt.Errorf("build switch pane-prev command: %w", err)
+		return switchPickerSurface{}, fmt.Errorf("build switch pane-prev command: %w", err)
 	}
 	paneNext, err := inttmux.BuildSwitchCyclePaneCommand(binaryPath, string(corepreview.DirectionNext))
 	if err != nil {
-		return "", nil, fmt.Errorf("build switch pane-next command: %w", err)
+		return switchPickerSurface{}, fmt.Errorf("build switch pane-next command: %w", err)
 	}
 
-	bindings := []string{}
+	surface := switchPickerSurface{PreviewCommand: previewCommand}
 	if plan.UI == switchUISidebar {
 		sidebarFocus, err := inttmux.BuildSwitchSidebarFocusCommand(binaryPath)
 		if err != nil {
-			return "", nil, fmt.Errorf("build switch sidebar-focus command: %w", err)
+			return switchPickerSurface{}, fmt.Errorf("build switch sidebar-focus command: %w", err)
 		}
-		bindings = append(bindings, "focus:execute-silent("+sidebarFocus+")")
+		surface.Actions = append(surface.Actions, intpicker.Action{
+			Key:     "focus",
+			Intent:  intpicker.ActionCustom,
+			Command: sidebarFocus,
+		})
 		if pos := switchSidebarInitialPos(plan); pos > 0 {
-			bindings = append(bindings, fmt.Sprintf("start:pos(%d)", pos))
+			surface.InitialIndex = pos - 1
+			surface.InitialIndexSet = true
 		}
-		return previewCommand, bindings, nil
+		return surface, nil
 	}
 
-	bindings = append(bindings,
-		"left:execute-silent("+windowPrev+")+refresh-preview",
-		"right:execute-silent("+windowNext+")+refresh-preview",
-		"alt-up:execute-silent("+panePrev+")+refresh-preview",
-		"alt-down:execute-silent("+paneNext+")+refresh-preview",
+	surface.Actions = append(surface.Actions,
+		intpicker.Action{Key: "left", Intent: intpicker.ActionCustom, Command: windowPrev, Refresh: true},
+		intpicker.Action{Key: "right", Intent: intpicker.ActionCustom, Command: windowNext, Refresh: true},
+		intpicker.Action{Key: "alt-up", Intent: intpicker.ActionCustom, Command: panePrev, Refresh: true},
+		intpicker.Action{Key: "alt-down", Intent: intpicker.ActionCustom, Command: paneNext, Refresh: true},
 	)
 
-	return previewCommand, bindings, nil
+	return surface, nil
 }
 
 func pickerCloseActions(keys ...string) []intpicker.Action {

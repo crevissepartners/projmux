@@ -13,8 +13,8 @@ picker evidence. It is not a production dependency-policy change.
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / `--footer-border line` | AI, settings, shell update, switch, sessions, notify | Covered for interactive native screens | `renderNativeInteractive` reserves bottom footer space and renders a separator line; `TestNativeInteractiveRendersFooterAtBottom` |
 | `--ansi` | colored row labels from render package | Covered | native writes row labels directly, strips ANSI escapes from default search text, and restores selected-row styling after embedded ANSI resets; `TestFilterItemsIgnoresANSIEscapeSequences`; `TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset`; Docker e2e shows ANSI rows |
-| hidden value after tab delimiter | all picker selections and default fzf matching | Covered by `picker.Item.Value` and default search text | `pickerItemsFromFZFEntries`; `TestNativeRunnerFiltersAndSelectsByNumber`; `TestFilterItemsSearchesHiddenValueWhenNoSearchKey` |
-| plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickerItemsFromFZF`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
+| hidden value after tab delimiter | all picker selections and default fzf matching | Covered by `picker.Item.Value` and default search text | `fzf.PickerOptions`; `TestNativeRunnerFiltersAndSelectsByNumber`; `TestFilterItemsSearchesHiddenValueWhenNoSearchKey` |
+| plain fzf candidates without structured entries | legacy runner call shape | Covered | `fzf.PickerOptions`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
 | default `--smart-case` matching | all searchable picker rows | Covered | native filter keeps lower-case queries case-insensitive and uppercase queries case-sensitive; `TestFilterItemsUsesFZFSmartCase` |
 | fuzzy result ranking | simple non-search-key picker UX | Covered with fzf V2 dynamic scoring for normal app rows | `fuzzyScore`; `TestFilterItemsRanksBetterMatchesFirst`; `TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches`; `TestFuzzyScoreMatchesFZFV2ReferenceScores` |
@@ -22,14 +22,14 @@ picker evidence. It is not a production dependency-policy change.
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered for app multiline rows | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
 | fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; `nativeInverseSelectedContent`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset` |
-| `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `pickerActionsFromFZF`; `TestNativeInteractiveSupportsCustomExpectKeys` |
+| `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `fzf.PickerOptions`; `TestNativeInteractiveSupportsCustomExpectKeys` |
 | printable expect keys | notify sidebar `a` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
 | control expect keys | notify sidebar `Ctrl-A`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
 | close `--bind key:abort` | Esc, Ctrl-C, Alt-N, Ctrl-Alt-S variants | Covered | `CloseActions`; `TestNativeRunnerUsesSharedCloseActions` |
 | terminal CSI-u key encoding | app keybind probe sequences, Ghostty/kitty-style modified keys | Covered | `TestNativeInteractiveSupportsCSIuAppKeyBindings` |
-| `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `pickerCommandFromFZFBinding`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes`; Docker no-fzf e2e sends `Right` and `Alt-Down` before selection |
+| `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `fzf.PickerOptions`/`fzf.OptionsFromPicker`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes`; `TestPickerOptionsMapsFZFBindingsToContractActions`; Docker no-fzf e2e sends `Right` and `Alt-Down` before selection |
 | `focus:execute-silent(...)` | switch sidebar focus | Covered | `runNativeFocusAction`; `TestNativeInteractiveRunsFocusActionOnSelectionChange` |
-| `start:pos(N)` | switch sidebar initial row | Covered | `pickerInitialIndexFromFZF`; `TestPickerOptionsFromFZFMapsStartPosToInitialIndex` |
+| `start:pos(N)` | switch sidebar initial row | Covered | `fzf.PickerOptions`/`fzf.OptionsFromPicker`; `TestPickerOptionsFromFZFMapsStartPosToInitialIndex`; `TestPickerOptionsMapsFZFBindingsToContractActions` |
 | `--preview` | switch, sessions | Covered by command output | `nativePreviewLines`; `TestNativeInteractiveRendersSelectedPreview` |
 | `--preview-window right,60%,border-left` | switch popup, sessions popup | Covered for projmux option shape | `renderNativeSplitPreview` renders a single-column left border without a synthetic title row and uses fzf-measured percent sizing; `TestNativeInteractiveRendersWidePreviewBesideList`; `TestNativePreviewWidthUsesPreviewWindowPercent` |
 | `--preview-window down,25%,border-top` | switch sidebar | Covered for projmux option shape | `renderNativeDownPreview` renders an immediate top border without a synthetic title row and uses fzf-measured percent sizing; `TestNativeInteractiveRendersDownPreviewBelowList`; `TestNativePreviewHeightUsesPreviewWindowPercent` |
@@ -48,6 +48,14 @@ picker evidence. It is not a production dependency-policy change.
 - `internal/ui/projmuxpicker` owns projmux-native visual composition: frame,
   ANSI width/truncation, theme tokens, prompt/footer/list rendering, selected
   row styling, scrollbars/gap rows, and preview pane geometry/rendering.
+- `internal/ui/fzf` owns the compatibility adapter in both directions:
+  `picker.Options` becomes fzf flags/bindings for fallback, and legacy
+  `fzf.Options` becomes `picker.Options` for the native backend. This keeps app
+  code closer to a DI-style picker contract instead of embedding fzf binding
+  strings at each call site.
+- `intfzf.NewPickerRunner()` adapts fzf to the same `picker.Runner` interface
+  as `picker.NativeRunner`, so follow-up branches can inject either backend at
+  a narrower boundary without deleting the existing fzf runner.
 - The split is deliberate POC evidence that projmux can grow a first-party
   picker design independently from the fzf compatibility adapter.
 

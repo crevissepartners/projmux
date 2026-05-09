@@ -1,6 +1,7 @@
 package fzf
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/ui/picker"
@@ -36,8 +37,19 @@ func OptionsFromPicker(options picker.Options) Options {
 		case picker.ActionClose:
 			fzfOptions.Bindings = append(fzfOptions.Bindings, key+":abort")
 		case picker.ActionAccept, picker.ActionCustom:
+			if action.Intent == picker.ActionCustom && strings.TrimSpace(action.Command) != "" {
+				binding := key + ":execute-silent(" + strings.TrimSpace(action.Command) + ")"
+				if action.Refresh {
+					binding += "+refresh-preview"
+				}
+				fzfOptions.Bindings = append(fzfOptions.Bindings, binding)
+				continue
+			}
 			fzfOptions.ExpectKeys = append(fzfOptions.ExpectKeys, key)
 		}
+	}
+	if options.InitialIndexSet || options.InitialIndex > 0 {
+		fzfOptions.Bindings = append(fzfOptions.Bindings, "start:pos("+strconv.Itoa(options.InitialIndex+1)+")")
 	}
 	return fzfOptions
 }
@@ -49,4 +61,153 @@ func ResultToPicker(result Result) picker.Result {
 		Query:  result.Query,
 		Closed: result.Value == "" && result.Key == "",
 	}
+}
+
+type PickerRunner struct {
+	Runner Runner
+}
+
+func NewPickerRunner() picker.Runner {
+	return PickerRunner{Runner: NewRunner()}
+}
+
+func (r PickerRunner) Run(options picker.Options) (picker.Result, error) {
+	runner := r.Runner
+	if runner == nil {
+		runner = NewRunner()
+	}
+	result, err := runner.Run(OptionsFromPicker(options))
+	if err != nil {
+		return picker.Result{}, err
+	}
+	return ResultToPicker(result), nil
+}
+
+func PickerOptions(options Options) picker.Options {
+	initialIndex, initialIndexSet := pickerInitialIndex(options)
+	return picker.Options{
+		UI:              options.UI,
+		Items:           pickerItems(options),
+		Prompt:          options.Prompt,
+		Header:          options.Header,
+		Footer:          options.Footer,
+		Actions:         pickerActions(options),
+		Preview:         picker.Preview{Command: options.PreviewCommand, Window: options.PreviewWindow},
+		InitialQuery:    options.InitialQuery,
+		InitialIndex:    initialIndex,
+		InitialIndexSet: initialIndexSet,
+		AcceptQuery:     options.AcceptQuery,
+		MultiLine:       options.Read0,
+	}
+}
+
+func ResultFromPicker(result picker.Result) Result {
+	return Result{
+		Key:   result.Key,
+		Value: result.Value,
+		Query: result.Query,
+	}
+}
+
+func pickerItems(options Options) []picker.Item {
+	if len(options.Entries) != 0 {
+		return pickerItemsFromEntries(options.Entries)
+	}
+	items := make([]picker.Item, 0, len(options.Candidates))
+	for _, candidate := range options.Candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		items = append(items, picker.Item{
+			Label:      candidate,
+			Title:      candidate,
+			Value:      candidate,
+			SearchText: candidate,
+		})
+	}
+	return items
+}
+
+func pickerItemsFromEntries(entries []Entry) []picker.Item {
+	items := make([]picker.Item, 0, len(entries))
+	for _, entry := range entries {
+		items = append(items, picker.Item{
+			Label:      entry.Label,
+			Title:      entry.Label,
+			Value:      entry.Value,
+			SearchText: entry.SearchKey,
+		})
+	}
+	return items
+}
+
+func pickerActions(options Options) []picker.Action {
+	actions := make([]picker.Action, 0, len(options.ExpectKeys)+len(options.Bindings))
+	for _, key := range options.ExpectKeys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		actions = append(actions, picker.Action{Key: key, Intent: picker.ActionAccept})
+	}
+	for _, binding := range options.Bindings {
+		key, action, ok := strings.Cut(strings.TrimSpace(binding), ":")
+		if !ok || strings.TrimSpace(key) == "" {
+			continue
+		}
+		if strings.TrimSpace(key) == "start" {
+			continue
+		}
+		switch strings.TrimSpace(action) {
+		case "abort":
+			actions = append(actions, picker.Action{Key: key, Intent: picker.ActionClose})
+		default:
+			actions = append(actions, picker.Action{
+				Key:     key,
+				Intent:  picker.ActionCustom,
+				Command: PickerCommandFromBinding(action),
+				Refresh: strings.Contains(action, "+refresh-preview"),
+			})
+		}
+	}
+	return actions
+}
+
+func pickerInitialIndex(options Options) (int, bool) {
+	for _, binding := range options.Bindings {
+		key, action, ok := strings.Cut(strings.TrimSpace(binding), ":")
+		if !ok || strings.TrimSpace(key) != "start" {
+			continue
+		}
+		action = strings.TrimSpace(action)
+		const prefix = "pos("
+		if !strings.HasPrefix(action, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(action, prefix)
+		idx := strings.Index(rest, ")")
+		if idx < 0 {
+			continue
+		}
+		pos, err := strconv.Atoi(strings.TrimSpace(rest[:idx]))
+		if err == nil && pos > 0 {
+			return pos - 1, true
+		}
+	}
+	return 0, false
+}
+
+func PickerCommandFromBinding(action string) string {
+	action = strings.TrimSpace(action)
+	const prefix = "execute-silent("
+	if !strings.HasPrefix(action, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(action, prefix)
+	idx := strings.Index(rest, ")")
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:idx])
 }

@@ -17,6 +17,15 @@ The fzf compatibility surface for this POC is tracked in
   keyboard input, filtering, preview command execution, and result contracts,
   while moving visual composition into `projmuxpicker` so projmux can evolve a
   native picker design without coupling every visual tweak to the fzf adapter.
+- `internal/ui/fzf` now owns the adapter between fzf's legacy option/result
+  shape and the backend-neutral `picker.Options` contract. App code should
+  describe picker intent as rows, actions, preview commands, and initial focus;
+  the fzf adapter is responsible for translating that into `--expect`,
+  `--bind execute-silent(...)`, `+refresh-preview`, and `start:pos(N)`.
+- `intfzf.NewPickerRunner()` wraps fzf behind the same `picker.Runner`
+  interface as the native runner. This is experimental DI groundwork only; the
+  POC still leaves existing app call sites mostly intact while the contract is
+  validated.
 - `PROJMUX_PICKER_BACKEND=native` routes simple app pickers through the native
   runner instead of shelling out to `fzf`.
 - Picker flows covered by the native path include AI picker/settings, shell
@@ -51,8 +60,9 @@ The fzf compatibility surface for this POC is tracked in
 ## POC Boundaries
 
 - The `projmuxpicker` package is intended as a foundation that can be carried
-  toward main after review. The Docker sandbox scripts, native debug logging,
-  and dependency-policy notes are POC support scaffolding and should be reviewed
+  toward main after review, along with the fzf-to-picker adapter boundary in
+  `internal/ui/fzf`. The Docker sandbox scripts, native debug logging, and
+  dependency-policy notes are POC support scaffolding and should be reviewed
   separately before any production merge.
 - Switch and sessions preview panes are native previews for the concrete
   projmux option shapes. Wide right-side preview windows render beside the

@@ -43,6 +43,7 @@ type Action struct {
 	Intent  ActionIntent
 	Label   string
 	Command string
+	Refresh bool
 }
 
 type Preview struct {
@@ -51,17 +52,18 @@ type Preview struct {
 }
 
 type Options struct {
-	UI           string
-	Items        []Item
-	Prompt       string
-	Header       string
-	Footer       string
-	Actions      []Action
-	Preview      Preview
-	InitialQuery string
-	InitialIndex int
-	AcceptQuery  bool
-	MultiLine    bool
+	UI              string
+	Items           []Item
+	Prompt          string
+	Header          string
+	Footer          string
+	Actions         []Action
+	Preview         Preview
+	InitialQuery    string
+	InitialIndex    int
+	InitialIndexSet bool
+	AcceptQuery     bool
+	MultiLine       bool
 }
 
 type Result struct {
