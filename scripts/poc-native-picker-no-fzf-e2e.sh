@@ -34,6 +34,15 @@ docker run --rm \
     echo "[poc/no-fzf] build projmux"
     go build -o /tmp/projmux ./cmd/projmux
     wide_pty="stty rows 30 cols 150; "
+    assert_search_header() {
+      local log="$1"
+      local name="$2"
+      if ! grep -q "Search" "$log"; then
+        cat "$log"
+        echo "native $name did not render explicit Search header" >&2
+        exit 1
+      fi
+    }
     echo "[poc/no-fzf] store native picker through Settings > Labs"
     rm -f "$XDG_CONFIG_HOME/projmux/picker-backend"
     labs_log=/tmp/projmux-settings-labs.log
@@ -45,11 +54,7 @@ docker run --rm \
       cat "$labs_stderr"
       exit "$labs_status"
     fi
-    if ! grep -q "Search" "$labs_log"; then
-      cat "$labs_log"
-      echo "native settings picker did not render explicit Search header" >&2
-      exit 1
-    fi
+    assert_search_header "$labs_log" "settings picker"
     if [[ -s "$labs_stderr" ]]; then
       cat "$labs_stderr"
       echo "Settings > Labs should not write tmux no-server noise outside tmux" >&2
@@ -66,11 +71,7 @@ docker run --rm \
       cat "$ai_settings_log"
       exit "$ai_settings_status"
     fi
-    if ! grep -q "Search" "$ai_settings_log"; then
-      cat "$ai_settings_log"
-      echo "native AI settings picker did not render explicit Search header" >&2
-      exit 1
-    fi
+    assert_search_header "$ai_settings_log" "AI settings picker"
     test "$(cat "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode")" = codex
     echo "[poc/no-fzf] native AI settings simple picker selected codex via smart-case query"
     echo "[poc/no-fzf] exercise native single-click selection under a PTY"
@@ -82,11 +83,7 @@ docker run --rm \
       cat "$mouse_log"
       exit "$mouse_status"
     fi
-    if ! grep -q "Search" "$mouse_log"; then
-      cat "$mouse_log"
-      echo "native mouse picker did not render explicit Search header before click" >&2
-      exit 1
-    fi
+    assert_search_header "$mouse_log" "mouse picker before click"
     test "$(cat "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode")" = codex
     echo "[poc/no-fzf] native single click selected codex"
     echo "[poc/no-fzf] exercise native switch picker under a PTY"
@@ -110,6 +107,7 @@ docker run --rm \
       echo "native switch did not open bravo-web" >&2
       exit 1
     fi
+    assert_search_header "$switch_log" "switch sidebar"
     tmux kill-server 2>/dev/null || true
     echo "[poc/no-fzf] native switch selected bravo-web"
     echo "[poc/no-fzf] exercise native switch popup preview cycle against existing sessions"
@@ -132,6 +130,7 @@ docker run --rm \
       echo "native switch popup did not open bravo-web" >&2
       exit 1
     fi
+    assert_search_header "$popup_log" "switch popup"
     if grep -q -- "--- preview ---" "$popup_log"; then
       cat "$popup_log"
       echo "native switch popup fell back to inline preview instead of wide right preview" >&2
@@ -164,6 +163,7 @@ docker run --rm \
       echo "native sessions picker did not open bravo-web" >&2
       exit 1
     fi
+    assert_search_header "$sessions_log" "sessions picker"
     if grep -q -- "--- preview ---" "$sessions_log"; then
       cat "$sessions_log"
       echo "native sessions picker fell back to inline preview instead of wide right preview" >&2
@@ -222,6 +222,7 @@ docker run --rm \
       echo "projmux shell Alt-1 popup did not render bravo-web" >&2
       exit 1
     fi
+    assert_search_header "$shell_alt_log" "shell Alt-1 popup"
     if ! grep -q "╭" "$shell_alt_log" || ! grep -q "╰" "$shell_alt_log"; then
       cat "$shell_alt_log"
       echo "projmux shell Alt-1 popup did not render native frame borders" >&2
