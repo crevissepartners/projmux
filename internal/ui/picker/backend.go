@@ -1323,110 +1323,27 @@ func nativePreviewLines(options Options, items []Item, selected, offset, limit i
 }
 
 func nativePreviewPlacement(window string) string {
-	window = strings.ToLower(strings.TrimSpace(window))
-	switch {
-	case strings.HasPrefix(window, "down"):
-		return "down"
-	case strings.HasPrefix(window, "right"), window == "":
-		return "right"
-	default:
-		return "inline"
-	}
+	return projmuxpicker.PreviewPlacement(window)
 }
 
 func nativePreviewHeight(rows int, window string) int {
-	if rows <= 0 {
-		rows = defaultNativeRows - 2
-	}
-	percent := nativePreviewPercent(window)
-	if percent <= 0 {
-		percent = 25
-	}
-	height := nativePreviewRoundedPercent(rows+2, percent) - 2
-	if height < 1 {
-		return 1
-	}
-	if height > rows-2 {
-		return maxInt(1, rows-2)
-	}
-	return height
-}
-
-func nativePreviewPercent(window string) int {
-	for _, part := range strings.Split(window, ",") {
-		part = strings.TrimSpace(part)
-		if !strings.HasSuffix(part, "%") {
-			continue
-		}
-		value, err := strconv.Atoi(strings.TrimSuffix(part, "%"))
-		if err == nil && value > 0 {
-			return value
-		}
-	}
-	return 0
+	return projmuxpicker.PreviewHeight(rows, window)
 }
 
 func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout, window string, total, start, end int) {
-	previewWidth := nativePreviewWidth(layout.Cols, window)
-	listWidth := layout.Cols - previewWidth - 1
-	if listWidth < 32 {
-		listWidth = 32
-		previewWidth = layout.Cols - listWidth - 1
-	}
-	listLines = nativeListLinesWithScrollbar(listLines, total, start, end, listWidth)
-	rows := maxInt(len(listLines), len(previewLines))
-	for i := 0; i < rows; i++ {
-		left := ""
-		if i < len(listLines) {
-			left = listLines[i]
-		}
-		right := ""
-		if i < len(previewLines) {
-			right = previewLines[i]
-		}
-		fmt.Fprintf(w, "%s│%s\n", nativePadRight(nativeTruncateANSI(left, listWidth), listWidth), nativeTruncateANSI(right, previewWidth))
-	}
+	projmuxpicker.RenderSplitPreview(w, listLines, previewLines, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols}, window, total, start, end)
 }
 
 func nativePreviewWidth(cols int, window string) int {
-	if cols <= 0 {
-		cols = defaultNativeCols - 4
-	}
-	percent := nativePreviewPercent(window)
-	if percent <= 0 {
-		percent = 50
-	}
-	width := nativePreviewRoundedPercent(cols+4, percent) - 6
-	if width < 1 {
-		return 1
-	}
-	if width > cols-1 {
-		return maxInt(1, cols-1)
-	}
-	return width
-}
-
-func nativePreviewRoundedPercent(size, percent int) int {
-	return (size*percent + 50) / 100
+	return projmuxpicker.PreviewWidth(cols, window)
 }
 
 func renderNativeDownPreview(w io.Writer, previewLines []string, layout nativeLayout) {
-	width := layout.Cols
-	if width <= 0 {
-		width = defaultNativeCols
-	}
-	fmt.Fprintln(w, nativeTruncateANSI(strings.Repeat("─", width), width))
-	for _, line := range previewLines {
-		fmt.Fprintln(w, nativeTruncateANSI(line, width))
-	}
+	projmuxpicker.RenderDownPreview(w, previewLines, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
 func renderNativeInlinePreview(w io.Writer, previewLines []string) {
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "--- preview ---")
-	for _, line := range previewLines {
-		fmt.Fprintln(w, line)
-	}
+	projmuxpicker.RenderInlinePreview(w, previewLines)
 }
 
 func nativePadRight(value string, width int) string {
