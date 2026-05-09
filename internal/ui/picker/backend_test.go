@@ -365,6 +365,25 @@ func TestNativeInteractiveIgnoresMatchingLaunchCloseKeyOnce(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveDoesNotIgnoreLaunchCloseKeyAfterFirstInput(t *testing.T) {
+	t.Setenv(NativeLaunchKeyEnv, "alt-1")
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[B\x1b1"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+		Actions: CloseActions("alt-1"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if !result.Closed || result.Key != "alt-1" {
+		t.Fatalf("result = %#v, want later launch key to close instead of being ignored", result)
+	}
+}
+
 func TestNativeInteractiveIgnoresMatchingCSIuLaunchCloseKeyOnce(t *testing.T) {
 	t.Setenv(NativeLaunchKeyEnv, "alt-1")
 
@@ -571,6 +590,21 @@ func TestNativeInteractiveRendersBorderFrame(t *testing.T) {
 	rendered := out.String()
 	if !strings.Contains(rendered, "╭") || !strings.Contains(rendered, "╰") || !strings.Contains(rendered, "│") {
 		t.Fatalf("native output = %q, want fzf-like rounded border frame", rendered)
+	}
+}
+
+func TestNativeInteractiveFrameUsesCRLFRowsForRawTTY(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:    "switch",
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 6, Cols: 24})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "╮\r\n│") || !strings.Contains(rendered, "│\r\n╰") {
+		t.Fatalf("native output = %q, want frame rows to use CRLF so raw TTY returns to column 0", rendered)
 	}
 }
 

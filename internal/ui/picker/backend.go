@@ -378,7 +378,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	focusedValue := ""
 	previewOffset := 0
 	launchKey := strings.ToLower(strings.TrimSpace(os.Getenv(NativeLaunchKeyEnv)))
-	ignoredLaunchKey := false
+	allowLaunchKeyIgnore := launchKey != ""
 	ignoredLaunchSuffix := ""
 	layout := detectNativeLayout(in)
 	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
@@ -416,14 +416,16 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if ignoredLaunchSuffix != "" && key.Text == ignoredLaunchSuffix {
 			nativeDebugLogf("interactive ui=%q ignore_launch_suffix text=%q", options.UI, key.Text)
 			ignoredLaunchSuffix = ""
+			allowLaunchKeyIgnore = false
 			continue
 		}
-		if ignore, suffix := shouldIgnoreNativeLaunchKey(key, launchKey, options.Actions, ignoredLaunchKey); ignore {
+		if ignore, suffix := shouldIgnoreNativeLaunchKey(key, launchKey, options.Actions, allowLaunchKeyIgnore); ignore {
 			nativeDebugLogf("interactive ui=%q ignore_launch_key name=%q text=%q suffix=%q", options.UI, key.Name, key.Text, suffix)
-			ignoredLaunchKey = true
+			allowLaunchKeyIgnore = suffix != ""
 			ignoredLaunchSuffix = suffix
 			continue
 		}
+		allowLaunchKeyIgnore = false
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
 			result, refresh := runNativePickerAction(action, options, items, selected, query)
@@ -591,8 +593,8 @@ func runNativeFocusAction(actions []Action, value string) {
 	}
 }
 
-func shouldIgnoreNativeLaunchKey(key nativeKey, launchKey string, actions []Action, alreadyIgnored bool) (bool, string) {
-	if alreadyIgnored || launchKey == "" {
+func shouldIgnoreNativeLaunchKey(key nativeKey, launchKey string, actions []Action, allowed bool) (bool, string) {
+	if !allowed || launchKey == "" {
 		return false, ""
 	}
 	name := strings.ToLower(key.Name)
@@ -1180,15 +1182,15 @@ func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 		innerHeight = 1
 	}
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	fmt.Fprintf(w, "╭%s╮\n", strings.Repeat("─", innerWidth))
+	fmt.Fprintf(w, "╭%s╮\r\n", strings.Repeat("─", innerWidth))
 	for i := 0; i < innerHeight; i++ {
 		line := ""
 		if i < len(lines) {
 			line = nativeTruncateANSI(strings.TrimRight(lines[i], "\r"), innerWidth)
 		}
-		fmt.Fprintf(w, "│%s│\n", nativePadRight(line, innerWidth))
+		fmt.Fprintf(w, "│%s│\r\n", nativePadRight(line, innerWidth))
 	}
-	fmt.Fprintf(w, "╰%s╯\n", strings.Repeat("─", innerWidth))
+	fmt.Fprintf(w, "╰%s╯\r\n", strings.Repeat("─", innerWidth))
 }
 
 func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {
