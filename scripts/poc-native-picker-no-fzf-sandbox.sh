@@ -135,7 +135,7 @@ Manual UX checks:
   searchable pickers show a visible separator between the query line and rows
   vertical borders are continuous while moving Up/Down
   mouse wheel moves selection in native pickers
-  primary click focuses the clicked row; press Enter to apply it
+  primary click focuses the clicked row; click the same row again or press Enter to apply it
   Alt-1 closes the sidebar immediately when pressed again
   Alt-2, Alt-3, Alt-4, Alt-5 open their matching native popups and close on
   the same Alt key immediately

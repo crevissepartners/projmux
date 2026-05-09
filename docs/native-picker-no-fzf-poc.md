@@ -79,7 +79,8 @@ The fzf compatibility surface for the native engine is tracked in
   query area reads as distinct chrome rather than the first row of the list.
 - Native interactive mode enables SGR mouse reporting while the alternate screen
   is active. Primary click moves focus to a clicked row and mouse wheel moves
-  selection up/down, with reporting disabled again during screen restore.
+  selection up/down. A second click on the focused row accepts it, and reporting
+  is disabled again during screen restore.
 - When terminal size detection is unavailable, native picker falls back to a
   conservative 80x24 terminal instead of assuming a wider surface. Interactive
   tmux popups still use the detected popup size when `stty size` is available.

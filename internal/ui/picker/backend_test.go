@@ -742,6 +742,24 @@ func TestNativeInteractiveSupportsMouseClickSelection(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveAcceptsSecondMouseClickOnFocusedRow(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5M\x1b[<0;3;5m\x1b[<0;3;5M"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want second click on focused row to accept web", result)
+	}
+}
+
 func TestNativeInteractiveSupportsMouseWheelSelection(t *testing.T) {
 	t.Parallel()
 

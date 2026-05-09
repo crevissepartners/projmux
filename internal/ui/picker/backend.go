@@ -402,6 +402,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	selected := options.InitialIndex
 	focusedValue := ""
 	previewOffset := 0
+	lastMouseSelected := -1
 	launchKey := strings.ToLower(strings.TrimSpace(os.Getenv(NativeLaunchKeyEnv)))
 	layout := detectNativeLayout(in)
 	renderer := projmuxpicker.FrameUpdateRenderer{}
@@ -443,10 +444,28 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		}
 		if key.HasMouse {
 			if nextSelected, ok := nativeMouseSelection(options, items, selected, layout, key.Mouse); ok {
+				if key.Mouse.Button == 0 && nextSelected == selected && lastMouseSelected == selected {
+					if options.AcceptQuery {
+						nativeDebugLogf("interactive ui=%q result=accept_query mouse=double_click query=%q", options.UI, query)
+						return Result{Key: "enter", Query: query}, nil
+					}
+					nativeDebugLogf("interactive ui=%q result=select mouse=double_click value=%q query=%q", options.UI, selectedNativeValue(items, selected), query)
+					return Result{Key: "enter", Value: selectedNativeValue(items, selected), Query: query}, nil
+				}
 				selected = nextSelected
+				if key.Mouse.Button == 0 {
+					lastMouseSelected = selected
+				} else {
+					lastMouseSelected = -1
+				}
 				continue
 			}
+			if key.Mouse.Release {
+				continue
+			}
+			lastMouseSelected = -1
 		}
+		lastMouseSelected = -1
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
 			result, refresh := runNativePickerAction(action, options, items, selected, query)
