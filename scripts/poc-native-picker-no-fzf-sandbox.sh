@@ -72,6 +72,7 @@ mode="${2:-}"
     "$(date -Is)" "$client" "$mode" "${PROJMUX_PICKER_BACKEND:-}" "${PROJMUX_PROJDIR:-}" "${PROJMUX_MANAGED_ROOTS:-}"
 } >> "$log"
 PROJMUX_PICKER_BACKEND="${PROJMUX_PICKER_BACKEND:-native}" \
+PROJMUX_NATIVE_DEBUG_LOG="$log" \
 PROJMUX_PROJDIR="${PROJMUX_PROJDIR:-/workspace/projects}" \
 PROJMUX_MANAGED_ROOTS="${PROJMUX_MANAGED_ROOTS:-/workspace/projects}" \
   /usr/local/bin/projmux tmux popup-toggle --client "$client" "$mode" >> "$log" 2>&1
@@ -88,7 +89,7 @@ WRAPPER
       printf "set-environment -g PROJMUX_MANAGED_ROOTS %q\n" "$PROJMUX_MANAGED_ROOTS"
       printf "set-environment -g SHELL /bin/bash\n"
     } >> "$sandbox_config"
-    printf -v popup_env "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=%q PROJMUX_MANAGED_ROOTS=%q" "$PROJMUX_PROJDIR" "$PROJMUX_MANAGED_ROOTS"
+    printf -v popup_env "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_DEBUG_LOG=%q PROJMUX_PROJDIR=%q PROJMUX_MANAGED_ROOTS=%q" "$popup_log" "$PROJMUX_PROJDIR" "$PROJMUX_MANAGED_ROOTS"
     {
       printf "bind-key -n M-1 run-shell \"%s %s #{client_tty} sessionizer-sidebar\"\n" "$popup_env" "$popup_wrapper"
       printf "bind-key -n M-2 run-shell \"%s %s #{client_tty} notify-sidebar\"\n" "$popup_env" "$popup_wrapper"

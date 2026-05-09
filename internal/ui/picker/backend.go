@@ -17,6 +17,7 @@ import (
 const (
 	BackendEnv         = "PROJMUX_PICKER_BACKEND"
 	NativeLaunchKeyEnv = "PROJMUX_NATIVE_LAUNCH_KEY"
+	NativeDebugLogEnv  = "PROJMUX_NATIVE_DEBUG_LOG"
 )
 
 type Backend string
@@ -155,6 +156,21 @@ func nativeSearchPattern(query string, caseSensitive bool) []rune {
 	return []rune(strings.ToLower(query))
 }
 
+func nativeDebugLogf(format string, args ...any) {
+	path := strings.TrimSpace(os.Getenv(NativeDebugLogEnv))
+	if path == "" {
+		return
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	fmt.Fprintf(file, "[%s] ", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(file, format, args...)
+	fmt.Fprintln(file)
+}
+
 func nativeSmartCaseSensitive(query string) bool {
 	for _, r := range query {
 		if r >= 'A' && r <= 'Z' {
@@ -204,6 +220,7 @@ const (
 func (r NativeRunner) Run(options Options) (Result, error) {
 	in := r.In
 	if in == nil {
+		nativeDebugLogf("run ui=%q input=nil result=closed", options.UI)
 		return Result{Closed: true}, nil
 	}
 	out := r.Out
@@ -215,19 +232,26 @@ func (r NativeRunner) Run(options Options) (Result, error) {
 		defer tty.Close()
 		if restore, ok := enableRawTerminal(tty); ok {
 			defer restore()
+			nativeDebugLogf("run ui=%q mode=interactive tty_fallback=true", options.UI)
 			return runNativeInteractive(tty, tty, options)
 		}
+		nativeDebugLogf("run ui=%q tty_fallback_opened=true raw=false", options.UI)
+	} else {
+		nativeDebugLogf("run ui=%q tty_fallback=false", options.UI)
 	}
 
 	if restore, ok := enableRawTerminal(in); ok {
 		defer restore()
+		nativeDebugLogf("run ui=%q mode=interactive tty_fallback=false", options.UI)
 		return runNativeInteractive(in, out, options)
 	}
 
 	if !allowNativeLineMode(in, os.Getenv) {
+		nativeDebugLogf("run ui=%q mode=none error=requires_tty", options.UI)
 		return Result{}, fmt.Errorf("native picker requires a TTY; run from an interactive terminal or set PROJMUX_NATIVE_LINE_MODE=1 for scripted line mode")
 	}
 
+	nativeDebugLogf("run ui=%q mode=line", options.UI)
 	return runNativeLineMode(in, out, options)
 }
 
@@ -240,20 +264,25 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 		line, err := readNativeLine(in)
 		if err != nil && !strings.HasSuffix(line, "\n") {
 			if err == io.EOF && strings.TrimSpace(line) == "" {
+				nativeDebugLogf("line ui=%q result=closed reason=eof_empty query=%q", options.UI, query)
 				return Result{Closed: true, Query: query}, nil
 			}
 			if err != nil && err != io.EOF {
+				nativeDebugLogf("line ui=%q error=%q", options.UI, err.Error())
 				return Result{}, fmt.Errorf("read native picker input: %w", err)
 			}
 		}
 		input := strings.TrimSpace(line)
 		if input == "" {
+			nativeDebugLogf("line ui=%q result=closed reason=empty_input query=%q", options.UI, query)
 			return Result{Closed: true, Query: query}, nil
 		}
 		if action, ok := findAction(options.Actions, input); ok && action.Intent == ActionClose {
+			nativeDebugLogf("line ui=%q result=closed reason=action key=%q query=%q", options.UI, action.Key, query)
 			return Result{Key: action.Key, Query: query, Closed: true}, nil
 		}
 		if options.AcceptQuery {
+			nativeDebugLogf("line ui=%q result=accept_query input=%q", options.UI, input)
 			return Result{Key: "enter", Query: input}, nil
 		}
 		if index, err := strconv.Atoi(input); err == nil {
@@ -261,6 +290,7 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 				fmt.Fprintf(out, "invalid selection: %d\n", index)
 				continue
 			}
+			nativeDebugLogf("line ui=%q result=select index=%d value=%q query=%q", options.UI, index, items[index-1].Value, query)
 			return Result{Key: "enter", Value: items[index-1].Value, Query: query}, nil
 		}
 		query = input
@@ -346,6 +376,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	ignoredLaunchKey := false
 	ignoredLaunchSuffix := ""
 	layout := detectNativeLayout(in)
+	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
 	fmt.Fprint(out, nativeScreenEnter)
 	defer fmt.Fprint(out, nativeScreenLeave)
 
@@ -367,18 +398,23 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		key, err := readNativeKey(in)
 		if err != nil {
 			if err == io.EOF {
+				nativeDebugLogf("interactive ui=%q result=closed reason=eof query=%q", options.UI, query)
 				return Result{Closed: true, Query: query}, nil
 			}
+			nativeDebugLogf("interactive ui=%q error=%q", options.UI, err.Error())
 			return Result{}, fmt.Errorf("read native picker key: %w", err)
 		}
+		nativeDebugLogf("interactive ui=%q key name=%q text=%q query=%q selected=%d items=%d", options.UI, key.Name, key.Text, query, selected, len(items))
 		if key.Name == "" && key.Text == "" {
 			continue
 		}
 		if ignoredLaunchSuffix != "" && key.Text == ignoredLaunchSuffix {
+			nativeDebugLogf("interactive ui=%q ignore_launch_suffix text=%q", options.UI, key.Text)
 			ignoredLaunchSuffix = ""
 			continue
 		}
 		if ignore, suffix := shouldIgnoreNativeLaunchKey(key, launchKey, options.Actions, ignoredLaunchKey); ignore {
+			nativeDebugLogf("interactive ui=%q ignore_launch_key name=%q text=%q suffix=%q", options.UI, key.Name, key.Text, suffix)
 			ignoredLaunchKey = true
 			ignoredLaunchSuffix = suffix
 			continue
@@ -386,6 +422,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
 			result, refresh := runNativePickerAction(action, options, items, selected, query)
+			nativeDebugLogf("interactive ui=%q action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
 			if refresh {
 				continue
 			}
@@ -394,6 +431,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if key.Text != "" {
 			if action, ok := findAction(options.Actions, key.Text); ok {
 				result, refresh := runNativePickerAction(action, options, items, selected, query)
+				nativeDebugLogf("interactive ui=%q text_action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
 				if refresh {
 					continue
 				}
@@ -404,13 +442,16 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		switch key.Name {
 		case "enter":
 			if options.AcceptQuery {
+				nativeDebugLogf("interactive ui=%q result=accept_query key=enter query=%q", options.UI, query)
 				return Result{Key: "enter", Query: query}, nil
 			}
 			if len(items) == 0 {
 				continue
 			}
+			nativeDebugLogf("interactive ui=%q result=select key=enter value=%q query=%q", options.UI, items[selected].Value, query)
 			return Result{Key: "enter", Value: items[selected].Value, Query: query}, nil
 		case "esc", "ctrl-c":
+			nativeDebugLogf("interactive ui=%q result=closed key=%q query=%q", options.UI, key.Name, query)
 			return Result{Key: key.Name, Query: query, Closed: true}, nil
 		case "up":
 			if selected > 0 {
