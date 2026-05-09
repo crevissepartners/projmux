@@ -65,6 +65,9 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if !hasEntryValue(rootOptions.Entries, settingsSectionStatusbar) {
 		t.Fatalf("root settings entries = %#v, want statusbar section", rootOptions.Entries)
 	}
+	if !hasEntryLabelContaining(rootOptions.Entries, "Icons & Decorations") {
+		t.Fatalf("root settings entries = %#v, want generic decoration section label", rootOptions.Entries)
+	}
 	if !hasEntryValue(rootOptions.Entries, settingsSectionAbout) {
 		t.Fatalf("root settings entries = %#v, want about section", rootOptions.Entries)
 	}
@@ -123,6 +126,12 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 	if got, want := statusbarOptions.UI, "settings-statusbar"; got != want {
 		t.Fatalf("statusbar settings UI = %q, want %q", got, want)
 	}
+	if got, want := statusbarOptions.Prompt, "Settings > Icons & Decorations > "; got != want {
+		t.Fatalf("statusbar settings prompt = %q, want %q", got, want)
+	}
+	if got, want := statusbarOptions.Header, "Set status and popup decoration mode"; got != want {
+		t.Fatalf("statusbar settings header = %q, want %q", got, want)
+	}
 	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(config.StatusbarDecorationOff)) {
 		t.Fatalf("statusbar settings entries = %#v, want off row", statusbarOptions.Entries)
 	}
@@ -146,7 +155,7 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 	}
 	if !reflect.DeepEqual(tmuxCalls, [][]string{
 		{"tmux", "set-option", "-g", statusbarDecorationTmuxOption, "emoji"},
-		{"tmux", "display-message", "statusbar decoration: emoji"},
+		{"tmux", "display-message", "decoration mode: emoji"},
 	}) {
 		t.Fatalf("tmux calls = %#v", tmuxCalls)
 	}

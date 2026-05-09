@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -254,43 +255,64 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 	t.Parallel()
 
-	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-notify"), "notify-sidebar")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
+	for _, tt := range []struct {
+		name       string
+		decoration string
+		wantTitle  string
+	}{
+		{name: "off", decoration: "off"},
+		{name: "symbol", decoration: "symbol", wantTitle: ""},
+		{name: "emoji", decoration: "emoji", wantTitle: "🔔"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}":    "/dev/pts/projmux-test-notify",
-		"#{pane_id}":       "%1",
-		"#S":               "work",
-		"#{client_width}":  "200",
-		"#{client_height}": "50",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil },
-	}
+			clientKey := "/dev/pts/projmux-test-notify-" + tt.name
+			marker := popupMarkerPath(sanitizePopupKey(clientKey), "notify-sidebar")
+			_ = os.Remove(marker)
+			defer os.Remove(marker)
 
-	if err := cmd.Run([]string{"popup-toggle", "notify-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+			runner := &recordingTmuxRunner{formats: map[string]string{
+				"#{client_tty}":                    clientKey,
+				"#{pane_id}":                       "%1",
+				"#S":                               "work",
+				"#{client_width}":                  "200",
+				"#{client_height}":                 "50",
+				"#{@projmux_statusbar_decoration}": tt.decoration,
+			}}
+			cmd := &tmuxCommand{
+				runner:     runner,
+				executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil },
+			}
 
-	got := runner.calls[len(runner.calls)-1]
-	wantPrefix := []string{
-		"display-popup",
-		"-c", "/dev/pts/projmux-test-notify",
-		"-E",
-		"-x", "128",
-		"-y", "0",
-		"-w", "72",
-		"-h", "50",
-		"-T", "Notifications",
-	}
-	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
-		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
-	}
-	command := got.args[len(got.args)-1]
-	if !strings.Contains(command, "'/tmp/proj mux/bin/projmux' 'notify' 'list' '--ui=sidebar'") {
-		t.Fatalf("popup command = %q, want notify sidebar command", command)
+			if err := cmd.Run([]string{"popup-toggle", "notify-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			got := runner.calls[len(runner.calls)-1]
+			wantPrefix := []string{
+				"display-popup",
+				"-c", clientKey,
+				"-E",
+				"-x", "128",
+				"-y", "0",
+				"-w", "72",
+				"-h", "50",
+			}
+			if tt.wantTitle != "" {
+				wantPrefix = append(wantPrefix, "-T", tt.wantTitle)
+			}
+			if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
+				t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
+			}
+			if tt.wantTitle == "" && slices.Contains(got.args, "-T") {
+				t.Fatalf("display call = %#v, want no title option", got)
+			}
+			command := got.args[len(got.args)-1]
+			if !strings.Contains(command, "'/tmp/proj mux/bin/projmux' 'notify' 'list' '--ui=sidebar'") {
+				t.Fatalf("popup command = %q, want notify sidebar command", command)
+			}
+		})
 	}
 }
 

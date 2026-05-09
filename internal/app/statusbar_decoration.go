@@ -60,3 +60,14 @@ func statusbarGitDecorator(mode config.StatusbarDecoration) string {
 		return ""
 	}
 }
+
+func notificationPopupTitle(mode config.StatusbarDecoration) string {
+	switch mode {
+	case config.StatusbarDecorationSymbol:
+		return ""
+	case config.StatusbarDecorationEmoji:
+		return "🔔"
+	default:
+		return ""
+	}
+}
