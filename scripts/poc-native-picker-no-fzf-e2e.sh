@@ -46,10 +46,9 @@ docker run --rm \
       exit "$labs_status"
     fi
     if [[ -s "$labs_stderr" ]]; then
-      if grep -Ev "^(error connecting to /tmp/tmux-[0-9]+/default \\(No such file or directory\\)|no server running on /tmp/tmux-[0-9]+/default)$" "$labs_stderr"; then
-        exit 1
-      fi
-      echo "[poc/no-fzf] ignored expected tmux display-message miss in no-server container"
+      cat "$labs_stderr"
+      echo "Settings > Labs should not write tmux no-server noise outside tmux" >&2
+      exit 1
     fi
     test "$(cat "$XDG_CONFIG_HOME/projmux/picker-backend")" = native
     echo "[poc/no-fzf] Settings > Labs persisted native picker backend"
@@ -300,10 +299,9 @@ docker run --rm \
       exit "$settings_status"
     fi
     if [[ -s "$settings_stderr" ]]; then
-      if grep -Ev "^(error connecting to /tmp/tmux-[0-9]+/default \\(No such file or directory\\)|no server running on /tmp/tmux-[0-9]+/default)$" "$settings_stderr"; then
-        exit 1
-      fi
-      echo "[poc/no-fzf] ignored expected tmux display-message miss in no-server container"
+      cat "$settings_stderr"
+      echo "Settings > AI Settings should not write tmux no-server noise outside tmux" >&2
+      exit 1
     fi
     test "$(cat "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode")" = codex
     echo "[poc/no-fzf] passed"'
