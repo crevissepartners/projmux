@@ -33,6 +33,7 @@ docker run --rm \
     go test ./internal/ui/picker ./internal/app -run "Native|TestSettingsNativeBackendDoesNotCallFZF|TestSwitchCommandUsesNativePickerWhenRequested"
     echo "[poc/no-fzf] build projmux"
     go build -o /tmp/projmux ./cmd/projmux
+    wide_pty="stty rows 30 cols 150; "
     echo "[poc/no-fzf] store native picker through Settings > Labs"
     rm -f "$XDG_CONFIG_HOME/projmux/picker-backend"
     labs_log=/tmp/projmux-settings-labs.log
@@ -96,7 +97,7 @@ docker run --rm \
     tmux select-window -t projmux-projects-bravo-web:0
     popup_log=/tmp/projmux-switch-popup.log
     popup_status=0
-    printf "bravo\033[C\033[1;3B\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=popup" "$popup_log" || popup_status=$?
+    printf "bravo\033[C\033[1;3B\r" | timeout 8s script -q -e -E never -c "${wide_pty}env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=popup" "$popup_log" || popup_status=$?
     if [[ "$popup_status" != 0 && "$popup_status" != 124 ]]; then
       cat "$popup_log"
       exit "$popup_status"
@@ -104,6 +105,11 @@ docker run --rm \
     if ! grep -q "/tmp/projmux-projects/bravo-web" "$popup_log"; then
       cat "$popup_log"
       echo "native switch popup did not open bravo-web" >&2
+      exit 1
+    fi
+    if grep -q -- "--- preview ---" "$popup_log"; then
+      cat "$popup_log"
+      echo "native switch popup fell back to inline preview instead of wide right preview" >&2
       exit 1
     fi
     if ! grep -Eq "^projmux-projects-bravo-web[[:space:]]+[0-9]+[[:space:]]+[0-9]+" "$preview_state"; then
@@ -123,7 +129,7 @@ docker run --rm \
     tmux select-window -t projmux-projects-bravo-web:0
     sessions_log=/tmp/projmux-sessions.log
     sessions_status=0
-    printf "bravo\033[C\033[1;3B\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux sessions --ui=popup" "$sessions_log" || sessions_status=$?
+    printf "bravo\033[C\033[1;3B\r" | timeout 8s script -q -e -E never -c "${wide_pty}env PROJMUX_PICKER_BACKEND=native /tmp/projmux sessions --ui=popup" "$sessions_log" || sessions_status=$?
     if [[ "$sessions_status" != 0 && "$sessions_status" != 124 ]]; then
       cat "$sessions_log"
       exit "$sessions_status"
@@ -131,6 +137,11 @@ docker run --rm \
     if ! grep -q "/tmp/projmux-projects/bravo-web" "$sessions_log"; then
       cat "$sessions_log"
       echo "native sessions picker did not open bravo-web" >&2
+      exit 1
+    fi
+    if grep -q -- "--- preview ---" "$sessions_log"; then
+      cat "$sessions_log"
+      echo "native sessions picker fell back to inline preview instead of wide right preview" >&2
       exit 1
     fi
     if ! grep -Eq "^projmux-projects-bravo-web[[:space:]]+[0-9]+[[:space:]]+[0-9]+" "$preview_state"; then
