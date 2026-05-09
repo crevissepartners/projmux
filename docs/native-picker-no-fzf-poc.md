@@ -143,9 +143,10 @@ search/selection under a container PTY,
 exercises `projmux switch --ui=popup` and `projmux sessions --ui=popup` against
 existing tmux sessions, sends `Right` and `Alt-Down` once to smoke the
 preview-cycle bindings, launches `projmux shell` under a container PTY, verifies
-that it creates a tmux session, exercises `notify list --ui=sidebar` with the
-printable `x` expect key, and exercises the settings picker under a PTY using
-Enter and arrow-key navigation through the native backend.
+that it creates a tmux session, verifies immediate launch-key close behavior for
+Alt-1 through Alt-5 native popup surfaces, exercises `notify list --ui=sidebar`
+with the printable `x` expect key, and exercises the settings picker under a PTY
+using Enter and arrow-key navigation through the native backend.
 
 Short tmux-friendly form:
 

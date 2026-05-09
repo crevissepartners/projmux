@@ -214,6 +214,38 @@ docker run --rm \
       exit 1
     fi
     echo "[poc/no-fzf] native launch key closes immediately"
+    assert_native_launch_close() {
+      local key="$1"
+      local name="$2"
+      local command="$3"
+      local digit="${key#alt-}"
+      local log="/tmp/projmux-launch-close-${key}.log"
+      local debug="/tmp/projmux-launch-close-${key}.debug"
+      local status=0
+      printf "\033%s" "$digit" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_DEBUG_LOG=$debug PROJMUX_NATIVE_LAUNCH_KEY=$key PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root $command" "$log" || status=$?
+      if [[ "$status" != 0 ]]; then
+        cat "$log"
+        cat "$debug"
+        exit "$status"
+      fi
+      if ! grep -q "╭" "$log" || ! grep -q "╰" "$log"; then
+        cat "$log"
+        echo "native $name did not render full frame while checking $key close" >&2
+        exit 1
+      fi
+      if ! grep -q "action key=\"$key\" intent=\"close\"" "$debug"; then
+        cat "$debug"
+        echo "native $name did not close on immediate $key toggle" >&2
+        exit 1
+      fi
+    }
+    echo "[poc/no-fzf] exercise native launch-key close parity for Alt-2/3/4/5"
+    /tmp/projmux notify push --text "toggle close" --target main --source ai --id poc-toggle-notify >/dev/null
+    assert_native_launch_close "alt-2" "notify sidebar" "/tmp/projmux notify list --ui=sidebar"
+    assert_native_launch_close "alt-3" "switch popup" "/tmp/projmux switch --ui=popup"
+    assert_native_launch_close "alt-4" "ai picker" "/tmp/projmux ai picker --inside right"
+    assert_native_launch_close "alt-5" "ai settings" "/tmp/projmux ai settings"
+    echo "[poc/no-fzf] native Alt-2/3/4/5 launch keys close immediately"
     echo "[poc/no-fzf] exercise native notify sidebar printable expect key"
     /tmp/projmux notify push --text "deploy ok" --target main --source ai --id poc-notify
     notify_log=/tmp/projmux-notify.log
