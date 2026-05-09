@@ -1109,6 +1109,15 @@ func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
 	}
 }
 
+func TestNativeInteractivePadsSelectedLineInsideStyle(t *testing.T) {
+	t.Parallel()
+
+	rendered := nativeRenderableListLine(nativeCurrentStart+"api"+nativeReset, 12)
+	if !strings.Contains(rendered, nativeCurrentStart+"api         "+nativeReset) {
+		t.Fatalf("nativeRenderableListLine() = %q, want padding before reset for full-row highlight", rendered)
+	}
+}
+
 func TestNativeInteractiveRendersMultilineGapLine(t *testing.T) {
 	t.Parallel()
 

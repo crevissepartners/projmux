@@ -941,6 +941,10 @@ func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 			return buf[0], true, nil
 		}
 		if err == io.EOF {
+			if _, ok := r.(*os.File); ok {
+				time.Sleep(nativeReadPollDelay)
+				continue
+			}
 			return 0, false, nil
 		}
 		if err != nil {
@@ -1412,12 +1416,23 @@ func nativeRenderableListLines(lines []string, width int) []string {
 
 func nativeRenderableListLine(line string, width int) string {
 	if line != nativeGapSentinel {
-		return line
+		return nativePadStyledLine(line, width)
 	}
 	if width <= 4 {
 		return nativeGapLine
 	}
 	return "  " + strings.Repeat(nativeGapLine, width-2)
+}
+
+func nativePadStyledLine(line string, width int) string {
+	if width <= 0 || nativeVisibleLen(line) >= width {
+		return line
+	}
+	padding := strings.Repeat(" ", width-nativeVisibleLen(line))
+	if strings.HasSuffix(line, nativeReset) {
+		return strings.TrimSuffix(line, nativeReset) + padding + nativeReset
+	}
+	return line
 }
 
 func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
