@@ -26,7 +26,7 @@ const (
 	ansiTabInactive       = "\x1b[38;5;245;48;5;235m"
 )
 
-const switchBranchBadgeMax = 24
+const switchBranchBadgeMax = 16
 
 type SwitchRow struct {
 	Label string

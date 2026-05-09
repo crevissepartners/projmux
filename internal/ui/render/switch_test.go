@@ -63,7 +63,7 @@ func TestBuildSwitchRowsTruncatesLongGitBranchBadge(t *testing.T) {
 		UI:          "popup",
 	}})
 
-	const want = "\x1b[38;5;242m~/workspace\x1b[0m \x1b[38;5;245;48;5;238m feature/native-picker... \x1b[0m"
+	const want = "\x1b[38;5;242m~/workspace\x1b[0m \x1b[38;5;245;48;5;238m feature/nativ... \x1b[0m"
 	if got := rows[0].Item.MetaLines[0]; got != want {
 		t.Fatalf("item meta line = %q, want truncated branch badge %q", got, want)
 	}

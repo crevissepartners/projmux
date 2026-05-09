@@ -61,19 +61,19 @@ func DefaultRenderer() Renderer {
 
 func (r *FrameUpdateRenderer) Render(w io.Writer, frame string) {
 	if r.previous == "" {
-		fmt.Fprint(w, SyncUpdateEnter)
-		defer fmt.Fprint(w, SyncUpdateLeave)
-		fmt.Fprint(w, cursorHome+frame+"\r")
+		fmt.Fprint(w, SyncUpdateEnter+cursorHome+frame+"\r"+SyncUpdateLeave)
 		r.previous = frame
 		return
 	}
 	if r.previous == frame {
 		return
 	}
-	fmt.Fprint(w, SyncUpdateEnter)
-	defer fmt.Fprint(w, SyncUpdateLeave)
-	writeFrameDiff(w, r.previous, frame)
-	fmt.Fprint(w, "\r")
+	var update strings.Builder
+	update.WriteString(SyncUpdateEnter)
+	writeFrameDiff(&update, r.previous, frame)
+	update.WriteString("\r")
+	update.WriteString(SyncUpdateLeave)
+	fmt.Fprint(w, update.String())
 	r.previous = frame
 }
 

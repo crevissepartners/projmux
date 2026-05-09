@@ -99,6 +99,19 @@ func TestFrameUpdateRendererSkipsUnchangedFrame(t *testing.T) {
 	}
 }
 
+func TestFrameUpdateRendererCoalescesEachFrameUpdate(t *testing.T) {
+	t.Parallel()
+
+	out := &countingWriter{}
+	renderer := FrameUpdateRenderer{}
+	renderer.Render(out, "top\r\none\r\nbottom")
+	renderer.Render(out, "top\r\ntwo\r\nbottom")
+
+	if got, want := out.writeCount, 2; got != want {
+		t.Fatalf("write count = %d, want %d one-write rendered frame updates; output = %q", got, want, out.String())
+	}
+}
+
 func TestRenderFullFrameUpdateAlwaysHomesAndWritesFrame(t *testing.T) {
 	t.Parallel()
 
@@ -150,4 +163,14 @@ func TestTruncateANSIRespectsWideRuneCells(t *testing.T) {
 	if gotLen := VisibleLen(got); gotLen != 6 {
 		t.Fatalf("VisibleLen(truncated wide) = %d, want 6", gotLen)
 	}
+}
+
+type countingWriter struct {
+	bytes.Buffer
+	writeCount int
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	w.writeCount++
+	return w.Buffer.Write(p)
 }

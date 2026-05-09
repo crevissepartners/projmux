@@ -85,12 +85,15 @@ The fzf compatibility surface for the native engine is tracked in
   switch/session/notify cards read as one focused block.
 - Pointer and continuation markers render inside the current-row gutter style so
   selected cards do not visually break between the marker and row content.
-- Native redraws use terminal synchronized-update wrappers and row-diff updates
-  after the first frame. The frame/redraw renderer lives in `projmuxpicker`
-  rather than the backend loop, skips unchanged frames, and avoids a trailing
-  newline after the bottom border. This reduces visible keyboard-navigation
-  flicker and prevents exact-height popups from scrolling the top border off
-  screen.
+- Native redraws use terminal synchronized-update wrappers and coalesced
+  row-diff updates after the first frame. The frame/redraw renderer lives in
+  `projmuxpicker` rather than the backend loop, skips unchanged frames, and
+  avoids a trailing newline after the bottom border. This reduces visible
+  keyboard-navigation flicker and prevents exact-height popups from scrolling
+  the top border off screen.
+- Switch picker git branch badges are capped more tightly for the native card
+  surface, so inactive branch backgrounds do not dominate narrow Alt-1 sidebar
+  rows.
 - Native selection changes render their frame diff before running sidebar focus
   commands, so tmux focus/switch side effects do not delay the visible picker
   movement.
