@@ -70,6 +70,8 @@ The fzf compatibility surface for the native engine is tracked in
   pickers.
 - Selected multi-line rows use a continuation marker on metadata lines so
   switch/session/notify cards read as one focused block.
+- Pointer and continuation markers render inside the current-row gutter style so
+  selected cards do not visually break between the marker and row content.
 - Native redraws use terminal synchronized-update wrappers and row-diff updates
   after the first frame. The frame/redraw renderer lives in `projmuxpicker`
   rather than the backend loop, skips unchanged frames, and avoids a trailing

@@ -52,6 +52,9 @@ func TestInteractiveRowLinesUsesCurrentStyleForSimpleSelection(t *testing.T) {
 	if !strings.Contains(rendered, Pointer) || !strings.Contains(rendered, CurrentStart) {
 		t.Fatalf("rendered selected line = %q, want projmux pointer and current-row style", rendered)
 	}
+	if !strings.HasPrefix(rendered, Pointer+CurrentStart) {
+		t.Fatalf("rendered selected line = %q, want pointer in current-row gutter", rendered)
+	}
 	if strings.Contains(rendered, InverseStart) {
 		t.Fatalf("rendered selected line = %q, want no terminal inverse selection style", rendered)
 	}

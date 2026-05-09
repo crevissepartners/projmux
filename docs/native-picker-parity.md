@@ -24,7 +24,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | `--read0` multi-line rows | switch, sessions, notify | Covered | `Options.MultiLine`; `TestNativeInteractiveRendersFZFLikeMultilineSelection` |
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered for app multiline rows | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
 | `--marker-multi-line` | selected switch/session/notify cards | Covered for app multiline rows | `nativeContinuation`; `TestNativeInteractiveRendersSelectedMultilineContinuationMarker` |
-| fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveUsesCurrentStyleForSimpleSelection` |
+| fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; pointer/continuation gutter tokens carry the current-row background; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveUsesCurrentStyleForSimpleSelection` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `fzf.PickerOptions`; `TestNativeInteractiveSupportsCustomExpectKeys` |
 | printable expect keys | notify sidebar `x` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
 | control expect keys | notify sidebar `Ctrl-X`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
