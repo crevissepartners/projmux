@@ -63,17 +63,17 @@ docker run --rm \
     fi
     test "$(cat "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode")" = codex
     echo "[poc/no-fzf] native AI settings simple picker selected codex via smart-case query"
-    echo "[poc/no-fzf] exercise native mouse click selection under a PTY"
+    echo "[poc/no-fzf] exercise native single-click selection under a PTY"
     rm -f "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
     mouse_log=/tmp/projmux-ai-settings-mouse.log
     mouse_status=0
-    printf "\033[<0;3;7M\033[<0;3;7m\033[<0;3;7M" | timeout 8s script -q -e -E never -c "/tmp/projmux ai settings" "$mouse_log" || mouse_status=$?
+    printf "\033[<0;3;7M" | timeout 8s script -q -e -E never -c "/tmp/projmux ai settings" "$mouse_log" || mouse_status=$?
     if [[ "$mouse_status" != 0 ]]; then
       cat "$mouse_log"
       exit "$mouse_status"
     fi
     test "$(cat "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode")" = codex
-    echo "[poc/no-fzf] native mouse click selected codex"
+    echo "[poc/no-fzf] native single click selected codex"
     echo "[poc/no-fzf] exercise native switch picker under a PTY"
     demo_root=/tmp/projmux-projects
     mkdir -p "$demo_root/alpha-api" "$demo_root/bravo-web" "$demo_root/charlie-tools"

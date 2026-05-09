@@ -75,14 +75,15 @@ The fzf compatibility surface for the native engine is tracked in
 - Native width/truncation uses terminal cell width for Korean/CJK text, emoji,
   and combining marks instead of raw rune count, so localized project names and
   decorated notify headers do not push the right frame border out of alignment.
-- Searchable native pickers draw a muted separator under the prompt/count line
-  so the query area reads as distinct chrome rather than the first row of the
-  list. Footer, down-preview, and multi-line card gaps share the same
-  `projmuxpicker` separator primitive for a more consistent native surface.
+- Searchable native pickers draw an explicit `Search` label and a muted
+  separator under the prompt/count line so the query area reads as distinct
+  chrome rather than the first row of the list. Footer, down-preview, and
+  multi-line card gaps share the same `projmuxpicker` separator primitive for a
+  more consistent native surface.
 - Native interactive mode enables SGR mouse reporting while the alternate screen
-  is active. Primary click moves focus to a clicked row and mouse wheel moves
-  selection up/down. A second click on the focused row accepts it, and reporting
-  is disabled again during screen restore.
+  is active. Primary click applies the clicked row, release events are ignored,
+  mouse wheel moves selection up/down, and reporting is disabled again during
+  screen restore.
 - When terminal size detection is unavailable, native picker falls back to a
   conservative 80x24 terminal instead of assuming a wider surface. Interactive
   tmux popups still use the detected popup size when `stty size` is available.
