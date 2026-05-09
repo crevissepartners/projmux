@@ -183,7 +183,8 @@ search/selection under a container PTY,
 exercises `projmux switch --ui=popup` and `projmux sessions --ui=popup` against
 existing tmux sessions under a wide 150x30 PTY, sends `Right` and `Alt-Down`
 once to smoke the preview-cycle bindings, asserts those popup flows stay on the
-right-side preview layout instead of falling back to inline preview, launches
+right-side preview layout instead of falling back to inline preview, asserts the
+explicit `Search` chrome across the searchable native picker surfaces, launches
 `projmux shell` under a container PTY, verifies
 that it creates a tmux session, verifies immediate launch-key close behavior for
 Alt-1 through Alt-5 native popup surfaces, exercises `notify list --ui=sidebar`
