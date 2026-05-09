@@ -1484,7 +1484,7 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 }
 
 func (c *switchCommand) runPickerBackend(fzfOptions intfzf.Options, pickerOptions intpicker.Options) (intpicker.Result, error) {
-	if intpicker.ResolveBackend(c.lookupEnv) == intpicker.BackendNative {
+	if resolvePickerBackend(c.lookupEnv) == intpicker.BackendNative {
 		if c.nativePicker == nil {
 			return intpicker.Result{}, fmt.Errorf("native switch picker is not configured")
 		}
@@ -1853,6 +1853,7 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 		item := row.Item
 		if item.Label == "" {
 			item.Label = intrender.FormatSwitchCardLabel(row.Item)
+			item.MetaLines = nil
 		}
 		items = append(items, item)
 		entries = append(entries, intfzf.Entry{

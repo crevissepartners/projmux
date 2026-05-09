@@ -54,17 +54,16 @@ projmux switch toggle-tag | toggle-pin | kill | settings | preview
 projmux switch cycle-pane | cycle-window | sidebar-focus
 ```
 
-Project picker. With no positional argument, opens the fzf-driven popup or
-sidebar (depending on entry helper). With a path, jumps directly. The
+Project picker. With no positional argument, opens the configured picker popup
+or sidebar (depending on entry helper). With a path, jumps directly. The
 sub-verbs are entry hooks invoked by tmux keybindings (e.g.
 `sidebar-focus` is wired to the sidebar's focus binding so navigation keeps
 the active session in sync).
 
-`PROJMUX_PICKER_BACKEND=native` opts the switcher into the experimental native
-picker backend. fzf remains the default and the only backend with full preview
-pane, sidebar focus, and key-action parity. Native currently provides
-multiline card rendering, title-focused search, numeric selection, and the
-shared close-action contract.
+Settings > Labs > Picker Engine can opt into the experimental native picker
+backend. `PROJMUX_PICKER_BACKEND=native` is still supported as an environment
+override and takes priority over the saved Labs setting. fzf remains the default
+and fallback backend while native parity continues to mature.
 
 ## setup
 
@@ -405,8 +404,8 @@ flags with the top-level `switch` UX:
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI
   splits, Icons & Decorations mode, Project Root management, the
-  switcher's saved workdirs list, and About/Update status. In Project Picker,
-  `Project Root` manages the saved
+  switcher's saved workdirs list, Labs, and About/Update status. In Project
+  Picker, `Project Root` manages the saved
   primary root (`~/.config/projmux/projdir`) and displays whether the effective
   value comes from `PROJMUX_PROJDIR`, tmux `@projmux_projdir`, saved config, or
   no configured source. When no source is configured, the direct-set prompt
@@ -414,8 +413,10 @@ flags with the top-level `switch` UX:
   effective root unless saved. `Workdirs` remains separate: those entries are
   additional search roots, not the primary root. Icons & Decorations stores
   `~/.config/projmux/statusbar-decoration` as `off` (default), `symbol`, or
-  `emoji` and updates the live tmux option when available. The About section
-  reads the cached update status without network access;
+  `emoji` and updates the live tmux option when available. Labs stores
+  `~/.config/projmux/picker-backend` as `fzf` (default) or `native` and updates
+  the live tmux `PROJMUX_PICKER_BACKEND` environment when available. The About
+  section reads the cached update status without network access;
   selecting Check Updates runs `projmux update check`, and Update Now runs
   `projmux update apply`. The same About section also lists the keybinding
   diagnostic path: zero-config first, `setup` for swallowed keys, `init` for

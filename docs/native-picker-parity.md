@@ -1,8 +1,8 @@
 # Native Picker fzf Parity Map
 
-This is a POC audit note for `poc/native-picker-no-fzf`. It reverse-engineers
-the subset of fzf behavior that projmux currently uses and maps it to native
-picker evidence. It is not a production dependency-policy change.
+This audit note reverse-engineers the subset of fzf behavior that projmux
+currently uses and maps it to native picker evidence. It supports the
+experimental native picker engine and is not a public dependency-policy change.
 
 ## App fzf Surface
 
@@ -23,8 +23,8 @@ picker evidence. It is not a production dependency-policy change.
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered for app multiline rows | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
 | fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; `nativeInverseSelectedContent`; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveKeepsSimpleSelectionAfterANSIReset` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `fzf.PickerOptions`; `TestNativeInteractiveSupportsCustomExpectKeys` |
-| printable expect keys | notify sidebar `a` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
-| control expect keys | notify sidebar `Ctrl-A`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
+| printable expect keys | notify sidebar `x` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
+| control expect keys | notify sidebar `Ctrl-X`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
 | close `--bind key:abort` | Esc, Ctrl-C, Alt-N, Ctrl-Alt-S variants | Covered | `CloseActions`; `TestNativeRunnerUsesSharedCloseActions` |
 | terminal CSI-u key encoding | app keybind probe sequences, Ghostty/kitty-style modified keys | Covered | `TestNativeInteractiveSupportsCSIuAppKeyBindings` |
 | `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `fzf.PickerOptions`/`fzf.OptionsFromPicker`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes`; `TestPickerOptionsMapsFZFBindingsToContractActions`; Docker no-fzf e2e sends `Right` and `Alt-Down` before selection |
@@ -56,8 +56,12 @@ picker evidence. It is not a production dependency-policy change.
 - `intfzf.NewPickerRunner()` adapts fzf to the same `picker.Runner` interface
   as `picker.NativeRunner`, so follow-up branches can inject either backend at
   a narrower boundary without deleting the existing fzf runner.
-- The split is deliberate POC evidence that projmux can grow a first-party
-  picker design independently from the fzf compatibility adapter.
+- Settings > Labs > Picker Engine persists the selected backend in
+  `~/.config/projmux/picker-backend` and updates the live tmux server
+  environment through `PROJMUX_PICKER_BACKEND`, while direct environment
+  overrides still win over saved config.
+- The split lets projmux grow a first-party picker design independently from
+  the fzf compatibility adapter.
 
 ## Verified Flows
 
@@ -68,6 +72,9 @@ picker evidence. It is not a production dependency-policy change.
   adapter and settings-style typed prompt tests.
 - `settings`: native backend exercised in unit tests and Docker no-fzf e2e
   using Enter plus arrow-key navigation under a PTY.
+- `settings > Labs`: unit-covered backend toggle writes
+  `~/.config/projmux/picker-backend`, updates the tmux global
+  `PROJMUX_PICKER_BACKEND`, and lets env override saved config.
 - `switch --ui=sidebar`: Docker no-fzf e2e creates sample projects, types
   `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
 - `switch --ui=popup`: Docker no-fzf e2e creates existing tmux sessions using
@@ -79,27 +86,25 @@ picker evidence. It is not a production dependency-policy change.
   cycle, asserts the stored preview cursor, selects `bravo-web`, and confirms
   the opened tmux shell path.
 - `notify sidebar`: native routing is unit-covered; Docker no-fzf e2e pushes a
-  notification, presses printable expect key `a`, and verifies the row is acked.
+  notification, presses printable expect key `x`, and verifies the row is acked.
 
-## POC Boundaries
+## Experimental Boundaries
 
 - Preview-window parity is covered for the concrete projmux option shapes
   (`right,60%,border-left` and `down,25%,border-top`) with fzf-measured percent
   sizing. The full fzf preview-window grammar, threshold alternatives, sticky
   headers, and offset expressions are intentionally outside this POC surface.
-- fzf V2 dynamic scoring is now covered for normal app-length non-search-key
+- fzf V2 dynamic scoring is covered for normal app-length non-search-key
   rows, including reference scores for boundary, delimiter, camelCase/number,
   gap, and consecutive bonuses. Very large `query * row` matrices intentionally
-  fall back to the greedy scorer to avoid pathological memory use in this POC.
-  Search-keyed app pickers preserve fzf's `--disabled` reload order instead of
-  score-sorting.
+  fall back to the greedy scorer to avoid pathological memory use. Search-keyed
+  app pickers preserve fzf's `--disabled` reload order instead of score-sorting.
 - Mouse support is not implemented. projmux does not currently expose mouse
   picker workflows, so this is outside the required app surface unless new
   workflows depend on it.
-- The public doctor/docs dependency policy still says `fzf` is required. This is
-  intentional for the POC branch.
-- Draft PR: https://github.com/crevissepartners/projmux/pull/98 (`DO NOT MERGE
-  / POC ONLY`).
+- The public doctor/docs dependency policy still says `fzf` is required. This
+  is intentional while the native engine remains experimental.
+- Draft PR: https://github.com/crevissepartners/projmux/pull/98.
 
 ## Commands
 

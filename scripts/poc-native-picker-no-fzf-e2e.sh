@@ -33,11 +33,30 @@ docker run --rm \
     go test ./internal/ui/picker ./internal/app -run "Native|TestSettingsNativeBackendDoesNotCallFZF|TestSwitchCommandUsesNativePickerWhenRequested"
     echo "[poc/no-fzf] build projmux"
     go build -o /tmp/projmux ./cmd/projmux
+    echo "[poc/no-fzf] store native picker through Settings > Labs"
+    rm -f "$XDG_CONFIG_HOME/projmux/picker-backend"
+    labs_log=/tmp/projmux-settings-labs.log
+    labs_stderr=/tmp/projmux-settings-labs.stderr
+    labs_status=0
+    { printf "\033[B\033[B\033[B\r\033[B\033[B\033[B\r"; sleep 0.3; printf "\0335"; } | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>$labs_stderr" "$labs_log" || labs_status=$?
+    if [[ "$labs_status" != 0 ]]; then
+      cat "$labs_log"
+      cat "$labs_stderr"
+      exit "$labs_status"
+    fi
+    if [[ -s "$labs_stderr" ]]; then
+      if grep -Ev "^(error connecting to /tmp/tmux-[0-9]+/default \\(No such file or directory\\)|no server running on /tmp/tmux-[0-9]+/default)$" "$labs_stderr"; then
+        exit 1
+      fi
+      echo "[poc/no-fzf] ignored expected tmux display-message miss in no-server container"
+    fi
+    test "$(cat "$XDG_CONFIG_HOME/projmux/picker-backend")" = native
+    echo "[poc/no-fzf] Settings > Labs persisted native picker backend"
     echo "[poc/no-fzf] exercise native AI settings simple picker with smart-case query"
     rm -f "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
     ai_settings_log=/tmp/projmux-ai-settings.log
     ai_settings_status=0
-    printf "Codex\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux ai settings" "$ai_settings_log" || ai_settings_status=$?
+    printf "Codex\r" | timeout 8s script -q -e -E never -c "/tmp/projmux ai settings" "$ai_settings_log" || ai_settings_status=$?
     if [[ "$ai_settings_status" != 0 ]]; then
       cat "$ai_settings_log"
       exit "$ai_settings_status"
@@ -199,7 +218,7 @@ docker run --rm \
     /tmp/projmux notify push --text "deploy ok" --target main --source ai --id poc-notify
     notify_log=/tmp/projmux-notify.log
     notify_status=0
-    printf "a" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-2 /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
+    printf "x" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-2 /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
     if [[ "$notify_status" != 0 ]]; then
       cat "$notify_log"
       exit "$notify_status"

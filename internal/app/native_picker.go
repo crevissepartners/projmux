@@ -8,7 +8,7 @@ import (
 )
 
 func runPickerOptionBackend(lookupEnv func(string) string, native intpicker.Runner, fzf intfzf.Runner, options intfzf.Options) (intfzf.Result, error) {
-	if intpicker.ResolveBackend(lookupEnv) == intpicker.BackendNative {
+	if resolvePickerBackend(lookupEnv) == intpicker.BackendNative {
 		if native == nil {
 			return intfzf.Result{}, fmt.Errorf("native picker is not configured")
 		}

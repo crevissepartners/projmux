@@ -124,6 +124,51 @@ func TestPathsStatusbarDecorationFile(t *testing.T) {
 	}
 }
 
+func TestPathsPickerBackendFile(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{ConfigDir: "/tmp/config/projmux"}
+	if got, want := paths.PickerBackendFile(), filepath.Join(paths.ConfigDir, PickerBackendFileName); got != want {
+		t.Fatalf("PickerBackendFile() = %q, want %q", got, want)
+	}
+}
+
+func TestPickerBackendRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", PickerBackendFileName)
+	if got, err := LoadPickerBackendFile(path); err != nil || got != PickerBackendFZF {
+		t.Fatalf("LoadPickerBackendFile(missing) = %q, %v; want %q, nil", got, err, PickerBackendFZF)
+	}
+
+	if err := SavePickerBackendFile(path, PickerBackendNative); err != nil {
+		t.Fatalf("SavePickerBackendFile() error = %v", err)
+	}
+	got, err := LoadPickerBackendFile(path)
+	if err != nil {
+		t.Fatalf("LoadPickerBackendFile() error = %v", err)
+	}
+	if got != PickerBackendNative {
+		t.Fatalf("LoadPickerBackendFile() = %q, want %q", got, PickerBackendNative)
+	}
+}
+
+func TestPickerBackendNormalizesInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), PickerBackendFileName)
+	if err := os.WriteFile(path, []byte("broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadPickerBackendFile(path)
+	if err != nil {
+		t.Fatalf("LoadPickerBackendFile() error = %v", err)
+	}
+	if got != PickerBackendFZF {
+		t.Fatalf("LoadPickerBackendFile() = %q, want %q", got, PickerBackendFZF)
+	}
+}
+
 func TestStatusbarDecorationRoundtrip(t *testing.T) {
 	t.Parallel()
 

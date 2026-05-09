@@ -1,13 +1,13 @@
-# Native Picker Without fzf POC
+# Experimental Native Picker Engine
 
-This note is POC-only. It does not change the public doctor dependency policy:
-`fzf` remains a required production dependency and the `internal/ui/fzf`
-backend remains the fallback with full preview/cycle/sidebar behavior.
+This note tracks the experimental native picker engine. It does not change the
+public doctor dependency policy: `fzf` remains a required production dependency
+and the `internal/ui/fzf` backend remains the default/fallback path.
 
-The fzf compatibility surface for this POC is tracked in
+The fzf compatibility surface for the native engine is tracked in
 [native-picker-parity.md](native-picker-parity.md).
 
-## What This POC Covers
+## What This Covers
 
 - `internal/ui/picker` is the backend-neutral contract for native picker rows,
   actions, filtering, and typed-query prompts.
@@ -23,19 +23,22 @@ The fzf compatibility surface for this POC is tracked in
   the fzf adapter is responsible for translating that into `--expect`,
   `--bind execute-silent(...)`, `+refresh-preview`, and `start:pos(N)`.
 - `intfzf.NewPickerRunner()` wraps fzf behind the same `picker.Runner`
-  interface as the native runner. This is experimental DI groundwork only; the
-  POC still leaves existing app call sites mostly intact while the contract is
-  validated.
-- `PROJMUX_PICKER_BACKEND=native` routes simple app pickers through the native
-  runner instead of shelling out to `fzf`.
+  interface as the native runner. This is the current DI boundary for swapping
+  picker engines while keeping fzf available.
+- Settings > Labs > Picker Engine stores the experimental selection in
+  `~/.config/projmux/picker-backend` and updates the live tmux environment so
+  new picker popups can switch between `fzf` and `native` without restarting
+  the app server.
+- `PROJMUX_PICKER_BACKEND=native` remains an explicit environment override and
+  takes priority over the saved Labs setting.
 - Picker flows covered by the native path include AI picker/settings, shell
   update prompt, settings hub sections, switch settings/add-pin, the main
   project switcher list, recent sessions, and notify sidebar.
 - The native picker supports ranked fuzzy search/filter, arrow-key selection in
   normal CSI and tmux application-cursor modes, Enter, Esc, Ctrl-C, Backspace,
   Ctrl-U, Ctrl-W, PageUp/PageDown, Home/End, modified CSI keys, custom expect
-  keys such as Ctrl-X/Alt-P, printable expect keys such as notify `a`, control
-  expect keys such as notify `Ctrl-A`, `start:pos(N)` initial focus, preview
+  keys such as Ctrl-X/Alt-P, printable expect keys such as notify `x`, control
+  expect keys such as notify `Ctrl-X`, `start:pos(N)` initial focus, preview
   command output, preview cycle command bindings, and sidebar focus command
   bindings.
 - Typed-query prompts support cursor-aware insertion/deletion with a visible
@@ -57,13 +60,11 @@ The fzf compatibility surface for this POC is tracked in
   escape-key sequences, so split arrow/Alt key bytes are consumed by the picker
   instead of leaking into the query or parent shell.
 
-## POC Boundaries
+## Experimental Boundaries
 
 - The `projmuxpicker` package is intended as a foundation that can be carried
-  toward main after review, along with the fzf-to-picker adapter boundary in
-  `internal/ui/fzf`. The Docker sandbox scripts, native debug logging, and
-  dependency-policy notes are POC support scaffolding and should be reviewed
-  separately before any production merge.
+  forward, along with the fzf-to-picker adapter boundary in `internal/ui/fzf`.
+  Docker sandbox scripts and dependency-policy notes remain support scaffolding.
 - Switch and sessions preview panes are native previews for the concrete
   projmux option shapes. Wide right-side preview windows render beside the
   list, and sidebar-style `down,25%,border-top` previews render below the list
@@ -73,18 +74,20 @@ The fzf compatibility surface for this POC is tracked in
   switch and sessions popup flows type a filtered query, send `Right` and
   `Alt-Down`, and assert the stored preview window/pane cursor for the selected
   session.
-- Public docs and doctor dependency policy still treat `fzf` as required.
+- Public doctor dependency policy still treats `fzf` as required. The Labs
+  setting is experimental and does not make native the default production
+  backend.
 
 ## Interactive No-fzf Sandbox
 
-Use this when you want to enter a Docker container and experience this POC build
-directly. It builds the no-fzf dependency image, mounts this worktree, builds
-`projmux` inside the container, creates sample projects under
-`/workspace/projects`, sets `PROJMUX_PICKER_BACKEND=native`, writes a sandbox
-tmux config that also forces the tmux server environment to native picker mode,
-and launches `projmux shell` so you can experience the POC directly. It also
-forces UTF-8 locale inside the container. This uses `wt path`
-instead of `wt run` because `docker run -it` needs the current terminal TTY:
+Use this when you want to enter a Docker container and experience this build
+directly without `fzf`. It builds the no-fzf dependency image, mounts this
+worktree, builds `projmux` inside the container, creates sample projects under
+`/workspace/projects`, stores the native picker backend in the sandbox config,
+writes a tmux config with the same backend in the tmux server environment, and
+launches `projmux shell`. It also forces UTF-8 locale inside the container. This
+uses `wt path` instead of `wt run` because `docker run -it` needs the current
+terminal TTY:
 
 ```sh
 bash "$(wt path poc/native-picker-no-fzf)/scripts/poc-native-picker-no-fzf-sandbox.sh"
@@ -113,14 +116,16 @@ Manual UX checks for the Docker sandbox:
 
 Run this from the repository root. It builds a Go 1.24 Trixie no-fzf
 dependency image from `test/docker/no-fzf-poc.Dockerfile`, including Go module
-cache, then mounts the repository into an isolated `--network none` container, builds
-`projmux`, asserts `fzf` is not on `PATH`, runs the focused native-picker tests,
-exercises `projmux switch --ui=sidebar` search/selection under a container PTY,
+cache, then mounts the repository into an isolated `--network none` container,
+builds `projmux`, asserts `fzf` is not on `PATH`, runs the focused native-picker
+tests, stores the native backend through Settings > Labs, verifies the saved
+backend works without an env override, exercises `projmux switch --ui=sidebar`
+search/selection under a container PTY,
 exercises `projmux switch --ui=popup` and `projmux sessions --ui=popup` against
 existing tmux sessions, sends `Right` and `Alt-Down` once to smoke the
 preview-cycle bindings, launches `projmux shell` under a container PTY, verifies
 that it creates a tmux session, exercises `notify list --ui=sidebar` with the
-printable `a` expect key, and exercises the settings picker under a PTY using
+printable `x` expect key, and exercises the settings picker under a PTY using
 Enter and arrow-key navigation through the native backend.
 
 Short tmux-friendly form:

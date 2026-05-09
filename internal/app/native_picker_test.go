@@ -1,9 +1,11 @@
 package app
 
 import (
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
@@ -47,6 +49,85 @@ func TestRunPickerOptionBackendUsesNativeWhenRequested(t *testing.T) {
 	}
 	if result.Key != "enter" || result.Value != "ai" {
 		t.Fatalf("result = %#v, want native selection", result)
+	}
+}
+
+func TestRunPickerOptionBackendUsesSavedNativeBackend(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	paths := config.DefaultPaths(configHome, t.TempDir())
+	if err := config.SavePickerBackendFile(paths.PickerBackendFile(), config.PickerBackendNative); err != nil {
+		t.Fatalf("SavePickerBackendFile() error = %v", err)
+	}
+
+	var fzfCalled bool
+	nativeCalled := false
+	result, err := runPickerOptionBackend(
+		os.Getenv,
+		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			nativeCalled = true
+			return intpicker.Result{Key: "enter", Value: "ai"}, nil
+		}),
+		switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			fzfCalled = true
+			return intfzf.Result{}, nil
+		}),
+		intfzf.Options{
+			UI:      "settings",
+			Entries: []intfzf.Entry{{Label: "AI Settings", Value: "ai"}},
+		},
+	)
+	if err != nil {
+		t.Fatalf("runPickerOptionBackend() error = %v", err)
+	}
+	if !nativeCalled {
+		t.Fatal("native runner was not called for saved native picker backend")
+	}
+	if fzfCalled {
+		t.Fatal("fzf runner was called for saved native picker backend")
+	}
+	if result.Value != "ai" {
+		t.Fatalf("result = %#v, want native selection", result)
+	}
+}
+
+func TestRunPickerOptionBackendEnvOverridesSavedNativeBackend(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	paths := config.DefaultPaths(configHome, t.TempDir())
+	if err := config.SavePickerBackendFile(paths.PickerBackendFile(), config.PickerBackendNative); err != nil {
+		t.Fatalf("SavePickerBackendFile() error = %v", err)
+	}
+
+	var nativeCalled bool
+	result, err := runPickerOptionBackend(
+		func(name string) string {
+			if name == intpicker.BackendEnv {
+				return string(intpicker.BackendFZF)
+			}
+			return os.Getenv(name)
+		},
+		pickerRunnerFunc(func(intpicker.Options) (intpicker.Result, error) {
+			nativeCalled = true
+			return intpicker.Result{}, nil
+		}),
+		switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			return intfzf.Result{Key: "enter", Value: "ai"}, nil
+		}),
+		intfzf.Options{UI: "settings"},
+	)
+	if err != nil {
+		t.Fatalf("runPickerOptionBackend() error = %v", err)
+	}
+	if nativeCalled {
+		t.Fatal("native runner was called despite env forcing fzf")
+	}
+	if result.Value != "ai" {
+		t.Fatalf("result = %#v, want fzf selection", result)
 	}
 }
 
