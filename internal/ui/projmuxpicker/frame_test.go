@@ -79,6 +79,23 @@ func TestFrameUpdateRendererDiffsAfterFirstFrame(t *testing.T) {
 	}
 }
 
+func TestFrameUpdateRendererSkipsUnchangedFrame(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderer := FrameUpdateRenderer{}
+	renderer.Render(&out, "top\r\none\r\nbottom")
+	first := out.String()
+	renderer.Render(&out, "top\r\none\r\nbottom")
+
+	if got := out.String(); got != first {
+		t.Fatalf("unchanged frame emitted output: before %q after %q", first, got)
+	}
+	if got, want := strings.Count(out.String(), SyncUpdateEnter), 1; got != want {
+		t.Fatalf("synchronized update enter count = %d, want %d for unchanged second frame: %q", got, want, out.String())
+	}
+}
+
 func TestRenderFullFrameUpdateAlwaysHomesAndWritesFrame(t *testing.T) {
 	t.Parallel()
 

@@ -67,9 +67,10 @@ The fzf compatibility surface for the native engine is tracked in
   separators reach the right border like fzf.
 - Native redraws use terminal synchronized-update wrappers and row-diff updates
   after the first frame. The frame/redraw renderer lives in `projmuxpicker`
-  rather than the backend loop, and the frame renderer avoids a trailing newline
-  after the bottom border. This reduces visible keyboard-navigation flicker and
-  prevents exact-height popups from scrolling the top border off screen.
+  rather than the backend loop, skips unchanged frames, and avoids a trailing
+  newline after the bottom border. This reduces visible keyboard-navigation
+  flicker and prevents exact-height popups from scrolling the top border off
+  screen.
 - In app TTY contexts, the native picker opens the controlling terminal
   (`/dev/tty`) before entering raw mode. This avoids stdin/stdout mismatch and
   line-mode escape leakage such as arrow keys appearing as `^[[`.
