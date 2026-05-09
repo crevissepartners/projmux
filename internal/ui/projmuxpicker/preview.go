@@ -67,10 +67,7 @@ func RenderSplitPreviewRows(w io.Writer, listLines, previewLines []string, layou
 		previewWidth = layout.Cols - listWidth - 1
 	}
 	listLines = ListLinesWithScrollbar(listLines, total, start, end, listWidth)
-	rows := maxInt(len(listLines), len(previewLines))
-	if rowCount > rows {
-		rows = rowCount
-	}
+	rows := max(rowCount, maxInt(len(listLines), len(previewLines)))
 	for i := 0; i < rows; i++ {
 		left := ""
 		if i < len(listLines) {
@@ -105,7 +102,7 @@ func RenderInlinePreview(w io.Writer, previewLines []string) {
 }
 
 func previewPercent(window string) int {
-	for _, part := range strings.Split(window, ",") {
+	for part := range strings.SplitSeq(window, ",") {
 		part = strings.TrimSpace(part)
 		if !strings.HasSuffix(part, "%") {
 			continue

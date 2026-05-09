@@ -183,7 +183,6 @@ func TestFuzzyScoreMatchesFZFV2ReferenceScores(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, ok := fuzzyScore(tt.source, nativeSearchPattern(tt.query, tt.caseSensitive), tt.caseSensitive)
@@ -212,7 +211,6 @@ func TestFuzzyScoreRejectsFZFV2ReferenceNonMatches(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, ok := fuzzyScore(tt.source, nativeSearchPattern(tt.query, tt.caseSensitive), tt.caseSensitive)
@@ -1013,7 +1011,7 @@ func TestNativeInteractiveSupportsPageNavigationAndEditing(t *testing.T) {
 	t.Parallel()
 
 	items := make([]Item, 0, 20)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		items = append(items, Item{Title: strconv.Itoa(i), Value: strconv.Itoa(i), SearchText: strconv.Itoa(i)})
 	}
 
@@ -1133,7 +1131,7 @@ func TestNativeInteractiveRendersSplitPreviewBorderThroughListArea(t *testing.T)
 
 	listLimit := nativeListLimit(options, layout, "right", nativePreviewHeight(layout.Rows, options.Preview.Window), true)
 	separatorRows := 0
-	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(out.String(), "\n"), "\n") {
 		if strings.Contains(line, "│") {
 			separatorRows++
 		}
@@ -1166,7 +1164,7 @@ func TestNativeInteractiveUsesScrollbarForLongLists(t *testing.T) {
 	t.Parallel()
 
 	items := make([]Item, 0, 24)
-	for i := 0; i < 24; i++ {
+	for i := range 24 {
 		items = append(items, Item{Title: "item " + strconv.Itoa(i), Value: strconv.Itoa(i)})
 	}
 
@@ -1189,7 +1187,7 @@ func TestNativeInteractiveUsesAvailableHeightForSimpleLists(t *testing.T) {
 	t.Parallel()
 
 	items := make([]Item, 0, 20)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		items = append(items, Item{Title: "item " + strconv.Itoa(i), Value: strconv.Itoa(i)})
 	}
 
@@ -1267,7 +1265,7 @@ func TestNativeVisibleRangeCountsMultilineRenderedRows(t *testing.T) {
 	t.Parallel()
 
 	items := make([]Item, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		items = append(items, Item{
 			Label: "item " + strconv.Itoa(i) + "\n  detail",
 			Value: strconv.Itoa(i),

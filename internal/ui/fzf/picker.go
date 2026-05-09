@@ -189,11 +189,11 @@ func pickerInitialIndex(options Options) (int, bool) {
 			continue
 		}
 		rest := strings.TrimPrefix(action, prefix)
-		idx := strings.Index(rest, ")")
-		if idx < 0 {
+		before, _, ok0 := strings.Cut(rest, ")")
+		if !ok0 {
 			continue
 		}
-		pos, err := strconv.Atoi(strings.TrimSpace(rest[:idx]))
+		pos, err := strconv.Atoi(strings.TrimSpace(before))
 		if err == nil && pos > 0 {
 			return pos - 1, true
 		}
@@ -208,9 +208,9 @@ func PickerCommandFromBinding(action string) string {
 		return ""
 	}
 	rest := strings.TrimPrefix(action, prefix)
-	idx := strings.Index(rest, ")")
-	if idx < 0 {
+	before, _, ok := strings.Cut(rest, ")")
+	if !ok {
 		return ""
 	}
-	return strings.TrimSpace(rest[:idx])
+	return strings.TrimSpace(before)
 }

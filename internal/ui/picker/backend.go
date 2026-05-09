@@ -724,10 +724,7 @@ func nativeMouseItemIndex(options Options, items []Item, selected int, layout na
 	hasPreview := strings.TrimSpace(options.Preview.Command) != "" && selected >= 0 && selected < len(items)
 	if hasPreview && placement == "right" && contentLayout.Cols >= 88 {
 		previewWidth := nativePreviewWidth(contentLayout.Cols, options.Preview.Window)
-		listWidth := contentLayout.Cols - previewWidth - 1
-		if listWidth < 32 {
-			listWidth = 32
-		}
+		listWidth := max(contentLayout.Cols-previewWidth-1, 32)
 		if contentX >= listWidth {
 			return selected, false
 		}
@@ -1108,7 +1105,7 @@ func readNativeByte(r io.Reader) (byte, error) {
 
 func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 	var buf [1]byte
-	for attempt := 0; attempt < nativeMaybeReadAttempts; attempt++ {
+	for range nativeMaybeReadAttempts {
 		n, err := r.Read(buf[:])
 		if n > 0 {
 			return buf[0], true, nil
@@ -1170,10 +1167,7 @@ func deleteNativeQueryBeforeCursorN(query string, cursor, count int) (string, in
 	if cursor == 0 || count <= 0 {
 		return query, cursor
 	}
-	start := cursor - count
-	if start < 0 {
-		start = 0
-	}
+	start := max(cursor-count, 0)
 	next := make([]rune, 0, len(runes)-(cursor-start))
 	next = append(next, runes[:start]...)
 	next = append(next, runes[cursor:]...)
@@ -1381,10 +1375,7 @@ func nativeVisibleRange(total, selected, limit int) (int, int) {
 	if limit <= 0 || total <= limit {
 		return 0, total
 	}
-	start := selected - limit/2
-	if start < 0 {
-		start = 0
-	}
+	start := max(selected-limit/2, 0)
 	if start+limit > total {
 		start = total - limit
 	}
@@ -1856,9 +1847,9 @@ func nativeFuzzyScoreV2(source, pattern []rune, caseSensitive bool) (int, bool) 
 	scores := make([]int, width*height)
 	consecutive := make([]int, width*height)
 	maxScore := 0
-	for row := 0; row < height; row++ {
+	for row := range height {
 		inGap := false
-		for col := 0; col < width; col++ {
+		for col := range width {
 			leftScore := 0
 			if col > 0 {
 				leftScore = scores[row*width+col-1]

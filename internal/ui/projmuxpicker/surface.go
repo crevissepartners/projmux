@@ -24,7 +24,7 @@ func WriteContentWithFooter(w io.Writer, top, main, footer string, layout Layout
 		return
 	}
 	remaining := layout.Rows - RenderedTextLineCount(screen.String()) - len(footerLines)
-	for i := 0; i < remaining; i++ {
+	for range remaining {
 		fmt.Fprintln(&screen)
 	}
 	for _, line := range footerLines {
@@ -42,7 +42,7 @@ func FooterBlockLines(footer string, cols int) []string {
 		cols = DefaultCols
 	}
 	lines := []string{TruncateANSI(strings.Repeat(GapLine, cols), cols)}
-	for _, line := range strings.Split(footer, "\n") {
+	for line := range strings.SplitSeq(footer, "\n") {
 		lines = append(lines, TruncateANSI(strings.TrimRight(line, "\r"), cols))
 	}
 	return lines

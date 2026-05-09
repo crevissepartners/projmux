@@ -51,7 +51,7 @@ func TestRenderSplitPreviewRowsExtendsSeparator(t *testing.T) {
 	RenderSplitPreviewRows(&out, []string{"api"}, []string{"preview"}, Layout{Rows: 10, Cols: 80}, "right,60%,border-left", 1, 0, 1, 5)
 
 	separatorRows := 0
-	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(out.String(), "\n"), "\n") {
 		if strings.Contains(line, "│") {
 			separatorRows++
 		}

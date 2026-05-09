@@ -88,14 +88,8 @@ func (r Renderer) ContentLayout(layout Layout) Layout {
 	if layout.Cols <= 0 {
 		layout.Cols = DefaultCols
 	}
-	rows := layout.Rows - 2
-	if rows < 1 {
-		rows = 1
-	}
-	cols := layout.Cols - 2
-	if cols < 1 {
-		cols = 1
-	}
+	rows := max(layout.Rows-2, 1)
+	cols := max(layout.Cols-2, 1)
 	return Layout{Rows: rows, Cols: cols}
 }
 
@@ -113,10 +107,7 @@ func (r Renderer) RenderFrame(w io.Writer, content string, layout Layout) {
 		height = DefaultRows
 	}
 	innerWidth := width - 2
-	innerHeight := height - 2
-	if innerHeight < 1 {
-		innerHeight = 1
-	}
+	innerHeight := max(height-2, 1)
 
 	theme := r.Theme
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
@@ -134,10 +125,7 @@ func (r Renderer) RenderFrame(w io.Writer, content string, layout Layout) {
 func writeFrameDiff(w io.Writer, previous, next string) {
 	previousLines := splitFrameLines(previous)
 	nextLines := splitFrameLines(next)
-	limit := len(nextLines)
-	if len(previousLines) > limit {
-		limit = len(previousLines)
-	}
+	limit := max(len(previousLines), len(nextLines))
 	for i := 0; i < limit; i++ {
 		previousLine := ""
 		if i < len(previousLines) {
