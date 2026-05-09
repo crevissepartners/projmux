@@ -407,12 +407,16 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if selected < 0 {
 			selected = 0
 		}
-		if value := selectedNativeValue(items, selected); value != focusedValue {
-			runNativeFocusAction(options.Actions, value)
-			focusedValue = value
+		focusValue := selectedNativeValue(items, selected)
+		focusChanged := focusValue != focusedValue
+		if focusChanged {
+			focusedValue = focusValue
 			previewOffset = 0
 		}
 		renderer.Render(out, nativeInteractiveFrame(options, items, query, queryCursor, selected, previewOffset, layout))
+		if focusChanged {
+			runNativeFocusAction(options.Actions, focusValue)
+		}
 
 		key, err := readNativeKey(in)
 		if err != nil {

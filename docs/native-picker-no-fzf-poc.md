@@ -78,6 +78,9 @@ The fzf compatibility surface for the native engine is tracked in
   newline after the bottom border. This reduces visible keyboard-navigation
   flicker and prevents exact-height popups from scrolling the top border off
   screen.
+- Native selection changes render their frame diff before running sidebar focus
+  commands, so tmux focus/switch side effects do not delay the visible picker
+  movement.
 - In app TTY contexts, the native picker opens the controlling terminal
   (`/dev/tty`) before entering raw mode. This avoids stdin/stdout mismatch and
   line-mode escape leakage such as arrow keys appearing as `^[[`.
