@@ -60,3 +60,29 @@ func TestRenderSplitPreviewRowsExtendsSeparator(t *testing.T) {
 		t.Fatalf("separator rows = %d, want 5 in output %q", separatorRows, out.String())
 	}
 }
+
+func TestRenderSplitPreviewRowsPadsBothPanes(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	RenderSplitPreviewRows(&out, []string{"api"}, []string{"preview"}, Layout{Rows: 10, Cols: 80}, "right,60%,border-left", 1, 0, 1, 3)
+
+	for i, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+		if got, want := VisibleLen(line), 80; got != want {
+			t.Fatalf("split preview row %d width = %d, want %d: %q", i, got, want, line)
+		}
+	}
+}
+
+func TestRenderDownPreviewPadsPreviewRows(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	RenderDownPreview(&out, []string{"preview"}, Layout{Rows: 10, Cols: 24})
+
+	for i, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+		if got, want := VisibleLen(line), 24; got != want {
+			t.Fatalf("down preview row %d width = %d, want %d: %q", i, got, want, line)
+		}
+	}
+}

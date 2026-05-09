@@ -96,6 +96,9 @@ The fzf compatibility surface for the native engine is tracked in
   projmux option shapes. Wide right-side preview windows render beside the
   list, and sidebar-style `down,25%,border-top` previews render below the list
   without a synthetic preview title row, using fzf-measured percent sizing.
+  Preview rows are padded by `projmuxpicker` to the full preview surface width
+  before the outer frame is applied, which keeps split/down preview columns
+  visually stable during redraws.
   The full fzf preview-window grammar remains outside this POC surface.
 - Preview cycle state is covered in Docker e2e against real tmux sessions: the
   switch and sessions popup flows type a filtered query, send `Right` and
