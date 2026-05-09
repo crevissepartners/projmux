@@ -46,10 +46,10 @@ The fzf compatibility surface for this POC is tracked in
   list, and sidebar-style `down,25%,border-top` previews render below the list
   without a synthetic preview title row, using fzf-measured percent sizing.
   The full fzf preview-window grammar remains outside this POC surface.
-- Exact preview cycle state parity still needs hands-on validation against real
-  tmux sessions. The Docker e2e now smokes the `Right` and `Alt-Down`
-  preview-cycle bindings before selecting a switch/session row, but does not
-  assert the final preview cursor state.
+- Preview cycle state is covered in Docker e2e against real tmux sessions: the
+  switch and sessions popup flows type a filtered query, send `Right` and
+  `Alt-Down`, and assert the stored preview window/pane cursor for the selected
+  session.
 - Public docs and doctor dependency policy still treat `fzf` as required.
 
 ## Interactive No-fzf Sandbox

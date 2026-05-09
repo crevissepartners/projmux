@@ -67,11 +67,16 @@ docker run --rm \
     tmux kill-server 2>/dev/null || true
     echo "[poc/no-fzf] native switch selected bravo-web"
     echo "[poc/no-fzf] exercise native switch popup preview cycle against existing sessions"
+    preview_state="$XDG_STATE_HOME/projmux/preview-state"
+    rm -f "$preview_state"
     tmux new-session -d -s projmux-projects-alpha-api -c "$demo_root/alpha-api"
     tmux new-session -d -s projmux-projects-bravo-web -c "$demo_root/bravo-web"
+    tmux new-window -t projmux-projects-bravo-web -n inspect -c "$demo_root/bravo-web"
+    tmux split-window -t projmux-projects-bravo-web:1 -h -c "$demo_root/bravo-web"
+    tmux select-window -t projmux-projects-bravo-web:0
     popup_log=/tmp/projmux-switch-popup.log
     popup_status=0
-    printf "\033[C\033[1;3Bbravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=popup" "$popup_log" || popup_status=$?
+    printf "bravo\033[C\033[1;3B\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=popup" "$popup_log" || popup_status=$?
     if [[ "$popup_status" != 0 && "$popup_status" != 124 ]]; then
       cat "$popup_log"
       exit "$popup_status"
@@ -81,14 +86,24 @@ docker run --rm \
       echo "native switch popup did not open bravo-web" >&2
       exit 1
     fi
+    if ! grep -Eq "^projmux-projects-bravo-web[[:space:]]+[0-9]+[[:space:]]+[0-9]+" "$preview_state"; then
+      cat "$popup_log"
+      cat "$preview_state" 2>/dev/null || true
+      echo "native switch popup did not persist preview cycle window/pane state" >&2
+      exit 1
+    fi
     tmux kill-server 2>/dev/null || true
     echo "[poc/no-fzf] native switch popup cycled window/pane preview and selected existing bravo-web"
     echo "[poc/no-fzf] exercise native sessions picker preview cycle against existing sessions"
+    rm -f "$preview_state"
     tmux new-session -d -s projmux-projects-alpha-api -c "$demo_root/alpha-api"
     tmux new-session -d -s projmux-projects-bravo-web -c "$demo_root/bravo-web"
+    tmux new-window -t projmux-projects-bravo-web -n inspect -c "$demo_root/bravo-web"
+    tmux split-window -t projmux-projects-bravo-web:1 -h -c "$demo_root/bravo-web"
+    tmux select-window -t projmux-projects-bravo-web:0
     sessions_log=/tmp/projmux-sessions.log
     sessions_status=0
-    printf "\033[C\033[1;3Bbravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux sessions --ui=popup" "$sessions_log" || sessions_status=$?
+    printf "bravo\033[C\033[1;3B\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux sessions --ui=popup" "$sessions_log" || sessions_status=$?
     if [[ "$sessions_status" != 0 && "$sessions_status" != 124 ]]; then
       cat "$sessions_log"
       exit "$sessions_status"
@@ -96,6 +111,12 @@ docker run --rm \
     if ! grep -q "/tmp/projmux-projects/bravo-web" "$sessions_log"; then
       cat "$sessions_log"
       echo "native sessions picker did not open bravo-web" >&2
+      exit 1
+    fi
+    if ! grep -Eq "^projmux-projects-bravo-web[[:space:]]+[0-9]+[[:space:]]+[0-9]+" "$preview_state"; then
+      cat "$sessions_log"
+      cat "$preview_state" 2>/dev/null || true
+      echo "native sessions picker did not persist preview cycle window/pane state" >&2
       exit 1
     fi
     tmux kill-server 2>/dev/null || true

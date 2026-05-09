@@ -52,12 +52,13 @@ picker evidence. It is not a production dependency-policy change.
 - `switch --ui=sidebar`: Docker no-fzf e2e creates sample projects, types
   `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
 - `switch --ui=popup`: Docker no-fzf e2e creates existing tmux sessions using
-  the app's session naming convention, sends `Right` and `Alt-Down` to exercise
-  preview window/pane cycle, types `bravo`, selects `bravo-web`, and confirms
-  the opened tmux shell path.
+  the app's session naming convention, types `bravo`, sends `Right` and
+  `Alt-Down` to exercise preview window/pane cycle, asserts the stored preview
+  cursor, selects `bravo-web`, and confirms the opened tmux shell path.
 - `sessions --ui=popup`: Docker no-fzf e2e creates existing tmux sessions,
-  sends `Right` and `Alt-Down` to exercise preview window/pane cycle, types
-  `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
+  types `bravo`, sends `Right` and `Alt-Down` to exercise preview window/pane
+  cycle, asserts the stored preview cursor, selects `bravo-web`, and confirms
+  the opened tmux shell path.
 - `notify sidebar`: native routing is unit-covered; Docker no-fzf e2e pushes a
   notification, presses printable expect key `a`, and verifies the row is acked.
 
