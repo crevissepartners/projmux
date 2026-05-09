@@ -9,7 +9,7 @@ experimental native picker engine and is not a public dependency-policy change.
 | fzf surface | projmux usage | Native status | Evidence |
 | --- | --- | --- | --- |
 | `--prompt` | AI, settings, shell update, switch, sessions, notify | Covered | `renderNativeInteractive`, `renderNative`; `TestNativePromptLineIncludesInlineMatchCount` |
-| prompt/list separation | native searchable picker chrome | Covered | native renders an explicit `Search` header label plus a separator under searchable prompt/count lines; `TestNativeInteractiveSeparatesSearchHeaderFromList` |
+| prompt/list separation | native searchable picker chrome | Covered | native renders an explicit `Search` header label plus a separator under searchable prompt/count lines; `TestNativeInteractiveSeparatesSearchHeaderFromList`; Docker no-fzf e2e asserts the `Search` header in Settings and AI settings PTY logs |
 | `--height 100%` / `--border` | all interactive picker screens | Covered for fullscreen rounded border frame | `renderNativeFrame`; screen-height list budgeting; conservative 80x24 fallback only when terminal size detection is unavailable; `TestNativeInteractiveRendersBorderFrame`; `TestNativeInteractiveUsesAvailableHeightForSimpleLists` |
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / `--footer-border line` | AI, settings, shell update, switch, sessions, notify | Covered for interactive native screens | `renderNativeInteractive` reserves bottom footer space and renders a separator line; `TestNativeInteractiveRendersFooterAtBottom` |
