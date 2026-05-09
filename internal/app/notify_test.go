@@ -318,6 +318,49 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	}
 }
 
+func TestNotifyListSidebarHeaderDecoration(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name       string
+		decoration string
+		wantHeader string
+	}{
+		{name: "off", decoration: "off", wantHeader: "Pending notifications, newest first"},
+		{name: "symbol", decoration: "symbol", wantHeader: " Pending notifications, newest first"},
+		{name: "emoji", decoration: "emoji", wantHeader: "🔔 Pending notifications, newest first"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := &stubNotifyStore{}
+			picker := &stubNotifyPicker{}
+			runner := &focusFakeRunner{respond: func(args []string) ([]byte, error) {
+				if reflect.DeepEqual(args, []string{"show-option", "-gqv", statusbarDecorationTmuxOption}) {
+					return []byte(tt.decoration + "\n"), nil
+				}
+				return nil, errors.New("unexpected runner call")
+			}}
+			cmd := newCmd(store)
+			cmd.lookupEnv = func(name string) string {
+				if name == "TMUX" {
+					return "/tmp/tmux"
+				}
+				return ""
+			}
+			cmd.picker = picker
+			cmd.runner = runner
+
+			if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run error = %v", err)
+			}
+			if got := picker.options.Header; got != tt.wantHeader {
+				t.Fatalf("picker header = %q, want %q", got, tt.wantHeader)
+			}
+		})
+	}
+}
+
 func TestNotifySidebarLabelDoesNotExposeRawPaneID(t *testing.T) {
 	t.Parallel()
 

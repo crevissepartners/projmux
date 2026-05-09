@@ -33,6 +33,8 @@ type notifyCommand struct {
 	runner     tmuxRunner
 	picker     intfzf.Runner
 	executable func() (string, error)
+	lookupEnv  func(string) string
+	homeDir    func() (string, error)
 }
 
 func newNotifyCommand() *notifyCommand {
@@ -41,6 +43,8 @@ func newNotifyCommand() *notifyCommand {
 		runner:     reconcileDefaultRunner(),
 		picker:     intfzf.NewRunner(),
 		executable: os.Executable,
+		lookupEnv:  os.Getenv,
+		homeDir:    os.UserHomeDir,
 	}
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
@@ -279,7 +283,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		UI:            "notify-sidebar",
 		Read0:         true,
 		Prompt:        "Notify > ",
-		Header:        "Pending notifications, newest first",
+		Header:        notifyHeaderDecorator(c.statusbarDecoration()) + "Pending notifications, newest first",
 		Footer:        "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
 		ExpectKeys:    []string{"x", "ctrl-x"},
 		Bindings:      []string{"alt-2:abort"},
@@ -507,6 +511,16 @@ func (c *notifyCommand) focusNotification(entry notify.Notification, source, kin
 		return fmt.Errorf("focus notification: %w", err)
 	}
 	return nil
+}
+
+func (c *notifyCommand) statusbarDecoration() config.StatusbarDecoration {
+	if envValue(c.lookupEnv, "TMUX") != "" && c.runner != nil {
+		out, err := c.runner.Run(context.Background(), "tmux", "show-option", "-gqv", statusbarDecorationTmuxOption)
+		if err == nil && strings.TrimSpace(string(out)) != "" {
+			return config.NormalizeStatusbarDecoration(string(out))
+		}
+	}
+	return loadStatusbarDecoration(c.homeDir, c.lookupEnv)
 }
 
 // --- ack ---------------------------------------------------------------------

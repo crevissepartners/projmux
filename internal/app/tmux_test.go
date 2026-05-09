@@ -258,11 +258,10 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
 		decoration string
-		wantTitle  string
 	}{
 		{name: "off", decoration: "off"},
-		{name: "symbol", decoration: "symbol", wantTitle: ""},
-		{name: "emoji", decoration: "emoji", wantTitle: "🔔"},
+		{name: "symbol", decoration: "symbol"},
+		{name: "emoji", decoration: "emoji"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -299,13 +298,10 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 				"-w", "72",
 				"-h", "50",
 			}
-			if tt.wantTitle != "" {
-				wantPrefix = append(wantPrefix, "-T", tt.wantTitle)
-			}
 			if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
 				t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
 			}
-			if tt.wantTitle == "" && slices.Contains(got.args, "-T") {
+			if slices.Contains(got.args, "-T") {
 				t.Fatalf("display call = %#v, want no title option", got)
 			}
 			command := got.args[len(got.args)-1]
@@ -534,7 +530,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' status git",
 		"set -g @projmux_statusbar_decoration off",
 		"set -g status 2",
-		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour244] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
+		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour33] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		" %Y-%m-%d %H:%M",
 		"range=user|notify",
 		"range=user|usage",
@@ -753,7 +749,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
 		"set -g @projmux_statusbar_decoration off",
-		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour244] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
+		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour33] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		" %Y-%m-%d %H:%M#[default]",
 		"set -g status 2",

@@ -678,7 +678,6 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 		options.Height = popupSize(ctx.ClientHeight, 100, 20)
 		options.X = popupRightX(ctx.ClientWidth, options.Width)
 		options.Y = "0"
-		options.Title = notificationPopupTitle(ctx.Decoration)
 		commandArgs = []string{"notify", "list", "--ui=sidebar"}
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 96)

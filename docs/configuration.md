@@ -102,11 +102,11 @@ failure handling.
 
 ## Decoration Mode
 
-Settings > Icons & Decorations controls optional status and popup decoration:
+Settings > Icons & Decorations controls optional status and picker decoration:
 
 - `off` is the default and avoids icon-font assumptions.
-- `symbol` restores the Nerd Font-style folder/git/bell icons.
-- `emoji` uses emoji decorators.
+- `symbol` restores the Nerd Font-style folder, GitHub, and bell icons.
+- `emoji` uses emoji decorators, including the notify sidebar header bell.
 
 The saved value lives at:
 
