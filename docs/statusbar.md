@@ -73,8 +73,9 @@ The path popup uses a short title, one-line copy status, the current path, and
 an `Enter closes this popup` prompt. If the tmux buffer write fails, it keeps
 the same compact surface with `Current path` as the title and a copy-unavailable
 message. The notification HUD detail surface (`Alt-2` / `User2`) opens the
-right-side `Notifications` popup with newest-first rows; selecting a row still
-focuses and acknowledges that notification.
+right-side notification popup with newest-first rows; its popup title follows
+the decoration mode (`off` leaves it untitled, `symbol`/`emoji` show a bell).
+Selecting a row still focuses and acknowledges that notification.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,
@@ -128,10 +129,10 @@ emits a deterministic block per segment), regenerate, and re-apply:
 projmux tmux apply
 ```
 
-Settings > Status Bar > cwd/git leading decoration controls the optional
-prefix before the path and git branch. The persisted enum lives at
+Settings > Icons & Decorations controls the optional decoration mode used by
+the path, git branch, and notification popup. The persisted enum lives at
 `~/.config/projmux/statusbar-decoration`; valid values are `off` (default,
-font-safe), `symbol` (Nerd Font-style folder/git icons), and `emoji`.
+font-safe), `symbol` (Nerd Font-style folder/git/bell icons), and `emoji`.
 Settings also updates tmux `@projmux_statusbar_decoration` for the live
 server when run inside tmux.
 

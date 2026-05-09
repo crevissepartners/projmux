@@ -584,6 +584,7 @@ type tmuxPopupContext struct {
 	ContextDir    string
 	ClientWidth   int
 	ClientHeight  int
+	Decoration    config.StatusbarDecoration
 }
 
 func (c *tmuxCommand) popupContext(ctx context.Context) tmuxPopupContext {
@@ -594,6 +595,11 @@ func (c *tmuxCommand) popupContext(ctx context.Context) tmuxPopupContext {
 	if clientKey == "" {
 		clientKey = "unknown"
 	}
+	rawDecoration := c.tmuxFormat(ctx, "#{"+statusbarDecorationTmuxOption+"}")
+	decoration := config.NormalizeStatusbarDecoration(rawDecoration)
+	if strings.TrimSpace(rawDecoration) == "" {
+		decoration = loadStatusbarDecoration(c.homeDir, c.lookupEnv)
+	}
 
 	return tmuxPopupContext{
 		ClientKey:     sanitizePopupKey(clientKey),
@@ -603,6 +609,7 @@ func (c *tmuxCommand) popupContext(ctx context.Context) tmuxPopupContext {
 		ContextDir:    c.tmuxFormat(ctx, "#{pane_current_path}"),
 		ClientWidth:   parseTmuxPositiveInt(c.tmuxFormat(ctx, "#{client_width}")),
 		ClientHeight:  parseTmuxPositiveInt(c.tmuxFormat(ctx, "#{client_height}")),
+		Decoration:    decoration,
 	}
 }
 
@@ -671,7 +678,7 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 		options.Height = popupSize(ctx.ClientHeight, 100, 20)
 		options.X = popupRightX(ctx.ClientWidth, options.Width)
 		options.Y = "0"
-		options.Title = "Notifications"
+		options.Title = notificationPopupTitle(ctx.Decoration)
 		commandArgs = []string{"notify", "list", "--ui=sidebar"}
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 96)

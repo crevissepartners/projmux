@@ -162,7 +162,7 @@ func (c *settingsCommand) rootEntries() []intfzf.Entry {
 			Value: settingsSectionProject,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Status Bar", "cwd/git leading decoration"),
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Icons & Decorations", "status and popup decoration mode"),
 			Value: settingsSectionStatusbar,
 		},
 		{
@@ -198,8 +198,8 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 		return intfzf.Options{
 			UI:         "settings-statusbar",
 			Entries:    c.statusbarEntries(),
-			Prompt:     "Settings > Status Bar > ",
-			Header:     "Set cwd/git leading decoration",
+			Prompt:     "Settings > Icons & Decorations > ",
+			Header:     "Set status and popup decoration mode",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -912,9 +912,9 @@ func (c *settingsCommand) statusbarEntries() []intfzf.Entry {
 		mode config.StatusbarDecoration
 		desc string
 	}{
-		{config.StatusbarDecorationOff, "no cwd/git prefix; safest for all fonts"},
-		{config.StatusbarDecorationSymbol, "Nerd Font-style folder and git icons"},
-		{config.StatusbarDecorationEmoji, "emoji folder and branch icons"},
+		{config.StatusbarDecorationOff, "no status or popup icon prefix; safest for all fonts"},
+		{config.StatusbarDecorationSymbol, "Nerd Font-style status and notification icons"},
+		{config.StatusbarDecorationEmoji, "emoji status and notification icons"},
 	}
 
 	entries := make([]intfzf.Entry, 0, len(modes)+1)
@@ -949,9 +949,9 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 	}
 	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
 		if err := c.runCommand("tmux", "set-option", "-g", statusbarDecorationTmuxOption, string(mode)); err != nil {
-			return fmt.Errorf("set live tmux statusbar decoration: %w", err)
+			return fmt.Errorf("set live tmux decoration mode: %w", err)
 		}
-		_ = c.runCommand("tmux", "display-message", "statusbar decoration: "+string(mode))
+		_ = c.runCommand("tmux", "display-message", "decoration mode: "+string(mode))
 	}
 	return nil
 }

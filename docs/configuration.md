@@ -100,12 +100,12 @@ ${PROJMUX_USAGE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/projmux/usage}/
 See [Usage tracking](usage-tracking.md) for adapter behavior, throttling, and
 failure handling.
 
-## Status Bar Decoration
+## Decoration Mode
 
-Settings > Status Bar controls the optional cwd/git leading decoration:
+Settings > Icons & Decorations controls optional status and popup decoration:
 
 - `off` is the default and avoids icon-font assumptions.
-- `symbol` restores the Nerd Font-style folder/git icons.
+- `symbol` restores the Nerd Font-style folder/git/bell icons.
 - `emoji` uses emoji decorators.
 
 The saved value lives at:
