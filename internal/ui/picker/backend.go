@@ -1157,89 +1157,31 @@ func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 }
 
 func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {
-	var screen strings.Builder
-	screen.WriteString(top)
-	screen.WriteString(main)
-	footerLines := nativeFooterBlockLines(footer, layout.Cols)
-	if len(footerLines) == 0 {
-		fmt.Fprint(w, screen.String())
-		return
-	}
-	remaining := layout.Rows - nativeRenderedTextLineCount(screen.String()) - len(footerLines)
-	for i := 0; i < remaining; i++ {
-		fmt.Fprintln(&screen)
-	}
-	for _, line := range footerLines {
-		fmt.Fprintln(&screen, line)
-	}
-	fmt.Fprint(w, screen.String())
+	projmuxpicker.WriteContentWithFooter(w, top, main, footer, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
 func nativeFooterBlockLines(footer string, cols int) []string {
-	footer = strings.TrimSpace(footer)
-	if footer == "" {
-		return nil
-	}
-	if cols <= 0 {
-		cols = defaultNativeCols
-	}
-	lines := []string{nativeTruncateANSI(strings.Repeat("─", cols), cols)}
-	for _, line := range strings.Split(footer, "\n") {
-		lines = append(lines, nativeTruncateANSI(strings.TrimRight(line, "\r"), cols))
-	}
-	return lines
+	return projmuxpicker.FooterBlockLines(footer, cols)
 }
 
 func nativeRenderedTextLineCount(value string) int {
-	value = strings.TrimSuffix(value, "\n")
-	if value == "" {
-		return 0
-	}
-	return len(strings.Split(value, "\n"))
+	return projmuxpicker.RenderedTextLineCount(value)
 }
 
 func nativePromptLine(prompt, query string, matches, total, cols int) string {
-	return nativePromptLineWithRenderedQuery(prompt, query, query, matches, total, cols)
+	return projmuxpicker.PromptLine(prompt, query, matches, total, cols)
 }
 
 func nativePromptLineWithCursor(prompt, query string, cursor, matches, total, cols int) string {
-	return nativePromptLineWithRenderedQuery(prompt, query, nativeQueryWithCursor(query, cursor), matches, total, cols)
+	return projmuxpicker.PromptLineWithCursor(prompt, query, cursor, matches, total, cols)
 }
 
 func nativePromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
-	prompt = strings.TrimRight(prompt, " ")
-	line := strings.TrimRight(prompt+" "+renderedQuery, " ")
-	info := strconv.Itoa(matches)
-	if query != "" || matches != total {
-		info = fmt.Sprintf("%d/%d", matches, total)
-	}
-	if cols <= 0 {
-		cols = defaultNativeCols
-	}
-	padding := cols - nativeVisibleLen(line) - len(info)
-	if padding < 2 {
-		return line + "  " + info
-	}
-	return line + strings.Repeat(" ", padding) + info
+	return projmuxpicker.PromptLineWithRenderedQuery(prompt, query, renderedQuery, matches, total, cols)
 }
 
 func nativeQueryWithCursor(query string, cursor int) string {
-	runes := []rune(query)
-	cursor = clampNativeQueryCursor(runes, cursor)
-	if cursor == len(runes) {
-		return string(runes) + nativeCursorStart + " " + nativeReset
-	}
-	var out strings.Builder
-	for i, r := range runes {
-		if i == cursor {
-			out.WriteString(nativeCursorStart)
-			out.WriteRune(r)
-			out.WriteString(nativeReset)
-			continue
-		}
-		out.WriteRune(r)
-	}
-	return out.String()
+	return projmuxpicker.QueryWithCursor(query, cursor)
 }
 
 func nativeVisibleRange(total, selected, limit int) (int, int) {
@@ -1307,147 +1249,58 @@ func nativeVisibleRangeByRenderedRows(items []Item, selected, limit int) (int, i
 }
 
 func nativeRenderedListLineCount(items []Item, start, end int, multiLine bool) int {
-	if start < 0 {
-		start = 0
-	}
-	if end > len(items) {
-		end = len(items)
-	}
-	if start >= end {
-		return 0
-	}
-	total := 0
-	for i := start; i < end; i++ {
-		total += nativeItemLineCount(items[i])
-	}
-	if multiLine {
-		total += end - start - 1
-	}
-	return total
+	return projmuxpicker.RenderedListLineCount(nativeRows(items), start, end, multiLine)
 }
 
 func nativeItemLineCount(item Item) int {
-	count := len(strings.Split(item.EffectiveLabel(), "\n"))
-	if count == 0 {
-		count = 1
-	}
-	for _, meta := range item.MetaLines {
-		if strings.TrimSpace(meta) != "" {
-			count++
-		}
-	}
-	return count
+	return projmuxpicker.RowLineCount(nativeRow(item))
 }
 
 func nativeInteractiveListLines(items []Item, start, end, selected int, multiLine bool) []string {
-	lines := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		lines = append(lines, nativeInteractiveItemLines(items[i], i == selected, multiLine)...)
-		if multiLine && i < end-1 {
-			lines = append(lines, nativeGapSentinel)
-		}
-	}
-	return lines
+	return projmuxpicker.InteractiveListLines(nativeRows(items), start, end, selected, multiLine)
 }
 
 func nativeListLinesWithScrollbar(lines []string, total, start, end, width int) []string {
-	visible := end - start
-	hasScrollbar := total > visible && len(lines) > 0 && width > 1
-	if !hasScrollbar {
-		return nativeRenderableListLines(lines, width)
-	}
-	scrollbarIndex := 0
-	if maxStart := total - visible; maxStart > 0 && len(lines) > 1 {
-		scrollbarIndex = start * (len(lines) - 1) / maxStart
-	}
-	rendered := make([]string, 0, len(lines))
-	for i, line := range lines {
-		marker := " "
-		if i == scrollbarIndex {
-			marker = nativeScrollbar
-		}
-		line = nativeRenderableListLine(line, width-1)
-		rendered = append(rendered, nativePadRight(nativeTruncateANSI(line, width-1), width-1)+marker)
-	}
-	return rendered
+	return projmuxpicker.ListLinesWithScrollbar(lines, total, start, end, width)
 }
 
 func nativeRenderableListLines(lines []string, width int) []string {
-	rendered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		rendered = append(rendered, nativeRenderableListLine(line, width))
-	}
-	return rendered
+	return projmuxpicker.RenderableListLines(lines, width)
 }
 
 func nativeRenderableListLine(line string, width int) string {
-	if line != nativeGapSentinel {
-		return nativePadStyledLine(line, width)
-	}
-	if width <= 4 {
-		return nativeGapLine
-	}
-	return "  " + strings.Repeat(nativeGapLine, width-2)
+	return projmuxpicker.RenderableListLine(line, width)
 }
 
 func nativePadStyledLine(line string, width int) string {
-	if width <= 0 || nativeVisibleLen(line) >= width {
-		return line
-	}
-	padding := strings.Repeat(" ", width-nativeVisibleLen(line))
-	if strings.HasSuffix(line, nativeReset) {
-		return strings.TrimSuffix(line, nativeReset) + padding + nativeReset
-	}
-	return line
+	return projmuxpicker.PadStyledLine(line, width)
 }
 
 func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
-	lines := strings.Split(item.EffectiveLabel(), "\n")
-	prefix := "  "
-	if selected {
-		prefix = "> "
-		if multiLine {
-			prefix = nativePointer
-		}
-	}
-	if len(lines) == 0 {
-		lines = []string{""}
-	}
-	rendered := make([]string, 0, len(lines)+len(item.MetaLines))
-	first := fmt.Sprintf("%s%s", prefix, strings.TrimRight(lines[0], "\r"))
-	if selected {
-		if multiLine {
-			first = prefix + nativeSelectedContent(strings.TrimRight(lines[0], "\r"))
-		} else {
-			first = nativeInverseSelectedContent(first)
-		}
-	}
-	rendered = append(rendered, first)
-	for _, line := range lines[1:] {
-		line = fmt.Sprintf("    %s", strings.TrimRight(line, "\r"))
-		if selected && multiLine {
-			line = "  " + nativeSelectedContent(strings.TrimSpace(line))
-		}
-		rendered = append(rendered, line)
-	}
-	for _, meta := range item.MetaLines {
-		if meta = strings.TrimSpace(meta); meta != "" {
-			line := fmt.Sprintf("    %s", meta)
-			if selected && multiLine {
-				line = "  " + nativeSelectedContent(meta)
-			}
-			rendered = append(rendered, line)
-		}
-	}
-	return rendered
+	return projmuxpicker.InteractiveRowLines(nativeRow(item), selected, multiLine)
 }
 
 func nativeSelectedContent(value string) string {
-	return nativeCurrentStart + strings.ReplaceAll(value, nativeReset, nativeReset+nativeCurrentStart) + nativeReset
+	return projmuxpicker.SelectedContent(value)
 }
 
 func nativeInverseSelectedContent(value string) string {
-	return nativeInverseStart + strings.ReplaceAll(value, nativeReset, nativeReset+nativeInverseStart) + nativeReset
+	return projmuxpicker.InverseSelectedContent(value)
+}
+
+func nativeRows(items []Item) []projmuxpicker.Row {
+	rows := make([]projmuxpicker.Row, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, nativeRow(item))
+	}
+	return rows
+}
+
+func nativeRow(item Item) projmuxpicker.Row {
+	return projmuxpicker.Row{
+		Label:     item.EffectiveLabel(),
+		MetaLines: item.MetaLines,
+	}
 }
 
 func nativePreviewLines(options Options, items []Item, selected, offset, limit int) []string {
