@@ -12,6 +12,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 const (
@@ -203,19 +205,19 @@ type NativeRunner struct {
 
 const nativePageSize = 12
 const (
-	defaultNativeRows       = 30
-	defaultNativeCols       = 100
+	defaultNativeRows       = projmuxpicker.DefaultRows
+	defaultNativeCols       = projmuxpicker.DefaultCols
 	nativeReadPollDelay     = 5 * time.Millisecond
 	nativeMaybeReadAttempts = 50
-	nativeCurrentStart      = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
-	nativePointer           = "\x1b[38;2;225;38;114m▌\x1b[0m "
-	nativeReset             = "\x1b[0m"
-	nativeInverseStart      = "\x1b[7m"
-	nativeCursorStart       = "\x1b[7m"
+	nativeCurrentStart      = projmuxpicker.CurrentStart
+	nativePointer           = projmuxpicker.Pointer
+	nativeReset             = projmuxpicker.Reset
+	nativeInverseStart      = projmuxpicker.InverseStart
+	nativeCursorStart       = projmuxpicker.CursorStart
 	nativeScreenEnter       = "\x1b[?1049h\x1b[?25l"
 	nativeScreenLeave       = "\x1b[?25h\x1b[?1049l\r\n"
-	nativeScrollbar         = "█"
-	nativeGapLine           = "─"
+	nativeScrollbar         = projmuxpicker.Scrollbar
+	nativeGapLine           = projmuxpicker.GapLine
 	nativeGapSentinel       = "\x00projmux-native-gap\x00"
 )
 
@@ -1064,21 +1066,8 @@ func renderNativeInteractiveWithCursor(w io.Writer, options Options, items []Ite
 }
 
 func nativeContentLayout(layout nativeLayout) nativeLayout {
-	if layout.Rows <= 0 {
-		layout.Rows = defaultNativeRows
-	}
-	if layout.Cols <= 0 {
-		layout.Cols = defaultNativeCols
-	}
-	rows := layout.Rows - 2
-	if rows < 1 {
-		rows = 1
-	}
-	cols := layout.Cols - 4
-	if cols < 20 {
-		cols = layout.Cols
-	}
-	return nativeLayout{Rows: rows, Cols: cols}
+	content := projmuxpicker.DefaultRenderer().ContentLayout(projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+	return nativeLayout{Rows: content.Rows, Cols: content.Cols}
 }
 
 func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
@@ -1164,33 +1153,7 @@ func nativeTextLineCount(value string) int {
 }
 
 func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
-	width := layout.Cols
-	if width <= 0 {
-		width = defaultNativeCols
-	}
-	if width < 4 {
-		fmt.Fprint(w, content)
-		return
-	}
-	height := layout.Rows
-	if height <= 0 {
-		height = defaultNativeRows
-	}
-	innerWidth := width - 2
-	innerHeight := height - 2
-	if innerHeight < 1 {
-		innerHeight = 1
-	}
-	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	fmt.Fprintf(w, "╭%s╮\r\n", strings.Repeat("─", innerWidth))
-	for i := 0; i < innerHeight; i++ {
-		line := ""
-		if i < len(lines) {
-			line = nativeTruncateANSI(strings.TrimRight(lines[i], "\r"), innerWidth)
-		}
-		fmt.Fprintf(w, "│%s│\r\n", nativePadRight(line, innerWidth))
-	}
-	fmt.Fprintf(w, "╰%s╯\r\n", strings.Repeat("─", innerWidth))
+	projmuxpicker.DefaultRenderer().RenderFrame(w, content, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
 func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {
@@ -1614,68 +1577,15 @@ func renderNativeInlinePreview(w io.Writer, previewLines []string) {
 }
 
 func nativePadRight(value string, width int) string {
-	length := nativeVisibleLen(value)
-	if length >= width {
-		return value
-	}
-	return value + strings.Repeat(" ", width-length)
+	return projmuxpicker.PadRight(value, width)
 }
 
 func nativeTruncateANSI(value string, width int) string {
-	if width <= 0 || nativeVisibleLen(value) <= width {
-		return value
-	}
-	var out strings.Builder
-	visible := 0
-	sawANSI := false
-	for i := 0; i < len(value) && visible < width; {
-		if value[i] == '\x1b' {
-			end := i + 1
-			for end < len(value) && value[end] != 'm' {
-				end++
-			}
-			if end < len(value) {
-				out.WriteString(value[i : end+1])
-				sawANSI = true
-				i = end + 1
-				continue
-			}
-		}
-		r, size := utf8.DecodeRuneInString(value[i:])
-		if r == utf8.RuneError && size == 0 {
-			break
-		}
-		out.WriteRune(r)
-		visible++
-		i += size
-	}
-	if sawANSI && !strings.HasSuffix(out.String(), nativeReset) {
-		out.WriteString(nativeReset)
-	}
-	return out.String()
+	return projmuxpicker.TruncateANSI(value, width)
 }
 
 func nativeVisibleLen(value string) int {
-	length := 0
-	for i := 0; i < len(value); {
-		if value[i] == '\x1b' {
-			i++
-			for i < len(value) && value[i] != 'm' {
-				i++
-			}
-			if i < len(value) {
-				i++
-			}
-			continue
-		}
-		_, size := utf8.DecodeRuneInString(value[i:])
-		if size <= 0 {
-			break
-		}
-		length++
-		i += size
-	}
-	return length
+	return projmuxpicker.VisibleLen(value)
 }
 
 func maxInt(a, b int) int {
