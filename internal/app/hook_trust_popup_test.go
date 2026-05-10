@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 func TestBuildHookTrustPopupArgsTargetsWidePopup(t *testing.T) {
@@ -77,7 +78,8 @@ func TestHookTrustPromptWritesDecision(t *testing.T) {
 		t.Fatalf("decision = %q, want %q", got, want)
 	}
 	for _, want := range []string{
-		"Project-local hook requires trust",
+		"Project hook trust",
+		projmuxpicker.MutedStart,
 		"[a] always",
 		".projmux/config.toml",
 	} {

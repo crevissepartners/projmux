@@ -13,12 +13,14 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 const (
 	hookTrustPopupTitle           = "Trust project hook"
 	hookTrustPopupWidth           = "90"
 	hookTrustPopupHeight          = "24"
+	hookTrustPopupContentWidth    = 86
 	hookTrustInlineEnv            = "PROJMUX_HOOK_TRUST_INLINE"
 	hookTrustPopupTargetClientEnv = "PROJMUX_HOOK_TRUST_TARGET_CLIENT"
 	hookTrustPopupTargetPaneEnv   = "PROJMUX_HOOK_TRUST_TARGET_PANE"
@@ -176,34 +178,33 @@ func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Read
 }
 
 func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectHookPromptRequest) hooks.ProjectHookDecision {
-	fmt.Fprintln(writer, "Project-local hook requires trust")
+	fmt.Fprintln(writer, projmuxpicker.CurrentStart+" Project hook trust "+projmuxpicker.Reset)
+	fmt.Fprintln(writer, hookTrustMuted("Project-local automation is disabled until this file hash is trusted."))
 	fmt.Fprintln(writer)
-	fmt.Fprintln(writer, "Repo")
-	fmt.Fprintf(writer, "  %s\n", req.RepoPath)
-	fmt.Fprintln(writer, "Hook")
-	fmt.Fprintf(writer, "  %s\n", req.RelativePath)
+	writeHookTrustField(writer, "repo", req.RepoPath)
+	writeHookTrustField(writer, "hook", req.RelativePath)
 	if req.PreviousSHA256 != "" {
-		fmt.Fprintln(writer, "Trusted SHA256")
-		fmt.Fprintf(writer, "  %s\n", req.PreviousSHA256)
+		writeHookTrustField(writer, "trusted sha", req.PreviousSHA256)
 	}
-	fmt.Fprintln(writer, "Current SHA256")
-	fmt.Fprintf(writer, "  %s\n", req.SHA256)
+	writeHookTrustField(writer, "current sha", req.SHA256)
 	if strings.TrimSpace(req.Preview) != "" {
 		fmt.Fprintln(writer)
-		fmt.Fprintln(writer, "Preview")
+		fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
+		fmt.Fprintln(writer, hookTrustMuted("preview"))
 		for line := range strings.SplitSeq(req.Preview, "\n") {
-			fmt.Fprintf(writer, "  %s\n", line)
+			fmt.Fprintln(writer, "  "+projmuxpicker.TruncateANSI(line, hookTrustPopupContentWidth-2))
 		}
 	}
 
 	fmt.Fprintln(writer)
-	fmt.Fprintln(writer, "[o] once    run this time only")
-	fmt.Fprintln(writer, "[a] always  trust this exact file hash")
-	fmt.Fprintln(writer, "[d] deny    skip this hook")
+	fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
+	fmt.Fprintln(writer, hookTrustActionLine("[o] once", "run this time only"))
+	fmt.Fprintln(writer, hookTrustActionLine("[a] always", "trust this exact file hash"))
+	fmt.Fprintln(writer, hookTrustActionLine("[d] deny", "skip this hook"))
 
 	input := bufio.NewReader(reader)
 	for range 3 {
-		fmt.Fprint(writer, "Select [o/a/d], then Enter: ")
+		fmt.Fprint(writer, "\n"+hookTrustMuted("choice")+"  ")
 		line, err := input.ReadString('\n')
 		if err != nil && len(line) == 0 {
 			fmt.Fprintln(writer)
@@ -213,9 +214,29 @@ func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectH
 		if decision != "" {
 			return decision
 		}
-		fmt.Fprintln(writer, "Please enter o, a, or d.")
+		fmt.Fprintln(writer, hookTrustMuted("Enter o, a, or d."))
 	}
 	return hooks.ProjectHookDeny
+}
+
+func writeHookTrustField(w io.Writer, label, value string) {
+	label = strings.TrimSpace(label)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "-"
+	}
+	fmt.Fprintf(w, "%s  %s\n",
+		hookTrustMuted(fmt.Sprintf("%-11s", label)),
+		projmuxpicker.TruncateANSI(value, hookTrustPopupContentWidth-13),
+	)
+}
+
+func hookTrustActionLine(action, detail string) string {
+	return fmt.Sprintf("  %-12s %s", action, hookTrustMuted(detail))
+}
+
+func hookTrustMuted(value string) string {
+	return projmuxpicker.MutedStart + value + projmuxpicker.Reset
 }
 
 func parseHookTrustDecision(value string) hooks.ProjectHookDecision {

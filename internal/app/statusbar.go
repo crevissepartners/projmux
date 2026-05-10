@@ -667,6 +667,9 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time) statusbarUsag
 func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int) []string {
 	rows := statusbarUsageRows(state.Snapshots)
 	lines := []string{
+		statusbarPopupTitleLine("Usage HUD"),
+		dimANSI("AI token usage windows from the local cache."),
+		"",
 		statusbarUsageSyncLine(state, now),
 		"",
 		statusbarUsageHeaderLine(),
@@ -681,7 +684,7 @@ func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int
 			lines = append(lines, row.render())
 		}
 	}
-	lines = append(lines, "", projmuxpicker.MutedStart+"Enter closes this popup."+projmuxpicker.Reset)
+	lines = append(lines, statusbarPopupFooterLines(cols)...)
 	return lines
 }
 
@@ -932,25 +935,22 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata) statusbarPa
 
 	const width = 84
 	contentWidth := width - 2
-	pathWidth := max(contentWidth-4, 24)
 	lines := []string{
-		projmuxpicker.HighlightStart + "Current pane path" + projmuxpicker.Reset,
+		statusbarPopupTitleLine("Current path"),
+		dimANSI("Active pane working directory."),
 		"",
-		projmuxpicker.MutedStart + "cwd" + projmuxpicker.Reset,
 	}
-	for _, line := range wrapStatusbarText(path, pathWidth) {
-		lines = append(lines, "  "+line)
-	}
+	lines = append(lines, statusbarFieldLines("cwd", path, contentWidth)...)
 	if metadata.Project != "" || metadata.Git != "" {
-		lines = append(lines, "")
+		lines = append(lines, "", projmuxpicker.SeparatorLine(contentWidth))
 		if metadata.Project != "" {
-			lines = append(lines, statusbarMetaLine("project", metadata.Project))
+			lines = append(lines, statusbarFieldLines("project", metadata.Project, contentWidth)...)
 		}
 		if metadata.Git != "" {
-			lines = append(lines, statusbarMetaLine("git", metadata.Git))
+			lines = append(lines, statusbarFieldLines("git", metadata.Git, contentWidth)...)
 		}
 	}
-	lines = append(lines, "", projmuxpicker.MutedStart+"Enter closes this popup."+projmuxpicker.Reset)
+	lines = append(lines, statusbarPopupFooterLines(contentWidth)...)
 
 	content := strings.Join(lines, "\n")
 	height := projmuxpicker.RenderedTextLineCount(content) + 2
@@ -965,8 +965,41 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata) statusbarPa
 	}
 }
 
-func statusbarMetaLine(label, value string) string {
-	return projmuxpicker.MutedStart + label + projmuxpicker.Reset + "  " + value
+func statusbarPopupTitleLine(title string) string {
+	return projmuxpicker.CurrentStart + " " + strings.TrimSpace(title) + " " + projmuxpicker.Reset
+}
+
+func statusbarPopupFooterLines(cols int) []string {
+	return []string{
+		"",
+		projmuxpicker.SeparatorLine(cols),
+		projmuxpicker.MutedStart + "Enter closes this popup." + projmuxpicker.Reset,
+	}
+}
+
+func statusbarFieldLines(label, value string, cols int) []string {
+	const labelWidth = 11
+	label = strings.TrimSpace(label)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "-"
+	}
+	valueWidth := max(cols-labelWidth-2, 24)
+	wrapped := wrapStatusbarText(value, valueWidth)
+	if len(wrapped) == 0 {
+		wrapped = []string{"-"}
+	}
+	lines := make([]string, 0, len(wrapped))
+	prefix := projmuxpicker.MutedStart + fmt.Sprintf("%-*s", labelWidth, label) + projmuxpicker.Reset + "  "
+	continuation := strings.Repeat(" ", labelWidth+2)
+	for i, line := range wrapped {
+		if i == 0 {
+			lines = append(lines, prefix+line)
+		} else {
+			lines = append(lines, continuation+line)
+		}
+	}
+	return lines
 }
 
 func wrapStatusbarText(value string, width int) []string {
