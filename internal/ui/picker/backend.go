@@ -1291,7 +1291,12 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
-	listLines = nativeListLinesWithScrollbar(listLines, len(items), start, end, layout.Cols)
+	scrollRows := listLimit
+	if len(previewLines) > 0 && placement != "down" {
+		scrollRows = len(listLines)
+	}
+	scrollTotal, scrollStart, scrollEnd := nativeListScrollbarUnits(items, start, end, options.MultiLine)
+	listLines = nativeListLinesWithScrollbarRows(listLines, scrollTotal, scrollStart, scrollEnd, layout.Cols, scrollRows)
 	for _, line := range listLines {
 		fmt.Fprintln(&main, line)
 	}
@@ -1455,6 +1460,24 @@ func nativeInteractiveListLines(items []Item, start, end, selected int, multiLin
 
 func nativeListLinesWithScrollbar(lines []string, total, start, end, width int) []string {
 	return projmuxpicker.ListLinesWithScrollbar(lines, total, start, end, width)
+}
+
+func nativeListLinesWithScrollbarRows(lines []string, total, start, end, width, rows int) []string {
+	return projmuxpicker.ListLinesWithScrollbarRows(lines, total, start, end, width, rows)
+}
+
+func nativeListScrollbarUnits(items []Item, start, end int, multiLine bool) (int, int, int) {
+	if !multiLine {
+		return len(items), start, end
+	}
+	rows := nativeRows(items)
+	total := projmuxpicker.RenderedListLineCount(rows, 0, len(rows), true)
+	before := projmuxpicker.RenderedListLineCount(rows, 0, start, true)
+	if start > 0 {
+		before++
+	}
+	visible := projmuxpicker.RenderedListLineCount(rows, start, end, true)
+	return total, before, before + visible
 }
 
 func nativeRenderableListLines(lines []string, width int) []string {
