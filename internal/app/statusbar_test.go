@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
-	intclipboard "github.com/crevissepartners/projmux/internal/integrations/clipboard"
 )
 
 // statusbarFakeRunner records every call so tests can assert on exec args
@@ -39,9 +38,6 @@ func newStatusbarTestCommand(runner *statusbarFakeRunner, store notifyStore) *st
 	c := &statusbarCommand{
 		runner:     runner,
 		executable: func() (string, error) { return "/usr/local/bin/projmux", nil },
-		clipboardCopy: func(context.Context, string) (intclipboard.Result, error) {
-			return intclipboard.Result{Target: intclipboard.TargetSystem, Tool: "mock"}, nil
-		},
 	}
 	if store != nil {
 		c.notifyStoreFn = func() (notifyStore, error) { return store, nil }
@@ -218,7 +214,7 @@ func TestStatusbarClickSessionOpensProjectSidebar(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickPwdOpensPathPopupAndCopiesSystemClipboard(t *testing.T) {
+func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{
@@ -237,17 +233,11 @@ func TestStatusbarClickPwdOpensPathPopupAndCopiesSystemClipboard(t *testing.T) {
 	if err := cmd.Run([]string{"click", "pwd"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if sawTmuxArgs(runner.calls, []string{"set-buffer", "/home/es5h/source/repos/projmux"}) {
-		t.Fatalf("system clipboard success should not need set-buffer fallback; calls = %#v", runner.calls)
-	}
 	if !sawTmuxSubcommand(runner.calls, "display-popup") {
 		t.Fatalf("missing path display-popup; calls = %#v", runner.calls)
 	}
-	if !sawTmuxArgsContainInOrder(runner.calls, []string{"display-popup", "-T", "Path copied"}) {
+	if !sawTmuxArgsContainInOrder(runner.calls, []string{"display-popup", "-T", "Current path"}) {
 		t.Fatalf("missing path popup title; calls = %#v", runner.calls)
-	}
-	if !sawTmuxPopupCommandContaining(runner.calls, "Copied to system clipboard") {
-		t.Fatalf("missing system clipboard status; calls = %#v", runner.calls)
 	}
 	if !sawTmuxPopupCommandContaining(runner.calls, "/home/es5h/source/repos/projmux") {
 		t.Fatalf("missing full path in popup; calls = %#v", runner.calls)
@@ -258,29 +248,29 @@ func TestStatusbarClickPwdOpensPathPopupAndCopiesSystemClipboard(t *testing.T) {
 	if !sawTmuxPopupCommandContaining(runner.calls, "git") || !sawTmuxPopupCommandContaining(runner.calls, "ship/statusbar-cwd-popup-phase2") {
 		t.Fatalf("missing git metadata; calls = %#v", runner.calls)
 	}
-}
-
-func TestStatusbarClickPwdReportsTmuxBufferFallback(t *testing.T) {
-	t.Parallel()
-
-	runner := &statusbarFakeRunner{
-		respond: func(name string, args []string) ([]byte, error) {
-			if name == "tmux" && equalStringSlices(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}) {
-				return []byte("/tmp/project\n"), nil
+	for _, call := range runner.calls {
+		if call.name != "tmux" {
+			if call.name == "clip.exe" || call.name == "pbcopy" || call.name == "wl-copy" || call.name == "xclip" || call.name == "xsel" {
+				t.Fatalf("pwd click must not invoke system clipboard tool; calls = %#v", runner.calls)
 			}
-			return nil, nil
-		},
+			continue
+		}
+		if len(call.args) > 0 && (call.args[0] == "set-buffer" || call.args[0] == "load-buffer") {
+			t.Fatalf("pwd click must not write tmux buffer; calls = %#v", runner.calls)
+		}
 	}
-	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
-	cmd.clipboardCopy = func(context.Context, string) (intclipboard.Result, error) {
-		return intclipboard.Result{Target: intclipboard.TargetTmux, Tool: "tmux load-buffer"}, nil
+	command, ok := firstTmuxPopupCommand(runner.calls)
+	if !ok {
+		t.Fatalf("missing popup command; calls = %#v", runner.calls)
 	}
-
-	if err := cmd.Run([]string{"click", "pwd"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if !strings.HasPrefix(command, "printf %s ") {
+		t.Fatalf("popup command = %q, want single-payload printf %%s", command)
 	}
-	if !sawTmuxPopupCommandContaining(runner.calls, "tmux buffer only - install a clipboard tool for system clipboard") {
-		t.Fatalf("missing tmux fallback status; calls = %#v", runner.calls)
+	if !strings.Contains(command, "; IFS= read -r _") {
+		t.Fatalf("popup command = %q, want simple Enter read", command)
+	}
+	if strings.Contains(command, "printf '%s\\n'") || strings.Contains(command, "read -n1") {
+		t.Fatalf("popup command uses brittle output/read shape: %q", command)
 	}
 }
 
@@ -326,8 +316,8 @@ func TestStatusbarClickPwdFallsBackToToastWhenPopupFails(t *testing.T) {
 	if err := cmd.Run([]string{"click", "pwd"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawTmuxDisplayMessage(runner.calls, "Copied to system clipboard: /tmp/project") {
-		t.Fatalf("missing fallback copied-path toast; calls = %#v", runner.calls)
+	if !sawTmuxDisplayMessage(runner.calls, "path: /tmp/project") {
+		t.Fatalf("missing fallback path toast; calls = %#v", runner.calls)
 	}
 }
 
@@ -998,6 +988,16 @@ func sawTmuxPopupCommandContaining(calls []statusbarFakeCall, want string) bool 
 		}
 	}
 	return false
+}
+
+func firstTmuxPopupCommand(calls []statusbarFakeCall) (string, bool) {
+	for _, c := range calls {
+		if c.name != "tmux" || len(c.args) < 2 || c.args[0] != "display-popup" {
+			continue
+		}
+		return c.args[len(c.args)-1], true
+	}
+	return "", false
 }
 
 func lastDisplayMessage(calls []statusbarFakeCall) (string, bool) {
