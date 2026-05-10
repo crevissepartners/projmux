@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	intclipboard "github.com/crevissepartners/projmux/internal/integrations/clipboard"
 )
 
 // statusbarFakeRunner records every call so tests can assert on exec args
@@ -38,6 +39,9 @@ func newStatusbarTestCommand(runner *statusbarFakeRunner, store notifyStore) *st
 	c := &statusbarCommand{
 		runner:     runner,
 		executable: func() (string, error) { return "/usr/local/bin/projmux", nil },
+		clipboardCopy: func(context.Context, string) (intclipboard.Result, error) {
+			return intclipboard.Result{Target: intclipboard.TargetSystem, Tool: "mock"}, nil
+		},
 	}
 	if store != nil {
 		c.notifyStoreFn = func() (notifyStore, error) { return store, nil }
@@ -214,13 +218,16 @@ func TestStatusbarClickSessionOpensProjectSidebar(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickPwdOpensPathPopupAndCopiesBuffer(t *testing.T) {
+func TestStatusbarClickPwdOpensPathPopupAndCopiesSystemClipboard(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{
 		respond: func(name string, args []string) ([]byte, error) {
 			if name == "tmux" && equalStringSlices(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}) {
 				return []byte("/home/es5h/source/repos/projmux\n"), nil
+			}
+			if name == "git" && equalStringSlices(args, []string{"-C", "/home/es5h/source/repos/projmux", "rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"}) {
+				return []byte("/home/es5h/source/repos/projmux\nship/statusbar-cwd-popup-phase2\n"), nil
 			}
 			return nil, nil
 		},
@@ -230,8 +237,8 @@ func TestStatusbarClickPwdOpensPathPopupAndCopiesBuffer(t *testing.T) {
 	if err := cmd.Run([]string{"click", "pwd"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawTmuxArgs(runner.calls, []string{"set-buffer", "/home/es5h/source/repos/projmux"}) {
-		t.Fatalf("missing set-buffer with pane path; calls = %#v", runner.calls)
+	if sawTmuxArgs(runner.calls, []string{"set-buffer", "/home/es5h/source/repos/projmux"}) {
+		t.Fatalf("system clipboard success should not need set-buffer fallback; calls = %#v", runner.calls)
 	}
 	if !sawTmuxSubcommand(runner.calls, "display-popup") {
 		t.Fatalf("missing path display-popup; calls = %#v", runner.calls)
@@ -239,8 +246,63 @@ func TestStatusbarClickPwdOpensPathPopupAndCopiesBuffer(t *testing.T) {
 	if !sawTmuxArgsContainInOrder(runner.calls, []string{"display-popup", "-T", "Path copied"}) {
 		t.Fatalf("missing path popup title; calls = %#v", runner.calls)
 	}
-	if !sawTmuxPopupCommandContaining(runner.calls, "Current pane path is in the tmux paste buffer.") {
-		t.Fatalf("missing copied path popup body; calls = %#v", runner.calls)
+	if !sawTmuxPopupCommandContaining(runner.calls, "Copied to system clipboard") {
+		t.Fatalf("missing system clipboard status; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "/home/es5h/source/repos/projmux") {
+		t.Fatalf("missing full path in popup; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "project") || !sawTmuxPopupCommandContaining(runner.calls, "projmux") {
+		t.Fatalf("missing project metadata; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "git") || !sawTmuxPopupCommandContaining(runner.calls, "ship/statusbar-cwd-popup-phase2") {
+		t.Fatalf("missing git metadata; calls = %#v", runner.calls)
+	}
+}
+
+func TestStatusbarClickPwdReportsTmuxBufferFallback(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{
+		respond: func(name string, args []string) ([]byte, error) {
+			if name == "tmux" && equalStringSlices(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}) {
+				return []byte("/tmp/project\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	cmd.clipboardCopy = func(context.Context, string) (intclipboard.Result, error) {
+		return intclipboard.Result{Target: intclipboard.TargetTmux, Tool: "tmux load-buffer"}, nil
+	}
+
+	if err := cmd.Run([]string{"click", "pwd"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "tmux buffer only - install a clipboard tool for system clipboard") {
+		t.Fatalf("missing tmux fallback status; calls = %#v", runner.calls)
+	}
+}
+
+func TestStatusbarPathMetadataPreservesGitRootWithSpaces(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{
+		respond: func(name string, args []string) ([]byte, error) {
+			if name == "git" && equalStringSlices(args, []string{"-C", "/tmp/work tree/proj", "rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"}) {
+				return []byte("/tmp/work tree/proj\nfeature/cwd-popup\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	metadata := cmd.statusbarPathMetadata(context.Background(), "/tmp/work tree/proj")
+	if metadata.Project != "proj" {
+		t.Fatalf("Project = %q, want proj", metadata.Project)
+	}
+	if metadata.Git != "feature/cwd-popup" {
+		t.Fatalf("Git = %q, want feature/cwd-popup", metadata.Git)
 	}
 }
 
@@ -264,7 +326,7 @@ func TestStatusbarClickPwdFallsBackToToastWhenPopupFails(t *testing.T) {
 	if err := cmd.Run([]string{"click", "pwd"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawTmuxDisplayMessage(runner.calls, "copied path: /tmp/project") {
+	if !sawTmuxDisplayMessage(runner.calls, "Copied to system clipboard: /tmp/project") {
 		t.Fatalf("missing fallback copied-path toast; calls = %#v", runner.calls)
 	}
 }

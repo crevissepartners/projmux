@@ -19,11 +19,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	intclipboard "github.com/crevissepartners/projmux/internal/integrations/clipboard"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 // statusbarRangeID identifies one clickable segment in the projmux status bar.
@@ -53,6 +56,7 @@ type statusbarCommand struct {
 	runner        statusbarRunner
 	executable    func() (string, error)
 	notifyStoreFn func() (notifyStore, error)
+	clipboardCopy func(context.Context, string) (intclipboard.Result, error)
 }
 
 // newStatusbarCommand builds the production wiring: real tmux + projmux exec
@@ -62,6 +66,9 @@ func newStatusbarCommand() *statusbarCommand {
 		runner:        statusbarExecRunner{},
 		executable:    os.Executable,
 		notifyStoreFn: defaultStatusbarNotifyStore,
+		clipboardCopy: func(ctx context.Context, text string) (intclipboard.Result, error) {
+			return intclipboard.Copy(ctx, text, intclipboard.Options{})
+		},
 	}
 }
 
@@ -352,13 +359,16 @@ func (c *statusbarCommand) handleSession(_ statusbarClickOptions, _, stderr io.W
 }
 
 // handlePwd shows the current pane's path in a small popup and copies it into
-// tmux's paste buffer. A plain display-message toast is too easy to miss and
-// reads like a failure because tmux styles messages with the warning palette.
+// the system clipboard when a host clipboard tool is available. tmux's paste
+// buffer remains the fallback path so the click is still useful on minimal
+// hosts. A plain display-message toast is too easy to miss and reads like a
+// failure because tmux styles messages with the warning palette.
 func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Writer) error {
 	if c.runner == nil {
 		return c.runTmux(stderr, "display-message", "statusbar pwd: runner unavailable")
 	}
-	out, err := c.runner.Run(context.Background(), "tmux", "display-message", "-p", "-F", "#{pane_current_path}")
+	ctx := context.Background()
+	out, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pane_current_path}")
 	if err != nil {
 		fmt.Fprintf(stderr, "statusbar pwd: read pane path: %v\n", err)
 		return c.runTmux(stderr, "display-message", "statusbar pwd: path unavailable")
@@ -368,27 +378,35 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 		return c.runTmux(stderr, "display-message", "statusbar pwd: path unavailable")
 	}
 
-	copied := true
-	if err := c.runTmuxNoFallback(stderr, "set-buffer", path); err != nil {
-		copied = false
-		fmt.Fprintf(stderr, "statusbar pwd: set-buffer: %v\n", err)
+	metadata := c.statusbarPathMetadata(ctx, path)
+	copyResult, copyErr := c.copyPath(ctx, path)
+	if copyErr != nil {
+		fmt.Fprintf(stderr, "statusbar pwd: copy path: %v\n", copyErr)
 	}
+	popup := statusbarPathPopup(path, copyResult, copyErr, metadata)
 	if err := c.runTmuxNoFallback(stderr,
 		"display-popup",
 		"-E",
-		"-w", "76%",
-		"-h", "8",
-		"-T", statusbarPathPopupTitle(copied),
-		statusbarPathPopupCommand(path, copied),
+		"-w", strconv.Itoa(popup.Width),
+		"-h", strconv.Itoa(popup.Height),
+		"-T", popup.Title,
+		popup.Command,
 	); err == nil {
 		return nil
 	}
 
-	message := "path: " + shortenStatusbarToast(path, 180)
-	if copied {
-		message = "copied path: " + shortenStatusbarToast(path, 172)
-	}
+	message := popup.Toast + ": " + shortenStatusbarToast(path, max(1, 180-len(popup.Toast)-2))
 	return c.runTmux(stderr, "display-message", message)
+}
+
+func (c *statusbarCommand) copyPath(ctx context.Context, path string) (intclipboard.Result, error) {
+	if c.clipboardCopy != nil {
+		return c.clipboardCopy(ctx, path)
+	}
+	if err := c.runTmuxNoFallback(io.Discard, "set-buffer", path); err != nil {
+		return intclipboard.Result{}, err
+	}
+	return intclipboard.Result{Target: intclipboard.TargetTmux, Tool: "tmux set-buffer"}, nil
 }
 
 // handleKube opens the project switcher. There is no kube-specific filter
@@ -564,34 +582,135 @@ func focusFailureSummary(err error) string {
 	return msg
 }
 
-func statusbarPathPopupCommand(path string, copied bool) string {
-	title := "Current path"
-	body := "Path shown below; tmux paste buffer unavailable."
-	if copied {
-		title = "Path copied"
-		body = "Current pane path is in the tmux paste buffer."
-	}
-
-	lines := []string{
-		"\033[1;38;5;45m" + title + "\033[0m",
-		"\033[38;5;245m" + body + "\033[0m",
-		"",
-		"\033[38;5;231m" + path + "\033[0m",
-		"",
-		"\033[38;5;245mEnter closes this popup.\033[0m",
-	}
-	quoted := make([]string, 0, len(lines))
-	for _, line := range lines {
-		quoted = append(quoted, tmuxShellQuote(line))
-	}
-	return "printf '%s\\n' " + strings.Join(quoted, " ") + "; IFS= read -r _"
+type statusbarPathMetadata struct {
+	Project string
+	Git     string
 }
 
-func statusbarPathPopupTitle(copied bool) string {
-	if copied {
-		return "Path copied"
+func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path string) statusbarPathMetadata {
+	metadata := statusbarPathMetadata{Project: filepath.Base(path)}
+	if metadata.Project == "." || metadata.Project == string(filepath.Separator) {
+		metadata.Project = path
 	}
-	return "Current path"
+	if c.runner == nil {
+		return metadata
+	}
+	out, err := c.runner.Run(ctx, "git", "-C", path, "rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return metadata
+	}
+	lines := strings.Split(strings.ReplaceAll(strings.TrimSpace(string(out)), "\r\n", "\n"), "\n")
+	if len(lines) < 2 {
+		return metadata
+	}
+	root, branch := strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
+	if branch == "HEAD" || branch == "" {
+		return metadata
+	}
+	repo := filepath.Base(root)
+	if repo != "" && repo != "." && repo != metadata.Project {
+		metadata.Git = branch + " in " + repo
+	} else {
+		metadata.Git = branch
+	}
+	return metadata
+}
+
+type statusbarPathPopupView struct {
+	Title   string
+	Toast   string
+	Command string
+	Width   int
+	Height  int
+}
+
+func statusbarPathPopup(path string, result intclipboard.Result, copyErr error, metadata statusbarPathMetadata) statusbarPathPopupView {
+	status := statusbarPathStatus(result, copyErr)
+	title := "Current path"
+	if copyErr == nil {
+		title = "Path copied"
+	}
+
+	const width = 84
+	contentWidth := width - 2
+	pathWidth := max(contentWidth-4, 24)
+	lines := []string{
+		projmuxpicker.HighlightStart + status + projmuxpicker.Reset,
+		"",
+		projmuxpicker.MutedStart + "cwd" + projmuxpicker.Reset,
+	}
+	for _, line := range wrapStatusbarText(path, pathWidth) {
+		lines = append(lines, "  "+line)
+	}
+	if metadata.Project != "" || metadata.Git != "" {
+		lines = append(lines, "")
+		if metadata.Project != "" {
+			lines = append(lines, statusbarMetaLine("project", metadata.Project))
+		}
+		if metadata.Git != "" {
+			lines = append(lines, statusbarMetaLine("git", metadata.Git))
+		}
+	}
+	lines = append(lines, "", projmuxpicker.MutedStart+"Enter closes this popup."+projmuxpicker.Reset)
+
+	content := strings.Join(lines, "\n")
+	height := projmuxpicker.RenderedTextLineCount(content) + 4 + projmuxpicker.TitlebarRows(title)
+	var frame strings.Builder
+	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&frame, content, title, projmuxpicker.Layout{Rows: height, Cols: width})
+
+	quoted := make([]string, 0, len(lines))
+	for line := range strings.SplitSeq(strings.TrimRight(frame.String(), "\r\n"), "\r\n") {
+		quoted = append(quoted, tmuxShellQuote(line))
+	}
+	command := "printf '%s\\n' " + strings.Join(quoted, " ") + "; IFS= read -r _"
+	return statusbarPathPopupView{
+		Title:   title,
+		Toast:   status,
+		Command: command,
+		Width:   width,
+		Height:  height,
+	}
+}
+
+func statusbarPathStatus(result intclipboard.Result, copyErr error) string {
+	if copyErr != nil {
+		return "copy failed - clipboard unavailable"
+	}
+	if result.SystemClipboard() {
+		return "Copied to system clipboard"
+	}
+	return "tmux buffer only - install a clipboard tool for system clipboard"
+}
+
+func statusbarMetaLine(label, value string) string {
+	return projmuxpicker.MutedStart + label + projmuxpicker.Reset + "  " + value
+}
+
+func wrapStatusbarText(value string, width int) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if width <= 0 {
+		return []string{value}
+	}
+	var lines []string
+	var current strings.Builder
+	currentWidth := 0
+	for _, r := range value {
+		runeWidth := projmuxpicker.RuneWidth(r)
+		if currentWidth > 0 && currentWidth+runeWidth > width {
+			lines = append(lines, current.String())
+			current.Reset()
+			currentWidth = 0
+		}
+		current.WriteRune(r)
+		currentWidth += runeWidth
+	}
+	if current.Len() > 0 {
+		lines = append(lines, current.String())
+	}
+	return lines
 }
 
 func shortenStatusbarToast(value string, max int) string {
