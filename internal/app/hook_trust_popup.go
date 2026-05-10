@@ -19,6 +19,7 @@ const (
 	hookTrustPopupTitle           = "Trust project hook"
 	hookTrustPopupWidth           = "90"
 	hookTrustPopupHeight          = "24"
+	hookTrustInlineEnv            = "PROJMUX_HOOK_TRUST_INLINE"
 	hookTrustPopupTargetClientEnv = "PROJMUX_HOOK_TRUST_TARGET_CLIENT"
 	hookTrustPopupTargetPaneEnv   = "PROJMUX_HOOK_TRUST_TARGET_PANE"
 )

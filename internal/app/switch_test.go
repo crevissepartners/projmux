@@ -152,6 +152,101 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}
 }
 
+func TestSwitchExecuteSidebarHookProjectLaunchesWideOpenPopup(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(target, ".projmux"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".projmux", "config.toml"), []byte("[startup]\nrun = \"agent\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessions := &capturingSwitchSessionExecutor{exists: map[string]bool{"target": false}}
+	tmuxRunner := &recordingTmuxRunner{}
+	cmd := &switchCommand{
+		tmuxRunner: tmuxRunner,
+		sessions:   sessions,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity:   stubSwitchIdentityResolver{name: "target"},
+		lookupEnv: func(name string) string {
+			if name == hookTrustPopupTargetClientEnv {
+				return "/dev/pts/9"
+			}
+			return ""
+		},
+	}
+
+	reopen, err := cmd.execute(context.Background(), switchPlan{
+		UI:          switchUISidebar,
+		Selection:   target,
+		SessionName: "target",
+	}, nil)
+	if err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if reopen {
+		t.Fatal("execute() reopen = true, want false")
+	}
+	if sessions.ensureSessionName != "" || sessions.openSessionName != "" {
+		t.Fatalf("sessions = ensure %q open %q, want handoff only", sessions.ensureSessionName, sessions.openSessionName)
+	}
+	if len(tmuxRunner.calls) != 1 {
+		t.Fatalf("tmux calls = %#v, want one run-shell handoff", tmuxRunner.calls)
+	}
+	call := tmuxRunner.calls[0]
+	if call.name != "tmux" || len(call.args) != 3 || call.args[0] != "run-shell" || call.args[1] != "-b" {
+		t.Fatalf("tmux call = %#v, want run-shell -b", call)
+	}
+	for _, want := range []string{
+		"display-popup",
+		"'-c' '/dev/pts/9'",
+		"PROJMUX_HOOK_TRUST_INLINE=1",
+		"'-w' '90'",
+		"'-h' '24'",
+		"switch open",
+		tmuxShellQuote(target),
+	} {
+		if !strings.Contains(call.args[2], want) {
+			t.Fatalf("run-shell command = %q, want substring %q", call.args[2], want)
+		}
+	}
+}
+
+func TestSwitchExecuteSidebarExistingHookProjectOpensDirectly(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(target, ".projmux"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".projmux", "config.toml"), []byte("[startup]\nrun = \"agent\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessions := &capturingSwitchSessionExecutor{exists: map[string]bool{"target": true}}
+	tmuxRunner := &recordingTmuxRunner{}
+	cmd := &switchCommand{
+		tmuxRunner: tmuxRunner,
+		sessions:   sessions,
+		identity:   stubSwitchIdentityResolver{name: "target"},
+	}
+
+	_, err := cmd.execute(context.Background(), switchPlan{
+		UI:          switchUISidebar,
+		Selection:   target,
+		SessionName: "target",
+	}, nil)
+	if err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if sessions.ensureSessionName != "target" || sessions.openSessionName != "target" {
+		t.Fatalf("sessions = ensure %q open %q, want direct open target", sessions.ensureSessionName, sessions.openSessionName)
+	}
+	if len(tmuxRunner.calls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none", tmuxRunner.calls)
+	}
+}
+
 func TestAppRunSwitchDeprecatedBackendValueUsesNativeRunner(t *testing.T) {
 	t.Parallel()
 
