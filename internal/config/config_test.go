@@ -133,6 +133,15 @@ func TestPathsPickerBackendFile(t *testing.T) {
 	}
 }
 
+func TestPathsProjectHooksFile(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{ConfigDir: "/tmp/config/projmux"}
+	if got, want := paths.ProjectHooksFile(), filepath.Join(paths.ConfigDir, ProjectHooksFileName); got != want {
+		t.Fatalf("ProjectHooksFile() = %q, want %q", got, want)
+	}
+}
+
 func TestPickerBackendRoundtrip(t *testing.T) {
 	t.Parallel()
 
@@ -166,6 +175,42 @@ func TestPickerBackendNormalizesInvalidValues(t *testing.T) {
 	}
 	if got != DefaultPickerBackend {
 		t.Fatalf("LoadPickerBackendFile() = %q, want %q", got, DefaultPickerBackend)
+	}
+}
+
+func TestProjectHooksRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", ProjectHooksFileName)
+	if got, err := LoadProjectHooksFile(path); err != nil || got != ProjectHooksOn {
+		t.Fatalf("LoadProjectHooksFile(missing) = %q, %v; want %q, nil", got, err, ProjectHooksOn)
+	}
+
+	if err := SaveProjectHooksFile(path, ProjectHooksOff); err != nil {
+		t.Fatalf("SaveProjectHooksFile() error = %v", err)
+	}
+	got, err := LoadProjectHooksFile(path)
+	if err != nil {
+		t.Fatalf("LoadProjectHooksFile() error = %v", err)
+	}
+	if got != ProjectHooksOff {
+		t.Fatalf("LoadProjectHooksFile() = %q, want %q", got, ProjectHooksOff)
+	}
+}
+
+func TestProjectHooksNormalizesInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ProjectHooksFileName)
+	if err := os.WriteFile(path, []byte("broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadProjectHooksFile(path)
+	if err != nil {
+		t.Fatalf("LoadProjectHooksFile() error = %v", err)
+	}
+	if got != ProjectHooksOn {
+		t.Fatalf("LoadProjectHooksFile() = %q, want %q", got, ProjectHooksOn)
 	}
 }
 
