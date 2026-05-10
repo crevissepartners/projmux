@@ -100,6 +100,18 @@ ${PROJMUX_USAGE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/projmux/usage}/
 See [Usage tracking](usage-tracking.md) for adapter behavior, throttling, and
 failure handling.
 
+## Shell Welcome State
+
+`projmux shell` stores its once-per-version welcome marker under:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/projmux/welcomed-v<version>.json
+```
+
+If the marker is missing, the next shell launch shows the welcome again. If the
+marker is corrupt or cannot be written, shell startup continues without the
+welcome.
+
 ## Decoration Mode
 
 Settings > Appearance controls optional status and picker decoration:
