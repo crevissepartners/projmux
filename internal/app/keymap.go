@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -24,6 +25,13 @@ type keymapLoader struct {
 	homeDir   func() (string, error)
 	lookupEnv func(string) string
 	readFile  func(string) ([]byte, error)
+}
+
+type keymapStore struct {
+	homeDir   func() (string, error)
+	lookupEnv func(string) string
+	readFile  func(string) ([]byte, error)
+	writeFile func(string, []byte, os.FileMode) error
 }
 
 func loadMergedKeyBindingCatalog(loader keymapLoader) ([]keyBindingAction, bool, error) {
@@ -54,6 +62,180 @@ func loadMergedKeyBindingCatalog(loader keymapLoader) ([]keyBindingAction, bool,
 		return nil, true, fmt.Errorf("keymap %s: %w", path, err)
 	}
 	return merged, true, nil
+}
+
+func loadKeymapForEdit(store keymapStore) (keymapFile, []keyBindingAction, bool, string, error) {
+	if store.homeDir == nil {
+		return keymapFile{Bindings: map[string]keymapOverride{}}, defaultKeyBindingCatalog(), false, "", nil
+	}
+	path, err := keymapPath(store.homeDir, store.lookupEnv)
+	if err != nil {
+		return keymapFile{}, nil, false, "", err
+	}
+	readFile := store.readFile
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
+	raw, err := readFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return keymapFile{Bindings: map[string]keymapOverride{}}, defaultKeyBindingCatalog(), false, path, nil
+		}
+		return keymapFile{}, nil, false, path, fmt.Errorf("read keymap %s: %w", path, err)
+	}
+	parsed, err := parseKeymapFile(path, string(raw))
+	if err != nil {
+		return keymapFile{}, nil, true, path, err
+	}
+	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	if err != nil {
+		return keymapFile{}, nil, true, path, fmt.Errorf("keymap %s: %w", path, err)
+	}
+	return parsed, merged, true, path, nil
+}
+
+func saveKeymapOverride(store keymapStore, actionID, field string, value *string) (string, error) {
+	if field != "plain" && field != "prefix" {
+		return "", fmt.Errorf("unsupported keymap field %q", field)
+	}
+	current, _, _, path, err := loadKeymapForEdit(store)
+	if err != nil {
+		return path, err
+	}
+	defaults := defaultKeyBindingCatalog()
+	action, ok := keyBindingActionByID(defaults, actionID)
+	if !ok {
+		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+
+	override := current.Bindings[actionID]
+	if current.Bindings == nil {
+		current.Bindings = map[string]keymapOverride{}
+	}
+	defaultValue := action.PlainChord
+	if field == "prefix" {
+		defaultValue = action.PrefixChord
+	}
+
+	if value == nil || *value == defaultValue {
+		if field == "plain" {
+			override.Plain = nil
+		} else {
+			override.Prefix = nil
+		}
+	} else {
+		if err := validateKeymapChord(*value); err != nil {
+			return path, err
+		}
+		copied := *value
+		if field == "plain" {
+			override.Plain = &copied
+		} else {
+			override.Prefix = &copied
+		}
+	}
+
+	if override.Plain == nil && override.Prefix == nil {
+		delete(current.Bindings, actionID)
+	} else {
+		current.Bindings[actionID] = override
+	}
+
+	if path == "" {
+		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+		return path, err
+	}
+	return path, nil
+}
+
+func keyBindingActionByID(actions []keyBindingAction, id string) (keyBindingAction, bool) {
+	for _, action := range actions {
+		if action.ID == id {
+			return action, true
+		}
+	}
+	return keyBindingAction{}, false
+}
+
+func writeKeymapFile(path string, keymap keymapFile, writeFile func(string, []byte, os.FileMode) error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create keymap directory: %w", err)
+	}
+	body := []byte(renderKeymapFile(keymap))
+	if writeFile != nil {
+		return writeFile(path, body, 0o644)
+	}
+	return atomicWriteKeymapFile(path, body)
+}
+
+func atomicWriteKeymapFile(path string, body []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, config.KeymapFileName+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create keymap temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+
+	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write keymap temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close keymap temp file: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return fmt.Errorf("chmod keymap temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename keymap temp file: %w", err)
+	}
+	return nil
+}
+
+func renderKeymapFile(keymap keymapFile) string {
+	var ids []string
+	for id, override := range keymap.Bindings {
+		if override.Plain == nil && override.Prefix == nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	var b strings.Builder
+	b.WriteString("# Generated by projmux Settings. Edit manually only with supported [bindings.<action-id>] plain/prefix keys.\n")
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		override := keymap.Bindings[id]
+		b.WriteString("[bindings.")
+		b.WriteString(id)
+		b.WriteString("]\n")
+		if override.Plain != nil {
+			b.WriteString("plain = ")
+			b.WriteString(formatKeymapString(*override.Plain))
+			b.WriteString("\n")
+		}
+		if override.Prefix != nil {
+			b.WriteString("prefix = ")
+			b.WriteString(formatKeymapString(*override.Prefix))
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func formatKeymapString(value string) string {
+	return `"` + value + `"`
 }
 
 func keymapPath(homeDir func() (string, error), lookupEnv func(string) string) (string, error) {
@@ -207,7 +389,7 @@ func validateKeymapChord(value string) error {
 	if strings.TrimSpace(value) != value {
 		return fmt.Errorf("chord must not have leading or trailing whitespace")
 	}
-	if strings.ContainsAny(value, " \t\r\n'\"#{}") {
+	if strings.ContainsAny(value, " \t\r\n'\"#{}\\") {
 		return fmt.Errorf("chord %q contains unsupported tmux config characters", value)
 	}
 	return nil

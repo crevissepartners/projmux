@@ -40,8 +40,15 @@ The file is read only when no env root list is set.
 
 ## Keymap File
 
-`~/.config/projmux/keymap.toml` can override tmux key chords by action ID.
-When the file is absent, generated tmux config stays on the built-in defaults.
+Settings > Keybindings is the normal in-app editor for tmux key chords. It
+lists each action, opens a detail screen, and lets you type `plain` or
+`prefix` tmux chord strings. Saving writes `~/.config/projmux/keymap.toml`,
+rewrites `~/.config/projmux/tmux.conf`, and, when Settings is running inside
+tmux, sources that app config so non-terminal-layer tmux chords take effect
+immediately.
+
+`~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
+absent, generated tmux config stays on the built-in defaults.
 
 Supported schema:
 
@@ -68,10 +75,19 @@ Set a value to the empty string to disable that chord for the action:
 plain = ""
 ```
 
+In Settings, `Disable Plain/Prefix chord` writes the empty string override.
+`Reset Plain/Prefix chord` removes that override and returns to the built-in
+default. The Settings writer is deterministic and rewrites the supported
+subset only: `[bindings.<action-id>]` tables with `plain` and `prefix` string
+keys. If the existing file has parse errors or unknown action IDs, Settings
+shows the keymap error row and refuses to overwrite it until the file is fixed.
+
 The file currently affects generated tmux config from `projmux tmux
 print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
 `projmux tmux install-app`, and `projmux shell`. Terminal init adapters such as
 Ghostty and Windows Terminal still install the built-in CSI-u fallback map.
+Changing those terminal-layer mappings still requires rerunning `projmux init`
+and restarting the terminal where that terminal requires it.
 
 When a chord is overridden, projmux emits unbinds for both the stale default
 chord and the replacement before binding the merged action. Popup and floating

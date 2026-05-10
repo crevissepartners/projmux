@@ -85,6 +85,16 @@ v0.4 shipped.
   does not depend on backend-specific key bindings. Done in the 0.5 picker
   contract slice; the native runner consumes shared close action keys.
 
+### Keybindings
+
+- In-app Settings editor for tmux keymap entries. Done in the 0.5 keybinding
+  M4 slice: Settings > Keybindings lists actions, opens action detail rows,
+  accepts typed `plain`/`prefix` tmux chord strings, supports disable/reset,
+  writes `~/.config/projmux/keymap.toml`, regenerates the app tmux config, and
+  hot-reloads the live tmux config when Settings is running inside tmux.
+- Still outstanding for later milestones: native "press the key" probing and
+  terminal init remediation for changed fallback mappings.
+
 ### Docker install and E2E harness
 
 - Initial Docker-backed Linux smoke suites are available through

@@ -19,6 +19,13 @@ The recommended path when a key does not fire:
    hand), use the [Manual fallback / advanced (CSI-u)](#manual-fallback--advanced-csi-u)
    section.
 
+To change projmux's tmux-level chords, open Settings > Keybindings. The
+in-app editor writes `~/.config/projmux/keymap.toml`, regenerates
+`~/.config/projmux/tmux.conf`, and hot-reloads the live tmux config when
+Settings is running inside tmux. Terminal fallback mappings are separate:
+after changing fallback keys, rerun `projmux init` and restart the terminal
+where applicable.
+
 > 한국어 요약: 대부분의 터미널은 `projmux shell` 만으로 아래 키가 바로 동작합니다.
 > 동작하지 않으면 `projmux setup` 으로 어떤 키가 막혔는지 진단하고,
 > `projmux init [terminal]` 으로 자동 설정하세요. 자동 설정이 없는 터미널은
@@ -162,8 +169,8 @@ just the projmux-owned region.
 
 `projmux init` always uses the built-in terminal fallback map. To override the
 tmux chords rendered by `projmux tmux print-config`, `projmux tmux install`,
-or `projmux shell`, use `~/.config/projmux/keymap.toml`; see
-[Configuration](configuration.md#keymap-file).
+or `projmux shell`, use Settings > Keybindings or edit
+`~/.config/projmux/keymap.toml`; see [Configuration](configuration.md#keymap-file).
 
 ### Supported terminals
 
