@@ -535,6 +535,7 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsSectionGlobalHooks, settingsAxisGlobal},
 		{settingsSectionProjectHooks, settingsAxisProject},
 		{settingsSectionProjectConfig, settingsAxisProject},
+		{settingsSectionEffectiveMerge, settingsAxisProject},
 		{settingsProjectRootManage, settingsAxisGlobal},
 		{settingsWorkdirList, settingsAxisGlobal},
 		{settingsProjectPins, settingsAxisGlobal},
