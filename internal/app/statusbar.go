@@ -652,11 +652,8 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time) statusbarUsag
 	title := "Usage"
 	lines := statusbarUsagePopupLines(state, now, width-2)
 	content := strings.Join(lines, "\n")
-	height := projmuxpicker.RenderedTextLineCount(content) + 4 + projmuxpicker.TitlebarRows(title)
-	var frame strings.Builder
-	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&frame, content, title, projmuxpicker.Layout{Rows: height, Cols: width})
-
-	payload := strings.ReplaceAll(strings.TrimRight(frame.String(), "\r\n"), "\r\n", "\n") + "\n"
+	height := projmuxpicker.RenderedTextLineCount(content) + 2
+	payload := strings.TrimRight(content, "\n") + "\n"
 	command := "printf %s " + tmuxShellQuote(payload) + "; IFS= read -r _"
 	return statusbarUsagePopupView{
 		Title:   title,
@@ -956,10 +953,8 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata) statusbarPa
 	lines = append(lines, "", projmuxpicker.MutedStart+"Enter closes this popup."+projmuxpicker.Reset)
 
 	content := strings.Join(lines, "\n")
-	height := projmuxpicker.RenderedTextLineCount(content) + 4 + projmuxpicker.TitlebarRows(title)
-	var frame strings.Builder
-	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&frame, content, title, projmuxpicker.Layout{Rows: height, Cols: width})
-	payload := strings.ReplaceAll(strings.TrimRight(frame.String(), "\r\n"), "\r\n", "\n") + "\n"
+	height := projmuxpicker.RenderedTextLineCount(content) + 2
+	payload := strings.TrimRight(content, "\n") + "\n"
 	command := "printf %s " + tmuxShellQuote(payload) + "; IFS= read -r _"
 	return statusbarPathPopupView{
 		Title:   title,

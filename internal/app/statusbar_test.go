@@ -278,6 +278,9 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	if strings.Contains(command, "printf '%s\\n'") || strings.Contains(command, "read -n1") {
 		t.Fatalf("popup command uses brittle output/read shape: %q", command)
 	}
+	if strings.ContainsAny(command, "╭╮╰╯│") {
+		t.Fatalf("path popup must rely on tmux chrome, not an inner frame: %q", command)
+	}
 }
 
 func TestStatusbarPathMetadataPreservesGitRootWithSpaces(t *testing.T) {
@@ -490,6 +493,9 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	}
 	if !strings.Contains(command, "; IFS= read -r _") {
 		t.Fatalf("usage popup command = %q, want simple Enter read", command)
+	}
+	if strings.ContainsAny(command, "╭╮╰╯│") {
+		t.Fatalf("usage popup must rely on tmux chrome, not an inner frame: %q", command)
 	}
 	for _, call := range runner.calls {
 		if call.name == "/usr/local/bin/projmux" || sawArgsContain(call.args, "popup-toggle") {
