@@ -661,7 +661,7 @@ func TestNativeInteractiveUsesAlternateScreen(t *testing.T) {
 	if !strings.HasSuffix(rendered, nativeScreenLeave) {
 		t.Fatalf("native output = %q, want alternate-screen leave suffix", rendered)
 	}
-	if !strings.Contains(rendered, "╯\r"+nativeSyncUpdateLeave+"\r\x1b[0m\x1b[?1006l\x1b[?1000l\x1b[H\x1b[J\x1b[?25h\x1b[?1049l") {
+	if !strings.Contains(rendered, "╯\r"+nativeSyncUpdateLeave+"\r\x1b[0m\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[H\x1b[J\x1b[?25h\x1b[?1049l") {
 		t.Fatalf("native output = %q, want reset and alternate-screen clear before leave", rendered)
 	}
 }
@@ -805,6 +805,24 @@ func TestNativeInteractiveMouseDownOnlyFocuses(t *testing.T) {
 	}
 	if result.Key != "enter" || result.Value != "/repo/web" {
 		t.Fatalf("result = %#v, want mouse down to focus web before enter", result)
+	}
+}
+
+func TestNativeInteractiveMouseDragFollowsSelection(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;4M\x1b[<32;3;5M\x1b[<0;99;5m\r"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want primary drag to focus web before enter", result)
 	}
 }
 

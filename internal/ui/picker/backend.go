@@ -221,8 +221,8 @@ const (
 	nativeReset             = projmuxpicker.Reset
 	nativeInverseStart      = projmuxpicker.InverseStart
 	nativeCursorStart       = projmuxpicker.CursorStart
-	nativeScreenEnter       = "\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?25l\x1b[2J\x1b[H"
-	nativeScreenLeave       = "\r\x1b[0m\x1b[?1006l\x1b[?1000l\x1b[H\x1b[J\x1b[?25h\x1b[?1049l\r\n"
+	nativeScreenEnter       = "\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?25l\x1b[2J\x1b[H"
+	nativeScreenLeave       = "\r\x1b[0m\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[H\x1b[J\x1b[?25h\x1b[?1049l\r\n"
 	nativeSyncUpdateEnter   = projmuxpicker.SyncUpdateEnter
 	nativeSyncUpdateLeave   = projmuxpicker.SyncUpdateLeave
 	nativeScrollbar         = projmuxpicker.Scrollbar
@@ -445,7 +445,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		}
 		if key.HasMouse {
 			if key.Mouse.Release {
-				if key.Mouse.Button == 0 && primaryMouseDown {
+				if nativeMouseIsPrimaryButton(key.Mouse.Button) && primaryMouseDown {
 					primaryMouseDown = false
 					if nextSelected, ok := nativeMouseItemIndex(options, items, selected, layout, key.Mouse.X, key.Mouse.Y); ok {
 						selected = nextSelected
@@ -454,19 +454,25 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 						return result, nil
 					}
 				}
-				if key.Mouse.Button == 0 {
+				if nativeMouseIsPrimaryButton(key.Mouse.Button) {
 					primaryMouseDown = false
+				}
+				continue
+			}
+			if primaryMouseDown && nativeMouseIsPrimaryDrag(key.Mouse.Button) {
+				if nextSelected, ok := nativeMouseItemIndex(options, items, selected, layout, key.Mouse.X, key.Mouse.Y); ok {
+					selected = nextSelected
 				}
 				continue
 			}
 			if nextSelected, ok := nativeMouseSelection(options, items, selected, layout, key.Mouse); ok {
 				selected = nextSelected
-				if key.Mouse.Button == 0 {
+				if nativeMouseIsPrimaryButton(key.Mouse.Button) {
 					primaryMouseDown = true
 				}
 				continue
 			}
-			if key.Mouse.Button == 0 {
+			if nativeMouseIsPrimaryButton(key.Mouse.Button) {
 				primaryMouseDown = false
 			}
 			continue
@@ -711,6 +717,14 @@ func nativeMouseSelection(options Options, items []Item, selected int, layout na
 	default:
 		return selected, false
 	}
+}
+
+func nativeMouseIsPrimaryButton(button int) bool {
+	return button&32 == 0 && button&3 == 0
+}
+
+func nativeMouseIsPrimaryDrag(button int) bool {
+	return button&32 != 0 && button&3 == 0
 }
 
 func nativeMouseItemIndex(options Options, items []Item, selected int, layout nativeLayout, x, y int) (int, bool) {
