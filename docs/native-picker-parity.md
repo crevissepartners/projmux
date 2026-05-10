@@ -14,8 +14,8 @@ native picker engine and is not a public dependency-policy change.
 | `--header` | AI, settings, shell update, notify | Covered | `renderNativeInteractive`, `renderNative`; settings native tests |
 | `--footer` / `--footer-border line` | AI, settings, shell update, switch, sessions, notify | Covered for interactive native screens | `renderNativeInteractive` reserves bottom footer space and renders a separator line; `TestNativeInteractiveRendersFooterAtBottom` |
 | `--ansi` | colored row labels from render package | Covered | native writes row labels directly, strips ANSI escapes from default search text, restores selected-row styling after embedded ANSI resets, and measures rendered cell width for Korean/CJK text, emoji, and combining marks; `TestFilterItemsIgnoresANSIEscapeSequences`; `TestNativeInteractiveUsesCurrentStyleForSimpleSelection`; `TestVisibleLenUsesTerminalCellWidth`; Docker e2e shows ANSI rows |
-| hidden value after tab delimiter | all picker selections and default fzf matching | Covered by `picker.Item.Value` and default search text | `fzf.PickerOptions`; `TestNativeRunnerFiltersAndSelectsByNumber`; `TestFilterItemsSearchesHiddenValueWhenNoSearchKey` |
-| plain fzf candidates without structured entries | legacy runner call shape | Covered | `fzf.PickerOptions`; `TestPickerOptionsFromFZFMapsCandidatesWhenEntriesAreEmpty` |
+| hidden value after tab delimiter | all picker selections and default fzf matching | Covered by `picker.Item.Value` and default search text | `pickercompat.PickerOptions`; `TestNativeRunnerFiltersAndSelectsByNumber`; `TestFilterItemsSearchesHiddenValueWhenNoSearchKey` |
+| plain fzf candidates without structured entries | legacy runner call shape | Covered | `pickercompat.PickerOptions`; `TestPickerOptionsFromLegacyPickerMapsCandidatesWhenEntriesAreEmpty` |
 | search key filtering (`--nth`/reload filter file) | switch/sessions/notify entries | Covered by `Item.SearchText` with fzf reload order preservation | `FilterItems`; `TestFilterItemsUsesSearchTextNotMetadata`; `TestFilterItemsPreservesSearchKeyOrder` |
 | default `--smart-case` matching | all searchable picker rows | Covered | native filter keeps lower-case queries case-insensitive and uppercase queries case-sensitive; `TestFilterItemsUsesFZFSmartCase` |
 | fzf match highlighting | searchable simple picker rows | Covered for non-search-key simple rows | native highlights matched visible label runes while preserving embedded ANSI style; search-key reload lists intentionally keep fzf disabled-filter rendering without match highlights; `TestNativeInteractiveHighlightsSimpleQueryMatches`; `TestNativeInteractiveDoesNotHighlightSearchKeyReloadLists` |
@@ -26,14 +26,14 @@ native picker engine and is not a public dependency-policy change.
 | `--gap --gap-line ─` | switch, sessions, notify multi-line rows | Covered for app multiline rows | `nativeGapLine`, row-budgeted range; `TestNativeInteractiveRendersMultilineGapLine`, `TestNativeVisibleRangeCountsMultilineRenderedRows` |
 | selected multi-line marker | selected switch/session/notify cards | Covered for app multiline rows | native uses the same compact pointer-width red `▌` gutter as the first selected project line, and metadata lines align to the project-name column without the old deeper indent; `nativeContinuation`; `TestNativeInteractiveRendersSelectedMultilineContinuationMarker`; `TestInteractiveRowLinesUsesCompactSelectedMetaIndent`; `TestInteractiveRowLinesAlignsUnselectedMetaWithProjectName` |
 | fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; pointer/continuation gutter tokens carry the current-row background; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveUsesCurrentStyleForSimpleSelection` |
-| `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `fzf.PickerOptions`; `TestNativeInteractiveSupportsCustomExpectKeys` |
+| `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `pickercompat.PickerOptions`; `TestNativeInteractiveSupportsCustomExpectKeys` |
 | printable expect keys | notify sidebar `x` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
 | control expect keys | notify sidebar `Ctrl-X`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
 | close `--bind key:abort` | Esc, Ctrl-C, Alt-N, Ctrl-Alt-S variants | Covered | `CloseActions`; `TestNativeRunnerUsesSharedCloseActions` |
 | terminal CSI-u key encoding | app keybind probe sequences, Ghostty/kitty-style modified keys | Covered | native handles app-specific Alt keys, generic modified letters/digits, and non-text keys such as Enter/Esc/Backspace/Tab; `TestNativeInteractiveSupportsCSIuAppKeyBindings` |
-| `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `fzf.PickerOptions`/`fzf.OptionsFromPicker`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes`; `TestPickerOptionsMapsFZFBindingsToContractActions`; Docker no-fzf e2e sends `Right` and `Alt-Down` before selection |
+| `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `pickercompat.PickerOptions`/`pickercompat.OptionsFromPicker`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes`; `TestPickerOptionsMapsLegacyBindingsToContractActions`; Docker no-fzf e2e sends `Right` and `Alt-Down` before selection |
 | `focus:execute-silent(...)` | switch sidebar focus | Covered | native renders the selection frame diff before running sidebar focus commands so movement stays visible before tmux focus side effects; `runNativeFocusAction`; `TestNativeInteractiveRunsFocusActionOnSelectionChange` |
-| `start:pos(N)` | switch sidebar initial row | Covered | `fzf.PickerOptions`/`fzf.OptionsFromPicker`; `TestPickerOptionsFromFZFMapsStartPosToInitialIndex`; `TestPickerOptionsMapsFZFBindingsToContractActions` |
+| `start:pos(N)` | switch sidebar initial row | Covered | `pickercompat.PickerOptions`/`pickercompat.OptionsFromPicker`; `TestPickerOptionsFromLegacyPickerMapsStartPosToInitialIndex`; `TestPickerOptionsMapsLegacyBindingsToContractActions` |
 | `--preview` | switch, sessions | Covered by command output | `nativePreviewLines`; `TestNativeInteractiveRendersSelectedPreview` |
 | `--preview-window right,60%,border-left` | switch popup, sessions popup | Covered for projmux option shape | `renderNativeSplitPreview` renders a single-column left border without a synthetic title row, uses fzf-measured percent sizing, normalizes preview tabs/control bytes before clipping, and pads both panes to fixed row widths so long preview rows do not wrap into extra vertical rows; `TestNativeInteractiveRendersWidePreviewBesideList`; `TestNativePreviewWidthUsesPreviewWindowPercent`; `TestRenderSplitPreviewRowsPadsBothPanes`; `TestRenderSplitPreviewRowsNormalizesPreviewTabsBeforeTruncating` |
 | `--preview-window down,25%,border-top` | switch sidebar | Covered for projmux option shape | `renderNativeDownPreview` renders an immediate top border without a synthetic title row, uses fzf-measured percent sizing, and pads preview rows to the surface width; `TestNativeInteractiveRendersDownPreviewBelowList`; `TestNativePreviewHeightUsesPreviewWindowPercent`; `TestRenderDownPreviewPadsPreviewRows` |
@@ -59,14 +59,14 @@ native picker engine and is not a public dependency-policy change.
   redraw updates, ANSI width/truncation, theme tokens, prompt/footer/list
   rendering, selected row styling, scrollbars/gap rows, and preview pane
   geometry/rendering.
-- `internal/ui/fzf` remains as the compatibility adapter from legacy
-  `fzf.Options` to `picker.Options` for the native backend. This keeps app code
+- `internal/ui/pickercompat` remains as the legacy picker option/result adapter
+  from legacy option shapes to `picker.Options` for the native backend. This keeps app code
   closer to a DI-style picker contract instead of embedding binding strings at
   each call site.
 - Settings > Labs remains available, but picker backend selection has been
   retired. Legacy saved/env backend values normalize to native.
 - The split lets projmux grow a first-party picker design independently from
-  the fzf compatibility adapter.
+  the legacy picker option/result adapter.
 
 ## Verified Flows
 

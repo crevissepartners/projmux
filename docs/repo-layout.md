@@ -21,8 +21,8 @@ projmux/
       tmux/
     state/
     ui/
-      fzf/
       picker/
+      pickercompat/
       projmuxpicker/
       render/
     version/
@@ -39,7 +39,7 @@ projmux/
 - `internal/core` contains product behavior that should be testable without tmux.
 - `internal/integrations/tmux` should be the only place that knows tmux command strings and output formats.
 - `internal/ui/picker` and `internal/ui/projmuxpicker` own native picker behavior.
-- `internal/ui/fzf` remains as a legacy option/result adapter; product code should route through the native picker.
+- `internal/ui/pickercompat` remains as a legacy picker option/result adapter; product code should route through the native picker.
 - `scripts/` is for development tooling only, not product logic.
 
 ## Early implementation order

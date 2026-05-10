@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
@@ -219,7 +219,7 @@ func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
 
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
-	var promptOptions intfzf.Options
+	var promptOptions intpickercompat.Options
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:  func(string) string { return "" },
@@ -227,13 +227,13 @@ func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			promptOptions = options
-			return intfzf.Result{Value: shellUpdateApply}, nil
+			return intpickercompat.Result{Value: shellUpdateApply}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			promptOptions = options
-			return intfzf.Result{Value: shellUpdateApply}, nil
+			return intpickercompat.Result{Value: shellUpdateApply}, nil
 		})),
 	}
 
@@ -293,11 +293,11 @@ func TestShellUpdatePromptLaterContinuesWithoutApplying(t *testing.T) {
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
-			return intfzf.Result{Value: shellUpdateLater}, nil
+		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{Value: shellUpdateLater}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
-			return intfzf.Result{Value: shellUpdateLater}, nil
+		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{Value: shellUpdateLater}, nil
 		})),
 	}
 
@@ -336,13 +336,13 @@ func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			promptCalls++
-			return intfzf.Result{Value: shellUpdateSkip}, nil
+			return intpickercompat.Result{Value: shellUpdateSkip}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			promptCalls++
-			return intfzf.Result{Value: shellUpdateSkip}, nil
+			return intpickercompat.Result{Value: shellUpdateSkip}, nil
 		})),
 	}
 
@@ -397,13 +397,13 @@ func TestShellSkipsPromptWithoutFreshSupportedUpdate(t *testing.T) {
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
 		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			t.Fatalf("unexpected update prompt: %#v", options)
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			t.Fatalf("unexpected update prompt: %#v", options)
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 	}
 
@@ -486,8 +486,8 @@ func (r *recordingShellRunner) run(_ context.Context, env []string, name string,
 	return nil
 }
 
-type shellUpdateRunnerFunc func(options intfzf.Options) (intfzf.Result, error)
+type shellUpdateRunnerFunc func(options intpickercompat.Options) (intpickercompat.Result, error)
 
-func (f shellUpdateRunnerFunc) Run(options intfzf.Options) (intfzf.Result, error) {
+func (f shellUpdateRunnerFunc) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
 	return f(options)
 }

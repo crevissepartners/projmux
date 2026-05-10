@@ -3,24 +3,24 @@ package app
 import (
 	"fmt"
 
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
-func runPickerOptionBackend(lookupEnv func(string) string, native intpicker.Runner, fzf intfzf.Runner, options intfzf.Options) (intfzf.Result, error) {
+func runPickerOptionBackend(lookupEnv func(string) string, native intpicker.Runner, legacy intpickercompat.Runner, options intpickercompat.Options) (intpickercompat.Result, error) {
 	_ = lookupEnv
-	_ = fzf
+	_ = legacy
 	if native == nil {
-		return intfzf.Result{}, fmt.Errorf("native picker is not configured")
+		return intpickercompat.Result{}, fmt.Errorf("native picker is not configured")
 	}
-	result, err := native.Run(intfzf.PickerOptions(options))
-	return intfzf.ResultFromPicker(result), err
+	result, err := native.Run(intpickercompat.PickerOptions(options))
+	return intpickercompat.ResultFromPicker(result), err
 }
 
-func pickerOptionsFromFZF(options intfzf.Options) intpicker.Options {
-	return intfzf.PickerOptions(options)
+func pickerOptionsFromLegacyPicker(options intpickercompat.Options) intpicker.Options {
+	return intpickercompat.PickerOptions(options)
 }
 
-func pickerCommandFromFZFBinding(action string) string {
-	return intfzf.PickerCommandFromBinding(action)
+func pickerCommandFromLegacyBinding(action string) string {
+	return intpickercompat.PickerCommandFromBinding(action)
 }

@@ -10,8 +10,8 @@ import (
 
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
@@ -34,7 +34,7 @@ type sessionsKiller interface {
 }
 
 type sessionsRunner interface {
-	Run(options intfzf.Options) (intfzf.Result, error)
+	Run(options intpickercompat.Options) (intpickercompat.Result, error)
 }
 
 type sessionsCommand struct {
@@ -132,7 +132,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.runner, intfzf.Options{
+		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.runner, intpickercompat.Options{
 			UI:             *ui,
 			Entries:        rowsToEntries(rows),
 			Prompt:         "› ",
@@ -300,10 +300,10 @@ func sessionsPickerFooter() string {
 	}, "\n"))
 }
 
-func rowsToEntries(rows []intrender.SessionRow) []intfzf.Entry {
-	entries := make([]intfzf.Entry, 0, len(rows))
+func rowsToEntries(rows []intrender.SessionRow) []intpickercompat.Entry {
+	entries := make([]intpickercompat.Entry, 0, len(rows))
 	for _, row := range rows {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: row.Label,
 			Value: row.Value,
 		})

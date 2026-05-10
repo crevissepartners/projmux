@@ -12,15 +12,15 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	t.Parallel()
 
 	var gotInputs candidates.Inputs
-	var gotRunnerOptions intfzf.Options
+	var gotRunnerOptions intpickercompat.Options
 	executor := &capturingSwitchSessionExecutor{
 		exists: map[string]bool{"workspace": true},
 	}
@@ -34,13 +34,13 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 			pinStore: func() (switchPinStore, error) {
 				return &stubSwitchPinStore{list: []string{"/pins/app"}}, nil
 			},
-			runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 				gotRunnerOptions = options
-				return intfzf.Result{Value: "/home/tester/workspace"}, nil
+				return intpickercompat.Result{Value: "/home/tester/workspace"}, nil
 			}),
-			nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 				gotRunnerOptions = options
-				return intfzf.Result{Value: "/home/tester/workspace"}, nil
+				return intpickercompat.Result{Value: "/home/tester/workspace"}, nil
 			})),
 			sessions:   executor,
 			executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -133,7 +133,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
+	if got, want := gotRunnerOptions.Entries, []intpickercompat.Entry{
 		{Label: "\x1b[1m\x1b[32mworkspace\x1b[0m\n  \x1b[38;5;242m~/workspace\x1b[0m", Value: "/home/tester/workspace"},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
@@ -152,7 +152,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}
 }
 
-func TestAppRunSwitchLegacyFZFBackendUsesNativeRunner(t *testing.T) {
+func TestAppRunSwitchLegacyBackendValueUsesNativeRunner(t *testing.T) {
 	t.Parallel()
 
 	var fzfCalled bool
@@ -169,9 +169,9 @@ func TestAppRunSwitchLegacyFZFBackendUsesNativeRunner(t *testing.T) {
 			pinStore: func() (switchPinStore, error) {
 				return &stubSwitchPinStore{}, nil
 			},
-			runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 				fzfCalled = true
-				return intfzf.Result{}, nil
+				return intpickercompat.Result{}, nil
 			}),
 			nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 				gotNativeOptions = options
@@ -196,7 +196,7 @@ func TestAppRunSwitchLegacyFZFBackendUsesNativeRunner(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if fzfCalled {
-		t.Fatal("fzf runner was called for native backend")
+		t.Fatal("legacy runner was called for native backend")
 	}
 	if got, want := gotNativeOptions.UI, switchUIPopup; got != want {
 		t.Fatalf("native UI = %q, want %q", got, want)
@@ -218,19 +218,19 @@ func TestAppRunSwitchLegacyFZFBackendUsesNativeRunner(t *testing.T) {
 func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	t.Parallel()
 
-	var gotRunnerOptions intfzf.Options
+	var gotRunnerOptions intpickercompat.Options
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = options
-			return intfzf.Result{Value: "/tmp/app"}, nil
+			return intpickercompat.Result{Value: "/tmp/app"}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = options
-			return intfzf.Result{Value: "/tmp/app"}, nil
+			return intpickercompat.Result{Value: "/tmp/app"}, nil
 		})),
 		sessions:   &capturingSwitchSessionExecutor{},
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -272,7 +272,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
+	if got, want := gotRunnerOptions.Entries, []intpickercompat.Entry{
 		{Label: "\x1b[1mapp\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m", Value: "/tmp/app"},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
@@ -288,9 +288,9 @@ func TestSwitchCommandNativeSidebarSetsTitle(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-			t.Fatal("fzf runner should not be called for native sidebar")
-			return intfzf.Result{}, nil
+		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatal("legacy runner should not be called for native sidebar")
+			return intpickercompat.Result{}, nil
 		}),
 		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			gotNativeOptions = options
@@ -324,19 +324,19 @@ func TestSwitchCommandNativeSidebarSetsTitle(t *testing.T) {
 func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 	t.Parallel()
 
-	var gotRunnerOptions intfzf.Options
+	var gotRunnerOptions intpickercompat.Options
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = options
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = options
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		sessions: &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
 		inventory: &stubPreviewInventory{panes: []corepreview.Pane{{
@@ -363,19 +363,19 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 func TestSwitchCommandSidebarUsesContextSessionForInitialPosition(t *testing.T) {
 	t.Parallel()
 
-	var gotRunnerOptions intfzf.Options
+	var gotRunnerOptions intpickercompat.Options
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/a", "/tmp/b"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = options
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = options
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		sessions: &capturingSwitchSessionExecutor{
 			exists: map[string]bool{"session-b": true},
@@ -444,19 +444,19 @@ func TestSwitchCommandSidebarFocusOpensExistingSession(t *testing.T) {
 func TestSwitchCommandMarksExistingSessionsInRows(t *testing.T) {
 	t.Parallel()
 
-	var gotRunnerOptions intfzf.Options
+	var gotRunnerOptions intpickercompat.Options
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/new-app", "/tmp/live-app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = options
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = options
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		sessions: &capturingSwitchSessionExecutor{
 			exists: map[string]bool{"tmp-live-app": true},
@@ -480,7 +480,7 @@ func TestSwitchCommandMarksExistingSessionsInRows(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := gotRunnerOptions.Entries, []intfzf.Entry{
+	if got, want := gotRunnerOptions.Entries, []intpickercompat.Entry{
 		{Label: "\x1b[1m\x1b[32mlive-app\x1b[0m\n  \x1b[38;5;242m/tmp/live-app\x1b[0m", Value: "/tmp/live-app"},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
@@ -521,10 +521,10 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	t.Chdir(fixture.path("managed/work-a/nested"))
 
 	cmd := newSwitchCommand()
-	fakeRunner := &capturingSwitchRunner{result: intfzf.Result{Value: fixture.path("managed/work-a")}}
+	fakeRunner := &capturingSwitchRunner{result: intpickercompat.Result{Value: fixture.path("managed/work-a")}}
 	fakeExecutor := &capturingSwitchSessionExecutor{}
 	cmd.runner = fakeRunner
-	cmd.nativePicker = nativePickerFromFZFRunner(fakeRunner)
+	cmd.nativePicker = nativePickerFromLegacyRunner(fakeRunner)
 	cmd.sessions = fakeExecutor
 	cmd.executable = func() (string, error) { return "/tmp/projmux", nil }
 
@@ -540,7 +540,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got, want := stdout.String(), ""; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
-	wantEntries := []intfzf.Entry{
+	wantEntries := []intpickercompat.Entry{
 		{Label: "\x1b[1mhome\x1b[0m\n  \x1b[38;5;242m~\x1b[0m", Value: fixture.path("home")},
 		{Label: "\x1b[1mapp\x1b[0m \x1b[33m*\x1b[0m\n  \x1b[38;5;242m" + fixture.path("pins/app") + "\x1b[0m", Value: fixture.path("pins/app")},
 		{Label: "\x1b[1mrepo-a\x1b[0m\n  \x1b[38;5;242m~rp/repo-a\x1b[0m", Value: fixture.path("rp/repo-a")},
@@ -599,9 +599,9 @@ func TestNewSwitchCommandDoesNotInferRepoRootFromHomeSourceRepos(t *testing.T) {
 	t.Chdir(fixture.path("home/source/repos/app/nested"))
 
 	cmd := newSwitchCommand()
-	fakeRunner := &capturingSwitchRunner{result: intfzf.Result{}}
+	fakeRunner := &capturingSwitchRunner{result: intpickercompat.Result{}}
 	cmd.runner = fakeRunner
-	cmd.nativePicker = nativePickerFromFZFRunner(fakeRunner)
+	cmd.nativePicker = nativePickerFromLegacyRunner(fakeRunner)
 	cmd.sessions = &capturingSwitchSessionExecutor{}
 	cmd.executable = func() (string, error) { return "/tmp/projmux", nil }
 
@@ -609,7 +609,7 @@ func TestNewSwitchCommandDoesNotInferRepoRootFromHomeSourceRepos(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	wantEntries := []intfzf.Entry{
+	wantEntries := []intpickercompat.Entry{
 		{Label: "\x1b[1mhome\x1b[0m\n  \x1b[38;5;242m~\x1b[0m", Value: fixture.path("home")},
 		{Label: "\x1b[1mrepos\x1b[0m\n  \x1b[38;5;242m~/source/repos\x1b[0m", Value: fixture.path("home/source/repos")},
 	}
@@ -646,8 +646,8 @@ func TestSwitchCommandRejectsInvalidUsage(t *testing.T) {
 			err := (&switchCommand{
 				discover:     func(candidates.Inputs) ([]string, error) { return nil, nil },
 				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-				runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-				nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+				runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+				nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 				sessions:     &capturingSwitchSessionExecutor{},
 				identity:     stubSwitchIdentityResolver{name: "tmp"},
 				validate:     func(string) error { return nil },
@@ -695,8 +695,8 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &switchCommand{
 				homeDir:      func() (string, error) { return "/home/tester", nil },
 				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-				runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-				nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+				runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+				nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 				workingDir: func() (string, error) {
 					return "", errors.New("no cwd")
 				},
@@ -711,11 +711,11 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 				pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
 				workingDir: func() (string, error) { return "/tmp", nil },
 				identity:   stubSwitchIdentityResolver{name: "tmp-app"},
-				runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{}, errors.New("fzf exploded")
+				runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{}, errors.New("picker exploded")
 				}),
-				nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{}, errors.New("fzf exploded")
+				nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{}, errors.New("picker exploded")
 				})),
 			},
 			want: "run native switch picker",
@@ -723,28 +723,36 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 		{
 			name: "identity setup",
 			cmd: &switchCommand{
-				discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
-				homeDir:      func() (string, error) { return "/home/tester", nil },
-				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-				workingDir:   func() (string, error) { return "/tmp", nil },
-				runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{Value: "/tmp/app"}, nil }),
-				nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{Value: "/tmp/app"}, nil })),
-				validate:     func(string) error { return nil },
-				identityErr:  errors.New("missing home"),
+				discover:   func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
+				homeDir:    func() (string, error) { return "/home/tester", nil },
+				pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				workingDir: func() (string, error) { return "/tmp", nil },
+				runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "/tmp/app"}, nil
+				}),
+				nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "/tmp/app"}, nil
+				})),
+				validate:    func(string) error { return nil },
+				identityErr: errors.New("missing home"),
 			},
 			want: "configure session identity resolver",
 		},
 		{
 			name: "open session",
 			cmd: &switchCommand{
-				discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
-				homeDir:      func() (string, error) { return "/home/tester", nil },
-				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-				workingDir:   func() (string, error) { return "/tmp", nil },
-				runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{Value: "/tmp/app"}, nil }),
-				nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{Value: "/tmp/app"}, nil })),
-				identity:     stubSwitchIdentityResolver{name: "tmp-app"},
-				validate:     func(string) error { return nil },
+				discover:   func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
+				homeDir:    func() (string, error) { return "/home/tester", nil },
+				pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				workingDir: func() (string, error) { return "/tmp", nil },
+				runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "/tmp/app"}, nil
+				}),
+				nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "/tmp/app"}, nil
+				})),
+				identity: stubSwitchIdentityResolver{name: "tmp-app"},
+				validate: func(string) error { return nil },
 				sessions: &capturingSwitchSessionExecutor{
 					openErr: errors.New("attach exploded"),
 				},
@@ -774,8 +782,8 @@ func TestSwitchCommandAllowsEmptySelection(t *testing.T) {
 	cmd := &switchCommand{
 		discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/a"}, nil },
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-a"},
 		validate:     func(string) error { return nil },
@@ -844,8 +852,8 @@ func TestSwitchCommandUsesWeakManagedRootHeuristicsWhenEnvUnset(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -880,8 +888,8 @@ func TestSwitchCommandUsesSavedWorkdirsWhenEnvUnset(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -919,8 +927,8 @@ func TestSwitchCommandManagedRootsEnvBeatsSavedWorkdirs(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -963,8 +971,8 @@ func TestSwitchCommandMultiPathProjdirSplitsPrimaryAndExtras(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -1006,8 +1014,8 @@ func TestSwitchCommandMultiPathProjdirCombinesWithManagedRootsEnv(t *testing.T) 
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -1041,8 +1049,8 @@ func TestSwitchCommandSinglePathProjdirRetainsSavedWorkdirs(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -1259,7 +1267,7 @@ func TestSwitchCommandSettingsMenuOffersAddCurrentPin(t *testing.T) {
 		t.Fatalf("settingsEntries() error = %v", err)
 	}
 
-	want := []intfzf.Entry{
+	want := []intpickercompat.Entry{
 		{Label: "+ Add pin...", Value: "add-interactive"},
 		{Label: "+ Add current pin  ~rp/new-app", Value: "add:/home/tester/source/repos/new-app"},
 		{Label: "x Clear all pins", Value: "clear"},
@@ -1297,7 +1305,7 @@ func TestSwitchCommandSettingsMenuSkipsAddWhenCurrentTargetAlreadyPinned(t *test
 		t.Fatalf("settingsEntries() error = %v", err)
 	}
 
-	want := []intfzf.Entry{
+	want := []intpickercompat.Entry{
 		{Label: "+ Add pin...", Value: "add-interactive"},
 		{Label: "x Clear all pins", Value: "clear"},
 		{Label: "x Remove  ~rp/app", Value: "pin:/home/tester/source/repos/app"},
@@ -1401,7 +1409,7 @@ func TestSwitchCommandCyclePaneNoOpsForNewSessionCandidates(t *testing.T) {
 func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *testing.T) {
 	t.Parallel()
 
-	var gotRunnerOptions []intfzf.Options
+	var gotRunnerOptions []intpickercompat.Options
 	executor := &capturingSwitchSessionExecutor{
 		exists: map[string]bool{
 			"tmp-app":      true,
@@ -1416,21 +1424,21 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 			return []string{"/tmp/app", "/tmp/previous"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = append(gotRunnerOptions, options)
 			call++
 			if call == 1 {
-				return intfzf.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
+				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = append(gotRunnerOptions, options)
 			call++
 			if call == 1 {
-				return intfzf.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
+				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		sessions:   executor,
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -1494,19 +1502,19 @@ func TestSwitchCommandPickerCtrlXBlocksKillWithoutPreviousLiveSession(t *testing
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			call++
 			if call == 1 {
-				return intfzf.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
+				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			call++
 			if call == 1 {
-				return intfzf.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
+				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		sessions:   executor,
 		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
@@ -1536,19 +1544,19 @@ func TestSwitchCommandPickerCtrlXDoesNotKillHome(t *testing.T) {
 			return []string{"/home/tester"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			call++
 			if call == 1 {
-				return intfzf.Result{Key: switchKillExpectKey, Value: "/home/tester"}, nil
+				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/home/tester"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			call++
 			if call == 1 {
-				return intfzf.Result{Key: switchKillExpectKey, Value: "/home/tester"}, nil
+				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/home/tester"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		sessions:   executor,
 		identity:   stubSwitchIdentityResolver{name: "home"},
@@ -1568,7 +1576,7 @@ func TestSwitchCommandPickerCtrlXDoesNotKillHome(t *testing.T) {
 func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 	t.Parallel()
 
-	var gotRunnerOptions []intfzf.Options
+	var gotRunnerOptions []intpickercompat.Options
 	store := &stubSwitchPinStore{toggled: true}
 	executor := &capturingSwitchSessionExecutor{}
 	call := 0
@@ -1578,21 +1586,21 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return store, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = append(gotRunnerOptions, options)
 			call++
 			if call == 1 {
-				return intfzf.Result{Key: switchPinExpectKey, Value: "/tmp/app"}, nil
+				return intpickercompat.Result{Key: switchPinExpectKey, Value: "/tmp/app"}, nil
 			}
-			return intfzf.Result{Value: "/tmp/app"}, nil
+			return intpickercompat.Result{Value: "/tmp/app"}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotRunnerOptions = append(gotRunnerOptions, options)
 			call++
 			if call == 1 {
-				return intfzf.Result{Key: switchPinExpectKey, Value: "/tmp/app"}, nil
+				return intpickercompat.Result{Key: switchPinExpectKey, Value: "/tmp/app"}, nil
 			}
-			return intfzf.Result{Value: "/tmp/app"}, nil
+			return intpickercompat.Result{Value: "/tmp/app"}, nil
 		})),
 		sessions:   executor,
 		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
@@ -1637,19 +1645,19 @@ func TestSwitchCommandSettingsSubcommandRunsSettingsMenu(t *testing.T) {
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return store, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Value: "clear"}, nil
+				return intpickercompat.Result{Value: "clear"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Value: "clear"}, nil
+				return intpickercompat.Result{Value: "clear"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		sessions:   &capturingSwitchSessionExecutor{},
 		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
@@ -1680,19 +1688,19 @@ func TestSwitchCommandSettingsMenuAddCurrentPin(t *testing.T) {
 			return []string{"/home/tester/source/repos/new-app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return store, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Value: "add:/home/tester/source/repos/new-app"}, nil
+				return intpickercompat.Result{Value: "add:/home/tester/source/repos/new-app"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Value: "add:/home/tester/source/repos/new-app"}, nil
+				return intpickercompat.Result{Value: "add:/home/tester/source/repos/new-app"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		sessions:   &capturingSwitchSessionExecutor{},
 		identity:   stubSwitchIdentityResolver{name: "new-app"},
@@ -1736,51 +1744,51 @@ func TestSwitchCommandSettingsMenuInteractiveAddPin(t *testing.T) {
 			}, nil
 		},
 		pinStore: func() (switchPinStore, error) { return store, nil },
-		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
 				if got, want := options.UI, "settings"; got != want {
 					t.Fatalf("settings picker UI = %q, want %q", got, want)
 				}
-				return intfzf.Result{Value: "add-interactive"}, nil
+				return intpickercompat.Result{Value: "add-interactive"}, nil
 			}
 			if runnerCalls == 2 {
 				if got, want := options.UI, "pin"; got != want {
 					t.Fatalf("add-pin picker UI = %q, want %q", got, want)
 				}
-				wantEntries := []intfzf.Entry{
+				wantEntries := []intpickercompat.Entry{
 					{Label: "~rp/new-app", Value: "/home/tester/source/repos/new-app"},
 					{Label: "~rp/lib", Value: "/home/tester/source/repos/lib"},
 				}
 				if !equalEntries(options.Entries, wantEntries) {
 					t.Fatalf("add-pin entries = %#v, want %#v", options.Entries, wantEntries)
 				}
-				return intfzf.Result{Value: "/home/tester/source/repos/lib"}, nil
+				return intpickercompat.Result{Value: "/home/tester/source/repos/lib"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
 				if got, want := options.UI, "settings"; got != want {
 					t.Fatalf("settings picker UI = %q, want %q", got, want)
 				}
-				return intfzf.Result{Value: "add-interactive"}, nil
+				return intpickercompat.Result{Value: "add-interactive"}, nil
 			}
 			if runnerCalls == 2 {
 				if got, want := options.UI, "pin"; got != want {
 					t.Fatalf("add-pin picker UI = %q, want %q", got, want)
 				}
-				wantEntries := []intfzf.Entry{
+				wantEntries := []intpickercompat.Entry{
 					{Label: "~rp/new-app", Value: "/home/tester/source/repos/new-app"},
 					{Label: "~rp/lib", Value: "/home/tester/source/repos/lib"},
 				}
 				if !equalEntries(options.Entries, wantEntries) {
 					t.Fatalf("add-pin entries = %#v, want %#v", options.Entries, wantEntries)
 				}
-				return intfzf.Result{Value: "/home/tester/source/repos/lib"}, nil
+				return intpickercompat.Result{Value: "/home/tester/source/repos/lib"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		sessions:   &capturingSwitchSessionExecutor{},
 		identity:   stubSwitchIdentityResolver{name: "new-app"},
@@ -1920,19 +1928,19 @@ func TestSwitchCommandTogglePinSnapsExplicitPathToCandidate(t *testing.T) {
 	}
 }
 
-type switchRunnerFunc func(options intfzf.Options) (intfzf.Result, error)
+type switchRunnerFunc func(options intpickercompat.Options) (intpickercompat.Result, error)
 
-func (f switchRunnerFunc) Run(options intfzf.Options) (intfzf.Result, error) {
+func (f switchRunnerFunc) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
 	return f(options)
 }
 
 type capturingSwitchRunner struct {
-	last   intfzf.Options
-	result intfzf.Result
+	last   intpickercompat.Options
+	result intpickercompat.Result
 	err    error
 }
 
-func (r *capturingSwitchRunner) Run(options intfzf.Options) (intfzf.Result, error) {
+func (r *capturingSwitchRunner) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
 	r.last = options
 	return r.result, r.err
 }
@@ -2086,7 +2094,7 @@ func equalStrings(got, want []string) bool {
 	return true
 }
 
-func equalEntries(got, want []intfzf.Entry) bool {
+func equalEntries(got, want []intpickercompat.Entry) bool {
 	if len(got) != len(want) {
 		return false
 	}

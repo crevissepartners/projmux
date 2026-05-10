@@ -1,4 +1,4 @@
-package fzf
+package pickercompat
 
 type Options struct {
 	UI             string
