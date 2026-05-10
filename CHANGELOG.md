@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.4.10](https://github.com/crevissepartners/projmux/compare/v0.4.9...v0.4.10) (2026-05-10)
+
+
+### Features
+
+* add lifecycle hook events ([#141](https://github.com/crevissepartners/projmux/issues/141)) ([7fa02e4](https://github.com/crevissepartners/projmux/commit/7fa02e435b7c6bef1b1b515baf5a6c73e9d164e6))
+* gate project hooks on trust ([#139](https://github.com/crevissepartners/projmux/issues/139)) ([fa38041](https://github.com/crevissepartners/projmux/commit/fa3804104554307f074d65fa631090e977ffbec2))
+* **keybindings:** add labs diagnostic flow ([#143](https://github.com/crevissepartners/projmux/issues/143)) ([9329b46](https://github.com/crevissepartners/projmux/commit/9329b468be93d62b501cb238675b720bc66fbf7d))
+* **keybindings:** confirm lab plain overrides ([#144](https://github.com/crevissepartners/projmux/issues/144)) ([2d5a4cb](https://github.com/crevissepartners/projmux/commit/2d5a4cb15df994732039855702a2f8e0d82ae81c))
+* **keybindings:** edit keymap in settings ([#140](https://github.com/crevissepartners/projmux/issues/140)) ([695db83](https://github.com/crevissepartners/projmux/commit/695db83d9925a959c1f4945b62d898628c098d29))
+* **keybindings:** support user keymap file ([#137](https://github.com/crevissepartners/projmux/issues/137)) ([218335a](https://github.com/crevissepartners/projmux/commit/218335a9cfe31d4de502d83177a26005e6eb6ce3))
+* load declarative project hook config ([#146](https://github.com/crevissepartners/projmux/issues/146)) ([c6338eb](https://github.com/crevissepartners/projmux/commit/c6338ebb819bb5367f8404d0ae2980ca0658be63))
+* render statusbar usage HUD popup ([#147](https://github.com/crevissepartners/projmux/issues/147)) ([028a81b](https://github.com/crevissepartners/projmux/commit/028a81b3e7664472a930cd84bd0630f057eca354))
+* **shell:** show first-run bootstrap welcome ([#133](https://github.com/crevissepartners/projmux/issues/133)) ([c71b00c](https://github.com/crevissepartners/projmux/commit/c71b00c82e02ace3bfc4e4c1d75cc8d8a0a727f7))
+* **statusbar:** add settings click target ([#134](https://github.com/crevissepartners/projmux/issues/134)) ([2c3250c](https://github.com/crevissepartners/projmux/commit/2c3250c3abb171eb8e094210a54bd2abaf227424))
+
+
+### Bug Fixes
+
+* align popup content styling ([#151](https://github.com/crevissepartners/projmux/issues/151)) ([d8a0c3c](https://github.com/crevissepartners/projmux/commit/d8a0c3cda02a10ef88ed9e74edfffa85a97d087a))
+* avoid nested statusbar popup frames ([#148](https://github.com/crevissepartners/projmux/issues/148)) ([20003fe](https://github.com/crevissepartners/projmux/commit/20003fe2e283127bad9a1a95d0f1a915c5cc134a))
+* copy statusbar cwd to system clipboard ([#142](https://github.com/crevissepartners/projmux/issues/142)) ([3b24bcb](https://github.com/crevissepartners/projmux/commit/3b24bcb60d02239a5a78dba74baadeeb2ab2955b))
+* hand off sidebar hook trust to wide popup ([#150](https://github.com/crevissepartners/projmux/issues/150)) ([ffc0104](https://github.com/crevissepartners/projmux/commit/ffc010444511ff698fa0d78df120ffbf01079bb1))
+* make statusbar cwd popup display-only ([#145](https://github.com/crevissepartners/projmux/issues/145)) ([4ebdb12](https://github.com/crevissepartners/projmux/commit/4ebdb1251e1f200ffa57ae7e2caeb75986a5c476))
+* normalize native picker frame chrome ([#138](https://github.com/crevissepartners/projmux/issues/138)) ([837714d](https://github.com/crevissepartners/projmux/commit/837714d8d3ead8ce8aa8338064de2bd270b3a0cb))
+* **picker:** retire fzf dependency ([#128](https://github.com/crevissepartners/projmux/issues/128)) ([50e71ee](https://github.com/crevissepartners/projmux/commit/50e71eef0d0494d5697545718e18ec566d51e728))
+* **picker:** wrap native arrow navigation ([#131](https://github.com/crevissepartners/projmux/issues/131)) ([9dc69fd](https://github.com/crevissepartners/projmux/commit/9dc69fdf660a95eb9d660e2e5ddefa79833c319f))
+* show hook trust prompt in wide popup ([#149](https://github.com/crevissepartners/projmux/issues/149)) ([464f21e](https://github.com/crevissepartners/projmux/commit/464f21e5316be43bfb8fafbe681afc2a16bd1dac))
+
 ## [0.4.9](https://github.com/crevissepartners/projmux/compare/v0.4.8...v0.4.9) (2026-05-10)
 
 
