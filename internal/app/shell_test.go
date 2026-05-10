@@ -70,6 +70,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"set -g status 2",
+		"range=user|settings",
 		"range=user|notify",
 		"range=user|usage",
 		"align=left",

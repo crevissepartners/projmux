@@ -237,19 +237,20 @@ projmux status notify [--max-width N]
 
 ```
 projmux statusbar click <range-id> [--socket <s>] [--mouse-window <id>]
-                                   [--mouse-x N] [--mouse-y N]
+                                   [--client <tty>] [--mouse-x N] [--mouse-y N]
 ```
 
 Click/keyboard dispatcher for the two-line status bar. Implemented range ids:
-`session pwd kube git usage notify`. The bare `window` /
+`session pwd kube git usage notify settings`. The bare `window` /
 `window|<idx>` token (tmux's built-in window-list range) and the empty
 range fall through to `select-window -t @<mouse_window>` so the native
 click-to-switch tab affordance is preserved on row 0. Unknown range ids are
 non-specialized placeholders and no-op. `session` opens the existing-session
 popup; `pwd` copies the current pane path to the tmux paste buffer and shows
 it in a compact popup; `kube` and `git` open the project switcher popup;
-`usage` opens the detailed `projmux usage` table popup; `notify` focuses and
-acks the newest actionable queue target.
+`settings` toggles the settings popup for the tmux client; `usage` opens the
+detailed `projmux usage` table popup; `notify` focuses and acks the newest
+actionable queue target.
 `MouseDown1Status` errors are
 swallowed and surfaced as `display-message` toasts so a transient
 failure does not raise a tmux error popup. See [statusbar.md](statusbar.md).

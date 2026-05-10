@@ -27,7 +27,10 @@ row 1  #[range=user|notify] <notify HUD pill> #[norange]
   `isWindowListRangeToken` fallback is now defense-in-depth only.
   The session, pwd, kube, and git segments on this row are wrapped
   in `#[range=user|<id>]` ranges and dispatched through the projmux
-  handler. The git segment shows the current branch or detached commit,
+  handler. The standalone config also wraps the right-side `projmux`
+  badge as the `settings` range; the app config renders a compact
+  `⚙` settings chip after the clock. The git segment shows the current
+  branch or detached commit,
   then compact state indicators when available: `*` for local changes,
   `+N` for staged entries, and `↑N`/`↓N` for ahead/behind counts. Each
   state token gets its own compact foreground color while preserving the
@@ -46,7 +49,7 @@ A single tmux bind handles both lines:
 ```tmux
 bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
   { select-window -t = } \
-  { run-shell "'<projmux>' statusbar click \"#{mouse_status_range}\" --mouse-window \"#{mouse_window}\"" }
+  { run-shell "'<projmux>' statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\"" }
 ```
 
 `MouseDown1Status` fires from any line of a multi-line status bar with
@@ -60,6 +63,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `pwd`     | 0 | copy `#{pane_current_path}` to tmux buffer and show a compact `Path copied` popup | `prefix s p`  |
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
+| `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
 | `usage`   | 1 | `display-popup -E -h 60% -w 80% -- projmux usage`, then wait for Enter | `prefix s u`  |
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on focus success | `prefix s n`  |
 
@@ -100,7 +104,9 @@ bind-key -T projmux-status s run-shell '#{q:projmux} statusbar click session'
 ```
 
 The chord routes through the same dispatcher as the mouse click, so
-keyboard and mouse paths are functionally identical.
+keyboard and mouse paths are functionally identical for keyed ranges.
+There is intentionally no `prefix s s` settings fallback because that chord
+already opens the session/sidebar range.
 
 ## Click failure handling
 
@@ -115,6 +121,7 @@ them as `display-message` toasts:
   <reason>`.
 - `session`, `kube`, or `git` popup launch failure: toast
   `statusbar <range>: popup failed`.
+- `settings` popup launch failure: toast `statusbar settings: popup failed`.
 - `pwd` path popup failure: keep the copied path in the tmux paste
   buffer when possible and fall back to a short `display-message`.
 - `usage` popup failure: fall back to inlining the rendered table

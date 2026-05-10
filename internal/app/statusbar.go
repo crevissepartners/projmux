@@ -2,8 +2,9 @@
 // projmux tmux status bar to per-segment handlers. The status bar wraps each
 // segment in a tmux user-defined range (e.g. `#[range=user|notify]...`); the
 // mouse binding `bind -n MouseDown1Status run-shell '<bin> statusbar click
-// "#{mouse_status_range}" --mouse-window "#{mouse_window}"'` invokes us with
-// the matching range id and the window id under the cursor, and the
+// "#{mouse_status_range}" --client "#{client_tty}" --mouse-window
+// "#{mouse_window}"'` invokes us with the matching range id, client tty, and
+// the window id under the cursor, and the
 // `prefix s {u,n,g,k,p,s}` shortcuts call us with hard-coded ids.
 //
 // When the click lands outside any user-defined range (e.g. on a window-list
@@ -29,12 +30,13 @@ import (
 type statusbarRangeID string
 
 const (
-	statusbarRangeSession statusbarRangeID = "session"
-	statusbarRangePwd     statusbarRangeID = "pwd"
-	statusbarRangeKube    statusbarRangeID = "kube"
-	statusbarRangeGit     statusbarRangeID = "git"
-	statusbarRangeUsage   statusbarRangeID = "usage"
-	statusbarRangeNotify  statusbarRangeID = "notify"
+	statusbarRangeSession  statusbarRangeID = "session"
+	statusbarRangePwd      statusbarRangeID = "pwd"
+	statusbarRangeKube     statusbarRangeID = "kube"
+	statusbarRangeGit      statusbarRangeID = "git"
+	statusbarRangeUsage    statusbarRangeID = "usage"
+	statusbarRangeNotify   statusbarRangeID = "notify"
+	statusbarRangeSettings statusbarRangeID = "settings"
 )
 
 // statusbarRunner abstracts the tmux/projmux invocations the click handlers
@@ -94,6 +96,7 @@ func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 type statusbarClickOptions struct {
 	RangeID     statusbarRangeID
 	Socket      string
+	ClientTTY   string
 	MouseWindow string
 	MouseX      int
 	MouseY      int
@@ -109,7 +112,7 @@ type statusbarClickOptions struct {
 // optional value, anything else is a positional. Up to one positional is
 // allowed; everything beyond that is a UsageError.
 //
-// Recognized flags: --socket, --mouse-window, --mouse-x, --mouse-y. Both
+// Recognized flags: --socket, --client, --mouse-window, --mouse-x, --mouse-y. Both
 // space-separated (`--flag value`) and equals (`--flag=value`) forms are
 // accepted. Unknown flags are reported as UsageError so typos don't silently
 // swallow values.
@@ -156,6 +159,16 @@ func parseStatusbarClickArgs(args []string) (string, statusbarClickOptions, erro
 				i = ni
 			}
 			opts.Socket = strings.TrimSpace(value)
+		case "client":
+			if !hasValue {
+				v, ni, err := consumeValue(name, i)
+				if err != nil {
+					return "", opts, err
+				}
+				value = v
+				i = ni
+			}
+			opts.ClientTTY = strings.TrimSpace(value)
 		case "mouse-window":
 			if !hasValue {
 				v, ni, err := consumeValue(name, i)
@@ -321,12 +334,13 @@ func (c *statusbarCommand) handleWindowListClick(opts statusbarClickOptions, std
 // state across goroutines.
 func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarClickOptions, io.Writer, io.Writer) error {
 	return map[statusbarRangeID]func(statusbarClickOptions, io.Writer, io.Writer) error{
-		statusbarRangeSession: c.handleSession,
-		statusbarRangePwd:     c.handlePwd,
-		statusbarRangeKube:    c.handleKube,
-		statusbarRangeGit:     c.handleGit,
-		statusbarRangeUsage:   c.handleUsage,
-		statusbarRangeNotify:  c.handleNotify,
+		statusbarRangeSession:  c.handleSession,
+		statusbarRangePwd:      c.handlePwd,
+		statusbarRangeKube:     c.handleKube,
+		statusbarRangeGit:      c.handleGit,
+		statusbarRangeUsage:    c.handleUsage,
+		statusbarRangeNotify:   c.handleNotify,
+		statusbarRangeSettings: c.handleSettings,
 	}
 }
 
@@ -391,7 +405,15 @@ func (c *statusbarCommand) handleGit(_ statusbarClickOptions, _, stderr io.Write
 	return c.handlePopupToggle(stderr, "git", "sessionizer")
 }
 
+func (c *statusbarCommand) handleSettings(opts statusbarClickOptions, _, stderr io.Writer) error {
+	return c.handlePopupToggleWithClient(stderr, "settings", "ai-split-settings", opts.ClientTTY)
+}
+
 func (c *statusbarCommand) handlePopupToggle(stderr io.Writer, label, mode string) error {
+	return c.handlePopupToggleWithClient(stderr, label, mode, "")
+}
+
+func (c *statusbarCommand) handlePopupToggleWithClient(stderr io.Writer, label, mode, clientTTY string) error {
 	binaryPath, err := c.resolveBinary()
 	if err != nil {
 		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: cannot resolve projmux binary", label))
@@ -399,7 +421,12 @@ func (c *statusbarCommand) handlePopupToggle(stderr io.Writer, label, mode strin
 	if c.runner == nil {
 		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: runner unavailable", label))
 	}
-	if _, err := c.runner.Run(context.Background(), binaryPath, "tmux", "popup-toggle", mode); err != nil {
+	args := []string{"tmux", "popup-toggle"}
+	if strings.TrimSpace(clientTTY) != "" {
+		args = append(args, "--client", strings.TrimSpace(clientTTY))
+	}
+	args = append(args, mode)
+	if _, err := c.runner.Run(context.Background(), binaryPath, args...); err != nil {
 		fmt.Fprintf(stderr, "statusbar %s: popup-toggle %s: %v\n", label, mode, err)
 		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: popup failed", label))
 	}
@@ -612,9 +639,9 @@ func (c *statusbarCommand) runTmuxNoFallback(_ io.Writer, args ...string) error 
 
 func printStatusbarUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux statusbar click <range-id> [--socket <s>] [--mouse-window <id>] [--mouse-x N] [--mouse-y N]")
+	fmt.Fprintln(w, "  projmux statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-window <id>] [--mouse-x N] [--mouse-y N]")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Range ids: session pwd kube git usage notify")
+	fmt.Fprintln(w, "Range ids: session pwd kube git usage notify settings")
 }
 
 type statusbarExecRunner struct{}
