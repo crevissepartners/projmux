@@ -1186,6 +1186,19 @@ func TestNativeInteractiveRendersPreviewOffset(t *testing.T) {
 	}
 }
 
+func TestLimitedNativePreviewLinesKeepsLimitWithOverflowNotice(t *testing.T) {
+	t.Parallel()
+
+	lines := limitedNativePreviewLines("one\ntwo\nthree\nfour", 0, 3)
+
+	if got, want := len(lines), 3; got != want {
+		t.Fatalf("limitedNativePreviewLines() len = %d, want %d: %#v", got, want, lines)
+	}
+	if got, want := lines[2], "... 2 more lines"; got != want {
+		t.Fatalf("overflow notice = %q, want %q", got, want)
+	}
+}
+
 func TestNativeInteractiveUsesScrollbarForLongLists(t *testing.T) {
 	t.Parallel()
 
@@ -1389,8 +1402,8 @@ func TestNativeInteractiveRendersSelectedMultilineContinuationMarker(t *testing.
 		if !strings.HasPrefix(line, nativeContinuation) || !strings.Contains(line, nativeCurrentStart) {
 			t.Fatalf("selected multiline continuation line = %q, want marker and current-row style", line)
 		}
-		if strings.Contains(line, "┃┃┃") || !strings.Contains(line, "|") {
-			t.Fatalf("selected multiline continuation line = %q, want single continuation bar", line)
+		if strings.Contains(line, "┃┃┃") || strings.Contains(line, "|||") || !strings.Contains(line, "▌") {
+			t.Fatalf("selected multiline continuation line = %q, want single pointer-width continuation bar", line)
 		}
 	}
 }

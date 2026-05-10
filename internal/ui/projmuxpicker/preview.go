@@ -66,8 +66,11 @@ func RenderSplitPreviewRows(w io.Writer, listLines, previewLines []string, layou
 		listWidth = 32
 		previewWidth = layout.Cols - listWidth - 1
 	}
-	listLines = ListLinesWithScrollbar(listLines, total, start, end, listWidth)
-	rows := max(rowCount, maxInt(len(listLines), len(previewLines)))
+	rows := maxInt(len(listLines), len(previewLines))
+	if rowCount > 0 {
+		rows = rowCount
+	}
+	listLines = ListLinesWithScrollbarRows(listLines, total, start, end, listWidth, rows)
 	for i := range rows {
 		left := ""
 		if i < len(listLines) {

@@ -142,8 +142,8 @@ func TestInteractiveRowLinesUsesContinuationMarkerForSelectedMultiline(t *testin
 		if !strings.HasPrefix(line, Continuation) {
 			t.Fatalf("selected continuation line = %q, want continuation marker", line)
 		}
-		if strings.Contains(line, "┃┃┃") || !strings.Contains(line, "|") {
-			t.Fatalf("selected continuation line = %q, want single continuation bar", line)
+		if strings.Contains(line, "┃┃┃") || strings.Contains(line, "|||") || !strings.Contains(line, "▌") {
+			t.Fatalf("selected continuation line = %q, want single pointer-width continuation bar", line)
 		}
 		if !strings.Contains(line, CurrentStart) {
 			t.Fatalf("selected continuation line = %q, want current-row style", line)
@@ -166,9 +166,27 @@ func TestInteractiveRowLinesUsesCompactSelectedMetaIndent(t *testing.T) {
 		if strings.HasPrefix(plain, "|||") || strings.HasPrefix(plain, "┃┃┃") {
 			t.Fatalf("selected continuation line = %q, want no repeated bar marker", line)
 		}
-		if !strings.HasPrefix(plain, "| ") {
-			t.Fatalf("selected continuation line = %q, want compact single-bar indent", line)
+		if !strings.HasPrefix(plain, "▌ ") {
+			t.Fatalf("selected continuation line = %q, want compact pointer-width indent", line)
 		}
+	}
+}
+
+func TestInteractiveRowLinesUsesCompactUnselectedMetaIndent(t *testing.T) {
+	t.Parallel()
+
+	lines := InteractiveRowLines(Row{
+		Label: "api\n  ~rp/api\n  shell main",
+	}, false, true)
+
+	if len(lines) != 3 {
+		t.Fatalf("InteractiveRowLines() len = %d, want 3: %#v", len(lines), lines)
+	}
+	if got, want := lines[1], "~rp/api"; got != want {
+		t.Fatalf("pwd line = %q, want %q", got, want)
+	}
+	if got, want := lines[2], "shell main"; got != want {
+		t.Fatalf("tabs line = %q, want %q", got, want)
 	}
 }
 
@@ -197,6 +215,20 @@ func TestListLinesWithScrollbarMovesThumbGradually(t *testing.T) {
 	}
 	if !strings.HasSuffix(rendered[1], Scrollbar) || !strings.HasSuffix(rendered[3], Scrollbar) {
 		t.Fatalf("scrollbar = %#v, want thumb moved by one row near the middle", rendered)
+	}
+}
+
+func TestListLinesWithScrollbarRowsKeepsViewportTrack(t *testing.T) {
+	t.Parallel()
+
+	lines := []string{"item 3", "detail"}
+	rendered := ListLinesWithScrollbarRows(lines, 10, 3, 4, 12, 6)
+
+	if len(rendered) != 6 {
+		t.Fatalf("rendered rows = %d, want viewport-sized rows: %#v", len(rendered), rendered)
+	}
+	if got := scrollbarCount(rendered); got == 0 {
+		t.Fatalf("scrollbar count = %d, want scrollbar on viewport track: %#v", got, rendered)
 	}
 }
 

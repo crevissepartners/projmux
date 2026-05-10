@@ -160,17 +160,32 @@ func InteractiveListLines(rows []Row, start, end, selected int, multiLine bool) 
 }
 
 func ListLinesWithScrollbar(lines []string, total, start, end, width int) []string {
+	return ListLinesWithScrollbarRows(lines, total, start, end, width, len(lines))
+}
+
+func ListLinesWithScrollbarRows(lines []string, total, start, end, width, rows int) []string {
 	visible := end - start
-	hasScrollbar := total > visible && len(lines) > 0 && width > 1
-	if !hasScrollbar {
-		return RenderableListLines(lines, width)
+	if rows < len(lines) {
+		rows = len(lines)
 	}
-	thumbStart, thumbEnd := scrollbarThumbRange(total, visible, start, len(lines))
-	rendered := make([]string, 0, len(lines))
-	for i, line := range lines {
+	hasScrollbar := total > visible && rows > 0 && width > 1
+	if !hasScrollbar {
+		rendered := RenderableListLines(lines, width)
+		for len(rendered) < rows {
+			rendered = append(rendered, PadRight("", width))
+		}
+		return rendered
+	}
+	thumbStart, thumbEnd := scrollbarThumbRange(total, visible, start, rows)
+	rendered := make([]string, 0, rows)
+	for i := range rows {
 		marker := " "
 		if i >= thumbStart && i < thumbEnd {
 			marker = Scrollbar
+		}
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
 		}
 		line = RenderableListLine(line, width-1)
 		rendered = append(rendered, PadRight(TruncateANSI(line, width-1), width-1)+marker)
@@ -185,10 +200,7 @@ func scrollbarThumbRange(total, visible, start, track int) (int, int) {
 	if visible >= total {
 		return 0, track
 	}
-	thumb := max((track*visible+total-1)/total, 1)
-	if thumb > track {
-		thumb = track
-	}
+	thumb := min(max((track*visible+total-1)/total, 1), track)
 	maxStart := total - visible
 	maxThumbStart := track - thumb
 	thumbStart := 0
@@ -253,15 +265,15 @@ func InteractiveRowLines(row Row, selected, multiLine bool) []string {
 	}
 	rendered = append(rendered, first)
 	for _, line := range lines[1:] {
-		line = fmt.Sprintf("    %s", strings.TrimRight(line, "\r"))
+		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
 		if selected && multiLine {
-			line = SelectedLine(Continuation, strings.TrimSpace(line))
+			line = SelectedLine(Continuation, line)
 		}
 		rendered = append(rendered, line)
 	}
 	for _, meta := range row.MetaLines {
 		if meta = strings.TrimSpace(meta); meta != "" {
-			line := fmt.Sprintf("    %s", meta)
+			line := meta
 			if selected && multiLine {
 				line = SelectedLine(Continuation, meta)
 			}
