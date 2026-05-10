@@ -581,8 +581,9 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 		UI:         "ai-settings",
 		Entries:    c.settingsRows(),
+		Title:      "AI Settings",
 		Prompt:     "AI Setting > ",
-		Header:     "Set Ctrl+Shift+R/L default mode",
+		Header:     "Default Ctrl+Shift+R/L split mode",
 		Footer:     projmuxFooter("Enter: set default  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-5", "ctrl-alt-s", "alt-4"),
@@ -606,8 +607,9 @@ func (c *aiCommand) runAgentPicker(direction string) (intfzf.Result, error) {
 	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 		UI:         "ai-picker",
 		Entries:    c.agentRows(),
+		Title:      "AI Launch",
 		Prompt:     "AI Launch > ",
-		Header:     "Split Direction: " + direction + "  |  Choose runtime",
+		Header:     "Split direction: " + direction,
 		Footer:     projmuxFooter("Enter: launch  |  Esc/Alt+4/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-4", "alt-5", "ctrl-alt-s"),
@@ -632,8 +634,9 @@ func (c *aiCommand) settingsRows() []intfzf.Entry {
 			tag = "\x1b[32m[ACTIVE]\x1b[0m"
 		}
 		rows = append(rows, intfzf.Entry{
-			Label: fmt.Sprintf("%s \x1b[36m%-9s\x1b[0m  \x1b[90m%s\x1b[0m", tag, item.mode, item.desc),
-			Value: item.mode,
+			Label:     fmt.Sprintf("%s \x1b[36m%-9s\x1b[0m  \x1b[90m%s\x1b[0m", tag, item.mode, item.desc),
+			Value:     item.mode,
+			SearchKey: item.mode + " " + item.desc,
 		})
 	}
 	return rows
@@ -641,11 +644,12 @@ func (c *aiCommand) settingsRows() []intfzf.Entry {
 
 func (c *aiCommand) agentRows() []intfzf.Entry {
 	rows := []intfzf.Entry{
-		c.agentRow(aiModeClaude, "Anthropic CLI split"),
 		c.agentRow(aiModeCodex, "OpenAI Codex split"),
+		c.agentRow(aiModeClaude, "Anthropic CLI split"),
 		{
-			Label: fmt.Sprintf("%-8s \x1b[34m[READY]\x1b[0m Plain shell split (\x1b[90mno agent\x1b[0m)", aiModeShell),
-			Value: aiModeShell,
+			Label:     fmt.Sprintf("%-8s \x1b[34m[READY]\x1b[0m Plain shell split (\x1b[90mno agent\x1b[0m)", aiModeShell),
+			Value:     aiModeShell,
+			SearchKey: aiModeShell + " plain shell split no agent",
 		},
 	}
 	return rows
@@ -657,8 +661,9 @@ func (c *aiCommand) agentRow(mode, desc string) intfzf.Entry {
 		status = "\x1b[32m[READY]\x1b[0m"
 	}
 	return intfzf.Entry{
-		Label: fmt.Sprintf("%-8s %s %s", mode, status, desc),
-		Value: mode,
+		Label:     fmt.Sprintf("%-8s %s %s", mode, status, desc),
+		Value:     mode,
+		SearchKey: mode + " " + desc,
 	}
 }
 
