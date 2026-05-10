@@ -224,6 +224,135 @@ func TrustProjectConfig(repoPath, trustStorePath string) (string, error) {
 	return trustProjectFile(repoPath, projectConfigRelativePath, trustStorePath)
 }
 
+// ProjectConfigTrustState classifies the trust standing of a project's
+// .projmux/config.toml file relative to the trust store.
+type ProjectConfigTrustState string
+
+const (
+	// ProjectConfigTrustAbsent means the project does not have a
+	// .projmux/config.toml file on disk, so trust is moot.
+	ProjectConfigTrustAbsent ProjectConfigTrustState = "absent"
+	// ProjectConfigTrustUntrusted means a config.toml exists but the trust
+	// store has no entry for it (or the store could not be opened in a way
+	// that would let a stored hash exist).
+	ProjectConfigTrustUntrusted ProjectConfigTrustState = "untrusted"
+	// ProjectConfigTrustTrusted means the stored hash matches the current
+	// file contents — the runner will accept the config without prompting.
+	ProjectConfigTrustTrusted ProjectConfigTrustState = "trusted"
+	// ProjectConfigTrustStale means an entry exists but the on-disk file
+	// hash differs from the stored hash; the runner will prompt before
+	// running anything declared in the changed file.
+	ProjectConfigTrustStale ProjectConfigTrustState = "stale"
+)
+
+// ProjectConfigTrustReport bundles the trust verdict together with the
+// hashes a caller needs to render meaningful UI (e.g. previous-vs-current
+// in a Settings badge).
+type ProjectConfigTrustReport struct {
+	State       ProjectConfigTrustState
+	CurrentHash string
+	StoredHash  string
+}
+
+// InspectProjectConfigTrust reports whether the project-local
+// .projmux/config.toml file is registered in the trust store and whether
+// the recorded hash still matches the file on disk. It does not mutate
+// the trust store. The function is read-only on purpose so a UI surface
+// (Settings Project tab) can render a "Trust" badge without side effects.
+func InspectProjectConfigTrust(repoPath, trustStorePath string) (ProjectConfigTrustReport, error) {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return ProjectConfigTrustReport{}, errors.New("repo path is required")
+	}
+	repo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return ProjectConfigTrustReport{}, err
+	}
+	rel := projectConfigRelativePath
+	path := filepath.Join(repo, filepath.FromSlash(rel))
+
+	info, statErr := os.Stat(path)
+	if errors.Is(statErr, os.ErrNotExist) || (statErr == nil && info.IsDir()) {
+		return ProjectConfigTrustReport{State: ProjectConfigTrustAbsent}, nil
+	}
+	if statErr != nil {
+		return ProjectConfigTrustReport{}, statErr
+	}
+
+	currentHash, _, err := hashHookFile(path)
+	if err != nil {
+		return ProjectConfigTrustReport{}, err
+	}
+
+	storePath := strings.TrimSpace(trustStorePath)
+	if storePath == "" {
+		storePath = defaultTrustStorePath()
+	}
+	if storePath == "" {
+		// No trust store available — treat the config as untrusted so the
+		// caller surfaces a "register required" badge instead of silently
+		// claiming trust.
+		return ProjectConfigTrustReport{
+			State:       ProjectConfigTrustUntrusted,
+			CurrentHash: currentHash,
+		}, nil
+	}
+	store, err := loadTrustedProjects(storePath)
+	if err != nil {
+		return ProjectConfigTrustReport{}, err
+	}
+	stored, ok := store.trustedFile(repo, rel)
+	if !ok {
+		return ProjectConfigTrustReport{
+			State:       ProjectConfigTrustUntrusted,
+			CurrentHash: currentHash,
+		}, nil
+	}
+	if stored.SHA256 == currentHash {
+		return ProjectConfigTrustReport{
+			State:       ProjectConfigTrustTrusted,
+			CurrentHash: currentHash,
+			StoredHash:  stored.SHA256,
+		}, nil
+	}
+	return ProjectConfigTrustReport{
+		State:       ProjectConfigTrustStale,
+		CurrentHash: currentHash,
+		StoredHash:  stored.SHA256,
+	}, nil
+}
+
+// UntrustProjectConfig removes the trust store entry for the project's
+// .projmux/config.toml file. If the trust store does not exist, or the
+// entry is already absent, the call is a no-op and returns nil so a UI
+// surface can render an idempotent "untrust" action.
+func UntrustProjectConfig(repoPath, trustStorePath string) error {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return errors.New("repo path is required")
+	}
+	repo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return err
+	}
+	rel := projectConfigRelativePath
+	storePath := strings.TrimSpace(trustStorePath)
+	if storePath == "" {
+		storePath = defaultTrustStorePath()
+	}
+	if storePath == "" {
+		return errors.New("trust store path could not be resolved")
+	}
+	store, err := loadTrustedProjects(storePath)
+	if err != nil {
+		return err
+	}
+	if !store.forget(repo, rel) {
+		return nil
+	}
+	return store.save(storePath)
+}
+
 func loadTrustedProjects(path string) (trustedProjects, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -292,6 +421,27 @@ func (s trustedProjects) previousHash(repo, rel string) string {
 		return ""
 	}
 	return file.SHA256
+}
+
+// forget removes the (repo, rel) entry from the trust store and reports
+// whether anything was actually removed. The project entry itself is
+// dropped when its last file is forgotten so save() doesn't leak empty
+// project keys into the on-disk JSON.
+func (s trustedProjects) forget(repo, rel string) bool {
+	project, ok := s[repo]
+	if !ok || project.Files == nil {
+		return false
+	}
+	if _, ok := project.Files[rel]; !ok {
+		return false
+	}
+	delete(project.Files, rel)
+	if len(project.Files) == 0 {
+		delete(s, repo)
+		return true
+	}
+	s[repo] = project
+	return true
 }
 
 func (s trustedProjects) trust(repo, rel, sum string, at time.Time) {
