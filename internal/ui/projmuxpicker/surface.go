@@ -43,9 +43,20 @@ func FooterBlockLines(footer string, cols int) []string {
 	}
 	lines := []string{SeparatorLine(cols)}
 	for line := range strings.SplitSeq(footer, "\n") {
-		lines = append(lines, TruncateANSI(strings.TrimRight(line, "\r"), cols))
+		lines = append(lines, ChromeLine(strings.TrimRight(line, "\r"), cols))
 	}
 	return lines
+}
+
+func HeaderLine(header string, cols int) string {
+	return ChromeLine(strings.TrimRight(header, "\r"), cols)
+}
+
+func ChromeLine(line string, cols int) string {
+	if cols <= 0 {
+		cols = DefaultCols
+	}
+	return PadStyledLine(TruncateANSI(line, cols), cols)
 }
 
 func SeparatorLine(cols int) string {
@@ -85,9 +96,9 @@ func PromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, t
 	}
 	padding := cols - VisibleLen(line) - VisibleLen(info)
 	if padding < 2 {
-		return line + "  " + info
+		return PadStyledLine(line+"  "+info, cols)
 	}
-	return line + strings.Repeat(" ", padding) + info
+	return PadStyledLine(line+strings.Repeat(" ", padding)+info, cols)
 }
 
 func QueryWithCursor(query string, cursor int) string {
@@ -188,7 +199,7 @@ func ListLinesWithScrollbarRows(lines []string, total, start, end, width, rows i
 			line = lines[i]
 		}
 		line = RenderableListLine(line, width-1)
-		rendered = append(rendered, PadRight(TruncateANSI(line, width-1), width-1)+marker)
+		rendered = append(rendered, PadStyledLine(TruncateANSI(line, width-1), width-1)+marker)
 	}
 	return rendered
 }
@@ -235,12 +246,22 @@ func RenderableListLine(line string, width int) string {
 }
 
 func PadStyledLine(line string, width int) string {
-	if width <= 0 || VisibleLen(line) >= width {
-		return line
+	if width <= 0 {
+		return closeStyledLine(line)
 	}
-	padding := strings.Repeat(" ", width-VisibleLen(line))
+	visible := VisibleLen(line)
+	if visible >= width {
+		return closeStyledLine(line)
+	}
+	padding := strings.Repeat(" ", width-visible)
 	if strings.HasSuffix(line, Reset) && padsInsideFinalStyle(line) {
 		return strings.TrimSuffix(line, Reset) + padding + Reset
+	}
+	if hasActiveStyle(line) {
+		if padsInsideFinalStyle(line) {
+			return line + padding + Reset
+		}
+		return line + Reset + padding
 	}
 	return line + padding
 }

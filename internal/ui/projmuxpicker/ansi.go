@@ -1,6 +1,7 @@
 package projmuxpicker
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -28,6 +29,60 @@ func PadRight(value string, width int) string {
 		return value
 	}
 	return value + strings.Repeat(" ", width-length)
+}
+
+func closeStyledLine(line string) string {
+	if hasActiveStyle(line) {
+		return line + Reset
+	}
+	return line
+}
+
+func hasActiveStyle(value string) bool {
+	active := false
+	for i := 0; i < len(value); {
+		if value[i] != '\x1b' {
+			i++
+			continue
+		}
+		start := i
+		i++
+		for i < len(value) && value[i] != 'm' {
+			i++
+		}
+		if i >= len(value) {
+			break
+		}
+		sequence := value[start : i+1]
+		i++
+		if !strings.HasPrefix(sequence, "\x1b[") {
+			continue
+		}
+		params := strings.TrimSuffix(strings.TrimPrefix(sequence, "\x1b["), "m")
+		active = sgrLeavesStyleActive(params, active)
+	}
+	return active
+}
+
+func sgrLeavesStyleActive(params string, active bool) bool {
+	if params == "" {
+		return false
+	}
+	for field := range strings.SplitSeq(params, ";") {
+		code, err := strconv.Atoi(field)
+		if err != nil {
+			continue
+		}
+		switch code {
+		case 0:
+			active = false
+		case 22, 23, 24, 25, 27, 28, 29, 39, 49, 59:
+			// These only clear one SGR attribute. Other attributes may still be active.
+		default:
+			active = true
+		}
+	}
+	return active
 }
 
 func TruncateANSI(value string, width int) string {

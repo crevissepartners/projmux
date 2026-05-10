@@ -68,6 +68,15 @@ native picker engine and is not a public dependency-policy change.
 - The split lets projmux grow a first-party picker design independently from
   the legacy picker option/result adapter.
 
+## Frame Chrome ANSI
+
+Native picker frame chrome is normalized in `internal/ui/projmuxpicker`.
+Titlebars restore the titlebar style after embedded ANSI resets, search prompt
+and footer separators fill the available frame width, and header, row, footer,
+and preview lines close any active SGR style before padding or frame borders can
+inherit it. This phase does not add popup modes or change the `popup-toggle`
+contract; native popups still rely on the existing borderless tmux popup path.
+
 ## Verified Flows
 
 - `ai` picker/settings: native backend routing covered by app tests. Docker

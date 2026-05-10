@@ -20,6 +20,72 @@ func TestPromptLineWithCursorRendersInlineCount(t *testing.T) {
 	}
 }
 
+func TestFrameChromeANSIGoldenLines(t *testing.T) {
+	t.Parallel()
+
+	footerLines := FooterBlockLines("\x1b[32mEnter: open\x1b[0m", 18)
+	if len(footerLines) != 2 {
+		t.Fatalf("FooterBlockLines() len = %d, want 2: %#v", len(footerLines), footerLines)
+	}
+	row := RenderableListLine(InteractiveRowLines(Row{
+		Label: "\x1b[36mapi\x1b[0m",
+	}, true, false)[0], 18)
+	cases := []struct {
+		name      string
+		line      string
+		want      string
+		wantWidth int
+	}{
+		{
+			name:      "title",
+			line:      frameTitlebarLine(DefaultTheme, 18, "\x1b[31mProjects\x1b[0m"),
+			want:      "│" + TitlebarStart + " \x1b[31mProjects" + Reset + TitlebarStart + strings.Repeat(" ", 9) + Reset + "│",
+			wantWidth: 20,
+		},
+		{
+			name:      "header",
+			line:      HeaderLine("\x1b[36mPinned", 18),
+			want:      "\x1b[36mPinned" + Reset + strings.Repeat(" ", 12),
+			wantWidth: 18,
+		},
+		{
+			name:      "search prompt",
+			line:      PromptLineWithCursor("› ", "api", 3, 2, 9, 18),
+			want:      MutedStart + "Search" + Reset + " › api" + CursorStart + " " + Reset + "  " + MutedStart + "2/9" + Reset,
+			wantWidth: 18,
+		},
+		{
+			name:      "row",
+			line:      row,
+			want:      Pointer + "\x1b[36mapi" + Reset + CurrentStart + strings.Repeat(" ", 13) + Reset,
+			wantWidth: 18,
+		},
+		{
+			name:      "footer separator",
+			line:      footerLines[0],
+			want:      MutedStart + strings.Repeat(GapLine, 18) + Reset,
+			wantWidth: 18,
+		},
+		{
+			name:      "footer text",
+			line:      footerLines[1],
+			want:      "\x1b[32mEnter: open" + Reset + strings.Repeat(" ", 7),
+			wantWidth: 18,
+		},
+	}
+	for _, tt := range cases {
+		if tt.line != tt.want {
+			t.Fatalf("%s line = %q, want %q", tt.name, tt.line, tt.want)
+		}
+		if hasActiveStyle(tt.line) {
+			t.Fatalf("%s line = %q, want no active style at line end", tt.name, tt.line)
+		}
+		if got := VisibleLen(tt.line); got != tt.wantWidth {
+			t.Fatalf("%s width = %d, want %d: %q", tt.name, got, tt.wantWidth, tt.line)
+		}
+	}
+}
+
 func TestSeparatorLineUsesMutedChromeAtFullWidth(t *testing.T) {
 	t.Parallel()
 
