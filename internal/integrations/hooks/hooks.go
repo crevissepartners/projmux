@@ -46,6 +46,7 @@ type Context struct {
 	Kind        string
 	Socket      string
 	PaneID      string
+	Env         map[string]string
 	// Version is optional. When empty the runner's Version is used.
 	Version string
 }
@@ -73,6 +74,8 @@ type Runner struct {
 	Logger               io.Writer
 	Timeout              time.Duration
 	Version              string
+	trustMu              sync.Mutex
+	authorized           map[string]string
 }
 
 // RunnerByEvent is the event-oriented lifecycle hook runner surface.
@@ -108,7 +111,12 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 	}
 
 	paths := r.hookPaths(event, c.CWD)
-	if len(paths.global) == 0 && paths.project.path == "" {
+	hasFileHooks := len(paths.global) > 0 || paths.project.path != ""
+	projectConfig, hasProjectConfig := r.projectConfigForEvent(event, paths.config, hasFileHooks)
+	if hasProjectConfig {
+		c.Env = mergeConfigEnv(c.Env, projectConfig.SessionEnv())
+	}
+	if len(paths.global) == 0 && paths.project.path == "" && !hasProjectConfig {
 		return RunResult{}, nil
 	}
 
@@ -140,7 +148,42 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 		}
 		result = mergeResult(event, result, hookResult)
 	}
+	if hasProjectConfig {
+		hookResult, err := r.runProjectConfigHook(ctx, event, c, projectConfig, timeout, hookOutputMode(event))
+		if err != nil {
+			if event == EventPreCreate {
+				return result, err
+			}
+			r.warnf(event, "config %q: %v", paths.config.rel, err)
+			return result, nil
+		}
+		result = mergeResult(event, result, hookResult)
+		if event == EventPaneStartup {
+			result = mergeResult(event, result, RunResult{Stdout: projectConfig.StartupRun})
+		}
+	}
 	return result, nil
+}
+
+// ProjectSessionEnv returns trusted project-local config environment that
+// should be applied to a newly-created tmux session.
+func (r *Runner) ProjectSessionEnv(cwd string) map[string]string {
+	if r == nil || !r.DiscoverProjectHooks || projectHooksDisabled(EventPostCreate, r.ProjectHooksFilePath, r.Logger) {
+		return nil
+	}
+	configFile := discoverProjectConfig(cwd)
+	if configFile.path == "" {
+		return nil
+	}
+	cfg, err := loadProjectConfig(configFile.path)
+	if err != nil {
+		r.warnf(EventPostCreate, "project config %q could not be parsed: %v", configFile.rel, err)
+		return nil
+	}
+	if !cfg.hasSessionEnv() || !r.authorizeProjectConfig(EventPostCreate, configFile) {
+		return nil
+	}
+	return cfg.SessionEnv()
 }
 
 // HasHooks reports whether an executable global or project-local hook exists
@@ -154,7 +197,18 @@ func (r *Runner) HasHooks(event Event, cwd string) bool {
 		return false
 	}
 	paths := r.hookPaths(event, cwd)
-	return len(paths.global) > 0 || paths.project.path != ""
+	if len(paths.global) > 0 || paths.project.path != "" {
+		return true
+	}
+	if paths.config.path == "" {
+		return false
+	}
+	cfg, err := loadProjectConfig(paths.config.path)
+	if err != nil {
+		r.warnf(event, "project config %q could not be parsed: %v", paths.config.rel, err)
+		return false
+	}
+	return cfg.hasEventSurface(event)
 }
 
 // Run executes configured post-create hooks for c. Hook failures
@@ -170,6 +224,7 @@ func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 type hookPaths struct {
 	global  []string
 	project projectHook
+	config  projectConfigFile
 }
 
 type projectHook struct {
@@ -205,6 +260,7 @@ func (r *Runner) hookPaths(event Event, cwd string) hookPaths {
 	}
 	if r.DiscoverProjectHooks && !projectHooksDisabled(event, r.ProjectHooksFilePath, r.Logger) {
 		paths.project = discoverProjectHook(event, cwd)
+		paths.config = discoverProjectConfig(cwd)
 	}
 	return paths
 }
@@ -281,13 +337,43 @@ func mergeResult(event Event, current, next RunResult) RunResult {
 	return current
 }
 
+func (r *Runner) projectConfigForEvent(event Event, configFile projectConfigFile, hasHooks bool) (ProjectConfig, bool) {
+	if configFile.path == "" {
+		return ProjectConfig{}, false
+	}
+	cfg, err := loadProjectConfig(configFile.path)
+	if err != nil {
+		r.warnf(event, "project config %q could not be parsed: %v", configFile.rel, err)
+		return ProjectConfig{}, false
+	}
+	if !cfg.relevantForEvent(event, hasHooks) {
+		return ProjectConfig{}, false
+	}
+	if !r.authorizeProjectConfig(event, configFile) {
+		return ProjectConfig{}, false
+	}
+	return cfg, true
+}
+
 func (r *Runner) runHook(ctx context.Context, event Event, c Context, path string, timeout time.Duration, mode outputMode) (RunResult, error) {
+	return r.runCommand(ctx, event, c, path, nil, timeout, mode)
+}
+
+func (r *Runner) runProjectConfigHook(ctx context.Context, event Event, c Context, cfg ProjectConfig, timeout time.Duration, mode outputMode) (RunResult, error) {
+	command := cfg.hookRun(event)
+	if strings.TrimSpace(command) == "" {
+		return RunResult{}, nil
+	}
+	return r.runCommand(ctx, event, c, "sh", []string{"-c", command}, timeout, mode)
+}
+
+func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name string, args []string, timeout time.Duration, mode outputMode) (RunResult, error) {
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	cmd := exec.CommandContext(runCtx, path)
+	cmd := exec.CommandContext(runCtx, name, args...)
 	cmd.Stdin = nil
 	cmd.Dir = c.CWD
+
 	cmd.Env = buildHookEnv(c, r.Version)
 	// Force-close inherited pipes 250ms after SIGKILL so a child that
 	// inherited stdout/stderr (e.g. a backgrounded sleep) cannot keep us
@@ -334,6 +420,9 @@ func buildHookEnv(c Context, fallbackVersion string) []string {
 	version := c.Version
 	if version == "" {
 		version = fallbackVersion
+	}
+	for _, key := range sortedEnvKeys(c.Env) {
+		env = append(env, key+"="+c.Env[key])
 	}
 	env = append(env,
 		"PROJMUX_SESSION="+c.SessionName,

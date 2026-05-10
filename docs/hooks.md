@@ -42,6 +42,7 @@ Project-local hooks are discovered from the lifecycle context's `PROJMUX_CWD`:
 ```text
 <repo>/.projmux/<event>
 <repo>/.projmux/hooks/<event>
+<repo>/.projmux/config.toml
 ```
 
 For example, `pane-startup` discovery checks:
@@ -60,28 +61,88 @@ executable. Discovery does not walk parent directories and does not run hooks
 from status, preview, or picker hot paths.
 
 If both a global hook and a project-local hook exist for an event, projmux runs
-the global hook first, then the project-local hook. For `pane-startup`, the last
-non-empty trimmed stdout wins, so a project-local hook can override the global
-startup command.
+the global hook first, then the project-local hook, then any matching
+declarative config command from `.projmux/config.toml`. For `pane-startup`, the
+last non-empty trimmed stdout wins. Config `pane-startup` commands therefore
+override file hooks deterministically.
+
+## Project Config
+
+Repositories may declare hook behavior in `.projmux/config.toml`. projmux
+supports only this narrow TOML subset in Phase B:
+
+```toml
+[startup]
+run = "git status --short"
+
+[hooks.pre-create]
+run = "echo checking"
+
+[hooks.post-create]
+run = "echo created $PROJMUX_SESSION"
+
+[hooks.pane-startup]
+run = "echo make test"
+
+[hooks.post-attach]
+run = "echo attached"
+
+[env]
+FOO = "bar"
+
+[kube]
+context = "dev-cluster"
+namespace = "tools"
+```
+
+Only quoted string values are supported. Unknown sections or keys make the
+config file invalid for this run. Supported hook events are the public lifecycle
+events listed above: `pre-create`, `post-create`, `pane-startup`, and
+`post-attach`. Internal tmux hook names such as `after-select-pane` are rejected.
+Phase C secret interpolation is not implemented; values are used literally.
+
+`[hooks.<event>] run` executes through `sh -c` with the same timeout, logging,
+environment, and failure model as file hooks. For `pane-startup`, stdout is
+captured as the pane command.
+
+`[startup] run` is a direct shorthand for a startup pane command. It is not
+executed as shell by the hook runner; the string itself is sent to the new pane.
+When both `[hooks.pane-startup] run` and `[startup] run` are present,
+`[startup] run` wins because it is applied last.
+
+`[env]` values are added to hook process environments and to newly-created tmux
+session environments. For new sessions, projmux passes them to
+`tmux new-session` as sorted `-e KEY=VALUE` arguments before the first pane is
+created, so the initial shell and `[startup]` command can see them. projmux also
+refreshes the tmux session environment with `tmux set-environment -t <session>
+KEY VALUE` after creation for later panes. projmux's reserved `PROJMUX_*` hook
+variables are appended after `[env]` in hook process environments, so the hook
+contract cannot be overridden by project config.
+
+`[kube] context` and `namespace` are reflected as hook and session environment:
+`PROJMUX_KUBE_CONTEXT`, `KUBE_CONTEXT`, `PROJMUX_KUBE_NAMESPACE`, and
+`KUBE_NAMESPACE`. projmux does not synthesize kubeconfig files from these two
+values.
 
 ## Trust Model
 
 Global hooks under `$XDG_CONFIG_HOME` are prompt-free.
 
-Project-local hooks are gated by trust-on-first-use for every user-facing hook
-event in this file. A repository hook must be approved before projmux runs it.
-Approving "always" records the hook content hash in:
+Project-local hooks and `.projmux/config.toml` are gated by trust-on-first-use
+for every user-facing hook event in this file. A repository hook file or config
+file must be approved before projmux runs or applies it. Approving "always"
+records the file content hash in:
 
 ```text
 ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/trusted-projects.json
 ```
 
-The trust key is the absolute repository path and each executable hook path is
-stored relative to that repository. Each project entry has a `trusted_at`
-timestamp and a `files` map of relative hook paths to SHA-256 hashes. When the
-file content changes, projmux asks again and shows the old and new SHA-256
+The trust key is the absolute repository path and each executable hook or config
+path is stored relative to that repository. Each project entry has a
+`trusted_at` timestamp and a `files` map of relative paths to SHA-256 hashes.
+When file content changes, projmux asks again and shows the old and new SHA-256
 hashes. In non-interactive contexts such as tmux run-shell or CI, untrusted or
-changed project-local hooks fail closed with a warning.
+changed project-local files fail closed with a warning.
 
 Set `PROJMUX_PROJECT_HOOKS=off` to disable project-local hook discovery
 entirely. Project-local hooks can also be disabled from `projmux settings`
@@ -181,10 +242,13 @@ it does not retroactively change the current shell. Open new panes via tmux
 - **Nothing happens.** Check the execute bit on the global hook
   (`ls -l ~/.config/projmux/hooks/<event>`) or the project hook
   (`ls -l .projmux/<event> .projmux/hooks/<event>`). A missing bit makes
-  projmux skip silently by design.
-- **`project hook ... requires trust; skipping in non-interactive context`.**
-  Run the same projmux command from an interactive terminal to approve the hook,
-  or set `PROJMUX_PROJECT_HOOKS=off` if project-local hooks should be disabled.
+  projmux skip hook files silently by design. `.projmux/config.toml` does not
+  need an execute bit.
+- **`project hook ... requires trust; skipping in non-interactive context`** or
+  **`project config ... requires trust; skipping in non-interactive context`.**
+  Run the same projmux command from an interactive terminal to approve the file,
+  or set `PROJMUX_PROJECT_HOOKS=off` if project-local execution should be
+  disabled.
 - **`projmux: <event> hook: ... timed out after 5s`.** Long-running work
   belongs in a backgrounded child (`(slow-thing &) >/dev/null 2>&1`). The hook
   itself must return within 5s or projmux kills it.

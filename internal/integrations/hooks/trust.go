@@ -59,10 +59,21 @@ type trustedFile struct {
 }
 
 func (r *Runner) authorizeProjectHook(h projectHook) bool {
-	sum, preview, err := hashHookFile(h.path)
+	return r.authorizeProjectFile(h.event, h.repo, h.rel, h.path, "project hook")
+}
+
+func (r *Runner) authorizeProjectConfig(event Event, h projectConfigFile) bool {
+	return r.authorizeProjectFile(event, h.repo, h.rel, h.path, "project config")
+}
+
+func (r *Runner) authorizeProjectFile(event Event, repo, rel, path, kind string) bool {
+	sum, preview, err := hashHookFile(path)
 	if err != nil {
-		r.warnf(h.event, "project hook %q could not be hashed: %v", h.path, err)
+		r.warnf(event, "%s %q could not be hashed: %v", kind, path, err)
 		return false
+	}
+	if r.authorizedProjectFile(repo, rel, sum) {
+		return true
 	}
 
 	storePath := strings.TrimSpace(r.TrustStorePath)
@@ -70,50 +81,71 @@ func (r *Runner) authorizeProjectHook(h projectHook) bool {
 		storePath = defaultTrustStorePath()
 	}
 	if storePath == "" {
-		r.warnf(h.event, "project hook %q requires trust, but the trust store path could not be resolved", h.path)
+		r.warnf(event, "%s %q requires trust, but the trust store path could not be resolved", kind, path)
 		return false
 	}
 
 	store, err := loadTrustedProjects(storePath)
 	if err != nil {
-		r.warnf(h.event, "project hook %q requires trust, but the trust store could not be read: %v", h.path, err)
+		r.warnf(event, "%s %q requires trust, but the trust store could not be read: %v", kind, path, err)
 		return false
 	}
-	if existing, ok := store.trustedFile(h.repo, h.rel); ok && existing.SHA256 == sum {
+	if existing, ok := store.trustedFile(repo, rel); ok && existing.SHA256 == sum {
+		r.rememberAuthorizedProjectFile(repo, rel, sum)
 		return true
 	}
 
 	req := ProjectHookPromptRequest{
-		RepoPath:       h.repo,
-		HookPath:       h.path,
-		RelativePath:   h.rel,
+		RepoPath:       repo,
+		HookPath:       path,
+		RelativePath:   rel,
 		SHA256:         sum,
-		PreviousSHA256: store.previousHash(h.repo, h.rel),
+		PreviousSHA256: store.previousHash(repo, rel),
 		Preview:        preview,
 	}
 	decision, prompted := r.promptProjectHookTrust(req)
 	if !prompted {
 		if req.PreviousSHA256 != "" {
-			r.warnf(h.event, "project hook %q hash changed; trusted sha256=%s current sha256=%s; skipping in non-interactive context", h.rel, req.PreviousSHA256, req.SHA256)
+			r.warnf(event, "%s %q hash changed; trusted sha256=%s current sha256=%s; skipping in non-interactive context", kind, rel, req.PreviousSHA256, req.SHA256)
 		} else {
-			r.warnf(h.event, "project hook %q requires trust; skipping in non-interactive context", h.rel)
+			r.warnf(event, "%s %q requires trust; skipping in non-interactive context", kind, rel)
 		}
 		return false
 	}
 
 	switch decision {
 	case ProjectHookAllowOnce:
+		r.rememberAuthorizedProjectFile(repo, rel, sum)
 		return true
 	case ProjectHookAllowAlways:
-		store.trust(h.repo, h.rel, sum, time.Now().UTC())
+		store.trust(repo, rel, sum, time.Now().UTC())
 		if err := store.save(storePath); err != nil {
-			r.warnf(h.event, "project hook %q trust could not be saved: %v", h.rel, err)
+			r.warnf(event, "%s %q trust could not be saved: %v", kind, rel, err)
 			return false
 		}
+		r.rememberAuthorizedProjectFile(repo, rel, sum)
 		return true
 	default:
 		return false
 	}
+}
+
+func (r *Runner) authorizedProjectFile(repo, rel, sum string) bool {
+	r.trustMu.Lock()
+	defer r.trustMu.Unlock()
+	if r.authorized == nil {
+		return false
+	}
+	return r.authorized[repo+"\x00"+rel] == sum
+}
+
+func (r *Runner) rememberAuthorizedProjectFile(repo, rel, sum string) {
+	r.trustMu.Lock()
+	defer r.trustMu.Unlock()
+	if r.authorized == nil {
+		r.authorized = map[string]string{}
+	}
+	r.authorized[repo+"\x00"+rel] = sum
 }
 
 func projectHooksDisabled(event Event, settingPath string, logger io.Writer) bool {

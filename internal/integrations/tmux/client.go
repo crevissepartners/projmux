@@ -84,6 +84,10 @@ type lifecycleHookInspector interface {
 	HasHooks(event hooks.Event, cwd string) bool
 }
 
+type lifecycleSessionEnvProvider interface {
+	ProjectSessionEnv(cwd string) map[string]string
+}
+
 // Client exposes typed tmux queries used by CLI commands.
 type Client struct {
 	runner     commandRunner
@@ -435,11 +439,13 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 		return err
 	}
 
-	paneID, err := c.createDetachedSession(ctx, sessionName, cwd)
+	sessionEnv := c.projectSessionEnv(cwd)
+	paneID, err := c.createDetachedSession(ctx, sessionName, cwd, sessionEnv)
 	if err != nil {
 		return fmt.Errorf("create tmux session %q: %w", sessionName, err)
 	}
 
+	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
 	c.runPostCreate(ctx, sessionName, cwd, "persistent")
 	c.runPaneStartup(ctx, sessionName, cwd, "persistent", paneID)
 	return nil
@@ -459,10 +465,12 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 		return err
 	}
 
-	paneID, err := c.createDetachedSession(ctx, sessionName, cwd)
+	sessionEnv := c.projectSessionEnv(cwd)
+	paneID, err := c.createDetachedSession(ctx, sessionName, cwd, sessionEnv)
 	if err != nil {
 		return fmt.Errorf("create tmux ephemeral session %q: %w", sessionName, err)
 	}
+	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
 	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", "@projmux_ephemeral", "1"); err != nil {
 		// set-option failure is intentionally swallowed; the session is still
 		// usable. The post-create hook still runs so the session gets the same
@@ -474,8 +482,11 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 	return nil
 }
 
-func (c *Client) createDetachedSession(ctx context.Context, sessionName, cwd string) (string, error) {
+func (c *Client) createDetachedSession(ctx context.Context, sessionName, cwd string, env map[string]string) (string, error) {
 	args := []string{"new-session", "-d", "-s", sessionName, "-c", cwd}
+	for _, key := range sortedMapKeys(env) {
+		args = append(args, "-e", key+"="+env[key])
+	}
 	if c.lifecycle == nil {
 		_, err := c.runner.Run(ctx, "tmux", args...)
 		return "", err
@@ -486,6 +497,23 @@ func (c *Client) createDetachedSession(ctx context.Context, sessionName, cwd str
 		return "", err
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+func (c *Client) projectSessionEnv(cwd string) map[string]string {
+	if c.lifecycle == nil {
+		return nil
+	}
+	provider, ok := c.lifecycle.(lifecycleSessionEnvProvider)
+	if !ok {
+		return nil
+	}
+	return provider.ProjectSessionEnv(cwd)
+}
+
+func (c *Client) applyProjectSessionEnv(ctx context.Context, sessionName string, env map[string]string) {
+	for _, key := range sortedMapKeys(env) {
+		_, _ = c.runner.Run(ctx, "tmux", "set-environment", "-t", sessionName, key, env[key])
+	}
 }
 
 func (c *Client) runPreCreate(ctx context.Context, sessionName, cwd, kind string) error {
@@ -682,6 +710,15 @@ func (c *Client) resolveTargetCWD(ctx context.Context, target string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func sortedMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // SwitchClient switches the active tmux client to the target session.
