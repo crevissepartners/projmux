@@ -322,35 +322,87 @@ func InspectProjectConfigTrust(repoPath, trustStorePath string) (ProjectConfigTr
 	}, nil
 }
 
-// UntrustProjectConfig removes the trust store entry for the project's
-// .projmux/config.toml file. If the trust store does not exist, or the
-// entry is already absent, the call is a no-op and returns nil so a UI
-// surface can render an idempotent "untrust" action.
-func UntrustProjectConfig(repoPath, trustStorePath string) error {
+// IsProjectConfigTrusted reports whether the project's .projmux/config.toml
+// file has a current-hash trust record. The function returns the recorded SHA
+// alongside the trust state so callers (e.g. the projmux hook CLI) can render
+// a badge consistent with the runner without forcing a hash recomputation.
+//
+// Note: this is a thin convenience wrapper around the trust store; it only
+// reports whether a hash is recorded, not whether that hash still matches
+// the on-disk file. Callers that need the absent/untrusted/trusted/stale
+// distinction should use InspectProjectConfigTrust instead.
+func IsProjectConfigTrusted(repoPath, trustStorePath string) (bool, string, error) {
 	repoPath = strings.TrimSpace(repoPath)
 	if repoPath == "" {
-		return errors.New("repo path is required")
+		return false, "", errors.New("repo path is required")
 	}
 	repo, err := filepath.Abs(repoPath)
 	if err != nil {
-		return err
+		return false, "", err
 	}
-	rel := projectConfigRelativePath
+	if strings.TrimSpace(trustStorePath) == "" {
+		trustStorePath = defaultTrustStorePath()
+	}
+	if strings.TrimSpace(trustStorePath) == "" {
+		return false, "", errors.New("trust store path could not be resolved")
+	}
+	store, err := loadTrustedProjects(trustStorePath)
+	if err != nil {
+		return false, "", err
+	}
+	file, ok := store.trustedFile(repo, projectConfigRelativePath)
+	if !ok {
+		return false, "", nil
+	}
+	return true, file.SHA256, nil
+}
+
+// UntrustProjectConfig drops the trusted hash recorded for the project's
+// .projmux/config.toml file. The trust store entry is removed entirely when
+// it becomes empty so projects with no other trusted files do not linger as
+// stale keys. Returns true when an entry was removed, false when nothing was
+// trusted (idempotent) so a UI surface can render an idempotent "untrust"
+// action without treating the no-op as an error.
+func UntrustProjectConfig(repoPath, trustStorePath string) (bool, error) {
+	return untrustProjectFile(repoPath, projectConfigRelativePath, trustStorePath)
+}
+
+// untrustProjectFile removes the trust store entry for repoPath/relPath and
+// reports whether anything was actually removed. relPath must be a
+// slash-separated path relative to the repo root. This is an internal helper;
+// the public surface is UntrustProjectConfig.
+func untrustProjectFile(repoPath, relPath, trustStorePath string) (bool, error) {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return false, errors.New("repo path is required")
+	}
+	relPath = strings.TrimSpace(relPath)
+	if relPath == "" {
+		return false, errors.New("relative path is required")
+	}
+	repo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return false, err
+	}
+	rel := filepath.ToSlash(filepath.Clean(relPath))
 	storePath := strings.TrimSpace(trustStorePath)
 	if storePath == "" {
 		storePath = defaultTrustStorePath()
 	}
 	if storePath == "" {
-		return errors.New("trust store path could not be resolved")
+		return false, errors.New("trust store path could not be resolved")
 	}
 	store, err := loadTrustedProjects(storePath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !store.forget(repo, rel) {
-		return nil
+		return false, nil
 	}
-	return store.save(storePath)
+	if err := store.save(storePath); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func loadTrustedProjects(path string) (trustedProjects, error) {

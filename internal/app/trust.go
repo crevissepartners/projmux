@@ -262,7 +262,7 @@ func (c *settingsCommand) runProjectTrustUntrust(ctx settingsProjectContext, std
 	if err != nil {
 		return err
 	}
-	if err := hooks.UntrustProjectConfig(ctx.Path, trustPath); err != nil {
+	if _, err := hooks.UntrustProjectConfig(ctx.Path, trustPath); err != nil {
 		fmt.Fprintf(stderr, "untrust failed: %v\n", err)
 		return nil
 	}

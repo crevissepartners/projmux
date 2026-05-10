@@ -65,6 +65,7 @@ type App struct {
 	current      *currentCommand
 	doctor       *doctorCommand
 	focus        *focusCommand
+	hook         *hookCommand
 	initCmd      *initCommand
 	kill         *killCommand
 	notify       *notifyCommand
@@ -98,6 +99,7 @@ func New() *App {
 		current:      newCurrentCommand(),
 		doctor:       newDoctorCommand(),
 		focus:        newFocusCommand(),
+		hook:         newHookCommand(),
 		initCmd:      newInitCommand(),
 		kill:         newKillCommand(),
 		notify:       newNotifyCommand(),
@@ -141,6 +143,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.doctor.Run(args[1:], stdout, stderr)
 	case "focus":
 		return a.focus.Run(args[1:], stdout, stderr)
+	case "hook":
+		return a.hook.Run(args[1:], stdout, stderr)
 	case "init":
 		return a.initCmd.Run(args[1:], stdout, stderr)
 	case "kill":
@@ -201,6 +205,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
 	fmt.Fprintln(w, "  doctor    Diagnose runtime dependencies and suggest installs")
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
+	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
 	fmt.Fprintln(w, "  init      Merge projmux keybindings into a terminal config")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")

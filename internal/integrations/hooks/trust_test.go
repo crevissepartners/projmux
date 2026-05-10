@@ -123,8 +123,12 @@ run = "echo ready"
 	if _, err := TrustProjectConfig(cwd, trustPath); err != nil {
 		t.Fatalf("TrustProjectConfig() error = %v", err)
 	}
-	if err := UntrustProjectConfig(cwd, trustPath); err != nil {
+	removed, err := UntrustProjectConfig(cwd, trustPath)
+	if err != nil {
 		t.Fatalf("UntrustProjectConfig() error = %v", err)
+	}
+	if !removed {
+		t.Fatalf("UntrustProjectConfig returned removed=false, want true after trust")
 	}
 	report, err := InspectProjectConfigTrust(cwd, trustPath)
 	if err != nil {
@@ -135,9 +139,13 @@ run = "echo ready"
 	}
 
 	// Calling untrust again is a no-op rather than an error so the UI can
-	// stay idempotent.
-	if err := UntrustProjectConfig(cwd, trustPath); err != nil {
+	// stay idempotent; the bool return distinguishes the two outcomes.
+	removedAgain, err := UntrustProjectConfig(cwd, trustPath)
+	if err != nil {
 		t.Fatalf("idempotent UntrustProjectConfig() error = %v", err)
+	}
+	if removedAgain {
+		t.Fatalf("UntrustProjectConfig second call removed=true, want false (idempotent)")
 	}
 }
 
@@ -154,7 +162,7 @@ run = "echo ready"
 	if _, err := TrustProjectConfig(cwd, trustPath); err != nil {
 		t.Fatalf("TrustProjectConfig() error = %v", err)
 	}
-	if err := UntrustProjectConfig(cwd, trustPath); err != nil {
+	if _, err := UntrustProjectConfig(cwd, trustPath); err != nil {
 		t.Fatalf("UntrustProjectConfig() error = %v", err)
 	}
 	store, err := loadTrustedProjects(trustPath)
@@ -180,8 +188,12 @@ run = "echo ready"
 `)
 	trustPath := filepath.Join(t.TempDir(), "missing-trusted-projects.json")
 
-	if err := UntrustProjectConfig(cwd, trustPath); err != nil {
+	removed, err := UntrustProjectConfig(cwd, trustPath)
+	if err != nil {
 		t.Fatalf("UntrustProjectConfig() error = %v", err)
+	}
+	if removed {
+		t.Fatalf("UntrustProjectConfig returned removed=true with no trust store, want false")
 	}
 	if _, err := os.Stat(trustPath); !os.IsNotExist(err) {
 		t.Fatalf("trust store should not have been created, stat err = %v", err)
