@@ -172,7 +172,7 @@ func TestInteractiveRowLinesUsesCompactSelectedMetaIndent(t *testing.T) {
 	}
 }
 
-func TestInteractiveRowLinesUsesCompactUnselectedMetaIndent(t *testing.T) {
+func TestInteractiveRowLinesAlignsUnselectedMetaWithProjectName(t *testing.T) {
 	t.Parallel()
 
 	lines := InteractiveRowLines(Row{
@@ -182,10 +182,10 @@ func TestInteractiveRowLinesUsesCompactUnselectedMetaIndent(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("InteractiveRowLines() len = %d, want 3: %#v", len(lines), lines)
 	}
-	if got, want := lines[1], "~rp/api"; got != want {
+	if got, want := lines[1], "  ~rp/api"; got != want {
 		t.Fatalf("pwd line = %q, want %q", got, want)
 	}
-	if got, want := lines[2], "shell main"; got != want {
+	if got, want := lines[2], "  shell main"; got != want {
 		t.Fatalf("tabs line = %q, want %q", got, want)
 	}
 }
