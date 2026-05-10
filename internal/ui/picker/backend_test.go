@@ -1458,14 +1458,49 @@ func TestNativeInteractiveShowsPartialNextMultilineItem(t *testing.T) {
 	}, items, "", 0, 0, nativeLayout{Rows: 9, Cols: 48})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "item 1") || !strings.Contains(rendered, "detail 1a") {
-		t.Fatalf("native output = %q, want first rows of next multiline item in remaining viewport", rendered)
+	if !strings.Contains(rendered, "item 1") {
+		t.Fatalf("native output = %q, want next multiline item to start in remaining viewport", rendered)
 	}
-	if strings.Contains(rendered, "detail 1b") {
+	if !strings.Contains(rendered, "  "+projmuxpicker.MutedStart+strings.Repeat(nativeGapLine, 8)) {
+		t.Fatalf("native output = %q, want separator before partial next multiline item", rendered)
+	}
+	if strings.Contains(rendered, "detail 1a") || strings.Contains(rendered, "detail 1b") {
 		t.Fatalf("native output = %q, want next item clipped to available viewport rows", rendered)
 	}
 	if !strings.Contains(rendered, nativeScrollbar) {
 		t.Fatalf("native output = %q, want scrollbar for clipped multiline list", rendered)
+	}
+}
+
+func TestNativePartialNextMultilineItemKeepsGapLine(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Label: "item 0\n  detail 0a\n  detail 0b", Value: "0"},
+		{Label: "item 1\n  detail 1a", Value: "1"},
+	}
+	lines := nativeInteractiveListLines(items, 0, 1, 0, true)
+
+	oneRemaining := nativeAppendPartialNextItemLines(items, lines, 1, 0, 4)
+	if len(oneRemaining) != 4 {
+		t.Fatalf("partial lines len = %d, want 4: %#v", len(oneRemaining), oneRemaining)
+	}
+	gapOnly := nativeRenderableListLine(oneRemaining[3], 48)
+	if !strings.Contains(gapOnly, strings.Repeat(nativeGapLine, 8)) || strings.Contains(gapOnly, "item 1") {
+		t.Fatalf("partial line = %q, want separator before next item when only one row remains", gapOnly)
+	}
+
+	twoRemaining := nativeAppendPartialNextItemLines(items, lines, 1, 0, 5)
+	if len(twoRemaining) != 5 {
+		t.Fatalf("partial lines len = %d, want 5: %#v", len(twoRemaining), twoRemaining)
+	}
+	gap := nativeRenderableListLine(twoRemaining[3], 48)
+	next := nativeRenderableListLine(twoRemaining[4], 48)
+	if !strings.Contains(gap, strings.Repeat(nativeGapLine, 8)) {
+		t.Fatalf("gap line = %q, want separator before partial next item", gap)
+	}
+	if !strings.Contains(next, "item 1") {
+		t.Fatalf("next line = %q, want first row of partial next item after separator", next)
 	}
 }
 
