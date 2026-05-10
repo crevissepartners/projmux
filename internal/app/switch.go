@@ -1466,6 +1466,9 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 			intpicker.CustomActions(switchKillExpectKey, switchPinExpectKey)...,
 		),
 	}
+	if plan.UI == switchUISidebar {
+		options.Title = "Projects"
+	}
 	if surface, err := c.switchPickerSurface(plan); err != nil {
 		return intpicker.Result{}, err
 	} else if surface.PreviewCommand != "" {

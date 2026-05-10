@@ -1301,7 +1301,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		return
 	}
 	if len(previewLines) > 0 {
-		renderNativeInlinePreview(&main, previewLines)
+		renderNativeInlinePreview(&main, previewLines, layout)
 	}
 	writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
 }
@@ -1644,8 +1644,8 @@ func renderNativeDownPreview(w io.Writer, previewLines []string, layout nativeLa
 	projmuxpicker.RenderDownPreview(w, previewLines, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
-func renderNativeInlinePreview(w io.Writer, previewLines []string) {
-	projmuxpicker.RenderInlinePreview(w, previewLines)
+func renderNativeInlinePreview(w io.Writer, previewLines []string, layout nativeLayout) {
+	projmuxpicker.RenderInlinePreviewRows(w, previewLines, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
 func nativePadRight(value string, width int) string {
