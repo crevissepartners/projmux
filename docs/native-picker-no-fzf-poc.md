@@ -80,8 +80,9 @@ The fzf compatibility surface for the native engine is tracked in
   separators reach the right border like fzf.
 - Native frames can render an optional picker-owned titlebar row below the top
   border when `picker.Options.Title` is set; empty titles keep the default frame
-  unchanged. The native Alt-1 project sidebar uses this for a `Projects`
-  titlebar.
+  unchanged. Non-empty titles use a distinct titlebar surface with an accent
+  marker and rule fill. The native Alt-1 project sidebar uses this for a
+  `Projects` titlebar.
 - Native width/truncation uses terminal cell width for Korean/CJK text, emoji,
   and combining marks instead of raw rune count, so localized project names and
   decorated notify headers do not push the right frame border out of alignment.
