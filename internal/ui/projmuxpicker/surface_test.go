@@ -142,11 +142,89 @@ func TestInteractiveRowLinesUsesContinuationMarkerForSelectedMultiline(t *testin
 		if !strings.HasPrefix(line, Continuation) {
 			t.Fatalf("selected continuation line = %q, want continuation marker", line)
 		}
-		if !strings.Contains(line, "┃┃┃") {
-			t.Fatalf("selected continuation line = %q, want fzf marker-multi-line glyphs", line)
+		if strings.Contains(line, "┃┃┃") || !strings.Contains(line, "|") {
+			t.Fatalf("selected continuation line = %q, want single continuation bar", line)
 		}
 		if !strings.Contains(line, CurrentStart) {
 			t.Fatalf("selected continuation line = %q, want current-row style", line)
 		}
 	}
+}
+
+func TestInteractiveRowLinesUsesCompactSelectedMetaIndent(t *testing.T) {
+	t.Parallel()
+
+	lines := InteractiveRowLines(Row{
+		Label: "api\n  ~rp/api\n  shell main",
+	}, true, true)
+
+	if len(lines) != 3 {
+		t.Fatalf("InteractiveRowLines() len = %d, want 3: %#v", len(lines), lines)
+	}
+	for _, line := range lines[1:] {
+		plain := stripANSIForSurfaceTest(line)
+		if strings.HasPrefix(plain, "|||") || strings.HasPrefix(plain, "┃┃┃") {
+			t.Fatalf("selected continuation line = %q, want no repeated bar marker", line)
+		}
+		if !strings.HasPrefix(plain, "| ") {
+			t.Fatalf("selected continuation line = %q, want compact single-bar indent", line)
+		}
+	}
+}
+
+func TestListLinesWithScrollbarUsesProportionalThumb(t *testing.T) {
+	t.Parallel()
+
+	lines := []string{"item 0", "item 1", "item 2", "item 3", "item 4"}
+	rendered := ListLinesWithScrollbar(lines, 10, 0, 5, 12)
+
+	if got := scrollbarCount(rendered); got != 3 {
+		t.Fatalf("scrollbar count = %d, want proportional thumb of 3 rows: %#v", got, rendered)
+	}
+	if !strings.HasSuffix(rendered[0], Scrollbar) || !strings.HasSuffix(rendered[2], Scrollbar) {
+		t.Fatalf("scrollbar = %#v, want thumb anchored at top", rendered)
+	}
+}
+
+func TestListLinesWithScrollbarMovesThumbGradually(t *testing.T) {
+	t.Parallel()
+
+	lines := []string{"item 2", "item 3", "item 4", "item 5", "item 6"}
+	rendered := ListLinesWithScrollbar(lines, 10, 2, 7, 12)
+
+	if got := scrollbarCount(rendered); got != 3 {
+		t.Fatalf("scrollbar count = %d, want stable proportional thumb length: %#v", got, rendered)
+	}
+	if !strings.HasSuffix(rendered[1], Scrollbar) || !strings.HasSuffix(rendered[3], Scrollbar) {
+		t.Fatalf("scrollbar = %#v, want thumb moved by one row near the middle", rendered)
+	}
+}
+
+func scrollbarCount(lines []string) int {
+	count := 0
+	for _, line := range lines {
+		if strings.HasSuffix(line, Scrollbar) {
+			count++
+		}
+	}
+	return count
+}
+
+func stripANSIForSurfaceTest(value string) string {
+	var out strings.Builder
+	for i := 0; i < len(value); {
+		if value[i] != '\x1b' {
+			out.WriteByte(value[i])
+			i++
+			continue
+		}
+		i++
+		for i < len(value) && value[i] != 'm' {
+			i++
+		}
+		if i < len(value) {
+			i++
+		}
+	}
+	return out.String()
 }

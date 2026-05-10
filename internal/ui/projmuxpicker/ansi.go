@@ -12,7 +12,7 @@ const (
 	HighlightStart = "\x1b[38;2;255;204;102m"
 	MutedStart     = "\x1b[38;2;117;132;140m"
 	Pointer        = CurrentStart + "\x1b[38;2;225;38;114m▌" + CurrentStart + " "
-	Continuation   = CurrentStart + "\x1b[38;2;225;38;114m┃┃┃" + CurrentStart + " "
+	Continuation   = CurrentStart + "\x1b[38;2;225;38;114m|" + CurrentStart + " "
 	Reset          = "\x1b[0m"
 	InverseStart   = "\x1b[7m"
 	CursorStart    = "\x1b[7m"

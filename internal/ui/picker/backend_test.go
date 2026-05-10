@@ -1389,8 +1389,8 @@ func TestNativeInteractiveRendersSelectedMultilineContinuationMarker(t *testing.
 		if !strings.HasPrefix(line, nativeContinuation) || !strings.Contains(line, nativeCurrentStart) {
 			t.Fatalf("selected multiline continuation line = %q, want marker and current-row style", line)
 		}
-		if !strings.Contains(line, "┃┃┃") {
-			t.Fatalf("selected multiline continuation line = %q, want fzf marker-multi-line glyphs", line)
+		if strings.Contains(line, "┃┃┃") || !strings.Contains(line, "|") {
+			t.Fatalf("selected multiline continuation line = %q, want single continuation bar", line)
 		}
 	}
 }
