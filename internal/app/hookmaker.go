@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,10 +26,41 @@ var settingsHookEvents = []settingsHookEvent{
 	{Name: string(hooks.EventPostAttach)},
 }
 
+// Hook maker action prefixes. Each action follows the shape
+//
+//	hook-<op>:<source>:<scope>:<event>
+//
+// where source is "script" or "declarative", scope is "global" or "project",
+// and op is one of add, edit, remove. add does not have a leading source — the
+// branch picker that follows the add selection chooses script vs declarative.
+const (
+	settingsActionPrefixHookAdd    = "hook-add:"
+	settingsActionPrefixHookEdit   = "hook-edit:"
+	settingsActionPrefixHookRemove = "hook-remove:"
+
+	hookSourceScript      = "script"
+	hookSourceDeclarative = "declarative"
+
+	hookScopeGlobal  = "global"
+	hookScopeProject = "project"
+)
+
 type settingsHookPathState struct {
 	status string
 	path   string
 	note   string
+}
+
+// settingsHookRow describes the two hook sources (script file and declarative
+// config.toml entry) for a single lifecycle event. Empty fields are valid —
+// only populated sources are rendered as live rows.
+type settingsHookRow struct {
+	Event      string
+	Scope      string
+	Script     settingsHookPathState
+	HasScript  bool
+	Declared   string
+	ConfigPath string
 }
 
 func (c *settingsCommand) globalHookEntries() []intpickercompat.Entry {
@@ -43,8 +75,13 @@ func (c *settingsCommand) globalHookEntries() []intpickercompat.Entry {
 	}
 
 	for _, event := range settingsHookEvents {
-		path := paths.HookPath(event.Name)
-		entries = append(entries, settingsHookEntry(event.Name, settingsHookPathStateFor(path)))
+		row := settingsHookRow{
+			Event:     event.Name,
+			Scope:     hookScopeGlobal,
+			Script:    settingsHookPathStateFor(paths.HookPath(event.Name)),
+			HasScript: true,
+		}
+		entries = append(entries, renderHookRowEntries(row)...)
 	}
 	return entries
 }
@@ -68,14 +105,27 @@ func (c *settingsCommand) projectHookEntries(ctx settingsProjectContext) []intpi
 		Label: settingsLabelInfo("Project context", ctx.Path, ctx.Source),
 		Value: settingsNoopValue,
 	})
+
+	configPath := filepath.Join(ctx.Path, ".projmux", "config.toml")
+	cfg, _ := loadProjectConfigForRead(configPath)
+
 	for _, event := range settingsHookEvents {
-		entries = append(entries, settingsHookEntry(event.Name, settingsProjectHookPathState(ctx.Path, event.Name)))
+		row := settingsHookRow{
+			Event:      event.Name,
+			Scope:      hookScopeProject,
+			Script:     settingsProjectHookPathState(ctx.Path, event.Name),
+			HasScript:  true,
+			Declared:   declaredHookRun(cfg, event.Name),
+			ConfigPath: configPath,
+		}
+		entries = append(entries, renderHookRowEntries(row)...)
 	}
 	return append(entries, settingsProjectConfigEntry(ctx.Path))
 }
 
 func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error {
 	for {
+		ctx := c.resolveSettingsProjectContext()
 		options, err := c.sectionOptions(settingsSectionProjectHooks)
 		if err != nil {
 			return err
@@ -88,17 +138,54 @@ func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error
 		if result.Key != "enter" || action == "" {
 			return errSettingsClosed
 		}
-		switch action {
-		case settingsBackValue:
+		switch {
+		case action == settingsBackValue:
 			return nil
-		case settingsNoopValue:
+		case action == settingsNoopValue:
 			continue
-		case settingsSectionProjectConfig:
+		case action == settingsSectionProjectConfig:
 			if err := c.runProjectConfigSection(stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixHookAdd),
+			strings.HasPrefix(action, settingsActionPrefixHookEdit),
+			strings.HasPrefix(action, settingsActionPrefixHookRemove):
+			if err := c.runHookMakerAction(ctx, action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
 			return fmt.Errorf("unknown project hook settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runGlobalHooksSection(stdout, stderr io.Writer) error {
+	for {
+		options, err := c.sectionOptions(settingsSectionGlobalHooks)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixHookAdd),
+			strings.HasPrefix(action, settingsActionPrefixHookEdit),
+			strings.HasPrefix(action, settingsActionPrefixHookRemove):
+			if err := c.runHookMakerAction(settingsProjectContext{}, action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown hook settings action: %s", action)
 		}
 	}
 }
@@ -123,7 +210,10 @@ func settingsProjectHookPathState(projectPath, event string) settingsHookPathSta
 	}
 	return settingsHookPathState{
 		status: "missing",
-		path:   strings.Join(candidates, " or "),
+		// Display both candidate paths so the user can see where projmux will
+		// look. The canonical creation path is .projmux/hooks/<event>; the
+		// legacy .projmux/<event> location is still resolved by the runner.
+		path: strings.Join(candidates, " or "),
 	}
 }
 
@@ -151,21 +241,106 @@ func settingsHookPathStateFor(path string) settingsHookPathState {
 	return state
 }
 
-func settingsHookEntry(event string, state settingsHookPathState) intpickercompat.Entry {
+// renderHookRowEntries emits picker rows for a single lifecycle event,
+// covering script + declarative sources. Active sources always get their own
+// edit row. When at least one source is already active, the missing
+// complement gets a source-specific [+ Add] row (no branch picker — the user
+// already chose). When BOTH sources are missing, a single [+ Add] row is
+// emitted that opens a declarative-vs-script branch picker.
+func renderHookRowEntries(row settingsHookRow) []intpickercompat.Entry {
+	entries := make([]intpickercompat.Entry, 0, 4)
+
+	scriptActive := row.HasScript && (row.Script.status == "active" || row.Script.status == "inactive")
+	declarativeActive := row.Scope == hookScopeProject && strings.TrimSpace(row.Declared) != ""
+
+	// Global scope: only script is supported; collapse to a single row.
+	if row.Scope != hookScopeProject {
+		if scriptActive {
+			entries = append(entries, settingsHookScriptEntry(row))
+		} else {
+			entries = append(entries, settingsHookAddRow(row))
+		}
+		return entries
+	}
+
+	// Project scope.
+	switch {
+	case scriptActive && declarativeActive:
+		entries = append(entries, settingsHookScriptEntry(row), settingsHookDeclarativeEntry(row))
+	case scriptActive && !declarativeActive:
+		// Script is set; offer to add the missing declarative complement.
+		entries = append(entries,
+			settingsHookScriptEntry(row),
+			settingsHookAddDeclarativeRow(row),
+		)
+	case !scriptActive && declarativeActive:
+		// Declarative is set; offer to add a script complement.
+		entries = append(entries,
+			settingsHookDeclarativeEntry(row),
+			settingsHookAddScriptRow(row),
+		)
+	default:
+		// Both missing — one combined [+ Add] row that triggers branch picker.
+		entries = append(entries, settingsHookAddRow(row))
+	}
+	return entries
+}
+
+func settingsHookAddRow(row settingsHookRow) intpickercompat.Entry {
+	desc := "missing - " + row.Script.path + " [+ Add] declarative or script"
+	return intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, row.Event, desc),
+		Value: settingsActionPrefixHookAdd + row.Scope + ":" + row.Event,
+	}
+}
+
+func settingsHookAddScriptRow(row settingsHookRow) intpickercompat.Entry {
+	desc := "[+ Add] script - " + row.Script.path
+	return intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, row.Event, desc),
+		Value: settingsActionPrefixHookAdd + row.Scope + ":" + row.Event + ":" + hookSourceScript,
+	}
+}
+
+func settingsHookAddDeclarativeRow(row settingsHookRow) intpickercompat.Entry {
+	desc := "[+ Add] declarative - " + row.ConfigPath + " [hooks." + row.Event + "]"
+	return intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, row.Event, desc),
+		Value: settingsActionPrefixHookAdd + row.Scope + ":" + row.Event + ":" + hookSourceDeclarative,
+	}
+}
+
+func settingsHookScriptEntry(row settingsHookRow) intpickercompat.Entry {
 	glyph := settingsGlyphInactive
 	color := settingsColorDim
-	if state.status == "active" {
+	if row.Script.status == "active" {
 		glyph = settingsGlyphToggle
 		color = settingsColorAdd
 	}
-	desc := state.status + " - " + state.path
-	if state.note != "" {
-		desc += " (" + state.note + ")"
+	desc := row.Script.status + " - " + row.Script.path + " (script)"
+	if row.Script.note != "" {
+		desc += " (" + row.Script.note + ")"
 	}
 	return intpickercompat.Entry{
-		Label: settingsLabel(glyph, color, event, desc),
-		Value: settingsNoopValue,
+		Label: settingsLabel(glyph, color, row.Event, desc),
+		Value: settingsActionPrefixHookEdit + hookSourceScript + ":" + row.Scope + ":" + row.Event,
 	}
+}
+
+func settingsHookDeclarativeEntry(row settingsHookRow) intpickercompat.Entry {
+	desc := "active - run = " + row.Declared + " (declarative)"
+	return intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphToggle, settingsColorAdd, row.Event, desc),
+		Value: settingsActionPrefixHookEdit + hookSourceDeclarative + ":" + row.Scope + ":" + row.Event,
+	}
+}
+
+// settingsHookEntry is preserved for tests that still rely on the simpler
+// single-source rendering. The hook maker page itself uses
+// renderHookRowEntries which emits the same label shape per source.
+func settingsHookEntry(event string, state settingsHookPathState) intpickercompat.Entry {
+	row := settingsHookRow{Event: event, Scope: hookScopeGlobal, Script: state, HasScript: true}
+	return settingsHookScriptEntry(row)
 }
 
 func settingsProjectConfigEntry(projectPath string) intpickercompat.Entry {
@@ -212,6 +387,409 @@ func settingsProjectConfigSummary(cfg hooks.ProjectConfig) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+func loadProjectConfigForRead(path string) (hooks.ProjectConfig, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return hooks.ProjectConfig{}, nil
+		}
+		return hooks.ProjectConfig{}, err
+	}
+	return hooks.ParseProjectConfig(string(content))
+}
+
+func declaredHookRun(cfg hooks.ProjectConfig, event string) string {
+	if cfg.Hooks == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Hooks[hooks.Event(event)])
+}
+
+// runHookMakerAction dispatches the hook-add / hook-edit / hook-remove value
+// produced by the hook maker page. action is one of the prefixed action keys
+// declared above.
+func (c *settingsCommand) runHookMakerAction(ctx settingsProjectContext, action string, stdout, stderr io.Writer) error {
+	switch {
+	case strings.HasPrefix(action, settingsActionPrefixHookAdd):
+		body := strings.TrimPrefix(action, settingsActionPrefixHookAdd)
+		return c.runHookMakerAdd(ctx, body, stdout, stderr)
+	case strings.HasPrefix(action, settingsActionPrefixHookEdit):
+		body := strings.TrimPrefix(action, settingsActionPrefixHookEdit)
+		return c.runHookMakerEdit(ctx, body, stdout, stderr)
+	case strings.HasPrefix(action, settingsActionPrefixHookRemove):
+		body := strings.TrimPrefix(action, settingsActionPrefixHookRemove)
+		return c.runHookMakerRemove(ctx, body, stdout, stderr)
+	default:
+		return fmt.Errorf("unknown hook maker action: %s", action)
+	}
+}
+
+func parseHookActionBody(body string) (scope, event, source string, ok bool) {
+	parts := strings.SplitN(body, ":", 3)
+	if len(parts) < 2 {
+		return "", "", "", false
+	}
+	scope = parts[0]
+	event = parts[1]
+	if len(parts) == 3 {
+		source = parts[2]
+	}
+	if scope != hookScopeGlobal && scope != hookScopeProject {
+		return "", "", "", false
+	}
+	if hooks.Event(event) == "" || !isSettingsSupportedHookEvent(event) {
+		return "", "", "", false
+	}
+	return scope, event, source, true
+}
+
+func isSettingsSupportedHookEvent(event string) bool {
+	for _, e := range settingsHookEvents {
+		if e.Name == event {
+			return true
+		}
+	}
+	return false
+}
+
+func parseEditActionBody(body string) (source, scope, event string, ok bool) {
+	parts := strings.SplitN(body, ":", 3)
+	if len(parts) != 3 {
+		return "", "", "", false
+	}
+	source = parts[0]
+	scope = parts[1]
+	event = parts[2]
+	if source != hookSourceScript && source != hookSourceDeclarative {
+		return "", "", "", false
+	}
+	if scope != hookScopeGlobal && scope != hookScopeProject {
+		return "", "", "", false
+	}
+	if !isSettingsSupportedHookEvent(event) {
+		return "", "", "", false
+	}
+	return source, scope, event, true
+}
+
+func (c *settingsCommand) runHookMakerAdd(ctx settingsProjectContext, body string, stdout, stderr io.Writer) error {
+	scope, event, source, ok := parseHookActionBody(body)
+	if !ok {
+		return fmt.Errorf("invalid hook add action: %s", body)
+	}
+	if source == "" {
+		// Branch picker: declarative vs script. Adds a small help row that
+		// explains the trade-off.
+		entries := []intpickercompat.Entry{
+			settingsBackEntry(),
+			{
+				Label: settingsLabelDim("How to choose", "one-line command -> declarative; complex script -> $EDITOR"),
+				Value: settingsNoopValue,
+			},
+			{
+				Label: settingsLabel(settingsGlyphType, settingsColorType, "Declarative (one-liner)", "write run = \"...\" to .projmux/config.toml"),
+				Value: settingsActionPrefixHookAdd + scope + ":" + event + ":" + hookSourceDeclarative,
+			},
+			{
+				Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Script ($EDITOR)", "create .projmux/hooks/<event> and open $EDITOR"),
+				Value: settingsActionPrefixHookAdd + scope + ":" + event + ":" + hookSourceScript,
+			},
+		}
+		// Project scope only supports declarative. Surface that constraint.
+		if scope == hookScopeGlobal {
+			entries[2] = intpickercompat.Entry{
+				Label: settingsLabelDim("Declarative", "config.toml is project-only"),
+				Value: settingsNoopValue,
+			}
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-hook-maker-add",
+			Entries:    entries,
+			Title:      "Hook " + event + " - add",
+			Prompt:     "Settings > Hooks > " + event + " > Add > ",
+			Footer:     projmuxFooter("Enter: choose  |  Back: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		next := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || next == "" || next == settingsNoopValue {
+			return nil
+		}
+		if next == settingsBackValue {
+			return nil
+		}
+		// Recurse with the resolved source.
+		return c.runHookMakerAction(ctx, next, stdout, stderr)
+	}
+
+	switch source {
+	case hookSourceScript:
+		return c.hookMakerAddScript(ctx, scope, event, stdout, stderr)
+	case hookSourceDeclarative:
+		if scope == hookScopeGlobal {
+			fmt.Fprintln(stderr, "declarative hooks are only supported for project scope")
+			return nil
+		}
+		return c.hookMakerEditDeclarative(ctx, event, stdout, stderr)
+	default:
+		return fmt.Errorf("unknown hook source: %s", source)
+	}
+}
+
+func (c *settingsCommand) runHookMakerEdit(ctx settingsProjectContext, body string, stdout, stderr io.Writer) error {
+	source, scope, event, ok := parseEditActionBody(body)
+	if !ok {
+		return fmt.Errorf("invalid hook edit action: %s", body)
+	}
+	switch source {
+	case hookSourceScript:
+		return c.hookMakerEditScript(ctx, scope, event, stdout, stderr)
+	case hookSourceDeclarative:
+		if scope == hookScopeGlobal {
+			fmt.Fprintln(stderr, "declarative hooks are only supported for project scope")
+			return nil
+		}
+		return c.hookMakerEditDeclarative(ctx, event, stdout, stderr)
+	default:
+		return fmt.Errorf("unknown hook source: %s", source)
+	}
+}
+
+func (c *settingsCommand) runHookMakerRemove(ctx settingsProjectContext, body string, stdout, stderr io.Writer) error {
+	source, scope, event, ok := parseEditActionBody(body)
+	if !ok {
+		return fmt.Errorf("invalid hook remove action: %s", body)
+	}
+	switch source {
+	case hookSourceScript:
+		return c.hookMakerRemoveScript(ctx, scope, event, stdout)
+	case hookSourceDeclarative:
+		if scope == hookScopeGlobal {
+			return nil
+		}
+		return c.hookMakerRemoveDeclarative(ctx, event, stdout)
+	default:
+		return fmt.Errorf("unknown hook source: %s", source)
+	}
+}
+
+// --- script branch ---------------------------------------------------------
+
+func (c *settingsCommand) hookMakerScriptPath(ctx settingsProjectContext, scope, event string) (string, string, error) {
+	switch scope {
+	case hookScopeGlobal:
+		paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+		if err != nil {
+			return "", "", err
+		}
+		return paths.HookPath(event), "", nil
+	case hookScopeProject:
+		if !ctx.hasProject() {
+			return "", "", errors.New("project hook requires a project context")
+		}
+		state := settingsProjectHookPathState(ctx.Path, event)
+		path := state.path
+		// state.path may be a " or "-joined list when both candidates are
+		// missing; pick the canonical hooks/ location for new files.
+		if state.status == "missing" {
+			path = filepath.Join(ctx.Path, ".projmux", config.HooksDirName, event)
+		}
+		rel, err := filepath.Rel(ctx.Path, path)
+		if err != nil {
+			return "", "", err
+		}
+		return path, filepath.ToSlash(rel), nil
+	default:
+		return "", "", fmt.Errorf("unknown hook scope: %s", scope)
+	}
+}
+
+func (c *settingsCommand) hookMakerAddScript(ctx settingsProjectContext, scope, event string, stdout, stderr io.Writer) error {
+	path, rel, err := c.hookMakerScriptPath(ctx, scope, event)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err == nil {
+		// Already exists; treat add as edit.
+		return c.hookMakerOpenScript(ctx, scope, event, path, rel, stdout, stderr)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body := "#!/bin/sh\n# projmux " + event + " hook for " + scope + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "created %s\n", path); err != nil {
+		return err
+	}
+	return c.hookMakerOpenScript(ctx, scope, event, path, rel, stdout, stderr)
+}
+
+func (c *settingsCommand) hookMakerEditScript(ctx settingsProjectContext, scope, event string, stdout, stderr io.Writer) error {
+	path, rel, err := c.hookMakerScriptPath(ctx, scope, event)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(stderr, "hook script %s does not exist; creating now\n", path)
+			return c.hookMakerAddScript(ctx, scope, event, stdout, stderr)
+		}
+		return err
+	}
+	return c.hookMakerOpenScript(ctx, scope, event, path, rel, stdout, stderr)
+}
+
+func (c *settingsCommand) hookMakerOpenScript(ctx settingsProjectContext, scope, event, path, rel string, stdout, stderr io.Writer) error {
+	editor := c.resolveEditor()
+	if err := c.openEditor(editor, path); err != nil {
+		fmt.Fprintf(stderr, "editor %s exited with error: %v\n", editor, err)
+		// Continue — the file may still be edited and trusted.
+	}
+	if err := ensureExecutableScript(path); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "edited %s\n", path); err != nil {
+		return err
+	}
+	if scope == hookScopeProject && ctx.hasProject() {
+		return c.recordProjectScriptTrust(ctx, rel, stdout, stderr)
+	}
+	return nil
+}
+
+func (c *settingsCommand) hookMakerRemoveScript(ctx settingsProjectContext, scope, event string, stdout io.Writer) error {
+	path, _, err := c.hookMakerScriptPath(ctx, scope, event)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "removed %s\n", path)
+	return err
+}
+
+func ensureExecutableScript(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("hook %q is a directory", path)
+	}
+	mode := info.Mode().Perm()
+	if mode&0o111 != 0 {
+		return nil
+	}
+	return os.Chmod(path, mode|0o755)
+}
+
+func (c *settingsCommand) recordProjectScriptTrust(ctx settingsProjectContext, rel string, stdout, stderr io.Writer) error {
+	if rel == "" {
+		return nil
+	}
+	trustPath, err := c.projectConfigTrustStorePath()
+	if err != nil {
+		return err
+	}
+	if _, err := hooks.TrustProjectFile(ctx.Path, rel, trustPath); err != nil {
+		fmt.Fprintf(stderr, "trust %s: %v\n", rel, err)
+		return nil
+	}
+	_, err = fmt.Fprintf(stdout, "trusted %s\n", filepath.Join(ctx.Path, rel))
+	return err
+}
+
+// --- declarative branch ----------------------------------------------------
+
+func (c *settingsCommand) hookMakerEditDeclarative(ctx settingsProjectContext, event string, stdout, stderr io.Writer) error {
+	if !ctx.hasProject() {
+		return errors.New("declarative hook requires a project context")
+	}
+	cfg, err := c.loadProjectConfigForEdit(ctx)
+	if err != nil {
+		return err
+	}
+	current := ""
+	if cfg.Hooks != nil {
+		current = cfg.Hooks[hooks.Event(event)]
+	}
+	value, ok, err := c.runProjectConfigTyped("Hook "+event+" - run",
+		"Type [hooks."+event+"] run > ", current)
+	if err != nil || !ok {
+		return err
+	}
+	value = strings.TrimSpace(value)
+	return c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
+		if cfg.Hooks == nil {
+			cfg.Hooks = map[hooks.Event]string{}
+		}
+		if value == "" {
+			delete(cfg.Hooks, hooks.Event(event))
+		} else {
+			cfg.Hooks[hooks.Event(event)] = value
+		}
+		return nil
+	})
+}
+
+func (c *settingsCommand) hookMakerRemoveDeclarative(ctx settingsProjectContext, event string, stdout io.Writer) error {
+	if !ctx.hasProject() {
+		return nil
+	}
+	return c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
+		delete(cfg.Hooks, hooks.Event(event))
+		return nil
+	})
+}
+
+// --- editor ---------------------------------------------------------------
+
+func (c *settingsCommand) resolveEditor() string {
+	env := c.lookupEnv
+	if env == nil {
+		env = os.Getenv
+	}
+	for _, key := range []string{"VISUAL", "EDITOR"} {
+		if v := strings.TrimSpace(env(key)); v != "" {
+			return v
+		}
+	}
+	return "vi"
+}
+
+func (c *settingsCommand) openEditor(editor, path string) error {
+	editor = strings.TrimSpace(editor)
+	if editor == "" {
+		editor = "vi"
+	}
+	if c.runCommand != nil {
+		// Split editor on whitespace so VISUAL="code -w" works.
+		fields := strings.Fields(editor)
+		name := fields[0]
+		args := append(append([]string{}, fields[1:]...), path)
+		return c.runCommand(name, args...)
+	}
+	fields := strings.Fields(editor)
+	name := fields[0]
+	args := append(append([]string{}, fields[1:]...), path)
+	cmd := exec.Command(name, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// --- project config section ------------------------------------------------
 
 func (c *settingsCommand) runProjectConfigSection(stdout, stderr io.Writer) error {
 	for {
@@ -324,12 +902,9 @@ func (c *settingsCommand) projectConfigEntries(ctx settingsProjectContext) []int
 	entries = append(entries, projectConfigStartupEntries(cfg)...)
 	entries = append(entries, projectConfigKubeEntries(cfg)...)
 	entries = append(entries, projectConfigEnvEntries(cfg)...)
-	if len(cfg.Hooks) > 0 {
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Hook commands", fmt.Sprintf("%d preserved", len(cfg.Hooks)), "script editor out of scope"),
-			Value: settingsNoopValue,
-		})
-	}
+	// Hooks are now authored from the Hooks page; the config.toml section is
+	// data-only for env / kube / startup. Hook commands are still parsed and
+	// preserved on save (UpdateProjectConfig round-trips them).
 	return entries
 }
 
