@@ -90,9 +90,9 @@ The fzf compatibility surface for the native engine is tracked in
 - Simple and multi-line native rows share the same projmux current-row style and
   pointer marker rather than falling back to terminal inverse video for simple
   pickers.
-- Selected multi-line rows use the same `┃┃┃` continuation marker configured
-  for fzf metadata lines, so switch/session/notify cards read as one focused
-  block.
+- Selected multi-line rows use the same pointer-width `▌` continuation marker
+  as the first selected project line, so switch/session/notify cards read as one
+  focused block.
 - Pointer and continuation markers render inside the current-row gutter style so
   selected cards do not visually break between the marker and row content.
 - Native redraws use terminal synchronized-update wrappers and coalesced

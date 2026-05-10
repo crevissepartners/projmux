@@ -74,6 +74,33 @@ func TestRenderSplitPreviewRowsPadsBothPanes(t *testing.T) {
 	}
 }
 
+func TestRenderSplitPreviewRowsKeepsRequestedViewport(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	RenderSplitPreviewRows(&out,
+		[]string{"api", "detail"},
+		[]string{"one", "two", "three", "four", "five"},
+		Layout{Rows: 10, Cols: 80},
+		"right,60%,border-left",
+		10,
+		3,
+		4,
+		3,
+	)
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("split preview rows = %d, want fixed viewport of 3: %q", len(lines), out.String())
+	}
+	if !strings.Contains(out.String(), Scrollbar) {
+		t.Fatalf("split preview output = %q, want scrollbar on fixed viewport", out.String())
+	}
+	if strings.Contains(out.String(), "four") || strings.Contains(out.String(), "five") {
+		t.Fatalf("split preview output = %q, want preview clipped to viewport", out.String())
+	}
+}
+
 func TestRenderDownPreviewPadsPreviewRows(t *testing.T) {
 	t.Parallel()
 

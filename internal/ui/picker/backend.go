@@ -1693,7 +1693,7 @@ func expandNativeCommand(command, target string) string {
 
 func limitedNativePreviewLines(output string, offset, limit int) []string {
 	output = strings.TrimRight(output, "\r\n")
-	if output == "" {
+	if output == "" || limit <= 0 {
 		return nil
 	}
 	lines := strings.Split(output, "\n")
@@ -1705,7 +1705,10 @@ func limitedNativePreviewLines(output string, offset, limit int) []string {
 	}
 	lines = lines[offset:]
 	if limit > 0 && len(lines) > limit {
-		lines = append(lines[:limit], fmt.Sprintf("... %d more lines", len(lines)-limit))
+		if limit == 1 {
+			return []string{fmt.Sprintf("... %d more lines", len(lines))}
+		}
+		lines = append(lines[:limit-1], fmt.Sprintf("... %d more lines", len(lines)-limit+1))
 	}
 	return lines
 }
