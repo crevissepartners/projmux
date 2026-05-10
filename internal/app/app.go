@@ -4,9 +4,30 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"sync"
 
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/version"
 )
+
+// legacyHookMigrationOnce ensures the best-effort declarative migration only
+// runs once per process invocation. Settings UI entry points still trigger
+// migration directly so users who never set PROJMUX_CWD still see the
+// converted entries.
+var legacyHookMigrationOnce sync.Once
+
+func runLegacyHookMigrations() {
+	legacyHookMigrationOnce.Do(func() {
+		// Project migration only fires when PROJMUX_CWD is set; otherwise
+		// the caller invoked projmux outside any project context and we
+		// have nothing to migrate.
+		if cwd := os.Getenv("PROJMUX_CWD"); cwd != "" {
+			_, _ = hooks.MigrateProjectLegacyScripts(cwd, "", os.Stderr)
+		}
+		_, _ = hooks.MigrateGlobalLegacyScripts(os.Getenv, os.UserHomeDir, "", os.Stderr)
+	})
+}
 
 // Run is the current CLI bootstrap. Feature commands will grow from here.
 func Run(args []string, stdout, stderr io.Writer) error {
@@ -101,6 +122,7 @@ func New() *App {
 
 // Run dispatches the configured application commands.
 func (a *App) Run(args []string, stdout, stderr io.Writer) error {
+	runLegacyHookMigrations()
 	if len(args) == 0 {
 		printUsage(stdout)
 		return nil

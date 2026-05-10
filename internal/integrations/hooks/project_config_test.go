@@ -177,17 +177,27 @@ run = "git status --short"
 	}
 }
 
-func TestRunnerPaneStartupConfigPrecedenceAfterHookFiles(t *testing.T) {
+func TestRunnerPaneStartupConfigPrecedenceStartupOverHook(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")
 	}
 	t.Parallel()
 
 	dir := t.TempDir()
-	globalPath := filepath.Join(dir, "global-pane-startup")
+	globalConfigPath := filepath.Join(dir, "global", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(globalConfigPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll global: %v", err)
+	}
+	if err := os.WriteFile(globalConfigPath, []byte(`
+[hooks.pane-startup]
+run = "echo global-command"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile global: %v", err)
+	}
+	// Legacy script files in the historical layout must be silently ignored
+	// by the runner; only declarative entries execute.
 	cwd := filepath.Join(dir, "repo")
-	writeHook(t, globalPath, "echo global-command\n", 0o755)
-	writeHook(t, filepath.Join(cwd, ".projmux", "pane-startup"), "echo project-file-command\n", 0o755)
+	writeHook(t, filepath.Join(cwd, ".projmux", "pane-startup"), "echo legacy-script-should-not-run\n", 0o755)
 	writeProjectConfig(t, cwd, `
 [hooks.pane-startup]
 run = "echo config-hook-command"
@@ -197,9 +207,7 @@ run = "startup-direct-command"
 `)
 
 	runner := &Runner{
-		GlobalHookPaths: map[Event][]string{
-			EventPaneStartup: {globalPath},
-		},
+		GlobalConfigPath:     globalConfigPath,
 		DiscoverProjectHooks: true,
 		ProjectHooksFilePath: testProjectHooksFilePath(t),
 		TrustStorePath:       testTrustStorePath(t),

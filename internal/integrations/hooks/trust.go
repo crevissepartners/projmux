@@ -58,10 +58,6 @@ type trustedFile struct {
 	TrustedAt time.Time `json:"trusted_at"`
 }
 
-func (r *Runner) authorizeProjectHook(h projectHook) bool {
-	return r.authorizeProjectFile(h.event, h.repo, h.rel, h.path, "project hook")
-}
-
 func (r *Runner) authorizeProjectConfig(event Event, h projectConfigFile) bool {
 	return r.authorizeProjectFile(event, h.repo, h.rel, h.path, "project config")
 }
@@ -176,12 +172,17 @@ func defaultTrustStorePath() string {
 	return filepath.Join(paths.StateDir, trustedProjectsFileName)
 }
 
-// TrustProjectFile hashes the file at repoPath/relPath and records the hash
+// trustProjectFile hashes the file at repoPath/relPath and records the hash
 // in the trust store so the runner will accept it on the next invocation.
 // relPath must be a slash-separated path relative to the repo root (e.g.
-// ".projmux/config.toml" or ".projmux/hooks/post-create"). An empty relPath is
-// rejected to keep callers explicit about which surface they trust.
-func TrustProjectFile(repoPath, relPath, trustStorePath string) (string, error) {
+// ".projmux/config.toml"). An empty relPath is rejected to keep callers
+// explicit about which surface they trust.
+//
+// This is an internal helper. The only public surface is TrustProjectConfig,
+// which targets the well-known .projmux/config.toml file. Script files are no
+// longer a trust surface — the runner refuses to execute them and the
+// migrator flips them to declarative entries instead.
+func trustProjectFile(repoPath, relPath, trustStorePath string) (string, error) {
 	repoPath = strings.TrimSpace(repoPath)
 	if repoPath == "" {
 		return "", errors.New("repo path is required")
@@ -217,10 +218,10 @@ func TrustProjectFile(repoPath, relPath, trustStorePath string) (string, error) 
 	return sum, nil
 }
 
-// TrustProjectConfig is a thin wrapper around TrustProjectFile that targets
-// the well-known .projmux/config.toml file.
+// TrustProjectConfig hashes the project-local .projmux/config.toml file and
+// records the hash so the runner will accept it on the next invocation.
 func TrustProjectConfig(repoPath, trustStorePath string) (string, error) {
-	return TrustProjectFile(repoPath, projectConfigRelativePath, trustStorePath)
+	return trustProjectFile(repoPath, projectConfigRelativePath, trustStorePath)
 }
 
 func loadTrustedProjects(path string) (trustedProjects, error) {

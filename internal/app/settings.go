@@ -21,6 +21,10 @@ import (
 // osStat is a package-level indirection so tests can stub filesystem checks.
 var osStat = os.Stat
 
+// osLstat mirrors osStat for symlink-aware checks (e.g. the hook maker has
+// to distinguish a dotfiles-managed symlink from a regular legacy script).
+var osLstat = os.Lstat
+
 type settingsCommand struct {
 	ai                 *aiCommand
 	switcher           *switchCommand

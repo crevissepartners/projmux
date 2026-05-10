@@ -4,7 +4,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -23,33 +22,21 @@ func defaultTmuxClient() *inttmux.Client {
 }
 
 func defaultLifecycleHookRunner() *hooks.Runner {
-	paths, err := config.DefaultPathsFromEnv()
+	globalConfigPath, err := hooks.GlobalConfigPath(os.Getenv, os.UserHomeDir)
 	if err != nil {
 		return nil
 	}
+
 	prompt := hooks.ProjectHookPrompt(nil)
 	if strings.TrimSpace(os.Getenv("TMUX")) != "" && strings.TrimSpace(os.Getenv(hookTrustInlineEnv)) == "" {
 		prompt = tmuxProjectHookPrompt(os.Getenv, os.Executable, inttmux.ExecRunner{})
 	}
 	return &hooks.Runner{
-		GlobalHookPaths: map[hooks.Event][]string{
-			hooks.EventPreCreate:   {paths.HookPath(config.PreCreateHookFileName)},
-			hooks.EventPostCreate:  {paths.HookPath(config.PostCreateHookFileName)},
-			hooks.EventPaneStartup: {paths.HookPath(config.PaneStartupHookFileName)},
-			hooks.EventPostAttach:  {paths.HookPath(config.PostAttachHookFileName)},
-		},
+		GlobalConfigPath:     globalConfigPath,
 		DiscoverProjectHooks: true,
 		ProjectHookPrompt:    prompt,
 		Logger:               os.Stderr,
 		Timeout:              hooks.DefaultPostCreateTimeout,
 		Version:              version.String(),
 	}
-}
-
-func defaultPostCreateHookPath() string {
-	paths, err := config.DefaultPathsFromEnv()
-	if err != nil {
-		return ""
-	}
-	return paths.PostCreateHookPath()
 }
