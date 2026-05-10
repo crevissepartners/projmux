@@ -1032,6 +1032,129 @@ func TestNativeInteractiveConsumesShiftCSIKeys(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveNormalizesAltShiftArrowCSIKeys(t *testing.T) {
+	t.Parallel()
+
+	// xterm encodes Alt-Shift-Left/Right as CSI 1;4D / 1;4C — modifier 4 is
+	// Shift+Alt. Settings popup Phase 2.6 binds Alt-Shift-Left/Right for
+	// tab navigation so the picker must surface them in their compound
+	// normalized form rather than dropping the modifier.
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "alt-shift-left", in: "\x1b[1;4D", want: "alt-shift-left"},
+		{name: "alt-shift-right", in: "\x1b[1;4C", want: "alt-shift-right"},
+		{name: "alt-shift-up", in: "\x1b[1;4A", want: "alt-shift-up"},
+		{name: "alt-shift-down", in: "\x1b[1;4B", want: "alt-shift-down"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			key, err := readNativeKey(strings.NewReader(tc.in))
+			if err != nil {
+				t.Fatalf("readNativeKey() error = %v", err)
+			}
+			if key.Name != tc.want || key.Text != "" {
+				t.Fatalf("key = %#v, want %q", key, tc.want)
+			}
+		})
+	}
+}
+
+func TestNativeInteractiveChipClickEmitsClickValueResult(t *testing.T) {
+	t.Parallel()
+
+	// Frame layout: outer 40x10, top border on row 1, chip strip on row 2.
+	// Chip "Global" starts at column 3 ([ G l o b a l ] occupies 3..10),
+	// gap at col 11, chip "Project" at cols 12..20. Click in the middle of
+	// the Project chip (col 16) should emit a chip result carrying the
+	// chip's ClickValue so the caller can resolve the tab transition.
+	in := "\x1b[<0;16;2M\x1b[<0;16;2m"
+	result, err := runNativeInteractive(strings.NewReader(in), io.Discard, Options{
+		UI: "settings",
+		TitleChips: []projmuxpicker.Chip{
+			{Label: "Global", Active: true, ClickValue: "__settings_tab_global__"},
+			{Label: "Project", ClickValue: "__settings_tab_project__"},
+		},
+		Items: []Item{
+			{Title: "Section A", Value: "section:a"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "chip" || result.Value != "__settings_tab_project__" {
+		t.Fatalf("result = %#v, want chip click resolved to Project ClickValue", result)
+	}
+}
+
+func TestNativeInteractiveChipClickOnActiveChipResolves(t *testing.T) {
+	t.Parallel()
+
+	// Clicking the active chip still resolves through ClickValue — caller
+	// can interpret "click active tab" as either a no-op or a soft refresh.
+	in := "\x1b[<0;5;2M\x1b[<0;5;2m"
+	result, err := runNativeInteractive(strings.NewReader(in), io.Discard, Options{
+		UI: "settings",
+		TitleChips: []projmuxpicker.Chip{
+			{Label: "Global", Active: true, ClickValue: "__settings_tab_global__"},
+			{Label: "Project", ClickValue: "__settings_tab_project__"},
+		},
+		Items: []Item{{Title: "Section A", Value: "section:a"}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "chip" || result.Value != "__settings_tab_global__" {
+		t.Fatalf("result = %#v, want chip click on active chip resolved to Global ClickValue", result)
+	}
+}
+
+func TestNativeInteractiveChipClickOnDisabledChipIsNoop(t *testing.T) {
+	t.Parallel()
+
+	// Disabled chip click is a no-op (matches chord behaviour). After the
+	// click we send Enter to select the only item — verify the result is
+	// the item, not a chip transition.
+	in := "\x1b[<0;16;2M\x1b[<0;16;2m\r"
+	result, err := runNativeInteractive(strings.NewReader(in), io.Discard, Options{
+		UI: "settings",
+		TitleChips: []projmuxpicker.Chip{
+			{Label: "Global", Active: true, ClickValue: "__settings_tab_global__"},
+			{Label: "Project", Disabled: true, ClickValue: "__settings_tab_project__"},
+		},
+		Items: []Item{{Title: "Section A", Value: "section:a"}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "section:a" {
+		t.Fatalf("result = %#v, want disabled chip click ignored, enter selecting section:a", result)
+	}
+}
+
+func TestNativeInteractiveChipClickOutsideStripDoesNotEmitChipResult(t *testing.T) {
+	t.Parallel()
+
+	// A click on a row that is not the chip strip must not be hijacked by
+	// the chip-click handler. We check the result directly by calling the
+	// chip resolver — the integration-style test above already exercises
+	// row==2 clicks, so here we just need to assert "row==3 returns no
+	// chip" so future refactors of the row-2 invariant surface as a
+	// regression in this guard.
+	if _, ok := nativeMouseChipResult(Options{
+		TitleChips: []projmuxpicker.Chip{
+			{Label: "Global", Active: true, ClickValue: "tab:global"},
+			{Label: "Project", ClickValue: "tab:project"},
+		},
+	}, nativeLayout{Rows: 24, Cols: 40}, 16, 3, ""); ok {
+		t.Fatalf("nativeMouseChipResult(row=3) ok=true, want false because chip strip lives on row 2")
+	}
+}
+
 func TestNativeInteractiveWaitsForSplitEscapeSequences(t *testing.T) {
 	t.Parallel()
 

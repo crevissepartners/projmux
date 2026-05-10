@@ -86,10 +86,92 @@ func RenderFullFrameUpdate(w io.Writer, frame string) {
 // chips with the inactive tone, so the popup tab metaphor visually matches
 // the tmux window list. Disabled chips render dim and convey "tab exists
 // but is not selectable" without breaking the chip row geometry.
+//
+// ClickValue is the picker Result.Value emitted when the chip is clicked
+// with the primary mouse button. Empty ClickValue or a Disabled chip make
+// the click a no-op so the picker keeps the keyboard chord and mouse
+// click metaphors in lockstep.
 type Chip struct {
-	Label    string
-	Active   bool
+	Label      string
+	Active     bool
+	Disabled   bool
+	ClickValue string
+}
+
+// ChipHit reports the visible column range a chip occupies in the rendered
+// chip strip. Columns are 1-based outer-frame coordinates so callers can
+// match mouse SGR events directly (the leftmost border column is 1).
+type ChipHit struct {
+	Index    int
 	Disabled bool
+	ColStart int
+	ColEnd   int
+	Value    string
+}
+
+// ChipsTitlebarRow returns the 1-based outer-frame row on which the chip
+// strip is rendered. The chip strip always sits on row 2 (top border is
+// row 1) so callers can collapse the entire layout calculation into a
+// single constant — kept as a function so the relation stays explicit and
+// is easy to extend if the frame grows additional decoration rows.
+func ChipsTitlebarRow() int {
+	return 2
+}
+
+// ChipsHitRegions returns the click-target columns each non-blank chip
+// occupies for the supplied innerWidth (frame inner width, i.e. outer
+// width minus the two border cells). The layout mirrors
+// frameTitlebarChipsLine: a single leading cell after the left border
+// followed by each chip body (" Label ") separated by one-cell gaps. The
+// caller is responsible for skipping disabled chips when matching, but
+// disabled chips still appear in the slice so geometry stays stable.
+func ChipsHitRegions(chips []Chip, innerWidth int) []ChipHit {
+	if innerWidth < 4 || len(chips) == 0 {
+		return nil
+	}
+	hits := make([]ChipHit, 0, len(chips))
+	// Column 1 is the left border, column 2 is the chip-strip leading
+	// padding cell, so the first chip body starts at column 3.
+	cursor := 3
+	maxBody := innerWidth - 1
+	used := 0
+	first := true
+	for index, chip := range chips {
+		label := strings.TrimSpace(chip.Label)
+		if label == "" {
+			continue
+		}
+		if !first {
+			gapWidth := 1
+			if used+gapWidth > maxBody {
+				break
+			}
+			cursor += gapWidth
+			used += gapWidth
+		}
+		first = false
+		remaining := maxBody - used
+		if remaining <= 2 {
+			break
+		}
+		labelBudget := remaining - 2
+		labelWidth := VisibleLen(label)
+		if labelWidth > labelBudget {
+			label = TruncateANSI(label, labelBudget)
+			labelWidth = VisibleLen(label)
+		}
+		chipWidth := labelWidth + 2
+		hits = append(hits, ChipHit{
+			Index:    index,
+			Disabled: chip.Disabled,
+			ColStart: cursor,
+			ColEnd:   cursor + chipWidth - 1,
+			Value:    chip.ClickValue,
+		})
+		cursor += chipWidth
+		used += chipWidth
+	}
+	return hits
 }
 
 func (r Renderer) ContentLayout(layout Layout) Layout {

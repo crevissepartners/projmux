@@ -70,16 +70,16 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 		t.Fatalf("root settings header = %q, want plain project context header %q", got, want)
 	}
 	wantChips := []projmuxpicker.Chip{
-		{Label: "Global", Active: true},
-		{Label: "Project", Disabled: true},
+		{Label: "Global", Active: true, ClickValue: settingsRootTabGlobalValue},
+		{Label: "Project", Disabled: true, ClickValue: settingsRootTabProjectValue},
 	}
 	if got := options.TitleChips; !reflect.DeepEqual(got, wantChips) {
 		t.Fatalf("root settings title chips = %#v, want %#v", got, wantChips)
 	}
-	if got, want := options.Footer, "Enter: open  |  Alt-Left/Alt-Right: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := options.Footer, "Enter: open  |  Alt-Shift-Left/Alt-Shift-Right or click chip: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
-	if got, want := options.ExpectKeys, []string{"enter", "ctrl-g", "ctrl-p", "alt-left", "alt-right"}; !reflect.DeepEqual(got, want) {
+	if got, want := options.ExpectKeys, []string{"enter", "ctrl-g", "ctrl-p", "alt-shift-left", "alt-shift-right"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings expect keys = %#v, want %#v", got, want)
 	}
 	if got, want := options.Bindings, []string{"esc:abort", "ctrl-c:abort", "alt-5:abort", "ctrl-alt-s:abort"}; !reflect.DeepEqual(got, want) {
@@ -151,7 +151,7 @@ func TestSettingsRootAltArrowTogglesTabsWhenProjectAvailable(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "alt-right"}, nil
+			return intpickercompat.Result{Key: "alt-shift-right"}, nil
 		case 2:
 			projectOptions = options
 			return intpickercompat.Result{}, nil
@@ -174,10 +174,10 @@ func TestSettingsRootAltArrowTogglesTabsWhenProjectAvailable(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if got, want := projectOptions.Prompt, "Settings > Project > "; got != want {
-		t.Fatalf("project tab prompt = %q, want %q after alt-right", got, want)
+		t.Fatalf("project tab prompt = %q, want %q after alt-shift-right", got, want)
 	}
 	if got := projectOptions.TitleChips; len(got) < 2 || got[0].Active || !got[1].Active || got[1].Disabled {
-		t.Fatalf("project tab chips after alt-right = %#v, want Project active and not disabled", got)
+		t.Fatalf("project tab chips after alt-shift-right = %#v, want Project active and not disabled", got)
 	}
 }
 
@@ -195,10 +195,10 @@ func TestSettingsRootAltArrowToggleInvariantWithProjectContext(t *testing.T) {
 		switch calls {
 		case 1:
 			// Global tab — pivot right.
-			return intpickercompat.Result{Key: "alt-right"}, nil
+			return intpickercompat.Result{Key: "alt-shift-right"}, nil
 		case 2:
 			// Project tab — pivot back left.
-			return intpickercompat.Result{Key: "alt-left"}, nil
+			return intpickercompat.Result{Key: "alt-shift-left"}, nil
 		case 3:
 			third = options
 			return intpickercompat.Result{}, nil
@@ -224,23 +224,27 @@ func TestSettingsRootAltArrowToggleInvariantWithProjectContext(t *testing.T) {
 		t.Fatalf("toggled-back prompt = %q, want %q", got, want)
 	}
 	if got := third.TitleChips; len(got) < 2 || !got[0].Active || got[1].Active {
-		t.Fatalf("toggled-back chips = %#v, want Global active after alt-right then alt-left", got)
+		t.Fatalf("toggled-back chips = %#v, want Global active after alt-shift-right then alt-shift-left", got)
 	}
 }
 
 func TestSettingsRootAltArrowDoesNotShadowGlobalSelectPaneChords(t *testing.T) {
 	t.Parallel()
 
-	// The settings popup binds Alt-Left/Alt-Right for tab navigation while
-	// global tmux select-pane chords keep the same physical keys. This is
-	// safe because tmux popups consume their own stdin and the popup is the
-	// active terminal client when Alt-Left/Right is pressed — the global
-	// chord only fires outside the popup. Verify the catalog still ships
-	// M-Left / M-Right so the global behaviour does not regress.
+	// The settings popup binds Alt-Shift-Left/Alt-Shift-Right for tab
+	// navigation while global tmux next/prev-window chords keep the same
+	// physical keys. This is safe because tmux popups consume their own
+	// stdin and the popup is the active terminal client when
+	// Alt-Shift-Left/Right is pressed — the global chord only fires
+	// outside the popup. Verify the catalog still ships M-S-Left /
+	// M-S-Right (and M-Left / M-Right select-pane) so the global behaviour
+	// does not regress.
 	catalog := defaultKeyBindingCatalog()
 	wantChords := map[string]string{
 		"select-pane-left":  "M-Left",
 		"select-pane-right": "M-Right",
+		"previous-window":   "M-S-Left",
+		"next-window":       "M-S-Right",
 	}
 	for id, chord := range wantChords {
 		var got string
@@ -260,9 +264,16 @@ func TestSettingsRootAltArrowDoesNotShadowGlobalSelectPaneChords(t *testing.T) {
 	for _, key := range rootOpts.ExpectKeys {
 		popupKeys[key] = true
 	}
-	for _, key := range []string{"alt-left", "alt-right"} {
+	for _, key := range []string{"alt-shift-left", "alt-shift-right"} {
 		if !popupKeys[key] {
 			t.Fatalf("settings popup expect keys = %#v, want %q", rootOpts.ExpectKeys, key)
+		}
+	}
+	// The legacy Alt-Left/Alt-Right chord no longer toggles tabs so
+	// muscle-memory holders of the new Alt-Shift chord do not double-bind.
+	for _, key := range []string{"alt-left", "alt-right"} {
+		if popupKeys[key] {
+			t.Fatalf("settings popup expect keys = %#v, want %q removed (Phase 2.6 chord changed to alt-shift)", rootOpts.ExpectKeys, key)
 		}
 	}
 }
@@ -276,7 +287,7 @@ func TestSettingsRootAltArrowIsNoopWithoutProjectContext(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "alt-right"}, nil
+			return intpickercompat.Result{Key: "alt-shift-right"}, nil
 		case 2:
 			secondOptions = options
 			return intpickercompat.Result{}, nil
@@ -294,10 +305,82 @@ func TestSettingsRootAltArrowIsNoopWithoutProjectContext(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if got, want := secondOptions.Prompt, "Settings > "; got != want {
-		t.Fatalf("alt-right with no project context = %q, want still on Global tab %q", got, want)
+		t.Fatalf("alt-shift-right with no project context = %q, want still on Global tab %q", got, want)
 	}
 	if got := secondOptions.TitleChips; len(got) < 2 || !got[0].Active || got[1].Active || !got[1].Disabled {
-		t.Fatalf("alt-right chips = %#v, want Global active and Project disabled (single-tab no-op)", got)
+		t.Fatalf("alt-shift-right chips = %#v, want Global active and Project disabled (single-tab no-op)", got)
+	}
+}
+
+func TestSettingsRootChipClickSwitchesToProjectTab(t *testing.T) {
+	t.Parallel()
+
+	// Phase 2.6: chip click resolves through Value sentinels so the
+	// settings loop can treat keyboard chord (Alt-Shift-Right) and mouse
+	// click on the chip strip as equivalent tab transitions.
+	home := t.TempDir()
+	project := filepath.Join(home, "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+
+	var calls int
+	var projectOptions intpickercompat.Options
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "chip", Value: settingsRootTabProjectValue}, nil
+		case 2:
+			projectOptions = options
+			return intpickercompat.Result{}, nil
+		default:
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd := &settingsCommand{
+		runner:       runner,
+		nativePicker: nativePickerFromCompatRunner(runner),
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := projectOptions.Prompt, "Settings > Project > "; got != want {
+		t.Fatalf("project tab prompt after chip click = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsRootChipClickOnDisabledProjectChipIsNoop(t *testing.T) {
+	t.Parallel()
+
+	// Without a project context the Project chip is disabled — picker
+	// suppresses the click at hit detection time so the settings loop
+	// never sees a chip Result for the Project tab. Mimic that behaviour
+	// in the runner stub by returning an empty result on the first call;
+	// the loop should fall through to "close picker" rather than toggle.
+	var calls int
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		// First call: Global tab. Return Closed result (Key empty, Value
+		// empty) so the loop exits cleanly. If chip click on a disabled
+		// chip were emitted as a Value we'd loop forever.
+		return intpickercompat.Result{}, nil
+	})
+	cmd := &settingsCommand{
+		runner:       runner,
+		nativePicker: nativePickerFromCompatRunner(runner),
+		lookupEnv:    func(string) string { return "" },
+	}
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("runner calls = %d, want exactly one picker invocation when disabled chip click is suppressed", calls)
 	}
 }
 
@@ -318,10 +401,16 @@ func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 			t.Fatalf("project tab entry values = %#v, want disabled/noop rows only without inline tab toggle", entryValues(options.Entries))
 		}
 	}
-	for _, label := range []string{"no project", "Trust", "Hooks (project)", "config.toml", "Effective merge view"} {
+	for _, label := range []string{"Trust", "Hooks (project)", "config.toml", "Effective merge view"} {
 		if !hasEntryLabelContaining(options.Entries, label) {
 			t.Fatalf("project tab entries = %#v, want label containing %q", options.Entries, label)
 		}
+	}
+	// Phase 2.6: the chip strip plus popup header already announce the
+	// active scope, so the entry list drops the redundant "Project
+	// context" placeholder row that lived above the search bar.
+	if hasEntryLabelContaining(options.Entries, "Project context") {
+		t.Fatalf("project tab entries = %#v, want no \"Project context\" placeholder row", options.Entries)
 	}
 }
 
@@ -580,7 +669,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got := rootOptions.TitleChips; len(got) < 1 || !got[0].Active {
 		t.Fatalf("root settings chips = %#v, want Global active", got)
 	}
-	if got, want := rootOptions.Footer, "Enter: open  |  Alt-Left/Alt-Right: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := rootOptions.Footer, "Enter: open  |  Alt-Shift-Left/Alt-Shift-Right or click chip: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
 	if got, want := entryValues(rootOptions.Entries), []string{
