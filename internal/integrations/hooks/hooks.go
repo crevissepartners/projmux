@@ -1,5 +1,11 @@
-// Package hooks runs optional user-supplied hook scripts at projmux
-// lifecycle points (e.g. tmux session creation).
+// Package hooks runs optional user-supplied lifecycle hooks at projmux
+// lifecycle points (e.g. tmux session creation). Hooks are sourced exclusively
+// from declarative [hooks.<event>] run = "..." entries in either the global
+// `${XDG_CONFIG_HOME}/projmux/config.toml` or the project-local
+// `<repo>/.projmux/config.toml`. Legacy script files in the historical
+// `.projmux/<event>` / `.projmux/hooks/<event>` layout are no longer executed;
+// MigrateProjectLegacyScripts / MigrateGlobalLegacyScripts handle the
+// transition.
 package hooks
 
 import (
@@ -10,7 +16,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +43,7 @@ var SupportedEvents = []Event{
 // post-create public API.
 const DefaultPostCreateTimeout = 5 * time.Second
 
-// Context describes the tmux lifecycle point and is passed to hook scripts as
+// Context describes the tmux lifecycle point and is passed to hook commands as
 // PROJMUX_* environment variables.
 type Context struct {
 	SessionName string
@@ -52,7 +57,7 @@ type Context struct {
 }
 
 // PostCreateContext describes the tmux session that was just created and is
-// passed to the post-create hook script as PROJMUX_* environment variables.
+// passed to the post-create hook command as PROJMUX_* environment variables.
 type PostCreateContext = Context
 
 // RunResult is the observable hook output returned for events that consume
@@ -61,10 +66,15 @@ type RunResult struct {
 	Stdout string
 }
 
-// Runner runs optional global and project-local lifecycle hooks. Missing,
-// non-executable, or empty paths degrade to no-ops.
+// Runner runs optional global and project-local lifecycle hooks. Missing or
+// empty entries degrade to no-ops. Global hooks live in GlobalConfigPath
+// (defaults to `${XDG_CONFIG_HOME}/projmux/config.toml`) and are always
+// trusted; project-local hooks live in `<cwd>/.projmux/config.toml` and are
+// gated by the trust store.
 type Runner struct {
-	GlobalHookPaths      map[Event][]string
+	// GlobalConfigPath is the global declarative config file. Empty disables
+	// global hooks. A missing file is also treated as empty (no error).
+	GlobalConfigPath     string
 	DiscoverProjectHooks bool
 	ProjectHooksFilePath string
 	TrustStorePath       string
@@ -81,12 +91,11 @@ type Runner struct {
 // RunnerByEvent is the event-oriented lifecycle hook runner surface.
 type RunnerByEvent = Runner
 
-// PostCreateRunner runs the optional global post-create hook at HookPath, then
-// an optional project-local post-create hook when DiscoverProjectHooks is set.
-// A nil receiver, empty paths, and missing/non-executable files all degrade to
-// silent no-ops so the caller can always invoke Run unconditionally.
+// PostCreateRunner is a backwards-compatible shim that delegates to Runner
+// for the post-create lifecycle point. It is intentionally thin: callers that
+// want full event coverage should construct *Runner directly.
 type PostCreateRunner struct {
-	HookPath             string
+	GlobalConfigPath     string
 	DiscoverProjectHooks bool
 	ProjectHooksFilePath string
 	TrustStorePath       string
@@ -110,13 +119,16 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 		return RunResult{}, nil
 	}
 
-	paths := r.hookPaths(event, c.CWD)
-	hasFileHooks := len(paths.global) > 0 || paths.project.path != ""
-	projectConfig, hasProjectConfig := r.projectConfigForEvent(event, paths.config, hasFileHooks)
-	if hasProjectConfig {
-		c.Env = mergeConfigEnv(c.Env, projectConfig.SessionEnv())
+	globalCfg, hasGlobalCfg := r.globalConfigForEvent(event)
+	projectFile := r.discoverProjectConfigFile(event, c.CWD)
+	projectCfg, hasProjectCfg := r.projectConfigForEvent(event, projectFile)
+	if hasGlobalCfg {
+		c.Env = mergeConfigEnv(c.Env, globalCfg.SessionEnv())
 	}
-	if len(paths.global) == 0 && paths.project.path == "" && !hasProjectConfig {
+	if hasProjectCfg {
+		c.Env = mergeConfigEnv(c.Env, projectCfg.SessionEnv())
+	}
+	if !hasGlobalCfg && !hasProjectCfg {
 		return RunResult{}, nil
 	}
 
@@ -126,40 +138,29 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 	}
 
 	var result RunResult
-	for _, path := range paths.global {
-		hookResult, err := r.runHook(ctx, event, c, path, timeout, hookOutputMode(event))
+	if hasGlobalCfg {
+		hookResult, err := r.runConfigHook(ctx, event, c, globalCfg, "global", timeout, hookOutputMode(event))
 		if err != nil {
 			if event == EventPreCreate {
 				return result, err
 			}
-			r.warnf(event, "hook %q: %v", path, err)
-			continue
+			r.warnf(event, "global config hook: %v", err)
+		} else {
+			result = mergeResult(event, result, hookResult)
 		}
-		result = mergeResult(event, result, hookResult)
 	}
-	if paths.project.path != "" && r.authorizeProjectHook(paths.project) {
-		hookResult, err := r.runHook(ctx, event, c, paths.project.path, timeout, hookOutputMode(event))
+	if hasProjectCfg {
+		hookResult, err := r.runConfigHook(ctx, event, c, projectCfg, "project", timeout, hookOutputMode(event))
 		if err != nil {
 			if event == EventPreCreate {
 				return result, err
 			}
-			r.warnf(event, "hook %q: %v", paths.project.path, err)
-			return result, nil
+			r.warnf(event, "project config %q: %v", projectFile.rel, err)
+		} else {
+			result = mergeResult(event, result, hookResult)
 		}
-		result = mergeResult(event, result, hookResult)
-	}
-	if hasProjectConfig {
-		hookResult, err := r.runProjectConfigHook(ctx, event, c, projectConfig, timeout, hookOutputMode(event))
-		if err != nil {
-			if event == EventPreCreate {
-				return result, err
-			}
-			r.warnf(event, "config %q: %v", paths.config.rel, err)
-			return result, nil
-		}
-		result = mergeResult(event, result, hookResult)
 		if event == EventPaneStartup {
-			result = mergeResult(event, result, RunResult{Stdout: projectConfig.StartupRun})
+			result = mergeResult(event, result, RunResult{Stdout: projectCfg.StartupRun})
 		}
 	}
 	return result, nil
@@ -186,7 +187,7 @@ func (r *Runner) ProjectSessionEnv(cwd string) map[string]string {
 	return cfg.SessionEnv()
 }
 
-// HasHooks reports whether an executable global or project-local hook exists
+// HasHooks reports whether a declarative global or project-local hook exists
 // for event. It does not perform project trust prompting.
 func (r *Runner) HasHooks(event Event, cwd string) bool {
 	if r == nil {
@@ -196,24 +197,29 @@ func (r *Runner) HasHooks(event Event, cwd string) bool {
 	if event == "" {
 		return false
 	}
-	paths := r.hookPaths(event, cwd)
-	if len(paths.global) > 0 || paths.project.path != "" {
-		return true
+	if globalCfg, err := LoadGlobalConfig(r.GlobalConfigPath); err == nil {
+		if globalCfg.hasEventSurface(event) {
+			return true
+		}
 	}
-	if paths.config.path == "" {
+	if !r.DiscoverProjectHooks || projectHooksDisabled(event, r.ProjectHooksFilePath, r.Logger) {
 		return false
 	}
-	cfg, err := loadProjectConfig(paths.config.path)
+	configFile := discoverProjectConfig(cwd)
+	if configFile.path == "" {
+		return false
+	}
+	cfg, err := loadProjectConfig(configFile.path)
 	if err != nil {
-		r.warnf(event, "project config %q could not be parsed: %v", paths.config.rel, err)
+		r.warnf(event, "project config %q could not be parsed: %v", configFile.rel, err)
 		return false
 	}
 	return cfg.hasEventSurface(event)
 }
 
 // Run executes configured post-create hooks for c. Hook failures
-// (missing file, non-executable, non-zero exit, exec error, timeout) are
-// recorded as a single warning line on Logger and never returned.
+// (non-zero exit, exec error, timeout) are recorded as a single warning line
+// on Logger and never returned.
 func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 	if r == nil {
 		return
@@ -221,24 +227,9 @@ func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 	_, _ = r.runner().Run(ctx, EventPostCreate, c)
 }
 
-type hookPaths struct {
-	global  []string
-	project projectHook
-	config  projectConfigFile
-}
-
-type projectHook struct {
-	event Event
-	repo  string
-	rel   string
-	path  string
-}
-
 func (r *PostCreateRunner) runner() *Runner {
 	return &Runner{
-		GlobalHookPaths: map[Event][]string{
-			EventPostCreate: {r.HookPath},
-		},
+		GlobalConfigPath:     r.GlobalConfigPath,
 		DiscoverProjectHooks: r.DiscoverProjectHooks,
 		ProjectHooksFilePath: r.ProjectHooksFilePath,
 		TrustStorePath:       r.TrustStorePath,
@@ -249,68 +240,6 @@ func (r *PostCreateRunner) runner() *Runner {
 		Timeout:              r.Timeout,
 		Version:              r.Version,
 	}
-}
-
-func (r *Runner) hookPaths(event Event, cwd string) hookPaths {
-	var paths hookPaths
-	for _, path := range r.GlobalHookPaths[event] {
-		if path = strings.TrimSpace(path); isExecutableHook(path) {
-			paths.global = append(paths.global, path)
-		}
-	}
-	if r.DiscoverProjectHooks && !projectHooksDisabled(event, r.ProjectHooksFilePath, r.Logger) {
-		paths.project = discoverProjectHook(event, cwd)
-		paths.config = discoverProjectConfig(cwd)
-	}
-	return paths
-}
-
-func discoverProjectHook(event Event, cwd string) projectHook {
-	cwd = strings.TrimSpace(cwd)
-	if cwd == "" {
-		return projectHook{}
-	}
-	repo, err := filepath.Abs(cwd)
-	if err != nil {
-		return projectHook{}
-	}
-	for _, candidate := range projectHookCandidates(event) {
-		path := filepath.Join(repo, candidate)
-		if isExecutableHook(path) {
-			return projectHook{
-				event: event,
-				repo:  repo,
-				rel:   filepath.ToSlash(candidate),
-				path:  path,
-			}
-		}
-	}
-	return projectHook{}
-}
-
-func projectHookCandidates(event Event) []string {
-	name := string(normalizeEvent(event))
-	if name == "" {
-		return nil
-	}
-	return []string{
-		filepath.Join(".projmux", name),
-		filepath.Join(".projmux", "hooks", name),
-	}
-}
-
-func isExecutableHook(path string) bool {
-	if strings.TrimSpace(path) == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	if info.IsDir() {
-		return false
-	}
-	return info.Mode().Perm()&0o100 != 0
 }
 
 type outputMode int
@@ -337,7 +266,26 @@ func mergeResult(event Event, current, next RunResult) RunResult {
 	return current
 }
 
-func (r *Runner) projectConfigForEvent(event Event, configFile projectConfigFile, hasHooks bool) (ProjectConfig, bool) {
+func (r *Runner) globalConfigForEvent(event Event) (ProjectConfig, bool) {
+	cfg, err := LoadGlobalConfig(r.GlobalConfigPath)
+	if err != nil {
+		r.warnf(event, "global config %q could not be parsed: %v", r.GlobalConfigPath, err)
+		return ProjectConfig{}, false
+	}
+	if !cfg.hasEventSurface(event) {
+		return ProjectConfig{}, false
+	}
+	return cfg, true
+}
+
+func (r *Runner) discoverProjectConfigFile(event Event, cwd string) projectConfigFile {
+	if !r.DiscoverProjectHooks || projectHooksDisabled(event, r.ProjectHooksFilePath, r.Logger) {
+		return projectConfigFile{}
+	}
+	return discoverProjectConfig(cwd)
+}
+
+func (r *Runner) projectConfigForEvent(event Event, configFile projectConfigFile) (ProjectConfig, bool) {
 	if configFile.path == "" {
 		return ProjectConfig{}, false
 	}
@@ -346,7 +294,7 @@ func (r *Runner) projectConfigForEvent(event Event, configFile projectConfigFile
 		r.warnf(event, "project config %q could not be parsed: %v", configFile.rel, err)
 		return ProjectConfig{}, false
 	}
-	if !cfg.relevantForEvent(event, hasHooks) {
+	if !cfg.relevantForEvent(event) {
 		return ProjectConfig{}, false
 	}
 	if !r.authorizeProjectConfig(event, configFile) {
@@ -355,19 +303,15 @@ func (r *Runner) projectConfigForEvent(event Event, configFile projectConfigFile
 	return cfg, true
 }
 
-func (r *Runner) runHook(ctx context.Context, event Event, c Context, path string, timeout time.Duration, mode outputMode) (RunResult, error) {
-	return r.runCommand(ctx, event, c, path, nil, timeout, mode)
-}
-
-func (r *Runner) runProjectConfigHook(ctx context.Context, event Event, c Context, cfg ProjectConfig, timeout time.Duration, mode outputMode) (RunResult, error) {
+func (r *Runner) runConfigHook(ctx context.Context, event Event, c Context, cfg ProjectConfig, label string, timeout time.Duration, mode outputMode) (RunResult, error) {
 	command := cfg.hookRun(event)
 	if strings.TrimSpace(command) == "" {
 		return RunResult{}, nil
 	}
-	return r.runCommand(ctx, event, c, "sh", []string{"-c", command}, timeout, mode)
+	return r.runCommand(ctx, event, c, "sh", []string{"-c", command}, label, timeout, mode)
 }
 
-func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name string, args []string, timeout time.Duration, mode outputMode) (RunResult, error) {
+func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name string, args []string, label string, timeout time.Duration, mode outputMode) (RunResult, error) {
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, name, args...)
@@ -381,7 +325,13 @@ func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name st
 	cmd.WaitDelay = 250 * time.Millisecond
 
 	logger := r.Logger
-	prefixed := newLinePrefixer(logger, "["+string(event)+"] ")
+	// Note: label (e.g. "global"/"project") is intentionally NOT embedded in
+	// the line prefix so existing log scrapers and tests that anchor on the
+	// "[event]" shape keep working. Pass label as a contextual hint via the
+	// warning text instead.
+	_ = label
+	prefix := "[" + string(event) + "] "
+	prefixed := newLinePrefixer(logger, prefix)
 	var stdout bytes.Buffer
 	if mode == outputCaptureStdout {
 		cmd.Stdout = &stdout

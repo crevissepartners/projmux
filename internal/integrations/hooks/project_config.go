@@ -62,8 +62,8 @@ func (c ProjectConfig) hasSessionEnv() bool {
 	return len(c.SessionEnv()) > 0
 }
 
-func (c ProjectConfig) relevantForEvent(event Event, hasHooks bool) bool {
-	return c.hasEventSurface(event) || hasHooks && c.hasSessionEnv()
+func (c ProjectConfig) relevantForEvent(event Event) bool {
+	return c.hasEventSurface(event)
 }
 
 func ParseProjectConfig(content string) (ProjectConfig, error) {

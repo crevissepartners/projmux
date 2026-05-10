@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -26,60 +25,71 @@ var settingsHookEvents = []settingsHookEvent{
 	{Name: string(hooks.EventPostAttach)},
 }
 
-// Hook maker action prefixes. Each action follows the shape
+// Hook maker action prefixes. Phase 2.6 dropped the script/declarative
+// distinction, so each action is now just
 //
-//	hook-<op>:<source>:<scope>:<event>
+//	hook-<op>:<scope>:<event>
 //
-// where source is "script" or "declarative", scope is "global" or "project",
-// and op is one of add, edit, remove. add does not have a leading source — the
-// branch picker that follows the add selection chooses script vs declarative.
+// where scope is "global" or "project" and op is one of add, edit, remove.
+// The [+ Add] picker always opens the declarative one-line editor.
 const (
 	settingsActionPrefixHookAdd    = "hook-add:"
 	settingsActionPrefixHookEdit   = "hook-edit:"
 	settingsActionPrefixHookRemove = "hook-remove:"
 
-	hookSourceScript      = "script"
-	hookSourceDeclarative = "declarative"
-
 	hookScopeGlobal  = "global"
 	hookScopeProject = "project"
 )
 
-type settingsHookPathState struct {
-	status string
-	path   string
-	note   string
-}
-
-// settingsHookRow describes the two hook sources (script file and declarative
-// config.toml entry) for a single lifecycle event. Empty fields are valid —
-// only populated sources are rendered as live rows.
+// settingsHookRow describes one lifecycle event's declarative entry plus any
+// legacy script file that the migrator could not flatten. Empty fields render
+// as a missing row with a [+ Add] button.
 type settingsHookRow struct {
 	Event      string
 	Scope      string
-	Script     settingsHookPathState
-	HasScript  bool
 	Declared   string
 	ConfigPath string
+	// Legacy is set when a multi-line script remains in the historical
+	// location after migration. The runner does not execute it; the row
+	// exists to nudge the user toward manual cleanup.
+	Legacy settingsLegacyScript
+}
+
+type settingsLegacyScript struct {
+	Path  string
+	Lines int
+	// Symlink is true when Path resolves to a symbolic link via Lstat. The
+	// migrator never touches symlinks (they typically come from a dotfiles
+	// repo), and the UI surfaces a dedicated message so the user knows to
+	// clean it up at the source instead of expecting projmux to rename it.
+	Symlink bool
 }
 
 func (c *settingsCommand) globalHookEntries() []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{settingsBackEntry()}
 
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	configPath, err := c.globalConfigPath()
 	if err != nil {
 		return append(entries, intpickercompat.Entry{
 			Label: settingsLabelDim("Hooks", err.Error()),
 			Value: settingsNoopValue,
 		})
 	}
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabelInfo("Global config", configPath, "[hooks.<event>]"),
+		Value: settingsNoopValue,
+	})
+
+	cfg, _ := hooks.LoadGlobalConfig(configPath)
+	legacy := globalLegacyScriptMap(c.homeDir, c.lookupEnv)
 
 	for _, event := range settingsHookEvents {
 		row := settingsHookRow{
-			Event:     event.Name,
-			Scope:     hookScopeGlobal,
-			Script:    settingsHookPathStateFor(paths.HookPath(event.Name)),
-			HasScript: true,
+			Event:      event.Name,
+			Scope:      hookScopeGlobal,
+			Declared:   declaredHookRun(cfg, event.Name),
+			ConfigPath: configPath,
+			Legacy:     legacy[event.Name],
 		}
 		entries = append(entries, renderHookRowEntries(row)...)
 	}
@@ -108,15 +118,15 @@ func (c *settingsCommand) projectHookEntries(ctx settingsProjectContext) []intpi
 
 	configPath := filepath.Join(ctx.Path, ".projmux", "config.toml")
 	cfg, _ := loadProjectConfigForRead(configPath)
+	legacy := projectLegacyScriptMap(ctx.Path)
 
 	for _, event := range settingsHookEvents {
 		row := settingsHookRow{
 			Event:      event.Name,
 			Scope:      hookScopeProject,
-			Script:     settingsProjectHookPathState(ctx.Path, event.Name),
-			HasScript:  true,
 			Declared:   declaredHookRun(cfg, event.Name),
 			ConfigPath: configPath,
+			Legacy:     legacy[event.Name],
 		}
 		entries = append(entries, renderHookRowEntries(row)...)
 	}
@@ -124,6 +134,11 @@ func (c *settingsCommand) projectHookEntries(ctx settingsProjectContext) []intpi
 }
 
 func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error {
+	// Best-effort migration on first entry so users on Phase 2.5 see their
+	// existing single-line scripts as declarative entries immediately.
+	if ctx := c.resolveSettingsProjectContext(); ctx.hasProject() {
+		_, _ = hooks.MigrateProjectLegacyScripts(ctx.Path, "", stderr)
+	}
 	for {
 		ctx := c.resolveSettingsProjectContext()
 		options, err := c.sectionOptions(settingsSectionProjectHooks)
@@ -160,6 +175,8 @@ func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error
 }
 
 func (c *settingsCommand) runGlobalHooksSection(stdout, stderr io.Writer) error {
+	// Same best-effort migration for the global hooks dir.
+	_, _ = hooks.MigrateGlobalLegacyScripts(c.lookupEnv, c.homeDir, "", stderr)
 	for {
 		options, err := c.sectionOptions(settingsSectionGlobalHooks)
 		if err != nil {
@@ -190,157 +207,147 @@ func (c *settingsCommand) runGlobalHooksSection(stdout, stderr io.Writer) error 
 	}
 }
 
-func settingsProjectHookPathState(projectPath, event string) settingsHookPathState {
-	candidates := []string{
-		filepath.Join(projectPath, ".projmux", event),
-		filepath.Join(projectPath, ".projmux", config.HooksDirName, event),
-	}
-	var inactive settingsHookPathState
-	for _, path := range candidates {
-		state := settingsHookPathStateFor(path)
-		if state.status == "active" {
-			return state
-		}
-		if state.status == "inactive" && inactive.path == "" {
-			inactive = state
-		}
-	}
-	if inactive.path != "" {
-		return inactive
-	}
-	return settingsHookPathState{
-		status: "missing",
-		// Display both candidate paths so the user can see where projmux will
-		// look. The canonical creation path is .projmux/hooks/<event>; the
-		// legacy .projmux/<event> location is still resolved by the runner.
-		path: strings.Join(candidates, " or "),
-	}
-}
-
-func settingsHookPathStateFor(path string) settingsHookPathState {
-	state := settingsHookPathState{status: "missing", path: path}
-	info, err := osStat(path)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			state.status = "unreadable"
-			state.note = err.Error()
-		}
-		return state
-	}
-	if info.IsDir() {
-		state.status = "inactive"
-		state.note = "directory"
-		return state
-	}
-	if info.Mode().Perm()&0o100 == 0 {
-		state.status = "inactive"
-		state.note = "not executable"
-		return state
-	}
-	state.status = "active"
-	return state
-}
-
-// renderHookRowEntries emits picker rows for a single lifecycle event,
-// covering script + declarative sources. Active sources always get their own
-// edit row. When at least one source is already active, the missing
-// complement gets a source-specific [+ Add] row (no branch picker — the user
-// already chose). When BOTH sources are missing, a single [+ Add] row is
-// emitted that opens a declarative-vs-script branch picker.
+// renderHookRowEntries emits picker rows for a single lifecycle event using
+// the Phase 2.6 declarative-only model. The row is one of:
+//   - active: a single edit row whose label includes the run line
+//   - missing: a single [+ Add] row that opens the inline editor
+//
+// When a legacy multi-line script remains in the historical location, an
+// additional dim "(legacy script)" row is appended below to nudge the user
+// toward manual cleanup.
 func renderHookRowEntries(row settingsHookRow) []intpickercompat.Entry {
-	entries := make([]intpickercompat.Entry, 0, 4)
-
-	scriptActive := row.HasScript && (row.Script.status == "active" || row.Script.status == "inactive")
-	declarativeActive := row.Scope == hookScopeProject && strings.TrimSpace(row.Declared) != ""
-
-	// Global scope: only script is supported; collapse to a single row.
-	if row.Scope != hookScopeProject {
-		if scriptActive {
-			entries = append(entries, settingsHookScriptEntry(row))
-		} else {
-			entries = append(entries, settingsHookAddRow(row))
-		}
-		return entries
-	}
-
-	// Project scope.
-	switch {
-	case scriptActive && declarativeActive:
-		entries = append(entries, settingsHookScriptEntry(row), settingsHookDeclarativeEntry(row))
-	case scriptActive && !declarativeActive:
-		// Script is set; offer to add the missing declarative complement.
-		entries = append(entries,
-			settingsHookScriptEntry(row),
-			settingsHookAddDeclarativeRow(row),
-		)
-	case !scriptActive && declarativeActive:
-		// Declarative is set; offer to add a script complement.
-		entries = append(entries,
-			settingsHookDeclarativeEntry(row),
-			settingsHookAddScriptRow(row),
-		)
-	default:
-		// Both missing — one combined [+ Add] row that triggers branch picker.
+	entries := make([]intpickercompat.Entry, 0, 2)
+	if strings.TrimSpace(row.Declared) != "" {
+		entries = append(entries, settingsHookActiveEntry(row))
+	} else {
 		entries = append(entries, settingsHookAddRow(row))
+	}
+	if row.Legacy.Path != "" {
+		entries = append(entries, settingsHookLegacyEntry(row))
 	}
 	return entries
 }
 
 func settingsHookAddRow(row settingsHookRow) intpickercompat.Entry {
-	desc := "missing - " + row.Script.path + " [+ Add] declarative or script"
+	desc := "missing - " + row.ConfigPath + " [hooks." + row.Event + "] [+ Add]"
 	return intpickercompat.Entry{
 		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, row.Event, desc),
 		Value: settingsActionPrefixHookAdd + row.Scope + ":" + row.Event,
 	}
 }
 
-func settingsHookAddScriptRow(row settingsHookRow) intpickercompat.Entry {
-	desc := "[+ Add] script - " + row.Script.path
-	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, row.Event, desc),
-		Value: settingsActionPrefixHookAdd + row.Scope + ":" + row.Event + ":" + hookSourceScript,
-	}
-}
-
-func settingsHookAddDeclarativeRow(row settingsHookRow) intpickercompat.Entry {
-	desc := "[+ Add] declarative - " + row.ConfigPath + " [hooks." + row.Event + "]"
-	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, row.Event, desc),
-		Value: settingsActionPrefixHookAdd + row.Scope + ":" + row.Event + ":" + hookSourceDeclarative,
-	}
-}
-
-func settingsHookScriptEntry(row settingsHookRow) intpickercompat.Entry {
-	glyph := settingsGlyphInactive
-	color := settingsColorDim
-	if row.Script.status == "active" {
-		glyph = settingsGlyphToggle
-		color = settingsColorAdd
-	}
-	desc := row.Script.status + " - " + row.Script.path + " (script)"
-	if row.Script.note != "" {
-		desc += " (" + row.Script.note + ")"
-	}
-	return intpickercompat.Entry{
-		Label: settingsLabel(glyph, color, row.Event, desc),
-		Value: settingsActionPrefixHookEdit + hookSourceScript + ":" + row.Scope + ":" + row.Event,
-	}
-}
-
-func settingsHookDeclarativeEntry(row settingsHookRow) intpickercompat.Entry {
-	desc := "active - run = " + row.Declared + " (declarative)"
+func settingsHookActiveEntry(row settingsHookRow) intpickercompat.Entry {
+	desc := "active - run = " + row.Declared
 	return intpickercompat.Entry{
 		Label: settingsLabel(settingsGlyphToggle, settingsColorAdd, row.Event, desc),
-		Value: settingsActionPrefixHookEdit + hookSourceDeclarative + ":" + row.Scope + ":" + row.Event,
+		Value: settingsActionPrefixHookEdit + row.Scope + ":" + row.Event,
 	}
 }
 
-// settingsHookEntry is preserved for tests that still rely on the simpler
-// single-source rendering. The hook maker page itself uses
-// renderHookRowEntries which emits the same label shape per source.
-func settingsHookEntry(event string, state settingsHookPathState) intpickercompat.Entry {
-	row := settingsHookRow{Event: event, Scope: hookScopeGlobal, Script: state, HasScript: true}
-	return settingsHookScriptEntry(row)
+// settingsHookLegacyEntry surfaces a multi-line or symlinked script left
+// behind after migration. The runner does not execute it; the row is
+// informational and non-interactive. Single-line regular files are migrated
+// automatically and never produce this row.
+func settingsHookLegacyEntry(row settingsHookRow) intpickercompat.Entry {
+	var (
+		title string
+		desc  string
+	)
+	if row.Legacy.Symlink {
+		title = row.Event + " (legacy script: symlink)"
+		desc = fmt.Sprintf("legacy script - %s (symlink, not executed; clean up via the source dotfiles repo)", row.Legacy.Path)
+	} else {
+		title = row.Event + " (legacy script)"
+		desc = fmt.Sprintf("legacy script - %s (%d lines, not executed)", row.Legacy.Path, row.Legacy.Lines)
+	}
+	return intpickercompat.Entry{
+		Label: settingsLabelDim(title, desc),
+		Value: settingsNoopValue,
+	}
+}
+
+// projectLegacyScriptMap collects legacy scripts that remain in the historical
+// `.projmux/<event>` / `.projmux/hooks/<event>` locations after migration.
+// Single-line regular files are migrated to declarative entries and renamed
+// to `<path>.bak`; they never show up here. Symlinks are always surfaced
+// because the migrator refuses to rename them (the source-of-truth lives
+// outside the projmux config dir, typically a dotfiles repo).
+func projectLegacyScriptMap(projectPath string) map[string]settingsLegacyScript {
+	result := map[string]settingsLegacyScript{}
+	for _, event := range settingsHookEvents {
+		for _, candidate := range []string{
+			filepath.Join(projectPath, ".projmux", event.Name),
+			filepath.Join(projectPath, ".projmux", config.HooksDirName, event.Name),
+		} {
+			if entry, ok := inspectLegacyScript(candidate); ok {
+				result[event.Name] = entry
+				break
+			}
+		}
+	}
+	return result
+}
+
+func globalLegacyScriptMap(homeDir func() (string, error), lookupEnv func(string) string) map[string]settingsLegacyScript {
+	result := map[string]settingsLegacyScript{}
+	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
+	if err != nil {
+		return result
+	}
+	for _, event := range settingsHookEvents {
+		candidate := paths.HookPath(event.Name)
+		if entry, ok := inspectLegacyScript(candidate); ok {
+			result[event.Name] = entry
+		}
+	}
+	return result
+}
+
+// inspectLegacyScript returns a populated settingsLegacyScript when the
+// candidate path is a legacy artifact the UI should surface. Symlinks always
+// qualify (regardless of target line count) so dotfiles-managed hooks get a
+// dedicated cleanup nudge. Regular files only qualify when they have two or
+// more non-trivial lines — single-line scripts are migrated automatically.
+func inspectLegacyScript(path string) (settingsLegacyScript, bool) {
+	linfo, err := osLstat(path)
+	if err != nil {
+		return settingsLegacyScript{}, false
+	}
+	if linfo.Mode()&os.ModeSymlink != 0 {
+		return settingsLegacyScript{Path: path, Symlink: true}, true
+	}
+	info, err := osStat(path)
+	if err != nil || info.IsDir() {
+		return settingsLegacyScript{}, false
+	}
+	lines := countLegacyScriptLines(path)
+	if lines <= 1 {
+		return settingsLegacyScript{}, false
+	}
+	return settingsLegacyScript{Path: path, Lines: lines}, true
+}
+
+// countLegacyScriptLines counts non-empty, non-comment lines so the UI can
+// echo the same metric the migrator uses to decide whether a script qualifies
+// for automatic conversion.
+func countLegacyScriptLines(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, raw := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func (c *settingsCommand) globalConfigPath() (string, error) {
+	return hooks.GlobalConfigPath(c.lookupEnv, c.homeDir)
 }
 
 func settingsProjectConfigEntry(projectPath string) intpickercompat.Entry {
@@ -413,35 +420,47 @@ func (c *settingsCommand) runHookMakerAction(ctx settingsProjectContext, action 
 	switch {
 	case strings.HasPrefix(action, settingsActionPrefixHookAdd):
 		body := strings.TrimPrefix(action, settingsActionPrefixHookAdd)
-		return c.runHookMakerAdd(ctx, body, stdout, stderr)
+		scope, event, ok := parseHookActionBody(body)
+		if !ok {
+			return fmt.Errorf("invalid hook add action: %s", body)
+		}
+		return c.hookMakerEditDeclarative(ctx, scope, event, stdout, stderr)
 	case strings.HasPrefix(action, settingsActionPrefixHookEdit):
 		body := strings.TrimPrefix(action, settingsActionPrefixHookEdit)
-		return c.runHookMakerEdit(ctx, body, stdout, stderr)
+		scope, event, ok := parseHookActionBody(body)
+		if !ok {
+			return fmt.Errorf("invalid hook edit action: %s", body)
+		}
+		return c.hookMakerEditDeclarative(ctx, scope, event, stdout, stderr)
 	case strings.HasPrefix(action, settingsActionPrefixHookRemove):
 		body := strings.TrimPrefix(action, settingsActionPrefixHookRemove)
-		return c.runHookMakerRemove(ctx, body, stdout, stderr)
+		scope, event, ok := parseHookActionBody(body)
+		if !ok {
+			return fmt.Errorf("invalid hook remove action: %s", body)
+		}
+		return c.hookMakerRemoveDeclarative(ctx, scope, event, stdout)
 	default:
 		return fmt.Errorf("unknown hook maker action: %s", action)
 	}
 }
 
-func parseHookActionBody(body string) (scope, event, source string, ok bool) {
-	parts := strings.SplitN(body, ":", 3)
-	if len(parts) < 2 {
-		return "", "", "", false
+// parseHookActionBody parses "<scope>:<event>" payloads. Phase 2.6 collapsed
+// the scope/event/source triple to scope/event since there is only one source
+// (declarative).
+func parseHookActionBody(body string) (scope, event string, ok bool) {
+	parts := strings.SplitN(body, ":", 2)
+	if len(parts) != 2 {
+		return "", "", false
 	}
 	scope = parts[0]
 	event = parts[1]
-	if len(parts) == 3 {
-		source = parts[2]
-	}
 	if scope != hookScopeGlobal && scope != hookScopeProject {
-		return "", "", "", false
+		return "", "", false
 	}
-	if hooks.Event(event) == "" || !isSettingsSupportedHookEvent(event) {
-		return "", "", "", false
+	if !isSettingsSupportedHookEvent(event) {
+		return "", "", false
 	}
-	return scope, event, source, true
+	return scope, event, true
 }
 
 func isSettingsSupportedHookEvent(event string) bool {
@@ -453,265 +472,48 @@ func isSettingsSupportedHookEvent(event string) bool {
 	return false
 }
 
-func parseEditActionBody(body string) (source, scope, event string, ok bool) {
-	parts := strings.SplitN(body, ":", 3)
-	if len(parts) != 3 {
-		return "", "", "", false
+// --- declarative branch ----------------------------------------------------
+
+func (c *settingsCommand) hookMakerEditDeclarative(ctx settingsProjectContext, scope, event string, stdout, stderr io.Writer) error {
+	switch scope {
+	case hookScopeProject:
+		return c.hookMakerEditProjectDeclarative(ctx, event, stdout, stderr)
+	case hookScopeGlobal:
+		return c.hookMakerEditGlobalDeclarative(event, stdout, stderr)
+	default:
+		return fmt.Errorf("unknown hook scope: %s", scope)
 	}
-	source = parts[0]
-	scope = parts[1]
-	event = parts[2]
-	if source != hookSourceScript && source != hookSourceDeclarative {
-		return "", "", "", false
-	}
-	if scope != hookScopeGlobal && scope != hookScopeProject {
-		return "", "", "", false
-	}
-	if !isSettingsSupportedHookEvent(event) {
-		return "", "", "", false
-	}
-	return source, scope, event, true
 }
 
-func (c *settingsCommand) runHookMakerAdd(ctx settingsProjectContext, body string, stdout, stderr io.Writer) error {
-	scope, event, source, ok := parseHookActionBody(body)
-	if !ok {
-		return fmt.Errorf("invalid hook add action: %s", body)
-	}
-	if source == "" {
-		// Branch picker: declarative vs script. Adds a small help row that
-		// explains the trade-off.
-		entries := []intpickercompat.Entry{
-			settingsBackEntry(),
-			{
-				Label: settingsLabelDim("How to choose", "one-line command -> declarative; complex script -> $EDITOR"),
-				Value: settingsNoopValue,
-			},
-			{
-				Label: settingsLabel(settingsGlyphType, settingsColorType, "Declarative (one-liner)", "write run = \"...\" to .projmux/config.toml"),
-				Value: settingsActionPrefixHookAdd + scope + ":" + event + ":" + hookSourceDeclarative,
-			},
-			{
-				Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Script ($EDITOR)", "create .projmux/hooks/<event> and open $EDITOR"),
-				Value: settingsActionPrefixHookAdd + scope + ":" + event + ":" + hookSourceScript,
-			},
+func (c *settingsCommand) hookMakerRemoveDeclarative(ctx settingsProjectContext, scope, event string, stdout io.Writer) error {
+	switch scope {
+	case hookScopeProject:
+		if !ctx.hasProject() {
+			return nil
 		}
-		// Project scope only supports declarative. Surface that constraint.
-		if scope == hookScopeGlobal {
-			entries[2] = intpickercompat.Entry{
-				Label: settingsLabelDim("Declarative", "config.toml is project-only"),
-				Value: settingsNoopValue,
-			}
-		}
-		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings-hook-maker-add",
-			Entries:    entries,
-			Title:      "Hook " + event + " - add",
-			Prompt:     "Settings > Hooks > " + event + " > Add > ",
-			Footer:     projmuxFooter("Enter: choose  |  Back: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
-			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+		return c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
+			delete(cfg.Hooks, hooks.Event(event))
+			return nil
 		})
+	case hookScopeGlobal:
+		path, err := c.globalConfigPath()
 		if err != nil {
 			return err
 		}
-		next := strings.TrimSpace(result.Value)
-		if result.Key != "enter" || next == "" || next == settingsNoopValue {
+		if _, err := hooks.UpdateGlobalConfig(path, func(cfg *hooks.ProjectConfig) error {
+			delete(cfg.Hooks, hooks.Event(event))
 			return nil
+		}); err != nil {
+			return err
 		}
-		if next == settingsBackValue {
-			return nil
-		}
-		// Recurse with the resolved source.
-		return c.runHookMakerAction(ctx, next, stdout, stderr)
-	}
-
-	switch source {
-	case hookSourceScript:
-		return c.hookMakerAddScript(ctx, scope, event, stdout, stderr)
-	case hookSourceDeclarative:
-		if scope == hookScopeGlobal {
-			fmt.Fprintln(stderr, "declarative hooks are only supported for project scope")
-			return nil
-		}
-		return c.hookMakerEditDeclarative(ctx, event, stdout, stderr)
+		_, err = fmt.Fprintf(stdout, "wrote %s\n", path)
+		return err
 	default:
-		return fmt.Errorf("unknown hook source: %s", source)
+		return fmt.Errorf("unknown hook scope: %s", scope)
 	}
 }
 
-func (c *settingsCommand) runHookMakerEdit(ctx settingsProjectContext, body string, stdout, stderr io.Writer) error {
-	source, scope, event, ok := parseEditActionBody(body)
-	if !ok {
-		return fmt.Errorf("invalid hook edit action: %s", body)
-	}
-	switch source {
-	case hookSourceScript:
-		return c.hookMakerEditScript(ctx, scope, event, stdout, stderr)
-	case hookSourceDeclarative:
-		if scope == hookScopeGlobal {
-			fmt.Fprintln(stderr, "declarative hooks are only supported for project scope")
-			return nil
-		}
-		return c.hookMakerEditDeclarative(ctx, event, stdout, stderr)
-	default:
-		return fmt.Errorf("unknown hook source: %s", source)
-	}
-}
-
-func (c *settingsCommand) runHookMakerRemove(ctx settingsProjectContext, body string, stdout, stderr io.Writer) error {
-	source, scope, event, ok := parseEditActionBody(body)
-	if !ok {
-		return fmt.Errorf("invalid hook remove action: %s", body)
-	}
-	switch source {
-	case hookSourceScript:
-		return c.hookMakerRemoveScript(ctx, scope, event, stdout)
-	case hookSourceDeclarative:
-		if scope == hookScopeGlobal {
-			return nil
-		}
-		return c.hookMakerRemoveDeclarative(ctx, event, stdout)
-	default:
-		return fmt.Errorf("unknown hook source: %s", source)
-	}
-}
-
-// --- script branch ---------------------------------------------------------
-
-func (c *settingsCommand) hookMakerScriptPath(ctx settingsProjectContext, scope, event string) (string, string, error) {
-	switch scope {
-	case hookScopeGlobal:
-		paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
-		if err != nil {
-			return "", "", err
-		}
-		return paths.HookPath(event), "", nil
-	case hookScopeProject:
-		if !ctx.hasProject() {
-			return "", "", errors.New("project hook requires a project context")
-		}
-		state := settingsProjectHookPathState(ctx.Path, event)
-		path := state.path
-		// state.path may be a " or "-joined list when both candidates are
-		// missing; pick the canonical hooks/ location for new files.
-		if state.status == "missing" {
-			path = filepath.Join(ctx.Path, ".projmux", config.HooksDirName, event)
-		}
-		rel, err := filepath.Rel(ctx.Path, path)
-		if err != nil {
-			return "", "", err
-		}
-		return path, filepath.ToSlash(rel), nil
-	default:
-		return "", "", fmt.Errorf("unknown hook scope: %s", scope)
-	}
-}
-
-func (c *settingsCommand) hookMakerAddScript(ctx settingsProjectContext, scope, event string, stdout, stderr io.Writer) error {
-	path, rel, err := c.hookMakerScriptPath(ctx, scope, event)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(path); err == nil {
-		// Already exists; treat add as edit.
-		return c.hookMakerOpenScript(ctx, scope, event, path, rel, stdout, stderr)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	body := "#!/bin/sh\n# projmux " + event + " hook for " + scope + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(stdout, "created %s\n", path); err != nil {
-		return err
-	}
-	return c.hookMakerOpenScript(ctx, scope, event, path, rel, stdout, stderr)
-}
-
-func (c *settingsCommand) hookMakerEditScript(ctx settingsProjectContext, scope, event string, stdout, stderr io.Writer) error {
-	path, rel, err := c.hookMakerScriptPath(ctx, scope, event)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(stderr, "hook script %s does not exist; creating now\n", path)
-			return c.hookMakerAddScript(ctx, scope, event, stdout, stderr)
-		}
-		return err
-	}
-	return c.hookMakerOpenScript(ctx, scope, event, path, rel, stdout, stderr)
-}
-
-func (c *settingsCommand) hookMakerOpenScript(ctx settingsProjectContext, scope, event, path, rel string, stdout, stderr io.Writer) error {
-	editor := c.resolveEditor()
-	if err := c.openEditor(editor, path); err != nil {
-		fmt.Fprintf(stderr, "editor %s exited with error: %v\n", editor, err)
-		// Continue — the file may still be edited and trusted.
-	}
-	if err := ensureExecutableScript(path); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(stdout, "edited %s\n", path); err != nil {
-		return err
-	}
-	if scope == hookScopeProject && ctx.hasProject() {
-		return c.recordProjectScriptTrust(ctx, rel, stdout, stderr)
-	}
-	return nil
-}
-
-func (c *settingsCommand) hookMakerRemoveScript(ctx settingsProjectContext, scope, event string, stdout io.Writer) error {
-	path, _, err := c.hookMakerScriptPath(ctx, scope, event)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	_, err = fmt.Fprintf(stdout, "removed %s\n", path)
-	return err
-}
-
-func ensureExecutableScript(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if info.IsDir() {
-		return fmt.Errorf("hook %q is a directory", path)
-	}
-	mode := info.Mode().Perm()
-	if mode&0o111 != 0 {
-		return nil
-	}
-	return os.Chmod(path, mode|0o755)
-}
-
-func (c *settingsCommand) recordProjectScriptTrust(ctx settingsProjectContext, rel string, stdout, stderr io.Writer) error {
-	if rel == "" {
-		return nil
-	}
-	trustPath, err := c.projectConfigTrustStorePath()
-	if err != nil {
-		return err
-	}
-	if _, err := hooks.TrustProjectFile(ctx.Path, rel, trustPath); err != nil {
-		fmt.Fprintf(stderr, "trust %s: %v\n", rel, err)
-		return nil
-	}
-	_, err = fmt.Fprintf(stdout, "trusted %s\n", filepath.Join(ctx.Path, rel))
-	return err
-}
-
-// --- declarative branch ----------------------------------------------------
-
-func (c *settingsCommand) hookMakerEditDeclarative(ctx settingsProjectContext, event string, stdout, stderr io.Writer) error {
+func (c *settingsCommand) hookMakerEditProjectDeclarative(ctx settingsProjectContext, event string, stdout, stderr io.Writer) error {
 	if !ctx.hasProject() {
 		return errors.New("declarative hook requires a project context")
 	}
@@ -742,51 +544,44 @@ func (c *settingsCommand) hookMakerEditDeclarative(ctx settingsProjectContext, e
 	})
 }
 
-func (c *settingsCommand) hookMakerRemoveDeclarative(ctx settingsProjectContext, event string, stdout io.Writer) error {
-	if !ctx.hasProject() {
-		return nil
+// hookMakerEditGlobalDeclarative reads and writes the global
+// `${XDG_CONFIG_HOME}/projmux/config.toml` entry for event. Global declarative
+// hooks bypass the trust prompt — they are considered authoritative for the
+// user that runs projmux.
+func (c *settingsCommand) hookMakerEditGlobalDeclarative(event string, stdout, stderr io.Writer) error {
+	path, err := c.globalConfigPath()
+	if err != nil {
+		return err
 	}
-	return c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
-		delete(cfg.Hooks, hooks.Event(event))
-		return nil
-	})
-}
-
-// --- editor ---------------------------------------------------------------
-
-func (c *settingsCommand) resolveEditor() string {
-	env := c.lookupEnv
-	if env == nil {
-		env = os.Getenv
+	cfg, err := hooks.LoadGlobalConfig(path)
+	if err != nil {
+		return err
 	}
-	for _, key := range []string{"VISUAL", "EDITOR"} {
-		if v := strings.TrimSpace(env(key)); v != "" {
-			return v
+	current := ""
+	if cfg.Hooks != nil {
+		current = cfg.Hooks[hooks.Event(event)]
+	}
+	value, ok, err := c.runProjectConfigTyped("Global Hook "+event+" - run",
+		"Type [hooks."+event+"] run > ", current)
+	if err != nil || !ok {
+		return err
+	}
+	value = strings.TrimSpace(value)
+	if _, err := hooks.UpdateGlobalConfig(path, func(cfg *hooks.ProjectConfig) error {
+		if cfg.Hooks == nil {
+			cfg.Hooks = map[hooks.Event]string{}
 		}
+		if value == "" {
+			delete(cfg.Hooks, hooks.Event(event))
+		} else {
+			cfg.Hooks[hooks.Event(event)] = value
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	return "vi"
-}
-
-func (c *settingsCommand) openEditor(editor, path string) error {
-	editor = strings.TrimSpace(editor)
-	if editor == "" {
-		editor = "vi"
-	}
-	if c.runCommand != nil {
-		// Split editor on whitespace so VISUAL="code -w" works.
-		fields := strings.Fields(editor)
-		name := fields[0]
-		args := append(append([]string{}, fields[1:]...), path)
-		return c.runCommand(name, args...)
-	}
-	fields := strings.Fields(editor)
-	name := fields[0]
-	args := append(append([]string{}, fields[1:]...), path)
-	cmd := exec.Command(name, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	_, err = fmt.Fprintf(stdout, "wrote %s\n", path)
+	return err
 }
 
 // --- project config section ------------------------------------------------
