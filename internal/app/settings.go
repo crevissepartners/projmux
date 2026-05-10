@@ -88,8 +88,8 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		result, err := c.runPicker(intfzf.Options{
 			UI:         "settings",
 			Entries:    c.rootEntries(),
+			Title:      "Settings",
 			Prompt:     "Settings > ",
-			Header:     "Choose settings area",
 			Footer:     projmuxFooter("Enter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -159,15 +159,15 @@ func (c *settingsCommand) runPicker(options intfzf.Options) (intfzf.Result, erro
 func (c *settingsCommand) rootEntries() []intfzf.Entry {
 	return []intfzf.Entry{
 		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Project Picker", "project roots, workdirs, and pins"),
+			Value: settingsSectionProject,
+		},
+		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "AI Settings", "default split mode"),
 			Value: settingsSectionAI,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Project Picker", "pinned projects and sidebar entries"),
-			Value: settingsSectionProject,
-		},
-		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Icons & Decorations", "status and popup decoration mode"),
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Appearance", "status and popup decoration mode"),
 			Value: settingsSectionStatusbar,
 		},
 		{
@@ -187,8 +187,9 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 		return intfzf.Options{
 			UI:         "settings-ai",
 			Entries:    c.aiEntries(),
+			Title:      "AI Settings",
 			Prompt:     "Settings > AI Settings > ",
-			Header:     "Set Ctrl+Shift+R/L default mode",
+			Header:     "Default Ctrl+Shift+R/L split mode",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -197,8 +198,9 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 		return intfzf.Options{
 			UI:         "settings-project-picker",
 			Entries:    c.projectPickerEntries(),
+			Title:      "Project Picker",
 			Prompt:     "Settings > Project Picker > ",
-			Header:     "Add projects to the picker and manage pinned projects",
+			Header:     "Project roots, workdirs, and pinned projects",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -207,8 +209,9 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 		return intfzf.Options{
 			UI:         "settings-statusbar",
 			Entries:    c.statusbarEntries(),
-			Prompt:     "Settings > Icons & Decorations > ",
-			Header:     "Set status and popup decoration mode",
+			Title:      "Appearance",
+			Prompt:     "Settings > Appearance > ",
+			Header:     "Status and popup decoration mode",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -217,6 +220,7 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 		return intfzf.Options{
 			UI:         "settings-labs",
 			Entries:    c.labsEntries(),
+			Title:      "Labs",
 			Prompt:     "Settings > Labs > ",
 			Header:     "Experimental features",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
@@ -227,8 +231,9 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 		return intfzf.Options{
 			UI:         "settings-about",
 			Entries:    c.aboutEntries(),
+			Title:      "About",
 			Prompt:     "Settings > About > ",
-			Header:     "projmux app information, key setup, and updates",
+			Header:     "Version, updates, key setup",
 			Footer:     projmuxFooter("Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -312,8 +317,9 @@ func (c *settingsCommand) runAddProject(stdout, stderr io.Writer) error {
 	result, err := c.runPicker(intfzf.Options{
 		UI:         "settings-project-add",
 		Entries:    entries,
+		Title:      "Add Project",
 		Prompt:     "Settings > Project Picker > Add Project > ",
-		Header:     "Choose a filesystem directory to add to the project picker",
+		Header:     "Choose a filesystem directory",
 		Footer:     projmuxFooter("Enter: add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
@@ -341,6 +347,7 @@ func (c *settingsCommand) runProjectRootSettings(stdout, stderr io.Writer) error
 		result, err := c.runPicker(intfzf.Options{
 			UI:         "settings-project-root",
 			Entries:    entries,
+			Title:      "Project Root",
 			Prompt:     "Settings > Project Picker > Project Root > ",
 			Header:     "Manage the primary Project Root; Workdirs are separate search roots",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
@@ -383,6 +390,7 @@ func (c *settingsCommand) runSetProjectRootTyped(stdout, stderr io.Writer) error
 		Entries:      nil,
 		AcceptQuery:  true,
 		InitialQuery: initialQuery,
+		Title:        "Set Project Root",
 		Prompt:       "Type project root path > ",
 		Header:       "Type one absolute primary root path. If unconfigured, the prompt starts at $HOME; Workdirs are separate search roots.",
 		Footer:       projmuxFooter("Enter: save  |  Esc/Alt+5/Ctrl+Alt+S: close"),
@@ -442,8 +450,9 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 	result, err := c.runPicker(intfzf.Options{
 		UI:         "settings-workdir-add",
 		Entries:    entries,
+		Title:      "Add Workdir",
 		Prompt:     "Settings > Project Picker > Add Workdir > ",
-		Header:     "Add a workdir to scan",
+		Header:     "Choose or type a directory to scan",
 		Footer:     projmuxFooter("Enter: add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
@@ -488,6 +497,7 @@ func (c *settingsCommand) runAddWorkdirTyped(stdout, stderr io.Writer) error {
 		UI:          "settings-workdir-typed",
 		Entries:     nil,
 		AcceptQuery: true,
+		Title:       "Type Workdir",
 		Prompt:      "Type workdir path > ",
 		Header:      "Type an absolute path. WSL example: /mnt/c/Users/me/code",
 		Footer:      projmuxFooter("Enter: add  |  Esc/Alt+5/Ctrl+Alt+S: close"),
@@ -558,6 +568,7 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 		result, err := c.runPicker(intfzf.Options{
 			UI:         "settings-workdirs",
 			Entries:    entries,
+			Title:      "Workdirs",
 			Prompt:     "Settings > Project Picker > Workdirs > ",
 			Header:     "Remove saved workdirs (env list takes priority when set)",
 			Footer:     projmuxFooter("Enter: remove  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
@@ -633,6 +644,7 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 		result, err := c.runPicker(intfzf.Options{
 			UI:         "settings-project-pins",
 			Entries:    entries,
+			Title:      "Pinned Projects",
 			Prompt:     "Settings > Project Picker > Pinned Projects > ",
 			Header:     "Remove pinned projects or clear all pins",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
@@ -666,15 +678,6 @@ func (c *settingsCommand) projectPickerEntries() []intfzf.Entry {
 	entries = append(entries, c.projectRootEntry())
 	entries = append(entries, c.projectRootHintEntry())
 	entries = append(entries, intfzf.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Project...", "scan filesystem roots"),
-		Value: settingsProjectAdd,
-	})
-	entries = append(entries, c.addCurrentProjectEntry())
-	entries = append(entries, intfzf.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Pinned Projects", "remove or clear pins"),
-		Value: settingsProjectPins,
-	})
-	entries = append(entries, intfzf.Entry{
 		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Workdir...", "append a directory to the saved workdirs list"),
 		Value: settingsWorkdirAdd,
 	})
@@ -682,6 +685,15 @@ func (c *settingsCommand) projectPickerEntries() []intfzf.Entry {
 		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Workdirs", "remove saved workdirs (env list takes priority)"),
 		Value: settingsWorkdirList,
 	})
+	entries = append(entries, intfzf.Entry{
+		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Pinned Projects", "remove or clear pins"),
+		Value: settingsProjectPins,
+	})
+	entries = append(entries, intfzf.Entry{
+		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Project...", "scan filesystem roots"),
+		Value: settingsProjectAdd,
+	})
+	entries = append(entries, c.addCurrentProjectEntry())
 	return entries
 }
 

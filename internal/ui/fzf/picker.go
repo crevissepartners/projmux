@@ -21,6 +21,7 @@ func OptionsFromPicker(options picker.Options) Options {
 		UI:             options.UI,
 		Entries:        entries,
 		Read0:          options.MultiLine,
+		Title:          options.Title,
 		Prompt:         options.Prompt,
 		Header:         options.Header,
 		Footer:         options.Footer,
@@ -90,6 +91,7 @@ func PickerOptions(options Options) picker.Options {
 	return picker.Options{
 		UI:              options.UI,
 		Items:           pickerItems(options),
+		Title:           options.Title,
 		Prompt:          options.Prompt,
 		Header:          options.Header,
 		Footer:          options.Footer,

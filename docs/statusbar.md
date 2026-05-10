@@ -134,7 +134,7 @@ emits a deterministic block per segment), regenerate, and re-apply:
 projmux tmux apply
 ```
 
-Settings > Icons & Decorations controls the optional decoration mode used by
+Settings > Appearance controls the optional decoration mode used by
 the path, git branch, and notification sidebar header. The persisted enum lives at
 `~/.config/projmux/statusbar-decoration`; valid values are `off` (default,
 font-safe), `symbol` (Nerd Font-style folder/GitHub/bell icons), and `emoji`.

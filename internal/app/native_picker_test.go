@@ -220,7 +220,7 @@ func TestSettingsNativeBackendDoesNotCallFZF(t *testing.T) {
 			}
 			return ""
 		},
-		nativePicker: intpicker.NativeRunner{In: strings.NewReader("1\n4\n"), Out: &out},
+		nativePicker: intpicker.NativeRunner{In: strings.NewReader("2\n4\n"), Out: &out},
 		runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
 			fzfCalled = true
 			return intfzf.Result{}, nil

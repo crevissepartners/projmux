@@ -17,6 +17,7 @@ type Options struct {
 	Candidates     []string
 	Entries        []Entry
 	Read0          bool
+	Title          string
 	Prompt         string
 	Header         string
 	Footer         string

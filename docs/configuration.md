@@ -102,7 +102,7 @@ failure handling.
 
 ## Decoration Mode
 
-Settings > Icons & Decorations controls optional status and picker decoration:
+Settings > Appearance controls optional status and picker decoration:
 
 - `off` is the default and avoids icon-font assumptions.
 - `symbol` restores the Nerd Font-style folder, GitHub, and bell icons.

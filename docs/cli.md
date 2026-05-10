@@ -403,7 +403,7 @@ flags with the top-level `switch` UX:
 - `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI
-  splits, Icons & Decorations mode, Project Root management, the
+  splits, Appearance mode, Project Root management, the
   switcher's saved workdirs list, Labs, and About/Update status. In Project
   Picker, `Project Root` manages the saved
   primary root (`~/.config/projmux/projdir`) and displays whether the effective
@@ -411,7 +411,7 @@ flags with the top-level `switch` UX:
   no configured source. When no source is configured, the direct-set prompt
   starts with `$HOME` as an editable fallback, but `$HOME` is not used as the
   effective root unless saved. `Workdirs` remains separate: those entries are
-  additional search roots, not the primary root. Icons & Decorations stores
+  additional search roots, not the primary root. Appearance stores
   `~/.config/projmux/statusbar-decoration` as `off` (default), `symbol`, or
   `emoji` and updates the live tmux option when available. Labs stores
   `~/.config/projmux/picker-backend` as `native` (default) or `fzf` and updates
