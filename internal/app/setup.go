@@ -256,6 +256,29 @@ func classifyProbeInput(key probeKey, seq []byte) probeResult {
 	return res
 }
 
+func suggestedPlainChordForSequence(seq []byte) (string, bool) {
+	if len(seq) == 0 || isAmbiguousEnterSequence(seq) {
+		return "", false
+	}
+	got := string(seq)
+	for _, action := range defaultKeyBindingCatalog() {
+		if action.ProbePlain != "" && action.PlainChord != "" && action.ProbePlain == got && !isAmbiguousEnterSequence([]byte(action.ProbePlain)) {
+			return action.PlainChord, true
+		}
+	}
+	if len(seq) == 2 && seq[0] == 0x1b && seq[1] >= 0x21 && seq[1] <= 0x7e {
+		return "M-" + string(seq[1]), true
+	}
+	if len(seq) == 1 && seq[0] >= 0x01 && seq[0] <= 0x1a {
+		return fmt.Sprintf("C-%c", 'a'+seq[0]-1), true
+	}
+	return "", false
+}
+
+func isAmbiguousEnterSequence(seq []byte) bool {
+	return len(seq) == 1 && (seq[0] == '\r' || seq[0] == '\n')
+}
+
 func renderProbeStatus(res probeResult) string {
 	switch res.Status {
 	case probeStatusPlain:
@@ -310,6 +333,9 @@ func renderProbeSummary(w io.Writer, terminal terminalInfo, results []probeResul
 	}
 	if hint := terminal.RemediationHint(); hint != "" {
 		fmt.Fprintln(w, "  - Manual fallback:", hint)
+	}
+	if activation := terminal.ReloadCapability(); activation.Summary != "" {
+		fmt.Fprintln(w, "  - After applying fallback:", activation.Summary)
 	}
 	fmt.Fprintln(w, "  - For unsupported terminals, bind each failing key to the matching CSI-u sequence")
 	fmt.Fprintln(w, "    from `projmux setup --non-interactive`.")
@@ -374,6 +400,29 @@ func (t terminalInfo) RemediationHint() string {
 		return "VS Code terminal swallows many shortcuts; consider running projmux in an external terminal"
 	}
 	return ""
+}
+
+type terminalReloadCapability struct {
+	Label   string
+	Summary string
+}
+
+var terminalReloadCapabilities = map[string]terminalReloadCapability{
+	"ghostty":          {Label: "ghostty reload-config", Summary: "reload Ghostty config"},
+	"wezterm":          {Label: "reload config", Summary: "reload WezTerm config"},
+	"kitty":            {Label: "reload config", Summary: "reload kitty config"},
+	"windows-terminal": {Label: "restart terminal", Summary: "restart Windows Terminal tabs"},
+	"iterm2":           {Label: "restart session", Summary: "restart iTerm2 sessions"},
+}
+
+func (t terminalInfo) ReloadCapability() terminalReloadCapability {
+	if capability, ok := terminalReloadCapabilities[t.Slug]; ok {
+		return capability
+	}
+	return terminalReloadCapability{
+		Label:   "manual",
+		Summary: "reload or restart manually if your terminal requires it",
+	}
 }
 
 // detectTerminal performs a best-effort identification of the host terminal

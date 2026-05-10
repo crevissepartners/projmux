@@ -245,6 +245,35 @@ func TestRenderProbeSummaryAllPass(t *testing.T) {
 	}
 }
 
+func TestSuggestedPlainChordForSequence(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		seq  []byte
+		want string
+		ok   bool
+	}{
+		{name: "alt printable", seq: []byte("\x1ba"), want: "M-a", ok: true},
+		{name: "alt digit", seq: []byte("\x1b7"), want: "M-7", ok: true},
+		{name: "control byte", seq: []byte{0x01}, want: "C-a", ok: true},
+		{name: "catalog plain sequence", seq: []byte("\x1b[1;4D"), want: "M-S-Left", ok: true},
+		{name: "enter is ambiguous", seq: []byte("\r"), ok: false},
+		{name: "arrow is not a plain tmux chord", seq: []byte("\x1b[A"), ok: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := suggestedPlainChordForSequence(tc.seq)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("suggestedPlainChordForSequence(%q) = %q, %v; want %q, %v", tc.seq, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
 func TestSetupCommandRunNonInteractive(t *testing.T) {
 	t.Parallel()
 
