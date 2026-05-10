@@ -287,7 +287,10 @@ func TestSettingsNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 			}
 			return ""
 		},
-		nativePicker: intpicker.NativeRunner{In: strings.NewReader("3\n4\n"), Out: &out},
+		// Root tab chrome moved out of the entry list in Phase 2.5, so AI
+		// Settings is now the second row in the Global tab (index 2). The
+		// AI > codex sub-action remains the fourth row in its own list.
+		nativePicker: intpicker.NativeRunner{In: strings.NewReader("2\n4\n"), Out: &out},
 		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			compatCalled = true
 			return intpickercompat.Result{}, nil

@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -186,7 +187,16 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			}
 			return err
 		}
-		if next, ok := settingsRootTabFromResult(result); ok {
+		if next, ok := settingsRootTabFromResultWithCurrent(result, tab); ok {
+			ctx := c.resolveSettingsProjectContext()
+			if next == settingsRootTabProject && !ctx.hasProject() {
+				// Single-tab environment (no project context): the Project
+				// chip renders disabled and Alt-Left/Alt-Right is a no-op.
+				// We stay on the current tab rather than navigating into an
+				// empty Project scope.
+				tab = settingsRootTabGlobal
+				continue
+			}
 			tab = next
 			continue
 		}
@@ -265,16 +275,46 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 	if tab != settingsRootTabProject {
 		tab = settingsRootTabGlobal
 	}
+	ctx := c.resolveSettingsProjectContext()
 	return intpickercompat.Options{
 		UI:         "settings",
 		Entries:    c.rootEntriesForTab(tab),
 		Title:      "Settings",
+		TitleChips: settingsRootTabChips(tab, ctx.hasProject()),
 		Prompt:     settingsRootPrompt(tab),
-		Header:     c.rootHeader(tab),
-		Footer:     projmuxFooter("Enter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"),
-		ExpectKeys: []string{"enter", "ctrl-g", "ctrl-p"},
+		Header:     settingsRootContextHeader(tab, ctx),
+		Footer:     projmuxFooter("Enter: open  |  Alt-Left/Alt-Right: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys: []string{"enter", "ctrl-g", "ctrl-p", "alt-left", "alt-right"},
 		Bindings:   settingsCloseBindings(),
 	}
+}
+
+// settingsRootTabChips returns the chip strip rendered in the popup
+// titlebar so the active scope reads as a real tab metaphor instead of an
+// inline list entry. When no project context is available, the Project
+// chip renders as disabled so the user still sees that the tab exists.
+func settingsRootTabChips(active settingsRootTab, hasProject bool) []projmuxpicker.Chip {
+	return []projmuxpicker.Chip{
+		{
+			Label:  "Global",
+			Active: active == settingsRootTabGlobal,
+		},
+		{
+			Label:    "Project",
+			Active:   active == settingsRootTabProject,
+			Disabled: !hasProject,
+		},
+	}
+}
+
+func settingsRootContextHeader(tab settingsRootTab, ctx settingsProjectContext) string {
+	if !ctx.hasProject() {
+		if tab == settingsRootTabProject {
+			return "Project context: (none) - open Settings from a project pane or set PROJMUX_CWD"
+		}
+		return "Project context: (none)"
+	}
+	return "Project context: (" + ctx.Name + ")"
 }
 
 func settingsRootPrompt(tab settingsRootTab) string {
@@ -285,11 +325,21 @@ func settingsRootPrompt(tab settingsRootTab) string {
 }
 
 func settingsRootTabFromResult(result intpickercompat.Result) (settingsRootTab, bool) {
+	return settingsRootTabFromResultWithCurrent(result, settingsRootTabGlobal)
+}
+
+// settingsRootTabFromResultWithCurrent resolves which tab the popup should
+// show next. Alt-Left and Alt-Right cycle between Global and Project,
+// while the legacy Ctrl-G / Ctrl-P bindings remain as direct selectors so
+// muscle memory does not regress.
+func settingsRootTabFromResultWithCurrent(result intpickercompat.Result, current settingsRootTab) (settingsRootTab, bool) {
 	switch strings.TrimSpace(result.Key) {
 	case "ctrl-g":
 		return settingsRootTabGlobal, true
 	case "ctrl-p":
 		return settingsRootTabProject, true
+	case "alt-left", "alt-right":
+		return settingsRootTabToggle(current), true
 	}
 	switch strings.TrimSpace(result.Value) {
 	case settingsRootTabGlobalValue:
@@ -300,6 +350,13 @@ func settingsRootTabFromResult(result intpickercompat.Result) (settingsRootTab, 
 	return "", false
 }
 
+func settingsRootTabToggle(current settingsRootTab) settingsRootTab {
+	if current == settingsRootTabProject {
+		return settingsRootTabGlobal
+	}
+	return settingsRootTabProject
+}
+
 func (c *settingsCommand) rootEntries() []intpickercompat.Entry {
 	return c.rootEntriesForAxis(settingsAxisGlobal)
 }
@@ -308,9 +365,7 @@ func (c *settingsCommand) rootEntriesForTab(tab settingsRootTab) []intpickercomp
 	if tab == settingsRootTabProject {
 		return c.projectTabEntries()
 	}
-	entries := []intpickercompat.Entry{c.projectTabEntry()}
-	entries = append(entries, c.rootEntriesForAxis(settingsAxisGlobal)...)
-	return entries
+	return c.rootEntriesForAxis(settingsAxisGlobal)
 }
 
 func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompat.Entry {
@@ -365,88 +420,54 @@ func (ctx settingsProjectContext) hasProject() bool {
 	return strings.TrimSpace(ctx.Path) != ""
 }
 
-func (c *settingsCommand) rootHeader(tab settingsRootTab) string {
-	ctx := c.resolveSettingsProjectContext()
-	projectContext := "(no project)"
-	if ctx.hasProject() {
-		projectContext = "(" + ctx.Name + ")"
-	}
-	if tab == settingsRootTabProject {
-		return "Tabs: Global  [Project]  " + projectContext
-	}
-	return "Tabs: [Global]  Project " + projectContext
-}
-
 func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 	ctx := c.resolveSettingsProjectContext()
-	entries := []intpickercompat.Entry{settingsGlobalTabEntry()}
 	if !ctx.hasProject() {
-		return append(entries,
-			intpickercompat.Entry{
+		return []intpickercompat.Entry{
+			{
 				Label: settingsLabelDim("Project context", "no project - open Settings from a project pane or set PROJMUX_CWD"),
 				Value: settingsNoopValue,
 			},
-			intpickercompat.Entry{
+			{
 				Label: settingsLabelDim("Trust", "disabled - no project context"),
 				Value: settingsNoopValue,
 			},
-			intpickercompat.Entry{
+			{
 				Label: settingsLabelDim("Hooks (project)", "disabled - no project context"),
 				Value: settingsNoopValue,
 			},
-			intpickercompat.Entry{
+			{
 				Label: settingsLabelDim("config.toml", "disabled - no project context"),
 				Value: settingsNoopValue,
 			},
-			intpickercompat.Entry{
+			{
 				Label: settingsLabelDim("Effective merge view", "Phase 3"),
 				Value: settingsNoopValue,
 			},
-		)
+		}
 	}
 
-	return append(entries,
-		intpickercompat.Entry{
+	return []intpickercompat.Entry{
+		{
 			Label: settingsLabelInfo("Project context", ctx.Path, ctx.Source),
 			Value: settingsNoopValue,
 		},
-		intpickercompat.Entry{
+		{
 			Label: settingsLabelDim("Trust", "read-only preview arrives in Phase 4"),
 			Value: settingsNoopValue,
 		},
-		intpickercompat.Entry{
+		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Hooks (project)", filepath.Join(ctx.Path, ".projmux")),
 			Value: settingsSectionProjectHooks,
 		},
-		intpickercompat.Entry{
+		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "config.toml", "edit env, kube, and startup"),
 			Value: settingsSectionProjectConfig,
 		},
-		intpickercompat.Entry{
+		{
 			Label: settingsLabelDim("Effective merge view", "Phase 3"),
 			Value: settingsNoopValue,
 		},
-	)
-}
-
-func (c *settingsCommand) projectTabEntry() intpickercompat.Entry {
-	ctx := c.resolveSettingsProjectContext()
-	desc := "project-local context and planned project settings"
-	if !ctx.hasProject() {
-		desc = "no project context"
-	} else {
-		desc = ctx.Name
-	}
-	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Project Settings", desc),
-		Value: settingsRootTabProjectValue,
-	}
-}
-
-func settingsGlobalTabEntry() intpickercompat.Entry {
-	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Global Settings", "user-wide settings"),
-		Value: settingsRootTabGlobalValue,
 	}
 }
 

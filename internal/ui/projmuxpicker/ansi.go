@@ -21,6 +21,24 @@ const (
 	CursorStart    = "\x1b[7m"
 	Scrollbar      = "█"
 	GapLine        = "─"
+
+	// Tmux window-status tone tokens. These are the canonical 256-color
+	// palette entries used both by the tmux status bar (window list) and by
+	// the projmux picker frame chip primitives so the two surfaces stay
+	// visually congruent without re-declaring colour codes.
+	TmuxWindowInactiveBg = "colour235"
+	TmuxWindowInactiveFg = "colour245"
+	TmuxWindowActiveBg   = "colour238"
+	TmuxWindowActiveFg   = "colour231"
+
+	// Chip ANSI segments (terminal SGR escapes). They mirror the tmux
+	// window-status tone above (colour235/245 inactive, colour238/231 bold
+	// active). Disabled reuses inactive bg with a dimmer foreground to read
+	// as "tab present but not actionable" rather than introducing a third
+	// hue.
+	ChipInactiveStart = "\x1b[48;5;235m\x1b[38;5;245m"
+	ChipActiveStart   = "\x1b[1m\x1b[48;5;238m\x1b[38;5;231m"
+	ChipDisabledStart = "\x1b[2m\x1b[48;5;235m\x1b[38;5;245m"
 )
 
 func PadRight(value string, width int) string {
