@@ -46,18 +46,20 @@ type EffectiveSection struct {
 	Entries []EffectiveEntry
 }
 
-// EffectiveConfig is the full merged view of the data-only config sections
-// ([env] / [kube] / [startup]). Hook entries ([hooks.*]) are intentionally
-// out of scope — the dedicated Hooks page surfaces those.
+// EffectiveConfig is the full merged view of the declarative config sections
+// ([env] / [kube] / [startup] / [hooks.*]). Phase 4 of the Hook maker roadmap
+// adds the Hooks section so the Effective merge view popup can surface the
+// resolved lifecycle hook command and the axis it was sourced from.
 type EffectiveConfig struct {
 	Env     EffectiveSection
 	Kube    EffectiveSection
 	Startup EffectiveSection
+	Hooks   EffectiveSection
 }
 
 // Sections returns the merged sections in stable display order.
 func (c EffectiveConfig) Sections() []EffectiveSection {
-	return []EffectiveSection{c.Env, c.Kube, c.Startup}
+	return []EffectiveSection{c.Env, c.Kube, c.Startup, c.Hooks}
 }
 
 // MergeEffective merges global + project config into a single effective view
@@ -70,6 +72,7 @@ func MergeEffective(global, project ProjectConfig) EffectiveConfig {
 		Env:     mergeEffectiveEnv(global, project),
 		Kube:    mergeEffectiveKube(global, project),
 		Startup: mergeEffectiveStartup(global, project),
+		Hooks:   mergeEffectiveHooks(global, project),
 	}
 }
 
@@ -125,6 +128,43 @@ func mergeEffectiveStartup(global, project ProjectConfig) EffectiveSection {
 	section.Entries = append(section.Entries,
 		resolveScalarEntry("run", project.StartupRun, global.StartupRun),
 	)
+	section.Source = summarizeSectionSource(section.Entries)
+	return section
+}
+
+// mergeEffectiveHooks resolves each supported lifecycle event with the same
+// project-wins policy as the data sections. Unlike [env] / [kube] / [startup],
+// each event resolves to a single `run` value sourced from exactly one axis —
+// so only EffectiveSourceProject and EffectiveSourceGlobal labels appear at
+// the row level. Events that are unset on both axes are omitted entirely to
+// keep the popup focused on active hooks (the popup is already information
+// dense). The section-level label still uses summarizeSectionSource so the
+// header reads (project), (global), or (merged) when both axes contribute
+// hook entries for different events.
+func mergeEffectiveHooks(global, project ProjectConfig) EffectiveSection {
+	section := EffectiveSection{Name: "hooks"}
+	for _, event := range SupportedEvents {
+		projectRun := strings.TrimSpace(project.hookRun(event))
+		globalRun := strings.TrimSpace(global.hookRun(event))
+		switch {
+		case projectRun != "":
+			// Project wins on conflict — the row is unambiguously sourced from
+			// the project config even if the global config also defines it.
+			section.Entries = append(section.Entries, EffectiveEntry{
+				Key:    string(event),
+				Value:  projectRun,
+				Source: EffectiveSourceProject,
+			})
+		case globalRun != "":
+			section.Entries = append(section.Entries, EffectiveEntry{
+				Key:    string(event),
+				Value:  globalRun,
+				Source: EffectiveSourceGlobal,
+			})
+		}
+		// Both axes empty → row omitted (declarative absence; the lifecycle
+		// is simply not wired up).
+	}
 	section.Source = summarizeSectionSource(section.Entries)
 	return section
 }

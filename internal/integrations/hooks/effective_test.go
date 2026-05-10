@@ -208,3 +208,171 @@ func TestDisplayEnvValueRedactsSensitive(t *testing.T) {
 		t.Fatalf("DisplayEnvValue empty = %q, want (unset)", got)
 	}
 }
+
+// TestMergeEffectiveHooksProjectWinsOnConflict covers the Phase 4 merge
+// engine: when both axes define a [hooks.<event>] entry for the same event,
+// the project value wins and the row is labelled project.
+func TestMergeEffectiveHooksProjectWinsOnConflict(t *testing.T) {
+	t.Parallel()
+
+	global := ProjectConfig{
+		Hooks: map[Event]string{
+			EventPostCreate: "echo global-post",
+		},
+	}
+	project := ProjectConfig{
+		Hooks: map[Event]string{
+			EventPostCreate: "echo project-post",
+		},
+	}
+	got := MergeEffective(global, project).Hooks
+	want := []EffectiveEntry{
+		{Key: string(EventPostCreate), Value: "echo project-post", Source: EffectiveSourceProject},
+	}
+	if !reflect.DeepEqual(got.Entries, want) {
+		t.Fatalf("hooks entries = %+v, want %+v", got.Entries, want)
+	}
+	if got.Source != EffectiveSourceProject {
+		t.Fatalf("hooks section source = %q, want project", got.Source)
+	}
+}
+
+// TestMergeEffectiveHooksGlobalOnlySourceLabel covers the case where a hook
+// is defined only in the global config — the row reports the global axis and
+// the section header summarizes the same single axis.
+func TestMergeEffectiveHooksGlobalOnlySourceLabel(t *testing.T) {
+	t.Parallel()
+
+	global := ProjectConfig{
+		Hooks: map[Event]string{
+			EventPreCreate: "echo global-pre",
+		},
+	}
+	got := MergeEffective(global, ProjectConfig{}).Hooks
+	want := []EffectiveEntry{
+		{Key: string(EventPreCreate), Value: "echo global-pre", Source: EffectiveSourceGlobal},
+	}
+	if !reflect.DeepEqual(got.Entries, want) {
+		t.Fatalf("hooks entries = %+v, want %+v", got.Entries, want)
+	}
+	if got.Source != EffectiveSourceGlobal {
+		t.Fatalf("hooks section source = %q, want global", got.Source)
+	}
+}
+
+// TestMergeEffectiveHooksProjectOnlySourceLabel covers the symmetric case:
+// only the project config defines a hook, so both row and section label
+// resolve to project.
+func TestMergeEffectiveHooksProjectOnlySourceLabel(t *testing.T) {
+	t.Parallel()
+
+	project := ProjectConfig{
+		Hooks: map[Event]string{
+			EventPostAttach: "echo project-attach",
+		},
+	}
+	got := MergeEffective(ProjectConfig{}, project).Hooks
+	want := []EffectiveEntry{
+		{Key: string(EventPostAttach), Value: "echo project-attach", Source: EffectiveSourceProject},
+	}
+	if !reflect.DeepEqual(got.Entries, want) {
+		t.Fatalf("hooks entries = %+v, want %+v", got.Entries, want)
+	}
+	if got.Source != EffectiveSourceProject {
+		t.Fatalf("hooks section source = %q, want project", got.Source)
+	}
+}
+
+// TestMergeEffectiveHooksMixedAxesSectionLabel covers the case where each
+// axis contributes a hook for a *different* event — neither row alone is
+// ambiguous, but the section header should summarize as merged because both
+// axes contributed entries.
+func TestMergeEffectiveHooksMixedAxesSectionLabel(t *testing.T) {
+	t.Parallel()
+
+	global := ProjectConfig{
+		Hooks: map[Event]string{
+			EventPreCreate: "echo global-pre",
+		},
+	}
+	project := ProjectConfig{
+		Hooks: map[Event]string{
+			EventPostCreate: "echo project-post",
+		},
+	}
+	got := MergeEffective(global, project).Hooks
+	if got.Source != EffectiveSourceMerged {
+		t.Fatalf("hooks section source = %q, want merged (project + global contributed)", got.Source)
+	}
+	// Stable display order follows SupportedEvents (pre-create before
+	// post-create), so the per-axis order is global-then-project here.
+	if len(got.Entries) != 2 {
+		t.Fatalf("hooks entries len = %d, want 2: %+v", len(got.Entries), got.Entries)
+	}
+	if got.Entries[0].Key != string(EventPreCreate) || got.Entries[0].Source != EffectiveSourceGlobal {
+		t.Fatalf("entries[0] = %+v, want pre-create/global", got.Entries[0])
+	}
+	if got.Entries[1].Key != string(EventPostCreate) || got.Entries[1].Source != EffectiveSourceProject {
+		t.Fatalf("entries[1] = %+v, want post-create/project", got.Entries[1])
+	}
+}
+
+// TestMergeEffectiveHooksOmitsUndefinedEvents documents the Phase 4 display
+// decision: events that are unset on both axes are not emitted as rows. The
+// section is allowed to be entirely empty, which keeps the popup uncluttered
+// when no lifecycle is wired up.
+func TestMergeEffectiveHooksOmitsUndefinedEvents(t *testing.T) {
+	t.Parallel()
+
+	got := MergeEffective(ProjectConfig{}, ProjectConfig{}).Hooks
+	if len(got.Entries) != 0 {
+		t.Fatalf("hooks entries = %+v, want empty (no events defined)", got.Entries)
+	}
+	if got.Source != EffectiveSourceDefault {
+		t.Fatalf("hooks section source = %q, want default when both axes empty", got.Source)
+	}
+}
+
+// TestMergeEffectiveHooksRowOrderFollowsSupportedEvents pins the row order so
+// the popup renders lifecycle events in the same order Phase 2.6's hooks
+// catalog defines them — pre-create, post-create, pane-startup, post-attach.
+func TestMergeEffectiveHooksRowOrderFollowsSupportedEvents(t *testing.T) {
+	t.Parallel()
+
+	project := ProjectConfig{
+		Hooks: map[Event]string{
+			EventPostAttach:  "echo attach",
+			EventPreCreate:   "echo pre",
+			EventPaneStartup: "echo pane",
+			EventPostCreate:  "echo post",
+		},
+	}
+	got := MergeEffective(ProjectConfig{}, project).Hooks
+	wantOrder := []Event{EventPreCreate, EventPostCreate, EventPaneStartup, EventPostAttach}
+	if len(got.Entries) != len(wantOrder) {
+		t.Fatalf("hooks entries len = %d, want %d: %+v", len(got.Entries), len(wantOrder), got.Entries)
+	}
+	for i, want := range wantOrder {
+		if got.Entries[i].Key != string(want) {
+			t.Fatalf("entries[%d].Key = %q, want %q", i, got.Entries[i].Key, want)
+		}
+	}
+}
+
+// TestEffectiveConfigSectionsIncludesHooks pins the Sections() display order:
+// env, kube, startup, then hooks. The settings popup depends on this order
+// to lay out the page.
+func TestEffectiveConfigSectionsIncludesHooks(t *testing.T) {
+	t.Parallel()
+
+	got := MergeEffective(ProjectConfig{}, ProjectConfig{}).Sections()
+	wantNames := []string{"env", "kube", "startup", "hooks"}
+	if len(got) != len(wantNames) {
+		t.Fatalf("Sections() len = %d, want %d: %+v", len(got), len(wantNames), got)
+	}
+	for i, name := range wantNames {
+		if got[i].Name != name {
+			t.Fatalf("Sections()[%d].Name = %q, want %q", i, got[i].Name, name)
+		}
+	}
+}
