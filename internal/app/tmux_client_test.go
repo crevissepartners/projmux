@@ -15,6 +15,7 @@ func TestDefaultLifecycleHookRunnerWiresGlobalEventPaths(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("TMUX", "")
 
 	runner := defaultLifecycleHookRunner()
 	if runner == nil {
@@ -35,5 +36,24 @@ func TestDefaultLifecycleHookRunnerWiresGlobalEventPaths(t *testing.T) {
 	}
 	if !runner.DiscoverProjectHooks {
 		t.Fatal("DiscoverProjectHooks = false, want true")
+	}
+	if runner.ProjectHookPrompt != nil {
+		t.Fatal("ProjectHookPrompt = non-nil outside tmux, want terminal fallback")
+	}
+}
+
+func TestDefaultLifecycleHookRunnerUsesPopupPromptInsideTmux(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	t.Setenv("TMUX", "/tmp/tmux/default,1,0")
+
+	runner := defaultLifecycleHookRunner()
+	if runner == nil {
+		t.Fatal("defaultLifecycleHookRunner() = nil")
+	}
+	if runner.ProjectHookPrompt == nil {
+		t.Fatal("ProjectHookPrompt = nil inside tmux, want popup prompt")
 	}
 }

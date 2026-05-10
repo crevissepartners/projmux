@@ -69,6 +69,8 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch fs.Arg(0) {
+	case "hook-trust-prompt":
+		return c.runHookTrustPrompt(fs.Args()[1:], stdout, stderr)
 	case "popup-preview":
 		return c.runPopupPreview(fs.Args()[1:], stderr)
 	case "popup-switch":
@@ -695,6 +697,15 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 	return buildPopupToggleWithPickerBackend(mode, binaryPath, marker, ctx, resolvePickerBackend(os.Getenv), os.Getenv)
 }
 
+func addHookTrustPopupTargetEnv(env map[string]string, ctx tmuxPopupContext) {
+	if strings.TrimSpace(ctx.TargetClient) != "" {
+		env[hookTrustPopupTargetClientEnv] = ctx.TargetClient
+	}
+	if strings.TrimSpace(ctx.OriginPane) != "" {
+		env[hookTrustPopupTargetPaneEnv] = ctx.OriginPane
+	}
+}
+
 func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, backend intpicker.Backend, lookupEnv func(string) string) (string, inttmux.PopupOptions, error) {
 	options := inttmux.PopupOptions{
 		Target:        ctx.OriginPane,
@@ -713,6 +724,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		options.Width = popupSize(ctx.ClientWidth, 80, 120)
 		options.Height = popupSize(ctx.ClientHeight, 70, 28)
 		cwd = ctx.ContextDir
+		addHookTrustPopupTargetEnv(env, ctx)
 		env["TMUX_SESSIONIZER_CONTEXT_DIR"] = ctx.ContextDir
 		env["TMUX_SESSIONIZER_CONTEXT_SESSION"] = ctx.OriginSession
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane
@@ -723,6 +735,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		options.X = "0"
 		options.Y = "0"
 		cwd = ctx.ContextDir
+		addHookTrustPopupTargetEnv(env, ctx)
 		env["TMUX_SESSIONIZER_CONTEXT_DIR"] = ctx.ContextDir
 		env["TMUX_SESSIONIZER_CONTEXT_SESSION"] = ctx.OriginSession
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane
