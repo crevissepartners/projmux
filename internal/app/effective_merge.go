@@ -95,7 +95,50 @@ func (c *settingsCommand) effectiveMergeEntries(ctx settingsProjectContext) []in
 	entries = append(entries, renderEffectiveSection(merged.Env)...)
 	entries = append(entries, renderEffectiveSection(merged.Kube)...)
 	entries = append(entries, renderEffectiveSection(merged.Startup)...)
+	entries = append(entries, renderEffectiveHooksSection(merged.Hooks)...)
 	return entries
+}
+
+// renderEffectiveHooksSection mirrors renderEffectiveSection but tailors the
+// "no entries" copy for the hooks axis: rather than the section-name +
+// "(no entries)" wording used elsewhere, an empty hooks section reads as
+// "no hooks configured" so the user understands the absence is intentional
+// (no lifecycle wiring is set on either axis) and not an error. Hook `run`
+// values are user-supplied commands rather than credentials, so they are
+// rendered verbatim — IsSensitiveEnvKey only applies to env values.
+func renderEffectiveHooksSection(section hooks.EffectiveSection) []intpickercompat.Entry {
+	header := intpickercompat.Entry{
+		Label: settingsLabelInfo("["+section.Name+"]", "", string(section.Source)),
+		Value: settingsNoopValue,
+	}
+	entries := []intpickercompat.Entry{header}
+	if len(section.Entries) == 0 {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelDim("  (no hooks configured)", string(hooks.EffectiveSourceDefault)),
+			Value: settingsNoopValue,
+		})
+		return entries
+	}
+	for _, entry := range section.Entries {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("  "+entry.Key, hookRunDisplayValue(entry.Value), string(entry.Source)),
+			Value: settingsNoopValue,
+		})
+	}
+	return entries
+}
+
+// hookRunDisplayValue formats a hook command for the popup. The value is the
+// user's own shell command — projmux does not redact it (unlike env values
+// flagged by IsSensitiveEnvKey) because the user wrote it deliberately and
+// hiding it would obscure what runs at the lifecycle point. An empty string
+// can only appear if a future code path produces it; the (unset) sentinel
+// keeps the row readable.
+func hookRunDisplayValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "(unset)"
+	}
+	return value
 }
 
 // renderEffectiveSection emits one section header row plus one row per

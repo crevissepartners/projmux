@@ -216,6 +216,138 @@ func TestRunSectionDispatchesEffectiveMerge(t *testing.T) {
 	}
 }
 
+// TestEffectiveMergeEntriesHooksProjectWins covers the Phase 4 spec: a hook
+// defined on both axes resolves to the project value with a (project) label;
+// non-conflicting events keep their origin axis label; the section header
+// reads (merged) when both axes contributed.
+func TestEffectiveMergeEntriesHooksProjectWins(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	mustMkdirAll(t, filepath.Join(configHome, "projmux"))
+	if err := os.WriteFile(filepath.Join(configHome, "projmux", "config.toml"), []byte(strings.Join([]string{
+		`[hooks.pre-create]`,
+		`run = "echo global-pre"`,
+		`[hooks.post-create]`,
+		`run = "echo global-post"`,
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+
+	project := filepath.Join(home, "repo")
+	mustMkdirAll(t, filepath.Join(project, ".projmux"))
+	if err := os.WriteFile(filepath.Join(project, ".projmux", "config.toml"), []byte(strings.Join([]string{
+		`[hooks.post-create]`,
+		`run = "echo project-post"`,
+		`[hooks.pane-startup]`,
+		`run = "echo project-pane"`,
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return configHome
+			}
+			return ""
+		},
+	}
+	ctx := newSettingsProjectContext(project, "test")
+	entries := cmd.effectiveMergeEntries(ctx)
+
+	// Section header — both axes contributed hook entries → merged.
+	requireEntryLabelContains(t, entries, "[hooks]", "(merged)")
+	// pre-create only on global axis → global label, value rendered verbatim.
+	requireEntryLabelContains(t, entries, "pre-create", "(global)")
+	requireEntryLabelContains(t, entries, "pre-create", "echo global-pre")
+	// post-create defined on both → project wins; row label reads project.
+	requireEntryLabelContains(t, entries, "post-create", "(project)")
+	requireEntryLabelContains(t, entries, "post-create", "echo project-post")
+	// pane-startup only in project → project label.
+	requireEntryLabelContains(t, entries, "pane-startup", "(project)")
+	requireEntryLabelContains(t, entries, "pane-startup", "echo project-pane")
+	// post-attach defined nowhere — confirm omission so the popup stays
+	// uncluttered for unused lifecycle events.
+	for _, entry := range entries {
+		if strings.Contains(entry.Label, "post-attach") {
+			t.Fatalf("entries leaked an undefined post-attach hook row: %q", entry.Label)
+		}
+	}
+}
+
+// TestEffectiveMergeEntriesHooksEmpty pins the Phase 4 display decision: when
+// neither axis defines any hook, the section still renders a header row plus
+// a single dim "(no hooks configured)" row, labelled as default.
+func TestEffectiveMergeEntriesHooksEmpty(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "repo")
+	mustMkdirAll(t, filepath.Join(project, ".projmux"))
+	if err := os.WriteFile(filepath.Join(project, ".projmux", "config.toml"), []byte(`[env]
+EDITOR = "vim"
+`), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+	ctx := newSettingsProjectContext(project, "test")
+	entries := cmd.effectiveMergeEntries(ctx)
+
+	requireEntryLabelContains(t, entries, "[hooks]", "(default)")
+	// The empty-row uses settingsLabelDim, which renders the source slot as
+	// a bare token (no parens). Match that shape so we pin the actual UX.
+	requireEntryLabelContains(t, entries, "no hooks configured", "default")
+}
+
+// TestEffectiveMergeEntriesHooksDoesNotRedactRunCommand documents the
+// Phase 4 decision: hook `run` strings are user-authored commands and are
+// rendered verbatim, even when they contain tokens or other secrets. Only
+// env values flagged by IsSensitiveEnvKey are redacted.
+func TestEffectiveMergeEntriesHooksDoesNotRedactRunCommand(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "repo")
+	mustMkdirAll(t, filepath.Join(project, ".projmux"))
+	if err := os.WriteFile(filepath.Join(project, ".projmux", "config.toml"), []byte(strings.Join([]string{
+		`[hooks.post-create]`,
+		// Intentionally embed a credential-shaped value in the user's
+		// shell command. The user wrote this on purpose; we surface it.
+		`run = "curl -H 'Authorization: Bearer ghp_xxx' https://example.com"`,
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+	ctx := newSettingsProjectContext(project, "test")
+	entries := cmd.effectiveMergeEntries(ctx)
+
+	requireEntryLabelContains(t, entries, "post-create", "ghp_xxx")
+	requireEntryLabelContains(t, entries, "post-create", "(project)")
+}
+
+// TestHookRunDisplayValueHandlesEmpty pins the small display helper. The
+// merge engine omits unset events entirely, but the helper still has to
+// handle the empty case (e.g. a future caller passes through raw values).
+func TestHookRunDisplayValueHandlesEmpty(t *testing.T) {
+	t.Parallel()
+
+	if got := hookRunDisplayValue("echo hi"); got != "echo hi" {
+		t.Fatalf("hookRunDisplayValue plain = %q, want echo hi", got)
+	}
+	if got := hookRunDisplayValue("   "); got != "(unset)" {
+		t.Fatalf("hookRunDisplayValue whitespace = %q, want (unset)", got)
+	}
+}
+
 // --- helpers --------------------------------------------------------------
 
 func mustMkdirAll(t *testing.T, path string) {
