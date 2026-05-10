@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	claudeagent "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 )
 
 // Runner is the command execution surface used by replay. It intentionally
@@ -38,8 +40,9 @@ type ReplayWarning struct {
 }
 
 // Replay creates a detached tmux session and replays its saved window, pane,
-// and layout metadata. It intentionally does not execute shell, startup, or
-// agent recipes; later phases can layer command replay on top.
+// and layout metadata. It does not restore live shell processes or dump/replay
+// environment variables, including secrets. Agent recipe replay is limited to
+// adapters with explicit safe command generation.
 func Replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOptions) (ReplayResult, error) {
 	var result ReplayResult
 	if runner == nil {
@@ -117,9 +120,46 @@ func Replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOption
 				return result, fmt.Errorf("replay tmux window %d active pane %d: %w", window.Index, window.ActivePaneIndex, err)
 			}
 		}
+		for _, pane := range panes {
+			if err := replayPaneRecipe(ctx, runner, snap.Session, window.Index, pane, &result); err != nil {
+				return result, err
+			}
+		}
 	}
 
 	return result, nil
+}
+
+func replayPaneRecipe(ctx context.Context, runner Runner, session string, windowIndex int, pane Pane, result *ReplayResult) error {
+	if pane.Recipe.Kind != RecipeKindAgent {
+		return nil
+	}
+
+	agent := strings.ToLower(strings.TrimSpace(pane.Recipe.Agent))
+	if agent != claudeagent.AgentName {
+		return nil
+	}
+	command, err := claudeagent.ResumeCommand(pane.Recipe.ResumeID)
+	if err != nil {
+		appendReplayWarning(result, ReplayWarning{
+			Scope:       "agent",
+			WindowIndex: windowIndex,
+			PaneIndex:   pane.Index,
+			Reason:      err.Error(),
+		})
+		return nil
+	}
+	if _, err := runner.Run(ctx, "tmux", "send-keys", "-t", paneTarget(session, windowIndex, pane.Index), command, "Enter"); err != nil {
+		return fmt.Errorf("replay tmux window %d pane %d claude resume: %w", windowIndex, pane.Index, err)
+	}
+	return nil
+}
+
+func appendReplayWarning(result *ReplayResult, warning ReplayWarning) {
+	if result == nil {
+		return
+	}
+	result.Warnings = append(result.Warnings, warning)
 }
 
 type cwdResolver struct {
