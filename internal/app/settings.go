@@ -36,6 +36,13 @@ type settingsCommand struct {
 
 var errSettingsClosed = errors.New("settings closed")
 
+type settingsRootTab string
+
+const (
+	settingsRootTabGlobal  settingsRootTab = "global"
+	settingsRootTabProject settingsRootTab = "project"
+)
+
 type SettingsAxis uint8
 
 const (
@@ -50,26 +57,28 @@ type settingsEntryMeta struct {
 }
 
 var settingsEntryCatalog = map[string]settingsEntryMeta{
-	settingsBackValue:          {Name: "Back", Axis: settingsAxisGlobal},
-	settingsNoopValue:          {Name: "Info", Axis: settingsAxisGlobal},
-	settingsSectionProject:     {Name: "Project Picker", Axis: settingsAxisGlobal},
-	settingsSectionAI:          {Name: "AI Settings", Axis: settingsAxisGlobal},
-	settingsSectionStatusbar:   {Name: "Appearance", Axis: settingsAxisGlobal},
-	settingsSectionKeybindings: {Name: "Keybindings", Axis: settingsAxisGlobal},
-	settingsSectionLabs:        {Name: "Labs", Axis: settingsAxisGlobal},
-	settingsSectionAbout:       {Name: "About", Axis: settingsAxisGlobal},
-	settingsProjectAdd:         {Name: "Add Project", Axis: settingsAxisGlobal},
-	settingsProjectPins:        {Name: "Pinned Projects", Axis: settingsAxisGlobal},
-	settingsProjectRootManage:  {Name: "Project Root", Axis: settingsAxisGlobal},
-	settingsProjdirClear:       {Name: "Clear Project Root", Axis: settingsAxisGlobal},
-	settingsProjdirSetCurrent:  {Name: "Use Current Project as Root", Axis: settingsAxisGlobal},
-	settingsProjdirSetTyped:    {Name: "Set Project Root", Axis: settingsAxisGlobal},
-	settingsWorkdirAdd:         {Name: "Add Workdir", Axis: settingsAxisGlobal},
-	settingsWorkdirList:        {Name: "Workdirs", Axis: settingsAxisGlobal},
-	settingsWorkdirTyped:       {Name: "Type Workdir", Axis: settingsAxisGlobal},
-	settingsLabKeybindings:     {Name: "Diagnose Keybindings", Axis: settingsAxisGlobal},
-	settingsUpdateApply:        {Name: "Update Now", Axis: settingsAxisGlobal},
-	settingsUpdateCheck:        {Name: "Check Updates", Axis: settingsAxisGlobal},
+	settingsBackValue:           {Name: "Back", Axis: settingsAxisBoth},
+	settingsNoopValue:           {Name: "Info", Axis: settingsAxisBoth},
+	settingsRootTabGlobalValue:  {Name: "Global Settings", Axis: settingsAxisBoth},
+	settingsRootTabProjectValue: {Name: "Project Settings", Axis: settingsAxisBoth},
+	settingsSectionProject:      {Name: "Project Picker", Axis: settingsAxisGlobal},
+	settingsSectionAI:           {Name: "AI Settings", Axis: settingsAxisGlobal},
+	settingsSectionStatusbar:    {Name: "Appearance", Axis: settingsAxisGlobal},
+	settingsSectionKeybindings:  {Name: "Keybindings", Axis: settingsAxisGlobal},
+	settingsSectionLabs:         {Name: "Labs", Axis: settingsAxisGlobal},
+	settingsSectionAbout:        {Name: "About", Axis: settingsAxisGlobal},
+	settingsProjectAdd:          {Name: "Add Project", Axis: settingsAxisGlobal},
+	settingsProjectPins:         {Name: "Pinned Projects", Axis: settingsAxisGlobal},
+	settingsProjectRootManage:   {Name: "Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirClear:        {Name: "Clear Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetCurrent:   {Name: "Use Current Project as Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetTyped:     {Name: "Set Project Root", Axis: settingsAxisGlobal},
+	settingsWorkdirAdd:          {Name: "Add Workdir", Axis: settingsAxisGlobal},
+	settingsWorkdirList:         {Name: "Workdirs", Axis: settingsAxisGlobal},
+	settingsWorkdirTyped:        {Name: "Type Workdir", Axis: settingsAxisGlobal},
+	settingsLabKeybindings:      {Name: "Diagnose Keybindings", Axis: settingsAxisGlobal},
+	settingsUpdateApply:         {Name: "Update Now", Axis: settingsAxisGlobal},
+	settingsUpdateCheck:         {Name: "Check Updates", Axis: settingsAxisGlobal},
 }
 
 var settingsEntryPrefixCatalog = []struct {
@@ -103,6 +112,8 @@ func settingsEntryMetaForValue(value string) (settingsEntryMeta, bool) {
 const (
 	settingsBackValue             = "__settings_back__"
 	settingsNoopValue             = "__settings_noop__"
+	settingsRootTabGlobalValue    = "__settings_tab_global__"
+	settingsRootTabProjectValue   = "__settings_tab_project__"
 	settingsSectionAI             = "section:ai"
 	settingsSectionKeybindings    = "section:keybindings"
 	settingsSectionProject        = "section:project-picker"
@@ -158,25 +169,25 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return errors.New("native picker is not configured")
 	}
 
+	tab := settingsRootTabGlobal
 	for {
-		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings",
-			Entries:    c.rootEntries(),
-			Title:      "Settings",
-			Prompt:     "Settings > ",
-			Footer:     projmuxFooter("Enter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"),
-			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
-		})
+		result, err := c.runPicker(c.rootOptions(tab))
 		if err != nil {
 			if errors.Is(err, errSettingsClosed) {
 				return nil
 			}
 			return err
 		}
+		if next, ok := settingsRootTabFromResult(result); ok {
+			tab = next
+			continue
+		}
 		section := strings.TrimSpace(result.Value)
 		if result.Key != "enter" || section == "" {
 			return nil
+		}
+		if section == settingsNoopValue {
+			continue
 		}
 
 		if err := c.runSection(section, stdout, stderr); err != nil {
@@ -236,8 +247,60 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 	return result, nil
 }
 
+func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Options {
+	if tab != settingsRootTabProject {
+		tab = settingsRootTabGlobal
+	}
+	return intpickercompat.Options{
+		UI:         "settings",
+		Entries:    c.rootEntriesForTab(tab),
+		Title:      "Settings",
+		Prompt:     settingsRootPrompt(tab),
+		Header:     c.rootHeader(tab),
+		Footer:     projmuxFooter("Enter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys: []string{"enter", "ctrl-g", "ctrl-p"},
+		Bindings:   settingsCloseBindings(),
+	}
+}
+
+func settingsRootPrompt(tab settingsRootTab) string {
+	if tab == settingsRootTabProject {
+		return "Settings > Project > "
+	}
+	return "Settings > "
+}
+
+func settingsRootTabFromResult(result intpickercompat.Result) (settingsRootTab, bool) {
+	switch strings.TrimSpace(result.Key) {
+	case "ctrl-g":
+		return settingsRootTabGlobal, true
+	case "ctrl-p":
+		return settingsRootTabProject, true
+	}
+	switch strings.TrimSpace(result.Value) {
+	case settingsRootTabGlobalValue:
+		return settingsRootTabGlobal, true
+	case settingsRootTabProjectValue:
+		return settingsRootTabProject, true
+	}
+	return "", false
+}
+
 func (c *settingsCommand) rootEntries() []intpickercompat.Entry {
-	return []intpickercompat.Entry{
+	return c.rootEntriesForAxis(settingsAxisGlobal)
+}
+
+func (c *settingsCommand) rootEntriesForTab(tab settingsRootTab) []intpickercompat.Entry {
+	if tab == settingsRootTabProject {
+		return c.projectTabEntries()
+	}
+	entries := []intpickercompat.Entry{c.projectTabEntry()}
+	entries = append(entries, c.rootEntriesForAxis(settingsAxisGlobal)...)
+	return entries
+}
+
+func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompat.Entry {
+	all := []intpickercompat.Entry{
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Project Picker", "project roots, workdirs, and pins"),
 			Value: settingsSectionProject,
@@ -263,6 +326,202 @@ func (c *settingsCommand) rootEntries() []intpickercompat.Entry {
 			Value: settingsSectionAbout,
 		},
 	}
+	entries := make([]intpickercompat.Entry, 0, len(all))
+	for _, entry := range all {
+		meta, ok := settingsEntryMetaForValue(entry.Value)
+		if !ok || meta.Axis&axis == 0 {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+type settingsProjectContext struct {
+	Path   string
+	Name   string
+	Source string
+}
+
+func (ctx settingsProjectContext) hasProject() bool {
+	return strings.TrimSpace(ctx.Path) != ""
+}
+
+func (c *settingsCommand) rootHeader(tab settingsRootTab) string {
+	ctx := c.resolveSettingsProjectContext()
+	projectContext := "(no project)"
+	if ctx.hasProject() {
+		projectContext = "(" + ctx.Name + ")"
+	}
+	if tab == settingsRootTabProject {
+		return "Tabs: Global  [Project]  " + projectContext
+	}
+	return "Tabs: [Global]  Project " + projectContext
+}
+
+func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
+	ctx := c.resolveSettingsProjectContext()
+	entries := []intpickercompat.Entry{settingsGlobalTabEntry()}
+	if !ctx.hasProject() {
+		return append(entries,
+			intpickercompat.Entry{
+				Label: settingsLabelDim("Project context", "no project - open Settings from a project pane or set PROJMUX_CWD"),
+				Value: settingsNoopValue,
+			},
+			intpickercompat.Entry{
+				Label: settingsLabelDim("Trust", "disabled - no project context"),
+				Value: settingsNoopValue,
+			},
+			intpickercompat.Entry{
+				Label: settingsLabelDim("Hooks (project)", "disabled - no project context"),
+				Value: settingsNoopValue,
+			},
+			intpickercompat.Entry{
+				Label: settingsLabelDim("config.toml", "disabled - no project context"),
+				Value: settingsNoopValue,
+			},
+			intpickercompat.Entry{
+				Label: settingsLabelDim("Effective merge view", "Phase 3"),
+				Value: settingsNoopValue,
+			},
+		)
+	}
+
+	return append(entries,
+		intpickercompat.Entry{
+			Label: settingsLabelInfo("Project context", ctx.Path, ctx.Source),
+			Value: settingsNoopValue,
+		},
+		intpickercompat.Entry{
+			Label: settingsLabelDim("Trust", "read-only preview arrives in Phase 4"),
+			Value: settingsNoopValue,
+		},
+		intpickercompat.Entry{
+			Label: settingsLabelDim("Hooks (project)", filepath.Join(ctx.Path, ".projmux", "hooks")),
+			Value: settingsNoopValue,
+		},
+		intpickercompat.Entry{
+			Label: settingsLabelDim("config.toml", filepath.Join(ctx.Path, ".projmux", "config.toml")),
+			Value: settingsNoopValue,
+		},
+		intpickercompat.Entry{
+			Label: settingsLabelDim("Effective merge view", "Phase 3"),
+			Value: settingsNoopValue,
+		},
+	)
+}
+
+func (c *settingsCommand) projectTabEntry() intpickercompat.Entry {
+	ctx := c.resolveSettingsProjectContext()
+	desc := "project-local context and planned project settings"
+	if !ctx.hasProject() {
+		desc = "no project context"
+	} else {
+		desc = ctx.Name
+	}
+	return intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Project Settings", desc),
+		Value: settingsRootTabProjectValue,
+	}
+}
+
+func settingsGlobalTabEntry() intpickercompat.Entry {
+	return intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Global Settings", "user-wide settings"),
+		Value: settingsRootTabGlobalValue,
+	}
+}
+
+func (c *settingsCommand) resolveSettingsProjectContext() settingsProjectContext {
+	if c.lookupEnv != nil {
+		if raw := strings.TrimSpace(c.lookupEnv("PROJMUX_CWD")); raw != "" {
+			return newSettingsProjectContext(filepath.Clean(raw), "PROJMUX_CWD env")
+		}
+	}
+	if c.switcher == nil {
+		return settingsProjectContext{}
+	}
+
+	currentPath, err := c.switcher.resolveWorkingDir()
+	if err == nil && currentPath != "" {
+		homeDir, _ := c.switcher.resolveHomeDir()
+		if root := nearestSettingsProjectRoot(currentPath, homeDir); root != "" {
+			return newSettingsProjectContext(root, "pane_current_path")
+		}
+		if target, err := c.switcher.resolveSwitchTargetNoMemoize(nil, "settings project context"); err == nil && settingsContextTargetMatches(currentPath, target) {
+			return newSettingsProjectContext(target, "switch context")
+		}
+	}
+
+	return settingsProjectContext{}
+}
+
+func newSettingsProjectContext(path, source string) settingsProjectContext {
+	path = filepath.Clean(path)
+	return settingsProjectContext{
+		Path:   path,
+		Name:   settingsProjectContextName(path),
+		Source: source,
+	}
+}
+
+func settingsProjectContextName(path string) string {
+	name := filepath.Base(filepath.Clean(path))
+	if name == "." || name == string(filepath.Separator) {
+		return path
+	}
+	return name
+}
+
+func nearestSettingsProjectRoot(path, boundary string) string {
+	path = filepath.Clean(path)
+	boundary = filepath.Clean(strings.TrimSpace(boundary))
+	for {
+		if boundary != "" && path == boundary {
+			return ""
+		}
+		if settingsProjectMarkerExists(filepath.Join(path, ".projmux")) || settingsProjectMarkerExists(filepath.Join(path, ".git")) {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return ""
+		}
+		path = parent
+	}
+}
+
+func settingsProjectMarkerExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	_, err := osStat(path)
+	return err == nil
+}
+
+func settingsContextTargetMatches(currentPath, target string) bool {
+	target = filepath.Clean(strings.TrimSpace(target))
+	currentPath = filepath.Clean(strings.TrimSpace(currentPath))
+	if target == "" || target == switchSettingsSentinel || currentPath == "" {
+		return false
+	}
+	return pathContains(target, currentPath)
+}
+
+func pathContains(base, path string) bool {
+	if base == "" || path == "" {
+		return false
+	}
+	base = filepath.Clean(base)
+	path = filepath.Clean(path)
+	if base == path {
+		return true
+	}
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Options, error) {

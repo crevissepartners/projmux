@@ -49,6 +49,214 @@ func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
 	}
 }
 
+func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{}
+	options := cmd.rootOptions(settingsRootTabGlobal)
+
+	if got, want := options.UI, "settings"; got != want {
+		t.Fatalf("root settings UI = %q, want %q", got, want)
+	}
+	if got, want := options.Prompt, "Settings > "; got != want {
+		t.Fatalf("root settings prompt = %q, want %q", got, want)
+	}
+	if got, want := options.Title, "Settings"; got != want {
+		t.Fatalf("root settings title = %q, want %q", got, want)
+	}
+	if got := options.Header; !strings.Contains(got, "[Global]") || !strings.Contains(got, "Project (no project)") {
+		t.Fatalf("root settings header = %q, want global tab and no-project context", got)
+	}
+	if got, want := options.Footer, "Enter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+		t.Fatalf("root settings footer = %q, want %q", got, want)
+	}
+	if got, want := options.Bindings, []string{"esc:abort", "ctrl-c:abort", "alt-5:abort", "ctrl-alt-s:abort"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("root settings close bindings = %#v, want %#v", got, want)
+	}
+	if got, want := entryValues(options.Entries), []string{
+		settingsRootTabProjectValue,
+		settingsSectionProject,
+		settingsSectionAI,
+		settingsSectionStatusbar,
+		settingsSectionKeybindings,
+		settingsSectionLabs,
+		settingsSectionAbout,
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("root settings entry order = %#v, want %#v", got, want)
+	}
+}
+
+func TestSettingsRootSwitchesToProjectTab(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	var projectOptions intpickercompat.Options
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			if got := options.Header; !strings.Contains(got, "[Global]") {
+				t.Fatalf("first root header = %q, want Global tab", got)
+			}
+			return intpickercompat.Result{Key: "ctrl-p"}, nil
+		case 2:
+			projectOptions = options
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd := &settingsCommand{
+		runner:       runner,
+		nativePicker: nativePickerFromCompatRunner(runner),
+		lookupEnv:    func(string) string { return "" },
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := projectOptions.Prompt, "Settings > Project > "; got != want {
+		t.Fatalf("project tab prompt = %q, want %q", got, want)
+	}
+	if got := projectOptions.Header; !strings.Contains(got, "[Project]") || !strings.Contains(got, "(no project)") {
+		t.Fatalf("project tab header = %q, want selected Project no-project tab", got)
+	}
+	if !hasEntryLabelContaining(projectOptions.Entries, "Project context") {
+		t.Fatalf("project tab entries = %#v, want project context row", projectOptions.Entries)
+	}
+}
+
+func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
+	options := cmd.rootOptions(settingsRootTabProject)
+
+	if got := options.Header; !strings.Contains(got, "[Project]") || !strings.Contains(got, "(no project)") {
+		t.Fatalf("project tab header = %q, want no-project state", got)
+	}
+	for _, value := range entryValues(options.Entries) {
+		if value != settingsRootTabGlobalValue && value != settingsNoopValue {
+			t.Fatalf("project tab entry values = %#v, want global tab switch plus disabled/noop rows only", entryValues(options.Entries))
+		}
+	}
+	for _, label := range []string{"no project", "Trust", "Hooks (project)", "config.toml", "Effective merge view"} {
+		if !hasEntryLabelContaining(options.Entries, label) {
+			t.Fatalf("project tab entries = %#v, want label containing %q", options.Entries, label)
+		}
+	}
+}
+
+func TestSettingsProjectContextPrefersPROJMUXCWD(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	envProject := filepath.Join(home, "env-project")
+	paneProject := filepath.Join(home, "source", "repos", "pane-project")
+	mkdirAll(t, filepath.Join(paneProject, ".git"))
+
+	cmd := &settingsCommand{
+		switcher: &switchCommand{
+			discover: candidates.Discover,
+			pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+			validate: func(string) error { return nil },
+			homeDir:  func() (string, error) { return home, nil },
+			workingDir: func() (string, error) {
+				return filepath.Join(paneProject, "nested"), nil
+			},
+			lookupEnv:    func(string) string { return "" },
+			loadWorkdirs: func(string) ([]string, error) { return nil, nil },
+		},
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return envProject
+			}
+			return ""
+		},
+	}
+
+	ctx := cmd.resolveSettingsProjectContext()
+	if got := ctx.Path; got != envProject {
+		t.Fatalf("project context path = %q, want PROJMUX_CWD %q", got, envProject)
+	}
+	if got, want := ctx.Source, "PROJMUX_CWD env"; got != want {
+		t.Fatalf("project context source = %q, want %q", got, want)
+	}
+	if got, want := ctx.Name, "env-project"; got != want {
+		t.Fatalf("project context name = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsProjectContextFallsBackToPaneProjectRoot(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".projmux"))
+
+	cmd := &settingsCommand{
+		switcher: &switchCommand{
+			discover: candidates.Discover,
+			pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+			validate: func(string) error { return nil },
+			homeDir:  func() (string, error) { return home, nil },
+			workingDir: func() (string, error) {
+				return filepath.Join(project, "subdir"), nil
+			},
+			lookupEnv:    func(string) string { return "" },
+			loadWorkdirs: func(string) ([]string, error) { return nil, nil },
+		},
+		lookupEnv: func(string) string { return "" },
+	}
+
+	ctx := cmd.resolveSettingsProjectContext()
+	if got := ctx.Path; got != project {
+		t.Fatalf("project context path = %q, want pane project %q", got, project)
+	}
+	if got, want := ctx.Source, "pane_current_path"; got != want {
+		t.Fatalf("project context source = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsProjectContextFallsBackToSwitchContext(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	repoRoot := filepath.Join(home, "source", "repos")
+	project := filepath.Join(repoRoot, "app")
+	current := filepath.Join(project, "subdir")
+	mkdirAll(t, current)
+
+	cmd := &settingsCommand{
+		switcher: &switchCommand{
+			discover: candidates.Discover,
+			pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+			validate: func(string) error { return nil },
+			homeDir:  func() (string, error) { return home, nil },
+			workingDir: func() (string, error) {
+				return current, nil
+			},
+			lookupEnv: func(name string) string {
+				if name == projdirEnvVar {
+					return repoRoot
+				}
+				return ""
+			},
+			loadWorkdirs: func(string) ([]string, error) { return nil, nil },
+		},
+		lookupEnv: func(string) string { return "" },
+	}
+
+	ctx := cmd.resolveSettingsProjectContext()
+	if got := ctx.Path; got != project {
+		t.Fatalf("project context path = %q, want switch context %q", got, project)
+	}
+	if got, want := ctx.Source, "switch context"; got != want {
+		t.Fatalf("project context source = %q, want %q", got, want)
+	}
+}
+
 func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 	t.Parallel()
 
@@ -56,6 +264,8 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		value string
 		axis  SettingsAxis
 	}{
+		{settingsRootTabGlobalValue, settingsAxisBoth},
+		{settingsRootTabProjectValue, settingsAxisBoth},
 		{settingsProjectRootManage, settingsAxisGlobal},
 		{settingsWorkdirList, settingsAxisGlobal},
 		{settingsProjectPins, settingsAxisGlobal},
@@ -186,13 +396,14 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got, want := rootOptions.Title, "Settings"; got != want {
 		t.Fatalf("root settings title = %q, want %q", got, want)
 	}
-	if got := rootOptions.Header; got != "" {
-		t.Fatalf("root settings header = %q, want title-only root chrome", got)
+	if got := rootOptions.Header; !strings.Contains(got, "[Global]") {
+		t.Fatalf("root settings header = %q, want Global tab chrome", got)
 	}
 	if got, want := rootOptions.Footer, "Enter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
 	if got, want := entryValues(rootOptions.Entries), []string{
+		settingsRootTabProjectValue,
 		settingsSectionProject,
 		settingsSectionAI,
 		settingsSectionStatusbar,
