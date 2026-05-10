@@ -30,6 +30,7 @@ type shellCommand struct {
 	executable         func() (string, error)
 	lookupEnv          func(string) string
 	homeDir            func() (string, error)
+	welcomeInput       io.Reader
 	writeFile          func(string, []byte, os.FileMode) error
 	runCommand         func(ctx context.Context, env []string, name string, args ...string) error
 	update             *updateCommand
@@ -48,6 +49,7 @@ func newShellCommand(update *updateCommand) *shellCommand {
 		executable:   os.Executable,
 		lookupEnv:    os.Getenv,
 		homeDir:      os.UserHomeDir,
+		welcomeInput: os.Stdin,
 		writeFile:    os.WriteFile,
 		runCommand:   runForegroundCommand,
 		update:       update,
@@ -79,8 +81,14 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("projmux shell cannot run inside the %q projmux tmux server", socketName)
 	}
 
-	if err := c.promptForUpdate(stdout, stderr); err != nil {
+	welcomeHandledUpdate, err := c.promptWelcome(stdout, stderr)
+	if err != nil {
 		return err
+	}
+	if !welcomeHandledUpdate {
+		if err := c.promptForUpdate(stdout, stderr); err != nil {
+			return err
+		}
 	}
 
 	binaryPath, err := c.resolveBinary(*binaryOverride)

@@ -21,6 +21,18 @@ projmux doctor
 `doctor` checks that runtime tools such as `tmux`, `git`, and `stty` are
 available.
 
+Start the tmux app with:
+
+```sh
+projmux shell
+```
+
+The first launch for each projmux version prints a short welcome with the
+current version, detach/exit keys, core app shortcuts, and cached update status
+when available. If an installer-supported update is available, pressing Enter
+at the inline prompt runs `projmux update apply`; answering `n` prints that
+manual command and continues into the shell.
+
 ## Runtime Tools
 
 Normal use needs:
