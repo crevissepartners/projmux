@@ -68,6 +68,8 @@ The fzf compatibility surface for the native engine is tracked in
 - Native Alt-1 sidebar popups use the same responsive width calculation as fzf
   with a smaller native-only minimum, so the borderless native frame is not
   wider than the existing fzf sidebar surface on normal terminals.
+- Native Alt-2 notify sidebar popups keep the fzf baseline width contract
+  (`32%`, minimum `72`) while still letting the native picker own the frame.
 - Simple native lists use the available terminal height after header, prompt,
   footer, and preview reservations instead of a fixed page-sized viewport.
 - Navigation-only native lists mirror fzf `--disabled --no-input`: the input
@@ -77,6 +79,7 @@ The fzf compatibility surface for the native engine is tracked in
   separators reach the right border like fzf.
 - Native frames can render an optional title inside the top border when
   `picker.Options.Title` is set; empty titles keep the default border unchanged.
+  The native Alt-1 project sidebar uses this for a `Projects` titlebar.
 - Native width/truncation uses terminal cell width for Korean/CJK text, emoji,
   and combining marks instead of raw rune count, so localized project names and
   decorated notify headers do not push the right frame border out of alignment.
@@ -106,6 +109,9 @@ The fzf compatibility surface for the native engine is tracked in
   avoids a trailing newline after the bottom border. This reduces visible
   keyboard-navigation flicker and prevents exact-height popups from scrolling
   the top border off screen.
+- Native preview panes normalize tabs and control bytes before horizontal
+  clipping, preventing long preview rows from wrapping and consuming extra
+  vertical viewport rows in Alt-3/session popups.
 - Switch picker git branch badges are capped more tightly for the native card
   surface, so inactive branch backgrounds do not dominate narrow Alt-1 sidebar
   rows.

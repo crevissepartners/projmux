@@ -706,7 +706,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 	case "notify-sidebar":
 		options.Client = ctx.TargetClient
 		options.Target = ""
-		options.Width = popupSize(ctx.ClientWidth, 32, 72)
+		options.Width = notifySidebarWidth(ctx.ClientWidth)
 		options.Height = popupSize(ctx.ClientHeight, 100, 20)
 		options.X = popupRightX(ctx.ClientWidth, options.Width)
 		options.Y = "0"
@@ -745,6 +745,10 @@ func sessionizerSidebarWidth(clientWidth int, backend intpicker.Backend) string 
 		minWidth = 40
 	}
 	return popupSize(clientWidth, 20, minWidth)
+}
+
+func notifySidebarWidth(clientWidth int) string {
+	return popupSize(clientWidth, 32, 72)
 }
 
 func inheritPopupPickerEnv(env map[string]string, lookupEnv func(string) string) {

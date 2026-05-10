@@ -274,6 +274,48 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	}
 }
 
+func TestSwitchCommandNativeSidebarSetsTitle(t *testing.T) {
+	t.Parallel()
+
+	var gotNativeOptions intpicker.Options
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			t.Fatal("fzf runner should not be called for native sidebar")
+			return intfzf.Result{}, nil
+		}),
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			gotNativeOptions = options
+			return intpicker.Result{Value: "/tmp/app"}, nil
+		}),
+		sessions:   &capturingSwitchSessionExecutor{},
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+		lookupEnv: func(name string) string {
+			if name == intpicker.BackendEnv {
+				return string(intpicker.BackendNative)
+			}
+			return ""
+		},
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := gotNativeOptions.UI, switchUISidebar; got != want {
+		t.Fatalf("native UI = %q, want %q", got, want)
+	}
+	if got, want := gotNativeOptions.Title, "Projects"; got != want {
+		t.Fatalf("native title = %q, want %q", got, want)
+	}
+}
+
 func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 	t.Parallel()
 

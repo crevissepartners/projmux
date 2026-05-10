@@ -361,6 +361,20 @@ func TestSessionizerSidebarWidthKeepsFZFMinimum(t *testing.T) {
 	}
 }
 
+func TestNotifySidebarWidthMatchesFZFBaseline(t *testing.T) {
+	t.Parallel()
+
+	if got, want := notifySidebarWidth(200), "72"; got != want {
+		t.Fatalf("notifySidebarWidth(200) = %q, want fzf minimum %q", got, want)
+	}
+	if got, want := notifySidebarWidth(300), "96"; got != want {
+		t.Fatalf("notifySidebarWidth(300) = %q, want fzf percent %q", got, want)
+	}
+	if got, want := notifySidebarWidth(0), "32%"; got != want {
+		t.Fatalf("notifySidebarWidth(unknown) = %q, want fzf percent fallback %q", got, want)
+	}
+}
+
 func TestAppRunTmuxPopupToggleUsesSavedNativeBackendForPopupChrome(t *testing.T) {
 	t.Parallel()
 
@@ -400,6 +414,41 @@ func TestAppRunTmuxPopupToggleUsesSavedNativeBackendForPopupChrome(t *testing.T)
 	command := got.args[len(got.args)-1]
 	if !strings.Contains(command, "PROJMUX_PICKER_BACKEND='native'") {
 		t.Fatalf("popup command = %q, want native backend env assignment", command)
+	}
+}
+
+func TestAppRunTmuxPopupToggleKeepsNotifySidebarFZFSizingForNative(t *testing.T) {
+	t.Setenv("PROJMUX_PICKER_BACKEND", "native")
+
+	clientKey := "/dev/pts/projmux-test-native-notify"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "notify-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":    clientKey,
+		"#{pane_id}":       "%1",
+		"#{client_width}":  "200",
+		"#{client_height}": "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "notify-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	if !slices.Contains(got.args, "-B") {
+		t.Fatalf("display call = %#v, want native notify popup to keep native-owned frame", got)
+	}
+	if !containsTmuxArgPair(got.args, "-w", "72") {
+		t.Fatalf("display call = %#v, want native notify sidebar to keep fzf baseline width", got)
+	}
+	if !containsTmuxArgPair(got.args, "-x", "128") {
+		t.Fatalf("display call = %#v, want right edge position based on fzf baseline width", got)
 	}
 }
 

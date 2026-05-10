@@ -5,6 +5,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 func PreviewPlacement(window string) string {
@@ -80,6 +81,7 @@ func RenderSplitPreviewRows(w io.Writer, listLines, previewLines []string, layou
 		if i < len(previewLines) {
 			right = previewLines[i]
 		}
+		right = normalizePreviewLine(right)
 		right = PadRight(TruncateANSI(right, previewWidth), previewWidth)
 		fmt.Fprintf(w, "%s│%s\n", PadRight(TruncateANSI(left, listWidth), listWidth), right)
 	}
@@ -92,16 +94,69 @@ func RenderDownPreview(w io.Writer, previewLines []string, layout Layout) {
 	}
 	fmt.Fprintln(w, SeparatorLine(width))
 	for _, line := range previewLines {
+		line = normalizePreviewLine(line)
 		fmt.Fprintln(w, PadRight(TruncateANSI(line, width), width))
 	}
 }
 
 func RenderInlinePreview(w io.Writer, previewLines []string) {
+	RenderInlinePreviewRows(w, previewLines, Layout{})
+}
+
+func RenderInlinePreviewRows(w io.Writer, previewLines []string, layout Layout) {
+	width := layout.Cols
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "--- preview ---")
 	for _, line := range previewLines {
+		line = normalizePreviewLine(line)
+		if width > 0 {
+			line = PadRight(TruncateANSI(line, width), width)
+		}
 		fmt.Fprintln(w, line)
 	}
+}
+
+func normalizePreviewLine(value string) string {
+	value = strings.TrimRight(value, "\r")
+	if value == "" {
+		return ""
+	}
+	var out strings.Builder
+	visible := 0
+	for i := 0; i < len(value); {
+		if value[i] == '\x1b' {
+			end := i + 1
+			for end < len(value) && value[end] != 'm' {
+				end++
+			}
+			if end < len(value) {
+				out.WriteString(value[i : end+1])
+				i = end + 1
+				continue
+			}
+		}
+		r, size := utf8.DecodeRuneInString(value[i:])
+		if size <= 0 {
+			break
+		}
+		switch r {
+		case '\t':
+			spaces := 4 - visible%4
+			out.WriteString(strings.Repeat(" ", spaces))
+			visible += spaces
+		default:
+			width := RuneWidth(r)
+			if width == 0 && (r < ' ' || (r >= 0x7f && r < 0xa0)) {
+				out.WriteRune(' ')
+				visible++
+			} else {
+				out.WriteRune(r)
+				visible += width
+			}
+		}
+		i += size
+	}
+	return out.String()
 }
 
 func previewPercent(window string) int {

@@ -74,6 +74,30 @@ func TestRenderSplitPreviewRowsPadsBothPanes(t *testing.T) {
 	}
 }
 
+func TestRenderSplitPreviewRowsNormalizesPreviewTabsBeforeTruncating(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	RenderSplitPreviewRows(&out,
+		[]string{"api"},
+		[]string{"one\ttwo three four five six seven eight nine ten eleven twelve"},
+		Layout{Rows: 10, Cols: 40},
+		"right,60%,border-left",
+		1,
+		0,
+		1,
+		1,
+	)
+
+	line := strings.TrimRight(out.String(), "\n")
+	if strings.Contains(line, "\t") {
+		t.Fatalf("split preview row contains raw tab and can wrap unexpectedly: %q", line)
+	}
+	if got, want := VisibleLen(line), 40; got != want {
+		t.Fatalf("split preview row width = %d, want %d: %q", got, want, line)
+	}
+}
+
 func TestRenderSplitPreviewRowsKeepsRequestedViewport(t *testing.T) {
 	t.Parallel()
 
@@ -111,5 +135,23 @@ func TestRenderDownPreviewPadsPreviewRows(t *testing.T) {
 		if got, want := VisibleLen(line), 24; got != want {
 			t.Fatalf("down preview row %d width = %d, want %d: %q", i, got, want, line)
 		}
+	}
+}
+
+func TestRenderInlinePreviewRowsTruncatesToLayoutWidth(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	RenderInlinePreviewRows(&out, []string{"one\ttwo three four five"}, Layout{Cols: 12})
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("inline preview lines = %d, want 3: %q", len(lines), out.String())
+	}
+	if strings.Contains(lines[2], "\t") {
+		t.Fatalf("inline preview row contains raw tab and can wrap unexpectedly: %q", lines[2])
+	}
+	if got, want := VisibleLen(lines[2]), 12; got != want {
+		t.Fatalf("inline preview row width = %d, want %d: %q", got, want, lines[2])
 	}
 }
