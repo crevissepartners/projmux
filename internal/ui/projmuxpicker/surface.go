@@ -165,20 +165,43 @@ func ListLinesWithScrollbar(lines []string, total, start, end, width int) []stri
 	if !hasScrollbar {
 		return RenderableListLines(lines, width)
 	}
-	scrollbarIndex := 0
-	if maxStart := total - visible; maxStart > 0 && len(lines) > 1 {
-		scrollbarIndex = start * (len(lines) - 1) / maxStart
-	}
+	thumbStart, thumbEnd := scrollbarThumbRange(total, visible, start, len(lines))
 	rendered := make([]string, 0, len(lines))
 	for i, line := range lines {
 		marker := " "
-		if i == scrollbarIndex {
+		if i >= thumbStart && i < thumbEnd {
 			marker = Scrollbar
 		}
 		line = RenderableListLine(line, width-1)
 		rendered = append(rendered, PadRight(TruncateANSI(line, width-1), width-1)+marker)
 	}
 	return rendered
+}
+
+func scrollbarThumbRange(total, visible, start, track int) (int, int) {
+	if total <= 0 || visible <= 0 || track <= 0 {
+		return 0, 0
+	}
+	if visible >= total {
+		return 0, track
+	}
+	thumb := max((track*visible+total-1)/total, 1)
+	if thumb > track {
+		thumb = track
+	}
+	maxStart := total - visible
+	maxThumbStart := track - thumb
+	thumbStart := 0
+	if maxStart > 0 && maxThumbStart > 0 {
+		thumbStart = (start*maxThumbStart + maxStart/2) / maxStart
+	}
+	if thumbStart < 0 {
+		thumbStart = 0
+	}
+	if thumbStart > maxThumbStart {
+		thumbStart = maxThumbStart
+	}
+	return thumbStart, thumbStart + thumb
 }
 
 func RenderableListLines(lines []string, width int) []string {
