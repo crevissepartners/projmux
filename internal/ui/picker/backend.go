@@ -85,12 +85,12 @@ func ResolveBackend(lookup func(string) string) Backend {
 		raw = lookup(BackendEnv)
 	}
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", string(BackendFZF):
+	case string(BackendFZF):
 		return BackendFZF
 	case string(BackendNative):
 		return BackendNative
 	default:
-		return BackendFZF
+		return BackendNative
 	}
 }
 
@@ -702,12 +702,15 @@ func nativeMouseItemIndex(options Options, items []Item, selected int, layout na
 	if x <= 1 || y <= 1 {
 		return selected, false
 	}
-	contentLayout := nativeContentLayout(layout)
+	contentLayout := nativeContentLayout(layout, options.Title)
 	contentX := x - 2
 	if contentX < 0 || contentX >= contentLayout.Cols {
 		return selected, false
 	}
 	contentRow := y - 2
+	if strings.TrimSpace(options.Title) != "" {
+		contentRow--
+	}
 	if contentRow < 0 || contentRow >= contentLayout.Rows {
 		return selected, false
 	}
@@ -1236,7 +1239,7 @@ func renderNativeInteractiveWithCursor(w io.Writer, options Options, items []Ite
 }
 
 func nativeInteractiveFrame(options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) string {
-	contentLayout := nativeContentLayout(layout)
+	contentLayout := nativeContentLayout(layout, options.Title)
 	var body strings.Builder
 	renderNativeInteractiveContent(&body, options, items, query, queryCursor, selected, previewOffset, contentLayout)
 	var frame strings.Builder
@@ -1244,8 +1247,8 @@ func nativeInteractiveFrame(options Options, items []Item, query string, queryCu
 	return frame.String()
 }
 
-func nativeContentLayout(layout nativeLayout) nativeLayout {
-	content := projmuxpicker.DefaultRenderer().ContentLayout(projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+func nativeContentLayout(layout nativeLayout, title string) nativeLayout {
+	content := projmuxpicker.DefaultRenderer().ContentLayoutWithTitle(projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols}, title)
 	return nativeLayout{Rows: content.Rows, Cols: content.Cols}
 }
 

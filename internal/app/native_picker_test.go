@@ -65,7 +65,18 @@ func TestRunPickerOptionBackendUsesSavedNativeBackend(t *testing.T) {
 	var fzfCalled bool
 	nativeCalled := false
 	result, err := runPickerOptionBackend(
-		os.Getenv,
+		func(name string) string {
+			switch name {
+			case intpicker.BackendEnv:
+				return ""
+			case "XDG_CONFIG_HOME":
+				return configHome
+			case "XDG_STATE_HOME":
+				return t.TempDir()
+			default:
+				return os.Getenv(name)
+			}
+		},
 		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			nativeCalled = true
 			return intpicker.Result{Key: "enter", Value: "ai"}, nil
@@ -87,6 +98,50 @@ func TestRunPickerOptionBackendUsesSavedNativeBackend(t *testing.T) {
 	}
 	if fzfCalled {
 		t.Fatal("fzf runner was called for saved native picker backend")
+	}
+	if result.Value != "ai" {
+		t.Fatalf("result = %#v, want native selection", result)
+	}
+}
+
+func TestRunPickerOptionBackendDefaultsToNativeBackend(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	var fzfCalled bool
+	var nativeCalled bool
+	result, err := runPickerOptionBackend(
+		func(name string) string {
+			switch name {
+			case intpicker.BackendEnv:
+				return ""
+			case "XDG_CONFIG_HOME":
+				return configHome
+			case "XDG_STATE_HOME":
+				return t.TempDir()
+			default:
+				return os.Getenv(name)
+			}
+		},
+		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			nativeCalled = true
+			return intpicker.Result{Key: "enter", Value: "ai"}, nil
+		}),
+		switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			fzfCalled = true
+			return intfzf.Result{}, nil
+		}),
+		intfzf.Options{UI: "settings"},
+	)
+	if err != nil {
+		t.Fatalf("runPickerOptionBackend() error = %v", err)
+	}
+	if !nativeCalled {
+		t.Fatal("native runner was not called for default picker backend")
+	}
+	if fzfCalled {
+		t.Fatal("fzf runner was called for default picker backend")
 	}
 	if result.Value != "ai" {
 		t.Fatalf("result = %#v, want native selection", result)

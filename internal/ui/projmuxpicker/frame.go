@@ -82,13 +82,18 @@ func RenderFullFrameUpdate(w io.Writer, frame string) {
 }
 
 func (r Renderer) ContentLayout(layout Layout) Layout {
+	return r.ContentLayoutWithTitle(layout, "")
+}
+
+func (r Renderer) ContentLayoutWithTitle(layout Layout, title string) Layout {
 	if layout.Rows <= 0 {
 		layout.Rows = DefaultRows
 	}
 	if layout.Cols <= 0 {
 		layout.Cols = DefaultCols
 	}
-	rows := max(layout.Rows-2, 1)
+	rows := layout.Rows - 2 - frameTitlebarRows(title)
+	rows = max(rows, 1)
 	cols := max(layout.Cols-2, 1)
 	return Layout{Rows: rows, Cols: cols}
 }
@@ -111,12 +116,16 @@ func (r Renderer) RenderFrameWithTitle(w io.Writer, content, title string, layou
 		height = DefaultRows
 	}
 	innerWidth := width - 2
-	innerHeight := max(height-2, 1)
+	titlebarRows := frameTitlebarRows(title)
+	innerHeight := max(height-2-titlebarRows, 0)
 
 	theme := r.Theme
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	fmt.Fprint(w, frameTopBorder(theme, innerWidth, title))
-	fmt.Fprint(w, "\r\n")
+	fmt.Fprintf(w, "%s%s%s\r\n", theme.TopLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.TopRight)
+	if titlebarRows > 0 {
+		fmt.Fprint(w, frameTitlebarLine(theme, innerWidth, title))
+		fmt.Fprint(w, "\r\n")
+	}
 	for i := range innerHeight {
 		line := ""
 		if i < len(lines) {
@@ -127,10 +136,17 @@ func (r Renderer) RenderFrameWithTitle(w io.Writer, content, title string, layou
 	fmt.Fprintf(w, "%s%s%s", theme.BottomLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.BottomRight)
 }
 
-func frameTopBorder(theme Theme, innerWidth int, title string) string {
+func frameTitlebarRows(title string) int {
+	if strings.TrimSpace(title) == "" {
+		return 0
+	}
+	return 1
+}
+
+func frameTitlebarLine(theme Theme, innerWidth int, title string) string {
 	title = strings.TrimSpace(title)
 	if title == "" || innerWidth < 4 {
-		return theme.TopLeft + strings.Repeat(theme.Horizontal, innerWidth) + theme.TopRight
+		return theme.Vertical + strings.Repeat(" ", innerWidth) + theme.Vertical
 	}
 	labelWidthLimit := innerWidth - 2
 	label := " " + TruncateANSI(title, labelWidthLimit) + " "
@@ -139,13 +155,10 @@ func frameTopBorder(theme Theme, innerWidth int, title string) string {
 		label = TruncateANSI(label, innerWidth)
 		labelWidth = VisibleLen(label)
 	}
-	leftRuleWidth := 1
-	rightRuleWidth := max(innerWidth-leftRuleWidth-labelWidth, 0)
-	return theme.TopLeft +
-		strings.Repeat(theme.Horizontal, leftRuleWidth) +
+	return theme.Vertical +
 		label +
-		strings.Repeat(theme.Horizontal, rightRuleWidth) +
-		theme.TopRight
+		strings.Repeat(" ", max(innerWidth-labelWidth, 0)) +
+		theme.Vertical
 }
 
 func writeFrameDiff(w io.Writer, previous, next string) {

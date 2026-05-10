@@ -755,7 +755,7 @@ func sidebarPopupHeight(clientHeight int) string {
 	if clientHeight <= 0 {
 		return "100%"
 	}
-	return fmt.Sprintf("%d", max(clientHeight-3, 1))
+	return fmt.Sprintf("%d", max(clientHeight-2, 1))
 }
 
 func inheritPopupPickerEnv(env map[string]string, lookupEnv func(string) string) {

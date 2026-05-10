@@ -60,10 +60,9 @@ sub-verbs are entry hooks invoked by tmux keybindings (e.g.
 `sidebar-focus` is wired to the sidebar's focus binding so navigation keeps
 the active session in sync).
 
-Settings > Labs > Picker Engine can opt into the experimental native picker
-backend. `PROJMUX_PICKER_BACKEND=native` is still supported as an environment
-override and takes priority over the saved Labs setting. fzf remains the default
-and fallback backend while native parity continues to mature.
+Settings > Labs > Picker Engine can switch between the default native picker
+backend and the external fzf fallback. `PROJMUX_PICKER_BACKEND=fzf` is supported
+as an environment override and takes priority over the saved Labs setting.
 
 ## setup
 
@@ -415,7 +414,7 @@ flags with the top-level `switch` UX:
   additional search roots, not the primary root. Icons & Decorations stores
   `~/.config/projmux/statusbar-decoration` as `off` (default), `symbol`, or
   `emoji` and updates the live tmux option when available. Labs stores
-  `~/.config/projmux/picker-backend` as `fzf` (default) or `native` and updates
+  `~/.config/projmux/picker-backend` as `native` (default) or `fzf` and updates
   the live tmux `PROJMUX_PICKER_BACKEND` environment when available. The About
   section reads the cached update status without network access;
   selecting Check Updates runs `projmux update check`, and Update Now runs

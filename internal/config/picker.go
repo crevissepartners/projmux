@@ -11,18 +11,21 @@ import (
 const (
 	PickerBackendFileName = "picker-backend"
 
-	PickerBackendFZF    PickerBackend = "fzf"
-	PickerBackendNative PickerBackend = "native"
+	PickerBackendFZF     PickerBackend = "fzf"
+	PickerBackendNative  PickerBackend = "native"
+	DefaultPickerBackend               = PickerBackendNative
 )
 
 type PickerBackend string
 
 func NormalizePickerBackend(value string) PickerBackend {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(PickerBackendFZF):
+		return PickerBackendFZF
 	case string(PickerBackendNative):
 		return PickerBackendNative
 	default:
-		return PickerBackendFZF
+		return DefaultPickerBackend
 	}
 }
 
@@ -32,14 +35,14 @@ func (p Paths) PickerBackendFile() string {
 
 func LoadPickerBackendFile(path string) (PickerBackend, error) {
 	if strings.TrimSpace(path) == "" {
-		return PickerBackendFZF, nil
+		return DefaultPickerBackend, nil
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return PickerBackendFZF, nil
+			return DefaultPickerBackend, nil
 		}
-		return PickerBackendFZF, fmt.Errorf("read picker backend file: %w", err)
+		return DefaultPickerBackend, fmt.Errorf("read picker backend file: %w", err)
 	}
 	return NormalizePickerBackend(string(content)), nil
 }

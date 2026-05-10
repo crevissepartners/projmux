@@ -60,18 +60,39 @@ func TestRendererRenderFrameWithTitleKeepsDefaultWhenTitleEmpty(t *testing.T) {
 	}
 }
 
-func TestRendererRenderFrameWithTitleUsesTopBorderTitle(t *testing.T) {
+func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
-	DefaultRenderer().RenderFrameWithTitle(&out, "hello", "Projects", Layout{Rows: 4, Cols: 24})
+	DefaultRenderer().RenderFrameWithTitle(&out, "hello", "Projects", Layout{Rows: 5, Cols: 24})
 
 	lines := strings.Split(out.String(), "\r\n")
-	if !strings.Contains(lines[0], " Projects ") {
-		t.Fatalf("top frame row = %q, want title in top border", lines[0])
+	if got, want := len(lines), 5; got != want {
+		t.Fatalf("frame line count = %d, want exact layout rows %d: %q", got, want, out.String())
 	}
-	if got, want := VisibleLen(lines[0]), 24; got != want {
-		t.Fatalf("top frame width = %d, want %d: %q", got, want, lines[0])
+	if strings.Contains(lines[0], "Projects") {
+		t.Fatalf("top frame row = %q, want plain border without title text", lines[0])
+	}
+	if !strings.Contains(lines[1], " Projects ") {
+		t.Fatalf("titlebar row = %q, want title inside picker-owned titlebar", lines[1])
+	}
+	if got, want := VisibleLen(lines[1]), 24; got != want {
+		t.Fatalf("titlebar row width = %d, want %d: %q", got, want, lines[1])
+	}
+	if !strings.Contains(lines[2], "hello") {
+		t.Fatalf("content row = %q, want content below titlebar", lines[2])
+	}
+}
+
+func TestRendererContentLayoutWithTitleReservesTitlebarRow(t *testing.T) {
+	t.Parallel()
+
+	layout := DefaultRenderer().ContentLayoutWithTitle(Layout{Rows: 10, Cols: 40}, "Projects")
+	if got, want := layout.Rows, 7; got != want {
+		t.Fatalf("ContentLayoutWithTitle().Rows = %d, want frame inner height minus titlebar %d", got, want)
+	}
+	if got, want := layout.Cols, 38; got != want {
+		t.Fatalf("ContentLayoutWithTitle().Cols = %d, want frame inner width %d", got, want)
 	}
 }
 

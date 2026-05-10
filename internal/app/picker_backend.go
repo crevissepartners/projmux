@@ -22,11 +22,11 @@ func resolvePickerBackendWithConfig(homeDir func() (string, error), lookupEnv fu
 
 	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
 	if err != nil {
-		return intpicker.BackendFZF
+		return intpicker.BackendNative
 	}
 	mode, err := config.LoadPickerBackendFile(paths.PickerBackendFile())
 	if err != nil {
-		return intpicker.BackendFZF
+		return intpicker.BackendNative
 	}
 	return pickerBackendFromConfig(mode)
 }
@@ -42,16 +42,20 @@ func pickerBackendFromEnv(lookupEnv func(string) string) (intpicker.Backend, boo
 	switch strings.ToLower(raw) {
 	case string(intpicker.BackendNative):
 		return intpicker.BackendNative, true
-	default:
+	case string(intpicker.BackendFZF):
 		return intpicker.BackendFZF, true
+	default:
+		return intpicker.BackendNative, true
 	}
 }
 
 func pickerBackendFromConfig(mode config.PickerBackend) intpicker.Backend {
-	if config.NormalizePickerBackend(string(mode)) == config.PickerBackendNative {
+	switch config.NormalizePickerBackend(string(mode)) {
+	case config.PickerBackendFZF:
+		return intpicker.BackendFZF
+	default:
 		return intpicker.BackendNative
 	}
-	return intpicker.BackendFZF
 }
 
 func pickerBackendConfigPaths(homeDir func() (string, error), lookupEnv func(string) string) (config.Paths, error) {

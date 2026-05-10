@@ -81,6 +81,8 @@ func TestAppRunTmuxPopupSwitchUsesCurrentPanePathAndDefaultOptions(t *testing.T)
 	wantOptions := inttmux.PopupOptions{
 		Width:         "80%",
 		Height:        "70%",
+		Env:           map[string]string{intpicker.BackendEnv: string(intpicker.BackendNative)},
+		NoBorder:      true,
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 	if !reflect.DeepEqual(popup.options, wantOptions) {
@@ -116,6 +118,8 @@ func TestAppRunTmuxPopupSessionsUsesDefaultOptions(t *testing.T) {
 	wantOptions := inttmux.PopupOptions{
 		Width:         "80%",
 		Height:        "75%",
+		Env:           map[string]string{intpicker.BackendEnv: string(intpicker.BackendNative)},
+		NoBorder:      true,
 		CloseBehavior: inttmux.PopupCloseOnExit,
 	}
 	if !reflect.DeepEqual(popup.options, wantOptions) {
@@ -204,6 +208,8 @@ func TestAppRunTmuxPopupCommandsUseMinimumReadableSizes(t *testing.T) {
 			wantOptions: inttmux.PopupOptions{
 				Width:         "120",
 				Height:        "28",
+				Env:           map[string]string{intpicker.BackendEnv: string(intpicker.BackendNative)},
+				NoBorder:      true,
 				CloseBehavior: inttmux.PopupCloseOnExit,
 			},
 		},
@@ -214,6 +220,8 @@ func TestAppRunTmuxPopupCommandsUseMinimumReadableSizes(t *testing.T) {
 			wantOptions: inttmux.PopupOptions{
 				Width:         "120",
 				Height:        "28",
+				Env:           map[string]string{intpicker.BackendEnv: string(intpicker.BackendNative)},
+				NoBorder:      true,
 				CloseBehavior: inttmux.PopupCloseOnExit,
 			},
 		},
@@ -278,15 +286,17 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"display-popup",
 		"-t", "%1",
 		"-E",
+		"-B",
 		"-d", "/tmp/work tree",
 		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-1",
+		"-e", "PROJMUX_PICKER_BACKEND=native",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_PANE=%1",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_SESSION=work",
 		"-x", "0",
 		"-y", "0",
-		"-w", "56",
-		"-h", "47",
+		"-w", "40",
+		"-h", "48",
 	}
 	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
@@ -378,7 +388,7 @@ func TestNotifySidebarWidthMatchesFZFBaseline(t *testing.T) {
 func TestSidebarPopupHeightLeavesStatusbarRows(t *testing.T) {
 	t.Parallel()
 
-	if got, want := sidebarPopupHeight(50), "47"; got != want {
+	if got, want := sidebarPopupHeight(50), "48"; got != want {
 		t.Fatalf("sidebarPopupHeight(50) = %q, want %q", got, want)
 	}
 	if got, want := sidebarPopupHeight(1), "1"; got != want {
@@ -464,7 +474,7 @@ func TestAppRunTmuxPopupToggleKeepsNotifySidebarFZFSizingForNative(t *testing.T)
 	if !containsTmuxArgPair(got.args, "-x", "136") {
 		t.Fatalf("display call = %#v, want right edge position based on fzf baseline width", got)
 	}
-	if !containsTmuxArgPair(got.args, "-h", "47") {
+	if !containsTmuxArgPair(got.args, "-h", "48") {
 		t.Fatalf("display call = %#v, want native notify sidebar to leave statusbar rows uncovered", got)
 	}
 }
@@ -510,11 +520,13 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 				"display-popup",
 				"-c", clientKey,
 				"-E",
+				"-B",
 				"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-2",
+				"-e", "PROJMUX_PICKER_BACKEND=native",
 				"-x", "136",
 				"-y", "0",
 				"-w", "64",
-				"-h", "47",
+				"-h", "48",
 			}
 			if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
 				t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
@@ -637,8 +649,10 @@ func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
 		"display-popup",
 		"-t", "%1",
 		"-E",
+		"-B",
 		"-d", "/tmp/work tree",
 		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-4",
+		"-e", "PROJMUX_PICKER_BACKEND=native",
 		"-e", "TMUX_SPLIT_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SPLIT_TARGET_PANE=%1",
 		"-w", "96",
