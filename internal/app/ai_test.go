@@ -563,7 +563,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 	for _, want := range []string{
 		"--app-name=projmux.TmuxCodex",
 		"projmux.TmuxCodex",
-		filepath.Join(home, ".local", "share", "projmux", "icons", "codex.svg"),
+		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
 		"Codex 승인 필요 · approval needed",
 		"검토 대기: approval needed · projmux/main",
 	} {
@@ -641,7 +641,7 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 		"projmux.TmuxCodex",
 		"%9",
 		"repo",
-		filepath.Join(home, ".local", "share", "projmux", "icons", "codex.svg"),
+		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
 	}) {
 		t.Fatalf("commands = %#v, want notification hook dispatch", commands)
 	}
@@ -659,8 +659,8 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 	psPath := "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 	localAppDataWin := `C:\Users\me\AppData\Local`
 	localAppDataWSL := filepath.Join(home, "windows-localappdata")
-	iconWSL := filepath.Join(localAppDataWSL, "projmux", "icons", "codex.png")
-	iconWin := `C:\Users\me\AppData\Local\projmux\icons\codex.png`
+	iconWSL := filepath.Join(localAppDataWSL, "projmux", "icons", "projmux.png")
+	iconWin := `C:\Users\me\AppData\Local\projmux\icons\projmux.png`
 	cmd := testAICommand(home)
 	cmd.now = func() time.Time { return time.Unix(1000, 0) }
 	cmd.lookupEnv = func(name string) string {
@@ -953,7 +953,7 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 	}
 	for _, want := range []string{
 		"projmux.TmuxCodex",
-		filepath.Join(home, ".local", "share", "projmux", "icons", "claude.svg"),
+		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
 		"Claude 승인 필요 · approval needed",
 	} {
 		if !containsAICommandArgSubstring(commands, want) {
