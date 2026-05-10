@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 // statusbarFakeRunner records every call so tests can assert on exec args
@@ -38,6 +40,10 @@ func newStatusbarTestCommand(runner *statusbarFakeRunner, store notifyStore) *st
 	c := &statusbarCommand{
 		runner:     runner,
 		executable: func() (string, error) { return "/usr/local/bin/projmux", nil },
+		usageStateFn: func(context.Context) (statusbarUsageState, error) {
+			return statusbarUsageState{}, nil
+		},
+		now: func() time.Time { return time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC) },
 	}
 	if store != nil {
 		c.notifyStoreFn = func() (notifyStore, error) { return store, nil }
@@ -418,11 +424,35 @@ func TestStatusbarClickPopupActionBinaryResolutionFailureShowsToast(t *testing.T
 	}
 }
 
-func TestStatusbarClickUsageOpensPopup(t *testing.T) {
+func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	cmd.now = func() time.Time { return now }
+	cmd.usageStateFn = func(context.Context) (statusbarUsageState, error) {
+		return statusbarUsageState{
+			LastSync:       now.Add(-45 * time.Second),
+			LastSyncSource: "last collect",
+			Snapshots: []coreusage.Snapshot{
+				{
+					Model:    "claude",
+					Window:   coreusage.Window5h,
+					Tokens:   800,
+					Limit:    1000,
+					Pct:      80,
+					ResetsAt: now.Add(2 * time.Hour),
+				},
+				{
+					Model:    "codex",
+					Window:   coreusage.WindowWeekly,
+					Pct:      12,
+					ResetsAt: time.Time{},
+				},
+			},
+		}, nil
+	}
 
 	if err := cmd.Run([]string{"click", "usage"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -430,11 +460,146 @@ func TestStatusbarClickUsageOpensPopup(t *testing.T) {
 	if !sawTmuxSubcommand(runner.calls, "display-popup") {
 		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
 	}
-	if !sawTmuxPopupCommandContaining(runner.calls, "Press Enter to close.") {
+	if !sawTmuxArgsContainInOrder(runner.calls, []string{"display-popup", "-T", "Usage"}) {
+		t.Fatalf("missing usage popup title; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Enter closes this popup.") {
 		t.Fatalf("missing enter-to-close prompt; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Claude") || !sawTmuxPopupCommandContaining(runner.calls, "Codex") {
+		t.Fatalf("missing model rows; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "800") || !sawTmuxPopupCommandContaining(runner.calls, "200") {
+		t.Fatalf("missing used/remaining values; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "80%") {
+		t.Fatalf("missing percentage value; calls = %#v", runner.calls)
+	}
+	if sawTmuxPopupCommandContaining(runner.calls, "/usr/local/bin/projmux") || sawTmuxPopupCommandContaining(runner.calls, " usage") {
+		t.Fatalf("usage popup should render structured content, not run raw projmux usage; calls = %#v", runner.calls)
 	}
 	if sawTmuxPopupCommandContaining(runner.calls, "read -n1 -s") {
 		t.Fatalf("usage popup should wait for Enter, not any key; calls = %#v", runner.calls)
+	}
+	command, ok := firstTmuxPopupCommand(runner.calls)
+	if !ok {
+		t.Fatalf("missing popup command; calls = %#v", runner.calls)
+	}
+	if !strings.HasPrefix(command, "printf %s ") || strings.Contains(command, "printf '%s\\n'") {
+		t.Fatalf("usage popup command = %q, want single-payload printf", command)
+	}
+	if !strings.Contains(command, "; IFS= read -r _") {
+		t.Fatalf("usage popup command = %q, want simple Enter read", command)
+	}
+	for _, call := range runner.calls {
+		if call.name == "/usr/local/bin/projmux" || sawArgsContain(call.args, "popup-toggle") {
+			t.Fatalf("usage click must remain direct display-popup, not popup-toggle; calls = %#v", runner.calls)
+		}
+	}
+}
+
+func TestStatusbarUsagePopupColorsThresholdsAndStaleSync(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	popup := statusbarUsagePopup(statusbarUsageState{
+		LastSync:       now.Add(-2 * time.Minute),
+		LastSyncSource: "last collect",
+		Snapshots: []coreusage.Snapshot{
+			{Model: "claude", Window: coreusage.Window5h, Pct: 94.9, ResetsAt: now.Add(time.Hour)},
+			{Model: "codex", Window: coreusage.Window5h, Pct: 95, ResetsAt: now.Add(time.Hour)},
+		},
+	}, now)
+
+	if !strings.Contains(popup.Command, "\x1b[38;5;214m") {
+		t.Fatalf("popup missing amber ANSI for stale sync / >=80%% usage: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, "\x1b[38;5;196m") {
+		t.Fatalf("popup missing red ANSI for >=95%% usage: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, "2m ago") {
+		t.Fatalf("popup missing sync age: %q", popup.Command)
+	}
+}
+
+func TestStatusbarUsageStateSyncPrefersLastCollectThenCacheMTime(t *testing.T) {
+	t.Parallel()
+
+	cacheMTime := time.Date(2026, time.May, 10, 11, 58, 0, 0, time.UTC)
+	lastCollect := time.Date(2026, time.May, 10, 11, 59, 0, 0, time.UTC)
+
+	fromLastCollect := statusbarUsageStateFromCache(coreusage.State{
+		LastCollect: map[string]time.Time{
+			"claude": lastCollect.Add(-time.Minute),
+			"codex":  lastCollect,
+		},
+		Snapshots: []coreusage.Snapshot{
+			{Model: "codex", Window: coreusage.WindowWeekly, Pct: 12},
+			{Model: "claude", Window: coreusage.Window5h, Pct: 80},
+		},
+	}, cacheMTime)
+	if !fromLastCollect.LastSync.Equal(lastCollect) {
+		t.Fatalf("LastSync = %v, want latest LastCollect %v", fromLastCollect.LastSync, lastCollect)
+	}
+	if fromLastCollect.LastSyncSource != "last collect" {
+		t.Fatalf("LastSyncSource = %q, want last collect", fromLastCollect.LastSyncSource)
+	}
+	if got := fromLastCollect.Snapshots[0].Model; got != "claude" {
+		t.Fatalf("Snapshots not sorted, first model = %q", got)
+	}
+
+	fromMTime := statusbarUsageStateFromCache(coreusage.State{}, cacheMTime)
+	if !fromMTime.LastSync.Equal(cacheMTime) {
+		t.Fatalf("LastSync = %v, want cache mtime %v", fromMTime.LastSync, cacheMTime)
+	}
+	if fromMTime.LastSyncSource != "cache mtime" {
+		t.Fatalf("LastSyncSource = %q, want cache mtime", fromMTime.LastSyncSource)
+	}
+}
+
+func TestStatusbarUsagePopupDimsUnavailableValues(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	popup := statusbarUsagePopup(statusbarUsageState{
+		Snapshots: []coreusage.Snapshot{
+			{Model: "claude", Window: coreusage.WindowWeekly, Pct: 33},
+		},
+	}, now)
+
+	if !strings.Contains(popup.Command, projmuxpicker.MutedStart) {
+		t.Fatalf("popup missing dim ANSI for unavailable values: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, "33%") {
+		t.Fatalf("popup missing available percentage: %q", popup.Command)
+	}
+}
+
+func TestStatusbarClickUsageFallsBackToToastWhenPopupFails(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{
+		respond: func(name string, args []string) ([]byte, error) {
+			if name == "tmux" && len(args) > 0 && args[0] == "display-popup" {
+				return nil, errors.New("popup unavailable")
+			}
+			return nil, nil
+		},
+	}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	cmd.usageStateFn = func(context.Context) (statusbarUsageState, error) {
+		return statusbarUsageState{
+			Snapshots: []coreusage.Snapshot{
+				{Model: "claude", Window: coreusage.Window5h, Pct: 25, ResetsAt: time.Date(2026, time.May, 10, 13, 0, 0, 0, time.UTC)},
+			},
+		}, nil
+	}
+
+	if err := cmd.Run([]string{"click", "usage"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "usage: Claude 5h 25%") {
+		t.Fatalf("missing usage fallback toast; calls = %#v", runner.calls)
 	}
 }
 
@@ -1029,6 +1194,10 @@ func sliceContainsPair(values []string, key, value string) bool {
 		}
 	}
 	return false
+}
+
+func sawArgsContain(values []string, want string) bool {
+	return slices.Contains(values, want)
 }
 
 // fakeExitError simulates the shape of a subprocess exit error: it carries a

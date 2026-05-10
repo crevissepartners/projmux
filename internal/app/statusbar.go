@@ -22,9 +22,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -55,6 +57,8 @@ type statusbarCommand struct {
 	runner        statusbarRunner
 	executable    func() (string, error)
 	notifyStoreFn func() (notifyStore, error)
+	usageStateFn  func(context.Context) (statusbarUsageState, error)
+	now           func() time.Time
 }
 
 // newStatusbarCommand builds the production wiring: real tmux + projmux exec
@@ -64,6 +68,7 @@ func newStatusbarCommand() *statusbarCommand {
 		runner:        statusbarExecRunner{},
 		executable:    os.Executable,
 		notifyStoreFn: defaultStatusbarNotifyStore,
+		now:           time.Now,
 	}
 }
 
@@ -429,24 +434,83 @@ func (c *statusbarCommand) handlePopupToggleWithClient(stderr io.Writer, label, 
 	return nil
 }
 
-// handleUsage opens the full `projmux usage` table inside a popup so users can
-// see per-window detail without leaving tmux. Falls back to display-message if
-// the popup itself fails (defensive — tmux 3.4+ supports popups everywhere).
+// handleUsage opens a native-framed usage HUD popup so users can inspect
+// per-window detail without leaving tmux. It stays a direct display-popup
+// action, not a popup-toggle mode, so the existing status key behaviour does
+// not introduce a new stacking popup surface.
 func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Writer) error {
-	binaryPath, err := c.resolveBinary()
+	ctx := context.Background()
+	state, err := c.loadUsageState(ctx)
 	if err != nil {
-		return c.runTmux(stderr, "display-message", "statusbar usage: cannot resolve projmux binary")
+		fmt.Fprintf(stderr, "statusbar usage: load usage state: %v\n", err)
+		state.LoadError = err
 	}
-	popupShell := tmuxShellQuote(binaryPath) + " usage; printf '\\nPress Enter to close.\\n'; IFS= read -r _"
-	if err := c.runTmuxNoFallback(stderr, "display-popup", "-E", "-h", "60%", "-w", "80%", popupShell); err == nil {
+	popup := statusbarUsagePopup(state, c.nowTime())
+	if err := c.runTmuxNoFallback(stderr,
+		"display-popup",
+		"-E",
+		"-w", strconv.Itoa(popup.Width),
+		"-h", strconv.Itoa(popup.Height),
+		"-T", popup.Title,
+		popup.Command,
+	); err == nil {
 		return nil
 	}
-	// Fallback path: inline the rendered table into a one-shot message.
-	out, runErr := c.runner.Run(context.Background(), binaryPath, "usage")
-	if runErr != nil {
-		return c.runTmux(stderr, "display-message", "statusbar usage: invocation failed")
+	return c.runTmux(stderr, "display-message", popup.Toast)
+}
+
+func (c *statusbarCommand) loadUsageState(ctx context.Context) (statusbarUsageState, error) {
+	if c.usageStateFn != nil {
+		return c.usageStateFn(ctx)
 	}
-	return c.runTmux(stderr, "display-message", strings.TrimSpace(string(out)))
+	return c.defaultUsageState(ctx)
+}
+
+func (c *statusbarCommand) defaultUsageState(_ context.Context) (statusbarUsageState, error) {
+	cmd := newUsageCommand()
+	cmd.now = c.nowTime
+	mgr, err := cmd.managerFn()
+	if err != nil {
+		return statusbarUsageState{}, err
+	}
+	state, err := mgr.LoadState()
+	if err != nil {
+		return statusbarUsageState{}, err
+	}
+	var cacheMTime time.Time
+	stateDir, err := cmd.resolveStateDir()
+	if err == nil {
+		if info, statErr := os.Stat(coreusage.NewStore(stateDir).FilePath()); statErr == nil {
+			cacheMTime = info.ModTime()
+		}
+	}
+	return statusbarUsageStateFromCache(state, cacheMTime), nil
+}
+
+func statusbarUsageStateFromCache(state coreusage.State, cacheMTime time.Time) statusbarUsageState {
+	out := statusbarUsageState{
+		Snapshots:  coreusage.SortedSnapshots(state.Snapshots),
+		LastSync:   latestUsageCollect(state.LastCollect),
+		CacheMTime: cacheMTime,
+	}
+	if out.LastSync.IsZero() && !cacheMTime.IsZero() {
+		out.LastSync = cacheMTime
+		out.LastSyncSource = "cache mtime"
+	}
+	if out.LastSyncSource == "" && !out.LastSync.IsZero() {
+		out.LastSyncSource = "last collect"
+	}
+	return out
+}
+
+func latestUsageCollect(values map[string]time.Time) time.Time {
+	var latest time.Time
+	for _, t := range values {
+		if t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
 }
 
 // handleNotify focuses and acknowledges the newest queued notification. If the
@@ -563,6 +627,270 @@ func focusFailureSummary(err error) string {
 type statusbarPathMetadata struct {
 	Project string
 	Git     string
+}
+
+type statusbarUsageState struct {
+	Snapshots      []coreusage.Snapshot
+	LastSync       time.Time
+	LastSyncSource string
+	CacheMTime     time.Time
+	LoadError      error
+}
+
+type statusbarUsagePopupView struct {
+	Title   string
+	Toast   string
+	Command string
+	Width   int
+	Height  int
+}
+
+const statusbarUsageSyncStaleAfter = time.Minute
+
+func statusbarUsagePopup(state statusbarUsageState, now time.Time) statusbarUsagePopupView {
+	const width = 96
+	title := "Usage"
+	lines := statusbarUsagePopupLines(state, now, width-2)
+	content := strings.Join(lines, "\n")
+	height := projmuxpicker.RenderedTextLineCount(content) + 4 + projmuxpicker.TitlebarRows(title)
+	var frame strings.Builder
+	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&frame, content, title, projmuxpicker.Layout{Rows: height, Cols: width})
+
+	payload := strings.ReplaceAll(strings.TrimRight(frame.String(), "\r\n"), "\r\n", "\n") + "\n"
+	command := "printf %s " + tmuxShellQuote(payload) + "; IFS= read -r _"
+	return statusbarUsagePopupView{
+		Title:   title,
+		Toast:   statusbarUsageToast(state),
+		Command: command,
+		Width:   width,
+		Height:  height,
+	}
+}
+
+func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int) []string {
+	rows := statusbarUsageRows(state.Snapshots)
+	lines := []string{
+		statusbarUsageSyncLine(state, now),
+		"",
+		statusbarUsageHeaderLine(),
+		projmuxpicker.SeparatorLine(cols),
+	}
+	if state.LoadError != nil {
+		lines = append(lines, dimANSI("usage data unavailable: "+statusbarUsageErrorSummary(state.LoadError)))
+	} else if len(rows) == 0 {
+		lines = append(lines, dimANSI("No usage data available yet."))
+	} else {
+		for _, row := range rows {
+			lines = append(lines, row.render())
+		}
+	}
+	lines = append(lines, "", projmuxpicker.MutedStart+"Enter closes this popup."+projmuxpicker.Reset)
+	return lines
+}
+
+func statusbarUsageToast(state statusbarUsageState) string {
+	if state.LoadError != nil {
+		return "usage unavailable"
+	}
+	rows := statusbarUsageRows(state.Snapshots)
+	if len(rows) == 0 {
+		return "usage: no data"
+	}
+	parts := make([]string, 0, min(len(rows), 2))
+	for _, row := range rows {
+		parts = append(parts, row.model+" "+row.window+" "+row.pct)
+		if len(parts) == 2 {
+			break
+		}
+	}
+	return "usage: " + strings.Join(parts, " · ")
+}
+
+func statusbarUsageSyncLine(state statusbarUsageState, now time.Time) string {
+	label := projmuxpicker.MutedStart + "sync" + projmuxpicker.Reset + "  "
+	if state.LastSync.IsZero() {
+		return label + dimANSI("never")
+	}
+	local := state.LastSync.Local()
+	value := local.Format("2006-01-02 15:04:05")
+	if age := usageSyncAge(state.LastSync, now); age >= time.Second {
+		value += " (" + formatBackoffDuration(age.Round(time.Second)) + " ago)"
+	}
+	if state.LastSyncSource == "cache mtime" {
+		value += " cache"
+	}
+	if usageSyncStale(state.LastSync, now) {
+		return label + amberANSI(value)
+	}
+	return label + value
+}
+
+func usageSyncAge(last, now time.Time) time.Duration {
+	if last.IsZero() || now.IsZero() {
+		return 0
+	}
+	if last.After(now) {
+		return 0
+	}
+	return now.Sub(last)
+}
+
+func usageSyncStale(last, now time.Time) bool {
+	return usageSyncAge(last, now) > statusbarUsageSyncStaleAfter
+}
+
+type statusbarUsageRow struct {
+	model     string
+	window    string
+	used      string
+	limit     string
+	remaining string
+	pct       string
+	pctValue  float64
+	reset     string
+}
+
+func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
+	snaps = coreusage.SortedSnapshots(snaps)
+	rows := make([]statusbarUsageRow, 0, len(snaps))
+	for _, s := range snaps {
+		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 {
+			continue
+		}
+		row := statusbarUsageRow{
+			model:    modelDisplayLabel(s.Model),
+			window:   string(s.Window),
+			used:     usageCountText(s.Tokens),
+			limit:    usageLimitText(s.Limit),
+			pct:      percentText(s.Pct),
+			pctValue: s.Pct,
+			reset:    usageResetText(s.ResetsAt),
+		}
+		if s.Limit > 0 {
+			row.remaining = formatUsageInt(max(s.Limit-s.Tokens, 0))
+		} else {
+			row.remaining = "-"
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func statusbarUsageHeaderLine() string {
+	return projmuxpicker.MutedStart +
+		fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", "MODEL", "WIN", "USED", "LIMIT", "LEFT", "PCT", "RESET") +
+		projmuxpicker.Reset
+}
+
+func (r statusbarUsageRow) render() string {
+	return fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s",
+		r.model,
+		r.window,
+		styleUnavailableRight(r.used, 10),
+		styleUnavailableRight(r.limit, 10),
+		styleUnavailableRight(r.remaining, 10),
+		statusbarUsagePctANSI(r.pct, r.pctValue, 6),
+		styleUnavailableLeft(r.reset, 16),
+	)
+}
+
+func usageCountText(value int64) string {
+	if value <= 0 {
+		return "-"
+	}
+	return formatUsageInt(value)
+}
+
+func usageLimitText(value int64) string {
+	if value <= 0 {
+		return "-"
+	}
+	return formatUsageInt(value)
+}
+
+func usageResetText(value time.Time) string {
+	if value.IsZero() {
+		return "-"
+	}
+	return value.Local().Format("Jan 02 15:04")
+}
+
+func formatUsageInt(value int64) string {
+	if value == 0 {
+		return "0"
+	}
+	neg := value < 0
+	if neg {
+		value = -value
+	}
+	s := strconv.FormatInt(value, 10)
+	var parts []string
+	for len(s) > 3 {
+		parts = append([]string{s[len(s)-3:]}, parts...)
+		s = s[:len(s)-3]
+	}
+	parts = append([]string{s}, parts...)
+	out := strings.Join(parts, ",")
+	if neg {
+		return "-" + out
+	}
+	return out
+}
+
+func styleUnavailableRight(value string, width int) string {
+	if value == "-" || strings.TrimSpace(value) == "" {
+		return dimANSI(fmt.Sprintf("%*s", width, "-"))
+	}
+	return fmt.Sprintf("%*s", width, value)
+}
+
+func styleUnavailableLeft(value string, width int) string {
+	if value == "-" || strings.TrimSpace(value) == "" {
+		return dimANSI(fmt.Sprintf("%-*s", width, "-"))
+	}
+	return fmt.Sprintf("%-*s", width, value)
+}
+
+func statusbarUsagePctANSI(text string, pct float64, width int) string {
+	padded := fmt.Sprintf("%*s", width, text)
+	switch {
+	case pct >= 95:
+		return redANSI(padded)
+	case pct >= 80:
+		return amberANSI(padded)
+	default:
+		return greenANSI(padded)
+	}
+}
+
+func statusbarUsageErrorSummary(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return "unknown"
+	}
+	if len(msg) > 72 {
+		return msg[:69] + "..."
+	}
+	return msg
+}
+
+func dimANSI(value string) string {
+	return projmuxpicker.MutedStart + value + projmuxpicker.Reset
+}
+
+func amberANSI(value string) string {
+	return "\x1b[38;5;214m" + value + projmuxpicker.Reset
+}
+
+func redANSI(value string) string {
+	return "\x1b[38;5;196m" + value + projmuxpicker.Reset
+}
+
+func greenANSI(value string) string {
+	return "\x1b[38;5;82m" + value + projmuxpicker.Reset
 }
 
 func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path string) statusbarPathMetadata {
@@ -696,6 +1024,13 @@ func (c *statusbarCommand) resolveBinary() (string, error) {
 		return "", errors.New("statusbar projmux binary path is empty")
 	}
 	return binaryPath, nil
+}
+
+func (c *statusbarCommand) nowTime() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // runTmux invokes tmux with the supplied args and swallows any error after
