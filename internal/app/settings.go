@@ -58,31 +58,32 @@ type settingsEntryMeta struct {
 }
 
 var settingsEntryCatalog = map[string]settingsEntryMeta{
-	settingsBackValue:            {Name: "Back", Axis: settingsAxisBoth},
-	settingsNoopValue:            {Name: "Info", Axis: settingsAxisBoth},
-	settingsRootTabGlobalValue:   {Name: "Global Settings", Axis: settingsAxisBoth},
-	settingsRootTabProjectValue:  {Name: "Project Settings", Axis: settingsAxisBoth},
-	settingsSectionProject:       {Name: "Project Picker", Axis: settingsAxisGlobal},
-	settingsSectionGlobalHooks:   {Name: "Hooks", Axis: settingsAxisGlobal},
-	settingsSectionProjectHooks:  {Name: "Hooks", Axis: settingsAxisProject},
-	settingsSectionProjectConfig: {Name: "Project Config", Axis: settingsAxisProject},
-	settingsSectionAI:            {Name: "AI Settings", Axis: settingsAxisGlobal},
-	settingsSectionStatusbar:     {Name: "Appearance", Axis: settingsAxisGlobal},
-	settingsSectionKeybindings:   {Name: "Keybindings", Axis: settingsAxisGlobal},
-	settingsSectionLabs:          {Name: "Labs", Axis: settingsAxisGlobal},
-	settingsSectionAbout:         {Name: "About", Axis: settingsAxisGlobal},
-	settingsProjectAdd:           {Name: "Add Project", Axis: settingsAxisGlobal},
-	settingsProjectPins:          {Name: "Pinned Projects", Axis: settingsAxisGlobal},
-	settingsProjectRootManage:    {Name: "Project Root", Axis: settingsAxisGlobal},
-	settingsProjdirClear:         {Name: "Clear Project Root", Axis: settingsAxisGlobal},
-	settingsProjdirSetCurrent:    {Name: "Use Current Project as Root", Axis: settingsAxisGlobal},
-	settingsProjdirSetTyped:      {Name: "Set Project Root", Axis: settingsAxisGlobal},
-	settingsWorkdirAdd:           {Name: "Add Workdir", Axis: settingsAxisGlobal},
-	settingsWorkdirList:          {Name: "Workdirs", Axis: settingsAxisGlobal},
-	settingsWorkdirTyped:         {Name: "Type Workdir", Axis: settingsAxisGlobal},
-	settingsLabKeybindings:       {Name: "Diagnose Keybindings", Axis: settingsAxisGlobal},
-	settingsUpdateApply:          {Name: "Update Now", Axis: settingsAxisGlobal},
-	settingsUpdateCheck:          {Name: "Check Updates", Axis: settingsAxisGlobal},
+	settingsBackValue:             {Name: "Back", Axis: settingsAxisBoth},
+	settingsNoopValue:             {Name: "Info", Axis: settingsAxisBoth},
+	settingsRootTabGlobalValue:    {Name: "Global Settings", Axis: settingsAxisBoth},
+	settingsRootTabProjectValue:   {Name: "Project Settings", Axis: settingsAxisBoth},
+	settingsSectionProject:        {Name: "Project Picker", Axis: settingsAxisGlobal},
+	settingsSectionGlobalHooks:    {Name: "Hooks", Axis: settingsAxisGlobal},
+	settingsSectionProjectHooks:   {Name: "Hooks", Axis: settingsAxisProject},
+	settingsSectionProjectConfig:  {Name: "Project Config", Axis: settingsAxisProject},
+	settingsSectionEffectiveMerge: {Name: "Effective merge view", Axis: settingsAxisProject},
+	settingsSectionAI:             {Name: "AI Settings", Axis: settingsAxisGlobal},
+	settingsSectionStatusbar:      {Name: "Appearance", Axis: settingsAxisGlobal},
+	settingsSectionKeybindings:    {Name: "Keybindings", Axis: settingsAxisGlobal},
+	settingsSectionLabs:           {Name: "Labs", Axis: settingsAxisGlobal},
+	settingsSectionAbout:          {Name: "About", Axis: settingsAxisGlobal},
+	settingsProjectAdd:            {Name: "Add Project", Axis: settingsAxisGlobal},
+	settingsProjectPins:           {Name: "Pinned Projects", Axis: settingsAxisGlobal},
+	settingsProjectRootManage:     {Name: "Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirClear:          {Name: "Clear Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetCurrent:     {Name: "Use Current Project as Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetTyped:       {Name: "Set Project Root", Axis: settingsAxisGlobal},
+	settingsWorkdirAdd:            {Name: "Add Workdir", Axis: settingsAxisGlobal},
+	settingsWorkdirList:           {Name: "Workdirs", Axis: settingsAxisGlobal},
+	settingsWorkdirTyped:          {Name: "Type Workdir", Axis: settingsAxisGlobal},
+	settingsLabKeybindings:        {Name: "Diagnose Keybindings", Axis: settingsAxisGlobal},
+	settingsUpdateApply:           {Name: "Update Now", Axis: settingsAxisGlobal},
+	settingsUpdateCheck:           {Name: "Check Updates", Axis: settingsAxisGlobal},
 }
 
 var settingsEntryPrefixCatalog = []struct {
@@ -126,6 +127,7 @@ const (
 	settingsSectionGlobalHooks        = "section:hooks-global"
 	settingsSectionProjectHooks       = "section:hooks-project"
 	settingsSectionProjectConfig      = "section:project-config"
+	settingsSectionEffectiveMerge     = "section:effective-merge"
 	settingsSectionKeybindings        = "section:keybindings"
 	settingsSectionProject            = "section:project-picker"
 	settingsSectionStatusbar          = "section:statusbar"
@@ -232,6 +234,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionProjectConfig {
 		return c.runProjectConfigSection(stdout, stderr)
+	}
+	if section == settingsSectionEffectiveMerge {
+		return c.runEffectiveMergeSection(stdout, stderr)
 	}
 	if section == settingsSectionKeybindings {
 		return c.runKeybindingsSection(stdout, stderr)
@@ -454,7 +459,7 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 				Value: settingsNoopValue,
 			},
 			{
-				Label: settingsLabelDim("Effective merge view", "Phase 3"),
+				Label: settingsLabelDim("Effective merge view", "disabled - no project context"),
 				Value: settingsNoopValue,
 			},
 		}
@@ -476,8 +481,8 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 			Value: settingsSectionProjectConfig,
 		},
 		{
-			Label: settingsLabelDim("Effective merge view", "Phase 3"),
-			Value: settingsNoopValue,
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Effective merge view", "global + project merge with source labels"),
+			Value: settingsSectionEffectiveMerge,
 		},
 	}
 }

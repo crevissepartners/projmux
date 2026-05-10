@@ -18,6 +18,7 @@ const (
 	KeymapFileName          = "keymap.toml"
 	HooksDirName            = "hooks"
 	ProjectHooksFileName    = "project-hooks"
+	GlobalConfigFileName    = "config.toml"
 	PostCreateHookFileName  = "post-create"
 	PaneStartupHookFileName = "pane-startup"
 	PostAttachHookFileName  = "post-attach"
@@ -83,6 +84,13 @@ func (p Paths) PostCreateHookPath() string {
 // HookPath returns the default location for a named global lifecycle hook.
 func (p Paths) HookPath(name string) string {
 	return filepath.Join(p.ConfigDir, HooksDirName, name)
+}
+
+// GlobalConfigFile returns the default location for the optional
+// global projmux config.toml that mirrors the project-local config schema
+// (env, kube, startup, hooks).
+func (p Paths) GlobalConfigFile() string {
+	return filepath.Join(p.ConfigDir, GlobalConfigFileName)
 }
 
 // ProjdirFile returns the path to the persisted projdir file rooted at the
