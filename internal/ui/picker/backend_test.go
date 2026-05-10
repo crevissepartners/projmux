@@ -51,6 +51,21 @@ func TestFilterItemsUsesSearchTextNotMetadata(t *testing.T) {
 	}
 }
 
+func TestFilterItemsKeepsInputOrderForSearchKeyRows(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "codex", Value: "codex", SearchText: "codex openai cli"},
+		{Title: "claude", Value: "claude", SearchText: "claude anthropic cli"},
+		{Title: "shell", Value: "shell", SearchText: "shell plain no agent"},
+	}
+
+	filtered := FilterItems(items, "cli")
+	if got, want := valuesOf(filtered), []string{"codex", "claude"}; !equalStringSlices(got, want) {
+		t.Fatalf("FilterItems(cli) values = %#v, want stable source order %#v", got, want)
+	}
+}
+
 func TestFilterItemsRanksBetterMatchesFirst(t *testing.T) {
 	t.Parallel()
 
