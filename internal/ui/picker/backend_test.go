@@ -701,6 +701,12 @@ func TestNativeInteractiveRendersOptionalTitlebar(t *testing.T) {
 	if !strings.Contains(lines[1], projmuxpicker.TitlebarStart) || !strings.Contains(lines[1], projmuxpicker.TitlebarRule+"─") {
 		t.Fatalf("native titlebar row = %q, want styled titlebar with rule fill", lines[1])
 	}
+	if !strings.HasPrefix(lines[2], "├") || !strings.Contains(lines[2], projmuxpicker.TitlebarRule+"─") {
+		t.Fatalf("native titlebar divider row = %q, want divider between title and search", lines[2])
+	}
+	if !strings.Contains(lines[3], "Search") {
+		t.Fatalf("native search row = %q, want search below title divider", lines[3])
+	}
 }
 
 func TestNativeInteractiveSeparatesSearchHeaderFromList(t *testing.T) {

@@ -723,9 +723,7 @@ func nativeMouseItemIndex(options Options, items []Item, selected int, layout na
 		return selected, false
 	}
 	contentRow := y - 2
-	if strings.TrimSpace(options.Title) != "" {
-		contentRow--
-	}
+	contentRow -= projmuxpicker.TitlebarRows(options.Title)
 	if contentRow < 0 || contentRow >= contentLayout.Rows {
 		return selected, false
 	}
