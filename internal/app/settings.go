@@ -36,12 +36,14 @@ const (
 	settingsBackValue             = "__settings_back__"
 	settingsNoopValue             = "__settings_noop__"
 	settingsSectionAI             = "section:ai"
+	settingsSectionKeybindings    = "section:keybindings"
 	settingsSectionProject        = "section:project-picker"
 	settingsSectionStatusbar      = "section:statusbar"
 	settingsSectionLabs           = "section:labs"
 	settingsSectionAbout          = "section:about"
 	settingsActionPrefixAI        = "ai:"
 	settingsActionPrefixHooks     = "project-hooks:"
+	settingsActionPrefixKeymap    = "keymap:"
 	settingsActionPrefixPicker    = "picker-backend:"
 	settingsActionPrefixProjdir   = "projdir:"
 	settingsActionPrefixStatusbar = "statusbar-decoration:"
@@ -59,6 +61,8 @@ const (
 	settingsWorkdirAdd            = "workdir:add"
 	settingsWorkdirList           = "workdir:list"
 	settingsWorkdirTyped          = "workdir:typed"
+	settingsKeymapFieldPlain      = "plain"
+	settingsKeymapFieldPrefix     = "prefix"
 )
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand) *settingsCommand {
@@ -118,6 +122,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	if section == settingsSectionProject {
 		return c.runProjectPickerSection(stdout, stderr)
 	}
+	if section == settingsSectionKeybindings {
+		return c.runKeybindingsSection(stdout, stderr)
+	}
 
 	for {
 		options, err := c.sectionOptions(section)
@@ -171,6 +178,10 @@ func (c *settingsCommand) rootEntries() []intpickercompat.Entry {
 			Value: settingsSectionStatusbar,
 		},
 		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Keybindings", "edit tmux plain and prefix chords"),
+			Value: settingsSectionKeybindings,
+		},
+		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Labs", "experimental picker engine"),
 			Value: settingsSectionLabs,
 		},
@@ -210,6 +221,26 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Title:      "Appearance - Status and popup decoration mode",
 			Prompt:     "Settings > Appearance > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		}, nil
+	case settingsSectionKeybindings:
+		entries, err := c.keybindingEntries()
+		if err != nil {
+			entries = []intpickercompat.Entry{
+				settingsBackEntry(),
+				{
+					Label: settingsLabelDim("Keymap error", err.Error()),
+					Value: settingsNoopValue,
+				},
+			}
+		}
+		return intpickercompat.Options{
+			UI:         "settings-keybindings",
+			Entries:    entries,
+			Title:      "Keybindings - Edit tmux plain and prefix chords",
+			Prompt:     "Settings > Keybindings > ",
+			Footer:     projmuxFooter("Enter: edit  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -971,6 +1002,301 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 		})
 	}
 	return entries
+}
+
+func (c *settingsCommand) runKeybindingsSection(stdout, stderr io.Writer) error {
+	for {
+		options, err := c.sectionOptions(settingsSectionKeybindings)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		if after, ok := strings.CutPrefix(action, settingsActionPrefixKeymap); ok {
+			id := after
+			if err := c.runKeybindingDetail(id, stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
+		return fmt.Errorf("unknown keybinding settings action: %s", action)
+	}
+}
+
+func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io.Writer) error {
+	for {
+		entries, title, err := c.keybindingDetailEntries(actionID)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-keybinding-detail",
+			Entries:    entries,
+			Title:      title,
+			Prompt:     "Settings > Keybindings > Action > ",
+			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		field, op, ok := parseKeymapDetailAction(action, actionID)
+		if !ok {
+			return fmt.Errorf("unknown keybinding detail action: %s", action)
+		}
+		switch op {
+		case "set":
+			if err := c.runKeybindingTyped(actionID, field, stdout, stderr); err != nil {
+				return err
+			}
+		case "disable":
+			disabled := ""
+			if err := c.saveKeymapAndApply(actionID, field, &disabled, stdout); err != nil {
+				return err
+			}
+		case "reset":
+			if err := c.saveKeymapAndApply(actionID, field, nil, stdout); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown keybinding operation: %s", op)
+		}
+	}
+}
+
+func parseKeymapDetailAction(value, actionID string) (string, string, bool) {
+	prefix := settingsActionPrefixKeymap + actionID + ":"
+	if !strings.HasPrefix(value, prefix) {
+		return "", "", false
+	}
+	field, op, ok := strings.Cut(strings.TrimPrefix(value, prefix), ":")
+	if !ok {
+		return "", "", false
+	}
+	if field != settingsKeymapFieldPlain && field != settingsKeymapFieldPrefix {
+		return "", "", false
+	}
+	return field, op, op == "set" || op == "disable" || op == "reset"
+}
+
+func (c *settingsCommand) runKeybindingTyped(actionID, field string, stdout, stderr io.Writer) error {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	initial := action.PlainChord
+	if field == settingsKeymapFieldPrefix {
+		initial = action.PrefixChord
+	}
+	result, err := c.runPicker(intpickercompat.Options{
+		UI:           "settings-keybinding-typed",
+		Entries:      nil,
+		AcceptQuery:  true,
+		InitialQuery: initial,
+		Title:        "Set Keybinding - Type a tmux chord string",
+		Prompt:       "Type tmux chord > ",
+		Footer:       projmuxFooter("Enter: save empty disables  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys:   []string{"enter"},
+		Bindings:     settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+	if result.Key != "enter" {
+		return nil
+	}
+	typed := strings.TrimSpace(result.Query)
+	if err := validateKeymapChord(typed); err != nil {
+		fmt.Fprintf(stderr, "invalid keybinding chord: %v\n", err)
+		return nil
+	}
+	return c.saveKeymapAndApply(actionID, field, &typed, stdout)
+}
+
+func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return nil, err
+	}
+	defaults := defaultKeyBindingCatalog()
+	entries := make([]intpickercompat.Entry, 0, len(actions)+2)
+	entries = append(entries, settingsBackEntry())
+	entries = append(entries, intpickercompat.Entry{
+		Label: "  " + settingsColorDim + "Terminal fallback mappings still require rerunning projmux init and restarting the terminal where applicable." + settingsColorReset,
+		Value: settingsNoopValue,
+	})
+	for _, action := range actions {
+		defaultAction, _ := keyBindingActionByID(defaults, action.ID)
+		plain := keybindingValueSummary(action.PlainChord, defaultAction.PlainChord)
+		prefix := keybindingValueSummary(action.PrefixChord, defaultAction.PrefixChord)
+		desc := strings.TrimSpace("plain " + plain + "  prefix " + prefix)
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, action.Description, desc),
+			Value:     settingsActionPrefixKeymap + action.ID,
+			SearchKey: action.ID + " " + action.Description + " " + action.PlainChord + " " + action.PrefixChord,
+		})
+	}
+	return entries, nil
+}
+
+func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickercompat.Entry, string, error) {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return nil, "", err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Action ID", action.ID, ""),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: "  " + settingsColorDim + "Terminal fallback mappings still require rerunning projmux init and restarting the terminal where applicable." + settingsColorReset,
+			Value: settingsNoopValue,
+		},
+	}
+	entries = append(entries, keybindingFieldEntries(action, defaultAction, settingsKeymapFieldPlain, "Plain chord")...)
+	entries = append(entries, keybindingFieldEntries(action, defaultAction, settingsKeymapFieldPrefix, "Prefix chord")...)
+	title := "Keybinding - " + action.Description
+	return entries, title, nil
+}
+
+func keybindingFieldEntries(action, defaultAction keyBindingAction, field, label string) []intpickercompat.Entry {
+	current := action.PlainChord
+	def := defaultAction.PlainChord
+	if field == settingsKeymapFieldPrefix {
+		current = action.PrefixChord
+		def = defaultAction.PrefixChord
+	}
+	value := current
+	source := "default"
+	if current == "" {
+		value = "disabled"
+	}
+	if current != def {
+		source = "keymap.toml"
+	}
+	prefix := settingsActionPrefixKeymap + action.ID + ":" + field + ":"
+	return []intpickercompat.Entry{
+		{
+			Label: settingsLabelInfo(label, value, source),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabel(settingsGlyphType, settingsColorType, "Set "+label+"...", "type a tmux chord; empty disables"),
+			Value: prefix + "set",
+		},
+		{
+			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Disable "+label, "write empty string override"),
+			Value: prefix + "disable",
+		},
+		{
+			Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Reset "+label, "remove override and use default"),
+			Value: prefix + "reset",
+		},
+	}
+}
+
+func keybindingValueSummary(current, def string) string {
+	if current == "" {
+		return "(disabled)"
+	}
+	if current != def {
+		return current + " (custom)"
+	}
+	return current
+}
+
+func (c *settingsCommand) keymapStore() keymapStore {
+	return keymapStore{
+		homeDir:   c.homeDir,
+		lookupEnv: c.lookupEnv,
+	}
+}
+
+func (c *settingsCommand) saveKeymapAndApply(actionID, field string, value *string, stdout io.Writer) error {
+	path, err := saveKeymapOverride(c.keymapStore(), actionID, field, value)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "wrote %s\n", path); err != nil {
+		return err
+	}
+	configPath, err := c.writeTmuxAppConfig()
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "wrote %s\n", configPath); err != nil {
+		return err
+	}
+	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
+		if err := c.runCommand("tmux", "source-file", configPath); err != nil {
+			return fmt.Errorf("source live tmux config: %w", err)
+		}
+		_, err = fmt.Fprintf(stdout, "reloaded tmux config\n")
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "saved keymap; no live tmux reload outside TMUX\n")
+	return err
+}
+
+func (c *settingsCommand) writeTmuxAppConfig() (string, error) {
+	home := ""
+	if c.homeDir != nil {
+		got, err := c.homeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory: %w", err)
+		}
+		home = got
+	}
+	env := c.lookupEnv
+	if env == nil {
+		env = os.Getenv
+	}
+	paths, err := config.Homes{
+		HomeDir:    home,
+		ConfigHome: env("XDG_CONFIG_HOME"),
+		StateHome:  env("XDG_STATE_HOME"),
+	}.Paths()
+	if err != nil {
+		return "", err
+	}
+	tmux := newTmuxCommand()
+	tmux.homeDir = c.homeDir
+	tmux.lookupEnv = c.lookupEnv
+	return tmux.writeAppConfig("", filepath.Join(paths.ConfigDir, "tmux.conf"))
 }
 
 func (c *settingsCommand) currentStatusbarDecoration() config.StatusbarDecoration {

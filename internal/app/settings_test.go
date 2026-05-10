@@ -78,6 +78,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 		settingsSectionProject,
 		settingsSectionAI,
 		settingsSectionStatusbar,
+		settingsSectionKeybindings,
 		settingsSectionLabs,
 		settingsSectionAbout,
 	}; !reflect.DeepEqual(got, want) {
@@ -91,6 +92,9 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}
 	if !hasEntryValue(rootOptions.Entries, settingsSectionStatusbar) {
 		t.Fatalf("root settings entries = %#v, want statusbar section", rootOptions.Entries)
+	}
+	if !hasEntryValue(rootOptions.Entries, settingsSectionKeybindings) {
+		t.Fatalf("root settings entries = %#v, want keybindings section", rootOptions.Entries)
 	}
 	if !hasEntryLabelContaining(rootOptions.Entries, "Appearance") {
 		t.Fatalf("root settings entries = %#v, want generic appearance section label", rootOptions.Entries)
@@ -423,6 +427,355 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 	}
 	if got, want := stdout.String(), "pinned: /home/tester/source/repos/app\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\nprefix = \"A\"\n")
+
+	var calls int
+	var keybindingOptions intpickercompat.Options
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			keybindingOptions = options
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 3:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := keybindingOptions.UI, "settings-keybindings"; got != want {
+		t.Fatalf("keybindings UI = %q, want %q", got, want)
+	}
+	if !hasEntryValue(keybindingOptions.Entries, settingsBackValue) {
+		t.Fatalf("keybindings entries = %#v, want back entry", keybindingOptions.Entries)
+	}
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "Terminal fallback mappings still require rerunning projmux init") {
+		t.Fatalf("keybindings entries = %#v, want terminal fallback note", keybindingOptions.Entries)
+	}
+	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"sessionizer-sidebar") {
+		t.Fatalf("keybindings entries = %#v, want sessionizer-sidebar action", keybindingOptions.Entries)
+	}
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "plain M-a (custom)") {
+		t.Fatalf("keybindings entries = %#v, want custom plain value", keybindingOptions.Entries)
+	}
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "prefix A (custom)") {
+		t.Fatalf("keybindings entries = %#v, want custom prefix value", keybindingOptions.Entries)
+	}
+}
+
+func TestSettingsHubKeybindingsSetPlainWritesKeymapAndSourcesTmux(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var tmuxCalls [][]string
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:plain:set"}, nil
+		case 4:
+			if got, want := options.UI, "settings-keybinding-typed"; got != want {
+				t.Fatalf("typed UI = %q, want %q", got, want)
+			}
+			if got, want := options.InitialQuery, "M-1"; got != want {
+				t.Fatalf("typed initial query = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Query: "M-a"}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX" {
+			return "/tmp/tmux,1,0"
+		}
+		return ""
+	}
+	cmd.runCommand = func(name string, args ...string) error {
+		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+		return nil
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n") {
+		t.Fatalf("keymap = %q, want custom plain binding", keymap)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	configText := readFile(t, configPath)
+	if !strings.Contains(configText, "bind-key -n M-a") {
+		t.Fatalf("tmux config = %q, want M-a bind", configText)
+	}
+	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
+		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
+	}
+	if !strings.Contains(stdout.String(), "reloaded tmux config") {
+		t.Fatalf("stdout = %q, want reload message", stdout.String())
+	}
+}
+
+func TestSettingsHubKeybindingsRejectsBackslashChord(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:plain:set"}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Query: `C-\`}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
+		t.Fatalf("keymap stat error = %v, want missing file after invalid chord", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "tmux.conf")); !os.IsNotExist(err) {
+		t.Fatalf("tmux config stat error = %v, want missing file after invalid chord", err)
+	}
+	if got := stdout.String(); got != "" {
+		t.Fatalf("stdout = %q, want empty", got)
+	}
+	if got, want := stderr.String(), "unsupported tmux config characters"; !strings.Contains(got, want) {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubKeybindingsTypedCancelDoesNotSaveOrReload(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var tmuxCalls [][]string
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:plain:set"}, nil
+		case 4:
+			if got, want := options.UI, "settings-keybinding-typed"; got != want {
+				t.Fatalf("typed UI = %q, want %q", got, want)
+			}
+			if got, want := options.InitialQuery, "M-1"; got != want {
+				t.Fatalf("typed initial query = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "esc", Query: options.InitialQuery}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX" {
+			return "/tmp/tmux,1,0"
+		}
+		return ""
+	}
+	cmd.runCommand = func(name string, args ...string) error {
+		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+		return nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
+		t.Fatalf("keymap stat error = %v, want missing file after typed cancel", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "tmux.conf")); !os.IsNotExist(err) {
+		t.Fatalf("tmux config stat error = %v, want missing file after typed cancel", err)
+	}
+	if len(tmuxCalls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none after typed cancel", tmuxCalls)
+	}
+	if got := stdout.String(); got != "" {
+		t.Fatalf("stdout = %q, want empty", got)
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stderr = %q, want empty", got)
+	}
+}
+
+func TestSettingsHubKeybindingsDisablePrefixSavesWithoutLiveTmux(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var tmuxCalls [][]string
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:prefix:disable"}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 6:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.runCommand = func(name string, args ...string) error {
+		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+		return nil
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.sessionizer-sidebar]\nprefix = \"\"\n") {
+		t.Fatalf("keymap = %q, want disabled prefix", keymap)
+	}
+	if len(tmuxCalls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none outside TMUX", tmuxCalls)
+	}
+	if !strings.Contains(stdout.String(), "no live tmux reload outside TMUX") {
+		t.Fatalf("stdout = %q, want no-live-tmux message", stdout.String())
+	}
+}
+
+func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n")
+
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:plain:reset"}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 6:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if strings.Contains(keymap, "[bindings.sessionizer-sidebar]") || strings.Contains(keymap, "plain =") {
+		t.Fatalf("keymap = %q, want override removed", keymap)
+	}
+}
+
+func TestSettingsHubKeybindingsInvalidKeymapShowsErrorRow(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"M-a\" # ok\nplain = \"M-b\"\n")
+
+	var calls int
+	var keybindingOptions intpickercompat.Options
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			keybindingOptions = options
+			return intpickercompat.Result{Key: "enter", Value: settingsNoopValue}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 4:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "Keymap error") {
+		t.Fatalf("keybindings entries = %#v, want parse error row", keybindingOptions.Entries)
+	}
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "duplicate") {
+		t.Fatalf("keybindings entries = %#v, want duplicate parse error", keybindingOptions.Entries)
+	}
+	if hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"sessionizer-sidebar") {
+		t.Fatalf("keybindings entries = %#v, want no editable action rows when parse failed", keybindingOptions.Entries)
 	}
 }
 
@@ -2036,11 +2389,44 @@ func entryIndexLabelContaining(entries []intpickercompat.Entry, value string) in
 	return -1
 }
 
+func testKeybindingSettingsCommand(t *testing.T, home string, run func(intpickercompat.Options) (intpickercompat.Result, error)) *settingsCommand {
+	t.Helper()
+	runner := switchRunnerFunc(run)
+	return &settingsCommand{
+		ai:           testAICommand(home),
+		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		homeDir:      func() (string, error) { return home, nil },
+		lookupEnv:    func(string) string { return "" },
+		runCommand:   func(string, ...string) error { return nil },
+		runner:       runner,
+		nativePicker: nativePickerFromCompatRunner(runner),
+	}
+}
+
 func mkdirAll(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", path, err)
 	}
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%q): %v", path, err)
+	}
+	return string(data)
 }
 
 func readWorkdirsFile(t *testing.T, home string) ([]string, error) {
