@@ -779,6 +779,340 @@ func TestSettingsHubKeybindingsInvalidKeymapShowsErrorRow(t *testing.T) {
 	}
 }
 
+func TestSettingsLabsKeybindingsListsActions(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n")
+	var calls int
+	var labsOptions, listOptions intpickercompat.Options
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+		case 2:
+			labsOptions = options
+			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+		case 3:
+			listOptions = options
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 5:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.lookupEnv = func(name string) string {
+		if name == "TERM_PROGRAM" {
+			return "ghostty"
+		}
+		return ""
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := labsOptions.UI, "settings-labs"; got != want {
+		t.Fatalf("labs UI = %q, want %q", got, want)
+	}
+	if !hasEntryValue(labsOptions.Entries, settingsLabKeybindings) {
+		t.Fatalf("labs entries = %#v, want keybinding lab row", labsOptions.Entries)
+	}
+	if got, want := listOptions.UI, "settings-lab-keybindings"; got != want {
+		t.Fatalf("keybinding lab UI = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContaining(listOptions.Entries, "Ghostty") {
+		t.Fatalf("keybinding lab entries = %#v, want detected terminal", listOptions.Entries)
+	}
+	if !hasEntryValue(listOptions.Entries, settingsActionPrefixLabKeymap+"sessionizer-sidebar") {
+		t.Fatalf("keybinding lab entries = %#v, want sessionizer-sidebar action", listOptions.Entries)
+	}
+	if !hasEntryLabelContaining(listOptions.Entries, "Alt-1") {
+		t.Fatalf("keybinding lab entries = %#v, want Alt-1 probe label", listOptions.Entries)
+	}
+	if !hasEntryLabelContaining(listOptions.Entries, "plain M-a (custom)") {
+		t.Fatalf("keybinding lab entries = %#v, want custom plain summary", listOptions.Entries)
+	}
+}
+
+func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		seed      string
+		result    probeResult
+		wantLabel []string
+	}{
+		{
+			name: "plain",
+			seed: "[bindings.sessionizer-sidebar]\nplain = \"\"\n",
+			result: classifyProbeInput(
+				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
+				[]byte("\x1b1"),
+			),
+			wantLabel: []string{"Plain key reached", "Save plain tmux binding"},
+		},
+		{
+			name: "csi-u",
+			result: classifyProbeInput(
+				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
+				[]byte("\x1b[9005u"),
+			),
+			wantLabel: []string{"CSI-u reached", "already routed through terminal fallback"},
+		},
+		{
+			name: "unknown",
+			result: classifyProbeInput(
+				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
+				[]byte("\x1b[A"),
+			),
+			wantLabel: []string{"Unexpected sequence", "no keymap overwrite"},
+		},
+		{
+			name: "timeout",
+			result: classifyProbeInput(
+				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
+				nil,
+			),
+			wantLabel: []string{"Timeout or swallowed", "projmux init ghostty --apply"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			if tc.seed != "" {
+				writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), tc.seed)
+			}
+			cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+				return intpickercompat.Result{}, nil
+			})
+			cmd.lookupEnv = func(name string) string {
+				if name == "TERM_PROGRAM" {
+					return "ghostty"
+				}
+				return ""
+			}
+			cmd.lastLabProbe = map[string]probeResult{"sessionizer-sidebar": tc.result}
+
+			entries, title, err := cmd.labKeybindingDetailEntries("sessionizer-sidebar")
+			if err != nil {
+				t.Fatalf("labKeybindingDetailEntries() error = %v", err)
+			}
+			if !strings.Contains(title, "Project sidebar") {
+				t.Fatalf("title = %q, want action description", title)
+			}
+			for _, want := range tc.wantLabel {
+				if !hasEntryLabelContaining(entries, want) {
+					t.Fatalf("entries = %#v, want label containing %q", entries, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsLabsPlainProbeSaveUsesKeymapApplyPath(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"\"\n")
+
+	var tmuxCalls [][]string
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
+		case 4:
+			if got, want := options.UI, "settings-lab-keybinding-detail"; got != want {
+				t.Fatalf("detail UI = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:probe"}, nil
+		case 5:
+			if !hasEntryLabelContaining(options.Entries, "Save plain tmux binding") {
+				t.Fatalf("detail entries = %#v, want save row after plain probe", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:save-plain"}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 8:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 9:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "TMUX":
+			return "/tmp/tmux,1,0"
+		case "TERM_PROGRAM":
+			return "ghostty"
+		default:
+			return ""
+		}
+	}
+	cmd.runCommand = func(name string, args ...string) error {
+		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+		return nil
+	}
+	cmd.probeKeybinding = func(key probeKey, timeout time.Duration) (probeResult, error) {
+		return classifyProbeInput(key, []byte(key.Plain)), nil
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if strings.Contains(keymap, "[bindings.sessionizer-sidebar]") || strings.Contains(keymap, "plain =") {
+		t.Fatalf("keymap = %q, want plain override reset", keymap)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
+		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
+	}
+	if !strings.Contains(stdout.String(), "reloaded tmux config") {
+		t.Fatalf("stdout = %q, want reload message", stdout.String())
+	}
+}
+
+func TestSettingsLabsInitPreviewApplyDelegatesToInitEngine(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	var ran [][]string
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
+		case 4:
+			if !hasEntryLabelContaining(options.Entries, "Preview terminal fallback") {
+				t.Fatalf("detail entries = %#v, want preview row", options.Entries)
+			}
+			if !hasEntryLabelContaining(options.Entries, "Apply terminal fallback") {
+				t.Fatalf("detail entries = %#v, want apply row", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:init-preview"}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:init-apply"}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 8:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 9:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.lookupEnv = func(name string) string {
+		if name == "TERM_PROGRAM" {
+			return "ghostty"
+		}
+		return ""
+	}
+	cmd.runInitKeybindings = func(args []string, stdout, stderr io.Writer) error {
+		ran = append(ran, append([]string(nil), args...))
+		return nil
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !reflect.DeepEqual(ran, [][]string{
+		{"ghostty", "--dry-run"},
+		{"ghostty", "--apply"},
+	}) {
+		t.Fatalf("init calls = %#v", ran)
+	}
+}
+
+func TestSettingsLabsWSLEnvDelegatesWindowsTerminalFallback(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	var ran [][]string
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
+		case 4:
+			if !hasEntryLabelContaining(options.Entries, "Windows Terminal") {
+				t.Fatalf("detail entries = %#v, want Windows Terminal fallback", options.Entries)
+			}
+			if !hasEntryLabelContaining(options.Entries, "projmux init windows-terminal") {
+				t.Fatalf("detail entries = %#v, want windows-terminal init command", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:init-preview"}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:init-apply"}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 8:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 9:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.lookupEnv = func(name string) string {
+		if name == "WSL_DISTRO_NAME" {
+			return "Ubuntu"
+		}
+		return ""
+	}
+	cmd.runInitKeybindings = func(args []string, stdout, stderr io.Writer) error {
+		ran = append(ran, append([]string(nil), args...))
+		return nil
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !reflect.DeepEqual(ran, [][]string{
+		{"windows-terminal", "--dry-run"},
+		{"windows-terminal", "--apply"},
+	}) {
+		t.Fatalf("init calls = %#v", ran)
+	}
+}
+
 func TestSettingsHubShowsAboutSection(t *testing.T) {
 	t.Parallel()
 

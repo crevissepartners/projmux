@@ -236,6 +236,43 @@ func TestInitCommandApplyInvokesAdapter(t *testing.T) {
 	}
 }
 
+func TestInitCommandRunSurfacePlansAndApplies(t *testing.T) {
+	t.Parallel()
+
+	cfg := filepath.Join(t.TempDir(), "config")
+	adapter := &fakeAdapter{name: "alpha", configPath: cfg}
+	reg := newTestRegistry()
+	reg.register(adapter)
+	cmd := &initCommand{
+		registry: reg,
+		getenv:   func(string) string { return "" },
+		readFile: os.ReadFile,
+		stat:     os.Stat,
+	}
+
+	preview, err := cmd.run(initOptions{TerminalName: "alpha", DryRun: true})
+	if err != nil {
+		t.Fatalf("run preview error = %v", err)
+	}
+	if preview.Terminal != "alpha" || preview.Applied {
+		t.Fatalf("preview = %+v, want alpha dry-run result", preview)
+	}
+	if preview.Plan.ConfigPath != cfg {
+		t.Fatalf("preview config path = %q, want %q", preview.Plan.ConfigPath, cfg)
+	}
+	if adapter.applied != nil {
+		t.Fatalf("preview unexpectedly applied: %+v", adapter.applied)
+	}
+
+	applied, err := cmd.run(initOptions{TerminalName: "alpha", Apply: true})
+	if err != nil {
+		t.Fatalf("run apply error = %v", err)
+	}
+	if !applied.Applied || adapter.applied == nil {
+		t.Fatalf("apply result = %+v adapter.applied=%+v, want applied plan", applied, adapter.applied)
+	}
+}
+
 func TestInitCommandRejectsApplyAndDryRunTogether(t *testing.T) {
 	t.Parallel()
 

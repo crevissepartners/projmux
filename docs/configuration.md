@@ -47,6 +47,12 @@ rewrites `~/.config/projmux/tmux.conf`, and, when Settings is running inside
 tmux, sources that app config so non-terminal-layer tmux chords take effect
 immediately.
 
+Settings > Labs > Diagnose keybindings is the in-app diagnostic/remediation
+surface for the same catalog. It probes one action key at a time through the
+controlling TTY, reports whether the key arrived as a plain tmux chord, CSI-u
+fallback, unexpected sequence, or timeout, and delegates supported terminal
+fallback preview/apply operations to the `projmux init` engine.
+
 `~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
 absent, generated tmux config stays on the built-in defaults.
 

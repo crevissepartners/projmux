@@ -680,8 +680,12 @@ func windowsTerminalBindingsFromCatalog() []wtBinding {
 }
 
 func probeKeysFromCatalog() []probeKey {
+	return probeKeysFromActions(defaultKeyBindingCatalog())
+}
+
+func probeKeysFromActions(catalog []keyBindingAction) []probeKey {
 	var actions []keyBindingAction
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range catalog {
 		if action.ProbeLabel != "" {
 			actions = append(actions, action)
 		}
@@ -704,11 +708,13 @@ func probeKeysFromCatalog() []probeKey {
 			userKey = keyBindingUserKey(action)
 		}
 		keys = append(keys, probeKey{
-			Label:   action.ProbeLabel,
-			Action:  action.ProbeAction,
-			Plain:   action.ProbePlain,
-			CSIu:    csiu,
-			UserKey: userKey,
+			ActionID:   action.ID,
+			Label:      action.ProbeLabel,
+			Action:     action.ProbeAction,
+			Plain:      action.ProbePlain,
+			CSIu:       csiu,
+			UserKey:    userKey,
+			PlainChord: action.PlainChord,
 		})
 	}
 	return keys

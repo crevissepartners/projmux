@@ -92,8 +92,13 @@ v0.4 shipped.
   accepts typed `plain`/`prefix` tmux chord strings, supports disable/reset,
   writes `~/.config/projmux/keymap.toml`, regenerates the app tmux config, and
   hot-reloads the live tmux config when Settings is running inside tmux.
-- Still outstanding for later milestones: native "press the key" probing and
-  terminal init remediation for changed fallback mappings.
+- M6 progress: Settings > Labs now exposes a Keybinding Lab that reuses the
+  setup probe and init merge engines for per-action diagnostics, single-key
+  plain/CSI-u/unknown/timeout outcomes, and supported terminal fallback
+  preview/apply actions.
+- Still outstanding for later milestones: broader terminal-specific fallback
+  remediation for changed/custom fallback mappings beyond the supported init
+  adapters.
 
 ### Docker install and E2E harness
 

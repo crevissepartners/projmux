@@ -25,6 +25,20 @@ type initCommand struct {
 	getwd func() (string, error)
 }
 
+type initOptions struct {
+	TerminalName   string
+	Apply          bool
+	DryRun         bool
+	ConfigOverride string
+	AllowSymlink   bool
+}
+
+type initResult struct {
+	Terminal string
+	Plan     MergePlan
+	Applied  bool
+}
+
 func newInitCommand() *initCommand {
 	return &initCommand{
 		registry: defaultTerminalRegistry,
@@ -59,6 +73,27 @@ func (c *initCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("init: unexpected positional argument %q", fs.Arg(0))
 	}
 
+	result, err := c.run(initOptions{
+		TerminalName:   terminalName,
+		Apply:          *apply,
+		DryRun:         *dryRun,
+		ConfigOverride: strings.TrimSpace(*configOverride),
+		AllowSymlink:   *allowSymlink,
+	})
+	if err != nil {
+		return err
+	}
+	if result.Applied {
+		return c.printApplyResult(result.Terminal, result.Plan, stdout)
+	}
+	return c.printPlan(result.Terminal, result.Plan, stdout)
+}
+
+func (c *initCommand) run(opts initOptions) (initResult, error) {
+	if opts.Apply && opts.DryRun {
+		return initResult{}, errors.New("init: --apply and --dry-run are mutually exclusive")
+	}
+
 	registry := c.registry
 	if registry == nil {
 		registry = defaultTerminalRegistry
@@ -68,48 +103,48 @@ func (c *initCommand) Run(args []string, stdout, stderr io.Writer) error {
 		adapter TerminalAdapter
 		ok      bool
 	)
-	if terminalName != "" {
-		name := strings.ToLower(strings.TrimSpace(terminalName))
+	if opts.TerminalName != "" {
+		name := strings.ToLower(strings.TrimSpace(opts.TerminalName))
 		adapter, ok = registry.lookup(name)
 		if !ok {
-			return fmt.Errorf("init: unknown terminal %q (known: %s)", name, strings.Join(registry.names(), ", "))
+			return initResult{}, fmt.Errorf("init: unknown terminal %q (known: %s)", name, strings.Join(registry.names(), ", "))
 		}
 	} else {
 		adapter, ok = registry.detect(c.env())
 		if !ok {
-			return fmt.Errorf("init: could not auto-detect terminal; pass one explicitly (known: %s)", strings.Join(registry.names(), ", "))
+			return initResult{}, fmt.Errorf("init: could not auto-detect terminal; pass one explicitly (known: %s)", strings.Join(registry.names(), ", "))
 		}
 	}
 
-	configPath, err := c.resolveConfigPath(adapter, strings.TrimSpace(*configOverride))
+	configPath, err := c.resolveConfigPath(adapter, strings.TrimSpace(opts.ConfigOverride))
 	if err != nil {
-		return err
+		return initResult{}, err
 	}
 
-	if err := c.guardSymlink(configPath, *allowSymlink); err != nil {
-		return err
+	if err := c.guardSymlink(configPath, opts.AllowSymlink); err != nil {
+		return initResult{}, err
 	}
 
 	current, exists, err := c.loadConfig(configPath)
 	if err != nil {
-		return fmt.Errorf("init: read %s: %w", configPath, err)
+		return initResult{}, fmt.Errorf("init: read %s: %w", configPath, err)
 	}
 
 	plan, err := adapter.PlanMerge(current, exists)
 	if err != nil {
-		return fmt.Errorf("init: plan %s merge: %w", adapter.Name(), err)
+		return initResult{}, fmt.Errorf("init: plan %s merge: %w", adapter.Name(), err)
 	}
 	plan.ConfigPath = configPath
 
-	if !*apply {
-		return c.printPlan(adapter.Name(), plan, stdout)
+	if !opts.Apply {
+		return initResult{Terminal: adapter.Name(), Plan: plan}, nil
 	}
 
 	if err := adapter.ApplyMerge(plan); err != nil {
-		return fmt.Errorf("init: apply %s merge: %w", adapter.Name(), err)
+		return initResult{}, fmt.Errorf("init: apply %s merge: %w", adapter.Name(), err)
 	}
 
-	return c.printApplyResult(adapter.Name(), plan, stdout)
+	return initResult{Terminal: adapter.Name(), Plan: plan, Applied: true}, nil
 }
 
 func (c *initCommand) env() func(string) string {

@@ -55,6 +55,9 @@ const (
 
 // probeKey describes a single key the user is asked to press.
 type probeKey struct {
+	// ActionID is the stable keybinding catalog id for in-app flows. It is
+	// empty only for synthetic tests.
+	ActionID string
 	// Label is the human-readable name shown to the user (e.g. "Alt-1").
 	Label string
 	// Action describes the projmux behaviour bound to the key, used in the
@@ -71,6 +74,9 @@ type probeKey struct {
 	// UserKey is the tmux user-key index the CSI-u sequence resolves to
 	// (e.g. "User4" for 9005u). Empty when no CSI-u escape route exists.
 	UserKey string
+	// PlainChord is the current tmux plain chord for the action after keymap
+	// overrides have been merged. It is for reporting/saving, not raw bytes.
+	PlainChord string
 }
 
 // probeResult captures what we observed when the user pressed (or failed to
@@ -166,6 +172,61 @@ func (c *setupCommand) printExpectedMap(stdout io.Writer) error {
 		fmt.Fprintf(stdout, "  %-16s plain=%-12s csi-u=%-12s -> %s\n", key.Label, plain, csiu, key.Action)
 	}
 	return nil
+}
+
+// probeControllingTTYKey reads one keypress from the controlling terminal
+// rather than process stdin. Settings runs inside tmux where stdin may be the
+// picker's pipe/pane path, so /dev/tty is the only reliable source for a raw
+// operator keypress. Tests can still inject openTTY/readKey/enterRaw.
+func (c *setupCommand) probeControllingTTYKey(key probeKey, timeout time.Duration) (probeResult, error) {
+	if c.readKey != nil && c.openTTY == nil {
+		seq, err := c.readKey(timeout)
+		if err != nil && !errors.Is(err, errProbeTimeout) {
+			return probeResult{}, err
+		}
+		return classifyProbeInput(key, seq), nil
+	}
+
+	openTTY := c.openTTY
+	if openTTY == nil {
+		openTTY = openControllingTTY
+	}
+	tty, cleanup, err := openTTY()
+	if err != nil {
+		return probeResult{}, fmt.Errorf("open controlling TTY: %w", err)
+	}
+	defer func() {
+		if cleanup != nil {
+			_ = cleanup()
+		}
+	}()
+
+	var restore func() error
+	if c.enterRaw != nil {
+		restore, err = c.enterRaw()
+	} else {
+		restore, err = enterTTYRawModeFile(tty)
+	}
+	if err != nil {
+		return probeResult{}, fmt.Errorf("enter raw TTY mode: %w", err)
+	}
+	defer func() {
+		if restore != nil {
+			_ = restore()
+		}
+	}()
+
+	readKey := c.readKey
+	if readKey == nil {
+		readKey = func(timeout time.Duration) ([]byte, error) {
+			return readKeySequence(tty, timeout)
+		}
+	}
+	seq, err := readKey(timeout)
+	if err != nil && !errors.Is(err, errProbeTimeout) {
+		return probeResult{}, err
+	}
+	return classifyProbeInput(key, seq), nil
 }
 
 // classifyProbeInput inspects the bytes captured for a single keystroke and
@@ -388,6 +449,18 @@ func detectTerminal(lookup func(string) string) terminalInfo {
 			}
 			return terminalInfo{Slug: "windows-terminal", Name: "Windows Terminal", Source: "WT_SESSION", Raw: v}, true
 		}},
+		{key: "WSL_DISTRO_NAME", match: func(v string) (terminalInfo, bool) {
+			if v == "" {
+				return terminalInfo{}, false
+			}
+			return terminalInfo{Slug: "windows-terminal", Name: "Windows Terminal", Source: "WSL_DISTRO_NAME", Raw: v, Notable: "WSL host assumed"}, true
+		}},
+		{key: "WSL_INTEROP", match: func(v string) (terminalInfo, bool) {
+			if v == "" {
+				return terminalInfo{}, false
+			}
+			return terminalInfo{Slug: "windows-terminal", Name: "Windows Terminal", Source: "WSL_INTEROP", Raw: v, Notable: "WSL host assumed"}, true
+		}},
 		{key: "TERM", match: func(v string) (terminalInfo, bool) {
 			lower := strings.ToLower(v)
 			switch {
@@ -516,27 +589,52 @@ func enterTTYRawMode(lookupEnv func(string) string) (func() error, error) {
 	if _, err := exec.LookPath("stty"); err != nil {
 		return nil, fmt.Errorf("stty utility not found: %w", err)
 	}
-	saved, err := runSttyOn("-g")
+	saved, err := runSttyOn(os.Stdin, "-g")
 	if err != nil {
 		return nil, err
 	}
 	saved = strings.TrimSpace(saved)
-	if _, err := runSttyOn("raw", "-echo", "-icanon", "min", "1", "time", "0"); err != nil {
+	if _, err := runSttyOn(os.Stdin, "raw", "-echo", "-icanon", "min", "1", "time", "0"); err != nil {
 		return nil, err
 	}
 	restore := func() error {
 		if saved == "" {
 			return nil
 		}
-		_, err := runSttyOn(saved)
+		_, err := runSttyOn(os.Stdin, saved)
 		return err
 	}
 	return restore, nil
 }
 
-func runSttyOn(args ...string) (string, error) {
+func enterTTYRawModeFile(tty *os.File) (func() error, error) {
+	if tty == nil {
+		return nil, errors.New("nil TTY")
+	}
+	if _, err := exec.LookPath("stty"); err != nil {
+		return nil, fmt.Errorf("stty utility not found: %w", err)
+	}
+	saved, err := runSttyOn(tty, "-g")
+	if err != nil {
+		return nil, err
+	}
+	saved = strings.TrimSpace(saved)
+	if _, err := runSttyOn(tty, "raw", "-echo", "-icanon", "min", "1", "time", "0"); err != nil {
+		return nil, err
+	}
+	restore := func() error {
+		if saved == "" {
+			return nil
+		}
+		_, err := runSttyOn(tty, saved)
+		return err
+	}
+	return restore, nil
+}
+
+func runSttyOn(stdin *os.File, args ...string) (string, error) {
 	cmd := exec.Command("stty", args...)
-	cmd.Stdin = os.Stdin
+	cmd.Stdin = stdin
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("stty %s failed: %w", strings.Join(args, " "), err)

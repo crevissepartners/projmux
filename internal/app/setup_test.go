@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +143,16 @@ func TestDetectTerminal(t *testing.T) {
 		{
 			name:     "windows terminal",
 			env:      lookup{"WT_SESSION": "abc-123"},
+			wantSlug: "windows-terminal",
+		},
+		{
+			name:     "windows terminal via wsl distro",
+			env:      lookup{"WSL_DISTRO_NAME": "Ubuntu"},
+			wantSlug: "windows-terminal",
+		},
+		{
+			name:     "windows terminal via wsl interop",
+			env:      lookup{"WSL_INTEROP": "/run/WSL/1_interop"},
 			wantSlug: "windows-terminal",
 		},
 		{
@@ -336,6 +347,43 @@ func TestSetupCommandRunInteractivePropagatesReadError(t *testing.T) {
 	err := cmd.Run(nil, &stdout, &stderr)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestSetupProbeControllingTTYKeyReadsTTYFile(t *testing.T) {
+	t.Parallel()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer r.Close()
+	if _, err := w.Write([]byte("\x1b1")); err != nil {
+		t.Fatalf("write pipe: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	var opened bool
+	cmd := &setupCommand{
+		openTTY: func() (*os.File, func() error, error) {
+			opened = true
+			return r, func() error { return nil }, nil
+		},
+		enterRaw: func() (func() error, error) {
+			return func() error { return nil }, nil
+		},
+	}
+	res, err := cmd.probeControllingTTYKey(probeKey{Label: "Alt-1", Plain: "\x1b1"}, time.Second)
+	if err != nil {
+		t.Fatalf("probeControllingTTYKey() error = %v", err)
+	}
+	if !opened {
+		t.Fatalf("probeControllingTTYKey() did not open controlling TTY")
+	}
+	if res.Status != probeStatusPlain {
+		t.Fatalf("probeControllingTTYKey() status = %q, want plain", res.Status)
 	}
 }
 
