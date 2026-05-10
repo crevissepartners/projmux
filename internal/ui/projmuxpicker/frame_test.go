@@ -85,8 +85,11 @@ func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	if got, want := VisibleLen(lines[1]), 24; got != want {
 		t.Fatalf("titlebar row width = %d, want %d: %q", got, want, lines[1])
 	}
-	if !strings.Contains(lines[2], "hello") {
-		t.Fatalf("content row = %q, want content below titlebar", lines[2])
+	if !strings.HasPrefix(lines[2], "├") || !strings.HasSuffix(lines[2], "┤") || !strings.Contains(lines[2], TitlebarRule+"─") {
+		t.Fatalf("titlebar divider row = %q, want full-width divider below titlebar", lines[2])
+	}
+	if !strings.Contains(lines[3], "hello") {
+		t.Fatalf("content row = %q, want content below titlebar divider", lines[3])
 	}
 }
 
@@ -94,7 +97,7 @@ func TestRendererContentLayoutWithTitleReservesTitlebarRow(t *testing.T) {
 	t.Parallel()
 
 	layout := DefaultRenderer().ContentLayoutWithTitle(Layout{Rows: 10, Cols: 40}, "Projects")
-	if got, want := layout.Rows, 7; got != want {
+	if got, want := layout.Rows, 6; got != want {
 		t.Fatalf("ContentLayoutWithTitle().Rows = %d, want frame inner height minus titlebar %d", got, want)
 	}
 	if got, want := layout.Cols, 38; got != want {
