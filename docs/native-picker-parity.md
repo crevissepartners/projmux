@@ -52,26 +52,19 @@ native picker engine and is not a public dependency-policy change.
 
 ## Native Surface Architecture
 
-- `internal/ui/picker` remains the backend-neutral contract and owns fzf/native
+- `internal/ui/picker` remains the backend-neutral contract and owns native
   routing, keyboard input, fuzzy filtering, action dispatch, preview command
   execution, and result handling.
 - `internal/ui/projmuxpicker` owns projmux-native visual composition: frame,
   redraw updates, ANSI width/truncation, theme tokens, prompt/footer/list
   rendering, selected row styling, scrollbars/gap rows, and preview pane
   geometry/rendering.
-- `internal/ui/fzf` owns the compatibility adapter in both directions:
-  `picker.Options` becomes fzf flags/bindings for fallback, and legacy
-  `fzf.Options` becomes `picker.Options` for the native backend. This keeps app
-  code closer to a DI-style picker contract instead of embedding fzf binding
-  strings at each call site.
-- `intfzf.NewPickerRunner()` adapts fzf to the same `picker.Runner` interface
-  as `picker.NativeRunner`, so follow-up branches can inject either backend at
-  a narrower boundary without deleting the existing fzf runner.
-- Settings > Labs > Picker Engine persists the selected backend in
-  `~/.config/projmux/picker-backend` and updates the live tmux server
-  environment through `PROJMUX_PICKER_BACKEND`, while direct environment
-  overrides still win over saved config. Native is the default when no saved
-  backend or override exists; `fzf` remains available as an explicit fallback.
+- `internal/ui/fzf` remains as the compatibility adapter from legacy
+  `fzf.Options` to `picker.Options` for the native backend. This keeps app code
+  closer to a DI-style picker contract instead of embedding binding strings at
+  each call site.
+- Settings > Labs remains available, but picker backend selection has been
+  retired. Legacy saved/env backend values normalize to native.
 - The split lets projmux grow a first-party picker design independently from
   the fzf compatibility adapter.
 
@@ -121,9 +114,8 @@ native picker engine and is not a public dependency-policy change.
 - Mouse support is intentionally narrow in this POC: primary mouse down focuses
   the clicked row, primary mouse up applies it, and wheel input moves selection.
   Drag gestures and the full fzf mouse grammar are follow-up work.
-- The public doctor/docs dependency policy is tracked separately from picker
-  backend selection. Native is the default picker backend, while fzf remains an
-  explicit fallback.
+- The public doctor/docs dependency policy no longer includes an external
+  picker binary.
 - Draft PR: https://github.com/crevissepartners/projmux/pull/98.
 
 ## Commands

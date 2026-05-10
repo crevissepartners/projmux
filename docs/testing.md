@@ -7,9 +7,8 @@ and humans run the same entrypoints.
 
 - `make test` runs the fast Go unit suite. These tests avoid tmux, TTY, GUI,
   and host shell dependencies.
-- Picker unit coverage includes the backend-neutral item/action contract, fzf
-  adapter mapping, native title-focused filtering, numeric selection, and
-  shared close actions.
+- Picker unit coverage includes the backend-neutral item/action contract,
+  native title-focused filtering, numeric selection, and shared close actions.
 - `make test-integration` builds `test/docker/Dockerfile` and runs
   `test/integration/linux-smoke.sh` in Docker. It validates Linux dependency
   discovery, tmux config generation/install, app config reload against a real
@@ -29,7 +28,7 @@ The Docker suites are intended to cover portable Linux behavior that can be
 made deterministic in a container:
 
 - binary build and source install into an isolated prefix
-- `doctor` dependency checks for `tmux`, `fzf`, `git`, and `stty`
+- `doctor` dependency checks for `tmux`, `git`, and `stty`
 - tmux config print/install/apply paths
 - notify queue push/list/ack/reconcile state transitions
 - focus fallback behavior when a tmux server has sessions but no attached
@@ -37,9 +36,8 @@ made deterministic in a container:
 - status rendering that only depends on tmux state and local files
 
 The test container disables networking during `docker run`. The image build may
-use the network to fetch the pinned base image, apt packages, and pinned fzf
-version, but suite execution should not need network access after the image is
-built.
+use the network to fetch the pinned base image and apt packages, but suite
+execution should not need network access after the image is built.
 
 ## Host-Only Checks
 

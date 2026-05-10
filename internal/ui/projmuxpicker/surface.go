@@ -277,9 +277,9 @@ func InteractiveRowLines(row Row, selected, multiLine bool) []string {
 		if meta = strings.TrimSpace(meta); meta != "" {
 			line := meta
 			if selected && multiLine {
-				line = SelectedLine(Continuation, meta)
+				line = SelectedLine(Continuation, " "+meta)
 			} else {
-				line = "  " + line
+				line = "   " + line
 			}
 			rendered = append(rendered, line)
 		}

@@ -19,7 +19,7 @@ core that 0.3 had landed.
 ### Diagnostics
 
 - `projmux doctor` — runtime dependency report. Enforces minimum tmux
-  3.4 and fzf 0.65.0 (`stale` status when present but below the floor).
+  3.4 and checks workflow dependencies such as `git` and `stty`.
 
 ### Focus
 
@@ -71,20 +71,19 @@ v0.4 shipped.
 
 ### Picker UI
 
-- Picker-domain model separate from fzf row encoding (kept fzf as the
-  stable fallback backend). Done in the 0.5 picker contract slice.
+- Picker-domain model separate from row rendering. Done in the 0.5 picker
+  contract slice.
 - Native picker backend for multi-line card rows and title-focused search.
-  Done in the 0.5 picker contract slice, later promoted to the default picker
-  backend with `PROJMUX_PICKER_BACKEND=fzf` kept as the explicit fallback.
+  Done in the 0.5 picker contract slice, later promoted to the only picker
+  backend.
 - Port switcher popup/sidebar surfaces after parity tests cover
   selection, preview, and key actions.
 
 ### Picker dismissal
 
 - Picker-agnostic popup close/toggle handling so AI picker dismissal
-  does not depend on fzf-specific key bindings. Done in the 0.5 picker
-  contract slice; fzf maps close actions to `abort`, and the native runner
-  consumes the same close action keys.
+  does not depend on backend-specific key bindings. Done in the 0.5 picker
+  contract slice; the native runner consumes shared close action keys.
 
 ### Docker install and E2E harness
 

@@ -147,7 +147,6 @@ func newSwitchCommand() *switchCommand {
 		discover:     candidates.Discover,
 		pinStore:     newDefaultSwitchPinStore,
 		tagStore:     newDefaultSwitchTagStore,
-		runner:       intfzf.NewRunner(),
 		sessions:     client,
 		inventory:    tmuxPreviewInventory{client: client},
 		executable:   os.Executable,
@@ -401,8 +400,8 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 }
 
 func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
-	if c.runner == nil {
-		return fmt.Errorf("switch runner is not configured")
+	if c.nativePicker == nil {
+		return fmt.Errorf("native picker is not configured")
 	}
 
 	for {
@@ -455,8 +454,8 @@ func (c *switchCommand) executeSettingsAction(action string, stdout, stderr io.W
 }
 
 func (c *switchCommand) runAddPinInteractive(stdout io.Writer) error {
-	if c.runner == nil {
-		return fmt.Errorf("switch runner is not configured")
+	if c.nativePicker == nil {
+		return fmt.Errorf("native picker is not configured")
 	}
 
 	entries, err := c.addPinEntries()
@@ -1310,8 +1309,8 @@ func validateSwitchUI(ui string) error {
 }
 
 func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
-	if c.runner == nil {
-		return switchPlan{}, fmt.Errorf("switch picker is not configured")
+	if c.nativePicker == nil {
+		return switchPlan{}, fmt.Errorf("native picker is not configured")
 	}
 	if c.identityErr != nil {
 		return switchPlan{}, fmt.Errorf("configure session identity resolver: %w", c.identityErr)
@@ -1451,8 +1450,8 @@ func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Wr
 }
 
 func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
-	if c.runner == nil {
-		return intpicker.Result{}, fmt.Errorf("switch runner is not configured")
+	if c.nativePicker == nil {
+		return intpicker.Result{}, fmt.Errorf("native picker is not configured")
 	}
 
 	options := intpicker.Options{
@@ -1487,27 +1486,16 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 }
 
 func (c *switchCommand) runPickerBackend(fzfOptions intfzf.Options, pickerOptions intpicker.Options) (intpicker.Result, error) {
-	if resolvePickerBackend(c.lookupEnv) == intpicker.BackendNative {
-		if c.nativePicker == nil {
-			result, err := c.runner.Run(fzfOptions)
-			if err != nil {
-				return intpicker.Result{}, fmt.Errorf("run switch picker: %w", err)
-			}
-			return intfzf.ResultToPicker(result), nil
-		}
-		result, err := c.nativePicker.Run(pickerOptions)
-		if err != nil {
-			return intpicker.Result{}, fmt.Errorf("run native switch picker: %w", err)
-		}
-		return result, nil
+	_ = fzfOptions
+	_ = resolvePickerBackend(c.lookupEnv)
+	if c.nativePicker == nil {
+		return intpicker.Result{}, fmt.Errorf("native picker is not configured")
 	}
-
-	result, err := c.runner.Run(fzfOptions)
+	result, err := c.nativePicker.Run(pickerOptions)
 	if err != nil {
-		return intpicker.Result{}, fmt.Errorf("run switch picker: %w", err)
+		return intpicker.Result{}, fmt.Errorf("run native switch picker: %w", err)
 	}
-
-	return intfzf.ResultToPicker(result), nil
+	return result, nil
 }
 
 type switchPickerSurface struct {

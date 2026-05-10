@@ -231,6 +231,10 @@ func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
 			promptOptions = options
 			return intfzf.Result{Value: shellUpdateApply}, nil
 		}),
+		nativePicker: nativePickerFromFZFRunner(shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			promptOptions = options
+			return intfzf.Result{Value: shellUpdateApply}, nil
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -292,6 +296,9 @@ func TestShellUpdatePromptLaterContinuesWithoutApplying(t *testing.T) {
 		updatePromptRunner: shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
 			return intfzf.Result{Value: shellUpdateLater}, nil
 		}),
+		nativePicker: nativePickerFromFZFRunner(shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			return intfzf.Result{Value: shellUpdateLater}, nil
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -333,6 +340,10 @@ func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
 			promptCalls++
 			return intfzf.Result{Value: shellUpdateSkip}, nil
 		}),
+		nativePicker: nativePickerFromFZFRunner(shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			promptCalls++
+			return intfzf.Result{Value: shellUpdateSkip}, nil
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -390,6 +401,10 @@ func TestShellSkipsPromptWithoutFreshSupportedUpdate(t *testing.T) {
 			t.Fatalf("unexpected update prompt: %#v", options)
 			return intfzf.Result{}, nil
 		}),
+		nativePicker: nativePickerFromFZFRunner(shellUpdateRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			t.Fatalf("unexpected update prompt: %#v", options)
+			return intfzf.Result{}, nil
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {

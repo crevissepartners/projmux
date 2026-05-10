@@ -357,12 +357,9 @@ func TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend(t *testing.T) 
 	}
 }
 
-func TestSessionizerSidebarWidthKeepsFZFMinimum(t *testing.T) {
+func TestSessionizerSidebarWidthUsesNativeCompactMinimum(t *testing.T) {
 	t.Parallel()
 
-	if got, want := sessionizerSidebarWidth(200, intpicker.BackendFZF), "56"; got != want {
-		t.Fatalf("sessionizerSidebarWidth(fzf) = %q, want %q", got, want)
-	}
 	if got, want := sessionizerSidebarWidth(200, intpicker.BackendNative), "40"; got != want {
 		t.Fatalf("sessionizerSidebarWidth(native) = %q, want compact %q", got, want)
 	}

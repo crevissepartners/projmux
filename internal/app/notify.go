@@ -43,7 +43,6 @@ func newNotifyCommand() *notifyCommand {
 	cmd := &notifyCommand{
 		now:        time.Now,
 		runner:     reconcileDefaultRunner(),
-		picker:     intfzf.NewRunner(),
 		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		executable: os.Executable,
 		lookupEnv:  os.Getenv,
@@ -278,8 +277,8 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr io.Writer) error {
-	if c.picker == nil {
-		return errors.New("notify sidebar picker is not configured")
+	if c.native == nil {
+		return errors.New("native picker is not configured")
 	}
 	now := c.clock()
 	fzfOptions := intfzf.Options{

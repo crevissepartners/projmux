@@ -42,6 +42,18 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 			}
 			return intfzf.Result{}, nil
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			if calls == 1 {
+				rootOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsSectionAI}, nil
+			}
+			if calls == 2 {
+				aiOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixAI + "codex"}, nil
+			}
+			return intfzf.Result{}, nil
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -109,7 +121,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}
 }
 
-func TestSettingsHubSetsExperimentalPickerBackend(t *testing.T) {
+func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -137,11 +149,23 @@ func TestSettingsHubSetsExperimentalPickerBackend(t *testing.T) {
 				return intfzf.Result{Key: "enter", Value: settingsSectionLabs}, nil
 			case 2:
 				labsOptions = options
-				return intfzf.Result{Key: "enter", Value: settingsActionPrefixPicker + string(config.PickerBackendNative)}, nil
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
 			default:
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionLabs}, nil
+			case 2:
+				labsOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -150,11 +174,10 @@ func TestSettingsHubSetsExperimentalPickerBackend(t *testing.T) {
 	if got, want := labsOptions.UI, "settings-labs"; got != want {
 		t.Fatalf("labs settings UI = %q, want %q", got, want)
 	}
-	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixPicker+string(config.PickerBackendFZF)) {
-		t.Fatalf("labs settings entries = %#v, want fzf row", labsOptions.Entries)
-	}
-	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixPicker+string(config.PickerBackendNative)) {
-		t.Fatalf("labs settings entries = %#v, want native row", labsOptions.Entries)
+	for _, entry := range labsOptions.Entries {
+		if strings.HasPrefix(entry.Value, settingsActionPrefixPicker) {
+			t.Fatalf("labs settings entries = %#v, want no picker backend choices", labsOptions.Entries)
+		}
 	}
 
 	paths, err := config.Homes{HomeDir: home}.Paths()
@@ -168,11 +191,8 @@ func TestSettingsHubSetsExperimentalPickerBackend(t *testing.T) {
 	if got != config.PickerBackendNative {
 		t.Fatalf("picker backend = %q, want %q", got, config.PickerBackendNative)
 	}
-	if !reflect.DeepEqual(tmuxCalls, [][]string{
-		{"tmux", "set-environment", "-g", pickerBackendTmuxEnv, "native"},
-		{"tmux", "display-message", "picker backend: native"},
-	}) {
-		t.Fatalf("tmux calls = %#v", tmuxCalls)
+	if len(tmuxCalls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none", tmuxCalls)
 	}
 }
 
@@ -209,6 +229,18 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionStatusbar}, nil
+			case 2:
+				statusbarOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(config.StatusbarDecorationEmoji)}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -283,6 +315,25 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 			}
 			return intfzf.Result{}, nil
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			if calls == 1 {
+				if got, want := options.UI, "settings"; got != want {
+					t.Fatalf("settings UI = %q, want %q", got, want)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			}
+			if calls == 2 {
+				if got, want := options.UI, "settings-project-picker"; got != want {
+					t.Fatalf("project settings UI = %q, want %q", got, want)
+				}
+				if !hasEntryValue(options.Entries, settingsBackValue) {
+					t.Fatalf("project settings entries = %#v, want back entry", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixSwitch + "add:/home/tester/source/repos/app"}, nil
+			}
+			return intfzf.Result{}, nil
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -342,6 +393,26 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionAbout}, nil
+			case 2:
+				aboutOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsNoopValue}, nil
+			case 3:
+				if got, want := options.UI, "settings-about"; got != want {
+					t.Fatalf("settings about UI after noop = %q, want %q", got, want)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 4:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -439,6 +510,25 @@ func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionAbout}, nil
+			case 2:
+				if !hasEntryValue(options.Entries, settingsUpdateApply) {
+					t.Fatalf("settings about entries = %#v, want update apply action", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsUpdateApply}, nil
+			case 3:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 4:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -491,6 +581,26 @@ func TestSettingsHubRunsUpdateCheckAction(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionAbout}, nil
+			case 2:
+				if !hasEntryValue(options.Entries, settingsUpdateCheck) {
+					t.Fatalf("settings about entries = %#v, want update check action", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsUpdateCheck}, nil
+			case 3:
+				refreshedAbout = options
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 4:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -563,6 +673,49 @@ func TestSettingsHubAddProjectScansFilesystem(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				if hasEntryValue(options.Entries, settingsProjectAdd) {
+					t.Fatalf("project settings entries = %#v, want Add Project moved out of root", options.Entries)
+				}
+				if !hasEntryValue(options.Entries, settingsProjectPins) {
+					t.Fatalf("project settings entries = %#v, want Pinned Projects", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjectPins}, nil
+			case 3:
+				if got, want := options.UI, "settings-project-pins"; got != want {
+					t.Fatalf("pinned projects UI = %q, want %q", got, want)
+				}
+				if got := entryIndexValue(options.Entries, settingsProjectAdd); got != 1 {
+					t.Fatalf("pinned project entries = %#v, want Add Project at index 1, got %d", options.Entries, got)
+				}
+				if got := entryIndexLabelContaining(options.Entries, "Add Current Project"); got != 2 {
+					t.Fatalf("pinned project entries = %#v, want Add Current Project at index 2, got %d", options.Entries, got)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjectAdd}, nil
+			case 4:
+				if got, want := options.UI, "settings-project-add"; got != want {
+					t.Fatalf("add project UI = %q, want %q", got, want)
+				}
+				app := filepath.Join(home, "source", "repos", "app")
+				if !hasEntryValue(options.Entries, settingsActionPrefixSwitch+"add:"+app) {
+					t.Fatalf("add project entries = %#v, want scanned app", options.Entries)
+				}
+				if !hasEntryValue(options.Entries, settingsActionPrefixSwitch+"add:"+filepath.Join(home, ".config")) {
+					t.Fatalf("add project entries = %#v, want hidden whitelist entry", options.Entries)
+				}
+				if hasEntryValue(options.Entries, settingsActionPrefixSwitch+"add:"+filepath.Join(home, ".cache")) {
+					t.Fatalf("add project entries = %#v, want hidden non-whitelist skipped", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixSwitch + "add:" + app}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -603,6 +756,25 @@ func TestSettingsHubPinnedProjectsRemovesPins(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsProjectPins}, nil
+			case 3:
+				if got, want := options.UI, "settings-project-pins"; got != want {
+					t.Fatalf("pinned projects UI = %q, want %q", got, want)
+				}
+				if !hasEntryValue(options.Entries, settingsActionPrefixSwitch+"clear") {
+					t.Fatalf("pinned project entries = %#v, want clear", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixSwitch + "pin:" + pin}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -692,6 +864,38 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				if hasEntryValue(options.Entries, settingsWorkdirAdd) {
+					t.Fatalf("project settings entries = %#v, want Add Workdir moved out of root", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
+			case 3:
+				if got, want := options.UI, "settings-workdirs"; got != want {
+					t.Fatalf("workdirs list UI = %q, want %q", got, want)
+				}
+				if got := entryIndexValue(options.Entries, settingsWorkdirAdd); got != 1 {
+					t.Fatalf("workdirs list entries = %#v, want Add Workdir at index 1, got %d", options.Entries, got)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 4:
+				if got, want := options.UI, "settings-workdir-add"; got != want {
+					t.Fatalf("add workdir UI = %q, want %q", got, want)
+				}
+				app := filepath.Join(home, "source", "repos", "app")
+				want := settingsActionPrefixWorkdir + "add:" + app
+				if !hasEntryValue(options.Entries, want) {
+					t.Fatalf("add workdir entries = %#v, want value %q", options.Entries, want)
+				}
+				return intfzf.Result{Key: "enter", Value: want}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -757,6 +961,29 @@ func TestSettingsHubWorkdirsListRemovesSavedEntry(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
+			case 3:
+				if got, want := options.UI, "settings-workdirs"; got != want {
+					t.Fatalf("workdirs list UI = %q, want %q", got, want)
+				}
+				want := settingsActionPrefixWorkdir + "remove:" + target
+				if !hasEntryValue(options.Entries, want) {
+					t.Fatalf("workdirs list entries = %#v, want %q", options.Entries, want)
+				}
+				return intfzf.Result{Key: "enter", Value: want}, nil
+			case 4:
+				// After remove, list should be empty (just back + placeholder).
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -851,6 +1078,22 @@ func TestAddWorkdirEntriesIncludesTypedRow(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
+			case 3:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 4:
+				addOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -910,6 +1153,33 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
+			case 3:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 4:
+				if !hasEntryValue(options.Entries, settingsWorkdirTyped) {
+					t.Fatalf("add workdir entries = %#v, want typed row", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirTyped}, nil
+			case 5:
+				typedOptions = options
+				return intfzf.Result{Key: "enter", Query: typed}, nil
+			case 6:
+				// After typed flow returns, the workdirs list reopens. Close it.
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 7:
+				// After typed flow returns, the project picker reopens. Close it.
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -976,6 +1246,31 @@ func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
+			case 3:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 4:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirTyped}, nil
+			case 5:
+				return intfzf.Result{Key: "enter", Query: "relative/path"}, nil
+			case 6:
+				// After typed-flow falls back, settings should return to the
+				// workdirs list. Close it.
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 7:
+				// After typed-flow falls back, settings should return to the
+				// project picker section. Close to terminate the run.
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -1019,6 +1314,23 @@ func TestSettingsHubBackReturnsToRoot(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionAI}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 3:
+				if got, want := options.UI, "settings"; got != want {
+					t.Fatalf("settings UI after back = %q, want %q", got, want)
+				}
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1056,6 +1368,9 @@ func testSettingsSwitchCommandWithHome(t *testing.T, home string, store *stubSwi
 		runner: switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
 			return intfzf.Result{}, nil
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			return intfzf.Result{}, nil
+		})),
 		sessions:   &capturingSwitchSessionExecutor{},
 		identity:   stubSwitchIdentityResolver{name: "app"},
 		validate:   func(string) error { return nil },
@@ -1384,6 +1699,41 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				if !hasEntryValue(options.Entries, settingsProjectRootManage) {
+					t.Fatalf("project picker entries = %#v, want project root management row", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjectRootManage}, nil
+			case 3:
+				if got, want := options.UI, "settings-project-root"; got != want {
+					t.Fatalf("project root UI = %q, want %q", got, want)
+				}
+				if got, want := options.Title, "Project Root - Manage the primary root"; got != want {
+					t.Fatalf("project root title = %q, want %q", got, want)
+				}
+				if got := options.Header; got != "" {
+					t.Fatalf("project root header = %q, want description only in title", got)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjdirSetTyped}, nil
+			case 4:
+				typedOptions = options
+				return intfzf.Result{Key: "enter", Query: target}, nil
+			case 5:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 6:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 7:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -1448,6 +1798,29 @@ func TestSettingsHubUseCurrentProjectAsRootSavesProjdir(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsProjectRootManage}, nil
+			case 3:
+				if !hasEntryLabelContaining(options.Entries, "Use Current Project as Root") {
+					t.Fatalf("project root entries = %#v, want current project action", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjdirSetCurrent}, nil
+			case 4:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 5:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 6:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer
@@ -1504,6 +1877,29 @@ func TestSettingsHubClearProjectRootRemovesSavedProjdir(t *testing.T) {
 				return intfzf.Result{}, nil
 			}
 		}),
+		nativePicker: nativePickerFromFZFRunner(switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
+			case 2:
+				return intfzf.Result{Key: "enter", Value: settingsProjectRootManage}, nil
+			case 3:
+				if !hasEntryLabelContaining(options.Entries, "/saved/root") {
+					t.Fatalf("project root entries = %#v, want saved value", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjdirClear}, nil
+			case 4:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 5:
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 6:
+				return intfzf.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intfzf.Result{}, nil
+			}
+		})),
 	}
 
 	var stdout bytes.Buffer

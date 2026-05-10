@@ -55,7 +55,6 @@ type aiCommand struct {
 
 func newAICommand() *aiCommand {
 	return &aiCommand{
-		runner:       intfzf.NewRunner(),
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		executable:   os.Executable,
 		lookupEnv:    os.Getenv,
@@ -575,8 +574,8 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 		return c.setMode(*set)
 	}
 
-	if c.runner == nil {
-		return errors.New("ai settings runner is not configured")
+	if c.nativePicker == nil {
+		return errors.New("native picker is not configured")
 	}
 	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 		UI:         "ai-settings",
@@ -600,8 +599,8 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *aiCommand) runAgentPicker(direction string) (intfzf.Result, error) {
-	if c.runner == nil {
-		return intfzf.Result{}, errors.New("ai picker runner is not configured")
+	if c.nativePicker == nil {
+		return intfzf.Result{}, errors.New("native picker is not configured")
 	}
 	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 		UI:         "ai-picker",

@@ -263,6 +263,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
 	cmd.picker = picker
+	cmd.native = nativePickerFromFZFRunner(picker)
 	cmd.runner = runner
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
@@ -310,9 +311,6 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
 	}
-	if entry.SearchKey != "" {
-		t.Fatalf("search key = %q, want empty for navigation-only sidebar", entry.SearchKey)
-	}
 	if got, want := picker.options.Bindings, []string{"alt-2:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("bindings = %#v, want %#v", got, want)
 	}
@@ -359,6 +357,7 @@ func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 				return ""
 			}
 			cmd.picker = picker
+			cmd.native = nativePickerFromFZFRunner(picker)
 			cmd.runner = runner
 
 			if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -496,6 +495,7 @@ func TestNotifyListSidebarDoesNotAckWhenFocusFails(t *testing.T) {
 	}}
 	cmd := newCmd(store)
 	cmd.picker = picker
+	cmd.native = nativePickerFromFZFRunner(picker)
 	cmd.runner = runner
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
@@ -517,6 +517,7 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	picker := &stubNotifyPicker{result: intfzf.Result{Key: "x", Value: "abc"}}
 	cmd := newCmd(store)
 	cmd.picker = picker
+	cmd.native = nativePickerFromFZFRunner(picker)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -540,6 +541,7 @@ func TestNotifyListSidebarClearAll(t *testing.T) {
 	picker := &stubNotifyPicker{result: intfzf.Result{Key: "ctrl-x", Value: "abc"}}
 	cmd := newCmd(store)
 	cmd.picker = picker
+	cmd.native = nativePickerFromFZFRunner(picker)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {

@@ -66,26 +66,6 @@ func ResultToPicker(result Result) picker.Result {
 	}
 }
 
-type PickerRunner struct {
-	Runner Runner
-}
-
-func NewPickerRunner() picker.Runner {
-	return PickerRunner{Runner: NewRunner()}
-}
-
-func (r PickerRunner) Run(options picker.Options) (picker.Result, error) {
-	runner := r.Runner
-	if runner == nil {
-		runner = NewRunner()
-	}
-	result, err := runner.Run(OptionsFromPicker(options))
-	if err != nil {
-		return picker.Result{}, err
-	}
-	return ResultToPicker(result), nil
-}
-
 func PickerOptions(options Options) picker.Options {
 	initialIndex, initialIndexSet := pickerInitialIndex(options)
 	return picker.Options{

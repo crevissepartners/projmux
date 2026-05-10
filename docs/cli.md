@@ -60,9 +60,8 @@ sub-verbs are entry hooks invoked by tmux keybindings (e.g.
 `sidebar-focus` is wired to the sidebar's focus binding so navigation keeps
 the active session in sync).
 
-Settings > Labs > Picker Engine can switch between the default native picker
-backend and the external fzf fallback. `PROJMUX_PICKER_BACKEND=fzf` is supported
-as an environment override and takes priority over the saved Labs setting.
+Settings > Labs remains available for experimental settings, but picker backend
+selection has been retired. The native picker is always used.
 
 ## setup
 
@@ -102,20 +101,16 @@ projmux doctor [--json]
 projmux doctor --install-missing [--dry-run] [--include-optional]
 ```
 
-Runs a dependency check: `tmux ≥ 3.4`, `fzf ≥ 0.65.0`, `git`, `stty` (POSIX
-only), and `kubectl` (optional). Exit code `0` even when optional deps are
-missing; non-zero only when a required dep is missing or stale. `--json`
-emits a machine-readable array; the default is the human report with
-suggested install commands per platform. `--install-missing` is explicit
-opt-in and runs generated install commands only for missing or stale required
-dependencies. `--dry-run` prints those commands without executing them.
-`--include-optional` also includes optional missing dependencies such as
-`kubectl` when an install command is available. Install flags cannot be
-combined with `--json`. Doctor does not diagnose terminal key delivery; use
-`projmux setup` for that. For fzf, doctor requires the junegunn/fzf CLI
-executable on `PATH` to report at least 0.65.0 from `fzf --version`; the npm
-package `fzf` is a JavaScript library and is not a valid CLI install path for
-projmux.
+Runs a dependency check: `tmux ≥ 3.4`, `git`, `stty` (POSIX only), and
+`kubectl` (optional). Exit code `0` even when optional deps are missing;
+non-zero only when a required dep is missing or stale. `--json` emits a
+machine-readable array; the default is the human report with suggested install
+commands per platform. `--install-missing` is explicit opt-in and runs
+generated install commands only for missing or stale required dependencies.
+`--dry-run` prints those commands without executing them. `--include-optional`
+also includes optional missing dependencies such as `kubectl` when an install
+command is available. Install flags cannot be combined with `--json`. Doctor
+does not diagnose terminal key delivery; use `projmux setup` for that.
 
 ## focus
 
@@ -413,10 +408,9 @@ flags with the top-level `switch` UX:
   effective root unless saved. `Workdirs` remains separate: those entries are
   additional search roots, not the primary root. Appearance stores
   `~/.config/projmux/statusbar-decoration` as `off` (default), `symbol`, or
-  `emoji` and updates the live tmux option when available. Labs stores
-  `~/.config/projmux/picker-backend` as `native` (default) or `fzf` and updates
-  the live tmux `PROJMUX_PICKER_BACKEND` environment when available. The About
-  section reads the cached update status without network access;
+  `emoji` and updates the live tmux option when available. Labs remains
+  available for experimental settings. The About section reads the cached
+  update status without network access;
   selecting Check Updates runs `projmux update check`, and Update Now runs
   `projmux update apply`. The same About section also lists the keybinding
   diagnostic path: zero-config first, `setup` for swallowed keys, `init` for

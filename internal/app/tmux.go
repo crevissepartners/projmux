@@ -740,11 +740,8 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 }
 
 func sessionizerSidebarWidth(clientWidth int, backend intpicker.Backend) string {
-	minWidth := 56
-	if backend == intpicker.BackendNative {
-		minWidth = 40
-	}
-	return popupSize(clientWidth, 20, minWidth)
+	_ = backend
+	return popupSize(clientWidth, 20, 40)
 }
 
 func notifySidebarWidth(clientWidth int) string {

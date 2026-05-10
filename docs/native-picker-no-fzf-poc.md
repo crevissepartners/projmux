@@ -1,7 +1,6 @@
 # Native Picker Engine
 
-This note tracks the native picker engine. Native is the default picker backend,
-while the `internal/ui/fzf` backend remains available as an explicit fallback.
+This note tracks the native picker engine. Native is the only picker backend.
 
 The fzf compatibility surface for the native engine is tracked in
 [native-picker-parity.md](native-picker-parity.md).
@@ -17,20 +16,12 @@ The fzf compatibility surface for the native engine is tracked in
   execution, and result contracts, while moving visual composition into
   `projmuxpicker` so projmux can evolve a native picker design without coupling
   every visual tweak to the fzf adapter.
-- `internal/ui/fzf` now owns the adapter between fzf's legacy option/result
+- `internal/ui/fzf` remains as a legacy adapter between the old option/result
   shape and the backend-neutral `picker.Options` contract. App code should
-  describe picker intent as rows, actions, preview commands, and initial focus;
-  the fzf adapter is responsible for translating that into `--expect`,
-  `--bind execute-silent(...)`, `+refresh-preview`, and `start:pos(N)`.
-- `intfzf.NewPickerRunner()` wraps fzf behind the same `picker.Runner`
-  interface as the native runner. This is the current DI boundary for swapping
-  picker engines while keeping fzf available.
-- Settings > Labs > Picker Engine stores the backend selection in
-  `~/.config/projmux/picker-backend` and updates the live tmux environment so
-  new picker popups can switch between `fzf` and `native` without restarting
-  the app server.
-- Native is the default backend. `PROJMUX_PICKER_BACKEND=fzf` remains an
-  explicit environment override and takes priority over the saved Labs setting.
+  describe picker intent as rows, actions, preview commands, and initial focus,
+  then route through the native picker.
+- Settings > Labs remains available for experimental settings, but picker
+  backend selection has been retired.
 - Picker flows covered by the native path include AI picker/settings, shell
   update prompt, settings hub sections, switch settings/add-pin, the main
   project switcher list, recent sessions, and notify sidebar.
@@ -135,7 +126,7 @@ The fzf compatibility surface for the native engine is tracked in
 ## Experimental Boundaries
 
 - The `projmuxpicker` package is intended as a foundation that can be carried
-  forward, along with the fzf-to-picker adapter boundary in `internal/ui/fzf`.
+  forward, along with the legacy option/result mapping in `internal/ui/fzf`.
   Its frame, row, preview, theme, ANSI, and redraw modules are foundation code;
   Docker sandbox scripts and dependency-policy notes remain support
   scaffolding.
@@ -151,9 +142,7 @@ The fzf compatibility surface for the native engine is tracked in
   switch and sessions popup flows type a filtered query, send `Right` and
   `Alt-Down`, and assert the stored preview window/pane cursor for the selected
   session.
-- Public doctor dependency policy remains separate from picker backend
-  selection. Native is the default picker backend, and fzf remains available as
-  an explicit fallback.
+- Public doctor dependency policy no longer includes an external picker binary.
 
 ## Interactive No-fzf Sandbox
 

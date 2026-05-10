@@ -10,6 +10,16 @@ import (
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
+func nativePickerFromFZFRunner(r intfzf.Runner) intpicker.Runner {
+	return pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+		result, err := r.Run(intfzf.OptionsFromPicker(options))
+		if err != nil {
+			return intpicker.Result{}, err
+		}
+		return intfzf.ResultToPicker(result), nil
+	})
+}
+
 func TestRunPickerOptionBackendUsesNativeWhenRequested(t *testing.T) {
 	t.Parallel()
 
@@ -148,7 +158,7 @@ func TestRunPickerOptionBackendDefaultsToNativeBackend(t *testing.T) {
 	}
 }
 
-func TestRunPickerOptionBackendEnvOverridesSavedNativeBackend(t *testing.T) {
+func TestRunPickerOptionBackendIgnoresLegacyFZFEnvOverride(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -159,30 +169,87 @@ func TestRunPickerOptionBackendEnvOverridesSavedNativeBackend(t *testing.T) {
 	}
 
 	var nativeCalled bool
+	var fzfCalled bool
 	result, err := runPickerOptionBackend(
 		func(name string) string {
 			if name == intpicker.BackendEnv {
-				return string(intpicker.BackendFZF)
+				return "fzf"
 			}
 			return os.Getenv(name)
 		},
 		pickerRunnerFunc(func(intpicker.Options) (intpicker.Result, error) {
 			nativeCalled = true
-			return intpicker.Result{}, nil
+			return intpicker.Result{Key: "enter", Value: "ai"}, nil
 		}),
 		switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-			return intfzf.Result{Key: "enter", Value: "ai"}, nil
+			fzfCalled = true
+			return intfzf.Result{Key: "enter", Value: "fzf"}, nil
 		}),
 		intfzf.Options{UI: "settings"},
 	)
 	if err != nil {
 		t.Fatalf("runPickerOptionBackend() error = %v", err)
 	}
-	if nativeCalled {
-		t.Fatal("native runner was called despite env forcing fzf")
+	if !nativeCalled {
+		t.Fatal("native runner was not called despite legacy fzf env")
+	}
+	if fzfCalled {
+		t.Fatal("fzf runner was called despite legacy fzf env")
 	}
 	if result.Value != "ai" {
-		t.Fatalf("result = %#v, want fzf selection", result)
+		t.Fatalf("result = %#v, want native selection", result)
+	}
+}
+
+func TestRunPickerOptionBackendErrorsWhenNativeMissingWithoutCallingFZF(t *testing.T) {
+	t.Parallel()
+
+	var fzfCalled bool
+	_, err := runPickerOptionBackend(
+		func(name string) string {
+			if name == intpicker.BackendEnv {
+				return "fzf"
+			}
+			return ""
+		},
+		nil,
+		switchRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+			fzfCalled = true
+			return intfzf.Result{Key: "enter", Value: "fzf"}, nil
+		}),
+		intfzf.Options{UI: "settings"},
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "native picker is not configured") {
+		t.Fatalf("runPickerOptionBackend() error = %v, want native picker error", err)
+	}
+	if fzfCalled {
+		t.Fatal("fzf runner was called when native picker was missing")
+	}
+}
+
+func TestProductionPickerConstructorsDoNotCreateFZFRunner(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	if cmd := newAICommand(); cmd.runner != nil {
+		t.Fatal("newAICommand() created fzf runner")
+	}
+	if cmd := newSettingsCommand(testAICommand(t.TempDir()), testSettingsSwitchCommand(t, &stubSwitchPinStore{}), nil); cmd.runner != nil {
+		t.Fatal("newSettingsCommand() created fzf runner")
+	}
+	if cmd := newSwitchCommand(); cmd.runner != nil {
+		t.Fatal("newSwitchCommand() created fzf runner")
+	}
+	if cmd := newSessionsCommand(); cmd.runner != nil {
+		t.Fatal("newSessionsCommand() created fzf runner")
+	}
+	if cmd := newNotifyCommand(); cmd.picker != nil {
+		t.Fatal("newNotifyCommand() created fzf runner")
+	}
+	if cmd := newShellCommand(nil); cmd.updatePromptRunner != nil {
+		t.Fatal("newShellCommand() created fzf runner")
 	}
 }
 

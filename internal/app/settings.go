@@ -65,7 +65,6 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 		ai:           ai,
 		switcher:     switcher,
 		update:       update,
-		runner:       intfzf.NewRunner(),
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		homeDir:      os.UserHomeDir,
 		lookupEnv:    os.Getenv,
@@ -80,8 +79,8 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printSettingsUsage(stderr)
 		return errors.New("settings does not accept positional arguments")
 	}
-	if c.runner == nil {
-		return errors.New("settings runner is not configured")
+	if c.nativePicker == nil {
+		return errors.New("native picker is not configured")
 	}
 
 	for {
@@ -997,33 +996,12 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 
 func (c *settingsCommand) labsEntries() []intfzf.Entry {
 	current, source := c.currentPickerBackend()
-	modes := []struct {
-		mode config.PickerBackend
-		name string
-		desc string
-	}{
-		{config.PickerBackendNative, "native", "default projmux picker engine; no fzf required"},
-		{config.PickerBackendFZF, "fzf", "external fzf fallback backend"},
-	}
-
-	entries := make([]intfzf.Entry, 0, len(modes)+2)
+	entries := make([]intfzf.Entry, 0, 2)
 	entries = append(entries, settingsBackEntry())
 	if source != "" {
 		entries = append(entries, intfzf.Entry{
 			Label: settingsLabelInfo("Picker source", string(current), source),
 			Value: settingsNoopValue,
-		})
-	}
-	for _, item := range modes {
-		glyph := settingsGlyphInactive
-		color := settingsColorDim
-		if item.mode == current {
-			glyph = settingsGlyphToggle
-			color = settingsColorAdd
-		}
-		entries = append(entries, intfzf.Entry{
-			Label: settingsLabel(glyph, color, item.name, item.desc),
-			Value: settingsActionPrefixPicker + string(item.mode),
 		})
 	}
 	return entries
@@ -1080,7 +1058,7 @@ func (c *settingsCommand) aboutEntries() []intfzf.Entry {
 		{"Key setup", "Alt-1..5 work zero-config when the terminal forwards Meta"},
 		{"Diagnose keys", "projmux setup reports swallowed shortcuts"},
 		{"Terminal fallback", "projmux init applies supported terminal key mappings"},
-		{"Dependencies", "projmux doctor checks tmux, fzf, git, stty, kubectl"},
+		{"Dependencies", "projmux doctor checks tmux, git, stty, kubectl"},
 		{"Rename key", "Ctrl-M sends 9011u, tmux maps User10 to rename"},
 		{"Ghostty", "bind alt/ctrl keys to csi:9001u..9012u"},
 		{"Windows Term.", "actions sendInput tmux/meta sequences; keybindings attach keys"},
