@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.7](https://github.com/crevissepartners/projmux/compare/v0.4.6...v0.4.7) (2026-05-10)
+
+
+### Features
+
+* **picker:** add experimental native picker engine ([#98](https://github.com/crevissepartners/projmux/issues/98)) ([c49aa68](https://github.com/crevissepartners/projmux/commit/c49aa68cc05fdde59f387ea0938f7b531fe23ba6))
+* **picker:** make native picker default ([#113](https://github.com/crevissepartners/projmux/issues/113)) ([5609d1e](https://github.com/crevissepartners/projmux/commit/5609d1e47a5ad54b2eb3fe8b9d008f0d0120b958))
+
+
+### Bug Fixes
+
+* **notify:** decorate sidebar popup title ([#104](https://github.com/crevissepartners/projmux/issues/104)) ([b19ec03](https://github.com/crevissepartners/projmux/commit/b19ec03c8a5ffa686234834373a49cf71d318484))
+* **notify:** make sidebar navigation-only ([#100](https://github.com/crevissepartners/projmux/issues/100)) ([11ce5d3](https://github.com/crevissepartners/projmux/commit/11ce5d38c44fd4e0044e4bde6fcd9a46282faafc))
+* **picker:** align native metadata indent ([#108](https://github.com/crevissepartners/projmux/issues/108)) ([0b55df8](https://github.com/crevissepartners/projmux/commit/0b55df8b8c4fb3f2436048a926b47fdbc494cb31))
+* **picker:** keep sidebars off statusbar ([#111](https://github.com/crevissepartners/projmux/issues/111)) ([320e023](https://github.com/crevissepartners/projmux/commit/320e0231987c853eb4c8decce48aa093366e92a3))
+* **picker:** polish native switch preview ([#106](https://github.com/crevissepartners/projmux/issues/106)) ([5fa3827](https://github.com/crevissepartners/projmux/commit/5fa3827368d06a277f1883ae828740234d2c83c8))
+* **picker:** refine native sidebar chrome ([#109](https://github.com/crevissepartners/projmux/issues/109)) ([aaea6ee](https://github.com/crevissepartners/projmux/commit/aaea6ee13c54ad8cbdb619d4e670295020d13a79))
+* **picker:** stabilize native preview chrome ([#110](https://github.com/crevissepartners/projmux/issues/110)) ([dce6bbf](https://github.com/crevissepartners/projmux/commit/dce6bbff55d4790e2e1881ab0e07935610912c94))
+* **picker:** stabilize native switch viewport ([#107](https://github.com/crevissepartners/projmux/issues/107)) ([77d91c3](https://github.com/crevissepartners/projmux/commit/77d91c3f828913f74f53542ea777fbac009c844a))
+* **picker:** tune sidebar geometry ([#112](https://github.com/crevissepartners/projmux/issues/112)) ([36aeda9](https://github.com/crevissepartners/projmux/commit/36aeda9863fc2cd19d907af70c50f9d6b90dd05d))
+* **statusbar:** refine notify and git decorations ([#105](https://github.com/crevissepartners/projmux/issues/105)) ([b46e386](https://github.com/crevissepartners/projmux/commit/b46e3869ba30a8fe0ead9b57290b7dfe1f4a59af))
+
 ## [0.4.6](https://github.com/crevissepartners/projmux/compare/v0.4.5...v0.4.6) (2026-05-08)
 
 
