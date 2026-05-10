@@ -1381,11 +1381,26 @@ func nativeAppendPartialNextItemLines(items []Item, lines []string, next, select
 		return lines
 	}
 	out := append([]string(nil), lines...)
-	nextLines := nativeInteractiveItemLines(items[next], next == selected, true)
+	nextLines := nativePartialNextItemLines(items, next, selected)
 	if len(nextLines) > remaining {
 		nextLines = nextLines[:remaining]
 	}
 	return append(out, nextLines...)
+}
+
+func nativePartialNextItemLines(items []Item, next, selected int) []string {
+	if next < 0 || next >= len(items) {
+		return nil
+	}
+	if next == 0 {
+		return nativeInteractiveItemLines(items[next], next == selected, true)
+	}
+	withNext := nativeInteractiveListLines(items, next-1, next+1, selected, true)
+	withoutNext := nativeInteractiveListLines(items, next-1, next, selected, true)
+	if len(withNext) <= len(withoutNext) {
+		return nativeInteractiveItemLines(items[next], next == selected, true)
+	}
+	return withNext[len(withoutNext):]
 }
 
 func nativeChromeLineCount(options Options) int {
