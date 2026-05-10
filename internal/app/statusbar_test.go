@@ -59,6 +59,7 @@ func TestStatusbarDispatchTableCoversAllKnownRanges(t *testing.T) {
 		statusbarRangeGit,
 		statusbarRangeUsage,
 		statusbarRangeNotify,
+		statusbarRangeSettings,
 	}
 	if got := len(table); got != len(want) {
 		t.Fatalf("dispatch table size = %d, want %d", got, len(want))
@@ -296,6 +297,20 @@ func TestStatusbarClickGitOpensProjectSwitcher(t *testing.T) {
 	}
 }
 
+func TestStatusbarClickSettingsOpensSettingsPopupForClient(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+
+	if err := cmd.Run([]string{"click", "settings", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-settings"}) {
+		t.Fatalf("missing settings popup-toggle for client; calls = %#v", runner.calls)
+	}
+}
+
 func TestStatusbarClickPopupActionFailuresShowToast(t *testing.T) {
 	t.Parallel()
 
@@ -307,6 +322,7 @@ func TestStatusbarClickPopupActionFailuresShowToast(t *testing.T) {
 		{name: "session", rangeID: "session", want: "statusbar session: popup failed"},
 		{name: "kube", rangeID: "kube", want: "statusbar kube: popup failed"},
 		{name: "git", rangeID: "git", want: "statusbar git: popup failed"},
+		{name: "settings", rangeID: "settings", want: "statusbar settings: popup failed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

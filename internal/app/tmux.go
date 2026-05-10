@@ -897,7 +897,7 @@ func tmuxStandaloneConfig(binaryPath string, decoration config.StatusbarDecorati
 		"set -g status 2",
 		"set -g status-right-length 140",
 		"set -g status-left " + tmuxConfigQuote("#[range=user|session][#S] #[norange]"),
-		"set -g status-right " + tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M #[bold,fg=colour16,bg=colour45] projmux #[default]"),
+		"set -g status-right " + tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M #[range=user|settings]#[bold,fg=colour16,bg=colour45] projmux #[norange]#[default]"),
 		// Two-line status bar: line 0 is the existing session/window/path row;
 		// line 1 splits notify (left, capped at 80 cells) and the AI usage HUD
 		// (right, capped at 120 cells). Caps assume a 200+ col terminal — the
@@ -1017,7 +1017,7 @@ func tmuxAppConfig(binaryPath, defaultShell string, decoration config.StatusbarD
 	lines = append(lines,
 		"set -g status 2",
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M#[default]"),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M #[range=user|settings]#[bold,fg=colour16,bg=colour45] ⚙ #[norange]#[default]"),
 		"set -g status-format[1] "+tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 80)#[norange]#[align=right range=user|usage]#("+bin+" status usage --max-width 120)#[norange]"),
 		"set -gu status-format[2]",
 	)
@@ -1083,7 +1083,7 @@ func tmuxAppKeyBindings() []string {
 // each handler twice.
 func tmuxStatusbarKeyBindings(binaryPath string) []string {
 	bin := tmuxShellQuote(binaryPath)
-	clickCmd := bin + " statusbar click \"#{mouse_status_range}\" --mouse-window \"#{mouse_window}\""
+	clickCmd := bin + " statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\""
 	// Use tmux's `{...}` block syntax for the if-shell branches so the nested
 	// quotes inside `run-shell` don't need to be escaped through another layer
 	// of tmux config quoting (which the parser rejects). Block syntax requires

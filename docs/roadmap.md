@@ -52,7 +52,7 @@ core that 0.3 had landed.
 
 - Two-line clickable status bar: row 0 is the existing
   session/window/path/git/kube row, row 1 splits notify (left) and
-  usage (right).
+  usage (right), with a row-0 settings click fallback.
 - `projmux statusbar click` — single dispatcher for both mouse clicks
   and the `prefix s {u,n,g,k,p,s}` keyboard chord. Window-list clicks
   on tabs short-circuit to native `select-window`.

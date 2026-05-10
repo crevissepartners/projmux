@@ -872,7 +872,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"sleep 0.05; '/tmp/proj mux/bin/projmux' tmux rebalance-panes",
 		"set-hook -g after-kill-pane",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
-		"#[bold,fg=colour16,bg=colour45] projmux #[default]",
+		"#[range=user|settings]#[bold,fg=colour16,bg=colour45] projmux #[norange]#[default]",
 		"'/tmp/proj mux/bin/projmux' status kube",
 		"'/tmp/proj mux/bin/projmux' status git",
 		"set -g @projmux_statusbar_decoration off",
@@ -953,7 +953,7 @@ func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *tes
 		"{ select-window -t = }",
 		// Projmux fallback path for non-window ranges still goes through run-shell,
 		// now wrapped in a `{ ... }` block instead of an extra layer of quoting.
-		`{ run-shell "'/tmp/proj mux/bin/projmux' statusbar click \"#{mouse_status_range}\" --mouse-window \"#{mouse_window}\"" }`,
+		`{ run-shell "'/tmp/proj mux/bin/projmux' statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\"" }`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
@@ -1098,7 +1098,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g @projmux_statusbar_decoration off",
 		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour33] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
-		" %Y-%m-%d %H:%M#[default]",
+		" %Y-%m-%d %H:%M #[range=user|settings]#[bold,fg=colour16,bg=colour45] ⚙ #[norange]#[default]",
 		"set -g status 2",
 		"range=user|notify",
 		"range=user|usage",
