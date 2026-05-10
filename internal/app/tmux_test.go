@@ -288,6 +288,8 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-E",
 		"-B",
 		"-d", "/tmp/work tree",
+		"-e", "PROJMUX_HOOK_TRUST_TARGET_CLIENT=/dev/pts/projmux-test-sidebar",
+		"-e", "PROJMUX_HOOK_TRUST_TARGET_PANE=%1",
 		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-1",
 		"-e", "PROJMUX_PICKER_BACKEND=native",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_DIR=/tmp/work tree",
@@ -772,6 +774,7 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_NATIVE_TTY_FALLBACK='0'",
 		"PROJMUX_PROJDIR='/workspace/projects'",
 		"PROJMUX_MANAGED_ROOTS='/workspace/projects'",
+		hookTrustPopupTargetPaneEnv + "='%1'",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("popup command = %q, want substring %q", command, want)
@@ -783,6 +786,7 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_NATIVE_TTY_FALLBACK": "0",
 		"PROJMUX_PROJDIR":             "/workspace/projects",
 		"PROJMUX_MANAGED_ROOTS":       "/workspace/projects",
+		hookTrustPopupTargetPaneEnv:   "%1",
 	} {
 		if got := options.Env[key]; got != want {
 			t.Fatalf("options.Env[%q] = %q, want %q", key, got, want)

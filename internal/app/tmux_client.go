@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
@@ -26,6 +27,10 @@ func defaultLifecycleHookRunner() *hooks.Runner {
 	if err != nil {
 		return nil
 	}
+	prompt := hooks.ProjectHookPrompt(nil)
+	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
+		prompt = tmuxProjectHookPrompt(os.Getenv, os.Executable, inttmux.ExecRunner{})
+	}
 	return &hooks.Runner{
 		GlobalHookPaths: map[hooks.Event][]string{
 			hooks.EventPreCreate:   {paths.HookPath(config.PreCreateHookFileName)},
@@ -34,6 +39,7 @@ func defaultLifecycleHookRunner() *hooks.Runner {
 			hooks.EventPostAttach:  {paths.HookPath(config.PostAttachHookFileName)},
 		},
 		DiscoverProjectHooks: true,
+		ProjectHookPrompt:    prompt,
 		Logger:               os.Stderr,
 		Timeout:              hooks.DefaultPostCreateTimeout,
 		Version:              version.String(),
