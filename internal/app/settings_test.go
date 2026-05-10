@@ -526,14 +526,25 @@ func TestSettingsHubAddProjectScansFilesystem(t *testing.T) {
 			case 1:
 				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
 			case 2:
-				if !hasEntryValue(options.Entries, settingsProjectAdd) {
-					t.Fatalf("project settings entries = %#v, want Add Project", options.Entries)
+				if hasEntryValue(options.Entries, settingsProjectAdd) {
+					t.Fatalf("project settings entries = %#v, want Add Project moved out of root", options.Entries)
 				}
 				if !hasEntryValue(options.Entries, settingsProjectPins) {
 					t.Fatalf("project settings entries = %#v, want Pinned Projects", options.Entries)
 				}
-				return intfzf.Result{Key: "enter", Value: settingsProjectAdd}, nil
+				return intfzf.Result{Key: "enter", Value: settingsProjectPins}, nil
 			case 3:
+				if got, want := options.UI, "settings-project-pins"; got != want {
+					t.Fatalf("pinned projects UI = %q, want %q", got, want)
+				}
+				if got := entryIndexValue(options.Entries, settingsProjectAdd); got != 1 {
+					t.Fatalf("pinned project entries = %#v, want Add Project at index 1, got %d", options.Entries, got)
+				}
+				if got := entryIndexLabelContaining(options.Entries, "Add Current Project"); got != 2 {
+					t.Fatalf("pinned project entries = %#v, want Add Current Project at index 2, got %d", options.Entries, got)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsProjectAdd}, nil
+			case 4:
 				if got, want := options.UI, "settings-project-add"; got != want {
 					t.Fatalf("add project UI = %q, want %q", got, want)
 				}
@@ -619,14 +630,17 @@ func TestProjectPickerEntriesIncludesWorkdirsRows(t *testing.T) {
 	}
 
 	entries := cmd.projectPickerEntries()
-	if !hasEntryValue(entries, settingsWorkdirAdd) {
-		t.Fatalf("project picker entries = %#v, want Add Workdir entry", entries)
+	if hasEntryValue(entries, settingsWorkdirAdd) {
+		t.Fatalf("project picker entries = %#v, want Add Workdir moved out of root", entries)
 	}
 	if !hasEntryValue(entries, settingsWorkdirList) {
 		t.Fatalf("project picker entries = %#v, want Workdirs entry", entries)
 	}
-	if !hasEntryLabelContaining(entries, "Add Workdir...") {
-		t.Fatalf("project picker entries = %#v, want 'Add Workdir...' label", entries)
+	if hasEntryLabelContaining(entries, "Add Workdir...") {
+		t.Fatalf("project picker entries = %#v, want no root-level 'Add Workdir...' label", entries)
+	}
+	if hasEntryLabelContaining(entries, "Add Current Project") {
+		t.Fatalf("project picker entries = %#v, want no root-level 'Add Current Project' label", entries)
 	}
 	if !hasEntryLabelContaining(entries, "Workdirs") {
 		t.Fatalf("project picker entries = %#v, want 'Workdirs' label", entries)
@@ -652,11 +666,19 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 			case 1:
 				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
 			case 2:
-				if !hasEntryValue(options.Entries, settingsWorkdirAdd) {
-					t.Fatalf("project settings entries = %#v, want Add Workdir", options.Entries)
+				if hasEntryValue(options.Entries, settingsWorkdirAdd) {
+					t.Fatalf("project settings entries = %#v, want Add Workdir moved out of root", options.Entries)
+				}
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
+			case 3:
+				if got, want := options.UI, "settings-workdirs"; got != want {
+					t.Fatalf("workdirs list UI = %q, want %q", got, want)
+				}
+				if got := entryIndexValue(options.Entries, settingsWorkdirAdd); got != 1 {
+					t.Fatalf("workdirs list entries = %#v, want Add Workdir at index 1, got %d", options.Entries, got)
 				}
 				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
-			case 3:
+			case 4:
 				if got, want := options.UI, "settings-workdir-add"; got != want {
 					t.Fatalf("add workdir UI = %q, want %q", got, want)
 				}
@@ -777,6 +799,9 @@ func TestWorkdirListEntriesSurfacesEnvSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workdirListEntries() error = %v", err)
 	}
+	if got := entryIndexValue(entries, settingsWorkdirAdd); got != 1 {
+		t.Fatalf("workdir list entries = %#v, want Add Workdir at index 1, got %d", entries, got)
+	}
 	if !hasEntryLabelContaining(entries, "/saved/a") {
 		t.Fatalf("workdir list entries = %#v, want saved entry", entries)
 	}
@@ -816,8 +841,10 @@ func TestAddWorkdirEntriesIncludesTypedRow(t *testing.T) {
 			case 1:
 				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
 			case 2:
-				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
 			case 3:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 4:
 				addOptions = options
 				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
 			default:
@@ -862,16 +889,21 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 			case 1:
 				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
 			case 2:
-				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
 			case 3:
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+			case 4:
 				if !hasEntryValue(options.Entries, settingsWorkdirTyped) {
 					t.Fatalf("add workdir entries = %#v, want typed row", options.Entries)
 				}
 				return intfzf.Result{Key: "enter", Value: settingsWorkdirTyped}, nil
-			case 4:
+			case 5:
 				typedOptions = options
 				return intfzf.Result{Key: "enter", Query: typed}, nil
-			case 5:
+			case 6:
+				// After typed flow returns, the workdirs list reopens. Close it.
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 7:
 				// After typed flow returns, the project picker reopens. Close it.
 				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
 			default:
@@ -925,12 +957,18 @@ func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
 			case 1:
 				return intfzf.Result{Key: "enter", Value: settingsSectionProject}, nil
 			case 2:
-				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirList}, nil
 			case 3:
-				return intfzf.Result{Key: "enter", Value: settingsWorkdirTyped}, nil
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
 			case 4:
-				return intfzf.Result{Key: "enter", Query: "relative/path"}, nil
+				return intfzf.Result{Key: "enter", Value: settingsWorkdirTyped}, nil
 			case 5:
+				return intfzf.Result{Key: "enter", Query: "relative/path"}, nil
+			case 6:
+				// After typed-flow falls back, settings should return to the
+				// workdirs list. Close it.
+				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 7:
 				// After typed-flow falls back, settings should return to the
 				// project picker section. Close to terminate the run.
 				return intfzf.Result{Key: "enter", Value: settingsBackValue}, nil
@@ -1206,8 +1244,8 @@ func TestProjectPickerEntriesIncludesProjdirRow(t *testing.T) {
 	if !hasEntryLabelContaining(entries, "("+projdirSourcePROJDIRenv+")") {
 		t.Fatalf("project picker entries = %#v, want source label", entries)
 	}
-	if !hasEntryLabelContaining(entries, "Set PROJMUX_PROJDIR") {
-		t.Fatalf("project picker entries = %#v, want override hint row", entries)
+	if hasEntryLabelContaining(entries, "Set PROJMUX_PROJDIR") {
+		t.Fatalf("project picker entries = %#v, want project-root hint moved into submenu", entries)
 	}
 }
 
@@ -1283,6 +1321,12 @@ func TestProjectRootEntriesShowShadowedSavedProjdir(t *testing.T) {
 	}
 	if !hasEntryValue(entries, settingsProjdirClear) {
 		t.Fatalf("project root entries = %#v, want clear action", entries)
+	}
+	if !hasEntryLabelContaining(entries, "Set PROJMUX_PROJDIR") {
+		t.Fatalf("project root entries = %#v, want project-root hint row", entries)
+	}
+	if got, wantBefore := entryIndexValue(entries, settingsProjdirSetTyped), entryIndexLabelContaining(entries, "Effective Project Root"); got < 0 || wantBefore < 0 || got > wantBefore {
+		t.Fatalf("project root entries = %#v, want action rows before informational rows", entries)
 	}
 }
 
@@ -1483,6 +1527,15 @@ func hasEntryValue(entries []intfzf.Entry, value string) bool {
 	return false
 }
 
+func entryIndexValue(entries []intfzf.Entry, value string) int {
+	for i, entry := range entries {
+		if entry.Value == value {
+			return i
+		}
+	}
+	return -1
+}
+
 func entryValues(entries []intfzf.Entry) []string {
 	values := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -1498,6 +1551,15 @@ func hasEntryLabelContaining(entries []intfzf.Entry, value string) bool {
 		}
 	}
 	return false
+}
+
+func entryIndexLabelContaining(entries []intfzf.Entry, value string) int {
+	for i, entry := range entries {
+		if strings.Contains(entry.Label, value) {
+			return i
+		}
+	}
+	return -1
 }
 
 func mkdirAll(t *testing.T, path string) {

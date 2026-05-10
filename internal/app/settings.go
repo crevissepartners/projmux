@@ -558,9 +558,9 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 		result, err := c.runPicker(intfzf.Options{
 			UI:         "settings-workdirs",
 			Entries:    entries,
-			Title:      "Workdirs - Remove saved scan roots",
+			Title:      "Workdirs - Add or remove scan roots",
 			Prompt:     "Settings > Project Picker > Workdirs > ",
-			Footer:     projmuxFooter("Enter: remove  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: add/remove  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -577,6 +577,12 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 		if action == settingsNoopValue {
 			continue
 		}
+		if action == settingsWorkdirAdd {
+			if err := c.runAddWorkdir(stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := c.execute(action, stdout, stderr); err != nil {
 			return err
 		}
@@ -584,7 +590,13 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 }
 
 func (c *settingsCommand) workdirListEntries() ([]intfzf.Entry, error) {
-	entries := []intfzf.Entry{settingsBackEntry()}
+	entries := []intfzf.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Workdir...", "append a directory to the saved workdirs list"),
+			Value: settingsWorkdirAdd,
+		},
+	}
 	if c.switcher == nil {
 		return append(entries, intfzf.Entry{
 			Label: settingsLabelDim("(no saved workdirs)", ""),
@@ -633,7 +645,7 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 		result, err := c.runPicker(intfzf.Options{
 			UI:         "settings-project-pins",
 			Entries:    entries,
-			Title:      "Pinned Projects - Remove or clear pins",
+			Title:      "Pinned Projects - Add or remove pins",
 			Prompt:     "Settings > Project Picker > Pinned Projects > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
@@ -652,6 +664,12 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 		if action == settingsNoopValue {
 			continue
 		}
+		if action == settingsProjectAdd {
+			if err := c.runAddProject(stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := c.execute(action, stdout, stderr); err != nil {
 			return err
 		}
@@ -664,24 +682,14 @@ func (c *settingsCommand) projectPickerEntries() []intfzf.Entry {
 	}
 
 	entries = append(entries, c.projectRootEntry())
-	entries = append(entries, c.projectRootHintEntry())
 	entries = append(entries, intfzf.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Workdir...", "append a directory to the saved workdirs list"),
-		Value: settingsWorkdirAdd,
-	})
-	entries = append(entries, intfzf.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Workdirs", "remove saved workdirs (env list takes priority)"),
+		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Workdirs", "add or remove scan roots"),
 		Value: settingsWorkdirList,
 	})
 	entries = append(entries, intfzf.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Pinned Projects", "remove or clear pins"),
+		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Pinned Projects", "add or remove pins"),
 		Value: settingsProjectPins,
 	})
-	entries = append(entries, intfzf.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Project...", "scan filesystem roots"),
-		Value: settingsProjectAdd,
-	})
-	entries = append(entries, c.addCurrentProjectEntry())
 	return entries
 }
 
@@ -729,6 +737,19 @@ func (c *settingsCommand) projectRootEntries() ([]intfzf.Entry, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	entries = append(entries,
+		intfzf.Entry{
+			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Set Project Root...", "save one primary root path directly"),
+			Value: settingsProjdirSetTyped,
+		},
+		c.setCurrentProjectRootEntry(),
+		intfzf.Entry{
+			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Clear Saved Project Root", "remove ~/.config/projmux/projdir"),
+			Value: settingsProjdirClear,
+		},
+	)
+
 	if info.EffectiveValue == "" {
 		entries = append(entries, intfzf.Entry{
 			Label: settingsLabelInfo("Effective Project Root", "not configured", "no env, tmux option, or saved value"),
@@ -765,15 +786,7 @@ func (c *settingsCommand) projectRootEntries() ([]intfzf.Entry, error) {
 	}
 
 	entries = append(entries,
-		intfzf.Entry{
-			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Set Project Root...", "save one primary root path directly"),
-			Value: settingsProjdirSetTyped,
-		},
-		c.setCurrentProjectRootEntry(),
-		intfzf.Entry{
-			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Clear Saved Project Root", "remove ~/.config/projmux/projdir"),
-			Value: settingsProjdirClear,
-		},
+		c.projectRootHintEntry(),
 		intfzf.Entry{
 			Label: "  " + settingsColorDim + "Env PROJMUX_PROJDIR and tmux @projmux_projdir override the saved value until unset." + settingsColorReset,
 			Value: settingsNoopValue,
@@ -854,7 +867,14 @@ func (c *settingsCommand) addCurrentProjectEntry() intfzf.Entry {
 }
 
 func (c *settingsCommand) pinnedProjectEntries() ([]intfzf.Entry, error) {
-	entries := []intfzf.Entry{settingsBackEntry()}
+	entries := []intfzf.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Project...", "scan filesystem roots"),
+			Value: settingsProjectAdd,
+		},
+		c.addCurrentProjectEntry(),
+	}
 	if c.switcher == nil {
 		return append(entries, intfzf.Entry{
 			Label: settingsLabelDim("(no pinned projects)", ""),
