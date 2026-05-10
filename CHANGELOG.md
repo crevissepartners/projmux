@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.8](https://github.com/crevissepartners/projmux/compare/v0.4.7...v0.4.8) (2026-05-10)
+
+
+### Bug Fixes
+
+* **ai:** stabilize native launch picker order ([#122](https://github.com/crevissepartners/projmux/issues/122)) ([68fc036](https://github.com/crevissepartners/projmux/commit/68fc036b210e01f75d2253c0f0a871af3c9be7c2))
+* **picker:** distinguish native titlebar chrome ([#116](https://github.com/crevissepartners/projmux/issues/116)) ([6ea8c0a](https://github.com/crevissepartners/projmux/commit/6ea8c0a9fadfd3c2d4b1752f9e2f8b065ab5a978))
+* **picker:** follow native mouse drag selection ([#120](https://github.com/crevissepartners/projmux/issues/120)) ([a20406e](https://github.com/crevissepartners/projmux/commit/a20406eff4584345f0bf5e847bc453e09a82a8cd))
+* **picker:** move settings descriptions into titles ([#123](https://github.com/crevissepartners/projmux/issues/123)) ([5175b85](https://github.com/crevissepartners/projmux/commit/5175b85b835765ab479fbc401aca5a31dafbbced))
+* **picker:** neutralize native titlebar accent ([#118](https://github.com/crevissepartners/projmux/issues/118)) ([fe66cb3](https://github.com/crevissepartners/projmux/commit/fe66cb32870dd2ec5616e639ae0d783a6517789e))
+* **picker:** refine native sidebar chrome and keys ([#119](https://github.com/crevissepartners/projmux/issues/119)) ([e5d89c6](https://github.com/crevissepartners/projmux/commit/e5d89c6c7dd7ec11a71f88c6dee0a4ae3f045029))
+* **picker:** separate native title from search ([#117](https://github.com/crevissepartners/projmux/issues/117)) ([e45ce8b](https://github.com/crevissepartners/projmux/commit/e45ce8b67b95540f3200aef647a5870144a6ff91))
+* **picker:** trigger native mouse clicks on release ([#114](https://github.com/crevissepartners/projmux/issues/114)) ([3ba6d80](https://github.com/crevissepartners/projmux/commit/3ba6d8032a70bc3ee9e88c3a9ea904ed1ff66b57))
+* **settings:** nest project picker list actions ([#124](https://github.com/crevissepartners/projmux/issues/124)) ([a1526c2](https://github.com/crevissepartners/projmux/commit/a1526c2b2350a2e0dcd62c15b7cb4148e2e9d7df))
+* **settings:** promote picker context to native titles ([#121](https://github.com/crevissepartners/projmux/issues/121)) ([12ca31f](https://github.com/crevissepartners/projmux/commit/12ca31f103faaecf050834f3ad0c7ea04db82e74))
+
 ## [0.4.7](https://github.com/crevissepartners/projmux/compare/v0.4.6...v0.4.7) (2026-05-10)
 
 
