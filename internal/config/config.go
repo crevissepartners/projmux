@@ -15,6 +15,7 @@ const (
 	TagsFileName           = "tags"
 	PreviewStateFileName   = "preview-state"
 	ProjdirFileName        = "projdir"
+	KeymapFileName         = "keymap.toml"
 	HooksDirName           = "hooks"
 	PostCreateHookFileName = "post-create"
 )
@@ -62,6 +63,11 @@ func (p Paths) PreviewStateFile() string {
 // PROJMUX_PROJDIR value (the primary project root path).
 func (p Paths) ProjdirFile() string {
 	return filepath.Join(p.ConfigDir, ProjdirFileName)
+}
+
+// KeymapFile returns the user-editable keybinding override file.
+func (p Paths) KeymapFile() string {
+	return filepath.Join(p.ConfigDir, KeymapFileName)
 }
 
 // PostCreateHookPath returns the default location for the optional

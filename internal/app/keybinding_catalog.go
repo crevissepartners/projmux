@@ -425,8 +425,12 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 }
 
 func keyBindingCatalogForScope(scope keyBindingScope) []keyBindingAction {
+	return keyBindingCatalogForScopeFrom(defaultKeyBindingCatalog(), scope)
+}
+
+func keyBindingCatalogForScopeFrom(catalog []keyBindingAction, scope keyBindingScope) []keyBindingAction {
 	var out []keyBindingAction
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range catalog {
 		if action.Scope == scope {
 			out = append(out, action)
 		}
@@ -470,6 +474,55 @@ func tmuxUnbindLines(actions []keyBindingAction) []string {
 	}
 	for _, action := range user {
 		lines = append(lines, "unbind-key -q -n "+keyBindingUserKey(action))
+	}
+	return lines
+}
+
+func tmuxMergedUnbindLines(defaults, merged []keyBindingAction) []string {
+	type binding struct {
+		chord string
+		order int
+	}
+	seenNoPrefix := map[string]bool{}
+	seenPrefix := map[string]bool{}
+	var plain, user, prefix []binding
+	add := func(action keyBindingAction) {
+		if action.PlainChord != "" && !seenNoPrefix[action.PlainChord] {
+			seenNoPrefix[action.PlainChord] = true
+			plain = append(plain, binding{chord: action.PlainChord, order: action.PlainBindOrder})
+		}
+		if action.UserSlot != noUserSlot {
+			chord := keyBindingUserKey(action)
+			if !seenNoPrefix[chord] {
+				seenNoPrefix[chord] = true
+				user = append(user, binding{chord: chord, order: action.UserSlot})
+			}
+		}
+		if action.PrefixChord != "" && !seenPrefix[action.PrefixChord] {
+			seenPrefix[action.PrefixChord] = true
+			prefix = append(prefix, binding{chord: action.PrefixChord, order: action.PrefixBindOrder})
+		}
+	}
+	for _, action := range defaults {
+		add(action)
+	}
+	for _, action := range merged {
+		add(action)
+	}
+
+	sort.SliceStable(plain, func(i, j int) bool { return plain[i].order < plain[j].order })
+	sort.SliceStable(user, func(i, j int) bool { return user[i].order < user[j].order })
+	sort.SliceStable(prefix, func(i, j int) bool { return prefix[i].order < prefix[j].order })
+
+	lines := make([]string, 0, len(plain)+len(user)+len(prefix))
+	for _, binding := range plain {
+		lines = append(lines, "unbind-key -q -n "+binding.chord)
+	}
+	for _, binding := range user {
+		lines = append(lines, "unbind-key -q -n "+binding.chord)
+	}
+	for _, binding := range prefix {
+		lines = append(lines, "unbind-key -q "+binding.chord)
 	}
 	return lines
 }

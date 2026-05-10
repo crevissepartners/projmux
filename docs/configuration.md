@@ -38,6 +38,46 @@ The saved workdir file is:
 It stores one absolute path per line. Lines beginning with `#` are comments.
 The file is read only when no env root list is set.
 
+## Keymap File
+
+`~/.config/projmux/keymap.toml` can override tmux key chords by action ID.
+When the file is absent, generated tmux config stays on the built-in defaults.
+
+Supported schema:
+
+```toml
+[bindings.sessionizer-sidebar]
+plain = "M-a"
+prefix = "A"
+
+[bindings.new-window]
+plain = "C-t"
+```
+
+Each table is `[bindings.<action-id>]`. Supported keys are:
+
+| Key | Meaning |
+| --- | --- |
+| `plain` | A no-prefix tmux chord such as `M-a`, `C-t`, or `M-S-Left`. |
+| `prefix` | A tmux prefix-table chord such as `A` or `r`. |
+
+Set a value to the empty string to disable that chord for the action:
+
+```toml
+[bindings.sessionizer-sidebar]
+plain = ""
+```
+
+The file currently affects generated tmux config from `projmux tmux
+print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
+`projmux tmux install-app`, and `projmux shell`. Terminal init adapters such as
+Ghostty and Windows Terminal still install the built-in CSI-u fallback map.
+
+When a chord is overridden, projmux emits unbinds for both the stale default
+chord and the replacement before binding the merged action. Popup and floating
+UI actions still route through `tmux popup-toggle`, so pressing the same
+configured key opens and closes the popup.
+
 ## Environment Variables
 
 | Variable | Purpose |

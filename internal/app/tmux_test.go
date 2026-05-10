@@ -899,6 +899,157 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	}
 }
 
+func TestTmuxPrintConfigMissingKeymapKeepsDefaultOutput(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := tmuxStandaloneConfig("/tmp/projmux", loadStatusbarDecoration(cmd.homeDir, cmd.lookupEnv))
+	if got := stdout.String(); got != want {
+		t.Fatalf("print-config output changed without keymap\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestTmuxPrintConfigNilHomeDirIgnoresRelativeKeymap(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+
+	keymapPath := filepath.Join(tmp, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte("[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "bind-key -n M-1 run-shell") {
+		t.Fatalf("print-config output = %q, want default M-1 binding", output)
+	}
+	if strings.Contains(output, "bind-key -n M-a run-shell") {
+		t.Fatalf("print-config output = %q, did not expect relative keymap override", output)
+	}
+}
+
+func TestTmuxPrintConfigKeymapOverrideChangesBindAndUnbindsStaleDefault(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte("[bindings.sessionizer-sidebar]\nplain = \"M-a\"\nprefix = \"A\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"unbind-key -q -n M-1",
+		"unbind-key -q -n M-a",
+		"unbind-key -q F",
+		"unbind-key -q A",
+		"bind-key -n M-a run-shell",
+		"bind-key A run-shell",
+		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-config output = %q, want substring %q", output, want)
+		}
+	}
+	if strings.Contains(output, "bind-key -n M-1 run-shell") {
+		t.Fatalf("print-config output = %q, did not expect stale M-1 bind", output)
+	}
+	if strings.Contains(output, "bind-key F run-shell") {
+		t.Fatalf("print-config output = %q, did not expect stale F bind", output)
+	}
+}
+
+func TestTmuxPrintConfigInvalidKeymapReportsUsefulErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "unknown action",
+			body: "[bindings.no-such-action]\nplain = \"M-a\"\n",
+			want: "unknown action id",
+		},
+		{
+			name: "invalid chord",
+			body: "[bindings.sessionizer-sidebar]\nplain = \"M x\"\n",
+			want: "contains unsupported tmux config characters",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+			if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(keymapPath, []byte(tt.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := &tmuxCommand{
+				executable: func() (string, error) { return "/tmp/projmux", nil },
+				homeDir:    func() (string, error) { return home, nil },
+				lookupEnv:  func(string) string { return "" },
+				readFile:   os.ReadFile,
+			}
+			err := cmd.Run([]string{"print-config"}, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "keymap.toml") {
+				t.Fatalf("Run() error = %v, want %q with keymap path", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestTmuxPrintConfigUsesSavedStatusbarDecoration(t *testing.T) {
 	t.Parallel()
 
@@ -1120,6 +1271,48 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)
 		}
+	}
+}
+
+func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte("[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n\n[bindings.new-window]\nplain = \"C-t\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"bind-key -n M-a run-shell",
+		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"bind-key -n C-t new-window -c \"#{pane_current_path}\"",
+		"unbind-key -q -n C-n",
+		"unbind-key -q -n C-t",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
+		}
+	}
+	if strings.Contains(output, "bind-key -n C-t run-shell") {
+		t.Fatalf("print-app-config output = %q, app chord unexpectedly used standalone action", output)
+	}
+	if strings.Contains(output, "bind-key -n M-a new-window") {
+		t.Fatalf("print-app-config output = %q, standalone chord unexpectedly used app action", output)
 	}
 }
 

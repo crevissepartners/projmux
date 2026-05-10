@@ -32,6 +32,7 @@ type shellCommand struct {
 	homeDir            func() (string, error)
 	welcomeInput       io.Reader
 	writeFile          func(string, []byte, os.FileMode) error
+	readFile           func(string) ([]byte, error)
 	runCommand         func(ctx context.Context, env []string, name string, args ...string) error
 	update             *updateCommand
 	updatePromptRunner intpickercompat.Runner
@@ -51,6 +52,7 @@ func newShellCommand(update *updateCommand) *shellCommand {
 		homeDir:      os.UserHomeDir,
 		welcomeInput: os.Stdin,
 		writeFile:    os.WriteFile,
+		readFile:     os.ReadFile,
 		runCommand:   runForegroundCommand,
 		update:       update,
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
@@ -277,7 +279,15 @@ func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create shell app config directory: %w", err)
 	}
-	if err := c.writeFile(path, []byte(tmuxAppConfig(binaryPath, c.defaultShell(), loadStatusbarDecoration(c.homeDir, c.lookupEnv))), 0o644); err != nil {
+	keyBindings, keymapPresent, err := loadMergedKeyBindingCatalog(keymapLoader{
+		homeDir:   c.homeDir,
+		lookupEnv: c.lookupEnv,
+		readFile:  c.readFile,
+	})
+	if err != nil {
+		return err
+	}
+	if err := c.writeFile(path, []byte(tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecoration(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return fmt.Errorf("write shell app config: %w", err)
 	}
 	return nil
