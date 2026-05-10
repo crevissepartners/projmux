@@ -1282,7 +1282,7 @@ func nativeContentLayout(layout nativeLayout, title string) nativeLayout {
 func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
 	var screen strings.Builder
 	if header := strings.TrimSpace(options.Header); header != "" {
-		fmt.Fprintln(&screen, header)
+		fmt.Fprintln(&screen, nativeHeaderLine(header, layout.Cols))
 	}
 	if !options.DisableSearch {
 		prompt := strings.TrimSpace(options.Prompt)
@@ -1453,6 +1453,10 @@ func nativeTextLineCount(value string) int {
 
 func nativeSearchSeparatorLine(cols int) string {
 	return projmuxpicker.SeparatorLine(cols)
+}
+
+func nativeHeaderLine(header string, cols int) string {
+	return projmuxpicker.HeaderLine(header, cols)
 }
 
 func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {

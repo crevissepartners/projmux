@@ -82,8 +82,8 @@ func RenderSplitPreviewRows(w io.Writer, listLines, previewLines []string, layou
 			right = previewLines[i]
 		}
 		right = normalizePreviewLine(right)
-		right = PadRight(TruncateANSI(right, previewWidth), previewWidth)
-		fmt.Fprintf(w, "%s│%s\n", PadRight(TruncateANSI(left, listWidth), listWidth), right)
+		right = PadStyledLine(TruncateANSI(right, previewWidth), previewWidth)
+		fmt.Fprintf(w, "%s│%s\n", PadStyledLine(TruncateANSI(left, listWidth), listWidth), right)
 	}
 }
 
@@ -95,7 +95,7 @@ func RenderDownPreview(w io.Writer, previewLines []string, layout Layout) {
 	fmt.Fprintln(w, SeparatorLine(width))
 	for _, line := range previewLines {
 		line = normalizePreviewLine(line)
-		fmt.Fprintln(w, PadRight(TruncateANSI(line, width), width))
+		fmt.Fprintln(w, PadStyledLine(TruncateANSI(line, width), width))
 	}
 }
 
@@ -110,7 +110,7 @@ func RenderInlinePreviewRows(w io.Writer, previewLines []string, layout Layout) 
 	for _, line := range previewLines {
 		line = normalizePreviewLine(line)
 		if width > 0 {
-			line = PadRight(TruncateANSI(line, width), width)
+			line = PadStyledLine(TruncateANSI(line, width), width)
 		}
 		fmt.Fprintln(w, line)
 	}

@@ -133,7 +133,7 @@ func (r Renderer) RenderFrameWithTitle(w io.Writer, content, title string, layou
 		if i < len(lines) {
 			line = TruncateANSI(strings.TrimRight(lines[i], "\r"), innerWidth)
 		}
-		fmt.Fprintf(w, "%s%s%s\r\n", theme.Vertical, PadRight(line, innerWidth), theme.Vertical)
+		fmt.Fprintf(w, "%s%s%s\r\n", theme.Vertical, PadStyledLine(line, innerWidth), theme.Vertical)
 	}
 	fmt.Fprintf(w, "%s%s%s", theme.BottomLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.BottomRight)
 }
