@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 type stubNotifyStore struct {
@@ -30,19 +30,19 @@ type stubNotifyStore struct {
 }
 
 type stubNotifyPicker struct {
-	options intfzf.Options
-	result  intfzf.Result
+	options intpickercompat.Options
+	result  intpickercompat.Result
 	err     error
 }
 
-func (p *stubNotifyPicker) Run(options intfzf.Options) (intfzf.Result, error) {
+func (p *stubNotifyPicker) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
 	p.options = options
 	return p.result, p.err
 }
 
-type notifyPickerFunc func(options intfzf.Options) (intfzf.Result, error)
+type notifyPickerFunc func(options intpickercompat.Options) (intpickercompat.Result, error)
 
-func (f notifyPickerFunc) Run(options intfzf.Options) (intfzf.Result, error) {
+func (f notifyPickerFunc) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
 	return f(options)
 }
 
@@ -259,11 +259,11 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 			},
 		},
 	}
-	picker := &stubNotifyPicker{result: intfzf.Result{Value: "abc"}}
+	picker := &stubNotifyPicker{result: intpickercompat.Result{Value: "abc"}}
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
 	cmd.picker = picker
-	cmd.native = nativePickerFromFZFRunner(picker)
+	cmd.native = nativePickerFromLegacyRunner(picker)
 	cmd.runner = runner
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
@@ -357,7 +357,7 @@ func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 				return ""
 			}
 			cmd.picker = picker
-			cmd.native = nativePickerFromFZFRunner(picker)
+			cmd.native = nativePickerFromLegacyRunner(picker)
 			cmd.runner = runner
 
 			if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -403,7 +403,7 @@ func TestNotifySidebarLabelDoesNotExposeRawPaneID(t *testing.T) {
 	}
 }
 
-func TestNotifySidebarNativeBackendDoesNotCallFZF(t *testing.T) {
+func TestNotifySidebarNativeBackendDoesNotCallLegacyRunner(t *testing.T) {
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{{
 			ID:        "abc",
@@ -438,9 +438,9 @@ func TestNotifySidebarNativeBackendDoesNotCallFZF(t *testing.T) {
 		}
 		return ""
 	}
-	cmd.picker = notifyPickerFunc(func(intfzf.Options) (intfzf.Result, error) {
+	cmd.picker = notifyPickerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 		fzfCalled = true
-		return intfzf.Result{}, nil
+		return intpickercompat.Result{}, nil
 	})
 	cmd.runner = runner
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
@@ -450,7 +450,7 @@ func TestNotifySidebarNativeBackendDoesNotCallFZF(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if fzfCalled {
-		t.Fatal("fzf picker was called for native notify backend")
+		t.Fatal("legacy picker was called for native notify backend")
 	}
 	if !nativeCalled {
 		t.Fatal("native picker was not called")
@@ -489,13 +489,13 @@ func TestNotifyListSidebarDoesNotAckWhenFocusFails(t *testing.T) {
 			},
 		},
 	}
-	picker := &stubNotifyPicker{result: intfzf.Result{Value: "abc"}}
+	picker := &stubNotifyPicker{result: intpickercompat.Result{Value: "abc"}}
 	runner := &focusFakeRunner{respond: func([]string) ([]byte, error) {
 		return nil, errors.New("focus failed")
 	}}
 	cmd := newCmd(store)
 	cmd.picker = picker
-	cmd.native = nativePickerFromFZFRunner(picker)
+	cmd.native = nativePickerFromLegacyRunner(picker)
 	cmd.runner = runner
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
@@ -514,10 +514,10 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
 	}
-	picker := &stubNotifyPicker{result: intfzf.Result{Key: "x", Value: "abc"}}
+	picker := &stubNotifyPicker{result: intpickercompat.Result{Key: "x", Value: "abc"}}
 	cmd := newCmd(store)
 	cmd.picker = picker
-	cmd.native = nativePickerFromFZFRunner(picker)
+	cmd.native = nativePickerFromLegacyRunner(picker)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -538,10 +538,10 @@ func TestNotifyListSidebarClearAll(t *testing.T) {
 		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
 		ackAll:      1,
 	}
-	picker := &stubNotifyPicker{result: intfzf.Result{Key: "ctrl-x", Value: "abc"}}
+	picker := &stubNotifyPicker{result: intpickercompat.Result{Key: "ctrl-x", Value: "abc"}}
 	cmd := newCmd(store)
 	cmd.picker = picker
-	cmd.native = nativePickerFromFZFRunner(picker)
+	cmd.native = nativePickerFromLegacyRunner(picker)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {

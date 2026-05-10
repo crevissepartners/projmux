@@ -8,14 +8,14 @@ import (
 
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	t.Parallel()
 
-	var gotOptions intfzf.Options
+	var gotOptions intpickercompat.Options
 	app := &App{
 		sessions: &sessionsCommand{
 			recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
@@ -33,13 +33,13 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 					},
 				},
 			},
-			runner: sessionsRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			runner: sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 				gotOptions = options
-				return intfzf.Result{Value: "repo-b"}, nil
+				return intpickercompat.Result{Value: "repo-b"}, nil
 			}),
-			native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 				gotOptions = options
-				return intfzf.Result{Value: "repo-b"}, nil
+				return intpickercompat.Result{Value: "repo-b"}, nil
 			})),
 			executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil },
 			opener:     &recordingSessionsOpener{},
@@ -63,7 +63,7 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotOptions.ExpectKeys, []string{sessionsKillExpectKey}; !equalStrings(got, want) {
 		t.Fatalf("runner expect keys = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.Entries, []intfzf.Entry{
+	if got, want := gotOptions.Entries, []intpickercompat.Entry{
 		{Label: "[ ]  \x1b[32m[Attached]\x1b[0m  \x1b[34m3 Windows\x1b[0m  repo-b", Value: "repo-b"},
 		{Label: "[ ]  \x1b[33m[Detached]\x1b[0m  home", Value: "home"},
 	}; !equalEntries(got, want) {
@@ -102,18 +102,18 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	t.Parallel()
 
-	var gotOptions intfzf.Options
+	var gotOptions intpickercompat.Options
 	cmd := &sessionsCommand{
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 		}),
-		runner: sessionsRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotOptions = options
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotOptions = options
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		opener:     &recordingSessionsOpener{},
@@ -136,7 +136,7 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	}
 }
 
-func TestSessionsCommandNativeBackendDoesNotCallFZF(t *testing.T) {
+func TestSessionsCommandNativeBackendDoesNotCallLegacyRunner(t *testing.T) {
 	t.Parallel()
 
 	var fzfCalled bool
@@ -145,9 +145,9 @@ func TestSessionsCommandNativeBackendDoesNotCallFZF(t *testing.T) {
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 		}),
-		runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			fzfCalled = true
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
 		native: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			if options.UI != switchUIPopup {
@@ -172,7 +172,7 @@ func TestSessionsCommandNativeBackendDoesNotCallFZF(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if fzfCalled {
-		t.Fatal("fzf runner was called for native sessions backend")
+		t.Fatal("legacy runner was called for native sessions backend")
 	}
 	if opener.openSessionName != "repo-b" {
 		t.Fatalf("open session = %q, want repo-b", opener.openSessionName)
@@ -186,7 +186,7 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 	runnerCalls := 0
 	opener := &recordingSessionsOpener{}
 	killer := &recordingSessionsKiller{}
-	var gotOptions []intfzf.Options
+	var gotOptions []intpickercompat.Options
 	cmd := &sessionsCommand{
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			recentCalls++
@@ -198,21 +198,21 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 			}
 			return []inttmux.RecentSessionSummary{{Name: "home", Attached: true}}, nil
 		}),
-		runner: sessionsRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		runner: sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotOptions = append(gotOptions, options)
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
+				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotOptions = append(gotOptions, options)
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
+				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		opener:     opener,
@@ -256,19 +256,19 @@ func TestSessionsCommandCtrlXSwitchesToFallbackBeforeKillingAttachedSession(t *t
 			}
 			return []inttmux.RecentSessionSummary{{Name: "home", Attached: true}}, nil
 		}),
-		runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
+				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
+				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		opener:     opener,
@@ -296,19 +296,19 @@ func TestSessionsCommandCtrlXBlocksAttachedSessionKillWithoutFallback(t *testing
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return []inttmux.RecentSessionSummary{{Name: "repo-b", Attached: true}}, nil
 		}),
-		runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
+				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
-				return intfzf.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
+				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
 			}
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		opener:     opener,
@@ -337,11 +337,11 @@ func TestSessionsCommandAllowsEmptySelection(t *testing.T) {
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 		}),
-		runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-			return intfzf.Result{}, nil
+		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-			return intfzf.Result{}, nil
+		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{}, nil
 		})),
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		opener:     opener,
@@ -363,13 +363,13 @@ func TestSessionsCommandReturnsWithoutPickerWhenRecentListIsEmpty(t *testing.T) 
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return nil, nil
 		}),
-		runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			called = true
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
+		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			called = true
-			return intfzf.Result{}, nil
+			return intpickercompat.Result{}, nil
 		})),
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		opener:     &recordingSessionsOpener{},
@@ -462,11 +462,11 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
-				runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{}, nil
+				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{}, nil
 				}),
-				native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{}, nil
+				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{}, nil
 				})),
 			},
 			want: "sessions executable resolver is not configured",
@@ -477,8 +477,8 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
-				runner:     sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil }),
-				native:     nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{}, nil })),
+				runner:     sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
+				native:     nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 				executable: func() (string, error) { return "", errors.New("not found") },
 			},
 			want: "resolve sessions executable",
@@ -489,11 +489,11 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
-				runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{}, errors.New("fzf failed")
+				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{}, errors.New("picker failed")
 				}),
-				native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{}, errors.New("fzf failed")
+				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{}, errors.New("picker failed")
 				})),
 				executable: func() (string, error) { return "/tmp/projmux", nil },
 			},
@@ -505,11 +505,11 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
-				runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{Value: "repo-b"}, nil
+				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "repo-b"}, nil
 				}),
-				native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{Value: "repo-b"}, nil
+				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "repo-b"}, nil
 				})),
 				executable: func() (string, error) { return "/tmp/projmux", nil },
 			},
@@ -521,9 +521,13 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
-				store:      &recordingSessionsStore{err: errors.New("state failed")},
-				runner:     sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{Value: "repo-b"}, nil }),
-				native:     nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) { return intfzf.Result{Value: "repo-b"}, nil })),
+				store: &recordingSessionsStore{err: errors.New("state failed")},
+				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "repo-b"}, nil
+				}),
+				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "repo-b"}, nil
+				})),
 				executable: func() (string, error) { return "/tmp/projmux", nil },
 				opener:     &recordingSessionsOpener{},
 			},
@@ -535,11 +539,11 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
-				runner: sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{Value: "repo-b"}, nil
+				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "repo-b"}, nil
 				}),
-				native: nativePickerFromFZFRunner(sessionsRunnerFunc(func(intfzf.Options) (intfzf.Result, error) {
-					return intfzf.Result{Value: "repo-b"}, nil
+				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+					return intpickercompat.Result{Value: "repo-b"}, nil
 				})),
 				executable: func() (string, error) { return "/tmp/projmux", nil },
 				opener:     &recordingSessionsOpener{openErr: errors.New("attach failed")},
@@ -569,9 +573,9 @@ func (f sessionsRecentFunc) RecentSessionSummaries(ctx context.Context) ([]inttm
 	return f(ctx)
 }
 
-type sessionsRunnerFunc func(options intfzf.Options) (intfzf.Result, error)
+type sessionsRunnerFunc func(options intpickercompat.Options) (intpickercompat.Result, error)
 
-func (f sessionsRunnerFunc) Run(options intfzf.Options) (intfzf.Result, error) {
+func (f sessionsRunnerFunc) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
 	return f(options)
 }
 

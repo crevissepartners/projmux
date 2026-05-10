@@ -14,8 +14,8 @@ The picker contract is split in two layers:
 
 - `internal/ui/picker` owns backend-neutral items, actions, preview metadata,
   title-focused filtering, and the native runner.
-- `internal/ui/fzf` is a retired compatibility adapter for old option/result
-  structs. Product flows do not execute the external fzf binary.
+- `internal/ui/pickercompat` is a retired legacy picker option/result adapter
+  for old structs. Product flows do not execute the external fzf binary.
 
 ## fzf Capability Check
 

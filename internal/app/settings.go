@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -23,7 +23,7 @@ type settingsCommand struct {
 	ai           *aiCommand
 	switcher     *switchCommand
 	update       *updateCommand
-	runner       intfzf.Runner
+	runner       intpickercompat.Runner
 	nativePicker intpicker.Runner
 	homeDir      func() (string, error)
 	lookupEnv    func(string) string
@@ -84,7 +84,7 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	for {
-		result, err := c.runPicker(intfzf.Options{
+		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings",
 			Entries:    c.rootEntries(),
 			Title:      "Settings",
@@ -144,19 +144,19 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 }
 
-func (c *settingsCommand) runPicker(options intfzf.Options) (intfzf.Result, error) {
+func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
 	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, options)
 	if err != nil {
 		if isNoSelectionExit(err) {
-			return intfzf.Result{}, errSettingsClosed
+			return intpickercompat.Result{}, errSettingsClosed
 		}
-		return intfzf.Result{}, fmt.Errorf("run settings picker: %w", err)
+		return intpickercompat.Result{}, fmt.Errorf("run settings picker: %w", err)
 	}
 	return result, nil
 }
 
-func (c *settingsCommand) rootEntries() []intfzf.Entry {
-	return []intfzf.Entry{
+func (c *settingsCommand) rootEntries() []intpickercompat.Entry {
+	return []intpickercompat.Entry{
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Project Picker", "project roots, workdirs, and pins"),
 			Value: settingsSectionProject,
@@ -180,10 +180,10 @@ func (c *settingsCommand) rootEntries() []intfzf.Entry {
 	}
 }
 
-func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error) {
+func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Options, error) {
 	switch section {
 	case settingsSectionAI:
-		return intfzf.Options{
+		return intpickercompat.Options{
 			UI:         "settings-ai",
 			Entries:    c.aiEntries(),
 			Title:      "AI Settings - Default Ctrl+Shift+R/L split mode",
@@ -193,7 +193,7 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			Bindings:   settingsCloseBindings(),
 		}, nil
 	case settingsSectionProject:
-		return intfzf.Options{
+		return intpickercompat.Options{
 			UI:         "settings-project-picker",
 			Entries:    c.projectPickerEntries(),
 			Title:      "Project Picker - Project roots, workdirs, and pinned projects",
@@ -203,7 +203,7 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			Bindings:   settingsCloseBindings(),
 		}, nil
 	case settingsSectionStatusbar:
-		return intfzf.Options{
+		return intpickercompat.Options{
 			UI:         "settings-statusbar",
 			Entries:    c.statusbarEntries(),
 			Title:      "Appearance - Status and popup decoration mode",
@@ -213,7 +213,7 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			Bindings:   settingsCloseBindings(),
 		}, nil
 	case settingsSectionLabs:
-		return intfzf.Options{
+		return intpickercompat.Options{
 			UI:         "settings-labs",
 			Entries:    c.labsEntries(),
 			Title:      "Labs - Experimental features",
@@ -223,7 +223,7 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			Bindings:   settingsCloseBindings(),
 		}, nil
 	case settingsSectionAbout:
-		return intfzf.Options{
+		return intpickercompat.Options{
 			UI:         "settings-about",
 			Entries:    c.aboutEntries(),
 			Title:      "About - Version, updates, key setup",
@@ -233,7 +233,7 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			Bindings:   settingsCloseBindings(),
 		}, nil
 	default:
-		return intfzf.Options{}, fmt.Errorf("unknown settings section: %s", section)
+		return intpickercompat.Options{}, fmt.Errorf("unknown settings section: %s", section)
 	}
 }
 
@@ -306,9 +306,9 @@ func (c *settingsCommand) runAddProject(stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	entries = append([]intfzf.Entry{settingsBackEntry()}, entries...)
+	entries = append([]intpickercompat.Entry{settingsBackEntry()}, entries...)
 
-	result, err := c.runPicker(intfzf.Options{
+	result, err := c.runPicker(intpickercompat.Options{
 		UI:         "settings-project-add",
 		Entries:    entries,
 		Title:      "Add Project - Choose a filesystem directory",
@@ -337,7 +337,7 @@ func (c *settingsCommand) runProjectRootSettings(stdout, stderr io.Writer) error
 			return err
 		}
 
-		result, err := c.runPicker(intfzf.Options{
+		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-project-root",
 			Entries:    entries,
 			Title:      "Project Root - Manage the primary root",
@@ -377,7 +377,7 @@ func (c *settingsCommand) runSetProjectRootTyped(stdout, stderr io.Writer) error
 	}
 
 	initialQuery := c.projectRootTypedInitialQuery()
-	result, err := c.runPicker(intfzf.Options{
+	result, err := c.runPicker(intpickercompat.Options{
 		UI:           "settings-project-root-typed",
 		Entries:      nil,
 		AcceptQuery:  true,
@@ -433,12 +433,12 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	entries = append([]intfzf.Entry{
+	entries = append([]intpickercompat.Entry{
 		settingsBackEntry(),
 		settingsWorkdirTypedEntry(),
 	}, entries...)
 
-	result, err := c.runPicker(intfzf.Options{
+	result, err := c.runPicker(intpickercompat.Options{
 		UI:         "settings-workdir-add",
 		Entries:    entries,
 		Title:      "Add Workdir - Choose or type a directory to scan",
@@ -466,8 +466,8 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 // settingsWorkdirTypedEntry surfaces the "Type path manually..." row that
 // bypasses the filesystem scan and lets the user type an absolute path
 // directly. Useful for heavy WSL mounts (/mnt/c/Users/...), large NFS, etc.
-func settingsWorkdirTypedEntry() intfzf.Entry {
-	return intfzf.Entry{
+func settingsWorkdirTypedEntry() intpickercompat.Entry {
+	return intpickercompat.Entry{
 		Label: settingsLabel(settingsGlyphType, settingsColorType, "Type path manually...", "skip filesystem scan"),
 		Value: settingsWorkdirTyped,
 	}
@@ -483,7 +483,7 @@ func (c *settingsCommand) runAddWorkdirTyped(stdout, stderr io.Writer) error {
 		return errors.New("project picker settings are not configured")
 	}
 
-	result, err := c.runPicker(intfzf.Options{
+	result, err := c.runPicker(intpickercompat.Options{
 		UI:          "settings-workdir-typed",
 		Entries:     nil,
 		AcceptQuery: true,
@@ -554,7 +554,7 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 			return err
 		}
 
-		result, err := c.runPicker(intfzf.Options{
+		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-workdirs",
 			Entries:    entries,
 			Title:      "Workdirs - Add or remove scan roots",
@@ -588,8 +588,8 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 	}
 }
 
-func (c *settingsCommand) workdirListEntries() ([]intfzf.Entry, error) {
-	entries := []intfzf.Entry{
+func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) {
+	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
 			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Workdir...", "append a directory to the saved workdirs list"),
@@ -597,7 +597,7 @@ func (c *settingsCommand) workdirListEntries() ([]intfzf.Entry, error) {
 		},
 	}
 	if c.switcher == nil {
-		return append(entries, intfzf.Entry{
+		return append(entries, intpickercompat.Entry{
 			Label: settingsLabelDim("(no saved workdirs)", ""),
 			Value: settingsNoopValue,
 		}), nil
@@ -609,13 +609,13 @@ func (c *settingsCommand) workdirListEntries() ([]intfzf.Entry, error) {
 	}
 
 	if len(saved) == 0 {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelDim("(no saved workdirs)", ""),
 			Value: settingsNoopValue,
 		})
 	} else {
 		for _, dir := range saved {
-			entries = append(entries, intfzf.Entry{
+			entries = append(entries, intpickercompat.Entry{
 				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Remove", dir+"  (saved)"),
 				Value: settingsActionPrefixWorkdir + "remove:" + dir,
 			})
@@ -626,7 +626,7 @@ func (c *settingsCommand) workdirListEntries() ([]intfzf.Entry, error) {
 		if strings.TrimSpace(src.Value) == "" {
 			continue
 		}
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo(src.Name, src.Value, "env, read-only"),
 			Value: settingsNoopValue,
 		})
@@ -641,7 +641,7 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 			return err
 		}
 
-		result, err := c.runPicker(intfzf.Options{
+		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-project-pins",
 			Entries:    entries,
 			Title:      "Pinned Projects - Add or remove pins",
@@ -675,17 +675,17 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 	}
 }
 
-func (c *settingsCommand) projectPickerEntries() []intfzf.Entry {
-	entries := []intfzf.Entry{
+func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 	}
 
 	entries = append(entries, c.projectRootEntry())
-	entries = append(entries, intfzf.Entry{
+	entries = append(entries, intpickercompat.Entry{
 		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Workdirs", "add or remove scan roots"),
 		Value: settingsWorkdirList,
 	})
-	entries = append(entries, intfzf.Entry{
+	entries = append(entries, intpickercompat.Entry{
 		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Pinned Projects", "add or remove pins"),
 		Value: settingsProjectPins,
 	})
@@ -694,39 +694,39 @@ func (c *settingsCommand) projectPickerEntries() []intfzf.Entry {
 
 // projectRootEntry renders the resolved primary root with its source label.
 // Opening it manages the saved project root; rendering never memoizes env state.
-func (c *settingsCommand) projectRootEntry() intfzf.Entry {
+func (c *settingsCommand) projectRootEntry() intpickercompat.Entry {
 	if c.switcher == nil {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Project Root", "unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
 	value, source, err := c.switcher.currentProjdirInfo()
 	if err != nil || value == "" {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Project Root", "not configured"),
 			Value: settingsProjectRootManage,
 		}
 	}
-	return intfzf.Entry{
+	return intpickercompat.Entry{
 		Label: settingsLabelInfo("Project Root", value, source),
 		Value: settingsProjectRootManage,
 	}
 }
 
-func (c *settingsCommand) projectRootHintEntry() intfzf.Entry {
+func (c *settingsCommand) projectRootHintEntry() intpickercompat.Entry {
 	// Keep the entire hint in one dim run so search substrings such as
 	// "Set PROJMUX_PROJDIR" stay contiguous in the rendered label.
-	return intfzf.Entry{
+	return intpickercompat.Entry{
 		Label: "  " + settingsColorDim + "Project Root is the primary root. Workdirs are extra search roots. Set PROJMUX_PROJDIR, @projmux_projdir, or the saved ~/.config/projmux/projdir value." + settingsColorReset,
 		Value: settingsNoopValue,
 	}
 }
 
-func (c *settingsCommand) projectRootEntries() ([]intfzf.Entry, error) {
-	entries := []intfzf.Entry{settingsBackEntry()}
+func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) {
+	entries := []intpickercompat.Entry{settingsBackEntry()}
 	if c.switcher == nil {
-		return append(entries, intfzf.Entry{
+		return append(entries, intpickercompat.Entry{
 			Label: settingsLabelDim("Project Root", "unavailable"),
 			Value: settingsNoopValue,
 		}), nil
@@ -738,24 +738,24 @@ func (c *settingsCommand) projectRootEntries() ([]intfzf.Entry, error) {
 	}
 
 	entries = append(entries,
-		intfzf.Entry{
+		intpickercompat.Entry{
 			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Set Project Root...", "save one primary root path directly"),
 			Value: settingsProjdirSetTyped,
 		},
 		c.setCurrentProjectRootEntry(),
-		intfzf.Entry{
+		intpickercompat.Entry{
 			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Clear Saved Project Root", "remove ~/.config/projmux/projdir"),
 			Value: settingsProjdirClear,
 		},
 	)
 
 	if info.EffectiveValue == "" {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Effective Project Root", "not configured", "no env, tmux option, or saved value"),
 			Value: settingsNoopValue,
 		})
 	} else {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Effective Project Root", info.EffectiveValue, info.EffectiveSource),
 			Value: settingsNoopValue,
 		})
@@ -763,22 +763,22 @@ func (c *settingsCommand) projectRootEntries() ([]intfzf.Entry, error) {
 
 	switch {
 	case info.SavedValue == "":
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Saved Project Root", "not set", "~/.config/projmux/projdir"),
 			Value: settingsNoopValue,
 		})
 	case info.EffectiveSource == projdirSourceSaved:
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Saved Project Root", info.SavedValue, "active"),
 			Value: settingsNoopValue,
 		})
 	case info.EffectiveSource == projdirSourceUnresolved:
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Saved Project Root", info.SavedValue, "saved"),
 			Value: settingsNoopValue,
 		})
 	default:
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Saved Project Root", info.SavedValue, "shadowed by "+info.EffectiveSource),
 			Value: settingsNoopValue,
 		})
@@ -786,7 +786,7 @@ func (c *settingsCommand) projectRootEntries() ([]intfzf.Entry, error) {
 
 	entries = append(entries,
 		c.projectRootHintEntry(),
-		intfzf.Entry{
+		intpickercompat.Entry{
 			Label: "  " + settingsColorDim + "Env PROJMUX_PROJDIR and tmux @projmux_projdir override the saved value until unset." + settingsColorReset,
 			Value: settingsNoopValue,
 		},
@@ -794,9 +794,9 @@ func (c *settingsCommand) projectRootEntries() ([]intfzf.Entry, error) {
 	return entries, nil
 }
 
-func (c *settingsCommand) setCurrentProjectRootEntry() intfzf.Entry {
+func (c *settingsCommand) setCurrentProjectRootEntry() intpickercompat.Entry {
 	if c.switcher == nil {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Use Current Project as Root", "unavailable"),
 			Value: settingsNoopValue,
 		}
@@ -804,7 +804,7 @@ func (c *settingsCommand) setCurrentProjectRootEntry() intfzf.Entry {
 
 	homeDir, err := c.switcher.resolveHomeDir()
 	if err != nil {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Use Current Project as Root", "home unavailable"),
 			Value: settingsNoopValue,
 		}
@@ -812,20 +812,20 @@ func (c *settingsCommand) setCurrentProjectRootEntry() intfzf.Entry {
 	repoRoot, _, _ := c.switcher.currentProjdirInfo()
 	currentTarget, err := c.switcher.resolveSwitchTargetNoMemoize(nil, "settings project root")
 	if err != nil || currentTarget == "" || currentTarget == switchSettingsSentinel {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Use Current Project as Root", "no project context"),
 			Value: settingsNoopValue,
 		}
 	}
-	return intfzf.Entry{
+	return intpickercompat.Entry{
 		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Use Current Project as Root", intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 		Value: settingsProjdirSetCurrent,
 	}
 }
 
-func (c *settingsCommand) addCurrentProjectEntry() intfzf.Entry {
+func (c *settingsCommand) addCurrentProjectEntry() intpickercompat.Entry {
 	if c.switcher == nil {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Add Current Project", "unavailable"),
 			Value: settingsNoopValue,
 		}
@@ -833,14 +833,14 @@ func (c *settingsCommand) addCurrentProjectEntry() intfzf.Entry {
 
 	pins, err := c.switcher.loadPins()
 	if err != nil {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Add Current Project", "pins unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
 	homeDir, err := c.switcher.resolveHomeDir()
 	if err != nil {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Add Current Project", "home unavailable"),
 			Value: settingsNoopValue,
 		}
@@ -848,25 +848,25 @@ func (c *settingsCommand) addCurrentProjectEntry() intfzf.Entry {
 	repoRoot := c.switcher.switchRepoRoot(homeDir)
 	currentTarget, err := c.switcher.resolveSwitchTarget(nil, "settings project picker")
 	if err != nil || currentTarget == "" || currentTarget == switchSettingsSentinel {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Add Current Project", "no project context"),
 			Value: settingsNoopValue,
 		}
 	}
 	if containsString(pins, currentTarget) {
-		return intfzf.Entry{
+		return intpickercompat.Entry{
 			Label: settingsLabelDim("Add Current Project", "already pinned  "+intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 			Value: settingsNoopValue,
 		}
 	}
-	return intfzf.Entry{
+	return intpickercompat.Entry{
 		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Current Project", intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 		Value: settingsActionPrefixSwitch + "add:" + currentTarget,
 	}
 }
 
-func (c *settingsCommand) pinnedProjectEntries() ([]intfzf.Entry, error) {
-	entries := []intfzf.Entry{
+func (c *settingsCommand) pinnedProjectEntries() ([]intpickercompat.Entry, error) {
+	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
 			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Project...", "scan filesystem roots"),
@@ -875,7 +875,7 @@ func (c *settingsCommand) pinnedProjectEntries() ([]intfzf.Entry, error) {
 		c.addCurrentProjectEntry(),
 	}
 	if c.switcher == nil {
-		return append(entries, intfzf.Entry{
+		return append(entries, intpickercompat.Entry{
 			Label: settingsLabelDim("(no pinned projects)", ""),
 			Value: settingsNoopValue,
 		}), nil
@@ -892,18 +892,18 @@ func (c *settingsCommand) pinnedProjectEntries() ([]intfzf.Entry, error) {
 	repoRoot := c.switcher.switchRepoRoot(homeDir)
 
 	if len(pins) == 0 {
-		return append(entries, intfzf.Entry{
+		return append(entries, intpickercompat.Entry{
 			Label: settingsLabelDim("(no pinned projects)", ""),
 			Value: settingsNoopValue,
 		}), nil
 	}
 
-	entries = append(entries, intfzf.Entry{
+	entries = append(entries, intpickercompat.Entry{
 		Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Clear all pins", ""),
 		Value: settingsActionPrefixSwitch + "clear",
 	})
 	for _, pin := range pins {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Remove", intrender.PrettyPath(pin, homeDir, repoRoot)),
 			Value: settingsActionPrefixSwitch + "pin:" + pin,
 		})
@@ -911,7 +911,7 @@ func (c *settingsCommand) pinnedProjectEntries() ([]intfzf.Entry, error) {
 	return entries, nil
 }
 
-func (c *settingsCommand) aiEntries() []intfzf.Entry {
+func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 	if c.ai == nil {
 		return nil
 	}
@@ -927,7 +927,7 @@ func (c *settingsCommand) aiEntries() []intfzf.Entry {
 		{aiModeShell, "always open plain shell split"},
 	}
 
-	entries := make([]intfzf.Entry, 0, len(modes)+1)
+	entries := make([]intpickercompat.Entry, 0, len(modes)+1)
 	entries = append(entries, settingsBackEntry())
 	for _, item := range modes {
 		glyph := settingsGlyphInactive
@@ -936,7 +936,7 @@ func (c *settingsCommand) aiEntries() []intfzf.Entry {
 			glyph = settingsGlyphToggle
 			color = settingsColorAdd
 		}
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabel(glyph, color, item.mode, item.desc),
 			Value: settingsActionPrefixAI + item.mode,
 		})
@@ -944,7 +944,7 @@ func (c *settingsCommand) aiEntries() []intfzf.Entry {
 	return entries
 }
 
-func (c *settingsCommand) statusbarEntries() []intfzf.Entry {
+func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 	current := c.currentStatusbarDecoration()
 	modes := []struct {
 		mode config.StatusbarDecoration
@@ -955,7 +955,7 @@ func (c *settingsCommand) statusbarEntries() []intfzf.Entry {
 		{config.StatusbarDecorationEmoji, "emoji status and notification icons"},
 	}
 
-	entries := make([]intfzf.Entry, 0, len(modes)+1)
+	entries := make([]intpickercompat.Entry, 0, len(modes)+1)
 	entries = append(entries, settingsBackEntry())
 	for _, item := range modes {
 		glyph := settingsGlyphInactive
@@ -964,7 +964,7 @@ func (c *settingsCommand) statusbarEntries() []intfzf.Entry {
 			glyph = settingsGlyphToggle
 			color = settingsColorAdd
 		}
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabel(glyph, color, string(item.mode), item.desc),
 			Value: settingsActionPrefixStatusbar + string(item.mode),
 		})
@@ -994,12 +994,12 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 	return nil
 }
 
-func (c *settingsCommand) labsEntries() []intfzf.Entry {
+func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	current, source := c.currentPickerBackend()
-	entries := make([]intfzf.Entry, 0, 2)
+	entries := make([]intpickercompat.Entry, 0, 2)
 	entries = append(entries, settingsBackEntry())
 	if source != "" {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Picker source", string(current), source),
 			Value: settingsNoopValue,
 		})
@@ -1044,7 +1044,7 @@ func (c *settingsCommand) setPickerBackend(value string) error {
 	return nil
 }
 
-func (c *settingsCommand) aboutEntries() []intfzf.Entry {
+func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 	status, statusErr := updateStatus{}, errors.New("update status is not configured")
 	if c.update != nil {
 		status, statusErr = c.update.status()
@@ -1064,10 +1064,10 @@ func (c *settingsCommand) aboutEntries() []intfzf.Entry {
 		{"Windows Term.", "actions sendInput tmux/meta sequences; keybindings attach keys"},
 		{"Docs", "docs/keybindings.md has copyable terminal examples"},
 	}
-	entries := make([]intfzf.Entry, 0, len(rows)+8)
+	entries := make([]intpickercompat.Entry, 0, len(rows)+8)
 	entries = append(entries, settingsBackEntry())
 	if statusErr != nil {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Update", "status unavailable", statusErr.Error()),
 			Value: settingsNoopValue,
 		})
@@ -1077,36 +1077,36 @@ func (c *settingsCommand) aboutEntries() []intfzf.Entry {
 			latest = "unknown"
 		}
 		entries = append(entries,
-			intfzf.Entry{
+			intpickercompat.Entry{
 				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Update Now", "run installer-specific update command"),
 				Value: settingsUpdateApply,
 			},
-			intfzf.Entry{
+			intpickercompat.Entry{
 				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Check Updates", "refresh cached GitHub release metadata"),
 				Value: settingsUpdateCheck,
 			},
-			intfzf.Entry{
+			intpickercompat.Entry{
 				Label: settingsLabelInfo("Latest", latest, status.CacheState),
 				Value: settingsNoopValue,
 			},
-			intfzf.Entry{
+			intpickercompat.Entry{
 				Label: settingsLabelInfo("Update state", status.UpdateState, ""),
 				Value: settingsNoopValue,
 			},
-			intfzf.Entry{
+			intpickercompat.Entry{
 				Label: settingsLabelInfo("Installer", status.Installer.Source, status.Installer.Note),
 				Value: settingsNoopValue,
 			},
 		)
 		if status.ReleaseURL != "" {
-			entries = append(entries, intfzf.Entry{
+			entries = append(entries, intpickercompat.Entry{
 				Label: settingsLabelInfo("Release notes", status.ReleaseURL, ""),
 				Value: settingsNoopValue,
 			})
 		}
 	}
 	for _, r := range rows {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo(r.name, r.value, ""),
 			Value: settingsNoopValue,
 		})
@@ -1163,8 +1163,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 	}
 }
 
-func settingsBackEntry() intfzf.Entry {
-	return intfzf.Entry{
+func settingsBackEntry() intpickercompat.Entry {
+	return intpickercompat.Entry{
 		Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Back", ""),
 		Value: settingsBackValue,
 	}

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 const (
@@ -33,7 +33,7 @@ type shellCommand struct {
 	writeFile          func(string, []byte, os.FileMode) error
 	runCommand         func(ctx context.Context, env []string, name string, args ...string) error
 	update             *updateCommand
-	updatePromptRunner intfzf.Runner
+	updatePromptRunner intpickercompat.Runner
 	nativePicker       intpicker.Runner
 }
 
@@ -156,15 +156,15 @@ func shouldPromptShellUpdate(status updateStatus) bool {
 	}
 }
 
-func shellUpdatePromptOptions(status updateStatus) intfzf.Options {
+func shellUpdatePromptOptions(status updateStatus) intpickercompat.Options {
 	latest := strings.TrimSpace(status.LatestVersion)
 	current := strings.TrimSpace(status.CurrentVersion)
-	return intfzf.Options{
+	return intpickercompat.Options{
 		UI:     "shell-update",
 		Prompt: "Update > ",
 		Header: fmt.Sprintf("projmux %s is available (current %s)", latest, current),
 		Footer: "Enter: choose  |  Esc: continue shell",
-		Entries: []intfzf.Entry{
+		Entries: []intpickercompat.Entry{
 			{
 				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Update Now", "run projmux update apply"),
 				Value: shellUpdateApply,

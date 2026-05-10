@@ -1,4 +1,4 @@
-package fzf
+package pickercompat
 
 import (
 	"strconv"
@@ -17,7 +17,7 @@ func OptionsFromPicker(options picker.Options) Options {
 		})
 	}
 
-	fzfOptions := Options{
+	compatOptions := Options{
 		UI:             options.UI,
 		Entries:        entries,
 		Read0:          options.MultiLine,
@@ -38,23 +38,23 @@ func OptionsFromPicker(options picker.Options) Options {
 		}
 		switch action.Intent {
 		case picker.ActionClose:
-			fzfOptions.Bindings = append(fzfOptions.Bindings, key+":abort")
+			compatOptions.Bindings = append(compatOptions.Bindings, key+":abort")
 		case picker.ActionAccept, picker.ActionCustom:
 			if action.Intent == picker.ActionCustom && strings.TrimSpace(action.Command) != "" {
 				binding := key + ":execute-silent(" + strings.TrimSpace(action.Command) + ")"
 				if action.Refresh {
 					binding += "+refresh-preview"
 				}
-				fzfOptions.Bindings = append(fzfOptions.Bindings, binding)
+				compatOptions.Bindings = append(compatOptions.Bindings, binding)
 				continue
 			}
-			fzfOptions.ExpectKeys = append(fzfOptions.ExpectKeys, key)
+			compatOptions.ExpectKeys = append(compatOptions.ExpectKeys, key)
 		}
 	}
 	if options.InitialIndexSet || options.InitialIndex > 0 {
-		fzfOptions.Bindings = append(fzfOptions.Bindings, "start:pos("+strconv.Itoa(options.InitialIndex+1)+")")
+		compatOptions.Bindings = append(compatOptions.Bindings, "start:pos("+strconv.Itoa(options.InitialIndex+1)+")")
 	}
-	return fzfOptions
+	return compatOptions
 }
 
 func ResultToPicker(result Result) picker.Result {

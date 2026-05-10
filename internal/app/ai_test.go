@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 func TestAISettingsGetAndSetMode(t *testing.T) {
@@ -72,10 +72,10 @@ func TestAISettingsSetModeDisplaysTmuxToastInsideTmux(t *testing.T) {
 
 func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	home := t.TempDir()
-	runner := &capturingAIRunner{result: intfzf.Result{Key: "enter", Value: "shell"}}
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: "shell"}}
 	cmd := testAICommand(home)
 	cmd.runner = runner
-	cmd.nativePicker = nativePickerFromFZFRunner(runner)
+	cmd.nativePicker = nativePickerFromLegacyRunner(runner)
 
 	if err := cmd.Run([]string{"settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run settings picker error = %v", err)
@@ -105,7 +105,7 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
 	cmd.runner = runner
-	cmd.nativePicker = nativePickerFromFZFRunner(runner)
+	cmd.nativePicker = nativePickerFromLegacyRunner(runner)
 
 	if _, err := cmd.runAgentPicker("right"); err != nil {
 		t.Fatalf("runAgentPicker error = %v", err)
@@ -1343,12 +1343,12 @@ func TestAINotificationMessageLabelsClaudeAndAvoidsRootProject(t *testing.T) {
 }
 
 type capturingAIRunner struct {
-	options intfzf.Options
-	result  intfzf.Result
+	options intpickercompat.Options
+	result  intpickercompat.Result
 	err     error
 }
 
-func (r *capturingAIRunner) Run(options intfzf.Options) (intfzf.Result, error) {
+func (r *capturingAIRunner) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
 	r.options = options
 	return r.result, r.err
 }
@@ -1366,7 +1366,7 @@ func testAICommand(home string) *aiCommand {
 	recorder := &aiCommandRecorder{}
 	cmd := &aiCommand{
 		runner:       &capturingAIRunner{},
-		nativePicker: nativePickerFromFZFRunner(&capturingAIRunner{}),
+		nativePicker: nativePickerFromLegacyRunner(&capturingAIRunner{}),
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv: func(name string) string {
 			switch name {

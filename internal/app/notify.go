@@ -13,8 +13,8 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 // notifyStore is the subset of *notify.Store the CLI dispatcher needs. The
@@ -32,7 +32,7 @@ type notifyCommand struct {
 	storeErr   error
 	now        func() time.Time
 	runner     tmuxRunner
-	picker     intfzf.Runner
+	picker     intpickercompat.Runner
 	native     intpicker.Runner
 	executable func() (string, error)
 	lookupEnv  func(string) string
@@ -281,7 +281,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		return errors.New("native picker is not configured")
 	}
 	now := c.clock()
-	fzfOptions := intfzf.Options{
+	compatOptions := intpickercompat.Options{
 		UI:            "notify-sidebar",
 		Read0:         true,
 		Title:         notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications",
@@ -293,7 +293,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		Entries:       notifySidebarEntries(entries, now),
 		DisableSearch: true,
 	}
-	result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.picker, fzfOptions)
+	result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.picker, compatOptions)
 	if err != nil {
 		return fmt.Errorf("run notify sidebar: %w", err)
 	}
@@ -336,17 +336,17 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 
 const notifySidebarEmptyValue = "__projmux_notify_empty__"
 
-func notifySidebarEntries(entries []notify.Notification, now time.Time) []intfzf.Entry {
+func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpickercompat.Entry {
 	if len(entries) == 0 {
-		return []intfzf.Entry{{
+		return []intpickercompat.Entry{{
 			Label: "No pending notifications",
 			Value: notifySidebarEmptyValue,
 		}}
 	}
-	out := make([]intfzf.Entry, 0, len(entries))
+	out := make([]intpickercompat.Entry, 0, len(entries))
 	for _, e := range entries {
 		label := notifySidebarLabel(e, now)
-		out = append(out, intfzf.Entry{
+		out = append(out, intpickercompat.Entry{
 			Label: label,
 			Value: e.ID,
 		})

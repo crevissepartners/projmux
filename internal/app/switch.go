@@ -19,8 +19,8 @@ import (
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	coretags "github.com/crevissepartners/projmux/internal/core/tags"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
@@ -66,7 +66,7 @@ type switchTagStore interface {
 type switchTagStoreFactory func() (switchTagStore, error)
 
 type switchRunner interface {
-	Run(options intfzf.Options) (intfzf.Result, error)
+	Run(options intpickercompat.Options) (intpickercompat.Result, error)
 }
 
 type switchSessionExecutor interface {
@@ -127,7 +127,7 @@ type switchKubeInfo struct {
 type switchPlan struct {
 	UI            string
 	Candidates    []string
-	Rows          []intfzf.Entry
+	Rows          []intpickercompat.Entry
 	Items         []intpicker.Item
 	SessionNames  map[string]string
 	Action        string
@@ -410,7 +410,7 @@ func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
 			return err
 		}
 
-		result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
+		result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
 			UI:      "settings",
 			Entries: entries,
 		})
@@ -466,7 +466,7 @@ func (c *switchCommand) runAddPinInteractive(stdout io.Writer) error {
 		return nil
 	}
 
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
 		UI:      "pin",
 		Entries: entries,
 	})
@@ -1475,18 +1475,18 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 		options.Actions = append(options.Actions, surface.Actions...)
 		options.InitialIndex = surface.InitialIndex
 		options.InitialIndexSet = surface.InitialIndexSet
-		fzfOptions := intfzf.OptionsFromPicker(options)
-		fzfOptions.Candidates = plan.Candidates
-		return c.runPickerBackend(fzfOptions, options)
+		compatOptions := intpickercompat.OptionsFromPicker(options)
+		compatOptions.Candidates = plan.Candidates
+		return c.runPickerBackend(compatOptions, options)
 	}
 
-	fzfOptions := intfzf.OptionsFromPicker(options)
-	fzfOptions.Candidates = plan.Candidates
-	return c.runPickerBackend(fzfOptions, options)
+	compatOptions := intpickercompat.OptionsFromPicker(options)
+	compatOptions.Candidates = plan.Candidates
+	return c.runPickerBackend(compatOptions, options)
 }
 
-func (c *switchCommand) runPickerBackend(fzfOptions intfzf.Options, pickerOptions intpicker.Options) (intpicker.Result, error) {
-	_ = fzfOptions
+func (c *switchCommand) runPickerBackend(compatOptions intpickercompat.Options, pickerOptions intpicker.Options) (intpicker.Result, error) {
+	_ = compatOptions
 	_ = resolvePickerBackend(c.lookupEnv)
 	if c.nativePicker == nil {
 		return intpicker.Result{}, fmt.Errorf("native picker is not configured")
@@ -1777,7 +1777,7 @@ func (c *switchCommand) addPin(target string, stdout io.Writer) error {
 	return err
 }
 
-func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePaths []string) ([]intfzf.Entry, []intpicker.Item, map[string]string, error) {
+func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePaths []string) ([]intpickercompat.Entry, []intpicker.Item, map[string]string, error) {
 	renderCandidates := make([]intrender.SwitchCandidate, 0, len(candidatePaths))
 	existingBySession, err := c.lookupExistingSessions(ctx, candidatePaths)
 	if err != nil {
@@ -1842,7 +1842,7 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 
 	sortSwitchCandidates(renderCandidates, homeDir)
 	rows := intrender.BuildSwitchRows(renderCandidates)
-	entries := make([]intfzf.Entry, 0, len(rows))
+	entries := make([]intpickercompat.Entry, 0, len(rows))
 	items := make([]intpicker.Item, 0, len(rows))
 	for _, row := range rows {
 		item := row.Item
@@ -1851,7 +1851,7 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 			item.MetaLines = nil
 		}
 		items = append(items, item)
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label:     item.EffectiveLabel(),
 			Value:     row.Value,
 			SearchKey: item.EffectiveSearchText(),
@@ -2090,7 +2090,7 @@ func printSwitchUsage(w io.Writer) {
 	fmt.Fprintln(w, "  alt-p         Toggle a pin on the focused candidate and reopen the picker")
 }
 
-func (c *switchCommand) settingsEntries() ([]intfzf.Entry, error) {
+func (c *switchCommand) settingsEntries() ([]intpickercompat.Entry, error) {
 	pins, err := c.loadPins()
 	if err != nil {
 		return nil, err
@@ -2102,26 +2102,26 @@ func (c *switchCommand) settingsEntries() ([]intfzf.Entry, error) {
 	}
 	repoRoot := c.switchRepoRoot(homeDir)
 
-	entries := make([]intfzf.Entry, 0, len(pins)+3)
-	entries = append(entries, intfzf.Entry{
+	entries := make([]intpickercompat.Entry, 0, len(pins)+3)
+	entries = append(entries, intpickercompat.Entry{
 		Label: "+ Add pin...",
 		Value: "add-interactive",
 	})
 	currentTarget, err := c.resolveSwitchTarget(nil, "switch settings")
 	if err == nil && currentTarget != "" && currentTarget != switchSettingsSentinel && !containsString(pins, currentTarget) {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: "+ Add current pin  " + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
 			Value: "add:" + currentTarget,
 		})
 	}
 	if len(pins) != 0 {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: "x Clear all pins",
 			Value: "clear",
 		})
 	}
 	for _, pin := range pins {
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: "x Remove  " + intrender.PrettyPath(pin, homeDir, repoRoot),
 			Value: "pin:" + pin,
 		})
@@ -2129,7 +2129,7 @@ func (c *switchCommand) settingsEntries() ([]intfzf.Entry, error) {
 	return entries, nil
 }
 
-func (c *switchCommand) addPinEntries() ([]intfzf.Entry, error) {
+func (c *switchCommand) addPinEntries() ([]intpickercompat.Entry, error) {
 	inputs, err := c.candidateInputs("")
 	if err != nil {
 		return nil, err
@@ -2155,13 +2155,13 @@ func (c *switchCommand) addPinEntries() ([]intfzf.Entry, error) {
 	}
 	repoRoot := c.switchRepoRoot(homeDir)
 
-	entries := make([]intfzf.Entry, 0, len(paths))
+	entries := make([]intpickercompat.Entry, 0, len(paths))
 	for _, path := range paths {
 		if path == switchSettingsSentinel || containsString(pins, path) {
 			continue
 		}
 
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: intrender.PrettyPath(path, homeDir, repoRoot),
 			Value: path,
 		})
@@ -2170,7 +2170,7 @@ func (c *switchCommand) addPinEntries() ([]intfzf.Entry, error) {
 	return entries, nil
 }
 
-func (c *switchCommand) filesystemPinEntries() ([]intfzf.Entry, error) {
+func (c *switchCommand) filesystemPinEntries() ([]intpickercompat.Entry, error) {
 	paths, err := c.filesystemPinCandidates()
 	if err != nil {
 		return nil, err
@@ -2187,12 +2187,12 @@ func (c *switchCommand) filesystemPinEntries() ([]intfzf.Entry, error) {
 	}
 	repoRoot := c.switchRepoRoot(homeDir)
 
-	entries := make([]intfzf.Entry, 0, len(paths))
+	entries := make([]intpickercompat.Entry, 0, len(paths))
 	for _, path := range paths {
 		if containsString(pins, path) {
 			continue
 		}
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, intrender.PrettyPath(path, homeDir, repoRoot), ""),
 			Value: "switch:add:" + path,
 		})
@@ -2202,7 +2202,7 @@ func (c *switchCommand) filesystemPinEntries() ([]intfzf.Entry, error) {
 
 // filesystemWorkdirEntries renders filesystem-scan entries that map to the
 // "workdir:add:<path>" settings action. Already-saved workdirs are skipped.
-func (c *switchCommand) filesystemWorkdirEntries() ([]intfzf.Entry, error) {
+func (c *switchCommand) filesystemWorkdirEntries() ([]intpickercompat.Entry, error) {
 	paths, err := c.filesystemPinCandidates()
 	if err != nil {
 		return nil, err
@@ -2223,12 +2223,12 @@ func (c *switchCommand) filesystemWorkdirEntries() ([]intfzf.Entry, error) {
 	}
 	repoRoot := c.switchRepoRoot(homeDir)
 
-	entries := make([]intfzf.Entry, 0, len(paths))
+	entries := make([]intpickercompat.Entry, 0, len(paths))
 	for _, path := range paths {
 		if _, ok := savedSet[path]; ok {
 			continue
 		}
-		entries = append(entries, intfzf.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, intrender.PrettyPath(path, homeDir, repoRoot), ""),
 			Value: "workdir:add:" + path,
 		})

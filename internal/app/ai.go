@@ -17,8 +17,8 @@ import (
 	"time"
 	"unicode/utf16"
 
-	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 const (
@@ -36,7 +36,7 @@ const (
 )
 
 type aiCommandRunner interface {
-	Run(options intfzf.Options) (intfzf.Result, error)
+	Run(options intpickercompat.Options) (intpickercompat.Result, error)
 }
 
 type aiCommand struct {
@@ -577,7 +577,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	if c.nativePicker == nil {
 		return errors.New("native picker is not configured")
 	}
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
 		UI:         "ai-settings",
 		Entries:    c.settingsRows(),
 		Title:      "AI Settings - Default Ctrl+Shift+R/L split mode",
@@ -598,11 +598,11 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	return c.setMode(result.Value)
 }
 
-func (c *aiCommand) runAgentPicker(direction string) (intfzf.Result, error) {
+func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, error) {
 	if c.nativePicker == nil {
-		return intfzf.Result{}, errors.New("native picker is not configured")
+		return intpickercompat.Result{}, errors.New("native picker is not configured")
 	}
-	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
+	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
 		UI:         "ai-picker",
 		Entries:    c.agentRows(),
 		Title:      "AI Launch - Split direction: " + direction,
@@ -613,7 +613,7 @@ func (c *aiCommand) runAgentPicker(direction string) (intfzf.Result, error) {
 	})
 }
 
-func (c *aiCommand) settingsRows() []intfzf.Entry {
+func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 	current := c.getMode()
 	modes := []struct {
 		mode string
@@ -624,13 +624,13 @@ func (c *aiCommand) settingsRows() []intfzf.Entry {
 		{aiModeCodex, "always run Codex split"},
 		{aiModeShell, "always open plain shell split"},
 	}
-	rows := make([]intfzf.Entry, 0, len(modes))
+	rows := make([]intpickercompat.Entry, 0, len(modes))
 	for _, item := range modes {
 		tag := ansiDim("[ ]")
 		if item.mode == current {
 			tag = "\x1b[32m[ACTIVE]\x1b[0m"
 		}
-		rows = append(rows, intfzf.Entry{
+		rows = append(rows, intpickercompat.Entry{
 			Label:     fmt.Sprintf("%s \x1b[36m%-9s\x1b[0m  \x1b[90m%s\x1b[0m", tag, item.mode, item.desc),
 			Value:     item.mode,
 			SearchKey: item.mode + " " + item.desc,
@@ -639,8 +639,8 @@ func (c *aiCommand) settingsRows() []intfzf.Entry {
 	return rows
 }
 
-func (c *aiCommand) agentRows() []intfzf.Entry {
-	rows := []intfzf.Entry{
+func (c *aiCommand) agentRows() []intpickercompat.Entry {
+	rows := []intpickercompat.Entry{
 		c.agentRow(aiModeCodex, "OpenAI Codex split"),
 		c.agentRow(aiModeClaude, "Anthropic CLI split"),
 		{
@@ -652,12 +652,12 @@ func (c *aiCommand) agentRows() []intfzf.Entry {
 	return rows
 }
 
-func (c *aiCommand) agentRow(mode, desc string) intfzf.Entry {
+func (c *aiCommand) agentRow(mode, desc string) intpickercompat.Entry {
 	status := "\x1b[33m[MISSING]\x1b[0m"
 	if c.agentAvailable(mode) {
 		status = "\x1b[32m[READY]\x1b[0m"
 	}
-	return intfzf.Entry{
+	return intpickercompat.Entry{
 		Label:     fmt.Sprintf("%-8s %s %s", mode, status, desc),
 		Value:     mode,
 		SearchKey: mode + " " + desc,

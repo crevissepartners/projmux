@@ -1,4 +1,4 @@
-package fzf
+package pickercompat
 
 import (
 	"reflect"
@@ -65,7 +65,7 @@ func TestOptionsFromPickerMapsItemsActionsAndPreview(t *testing.T) {
 	}
 }
 
-func TestPickerOptionsMapsFZFBindingsToContractActions(t *testing.T) {
+func TestPickerOptionsMapsLegacyBindingsToContractActions(t *testing.T) {
 	t.Parallel()
 
 	options := PickerOptions(Options{
@@ -91,7 +91,7 @@ func TestPickerOptionsMapsFZFBindingsToContractActions(t *testing.T) {
 		t.Fatalf("DisableSearch/AcceptQuery = %t/%t, want true/true", options.DisableSearch, options.AcceptQuery)
 	}
 	if len(options.Items) != 1 || options.Items[0].SearchText != "api service" {
-		t.Fatalf("Items = %#v, want fzf entry mapped to picker item", options.Items)
+		t.Fatalf("Items = %#v, want legacy entry mapped to picker item", options.Items)
 	}
 	if len(options.Actions) != 2 {
 		t.Fatalf("Actions = %#v, want close and command actions", options.Actions)

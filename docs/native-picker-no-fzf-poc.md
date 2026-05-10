@@ -15,9 +15,10 @@ The fzf compatibility surface for the native engine is tracked in
   responsible for backend routing, keyboard input, filtering, preview command
   execution, and result contracts, while moving visual composition into
   `projmuxpicker` so projmux can evolve a native picker design without coupling
-  every visual tweak to the fzf adapter.
-- `internal/ui/fzf` remains as a legacy adapter between the old option/result
-  shape and the backend-neutral `picker.Options` contract. App code should
+  every visual tweak to the legacy picker option/result adapter.
+- `internal/ui/pickercompat` remains as a legacy picker option/result adapter
+  between the old option/result shape and the backend-neutral `picker.Options`
+  contract. App code should
   describe picker intent as rows, actions, preview commands, and initial focus,
   then route through the native picker.
 - Settings > Labs remains available for experimental settings, but picker
@@ -126,7 +127,8 @@ The fzf compatibility surface for the native engine is tracked in
 ## Experimental Boundaries
 
 - The `projmuxpicker` package is intended as a foundation that can be carried
-  forward, along with the legacy option/result mapping in `internal/ui/fzf`.
+  forward, along with the legacy picker option/result mapping in
+  `internal/ui/pickercompat`.
   Its frame, row, preview, theme, ANSI, and redraw modules are foundation code;
   Docker sandbox scripts and dependency-policy notes remain support
   scaffolding.
