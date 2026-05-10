@@ -24,6 +24,7 @@ func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
 	cmd := &settingsCommand{}
 	want := map[string]settingsEntryMeta{
 		settingsSectionProject:     {Name: "Project Picker", Axis: settingsAxisGlobal},
+		settingsSectionGlobalHooks: {Name: "Hooks", Axis: settingsAxisGlobal},
 		settingsSectionAI:          {Name: "AI Settings", Axis: settingsAxisGlobal},
 		settingsSectionStatusbar:   {Name: "Appearance", Axis: settingsAxisGlobal},
 		settingsSectionKeybindings: {Name: "Keybindings", Axis: settingsAxisGlobal},
@@ -77,6 +78,7 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 		settingsRootTabProjectValue,
 		settingsSectionProject,
 		settingsSectionAI,
+		settingsSectionGlobalHooks,
 		settingsSectionStatusbar,
 		settingsSectionKeybindings,
 		settingsSectionLabs,
@@ -266,6 +268,8 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 	}{
 		{settingsRootTabGlobalValue, settingsAxisBoth},
 		{settingsRootTabProjectValue, settingsAxisBoth},
+		{settingsSectionGlobalHooks, settingsAxisGlobal},
+		{settingsSectionProjectHooks, settingsAxisProject},
 		{settingsProjectRootManage, settingsAxisGlobal},
 		{settingsWorkdirList, settingsAxisGlobal},
 		{settingsProjectPins, settingsAxisGlobal},
@@ -406,6 +410,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 		settingsRootTabProjectValue,
 		settingsSectionProject,
 		settingsSectionAI,
+		settingsSectionGlobalHooks,
 		settingsSectionStatusbar,
 		settingsSectionKeybindings,
 		settingsSectionLabs,
