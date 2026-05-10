@@ -12,11 +12,15 @@ import (
 const pickerBackendTmuxEnv = intpicker.BackendEnv
 
 func resolvePickerBackend(lookupEnv func(string) string) intpicker.Backend {
+	return resolvePickerBackendWithConfig(os.UserHomeDir, lookupEnv)
+}
+
+func resolvePickerBackendWithConfig(homeDir func() (string, error), lookupEnv func(string) string) intpicker.Backend {
 	if backend, ok := pickerBackendFromEnv(lookupEnv); ok {
 		return backend
 	}
 
-	paths, err := pickerBackendConfigPaths(os.UserHomeDir, lookupEnv)
+	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
 	if err != nil {
 		return intpicker.BackendFZF
 	}

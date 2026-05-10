@@ -94,12 +94,14 @@ experimental native picker engine and is not a public dependency-policy change.
   types `bravo`, sends `Right` and `Alt-Down` to exercise preview window/pane
   cycle, asserts the popup stays on the right-side preview layout instead of
   inline preview, asserts the stored preview cursor, selects `bravo-web`, and
-  confirms the opened tmux shell path.
+  asserts tmux reports the selected session's active target on the expected
+  window with the expected pane path.
 - `sessions --ui=popup`: Docker no-fzf e2e creates existing tmux sessions,
   runs the picker under a 150x30 PTY, types `bravo`, sends `Right` and
   `Alt-Down` to exercise preview window/pane cycle, asserts the popup stays on
   the right-side preview layout instead of inline preview, asserts the stored
-  preview cursor, selects `bravo-web`, and confirms the opened tmux shell path.
+  preview cursor, selects `bravo-web`, and asserts tmux reports the selected
+  session's active target on the expected window with the expected pane path.
 - `notify sidebar`: native routing is unit-covered; Docker no-fzf e2e pushes a
   notification, presses printable expect key `x`, and verifies the row is acked.
 

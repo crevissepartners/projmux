@@ -302,7 +302,7 @@ entry into the notify queue.
 ## tmux
 
 ```
-projmux tmux popup-toggle <mode>
+projmux tmux popup-toggle [--client <key>] <mode>
 projmux tmux popup-switch
 projmux tmux popup-sessions
 projmux tmux popup-preview <session>
@@ -318,7 +318,8 @@ projmux tmux apply
 Helpers tmux's keybindings and the install pipeline call into. Modes
 accepted by `popup-toggle` mirror the historical sessionizer surface:
 `session-popup`, `sessionizer`, `sessionizer-sidebar`,
-`ai-split-picker-right`, `ai-split-picker-down`, `ai-split-settings`.
+`notify-sidebar`, `ai-split-picker-right`, `ai-split-picker-down`,
+`ai-split-settings`.
 `apply` reloads the live `-L projmux` server's config without restarting
 it; `make install` and `projmux upgrade` invoke it after replacing the
 binary.

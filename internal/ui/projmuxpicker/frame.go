@@ -112,7 +112,7 @@ func (r Renderer) RenderFrame(w io.Writer, content string, layout Layout) {
 	theme := r.Theme
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
 	fmt.Fprintf(w, "%s%s%s\r\n", theme.TopLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.TopRight)
-	for i := 0; i < innerHeight; i++ {
+	for i := range innerHeight {
 		line := ""
 		if i < len(lines) {
 			line = TruncateANSI(strings.TrimRight(lines[i], "\r"), innerWidth)
@@ -126,7 +126,7 @@ func writeFrameDiff(w io.Writer, previous, next string) {
 	previousLines := splitFrameLines(previous)
 	nextLines := splitFrameLines(next)
 	limit := max(len(previousLines), len(nextLines))
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		previousLine := ""
 		if i < len(previousLines) {
 			previousLine = previousLines[i]

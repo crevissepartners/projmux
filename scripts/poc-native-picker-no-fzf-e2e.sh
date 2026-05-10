@@ -5,6 +5,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 base_image="${PROJMUX_POC_NO_FZF_BASE_IMAGE:-golang:1.24-trixie}"
 image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf-go124-trixie}"
 dockerfile="$root/test/docker/no-fzf-poc.Dockerfile"
+host_uid="$(id -u)"
+host_gid="$(id -g)"
 
 echo "[poc/no-fzf] starting Docker e2e from $root"
 echo "[poc/no-fzf] building dependency image $image from $base_image"
@@ -14,7 +16,8 @@ echo "[poc/no-fzf] running isolated no-fzf test container"
 
 docker run --rm \
   --network none \
-  -v "$root":/work \
+  --user "$host_uid:$host_gid" \
+  -v "$root":/work:ro \
   -w /work \
   -e HOME=/tmp/projmux-home \
   -e XDG_CACHE_HOME=/tmp/projmux-cache \
@@ -22,11 +25,22 @@ docker run --rm \
   -e XDG_RUNTIME_DIR=/tmp/projmux-runtime \
   -e XDG_STATE_HOME=/tmp/projmux-state \
   -e GOCACHE=/tmp/projmux-gocache \
+  -e GOPATH=/tmp/projmux-gopath \
+  -e GOMODCACHE=/go/pkg/mod \
+  -e GOFLAGS=-mod=readonly \
   -e GOTOOLCHAIN=local \
   -e TERM=xterm-256color \
   -e SHELL=/bin/bash \
   "$image" \
   bash -lc 'set -euo pipefail
+    mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$XDG_STATE_HOME" "$GOCACHE" "$GOPATH"
+    chmod 700 "$XDG_RUNTIME_DIR"
+    for dir in "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$XDG_STATE_HOME" "$GOCACHE" "$GOPATH"; do
+      if [[ ! -w "$dir" ]]; then
+        echo "container directory is not writable for $(id -u):$(id -g): $dir" >&2
+        exit 1
+      fi
+    done
     echo "[poc/no-fzf] assert fzf is absent"
     ! command -v fzf
     echo "[poc/no-fzf] run focused tests"
@@ -42,6 +56,54 @@ docker run --rm \
         echo "native $name did not render explicit Search header" >&2
         exit 1
       fi
+    }
+    assert_tmux_session_state() {
+      local session="$1"
+      local want_path="$2"
+      local log="$3"
+      local name="$4"
+      local want_window="${5:-}"
+      local actual
+      local actual_target
+      local actual_path
+      local actual_window
+      local err=/tmp/projmux-tmux-state.err
+      if ! tmux has-session -t "$session" 2>"$err"; then
+        cat "$log"
+        cat "$err"
+        echo "native $name did not create/select tmux session $session" >&2
+        exit 1
+      fi
+      if ! actual="$(tmux display-message -p -t "$session" -F "#{session_name}:#{window_index}.#{pane_index}	#{pane_current_path}" 2>"$err")"; then
+        cat "$log"
+        cat "$err"
+        echo "native $name could not read tmux active target for $session" >&2
+        exit 1
+      fi
+      actual_target="${actual%%	*}"
+      actual_path="${actual#*	}"
+      if [[ "$actual_path" != "$want_path" ]]; then
+        cat "$log"
+        tmux list-panes -a -F "#{session_name}:#{window_index}.#{pane_index} #{pane_current_path}" 2>/dev/null || true
+        echo "native $name active target $actual_target has path $actual_path, want $want_path" >&2
+        exit 1
+      fi
+      if [[ -n "$want_window" ]]; then
+        actual_window="${actual_target#*:}"
+        actual_window="${actual_window%%.*}"
+        if [[ "$actual_window" != "$want_window" ]]; then
+          cat "$log"
+          tmux list-windows -t "$session" -F "#{window_index} active=#{window_active} panes=#{window_panes}" 2>/dev/null || true
+          echo "native $name active window is $actual_window, want $want_window from preview selection" >&2
+          exit 1
+        fi
+      fi
+    }
+    assert_tmux_session_path() {
+      assert_tmux_session_state "$1" "$2" "$3" "$4"
+    }
+    assert_tmux_session_window() {
+      assert_tmux_session_state "$1" "$2" "$3" "$4" "$5"
     }
     echo "[poc/no-fzf] store native picker through Settings > Labs"
     rm -f "$XDG_CONFIG_HOME/projmux/picker-backend"
@@ -97,14 +159,26 @@ docker run --rm \
     done
     switch_log=/tmp/projmux-switch.log
     switch_status=0
-    printf "bravo\r" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-1 PROJMUX_PROJDIR=$demo_root PROJMUX_MANAGED_ROOTS=$demo_root /tmp/projmux switch --ui=sidebar" "$switch_log" || switch_status=$?
+    switch_shell_marker=/tmp/projmux-switch-shell-marker
+    switch_opened_pwd=/tmp/projmux-switch-opened-pwd
+    rm -f "$switch_opened_pwd"
+    cat > "$switch_shell_marker" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+pwd > "$switch_opened_pwd"
+exec /bin/bash "\$@"
+EOF
+    chmod +x "$switch_shell_marker"
+    printf -v switch_env "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-1 PROJMUX_PROJDIR=%q PROJMUX_MANAGED_ROOTS=%q SHELL=%q" "$demo_root" "$demo_root" "$switch_shell_marker"
+    printf "bravo\r" | timeout 8s script -q -e -E never -c "$switch_env /tmp/projmux switch --ui=sidebar" "$switch_log" || switch_status=$?
     if [[ "$switch_status" != 0 && "$switch_status" != 124 ]]; then
       cat "$switch_log"
       exit "$switch_status"
     fi
-    if ! grep -q "/tmp/projmux-projects/bravo-web" "$switch_log"; then
+    if ! grep -Fxq "$demo_root/bravo-web" "$switch_opened_pwd" 2>/dev/null; then
       cat "$switch_log"
-      echo "native switch did not open bravo-web" >&2
+      cat "$switch_opened_pwd" 2>/dev/null || true
+      echo "native switch sidebar did not open $demo_root/bravo-web" >&2
       exit 1
     fi
     assert_search_header "$switch_log" "switch sidebar"
@@ -125,11 +199,7 @@ docker run --rm \
       cat "$popup_log"
       exit "$popup_status"
     fi
-    if ! grep -q "/tmp/projmux-projects/bravo-web" "$popup_log"; then
-      cat "$popup_log"
-      echo "native switch popup did not open bravo-web" >&2
-      exit 1
-    fi
+    assert_tmux_session_window "projmux-projects-bravo-web" "$demo_root/bravo-web" "$popup_log" "switch popup" "1"
     assert_search_header "$popup_log" "switch popup"
     if grep -q -- "--- preview ---" "$popup_log"; then
       cat "$popup_log"
@@ -158,11 +228,7 @@ docker run --rm \
       cat "$sessions_log"
       exit "$sessions_status"
     fi
-    if ! grep -q "/tmp/projmux-projects/bravo-web" "$sessions_log"; then
-      cat "$sessions_log"
-      echo "native sessions picker did not open bravo-web" >&2
-      exit 1
-    fi
+    assert_tmux_session_window "projmux-projects-bravo-web" "$demo_root/bravo-web" "$sessions_log" "sessions picker" "1"
     assert_search_header "$sessions_log" "sessions picker"
     if grep -q -- "--- preview ---" "$sessions_log"; then
       cat "$sessions_log"

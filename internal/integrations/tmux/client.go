@@ -31,7 +31,10 @@ var (
 	errActiveFlagInvalid          = errors.New("tmux active flag is invalid")
 )
 
-const tmuxFieldSep = "|"
+const (
+	tmuxFieldSep        = "\x1f"
+	tmuxEscapedFieldSep = "\\037"
+)
 
 type commandRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -1025,7 +1028,7 @@ func recentSessionFields(rawLine string) []string {
 }
 
 func splitTmuxFields(rawLine string, expected int) []string {
-	for _, sep := range []string{tmuxFieldSep, "\t"} {
+	for _, sep := range []string{tmuxFieldSep, tmuxEscapedFieldSep, "\t"} {
 		fields := strings.SplitN(rawLine, sep, expected)
 		if len(fields) == expected {
 			return fields

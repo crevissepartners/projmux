@@ -5,6 +5,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 base_image="${PROJMUX_POC_NO_FZF_BASE_IMAGE:-golang:1.24-trixie}"
 image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf-go124-trixie}"
 dockerfile="$root/test/docker/no-fzf-poc.Dockerfile"
+host_uid="$(id -u)"
+host_gid="$(id -g)"
 
 if [[ ! -t 0 || ! -t 1 || ! -t 2 ]]; then
   cat >&2 <<'EOF'
@@ -27,7 +29,8 @@ docker build --pull=false --build-arg "BASE_IMAGE=$base_image" -f "$dockerfile" 
 echo "[poc/no-fzf] entering interactive no-fzf sandbox"
 docker run --rm -it \
   --network none \
-  -v "$root":/work \
+  --user "$host_uid:$host_gid" \
+  -v "$root":/work:ro \
   -w /work \
   -e HOME=/tmp/projmux-home \
   -e XDG_CACHE_HOME=/tmp/projmux-cache \
@@ -35,6 +38,9 @@ docker run --rm -it \
   -e XDG_RUNTIME_DIR=/tmp/projmux-runtime \
   -e XDG_STATE_HOME=/tmp/projmux-state \
   -e GOCACHE=/tmp/projmux-gocache \
+  -e GOPATH=/tmp/projmux-gopath \
+  -e GOMODCACHE=/go/pkg/mod \
+  -e GOFLAGS=-mod=readonly \
   -e GOTOOLCHAIN=local \
   -e LANG=C.UTF-8 \
   -e LC_ALL=C.UTF-8 \
@@ -43,7 +49,16 @@ docker run --rm -it \
   -e SHELL=/bin/bash \
   "$image" \
   bash -lc 'set -euo pipefail
-    go build -o /usr/local/bin/projmux ./cmd/projmux
+    mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$XDG_STATE_HOME" "$GOCACHE" "$GOPATH" /tmp/projmux-bin
+    chmod 700 "$XDG_RUNTIME_DIR"
+    for dir in "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$XDG_STATE_HOME" "$GOCACHE" "$GOPATH" /tmp/projmux-bin; do
+      if [[ ! -w "$dir" ]]; then
+        echo "container directory is not writable for $(id -u):$(id -g): $dir" >&2
+        exit 1
+      fi
+    done
+    go build -o /tmp/projmux-bin/projmux ./cmd/projmux
+    export PATH=/tmp/projmux-bin:$PATH
     if command -v fzf >/dev/null 2>&1; then
       echo "unexpected fzf on PATH" >&2
       exit 1
@@ -76,14 +91,14 @@ PROJMUX_NATIVE_DEBUG_LOG="$log" \
 PROJMUX_NATIVE_TTY_FALLBACK=0 \
 PROJMUX_PROJDIR="${PROJMUX_PROJDIR:-/workspace/projects}" \
 PROJMUX_MANAGED_ROOTS="${PROJMUX_MANAGED_ROOTS:-/workspace/projects}" \
-  /usr/local/bin/projmux tmux popup-toggle --client "$client" "$mode" >> "$log" 2>&1
+  /tmp/projmux-bin/projmux tmux popup-toggle --client "$client" "$mode" >> "$log" 2>&1
 code=$?
 printf "[%s] popup-toggle exit=%s client=%q mode=%q\n" "$(date -Is)" "$code" "$client" "$mode" >> "$log"
 exit "$code"
 WRAPPER
     chmod +x "$popup_wrapper"
     : > "$popup_log"
-    projmux tmux print-app-config --bin /usr/local/bin/projmux > "$sandbox_config"
+    projmux tmux print-app-config --bin /tmp/projmux-bin/projmux > "$sandbox_config"
     {
       printf "set-environment -g PROJMUX_PICKER_BACKEND native\n"
       printf "set-environment -g PROJMUX_PROJDIR %q\n" "$PROJMUX_PROJDIR"
@@ -114,7 +129,7 @@ WRAPPER
 [poc/no-fzf] launching interactive projmux shell
 
 fzf is absent. projmux was built from the mounted POC worktree:
-  /usr/local/bin/projmux
+  /tmp/projmux-bin/projmux
 
 Demo project root:
   /workspace/projects
@@ -149,4 +164,4 @@ Environment:
 
 Detach from tmux with Ctrl-b d. Exit the container shell to remove the sandbox.
 EOF
-    exec projmux shell --socket poc-no-fzf --session main --bin /usr/local/bin/projmux --config "$sandbox_config" --no-install'
+    exec projmux shell --socket poc-no-fzf --session main --bin /tmp/projmux-bin/projmux --config "$sandbox_config" --no-install'
