@@ -31,6 +31,11 @@ var (
 	errActiveFlagInvalid          = errors.New("tmux active flag is invalid")
 )
 
+const (
+	tmuxFieldSep        = "\x1f"
+	tmuxEscapedFieldSep = "\\037"
+)
+
 type commandRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
 }
@@ -145,6 +150,7 @@ type PopupOptions struct {
 	Target        string
 	Cwd           string
 	Env           map[string]string
+	NoBorder      bool
 	X             string
 	Y             string
 	Width         string
@@ -220,7 +226,7 @@ func (c *Client) CurrentSessionName(ctx context.Context) (string, error) {
 
 // RecentSessions lists tmux session names ordered by most-recent activity first.
 func (c *Client) RecentSessions(ctx context.Context) ([]string, error) {
-	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_activity}\t#{session_name}\t#{session_attached}\t#{session_windows}")
+	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", tmuxFormat("#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}"))
 	if err != nil {
 		return nil, fmt.Errorf("list recent tmux sessions: %w", err)
 	}
@@ -231,7 +237,7 @@ func (c *Client) RecentSessions(ctx context.Context) ([]string, error) {
 // RecentSessionSummaries lists tmux session rows ordered by most-recent
 // activity first, enriched with attachment and pane metadata.
 func (c *Client) RecentSessionSummaries(ctx context.Context) ([]RecentSessionSummary, error) {
-	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_activity}\t#{session_name}\t#{session_attached}\t#{session_windows}")
+	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", tmuxFormat("#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}"))
 	if err != nil {
 		return nil, fmt.Errorf("list recent tmux sessions: %w", err)
 	}
@@ -304,7 +310,7 @@ func (c *Client) ListSessionWindows(ctx context.Context, sessionName string) ([]
 		return nil, errSessionNameRequired
 	}
 
-	output, err := c.runner.Run(ctx, "tmux", "list-windows", "-t", sessionName, "-F", "#{window_index}\t#{?window_active,1,0}\t#{window_name}\t#{window_panes}\t#{pane_current_path}")
+	output, err := c.runner.Run(ctx, "tmux", "list-windows", "-t", sessionName, "-F", tmuxFormat("#{window_index}", "#{?window_active,1,0}", "#{window_name}", "#{window_panes}", "#{pane_current_path}"))
 	if err != nil {
 		return nil, fmt.Errorf("list tmux windows for session %q: %w", sessionName, err)
 	}
@@ -319,7 +325,22 @@ func (c *Client) ListSessionWindows(ctx context.Context, sessionName string) ([]
 
 // ListAllPanes lists tmux panes across all sessions with active hints.
 func (c *Client) ListAllPanes(ctx context.Context) ([]Pane, error) {
-	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{window_index}\t#{pane_index}\t#{?pane_active,1,0}\t#{pane_title}\t#{@projmux_attention_state}\t#{@projmux_ai_state}\t#{@projmux_ai_agent}\t#{@projmux_ai_topic}\t#{@projmux_attention_ack}\t#{@projmux_attention_focus_armed}\t#{pane_current_command}\t#{pane_current_path}")
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-a", "-F", tmuxFormat(
+		"#{session_name}",
+		"#{pane_id}",
+		"#{window_index}",
+		"#{pane_index}",
+		"#{?pane_active,1,0}",
+		"#{pane_title}",
+		"#{@projmux_attention_state}",
+		"#{@projmux_ai_state}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_attention_ack}",
+		"#{@projmux_attention_focus_armed}",
+		"#{pane_current_command}",
+		"#{pane_current_path}",
+	))
 	if err != nil {
 		return nil, fmt.Errorf("list tmux panes: %w", err)
 	}
@@ -357,7 +378,7 @@ func (c *Client) ListWindowPanes(ctx context.Context, sessionName string, window
 	}
 
 	target := fmt.Sprintf("%s:%d", sessionName, windowIndex)
-	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-t", target, "-F", "#{pane_index}\t#{?pane_active,1,0}")
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-t", target, "-F", tmuxFormat("#{pane_index}", "#{?pane_active,1,0}"))
 	if err != nil {
 		return nil, fmt.Errorf("list tmux panes for session %q window %d: %w", sessionName, windowIndex, err)
 	}
@@ -559,6 +580,9 @@ func BuildDisplayPopupArgs(command string, options PopupOptions) ([]string, erro
 	}
 	if resolved.CloseBehavior == PopupCloseOnExit {
 		args = append(args, "-E")
+	}
+	if resolved.NoBorder {
+		args = append(args, "-B")
 	}
 	if resolved.Cwd != "" {
 		args = append(args, "-d", resolved.Cwd)
@@ -862,6 +886,7 @@ func resolvePopupOptions(options PopupOptions) (PopupOptions, error) {
 		Target:        strings.TrimSpace(options.Target),
 		Cwd:           strings.TrimSpace(options.Cwd),
 		Env:           cleanPopupEnv(options.Env),
+		NoBorder:      options.NoBorder,
 		X:             strings.TrimSpace(options.X),
 		Y:             strings.TrimSpace(options.Y),
 		Width:         strings.TrimSpace(options.Width),
@@ -915,6 +940,10 @@ func sortedEnvKeys(env map[string]string) []string {
 	return keys
 }
 
+func tmuxFormat(fields ...string) string {
+	return strings.Join(fields, tmuxFieldSep)
+}
+
 type recentSession struct {
 	name     string
 	attached bool
@@ -935,7 +964,7 @@ func parseRecentSessionRows(output []byte) ([]recentSession, error) {
 			continue
 		}
 
-		fields := strings.SplitN(rawLine, "\t", 4)
+		fields := recentSessionFields(rawLine)
 		if len(fields) != 4 {
 			return nil, fmt.Errorf("parse recent tmux sessions: malformed row %q", rawLine)
 		}
@@ -975,6 +1004,37 @@ func parseRecentSessionRows(output []byte) ([]recentSession, error) {
 	})
 
 	return sessions, nil
+}
+
+func recentSessionFields(rawLine string) []string {
+	if fields := splitTmuxFields(rawLine, 4); len(fields) == 4 {
+		return fields
+	}
+
+	// Some tmux/script combinations render literal tab separators as
+	// underscores in `list-sessions -F` output. Session names can also contain
+	// underscores, so preserve the first field and the final two fields, then
+	// rejoin the middle as the session name.
+	parts := strings.Split(rawLine, "_")
+	if len(parts) < 4 {
+		return parts
+	}
+	return []string{
+		parts[0],
+		strings.Join(parts[1:len(parts)-2], "_"),
+		parts[len(parts)-2],
+		parts[len(parts)-1],
+	}
+}
+
+func splitTmuxFields(rawLine string, expected int) []string {
+	for _, sep := range []string{tmuxFieldSep, tmuxEscapedFieldSep, "\t"} {
+		fields := strings.SplitN(rawLine, sep, expected)
+		if len(fields) == expected {
+			return fields
+		}
+	}
+	return strings.Split(rawLine, "\t")
 }
 
 func parseRecentSessions(output []byte) ([]string, error) {
@@ -1032,7 +1092,7 @@ func parseSessionWindows(output []byte) ([]Window, error) {
 			continue
 		}
 
-		fields := strings.Split(rawLine, "\t")
+		fields := splitTmuxFields(rawLine, 5)
 		if len(fields) != 5 {
 			return nil, fmt.Errorf("parse tmux windows: malformed row %q", rawLine)
 		}
@@ -1074,7 +1134,7 @@ func parseAllPanes(output []byte) ([]Pane, error) {
 			continue
 		}
 
-		fields := normalizeAllPaneFields(strings.Split(rawLine, "\t"))
+		fields := normalizeAllPaneFields(splitTmuxFields(rawLine, 14))
 		if len(fields) != 14 {
 			return nil, fmt.Errorf("parse tmux panes: malformed row %q", rawLine)
 		}
@@ -1142,7 +1202,7 @@ func parseWindowPanes(output []byte) ([]WindowPane, error) {
 			continue
 		}
 
-		fields := strings.Split(rawLine, "\t")
+		fields := splitTmuxFields(rawLine, 2)
 		if len(fields) != 2 {
 			return nil, fmt.Errorf("parse tmux window panes: malformed row %q", rawLine)
 		}

@@ -51,6 +51,24 @@ func TestBuildSwitchRowsMutesInactiveGitBranch(t *testing.T) {
 	}
 }
 
+func TestBuildSwitchRowsTruncatesLongGitBranchBadge(t *testing.T) {
+	t.Parallel()
+
+	rows := BuildSwitchRows([]SwitchCandidate{{
+		Path:        "/home/tester/workspace",
+		DisplayPath: "~/workspace",
+		SessionName: "workspace",
+		ModeLabel:   "new",
+		GitBranch:   "feature/native-picker-branch-badge-that-is-far-too-long",
+		UI:          "popup",
+	}})
+
+	const want = "\x1b[38;5;242m~/workspace\x1b[0m \x1b[38;5;245;48;5;238m feature/nativ... \x1b[0m"
+	if got := rows[0].Item.MetaLines[0]; got != want {
+		t.Fatalf("item meta line = %q, want truncated branch badge %q", got, want)
+	}
+}
+
 func TestBuildSwitchRowsOmitsBlankMode(t *testing.T) {
 	t.Parallel()
 

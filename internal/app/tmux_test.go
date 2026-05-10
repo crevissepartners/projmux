@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 func TestAppRunTmuxPopupPreviewUsesDefaultOptions(t *testing.T) {
@@ -122,6 +123,61 @@ func TestAppRunTmuxPopupSessionsUsesDefaultOptions(t *testing.T) {
 	}
 }
 
+func TestAppRunTmuxPopupSwitchAndSessionsUseSavedNativeBackendChrome(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	saveNativePickerBackend(t, home)
+
+	tests := []struct {
+		name    string
+		args    []string
+		popup   *stubTmuxPopupClient
+		command string
+	}{
+		{
+			name:    "switch",
+			args:    []string{"tmux", "popup-switch"},
+			popup:   &stubTmuxPopupClient{currentPanePath: "/tmp/work tree"},
+			command: "cd -- '/tmp/work tree' && exec '/tmp/projmux' 'switch' '--ui=popup'",
+		},
+		{
+			name:    "sessions",
+			args:    []string{"tmux", "popup-sessions"},
+			popup:   &stubTmuxPopupClient{},
+			command: "exec '/tmp/projmux' 'sessions' '--ui=popup'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := &App{
+				tmux: &tmuxCommand{
+					popup:      tt.popup,
+					executable: func() (string, error) { return "/tmp/projmux", nil },
+					homeDir:    func() (string, error) { return home, nil },
+					lookupEnv:  func(string) string { return "" },
+				},
+			}
+
+			if err := app.Run(tt.args, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if tt.popup.command != tt.command {
+				t.Fatalf("popup command = %q, want %q", tt.popup.command, tt.command)
+			}
+			if !tt.popup.options.NoBorder {
+				t.Fatalf("popup options = %#v, want NoBorder for saved native backend", tt.popup.options)
+			}
+			if got := tt.popup.options.Env[intpicker.BackendEnv]; got != string(intpicker.BackendNative) {
+				t.Fatalf("popup backend env = %q, want native", got)
+			}
+		})
+	}
+}
+
 func TestAppRunTmuxPopupCommandsUseMinimumReadableSizes(t *testing.T) {
 	t.Parallel()
 
@@ -221,6 +277,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-t", "%1",
 		"-E",
 		"-d", "/tmp/work tree",
+		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-1",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_PANE=%1",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_SESSION=work",
@@ -249,6 +306,81 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	}
 	if got, want := string(content), "%1\n"; got != want {
 		t.Fatalf("marker content = %q, want %q", got, want)
+	}
+}
+
+func TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend(t *testing.T) {
+	t.Setenv("PROJMUX_PICKER_BACKEND", "native")
+
+	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-native-border"), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":        "/dev/pts/projmux-test-native-border",
+		"#{pane_id}":           "%1",
+		"#S":                   "work",
+		"#{pane_current_path}": "/tmp/work tree",
+		"#{client_width}":      "200",
+		"#{client_height}":     "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	if !slices.Contains(got.args, "-B") {
+		t.Fatalf("display call = %#v, want -B for native backend popup so only native picker draws the frame", got)
+	}
+	if !containsTmuxArgPair(got.args, "-e", "PROJMUX_PICKER_BACKEND=native") {
+		t.Fatalf("display call = %#v, want native backend env propagated", got)
+	}
+}
+
+func TestAppRunTmuxPopupToggleUsesSavedNativeBackendForPopupChrome(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	saveNativePickerBackend(t, home)
+
+	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-saved-native-border"), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":        "/dev/pts/projmux-test-saved-native-border",
+		"#{pane_id}":           "%1",
+		"#S":                   "work",
+		"#{pane_current_path}": "/tmp/work tree",
+		"#{client_width}":      "200",
+		"#{client_height}":     "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	if !slices.Contains(got.args, "-B") {
+		t.Fatalf("display call = %#v, want -B for saved native backend popup", got)
+	}
+	if !containsTmuxArgPair(got.args, "-e", "PROJMUX_PICKER_BACKEND=native") {
+		t.Fatalf("display call = %#v, want native backend env for child", got)
+	}
+	command := got.args[len(got.args)-1]
+	if !strings.Contains(command, "PROJMUX_PICKER_BACKEND='native'") {
+		t.Fatalf("popup command = %q, want native backend env assignment", command)
 	}
 }
 
@@ -293,6 +425,7 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 				"display-popup",
 				"-c", clientKey,
 				"-E",
+				"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-2",
 				"-x", "128",
 				"-y", "0",
 				"-w", "72",
@@ -379,6 +512,9 @@ func TestAppRunTmuxPopupToggleOpensSettingsHub(t *testing.T) {
 	}
 
 	got := runner.calls[len(runner.calls)-1]
+	if !containsTmuxArgPair(got.args, "-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-5") {
+		t.Fatalf("display call = %#v, want native launch key env", got)
+	}
 	command := got.args[len(got.args)-1]
 	if !strings.Contains(command, "'/tmp/projmux' 'settings'") {
 		t.Fatalf("popup command = %q, want settings command", command)
@@ -417,6 +553,7 @@ func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
 		"-t", "%1",
 		"-E",
 		"-d", "/tmp/work tree",
+		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-4",
 		"-e", "TMUX_SPLIT_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SPLIT_TARGET_PANE=%1",
 		"-w", "96",
@@ -480,6 +617,120 @@ func TestAppRunTmuxPopupToggleTreatsClosedPopupAsNoOp(t *testing.T) {
 
 	if err := cmd.Run([]string{"popup-toggle", "session-popup"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
+	}
+}
+
+func TestNativeLaunchKeyForPopupMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{mode: "sessionizer-sidebar", want: "alt-1"},
+		{mode: "notify-sidebar", want: "alt-2"},
+		{mode: "session-popup", want: "alt-3"},
+		{mode: "ai-split-picker-right", want: "alt-4"},
+		{mode: "ai-split-picker-down", want: "alt-4"},
+		{mode: "ai-split-settings", want: "alt-5"},
+		{mode: "sessionizer", want: "alt-6"},
+		{mode: "unknown", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			t.Parallel()
+
+			if got := nativeLaunchKeyForPopupMode(tt.mode); got != tt.want {
+				t.Fatalf("nativeLaunchKeyForPopupMode(%q) = %q, want %q", tt.mode, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
+	t.Setenv("PROJMUX_PICKER_BACKEND", "native")
+	t.Setenv("PROJMUX_NATIVE_DEBUG_LOG", "/tmp/projmux-popup.log")
+	t.Setenv("PROJMUX_NATIVE_TTY_FALLBACK", "0")
+	t.Setenv("PROJMUX_PROJDIR", "/workspace/projects")
+	t.Setenv("PROJMUX_MANAGED_ROOTS", "/workspace/projects")
+
+	command, options, err := buildPopupToggle(
+		tmuxPopupToggleMode{Raw: "sessionizer-sidebar", Canonical: "sessionizer-sidebar"},
+		"/tmp/projmux",
+		"/tmp/marker",
+		tmuxPopupContext{
+			OriginPane:    "%1",
+			OriginSession: "main",
+			ContextDir:    "/workspace/projects/alpha-api",
+			ClientWidth:   200,
+			ClientHeight:  50,
+		},
+	)
+	if err != nil {
+		t.Fatalf("buildPopupToggle() error = %v", err)
+	}
+	for _, want := range []string{
+		"PROJMUX_PICKER_BACKEND='native'",
+		"PROJMUX_NATIVE_DEBUG_LOG='/tmp/projmux-popup.log'",
+		"PROJMUX_NATIVE_TTY_FALLBACK='0'",
+		"PROJMUX_PROJDIR='/workspace/projects'",
+		"PROJMUX_MANAGED_ROOTS='/workspace/projects'",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("popup command = %q, want substring %q", command, want)
+		}
+	}
+	for key, want := range map[string]string{
+		"PROJMUX_PICKER_BACKEND":      "native",
+		"PROJMUX_NATIVE_DEBUG_LOG":    "/tmp/projmux-popup.log",
+		"PROJMUX_NATIVE_TTY_FALLBACK": "0",
+		"PROJMUX_PROJDIR":             "/workspace/projects",
+		"PROJMUX_MANAGED_ROOTS":       "/workspace/projects",
+	} {
+		if got := options.Env[key]; got != want {
+			t.Fatalf("options.Env[%q] = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestAppRunTmuxPopupTogglePropagatesLegacySessionizerRoots(t *testing.T) {
+	t.Parallel()
+
+	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-legacy-roots"), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":        "/dev/pts/projmux-test-legacy-roots",
+		"#{pane_id}":           "%1",
+		"#S":                   "work",
+		"#{pane_current_path}": "/tmp/work tree",
+		"#{client_width}":      "200",
+		"#{client_height}":     "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX_SESSIONIZER_ROOTS" {
+				return "/legacy/projects"
+			}
+			return ""
+		},
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	if !containsTmuxArgPair(got.args, "-e", "TMUX_SESSIONIZER_ROOTS=/legacy/projects") {
+		t.Fatalf("display call = %#v, want legacy roots env propagated", got)
+	}
+	command := got.args[len(got.args)-1]
+	if !strings.Contains(command, "TMUX_SESSIONIZER_ROOTS='/legacy/projects'") {
+		t.Fatalf("popup command = %q, want legacy roots env assignment", command)
 	}
 }
 
@@ -1009,6 +1260,18 @@ func TestTmuxCommandReportsConfigurationAndRuntimeErrors(t *testing.T) {
 	}
 }
 
+func saveNativePickerBackend(t *testing.T, home string) {
+	t.Helper()
+
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SavePickerBackendFile(paths.PickerBackendFile(), config.PickerBackendNative); err != nil {
+		t.Fatalf("SavePickerBackendFile() error = %v", err)
+	}
+}
+
 type stubTmuxPopupClient struct {
 	currentPanePath string
 	currentPaneErr  error
@@ -1054,4 +1317,13 @@ func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string
 		return nil, r.err
 	}
 	return nil, nil
+}
+
+func containsTmuxArgPair(args []string, key, value string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == key && args[i+1] == value {
+			return true
+		}
+	}
+	return false
 }

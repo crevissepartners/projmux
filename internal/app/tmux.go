@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 type tmuxPopupClient interface {
@@ -241,7 +243,7 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 		return fmt.Errorf("stat tmux popup marker: %w", err)
 	}
 
-	command, options, err := buildPopupToggle(mode, binaryPath, marker, popupCtx)
+	command, options, err := buildPopupToggleWithPickerBackend(mode, binaryPath, marker, popupCtx, c.pickerBackend(), c.lookupEnv)
 	if err != nil {
 		return err
 	}
@@ -322,6 +324,7 @@ func (c *tmuxCommand) runPopupSwitch(args []string, stderr io.Writer) error {
 	if c.switchPopup != nil {
 		options = c.switchPopup(popupCtx)
 	}
+	options = c.applyPickerPopupBackend(options)
 
 	if err := c.popup.DisplayPopupWithOptions(context.Background(), command, options); err != nil {
 		return fmt.Errorf("display tmux popup switch: %w", err)
@@ -357,6 +360,7 @@ func (c *tmuxCommand) runPopupSessions(args []string, stderr io.Writer) error {
 	if c.sessionsPopup != nil {
 		options = c.sessionsPopup(popupCtx)
 	}
+	options = c.applyPickerPopupBackend(options)
 
 	if err := c.popup.DisplayPopupWithOptions(context.Background(), command, options); err != nil {
 		return fmt.Errorf("display tmux popup sessions: %w", err)
@@ -613,6 +617,30 @@ func (c *tmuxCommand) popupContext(ctx context.Context) tmuxPopupContext {
 	}
 }
 
+func (c *tmuxCommand) pickerBackend() intpicker.Backend {
+	return resolvePickerBackendWithConfig(c.homeDir, c.lookupEnv)
+}
+
+func (c *tmuxCommand) applyPickerPopupBackend(options inttmux.PopupOptions) inttmux.PopupOptions {
+	env := options.Env
+	if env == nil {
+		env = map[string]string{}
+	} else {
+		env = maps.Clone(env)
+	}
+	inheritPopupPickerEnv(env, c.lookupEnv)
+	if c.pickerBackend() == intpicker.BackendNative {
+		options.NoBorder = true
+		env[intpicker.BackendEnv] = string(intpicker.BackendNative)
+	}
+	if len(env) == 0 {
+		options.Env = nil
+	} else {
+		options.Env = env
+	}
+	return options
+}
+
 func (c *tmuxCommand) tmuxFormat(ctx context.Context, format string) string {
 	if c.runner == nil {
 		return ""
@@ -640,6 +668,10 @@ func (c *tmuxCommand) closePopup(ctx context.Context, targetPane, targetClient s
 }
 
 func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext) (string, inttmux.PopupOptions, error) {
+	return buildPopupToggleWithPickerBackend(mode, binaryPath, marker, ctx, resolvePickerBackend(os.Getenv), os.Getenv)
+}
+
+func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, backend intpicker.Backend, lookupEnv func(string) string) (string, inttmux.PopupOptions, error) {
 	options := inttmux.PopupOptions{
 		Target:        ctx.OriginPane,
 		CloseBehavior: inttmux.PopupCloseOnExit,
@@ -693,10 +725,48 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 	default:
 		return "", inttmux.PopupOptions{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", mode.Raw)
 	}
+	if launchKey := nativeLaunchKeyForPopupMode(mode.Raw); launchKey != "" {
+		env[intpicker.NativeLaunchKeyEnv] = launchKey
+	}
+	inheritPopupPickerEnv(env, lookupEnv)
+	if backend == intpicker.BackendNative {
+		options.NoBorder = true
+		env[intpicker.BackendEnv] = string(intpicker.BackendNative)
+	}
 
 	options.Cwd = cwd
 	options.Env = env
 	return buildMarkedPopupCommand(binaryPath, commandArgs, marker, cwd, env), options, nil
+}
+
+func inheritPopupPickerEnv(env map[string]string, lookupEnv func(string) string) {
+	if lookupEnv == nil {
+		lookupEnv = os.Getenv
+	}
+	for _, key := range []string{intpicker.BackendEnv, intpicker.NativeDebugLogEnv, intpicker.NativeTTYFallbackEnv, "PROJMUX_PROJDIR", "PROJMUX_MANAGED_ROOTS", "TMUX_SESSIONIZER_ROOTS"} {
+		if value := strings.TrimSpace(lookupEnv(key)); value != "" {
+			env[key] = value
+		}
+	}
+}
+
+func nativeLaunchKeyForPopupMode(mode string) string {
+	switch mode {
+	case "sessionizer-sidebar":
+		return "alt-1"
+	case "notify-sidebar":
+		return "alt-2"
+	case "session-popup":
+		return "alt-3"
+	case "ai-split-picker-right", "ai-split-picker-down":
+		return "alt-4"
+	case "ai-split-settings":
+		return "alt-5"
+	case "sessionizer":
+		return "alt-6"
+	default:
+		return ""
+	}
 }
 
 func (c *tmuxCommand) parseConfigBinary(args []string, name string, stderr io.Writer) (string, error) {

@@ -127,6 +127,60 @@ func TestClientRecentSessionsSortsByActivityDescending(t *testing.T) {
 	}
 }
 
+func TestClientRecentSessionsAcceptsUnderscoreSeparatedRows(t *testing.T) {
+	t.Parallel()
+
+	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("10_repo_with_underscores_0_1\n35_projmux-projects-bravo-web_1_2\n"), nil
+	}))
+
+	sessions, err := client.RecentSessions(context.Background())
+	if err != nil {
+		t.Fatalf("RecentSessions returned error: %v", err)
+	}
+
+	want := []string{"projmux-projects-bravo-web", "repo_with_underscores"}
+	if !reflect.DeepEqual(sessions, want) {
+		t.Fatalf("RecentSessions = %#v, want %#v", sessions, want)
+	}
+}
+
+func TestParseRecentSessionRowsAllowsPipeInSessionName(t *testing.T) {
+	t.Parallel()
+
+	row := strings.Join([]string{"42", "team|workspace", "1", "3"}, tmuxFieldSep)
+
+	sessions, err := parseRecentSessionRows([]byte(row + "\n"))
+	if err != nil {
+		t.Fatalf("parseRecentSessionRows returned error: %v", err)
+	}
+
+	want := []recentSession{
+		{name: "team|workspace", attached: true, windows: 3, activity: 42, order: 0},
+	}
+	if !reflect.DeepEqual(sessions, want) {
+		t.Fatalf("parseRecentSessionRows = %#v, want %#v", sessions, want)
+	}
+}
+
+func TestParseRecentSessionRowsAcceptsEscapedUnitSeparator(t *testing.T) {
+	t.Parallel()
+
+	row := strings.Join([]string{"42", "workspace", "1", "3"}, tmuxEscapedFieldSep)
+
+	sessions, err := parseRecentSessionRows([]byte(row + "\n"))
+	if err != nil {
+		t.Fatalf("parseRecentSessionRows returned error: %v", err)
+	}
+
+	want := []recentSession{
+		{name: "workspace", attached: true, windows: 3, activity: 42, order: 0},
+	}
+	if !reflect.DeepEqual(sessions, want) {
+		t.Fatalf("parseRecentSessionRows = %#v, want %#v", sessions, want)
+	}
+}
+
 func TestClientRecentSessionsReturnsEmptyListForNoOutput(t *testing.T) {
 	t.Parallel()
 
@@ -373,12 +427,27 @@ func TestClientRecentSessionSummariesIncludeAttachedPaneCountAndPath(t *testing.
 		call++
 		switch call {
 		case 1:
-			if got, want := args, []string{"list-sessions", "-F", "#{session_activity}\t#{session_name}\t#{session_attached}\t#{session_windows}"}; !reflect.DeepEqual(got, want) {
+			if got, want := args, []string{"list-sessions", "-F", tmuxFormat("#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}")}; !reflect.DeepEqual(got, want) {
 				t.Fatalf("list-sessions args = %#v, want %#v", got, want)
 			}
 			return []byte("10\tstale\t0\t1\n35\tfresh\t1\t3\n"), nil
 		case 2:
-			if got, want := args, []string{"list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{window_index}\t#{pane_index}\t#{?pane_active,1,0}\t#{pane_title}\t#{@projmux_attention_state}\t#{@projmux_ai_state}\t#{@projmux_ai_agent}\t#{@projmux_ai_topic}\t#{@projmux_attention_ack}\t#{@projmux_attention_focus_armed}\t#{pane_current_command}\t#{pane_current_path}"}; !reflect.DeepEqual(got, want) {
+			if got, want := args, []string{"list-panes", "-a", "-F", tmuxFormat(
+				"#{session_name}",
+				"#{pane_id}",
+				"#{window_index}",
+				"#{pane_index}",
+				"#{?pane_active,1,0}",
+				"#{pane_title}",
+				"#{@projmux_attention_state}",
+				"#{@projmux_ai_state}",
+				"#{@projmux_ai_agent}",
+				"#{@projmux_ai_topic}",
+				"#{@projmux_attention_ack}",
+				"#{@projmux_attention_focus_armed}",
+				"#{pane_current_command}",
+				"#{pane_current_path}",
+			)}; !reflect.DeepEqual(got, want) {
 				t.Fatalf("list-panes args = %#v, want %#v", got, want)
 			}
 			return []byte(
@@ -445,6 +514,42 @@ func TestClientListSessionWindowsParsesRows(t *testing.T) {
 	}
 	if !reflect.DeepEqual(windows, want) {
 		t.Fatalf("ListSessionWindows = %#v, want %#v", windows, want)
+	}
+}
+
+func TestParseSessionWindowsAllowsPipeInWindowName(t *testing.T) {
+	t.Parallel()
+
+	row := strings.Join([]string{"2", "1", "editor|logs", "4", "/home/tester/source/repos/dev"}, tmuxFieldSep)
+
+	windows, err := parseSessionWindows([]byte(row + "\n"))
+	if err != nil {
+		t.Fatalf("parseSessionWindows returned error: %v", err)
+	}
+
+	want := []Window{
+		{Index: 2, Name: "editor|logs", PaneCount: 4, Path: "/home/tester/source/repos/dev", Active: true},
+	}
+	if !reflect.DeepEqual(windows, want) {
+		t.Fatalf("parseSessionWindows = %#v, want %#v", windows, want)
+	}
+}
+
+func TestParseSessionWindowsAcceptsEscapedUnitSeparator(t *testing.T) {
+	t.Parallel()
+
+	row := strings.Join([]string{"0", "1", "bash", "1", "/tmp/projmux"}, tmuxEscapedFieldSep)
+
+	windows, err := parseSessionWindows([]byte(row + "\n"))
+	if err != nil {
+		t.Fatalf("parseSessionWindows returned error: %v", err)
+	}
+
+	want := []Window{
+		{Index: 0, Name: "bash", PaneCount: 1, Path: "/tmp/projmux", Active: true},
+	}
+	if !reflect.DeepEqual(windows, want) {
+		t.Fatalf("parseSessionWindows = %#v, want %#v", windows, want)
 	}
 }
 
@@ -528,6 +633,102 @@ func TestClientListAllPanesParsesRows(t *testing.T) {
 	}
 	if !reflect.DeepEqual(panes, want) {
 		t.Fatalf("ListAllPanes = %#v, want %#v", panes, want)
+	}
+}
+
+func TestParseAllPanesAllowsPipeInNonFinalFields(t *testing.T) {
+	t.Parallel()
+
+	row := strings.Join([]string{
+		"team|workspace",
+		"%7",
+		"1",
+		"3",
+		"1",
+		"server|logs",
+		"busy",
+		"thinking",
+		"codex",
+		"approval|needed",
+		"acked",
+		"1",
+		"go",
+		"/home/tester/source/repos/workspace",
+	}, tmuxFieldSep)
+
+	panes, err := parseAllPanes([]byte(row + "\n"))
+	if err != nil {
+		t.Fatalf("parseAllPanes returned error: %v", err)
+	}
+
+	want := []Pane{
+		{
+			ID:                  "%7",
+			SessionName:         "team|workspace",
+			WindowIndex:         1,
+			PaneIndex:           3,
+			Title:               "server|logs",
+			AttentionState:      "busy",
+			AIState:             "thinking",
+			AIAgent:             "codex",
+			AITopic:             "approval|needed",
+			AttentionAck:        "acked",
+			AttentionFocusArmed: "1",
+			Command:             "go",
+			Path:                "/home/tester/source/repos/workspace",
+			Active:              true,
+		},
+	}
+	if !reflect.DeepEqual(panes, want) {
+		t.Fatalf("parseAllPanes = %#v, want %#v", panes, want)
+	}
+}
+
+func TestParseAllPanesAcceptsEscapedUnitSeparator(t *testing.T) {
+	t.Parallel()
+
+	row := strings.Join([]string{
+		"workspace",
+		"%7",
+		"1",
+		"3",
+		"1",
+		"server",
+		"busy",
+		"thinking",
+		"codex",
+		"approval needed",
+		"acked",
+		"1",
+		"go",
+		"/home/tester/source/repos/workspace",
+	}, tmuxEscapedFieldSep)
+
+	panes, err := parseAllPanes([]byte(row + "\n"))
+	if err != nil {
+		t.Fatalf("parseAllPanes returned error: %v", err)
+	}
+
+	want := []Pane{
+		{
+			ID:                  "%7",
+			SessionName:         "workspace",
+			WindowIndex:         1,
+			PaneIndex:           3,
+			Title:               "server",
+			AttentionState:      "busy",
+			AIState:             "thinking",
+			AIAgent:             "codex",
+			AITopic:             "approval needed",
+			AttentionAck:        "acked",
+			AttentionFocusArmed: "1",
+			Command:             "go",
+			Path:                "/home/tester/source/repos/workspace",
+			Active:              true,
+		},
+	}
+	if !reflect.DeepEqual(panes, want) {
+		t.Fatalf("parseAllPanes = %#v, want %#v", panes, want)
 	}
 }
 
@@ -621,7 +822,7 @@ func TestClientListWindowPanesParsesRows(t *testing.T) {
 	}
 
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"list-panes", "-t", "workspace:2", "-F", "#{pane_index}\t#{?pane_active,1,0}"}},
+		{name: "tmux", args: []string{"list-panes", "-t", "workspace:2", "-F", tmuxFormat("#{pane_index}", "#{?pane_active,1,0}")}},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -998,13 +1199,14 @@ func TestBuildDisplayPopupArgsMapsExplicitOptions(t *testing.T) {
 		Width:         "70%",
 		Height:        "20",
 		Title:         "proj popup",
+		NoBorder:      true,
 		CloseBehavior: PopupKeepOpen,
 	})
 	if err != nil {
 		t.Fatalf("BuildDisplayPopupArgs returned error: %v", err)
 	}
 
-	want := []string{"display-popup", "-w", "70%", "-h", "20", "-T", "proj popup", "printf hello"}
+	want := []string{"display-popup", "-B", "-w", "70%", "-h", "20", "-T", "proj popup", "printf hello"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("BuildDisplayPopupArgs = %#v, want %#v", args, want)
 	}

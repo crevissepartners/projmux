@@ -11,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	intfzf "github.com/crevissepartners/projmux/internal/ui/fzf"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -19,13 +20,14 @@ import (
 var osStat = os.Stat
 
 type settingsCommand struct {
-	ai         *aiCommand
-	switcher   *switchCommand
-	update     *updateCommand
-	runner     intfzf.Runner
-	homeDir    func() (string, error)
-	lookupEnv  func(string) string
-	runCommand func(name string, args ...string) error
+	ai           *aiCommand
+	switcher     *switchCommand
+	update       *updateCommand
+	runner       intfzf.Runner
+	nativePicker intpicker.Runner
+	homeDir      func() (string, error)
+	lookupEnv    func(string) string
+	runCommand   func(name string, args ...string) error
 }
 
 var errSettingsClosed = errors.New("settings closed")
@@ -36,8 +38,10 @@ const (
 	settingsSectionAI             = "section:ai"
 	settingsSectionProject        = "section:project-picker"
 	settingsSectionStatusbar      = "section:statusbar"
+	settingsSectionLabs           = "section:labs"
 	settingsSectionAbout          = "section:about"
 	settingsActionPrefixAI        = "ai:"
+	settingsActionPrefixPicker    = "picker-backend:"
 	settingsActionPrefixProjdir   = "projdir:"
 	settingsActionPrefixStatusbar = "statusbar-decoration:"
 	settingsActionPrefixSwitch    = "switch:"
@@ -58,12 +62,13 @@ const (
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand) *settingsCommand {
 	return &settingsCommand{
-		ai:        ai,
-		switcher:  switcher,
-		update:    update,
-		runner:    intfzf.NewRunner(),
-		homeDir:   os.UserHomeDir,
-		lookupEnv: os.Getenv,
+		ai:           ai,
+		switcher:     switcher,
+		update:       update,
+		runner:       intfzf.NewRunner(),
+		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		homeDir:      os.UserHomeDir,
+		lookupEnv:    os.Getenv,
 		runCommand: func(name string, args ...string) error {
 			return exec.Command(name, args...).Run()
 		},
@@ -141,7 +146,7 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 }
 
 func (c *settingsCommand) runPicker(options intfzf.Options) (intfzf.Result, error) {
-	result, err := c.runner.Run(options)
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, options)
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return intfzf.Result{}, errSettingsClosed
@@ -164,6 +169,10 @@ func (c *settingsCommand) rootEntries() []intfzf.Entry {
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Icons & Decorations", "status and popup decoration mode"),
 			Value: settingsSectionStatusbar,
+		},
+		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Labs", "experimental picker engine"),
+			Value: settingsSectionLabs,
 		},
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "About", "version, updates, key setup"),
@@ -200,6 +209,16 @@ func (c *settingsCommand) sectionOptions(section string) (intfzf.Options, error)
 			Entries:    c.statusbarEntries(),
 			Prompt:     "Settings > Icons & Decorations > ",
 			Header:     "Set status and popup decoration mode",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		}, nil
+	case settingsSectionLabs:
+		return intfzf.Options{
+			UI:         "settings-labs",
+			Entries:    c.labsEntries(),
+			Prompt:     "Settings > Labs > ",
+			Header:     "Experimental features",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -956,6 +975,77 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 	return nil
 }
 
+func (c *settingsCommand) labsEntries() []intfzf.Entry {
+	current, source := c.currentPickerBackend()
+	modes := []struct {
+		mode config.PickerBackend
+		name string
+		desc string
+	}{
+		{config.PickerBackendFZF, "fzf", "stable external picker backend"},
+		{config.PickerBackendNative, "native", "experimental projmux picker engine; no fzf required"},
+	}
+
+	entries := make([]intfzf.Entry, 0, len(modes)+2)
+	entries = append(entries, settingsBackEntry())
+	if source != "" {
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabelInfo("Picker source", string(current), source),
+			Value: settingsNoopValue,
+		})
+	}
+	for _, item := range modes {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if item.mode == current {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intfzf.Entry{
+			Label: settingsLabel(glyph, color, item.name, item.desc),
+			Value: settingsActionPrefixPicker + string(item.mode),
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) currentPickerBackend() (config.PickerBackend, string) {
+	if backend, ok := pickerBackendFromEnv(c.lookupEnv); ok {
+		return config.NormalizePickerBackend(string(backend)), intpicker.BackendEnv + " env"
+	}
+
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return config.PickerBackendFZF, "default"
+	}
+	mode, err := config.LoadPickerBackendFile(paths.PickerBackendFile())
+	if err != nil {
+		return config.PickerBackendFZF, "default"
+	}
+	if _, err := osStat(paths.PickerBackendFile()); err == nil {
+		return mode, "saved"
+	}
+	return mode, "default"
+}
+
+func (c *settingsCommand) setPickerBackend(value string) error {
+	mode := config.NormalizePickerBackend(value)
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+	if err := config.SavePickerBackendFile(paths.PickerBackendFile(), mode); err != nil {
+		return err
+	}
+	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
+		if err := c.runCommand("tmux", "set-environment", "-g", pickerBackendTmuxEnv, string(mode)); err != nil {
+			return fmt.Errorf("set live tmux picker backend: %w", err)
+		}
+		_ = c.runCommand("tmux", "display-message", "picker backend: "+string(mode))
+	}
+	return nil
+}
+
 func (c *settingsCommand) aboutEntries() []intfzf.Entry {
 	status, statusErr := updateStatus{}, errors.New("update status is not configured")
 	if c.update != nil {
@@ -1034,6 +1124,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return errors.New("ai settings are not configured")
 		}
 		return c.ai.setMode(mode)
+	case strings.HasPrefix(value, settingsActionPrefixPicker):
+		return c.setPickerBackend(strings.TrimPrefix(value, settingsActionPrefixPicker))
 	case strings.HasPrefix(value, settingsActionPrefixProjdir):
 		action := strings.TrimPrefix(value, settingsActionPrefixProjdir)
 		if c.switcher == nil {

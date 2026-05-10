@@ -203,6 +203,12 @@ func TestAppRunSwitchNativeBackendUsesNativeRunner(t *testing.T) {
 	if len(gotNativeOptions.Items) != 1 || gotNativeOptions.Items[0].Value != "/home/tester/workspace" {
 		t.Fatalf("native items = %#v, want switch picker item", gotNativeOptions.Items)
 	}
+	if got := gotNativeOptions.Items[0].MetaLines; len(got) != 0 {
+		t.Fatalf("native item meta lines = %#v, want merged into Label to avoid duplicate card metadata", got)
+	}
+	if got := gotNativeOptions.Items[0].Label; strings.Count(got, "~/workspace") != 1 {
+		t.Fatalf("native item label = %q, want one rendered path/git metadata line", got)
+	}
 	if got, want := executor.openSessionName, "workspace"; got != want {
 		t.Fatalf("open session = %q, want %q", got, want)
 	}

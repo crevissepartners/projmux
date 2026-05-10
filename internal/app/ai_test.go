@@ -34,12 +34,39 @@ func TestAISettingsGetAndSetMode(t *testing.T) {
 	if err := cmd.Run([]string{"settings", "--set", "codex"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run settings --set error = %v", err)
 	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("commands = %#v, want no tmux toast outside tmux", cmdRecorder(cmd).commands)
+	}
 	stdout.Reset()
 	if err := cmd.Run([]string{"settings", "--get"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run settings --get after set error = %v", err)
 	}
 	if got, want := stdout.String(), "codex\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestAISettingsSetModeDisplaysTmuxToastInsideTmux(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		default:
+			return ""
+		}
+	}
+
+	if err := cmd.Run([]string{"settings", "--set", "codex"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run settings --set error = %v", err)
+	}
+
+	want := []recordedAICommand{{name: "tmux", args: []string{"display-message", "ai split default: codex"}}}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
 	}
 }
 
@@ -380,7 +407,6 @@ func TestAISplitShellUsesTmuxSplitWindow(t *testing.T) {
 	}
 
 	want := []recordedAICommand{
-		{name: "tmux", args: []string{"display-message", "ai split default: shell"}},
 		{name: "tmux", args: []string{"split-window", "-v", "-t", "%9", "-c", work, "/bin/bash", "-l"}},
 		{name: "tmux", args: []string{"resize-pane", "-t", "%1", "-y", "7"}},
 		{name: "tmux", args: []string{"resize-pane", "-t", "%9", "-y", "7"}},

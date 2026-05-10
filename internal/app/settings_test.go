@@ -68,6 +68,9 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if !hasEntryLabelContaining(rootOptions.Entries, "Icons & Decorations") {
 		t.Fatalf("root settings entries = %#v, want generic decoration section label", rootOptions.Entries)
 	}
+	if !hasEntryValue(rootOptions.Entries, settingsSectionLabs) {
+		t.Fatalf("root settings entries = %#v, want labs section", rootOptions.Entries)
+	}
 	if !hasEntryValue(rootOptions.Entries, settingsSectionAbout) {
 		t.Fatalf("root settings entries = %#v, want about section", rootOptions.Entries)
 	}
@@ -82,6 +85,73 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}
 	if got, want := readModeFile(t, home), "codex\n"; got != want {
 		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubSetsExperimentalPickerBackend(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	var labsOptions intfzf.Options
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		ai:       testAICommand(home),
+		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+		runner: switchRunnerFunc(func(options intfzf.Options) (intfzf.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intfzf.Result{Key: "enter", Value: settingsSectionLabs}, nil
+			case 2:
+				labsOptions = options
+				return intfzf.Result{Key: "enter", Value: settingsActionPrefixPicker + string(config.PickerBackendNative)}, nil
+			default:
+				return intfzf.Result{}, nil
+			}
+		}),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := labsOptions.UI, "settings-labs"; got != want {
+		t.Fatalf("labs settings UI = %q, want %q", got, want)
+	}
+	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixPicker+string(config.PickerBackendFZF)) {
+		t.Fatalf("labs settings entries = %#v, want fzf row", labsOptions.Entries)
+	}
+	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixPicker+string(config.PickerBackendNative)) {
+		t.Fatalf("labs settings entries = %#v, want native row", labsOptions.Entries)
+	}
+
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.LoadPickerBackendFile(paths.PickerBackendFile())
+	if err != nil {
+		t.Fatalf("LoadPickerBackendFile() error = %v", err)
+	}
+	if got != config.PickerBackendNative {
+		t.Fatalf("picker backend = %q, want %q", got, config.PickerBackendNative)
+	}
+	if !reflect.DeepEqual(tmuxCalls, [][]string{
+		{"tmux", "set-environment", "-g", pickerBackendTmuxEnv, "native"},
+		{"tmux", "display-message", "picker backend: native"},
+	}) {
+		t.Fatalf("tmux calls = %#v", tmuxCalls)
 	}
 }
 
