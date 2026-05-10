@@ -23,7 +23,7 @@ func TestResolveBackendDefaultsToNative(t *testing.T) {
 	}
 }
 
-func TestResolveBackendIgnoresLegacyFZFOverride(t *testing.T) {
+func TestResolveBackendIgnoresDeprecatedFZFOverride(t *testing.T) {
 	t.Parallel()
 
 	got := ResolveBackend(func(name string) string {

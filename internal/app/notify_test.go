@@ -263,7 +263,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
 	cmd.picker = picker
-	cmd.native = nativePickerFromLegacyRunner(picker)
+	cmd.native = nativePickerFromCompatRunner(picker)
 	cmd.runner = runner
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
@@ -357,7 +357,7 @@ func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 				return ""
 			}
 			cmd.picker = picker
-			cmd.native = nativePickerFromLegacyRunner(picker)
+			cmd.native = nativePickerFromCompatRunner(picker)
 			cmd.runner = runner
 
 			if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -403,7 +403,7 @@ func TestNotifySidebarLabelDoesNotExposeRawPaneID(t *testing.T) {
 	}
 }
 
-func TestNotifySidebarNativeBackendDoesNotCallLegacyRunner(t *testing.T) {
+func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{{
 			ID:        "abc",
@@ -418,7 +418,7 @@ func TestNotifySidebarNativeBackendDoesNotCallLegacyRunner(t *testing.T) {
 			ExpiresAt: time.Date(2026, time.May, 6, 13, 0, 0, 0, time.UTC),
 		}},
 	}
-	var fzfCalled bool
+	var compatCalled bool
 	var nativeCalled bool
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
@@ -439,7 +439,7 @@ func TestNotifySidebarNativeBackendDoesNotCallLegacyRunner(t *testing.T) {
 		return ""
 	}
 	cmd.picker = notifyPickerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-		fzfCalled = true
+		compatCalled = true
 		return intpickercompat.Result{}, nil
 	})
 	cmd.runner = runner
@@ -449,8 +449,8 @@ func TestNotifySidebarNativeBackendDoesNotCallLegacyRunner(t *testing.T) {
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if fzfCalled {
-		t.Fatal("legacy picker was called for native notify backend")
+	if compatCalled {
+		t.Fatal("compat picker was called for native notify backend")
 	}
 	if !nativeCalled {
 		t.Fatal("native picker was not called")
@@ -495,7 +495,7 @@ func TestNotifyListSidebarDoesNotAckWhenFocusFails(t *testing.T) {
 	}}
 	cmd := newCmd(store)
 	cmd.picker = picker
-	cmd.native = nativePickerFromLegacyRunner(picker)
+	cmd.native = nativePickerFromCompatRunner(picker)
 	cmd.runner = runner
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
@@ -517,7 +517,7 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	picker := &stubNotifyPicker{result: intpickercompat.Result{Key: "x", Value: "abc"}}
 	cmd := newCmd(store)
 	cmd.picker = picker
-	cmd.native = nativePickerFromLegacyRunner(picker)
+	cmd.native = nativePickerFromCompatRunner(picker)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -541,7 +541,7 @@ func TestNotifyListSidebarClearAll(t *testing.T) {
 	picker := &stubNotifyPicker{result: intpickercompat.Result{Key: "ctrl-x", Value: "abc"}}
 	cmd := newCmd(store)
 	cmd.picker = picker
-	cmd.native = nativePickerFromLegacyRunner(picker)
+	cmd.native = nativePickerFromCompatRunner(picker)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
