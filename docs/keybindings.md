@@ -31,7 +31,12 @@ Settings > Labs > Diagnose keybindings reuses the same probe and terminal
 fallback engines from `projmux setup` and `projmux init`. It lists the
 keybinding catalog, lets you press one action key at a time from inside the
 app, distinguishes plain / CSI-u / unexpected / timeout outcomes, and exposes
-preview/apply rows for supported terminal fallbacks.
+preview/apply rows for supported terminal fallbacks. When an unexpected
+sequence can be safely read as a tmux plain chord, the Lab shows an explicit
+`Save as plain override` row with the suggested chord; it never overwrites
+`keymap.toml` from an unexpected sequence unless you select that confirmation
+row. The Lab also shows whether the detected terminal can reload config after
+fallback apply or needs a restart/manual reload.
 
 > 한국어 요약: 대부분의 터미널은 `projmux shell` 만으로 아래 키가 바로 동작합니다.
 > 동작하지 않으면 `projmux setup` 으로 어떤 키가 막혔는지 진단하고,
@@ -136,6 +141,9 @@ tailored to the detected terminal (Ghostty, WezTerm, kitty, iTerm2,
 Alacritty, Windows Terminal, foot, VS Code, …). When projmux ships an init
 adapter for the terminal, the summary gives both the dry-run preview and the
 exact apply command, e.g. `projmux init ghostty --apply`.
+Settings > Labs also includes a concise after-apply hint: Ghostty/WezTerm/kitty
+can reload config, Windows Terminal and iTerm2 generally need a restarted tab
+or session, and unknown terminals are marked manual.
 
 Useful flags:
 

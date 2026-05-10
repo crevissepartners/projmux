@@ -843,10 +843,11 @@ func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name      string
-		seed      string
-		result    probeResult
-		wantLabel []string
+		name       string
+		seed       string
+		result     probeResult
+		wantLabel  []string
+		wantAbsent []string
 	}{
 		{
 			name: "plain",
@@ -871,7 +872,8 @@ func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
 				[]byte("\x1b[A"),
 			),
-			wantLabel: []string{"Unexpected sequence", "no keymap overwrite"},
+			wantLabel:  []string{"Unexpected sequence", "no keymap overwrite"},
+			wantAbsent: []string{"Save as plain override"},
 		},
 		{
 			name: "timeout",
@@ -914,7 +916,88 @@ func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 					t.Fatalf("entries = %#v, want label containing %q", entries, want)
 				}
 			}
+			for _, absent := range tc.wantAbsent {
+				if hasEntryLabelContaining(entries, absent) {
+					t.Fatalf("entries = %#v, did not want label containing %q", entries, absent)
+				}
+			}
 		})
+	}
+}
+
+func TestSettingsLabsUnknownProbeSaveOverrideUsesSuggestedPlainChord(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var tmuxCalls [][]string
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:probe"}, nil
+		case 5:
+			if !hasEntryLabelContaining(options.Entries, "Unexpected sequence") {
+				t.Fatalf("detail entries = %#v, want unexpected sequence row", options.Entries)
+			}
+			if !hasEntryLabelContaining(options.Entries, "Save as plain override") {
+				t.Fatalf("detail entries = %#v, want save override row", options.Entries)
+			}
+			if !hasEntryLabelContaining(options.Entries, "plain = M-a") {
+				t.Fatalf("detail entries = %#v, want suggested M-a description", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:save-plain-override:M-a"}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 8:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 9:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "TMUX":
+			return "/tmp/tmux,1,0"
+		case "TERM_PROGRAM":
+			return "ghostty"
+		default:
+			return ""
+		}
+	}
+	cmd.runCommand = func(name string, args ...string) error {
+		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+		return nil
+	}
+	cmd.probeKeybinding = func(key probeKey, timeout time.Duration) (probeResult, error) {
+		return classifyProbeInput(key, []byte("\x1ba")), nil
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n") {
+		t.Fatalf("keymap = %q, want M-a plain override", keymap)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
+		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
+	}
+	if !strings.Contains(stdout.String(), "reloaded tmux config") {
+		t.Fatalf("stdout = %q, want reload message", stdout.String())
 	}
 }
 
@@ -990,6 +1073,51 @@ func TestSettingsLabsPlainProbeSaveUsesKeymapApplyPath(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "reloaded tmux config") {
 		t.Fatalf("stdout = %q, want reload message", stdout.String())
+	}
+}
+
+func TestSettingsLabsTerminalReloadCapabilityRows(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		env  map[string]string
+		want []string
+	}{
+		{
+			name: "ghostty reload",
+			env:  map[string]string{"TERM_PROGRAM": "ghostty"},
+			want: []string{"After fallback apply", "ghostty reload-config", "reload Ghostty config"},
+		},
+		{
+			name: "wsl windows terminal restart",
+			env:  map[string]string{"WSL_DISTRO_NAME": "Ubuntu"},
+			want: []string{"After fallback apply", "restart terminal", "restart Windows Terminal tabs"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+				return intpickercompat.Result{}, nil
+			})
+			cmd.lookupEnv = func(name string) string {
+				return tc.env[name]
+			}
+
+			entries, _, err := cmd.labKeybindingDetailEntries("sessionizer-sidebar")
+			if err != nil {
+				t.Fatalf("labKeybindingDetailEntries() error = %v", err)
+			}
+			for _, want := range tc.want {
+				if !hasEntryLabelContaining(entries, want) {
+					t.Fatalf("entries = %#v, want label containing %q", entries, want)
+				}
+			}
+		})
 	}
 }
 

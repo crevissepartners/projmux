@@ -1419,6 +1419,12 @@ func (c *settingsCommand) runLabKeybindingDetail(actionID string, stdout, stderr
 				return err
 			}
 		default:
+			if chord, ok := strings.CutPrefix(op, "save-plain-override:"); ok {
+				if err := c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, &chord, stdout); err != nil {
+					return err
+				}
+				continue
+			}
 			return fmt.Errorf("unknown lab keybinding operation: %s", op)
 		}
 	}
@@ -1434,6 +1440,9 @@ func parseLabKeybindingAction(value, actionID string) (string, bool) {
 	case "probe", "init-preview", "init-apply", "save-plain":
 		return op, true
 	default:
+		if strings.HasPrefix(op, "save-plain-override:") && strings.TrimPrefix(op, "save-plain-override:") != "" {
+			return op, true
+		}
 		return "", false
 	}
 }
@@ -1501,6 +1510,10 @@ func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpick
 			Value: settingsNoopValue,
 		},
 		{
+			Label: settingsLabelInfo("After fallback apply", terminal.ReloadCapability().Label, terminal.ReloadCapability().Summary),
+			Value: settingsNoopValue,
+		},
+		{
 			Label: settingsLabelInfo("Plain chord", keybindingValueSummary(action.PlainChord, defaultAction.PlainChord), "tmux"),
 			Value: settingsNoopValue,
 		},
@@ -1561,6 +1574,12 @@ func labProbeOutcomeEntries(prefix string, action, defaultAction keyBindingActio
 			Label: settingsLabelInfo("Unexpected sequence", visibleEscape(string(res.Sequence)), "no keymap overwrite"),
 			Value: settingsNoopValue,
 		})
+		if chord, ok := suggestedPlainChordForSequence(res.Sequence); ok {
+			entries = append(entries, intpickercompat.Entry{
+				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save as plain override", "write plain = "+chord+" and reload app config"),
+				Value: prefix + "save-plain-override:" + chord,
+			})
+		}
 	case probeStatusTimeout:
 		desc := "terminal fallback unavailable"
 		if cmd := terminal.InitCommand(); cmd != "" {
@@ -1617,13 +1636,14 @@ func (c *settingsCommand) runLabTerminalInit(apply bool, stdout, stderr io.Write
 }
 
 func labTerminalSupportSummary(terminal terminalInfo) string {
+	activation := terminal.ReloadCapability()
 	if cmd := terminal.InitCommand(); cmd != "" {
-		return "supported fallback: " + strings.TrimSuffix(cmd, " --apply")
+		return "supported fallback: " + strings.TrimSuffix(cmd, " --apply") + "; after apply: " + activation.Label
 	}
 	if hint := terminal.RemediationHint(); hint != "" {
-		return hint
+		return hint + "; after apply: " + activation.Label
 	}
-	return "no automatic fallback adapter"
+	return "no automatic fallback adapter; after apply: " + activation.Label
 }
 
 func (c *settingsCommand) writeTmuxAppConfig() (string, error) {
