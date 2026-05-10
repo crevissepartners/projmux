@@ -748,14 +748,14 @@ func sessionizerSidebarWidth(clientWidth int, backend intpicker.Backend) string 
 }
 
 func notifySidebarWidth(clientWidth int) string {
-	return popupSize(clientWidth, 32, 72)
+	return popupSize(clientWidth, 24, 64)
 }
 
 func sidebarPopupHeight(clientHeight int) string {
 	if clientHeight <= 0 {
 		return "100%"
 	}
-	return fmt.Sprintf("%d", max(clientHeight-1, 1))
+	return fmt.Sprintf("%d", max(clientHeight-3, 1))
 }
 
 func inheritPopupPickerEnv(env map[string]string, lookupEnv func(string) string) {

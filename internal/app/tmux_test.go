@@ -286,7 +286,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-x", "0",
 		"-y", "0",
 		"-w", "56",
-		"-h", "49",
+		"-h", "47",
 	}
 	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
@@ -364,21 +364,21 @@ func TestSessionizerSidebarWidthKeepsFZFMinimum(t *testing.T) {
 func TestNotifySidebarWidthMatchesFZFBaseline(t *testing.T) {
 	t.Parallel()
 
-	if got, want := notifySidebarWidth(200), "72"; got != want {
+	if got, want := notifySidebarWidth(200), "64"; got != want {
 		t.Fatalf("notifySidebarWidth(200) = %q, want fzf minimum %q", got, want)
 	}
-	if got, want := notifySidebarWidth(300), "96"; got != want {
+	if got, want := notifySidebarWidth(300), "72"; got != want {
 		t.Fatalf("notifySidebarWidth(300) = %q, want fzf percent %q", got, want)
 	}
-	if got, want := notifySidebarWidth(0), "32%"; got != want {
+	if got, want := notifySidebarWidth(0), "24%"; got != want {
 		t.Fatalf("notifySidebarWidth(unknown) = %q, want fzf percent fallback %q", got, want)
 	}
 }
 
-func TestSidebarPopupHeightLeavesStatusbarRow(t *testing.T) {
+func TestSidebarPopupHeightLeavesStatusbarRows(t *testing.T) {
 	t.Parallel()
 
-	if got, want := sidebarPopupHeight(50), "49"; got != want {
+	if got, want := sidebarPopupHeight(50), "47"; got != want {
 		t.Fatalf("sidebarPopupHeight(50) = %q, want %q", got, want)
 	}
 	if got, want := sidebarPopupHeight(1), "1"; got != want {
@@ -458,14 +458,14 @@ func TestAppRunTmuxPopupToggleKeepsNotifySidebarFZFSizingForNative(t *testing.T)
 	if !slices.Contains(got.args, "-B") {
 		t.Fatalf("display call = %#v, want native notify popup to keep native-owned frame", got)
 	}
-	if !containsTmuxArgPair(got.args, "-w", "72") {
+	if !containsTmuxArgPair(got.args, "-w", "64") {
 		t.Fatalf("display call = %#v, want native notify sidebar to keep fzf baseline width", got)
 	}
-	if !containsTmuxArgPair(got.args, "-x", "128") {
+	if !containsTmuxArgPair(got.args, "-x", "136") {
 		t.Fatalf("display call = %#v, want right edge position based on fzf baseline width", got)
 	}
-	if !containsTmuxArgPair(got.args, "-h", "49") {
-		t.Fatalf("display call = %#v, want native notify sidebar to leave statusbar row uncovered", got)
+	if !containsTmuxArgPair(got.args, "-h", "47") {
+		t.Fatalf("display call = %#v, want native notify sidebar to leave statusbar rows uncovered", got)
 	}
 }
 
@@ -511,10 +511,10 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 				"-c", clientKey,
 				"-E",
 				"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-2",
-				"-x", "128",
+				"-x", "136",
 				"-y", "0",
-				"-w", "72",
-				"-h", "49",
+				"-w", "64",
+				"-h", "47",
 			}
 			if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
 				t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
