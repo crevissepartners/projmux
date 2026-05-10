@@ -18,6 +18,124 @@ import (
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
+func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{}
+	want := map[string]settingsEntryMeta{
+		settingsSectionProject:     {Name: "Project Picker", Axis: settingsAxisGlobal},
+		settingsSectionAI:          {Name: "AI Settings", Axis: settingsAxisGlobal},
+		settingsSectionStatusbar:   {Name: "Appearance", Axis: settingsAxisGlobal},
+		settingsSectionKeybindings: {Name: "Keybindings", Axis: settingsAxisGlobal},
+		settingsSectionLabs:        {Name: "Labs", Axis: settingsAxisGlobal},
+		settingsSectionAbout:       {Name: "About", Axis: settingsAxisGlobal},
+	}
+
+	seen := map[string]bool{}
+	for _, entry := range cmd.rootEntries() {
+		meta, ok := settingsEntryMetaForValue(entry.Value)
+		if !ok {
+			t.Fatalf("root entry value %q missing settings axis metadata", entry.Value)
+		}
+		if got := meta; got != want[entry.Value] {
+			t.Fatalf("root entry value %q metadata = %#v, want %#v", entry.Value, got, want[entry.Value])
+		}
+		seen[entry.Value] = true
+	}
+	for value := range want {
+		if !seen[value] {
+			t.Fatalf("root entries missing catalogued value %q", value)
+		}
+	}
+}
+
+func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		value string
+		axis  SettingsAxis
+	}{
+		{settingsProjectRootManage, settingsAxisGlobal},
+		{settingsWorkdirList, settingsAxisGlobal},
+		{settingsProjectPins, settingsAxisGlobal},
+		{settingsActionPrefixAI + aiModeCodex, settingsAxisGlobal},
+		{settingsActionPrefixStatusbar + string(config.StatusbarDecorationSymbol), settingsAxisGlobal},
+		{settingsActionPrefixKeymap + "settings", settingsAxisGlobal},
+		{settingsActionPrefixHooks + string(config.ProjectHooksOn), settingsAxisGlobal},
+	}
+
+	for _, tc := range cases {
+		meta, ok := settingsEntryMetaForValue(tc.value)
+		if !ok {
+			t.Fatalf("settings entry value %q missing catalog metadata", tc.value)
+		}
+		if got := meta.Axis; got != tc.axis {
+			t.Fatalf("settings entry value %q axis = %b, want %b", tc.value, got, tc.axis)
+		}
+	}
+}
+
+func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		ai:       testAICommand(home),
+		switcher: testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{}),
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(string) string {
+			return ""
+		},
+	}
+
+	assertCataloguedEntries := func(name string, entries []intpickercompat.Entry) {
+		t.Helper()
+		for _, entry := range entries {
+			if _, ok := settingsEntryMetaForValue(entry.Value); !ok {
+				t.Fatalf("%s entry value %q missing settings axis metadata", name, entry.Value)
+			}
+		}
+	}
+
+	assertCataloguedEntries("root", cmd.rootEntries())
+	assertCataloguedEntries("ai", cmd.aiEntries())
+	assertCataloguedEntries("appearance", cmd.statusbarEntries())
+	assertCataloguedEntries("project picker", cmd.projectPickerEntries())
+	assertCataloguedEntries("labs", cmd.labsEntries())
+
+	projectRootEntries, err := cmd.projectRootEntries()
+	if err != nil {
+		t.Fatalf("projectRootEntries() error = %v", err)
+	}
+	assertCataloguedEntries("project root", projectRootEntries)
+
+	workdirEntries, err := cmd.workdirListEntries()
+	if err != nil {
+		t.Fatalf("workdirListEntries() error = %v", err)
+	}
+	assertCataloguedEntries("workdirs", workdirEntries)
+
+	pinnedProjectEntries, err := cmd.pinnedProjectEntries()
+	if err != nil {
+		t.Fatalf("pinnedProjectEntries() error = %v", err)
+	}
+	assertCataloguedEntries("pinned projects", pinnedProjectEntries)
+
+	for _, value := range []string{
+		settingsActionPrefixKeymap + "settings",
+		settingsActionPrefixLabKeymap + "settings",
+		settingsActionPrefixWorkdir + "remove:/tmp/work",
+		settingsActionPrefixSwitch + "add:/tmp/project",
+		settingsActionPrefixSwitch + "pin:/tmp/project",
+		settingsActionPrefixSwitch + "clear",
+	} {
+		if _, ok := settingsEntryMetaForValue(value); !ok {
+			t.Fatalf("representative generated value %q missing settings axis metadata", value)
+		}
+	}
+}
+
 func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	t.Parallel()
 

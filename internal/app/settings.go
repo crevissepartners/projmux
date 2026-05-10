@@ -36,6 +36,70 @@ type settingsCommand struct {
 
 var errSettingsClosed = errors.New("settings closed")
 
+type SettingsAxis uint8
+
+const (
+	settingsAxisGlobal SettingsAxis = 1 << iota
+	settingsAxisProject
+	settingsAxisBoth = settingsAxisGlobal | settingsAxisProject
+)
+
+type settingsEntryMeta struct {
+	Name string
+	Axis SettingsAxis
+}
+
+var settingsEntryCatalog = map[string]settingsEntryMeta{
+	settingsBackValue:          {Name: "Back", Axis: settingsAxisGlobal},
+	settingsNoopValue:          {Name: "Info", Axis: settingsAxisGlobal},
+	settingsSectionProject:     {Name: "Project Picker", Axis: settingsAxisGlobal},
+	settingsSectionAI:          {Name: "AI Settings", Axis: settingsAxisGlobal},
+	settingsSectionStatusbar:   {Name: "Appearance", Axis: settingsAxisGlobal},
+	settingsSectionKeybindings: {Name: "Keybindings", Axis: settingsAxisGlobal},
+	settingsSectionLabs:        {Name: "Labs", Axis: settingsAxisGlobal},
+	settingsSectionAbout:       {Name: "About", Axis: settingsAxisGlobal},
+	settingsProjectAdd:         {Name: "Add Project", Axis: settingsAxisGlobal},
+	settingsProjectPins:        {Name: "Pinned Projects", Axis: settingsAxisGlobal},
+	settingsProjectRootManage:  {Name: "Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirClear:       {Name: "Clear Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetCurrent:  {Name: "Use Current Project as Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetTyped:    {Name: "Set Project Root", Axis: settingsAxisGlobal},
+	settingsWorkdirAdd:         {Name: "Add Workdir", Axis: settingsAxisGlobal},
+	settingsWorkdirList:        {Name: "Workdirs", Axis: settingsAxisGlobal},
+	settingsWorkdirTyped:       {Name: "Type Workdir", Axis: settingsAxisGlobal},
+	settingsLabKeybindings:     {Name: "Diagnose Keybindings", Axis: settingsAxisGlobal},
+	settingsUpdateApply:        {Name: "Update Now", Axis: settingsAxisGlobal},
+	settingsUpdateCheck:        {Name: "Check Updates", Axis: settingsAxisGlobal},
+}
+
+var settingsEntryPrefixCatalog = []struct {
+	prefix string
+	meta   settingsEntryMeta
+}{
+	{settingsActionPrefixAI, settingsEntryMeta{Name: "AI Settings", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixHooks, settingsEntryMeta{Name: "Project hook policy", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixKeymap, settingsEntryMeta{Name: "Keybindings", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixLabKeymap, settingsEntryMeta{Name: "Keybinding diagnostics", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixPicker, settingsEntryMeta{Name: "Picker backend", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixProjdir, settingsEntryMeta{Name: "Project Root", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixStatusbar, settingsEntryMeta{Name: "Appearance", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixSwitch, settingsEntryMeta{Name: "Pinned Projects", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixUpdate, settingsEntryMeta{Name: "About", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixWorkdir, settingsEntryMeta{Name: "Workdirs", Axis: settingsAxisGlobal}},
+}
+
+func settingsEntryMetaForValue(value string) (settingsEntryMeta, bool) {
+	if meta, ok := settingsEntryCatalog[value]; ok {
+		return meta, true
+	}
+	for _, candidate := range settingsEntryPrefixCatalog {
+		if strings.HasPrefix(value, candidate.prefix) {
+			return candidate.meta, true
+		}
+	}
+	return settingsEntryMeta{}, false
+}
+
 const (
 	settingsBackValue             = "__settings_back__"
 	settingsNoopValue             = "__settings_noop__"
