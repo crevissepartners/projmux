@@ -287,7 +287,7 @@ func TestSettingsNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 			}
 			return ""
 		},
-		nativePicker: intpicker.NativeRunner{In: strings.NewReader("2\n4\n"), Out: &out},
+		nativePicker: intpicker.NativeRunner{In: strings.NewReader("3\n4\n"), Out: &out},
 		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			compatCalled = true
 			return intpickercompat.Result{}, nil
