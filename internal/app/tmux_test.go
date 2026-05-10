@@ -265,6 +265,8 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	cmd := &tmuxCommand{
 		runner:     runner,
 		executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil },
+		homeDir:    func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:  func(string) string { return "" },
 	}
 
 	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -339,6 +341,23 @@ func TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend(t *testing.T) 
 	}
 	if !containsTmuxArgPair(got.args, "-e", "PROJMUX_PICKER_BACKEND=native") {
 		t.Fatalf("display call = %#v, want native backend env propagated", got)
+	}
+	if !containsTmuxArgPair(got.args, "-w", "40") {
+		t.Fatalf("display call = %#v, want native sidebar to keep compact responsive width", got)
+	}
+}
+
+func TestSessionizerSidebarWidthKeepsFZFMinimum(t *testing.T) {
+	t.Parallel()
+
+	if got, want := sessionizerSidebarWidth(200, intpicker.BackendFZF), "56"; got != want {
+		t.Fatalf("sessionizerSidebarWidth(fzf) = %q, want %q", got, want)
+	}
+	if got, want := sessionizerSidebarWidth(200, intpicker.BackendNative), "40"; got != want {
+		t.Fatalf("sessionizerSidebarWidth(native) = %q, want compact %q", got, want)
+	}
+	if got, want := sessionizerSidebarWidth(0, intpicker.BackendNative), "20%"; got != want {
+		t.Fatalf("sessionizerSidebarWidth(native unknown client) = %q, want %q", got, want)
 	}
 }
 

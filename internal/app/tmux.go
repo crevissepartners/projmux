@@ -694,7 +694,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane
 		commandArgs = []string{"switch", "--ui=popup"}
 	case "sessionizer-sidebar":
-		options.Width = popupSize(ctx.ClientWidth, 20, 56)
+		options.Width = sessionizerSidebarWidth(ctx.ClientWidth, backend)
 		options.Height = popupSize(ctx.ClientHeight, 100, 20)
 		options.X = "0"
 		options.Y = "0"
@@ -737,6 +737,14 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 	options.Cwd = cwd
 	options.Env = env
 	return buildMarkedPopupCommand(binaryPath, commandArgs, marker, cwd, env), options, nil
+}
+
+func sessionizerSidebarWidth(clientWidth int, backend intpicker.Backend) string {
+	minWidth := 56
+	if backend == intpicker.BackendNative {
+		minWidth = 40
+	}
+	return popupSize(clientWidth, 20, minWidth)
 }
 
 func inheritPopupPickerEnv(env map[string]string, lookupEnv func(string) string) {

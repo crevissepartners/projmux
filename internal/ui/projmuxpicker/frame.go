@@ -94,6 +94,10 @@ func (r Renderer) ContentLayout(layout Layout) Layout {
 }
 
 func (r Renderer) RenderFrame(w io.Writer, content string, layout Layout) {
+	r.RenderFrameWithTitle(w, content, "", layout)
+}
+
+func (r Renderer) RenderFrameWithTitle(w io.Writer, content, title string, layout Layout) {
 	width := layout.Cols
 	if width <= 0 {
 		width = DefaultCols
@@ -111,7 +115,8 @@ func (r Renderer) RenderFrame(w io.Writer, content string, layout Layout) {
 
 	theme := r.Theme
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	fmt.Fprintf(w, "%s%s%s\r\n", theme.TopLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.TopRight)
+	fmt.Fprint(w, frameTopBorder(theme, innerWidth, title))
+	fmt.Fprint(w, "\r\n")
 	for i := range innerHeight {
 		line := ""
 		if i < len(lines) {
@@ -120,6 +125,27 @@ func (r Renderer) RenderFrame(w io.Writer, content string, layout Layout) {
 		fmt.Fprintf(w, "%s%s%s\r\n", theme.Vertical, PadRight(line, innerWidth), theme.Vertical)
 	}
 	fmt.Fprintf(w, "%s%s%s", theme.BottomLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.BottomRight)
+}
+
+func frameTopBorder(theme Theme, innerWidth int, title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" || innerWidth < 4 {
+		return theme.TopLeft + strings.Repeat(theme.Horizontal, innerWidth) + theme.TopRight
+	}
+	labelWidthLimit := innerWidth - 2
+	label := " " + TruncateANSI(title, labelWidthLimit) + " "
+	labelWidth := VisibleLen(label)
+	if labelWidth > innerWidth {
+		label = TruncateANSI(label, innerWidth)
+		labelWidth = VisibleLen(label)
+	}
+	leftRuleWidth := 1
+	rightRuleWidth := max(innerWidth-leftRuleWidth-labelWidth, 0)
+	return theme.TopLeft +
+		strings.Repeat(theme.Horizontal, leftRuleWidth) +
+		label +
+		strings.Repeat(theme.Horizontal, rightRuleWidth) +
+		theme.TopRight
 }
 
 func writeFrameDiff(w io.Writer, previous, next string) {
