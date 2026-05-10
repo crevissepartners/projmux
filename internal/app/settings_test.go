@@ -53,8 +53,23 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got, want := rootOptions.Prompt, "Settings > "; got != want {
 		t.Fatalf("root settings prompt = %q, want %q", got, want)
 	}
+	if got, want := rootOptions.Title, "Settings"; got != want {
+		t.Fatalf("root settings title = %q, want %q", got, want)
+	}
+	if got := rootOptions.Header; got != "" {
+		t.Fatalf("root settings header = %q, want title-only root chrome", got)
+	}
 	if got, want := rootOptions.Footer, "Enter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
+	}
+	if got, want := entryValues(rootOptions.Entries), []string{
+		settingsSectionProject,
+		settingsSectionAI,
+		settingsSectionStatusbar,
+		settingsSectionLabs,
+		settingsSectionAbout,
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("root settings entry order = %#v, want %#v", got, want)
 	}
 	if !hasEntryValue(rootOptions.Entries, settingsSectionAI) {
 		t.Fatalf("root settings entries = %#v, want AI section", rootOptions.Entries)
@@ -65,8 +80,8 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if !hasEntryValue(rootOptions.Entries, settingsSectionStatusbar) {
 		t.Fatalf("root settings entries = %#v, want statusbar section", rootOptions.Entries)
 	}
-	if !hasEntryLabelContaining(rootOptions.Entries, "Icons & Decorations") {
-		t.Fatalf("root settings entries = %#v, want generic decoration section label", rootOptions.Entries)
+	if !hasEntryLabelContaining(rootOptions.Entries, "Appearance") {
+		t.Fatalf("root settings entries = %#v, want generic appearance section label", rootOptions.Entries)
 	}
 	if !hasEntryValue(rootOptions.Entries, settingsSectionLabs) {
 		t.Fatalf("root settings entries = %#v, want labs section", rootOptions.Entries)
@@ -76,6 +91,9 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}
 	if got, want := aiOptions.UI, "settings-ai"; got != want {
 		t.Fatalf("AI settings UI = %q, want %q", got, want)
+	}
+	if got, want := aiOptions.Title, "AI Settings"; got != want {
+		t.Fatalf("AI settings title = %q, want %q", got, want)
 	}
 	if got, want := aiOptions.Prompt, "Settings > AI Settings > "; got != want {
 		t.Fatalf("AI settings prompt = %q, want %q", got, want)
@@ -196,10 +214,13 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 	if got, want := statusbarOptions.UI, "settings-statusbar"; got != want {
 		t.Fatalf("statusbar settings UI = %q, want %q", got, want)
 	}
-	if got, want := statusbarOptions.Prompt, "Settings > Icons & Decorations > "; got != want {
+	if got, want := statusbarOptions.Title, "Appearance"; got != want {
+		t.Fatalf("statusbar settings title = %q, want %q", got, want)
+	}
+	if got, want := statusbarOptions.Prompt, "Settings > Appearance > "; got != want {
 		t.Fatalf("statusbar settings prompt = %q, want %q", got, want)
 	}
-	if got, want := statusbarOptions.Header, "Set status and popup decoration mode"; got != want {
+	if got, want := statusbarOptions.Header, "Status and popup decoration mode"; got != want {
 		t.Fatalf("statusbar settings header = %q, want %q", got, want)
 	}
 	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(config.StatusbarDecorationOff)) {
@@ -325,6 +346,9 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	}
 	if got, want := aboutOptions.UI, "settings-about"; got != want {
 		t.Fatalf("settings about UI = %q, want %q", got, want)
+	}
+	if got, want := aboutOptions.Title, "About"; got != want {
+		t.Fatalf("settings about title = %q, want %q", got, want)
 	}
 	if got, want := aboutOptions.Prompt, "Settings > About > "; got != want {
 		t.Fatalf("settings about prompt = %q, want %q", got, want)
@@ -1448,6 +1472,14 @@ func hasEntryValue(entries []intfzf.Entry, value string) bool {
 		}
 	}
 	return false
+}
+
+func entryValues(entries []intfzf.Entry) []string {
+	values := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		values = append(values, entry.Value)
+	}
+	return values
 }
 
 func hasEntryLabelContaining(entries []intfzf.Entry, value string) bool {

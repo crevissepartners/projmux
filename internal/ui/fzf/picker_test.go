@@ -13,6 +13,7 @@ func TestOptionsFromPickerMapsItemsActionsAndPreview(t *testing.T) {
 	options := OptionsFromPicker(picker.Options{
 		UI:              "switch",
 		MultiLine:       true,
+		Title:           "Projects",
 		Prompt:          "> ",
 		Header:          "header",
 		Footer:          "footer",
@@ -45,6 +46,9 @@ func TestOptionsFromPickerMapsItemsActionsAndPreview(t *testing.T) {
 	if got, want := options.Entries, []Entry{{Label: "API\n  branch main", Value: "/repo/api", SearchKey: "api service"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Entries = %#v, want %#v", got, want)
 	}
+	if got, want := options.Title, "Projects"; got != want {
+		t.Fatalf("Title = %q, want %q", got, want)
+	}
 	if got, want := options.Bindings, []string{
 		"esc:abort",
 		"alt-4:abort",
@@ -67,6 +71,7 @@ func TestPickerOptionsMapsFZFBindingsToContractActions(t *testing.T) {
 	options := PickerOptions(Options{
 		UI:            "switch",
 		Entries:       []Entry{{Label: "api", Value: "/repo/api", SearchKey: "api service"}},
+		Title:         "Projects",
 		Read0:         true,
 		DisableSearch: true,
 		AcceptQuery:   true,
@@ -75,6 +80,9 @@ func TestPickerOptionsMapsFZFBindingsToContractActions(t *testing.T) {
 
 	if got, want := options.UI, "switch"; got != want {
 		t.Fatalf("UI = %q, want %q", got, want)
+	}
+	if got, want := options.Title, "Projects"; got != want {
+		t.Fatalf("Title = %q, want %q", got, want)
 	}
 	if !options.MultiLine {
 		t.Fatal("MultiLine = false, want true")

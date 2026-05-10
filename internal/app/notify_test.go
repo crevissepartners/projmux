@@ -281,7 +281,10 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Prompt, "Notify > "; got != want {
 		t.Fatalf("picker prompt = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Header, "Pending notifications, newest first"; got != want {
+	if got, want := picker.options.Title, "Pending Notifications"; got != want {
+		t.Fatalf("picker title = %q, want %q", got, want)
+	}
+	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
 	if got, want := picker.options.Footer, "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close"; got != want {
@@ -325,17 +328,17 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	}
 }
 
-func TestNotifyListSidebarHeaderDecoration(t *testing.T) {
+func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range []struct {
 		name       string
 		decoration string
-		wantHeader string
+		wantTitle  string
 	}{
-		{name: "off", decoration: "off", wantHeader: "Pending notifications, newest first"},
-		{name: "symbol", decoration: "symbol", wantHeader: " Pending notifications, newest first"},
-		{name: "emoji", decoration: "emoji", wantHeader: "🔔 Pending notifications, newest first"},
+		{name: "off", decoration: "off", wantTitle: "Pending Notifications"},
+		{name: "symbol", decoration: "symbol", wantTitle: " Pending Notifications"},
+		{name: "emoji", decoration: "emoji", wantTitle: "🔔 Pending Notifications"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -361,8 +364,11 @@ func TestNotifyListSidebarHeaderDecoration(t *testing.T) {
 			if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("Run error = %v", err)
 			}
-			if got := picker.options.Header; got != tt.wantHeader {
-				t.Fatalf("picker header = %q, want %q", got, tt.wantHeader)
+			if got := picker.options.Title; got != tt.wantTitle {
+				t.Fatalf("picker title = %q, want %q", got, tt.wantTitle)
+			}
+			if got, want := picker.options.Header, "Newest first"; got != want {
+				t.Fatalf("picker header = %q, want %q", got, want)
 			}
 		})
 	}
