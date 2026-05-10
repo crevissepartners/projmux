@@ -73,9 +73,9 @@ v0.4 shipped.
 
 - Picker-domain model separate from fzf row encoding (kept fzf as the
   stable fallback backend). Done in the 0.5 picker contract slice.
-- Opt-in native picker backend for multi-line card rows and
-  title-focused search. Done in the 0.5 picker contract slice via
-  `PROJMUX_PICKER_BACKEND=native`.
+- Native picker backend for multi-line card rows and title-focused search.
+  Done in the 0.5 picker contract slice, later promoted to the default picker
+  backend with `PROJMUX_PICKER_BACKEND=fzf` kept as the explicit fallback.
 - Port switcher popup/sidebar surfaces after parity tests cover
   selection, preview, and key actions.
 

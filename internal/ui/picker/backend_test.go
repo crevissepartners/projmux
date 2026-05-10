@@ -12,28 +12,28 @@ import (
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
-func TestResolveBackendDefaultsToFZF(t *testing.T) {
+func TestResolveBackendDefaultsToNative(t *testing.T) {
 	t.Parallel()
 
-	if got := ResolveBackend(nil); got != BackendFZF {
-		t.Fatalf("ResolveBackend(nil) = %q, want %q", got, BackendFZF)
+	if got := ResolveBackend(nil); got != BackendNative {
+		t.Fatalf("ResolveBackend(nil) = %q, want %q", got, BackendNative)
 	}
-	if got := ResolveBackend(func(string) string { return "unknown" }); got != BackendFZF {
-		t.Fatalf("ResolveBackend(unknown) = %q, want %q", got, BackendFZF)
+	if got := ResolveBackend(func(string) string { return "unknown" }); got != BackendNative {
+		t.Fatalf("ResolveBackend(unknown) = %q, want %q", got, BackendNative)
 	}
 }
 
-func TestResolveBackendAllowsNativeOptIn(t *testing.T) {
+func TestResolveBackendAllowsFZFOverride(t *testing.T) {
 	t.Parallel()
 
 	got := ResolveBackend(func(name string) string {
 		if name != BackendEnv {
 			t.Fatalf("env name = %q, want %q", name, BackendEnv)
 		}
-		return "native"
+		return "fzf"
 	})
-	if got != BackendNative {
-		t.Fatalf("ResolveBackend(native) = %q, want %q", got, BackendNative)
+	if got != BackendFZF {
+		t.Fatalf("ResolveBackend(fzf) = %q, want %q", got, BackendFZF)
 	}
 }
 
@@ -691,9 +691,12 @@ func TestNativeInteractiveRendersOptionalTitlebar(t *testing.T) {
 		Items: []Item{{Title: "api", Value: "/repo/api"}},
 	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 8, Cols: 40})
 
-	firstLine := strings.Split(out.String(), "\r\n")[0]
-	if !strings.Contains(firstLine, " Projects ") {
-		t.Fatalf("native output first line = %q, want optional titlebar", firstLine)
+	lines := strings.Split(out.String(), "\r\n")
+	if strings.Contains(lines[0], "Projects") {
+		t.Fatalf("native top frame row = %q, want title outside border row", lines[0])
+	}
+	if !strings.Contains(lines[1], " Projects ") {
+		t.Fatalf("native titlebar row = %q, want optional titlebar", lines[1])
 	}
 }
 

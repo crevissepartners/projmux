@@ -44,8 +44,8 @@ Responsibilities:
 Picker data is modeled independently from fzf rows. The app builds
 backend-neutral `picker.Item` values (`Title`, `Value`, `SearchText`,
 `MetaLines`, `Badges`, `PreviewTarget`) and then adapts them to the selected
-backend. `fzf` remains the default, stable backend; the native backend is
-opt-in through `PROJMUX_PICKER_BACKEND=native` while it reaches full parity.
+backend. Native is the default backend, while `PROJMUX_PICKER_BACKEND=fzf`
+keeps the external fzf backend available as an explicit fallback.
 
 Responsibilities:
 - rows for popup and sidebar views

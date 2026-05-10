@@ -10,7 +10,10 @@ import (
 func runPickerOptionBackend(lookupEnv func(string) string, native intpicker.Runner, fzf intfzf.Runner, options intfzf.Options) (intfzf.Result, error) {
 	if resolvePickerBackend(lookupEnv) == intpicker.BackendNative {
 		if native == nil {
-			return intfzf.Result{}, fmt.Errorf("native picker is not configured")
+			if fzf == nil {
+				return intfzf.Result{}, fmt.Errorf("native picker is not configured")
+			}
+			return fzf.Run(options)
 		}
 		result, err := native.Run(intfzf.PickerOptions(options))
 		return intfzf.ResultFromPicker(result), err

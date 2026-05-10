@@ -1,8 +1,8 @@
 # Native Picker fzf Parity Map
 
 This audit note reverse-engineers the subset of fzf behavior that projmux
-currently uses and maps it to native picker evidence. It supports the
-experimental native picker engine and is not a public dependency-policy change.
+currently uses and maps it to native picker evidence. It supports the default
+native picker engine and is not a public dependency-policy change.
 
 ## App fzf Surface
 
@@ -46,8 +46,8 @@ experimental native picker engine and is not a public dependency-policy change.
 | fzf navigation keys | interactive selection in searchable lists | Covered | native maps CSI-u `Ctrl-J` plus `Ctrl-N` to down and `Ctrl-P`/`Ctrl-K` to up when not claimed by a custom action; raw LF remains Enter for PTY compatibility; `TestNativeInteractiveSupportsFZFNavigationKeys` |
 | alternate-screen lifecycle | fzf fullscreen picker screen restore | Covered | native frame updates and screen exit return to column 0 before terminal control sequences, screen exit resets styles plus clears the alternate buffer from the home cursor before restore, and real TTY restores get a short settle window before caller handoff; `nativeScreenEnter`; `TestNativeInteractiveUsesAlternateScreen`; `TestRenderFullFrameUpdateAlwaysHomesAndWritesFrame` |
 | frame content width | fzf border inner width | Covered | `ContentLayout` uses the frame inner width so separators and rows reach the right border; `TestRendererContentLayoutUsesFrameInnerWidth` |
-| tmux popup frame interaction | native picker popups launched through `popup-toggle` | Covered for native backend popups | `popup-toggle` passes tmux `display-popup -B` when `PROJMUX_PICKER_BACKEND=native`, so the native picker owns the visible frame instead of double-drawing with the tmux popup border; native Alt-1 uses a compact native-only minimum while fzf keeps the previous project sidebar minimum; Alt-1/Alt-2 sidebar heights reserve three bottom statusbar rows; Alt-2 notify sidebar keeps the fzf-like `24%` / min `64` baseline; `TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend`; `TestSessionizerSidebarWidthKeepsFZFMinimum`; `TestSidebarPopupHeightLeavesStatusbarRows`; `TestNotifySidebarWidthMatchesFZFBaseline`; `TestAppRunTmuxPopupToggleKeepsNotifySidebarFZFSizingForNative` |
-| optional native titlebar | native picker popup frame | Covered for empty-title compatibility and opt-in titles | `picker.Options.Title`; `RenderFrameWithTitle`; empty titles keep the prior border unchanged, non-empty titles render in the top border, and the native Alt-1 project sidebar opts into `Projects`; `TestRendererRenderFrameWithTitleKeepsDefaultWhenTitleEmpty`; `TestRendererRenderFrameWithTitleUsesTopBorderTitle`; `TestNativeInteractiveRendersOptionalTitlebar`; `TestSwitchCommandNativeSidebarSetsTitle` |
+| tmux popup frame interaction | native picker popups launched through `popup-toggle` | Covered for native backend popups | `popup-toggle` passes tmux `display-popup -B` when `PROJMUX_PICKER_BACKEND=native`, so the native picker owns the visible frame instead of double-drawing with the tmux popup border; native Alt-1 uses a compact native-only minimum while fzf keeps the previous project sidebar minimum; Alt-1/Alt-2 sidebar heights reserve two bottom statusbar rows; Alt-2 notify sidebar keeps the fzf-like `24%` / min `64` baseline; `TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend`; `TestSessionizerSidebarWidthKeepsFZFMinimum`; `TestSidebarPopupHeightLeavesStatusbarRows`; `TestNotifySidebarWidthMatchesFZFBaseline`; `TestAppRunTmuxPopupToggleKeepsNotifySidebarFZFSizingForNative` |
+| optional native titlebar | native picker popup frame | Covered for empty-title compatibility and opt-in titles | `picker.Options.Title`; `RenderFrameWithTitle`; `ContentLayoutWithTitle`; empty titles keep the prior frame unchanged, non-empty titles render in a picker-owned row below the top border, and the native Alt-1 project sidebar opts into `Projects`; `TestRendererRenderFrameWithTitleKeepsDefaultWhenTitleEmpty`; `TestRendererRenderFrameWithTitleUsesTitlebarRow`; `TestRendererContentLayoutWithTitleReservesTitlebarRow`; `TestNativeInteractiveRendersOptionalTitlebar`; `TestSwitchCommandNativeSidebarSetsTitle` |
 | redraw flicker/top clipping | keyboard navigation in exact-height tmux popup | Partially covered | native redraws use synchronized updates plus coalesced row diffs after the first frame, skip unchanged frames, render frame diffs before sidebar focus commands, frame rendering avoids trailing bottom-border CRLF, and screen exit clears the alternate buffer before restore; `TestNativeInteractiveWrapsRedrawsInSynchronizedUpdates`; `TestFrameUpdateRendererSkipsUnchangedFrame`; `TestFrameUpdateRendererCoalescesEachFrameUpdate`; `TestRendererRenderFrameUsesCRLFRowsForRawTTY`; `TestNativeInteractiveUsesAlternateScreen` |
 
 ## Native Surface Architecture
@@ -70,7 +70,8 @@ experimental native picker engine and is not a public dependency-policy change.
 - Settings > Labs > Picker Engine persists the selected backend in
   `~/.config/projmux/picker-backend` and updates the live tmux server
   environment through `PROJMUX_PICKER_BACKEND`, while direct environment
-  overrides still win over saved config.
+  overrides still win over saved config. Native is the default when no saved
+  backend or override exists; `fzf` remains available as an explicit fallback.
 - The split lets projmux grow a first-party picker design independently from
   the fzf compatibility adapter.
 
@@ -120,8 +121,9 @@ experimental native picker engine and is not a public dependency-policy change.
 - Mouse support is intentionally narrow in this POC: primary click applies the
   clicked row, release events are ignored, and wheel input moves selection.
   Drag gestures and the full fzf mouse grammar are follow-up work.
-- The public doctor/docs dependency policy still says `fzf` is required. This
-  is intentional while the native engine remains experimental.
+- The public doctor/docs dependency policy is tracked separately from picker
+  backend selection. Native is the default picker backend, while fzf remains an
+  explicit fallback.
 - Draft PR: https://github.com/crevissepartners/projmux/pull/98.
 
 ## Commands

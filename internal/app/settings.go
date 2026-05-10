@@ -982,8 +982,8 @@ func (c *settingsCommand) labsEntries() []intfzf.Entry {
 		name string
 		desc string
 	}{
-		{config.PickerBackendFZF, "fzf", "stable external picker backend"},
-		{config.PickerBackendNative, "native", "experimental projmux picker engine; no fzf required"},
+		{config.PickerBackendNative, "native", "default projmux picker engine; no fzf required"},
+		{config.PickerBackendFZF, "fzf", "external fzf fallback backend"},
 	}
 
 	entries := make([]intfzf.Entry, 0, len(modes)+2)
@@ -1016,11 +1016,11 @@ func (c *settingsCommand) currentPickerBackend() (config.PickerBackend, string) 
 
 	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
-		return config.PickerBackendFZF, "default"
+		return config.DefaultPickerBackend, "default"
 	}
 	mode, err := config.LoadPickerBackendFile(paths.PickerBackendFile())
 	if err != nil {
-		return config.PickerBackendFZF, "default"
+		return config.DefaultPickerBackend, "default"
 	}
 	if _, err := osStat(paths.PickerBackendFile()); err == nil {
 		return mode, "saved"

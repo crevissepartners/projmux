@@ -13,10 +13,10 @@ or session title, instead of matching every contextual preview line.
 The picker contract is split in two layers:
 
 - `internal/ui/picker` owns backend-neutral items, actions, preview metadata,
-  backend selection, title-focused filtering, and the opt-in native runner.
+  backend selection, title-focused filtering, and the default native runner.
 - `internal/ui/fzf` adapts that model into the historical fzf command line.
 
-The default fzf backend still sends one logical row per item:
+The fzf fallback backend sends one logical row per item:
 
 ```text
 <visible label>\t<selection value>
@@ -100,12 +100,12 @@ Current implementation:
   `SearchText`, `MetaLines`, `Badges`, and `PreviewTarget`.
 - `picker.Options` carries backend-neutral actions, preview metadata, prompt,
   footer, initial query, and multiline intent.
-- fzf remains the default backend and renders the same popup/sidebar surfaces.
-- `PROJMUX_PICKER_BACKEND=native` opts into the native runner. It supports
+- Native is the default backend and renders the popup/sidebar surfaces.
+- `PROJMUX_PICKER_BACKEND=fzf` opts into the external fzf runner. Native supports
   multiline item rendering, title-focused search via `SearchText`, numeric
   selection, and shared close actions.
-- Switcher popup/sidebar still use the fzf backend for full preview and key
-  action parity. Native preview panes, raw-key navigation, and sidebar focus
-  tracking remain follow-up work.
+- Switcher popup/sidebar use the selected backend for preview and key action
+  parity, including native preview panes, raw-key navigation, and sidebar focus
+  tracking.
 
-fzf can stay as the stable fallback while the native picker reaches parity.
+fzf can stay as the stable fallback while the native picker continues to mature.

@@ -1,8 +1,7 @@
-# Experimental Native Picker Engine
+# Native Picker Engine
 
-This note tracks the experimental native picker engine. It does not change the
-public doctor dependency policy: `fzf` remains a required production dependency
-and the `internal/ui/fzf` backend remains the default/fallback path.
+This note tracks the native picker engine. Native is the default picker backend,
+while the `internal/ui/fzf` backend remains available as an explicit fallback.
 
 The fzf compatibility surface for the native engine is tracked in
 [native-picker-parity.md](native-picker-parity.md).
@@ -26,12 +25,12 @@ The fzf compatibility surface for the native engine is tracked in
 - `intfzf.NewPickerRunner()` wraps fzf behind the same `picker.Runner`
   interface as the native runner. This is the current DI boundary for swapping
   picker engines while keeping fzf available.
-- Settings > Labs > Picker Engine stores the experimental selection in
+- Settings > Labs > Picker Engine stores the backend selection in
   `~/.config/projmux/picker-backend` and updates the live tmux environment so
   new picker popups can switch between `fzf` and `native` without restarting
   the app server.
-- `PROJMUX_PICKER_BACKEND=native` remains an explicit environment override and
-  takes priority over the saved Labs setting.
+- Native is the default backend. `PROJMUX_PICKER_BACKEND=fzf` remains an
+  explicit environment override and takes priority over the saved Labs setting.
 - Picker flows covered by the native path include AI picker/settings, shell
   update prompt, settings hub sections, switch settings/add-pin, the main
   project switcher list, recent sessions, and notify sidebar.
@@ -70,7 +69,7 @@ The fzf compatibility surface for the native engine is tracked in
   wider than the existing fzf sidebar surface on normal terminals.
 - Native Alt-2 notify sidebar popups keep the fzf baseline width contract
   (`24%`, minimum `64`) while still letting the native picker own the frame.
-- Native sidebar popups reserve three rows at the bottom for the tmux statusbar
+- Native sidebar popups reserve two rows at the bottom for the tmux statusbar
   area instead of using the full client height.
 - Simple native lists use the available terminal height after header, prompt,
   footer, and preview reservations instead of a fixed page-sized viewport.
@@ -79,9 +78,10 @@ The fzf compatibility surface for the native engine is tracked in
   expect/action keys still work.
 - Native frame content now uses the full inner border width so prompt/list/footer
   separators reach the right border like fzf.
-- Native frames can render an optional title inside the top border when
-  `picker.Options.Title` is set; empty titles keep the default border unchanged.
-  The native Alt-1 project sidebar uses this for a `Projects` titlebar.
+- Native frames can render an optional picker-owned titlebar row below the top
+  border when `picker.Options.Title` is set; empty titles keep the default frame
+  unchanged. The native Alt-1 project sidebar uses this for a `Projects`
+  titlebar.
 - Native width/truncation uses terminal cell width for Korean/CJK text, emoji,
   and combining marks instead of raw rune count, so localized project names and
   decorated notify headers do not push the right frame border out of alignment.
@@ -149,9 +149,9 @@ The fzf compatibility surface for the native engine is tracked in
   switch and sessions popup flows type a filtered query, send `Right` and
   `Alt-Down`, and assert the stored preview window/pane cursor for the selected
   session.
-- Public doctor dependency policy still treats `fzf` as required. The Labs
-  setting is experimental and does not make native the default production
-  backend.
+- Public doctor dependency policy remains separate from picker backend
+  selection. Native is the default picker backend, and fzf remains available as
+  an explicit fallback.
 
 ## Interactive No-fzf Sandbox
 

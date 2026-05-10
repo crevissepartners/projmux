@@ -1489,7 +1489,11 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 func (c *switchCommand) runPickerBackend(fzfOptions intfzf.Options, pickerOptions intpicker.Options) (intpicker.Result, error) {
 	if resolvePickerBackend(c.lookupEnv) == intpicker.BackendNative {
 		if c.nativePicker == nil {
-			return intpicker.Result{}, fmt.Errorf("native switch picker is not configured")
+			result, err := c.runner.Run(fzfOptions)
+			if err != nil {
+				return intpicker.Result{}, fmt.Errorf("run switch picker: %w", err)
+			}
+			return intfzf.ResultToPicker(result), nil
 		}
 		result, err := c.nativePicker.Run(pickerOptions)
 		if err != nil {

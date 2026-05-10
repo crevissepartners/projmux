@@ -488,6 +488,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv(projdirEnvVar, fixture.path("rp"))
 	t.Setenv(managedRootsEnvVar, fixture.path("managed"))
+	t.Setenv(intpicker.BackendEnv, string(intpicker.BackendFZF))
 
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
@@ -586,6 +587,7 @@ func TestNewSwitchCommandDoesNotInferRepoRootFromHomeSourceRepos(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", fixture.path("xdg-state"))
 	t.Setenv("TMUX", "")
 	t.Setenv(projdirEnvVar, "")
+	t.Setenv(intpicker.BackendEnv, string(intpicker.BackendFZF))
 	t.Chdir(fixture.path("home/source/repos/app/nested"))
 
 	cmd := newSwitchCommand()

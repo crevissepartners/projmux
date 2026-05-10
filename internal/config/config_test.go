@@ -137,8 +137,8 @@ func TestPickerBackendRoundtrip(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config", PickerBackendFileName)
-	if got, err := LoadPickerBackendFile(path); err != nil || got != PickerBackendFZF {
-		t.Fatalf("LoadPickerBackendFile(missing) = %q, %v; want %q, nil", got, err, PickerBackendFZF)
+	if got, err := LoadPickerBackendFile(path); err != nil || got != DefaultPickerBackend {
+		t.Fatalf("LoadPickerBackendFile(missing) = %q, %v; want %q, nil", got, err, DefaultPickerBackend)
 	}
 
 	if err := SavePickerBackendFile(path, PickerBackendNative); err != nil {
@@ -164,8 +164,8 @@ func TestPickerBackendNormalizesInvalidValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPickerBackendFile() error = %v", err)
 	}
-	if got != PickerBackendFZF {
-		t.Fatalf("LoadPickerBackendFile() = %q, want %q", got, PickerBackendFZF)
+	if got != DefaultPickerBackend {
+		t.Fatalf("LoadPickerBackendFile() = %q, want %q", got, DefaultPickerBackend)
 	}
 }
 
