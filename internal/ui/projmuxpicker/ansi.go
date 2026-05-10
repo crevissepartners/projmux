@@ -13,7 +13,6 @@ const (
 	MutedStart     = "\x1b[38;2;117;132;140m"
 	TitlebarStart  = "\x1b[48;2;24;34;38m\x1b[38;2;238;242;244m"
 	TitlebarRule   = "\x1b[48;2;24;34;38m\x1b[38;2;117;132;140m"
-	TitlebarAccent = "\x1b[48;2;24;34;38m\x1b[38;2;225;38;114m"
 	Pointer        = CurrentStart + "\x1b[38;2;225;38;114m▌" + CurrentStart + " "
 	Continuation   = CurrentStart + "\x1b[38;2;225;38;114m▌" + CurrentStart + " "
 	Reset          = "\x1b[0m"

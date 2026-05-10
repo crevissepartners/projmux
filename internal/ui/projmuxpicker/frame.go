@@ -150,17 +150,14 @@ func frameTitlebarLine(theme Theme, innerWidth int, title string) string {
 	if title == "" || innerWidth < 4 {
 		return theme.Vertical + TitlebarStart + strings.Repeat(" ", innerWidth) + Reset + theme.Vertical
 	}
-	prefix := " ▌ "
-	labelWidthLimit := max(innerWidth-VisibleLen(prefix)-2, 1)
+	labelWidthLimit := max(innerWidth-2, 1)
 	label := TruncateANSI(title, labelWidthLimit)
 	label = strings.ReplaceAll(label, Reset, Reset+TitlebarStart)
-	titleBlock := prefix + label + " "
+	titleBlock := " " + label + " "
 	titleBlockWidth := VisibleLen(titleBlock)
 	return theme.Vertical +
 		TitlebarStart +
-		" " +
-		TitlebarAccent + "▌" + TitlebarStart +
-		" " + label + " " +
+		titleBlock +
 		TitlebarRule +
 		strings.Repeat(theme.Horizontal, max(innerWidth-titleBlockWidth, 0)) +
 		Reset +
