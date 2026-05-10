@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.9](https://github.com/crevissepartners/projmux/compare/v0.4.8...v0.4.9) (2026-05-10)
+
+
+### Bug Fixes
+
+* **picker:** align multiline gap separators ([#127](https://github.com/crevissepartners/projmux/issues/127)) ([1053e8d](https://github.com/crevissepartners/projmux/commit/1053e8d8b69313c923d8c99c8b562aea90c36bdf))
+* **picker:** keep multiline partial gap rows ([#125](https://github.com/crevissepartners/projmux/issues/125)) ([9b740e5](https://github.com/crevissepartners/projmux/commit/9b740e53544ef127e61d652d0783305da4406672))
+
 ## [0.4.8](https://github.com/crevissepartners/projmux/compare/v0.4.7...v0.4.8) (2026-05-10)
 
 
