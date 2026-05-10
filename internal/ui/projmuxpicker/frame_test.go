@@ -76,6 +76,12 @@ func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	if !strings.Contains(lines[1], " Projects ") {
 		t.Fatalf("titlebar row = %q, want title inside picker-owned titlebar", lines[1])
 	}
+	if !strings.Contains(lines[1], TitlebarStart) || !strings.Contains(lines[1], TitlebarAccent+"▌"+TitlebarStart) {
+		t.Fatalf("titlebar row = %q, want distinct titlebar styling and accent marker", lines[1])
+	}
+	if !strings.Contains(lines[1], TitlebarRule+"─") {
+		t.Fatalf("titlebar row = %q, want rule fill after title", lines[1])
+	}
 	if got, want := VisibleLen(lines[1]), 24; got != want {
 		t.Fatalf("titlebar row width = %d, want %d: %q", got, want, lines[1])
 	}
