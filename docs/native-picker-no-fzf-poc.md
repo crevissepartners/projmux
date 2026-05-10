@@ -69,9 +69,9 @@ The fzf compatibility surface for the native engine is tracked in
   with a smaller native-only minimum, so the borderless native frame is not
   wider than the existing fzf sidebar surface on normal terminals.
 - Native Alt-2 notify sidebar popups keep the fzf baseline width contract
-  (`32%`, minimum `72`) while still letting the native picker own the frame.
-- Native sidebar popups reserve the bottom tmux statusbar row instead of using
-  the full client height.
+  (`24%`, minimum `64`) while still letting the native picker own the frame.
+- Native sidebar popups reserve three rows at the bottom for the tmux statusbar
+  area instead of using the full client height.
 - Simple native lists use the available terminal height after header, prompt,
   footer, and preview reservations instead of a fixed page-sized viewport.
 - Navigation-only native lists mirror fzf `--disabled --no-input`: the input
