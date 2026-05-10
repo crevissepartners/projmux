@@ -451,6 +451,18 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 				}
 				continue
 			}
+			if nativeMouseIsPrimaryButton(key.Mouse.Button) {
+				// Chip click takes priority over list hit detection: chips
+				// live on the titlebar row above the content area so the
+				// regions never overlap, but resolving the chip first
+				// keeps the precedence explicit and matches the tab-style
+				// metaphor where the strip is its own click target.
+				if chipResult, ok := nativeMouseChipResult(options, layout, key.Mouse.X, key.Mouse.Y, query); ok {
+					primaryMouseDown = false
+					nativeDebugLogf("interactive ui=%q result=chip mouse=press value=%q query=%q", options.UI, chipResult.Value, chipResult.Query)
+					return chipResult, nil
+				}
+			}
 			if primaryMouseDown && nativeMouseIsPrimaryDrag(key.Mouse.Button) {
 				if nextSelected, ok := nativeMouseItemIndex(options, items, selected, layout, key.Mouse.X, key.Mouse.Y); ok {
 					selected = nextSelected
@@ -711,6 +723,38 @@ func nativeMouseSelection(options Options, items []Item, selected int, layout na
 	}
 }
 
+// nativeMouseChipResult resolves a primary-button press into a chip click
+// result. It returns ok=false when no chip strip is rendered, when the
+// click lands outside any chip's hit region, or when the chip has no
+// ClickValue (chord-only chip). Disabled chips still match the row but
+// resolve to ok=false so the press becomes a no-op — chord and click
+// behaviour stay in lockstep.
+func nativeMouseChipResult(options Options, layout nativeLayout, x, y int, query string) (Result, bool) {
+	if len(options.TitleChips) == 0 {
+		return Result{}, false
+	}
+	if y != projmuxpicker.ChipsTitlebarRow() {
+		return Result{}, false
+	}
+	innerWidth := layout.Cols - 2
+	if innerWidth < 4 {
+		return Result{}, false
+	}
+	for _, hit := range projmuxpicker.ChipsHitRegions(options.TitleChips, innerWidth) {
+		if x < hit.ColStart || x > hit.ColEnd {
+			continue
+		}
+		if hit.Disabled {
+			return Result{}, false
+		}
+		if strings.TrimSpace(hit.Value) == "" {
+			return Result{}, false
+		}
+		return Result{Key: "chip", Value: hit.Value, Query: query}, true
+	}
+	return Result{}, false
+}
+
 func nativeMouseIsPrimaryButton(button int) bool {
 	return button&32 == 0 && button&3 == 0
 }
@@ -910,8 +954,20 @@ func nativeKeyFromCSI(seq []byte) nativeKey {
 		return nativeKey{Name: "shift-" + name}
 	case "3":
 		return nativeKey{Name: "alt-" + name}
+	case "4":
+		// CSI modifier 4 = Shift+Alt. xterm encodes Alt-Shift-Left as
+		// "\x1b[1;4D" — normalize to alt-shift-<name> so popup chord
+		// matching uses the same surface form as keyboard chord catalog
+		// entries.
+		return nativeKey{Name: "alt-shift-" + name}
 	case "5":
 		return nativeKey{Name: "ctrl-" + name}
+	case "6":
+		return nativeKey{Name: "ctrl-shift-" + name}
+	case "7":
+		return nativeKey{Name: "ctrl-alt-" + name}
+	case "8":
+		return nativeKey{Name: "ctrl-alt-shift-" + name}
 	default:
 		return nativeKey{Name: name}
 	}

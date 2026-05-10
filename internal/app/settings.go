@@ -194,9 +194,9 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			ctx := c.resolveSettingsProjectContext()
 			if next == settingsRootTabProject && !ctx.hasProject() {
 				// Single-tab environment (no project context): the Project
-				// chip renders disabled and Alt-Left/Alt-Right is a no-op.
-				// We stay on the current tab rather than navigating into an
-				// empty Project scope.
+				// chip renders disabled and Alt-Shift-Left/Alt-Shift-Right
+				// (or a chip click) is a no-op. We stay on the current tab
+				// rather than navigating into an empty Project scope.
 				tab = settingsRootTabGlobal
 				continue
 			}
@@ -289,8 +289,8 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 		TitleChips: settingsRootTabChips(tab, ctx.hasProject()),
 		Prompt:     settingsRootPrompt(tab),
 		Header:     settingsRootContextHeader(tab, ctx),
-		Footer:     projmuxFooter("Enter: open  |  Alt-Left/Alt-Right: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"),
-		ExpectKeys: []string{"enter", "ctrl-g", "ctrl-p", "alt-left", "alt-right"},
+		Footer:     projmuxFooter("Enter: open  |  Alt-Shift-Left/Alt-Shift-Right or click chip: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys: []string{"enter", "ctrl-g", "ctrl-p", "alt-shift-left", "alt-shift-right"},
 		Bindings:   settingsCloseBindings(),
 	}
 }
@@ -299,16 +299,21 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 // titlebar so the active scope reads as a real tab metaphor instead of an
 // inline list entry. When no project context is available, the Project
 // chip renders as disabled so the user still sees that the tab exists.
+// ClickValue mirrors the sentinel emitted by Alt-Shift-Left/Right chord
+// handling so a primary-button click on the chip resolves through the
+// same tab-resolution path as the keyboard chord.
 func settingsRootTabChips(active settingsRootTab, hasProject bool) []projmuxpicker.Chip {
 	return []projmuxpicker.Chip{
 		{
-			Label:  "Global",
-			Active: active == settingsRootTabGlobal,
+			Label:      "Global",
+			Active:     active == settingsRootTabGlobal,
+			ClickValue: settingsRootTabGlobalValue,
 		},
 		{
-			Label:    "Project",
-			Active:   active == settingsRootTabProject,
-			Disabled: !hasProject,
+			Label:      "Project",
+			Active:     active == settingsRootTabProject,
+			Disabled:   !hasProject,
+			ClickValue: settingsRootTabProjectValue,
 		},
 	}
 }
@@ -335,16 +340,18 @@ func settingsRootTabFromResult(result intpickercompat.Result) (settingsRootTab, 
 }
 
 // settingsRootTabFromResultWithCurrent resolves which tab the popup should
-// show next. Alt-Left and Alt-Right cycle between Global and Project,
-// while the legacy Ctrl-G / Ctrl-P bindings remain as direct selectors so
-// muscle memory does not regress.
+// show next. Alt-Shift-Left and Alt-Shift-Right cycle between Global and
+// Project, while the legacy Ctrl-G / Ctrl-P bindings remain as direct
+// selectors so muscle memory does not regress. Primary-button chip clicks
+// resolve through the Value sentinels emitted by the chip strip so click
+// and chord follow the same tab-resolution path.
 func settingsRootTabFromResultWithCurrent(result intpickercompat.Result, current settingsRootTab) (settingsRootTab, bool) {
 	switch strings.TrimSpace(result.Key) {
 	case "ctrl-g":
 		return settingsRootTabGlobal, true
 	case "ctrl-p":
 		return settingsRootTabProject, true
-	case "alt-left", "alt-right":
+	case "alt-shift-left", "alt-shift-right":
 		return settingsRootTabToggle(current), true
 	}
 	switch strings.TrimSpace(result.Value) {
@@ -429,11 +436,11 @@ func (ctx settingsProjectContext) hasProject() bool {
 func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 	ctx := c.resolveSettingsProjectContext()
 	if !ctx.hasProject() {
+		// The titlebar chip strip already advertises the active Project
+		// scope (and the popup header carries the "no project" hint), so
+		// the picker entry list skips the redundant "Project context"
+		// placeholder row that lived above the search bar in Phase 1/2.
 		return []intpickercompat.Entry{
-			{
-				Label: settingsLabelDim("Project context", "no project - open Settings from a project pane or set PROJMUX_CWD"),
-				Value: settingsNoopValue,
-			},
 			{
 				Label: settingsLabelDim("Trust", "disabled - no project context"),
 				Value: settingsNoopValue,
@@ -453,11 +460,9 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 		}
 	}
 
+	// The project context label is conveyed by the chip strip plus the
+	// popup header — keep the picker entries focused on actionable rows.
 	return []intpickercompat.Entry{
-		{
-			Label: settingsLabelInfo("Project context", ctx.Path, ctx.Source),
-			Value: settingsNoopValue,
-		},
 		{
 			Label: settingsLabelDim("Trust", "read-only preview arrives in Phase 4"),
 			Value: settingsNoopValue,

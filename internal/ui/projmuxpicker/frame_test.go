@@ -320,6 +320,64 @@ func TestRendererRenderFrameWithEmptyChipsHasNoTitlebar(t *testing.T) {
 	}
 }
 
+func TestChipsHitRegionsReportsClickColumnRangesPerChip(t *testing.T) {
+	t.Parallel()
+
+	// Outer width 40 → innerWidth 38. Chip strip layout starts at outer
+	// column 3 (border + leading cell), each chip body is " Label ", and
+	// chips are separated by one gap cell. " Global " spans 8 cells, then
+	// gap, then " Project " spans 9 cells.
+	hits := ChipsHitRegions([]Chip{
+		{Label: "Global", Active: true, ClickValue: "tab:global"},
+		{Label: "Project", Disabled: true, ClickValue: "tab:project"},
+	}, 38)
+
+	want := []ChipHit{
+		{Index: 0, Disabled: false, ColStart: 3, ColEnd: 10, Value: "tab:global"},
+		{Index: 1, Disabled: true, ColStart: 12, ColEnd: 20, Value: "tab:project"},
+	}
+	if len(hits) != len(want) {
+		t.Fatalf("ChipsHitRegions() length = %d, want %d (hits=%#v)", len(hits), len(want), hits)
+	}
+	for i := range want {
+		if hits[i] != want[i] {
+			t.Fatalf("ChipsHitRegions()[%d] = %#v, want %#v", i, hits[i], want[i])
+		}
+	}
+}
+
+func TestChipsHitRegionsSkipsBlankChips(t *testing.T) {
+	t.Parallel()
+
+	hits := ChipsHitRegions([]Chip{
+		{Label: "", ClickValue: ""},
+		{Label: "Project", ClickValue: "tab:project"},
+	}, 38)
+	if len(hits) != 1 {
+		t.Fatalf("ChipsHitRegions() = %#v, want one hit skipping blank chip", hits)
+	}
+	if hits[0].ColStart != 3 {
+		t.Fatalf("ChipsHitRegions()[0].ColStart = %d, want 3 (no leading gap before first visible chip)", hits[0].ColStart)
+	}
+}
+
+func TestChipsHitRegionsReturnsNilWhenInnerWidthTooSmall(t *testing.T) {
+	t.Parallel()
+
+	hits := ChipsHitRegions([]Chip{{Label: "Global"}}, 3)
+	if hits != nil {
+		t.Fatalf("ChipsHitRegions(small width) = %#v, want nil", hits)
+	}
+}
+
+func TestChipsTitlebarRowIsRowTwo(t *testing.T) {
+	t.Parallel()
+
+	if got, want := ChipsTitlebarRow(), 2; got != want {
+		t.Fatalf("ChipsTitlebarRow() = %d, want %d (top border on row 1, chip strip on row 2)", got, want)
+	}
+}
+
 func TestChipANSIGoldenMatchesTmuxWindowStatusPalette(t *testing.T) {
 	t.Parallel()
 
