@@ -681,6 +681,22 @@ func TestNativeInteractiveRendersBorderFrame(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveRendersOptionalTitlebar(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:    "switch",
+		Title: "Projects",
+		Items: []Item{{Title: "api", Value: "/repo/api"}},
+	}, []Item{{Title: "api", Value: "/repo/api"}}, "", 0, 0, nativeLayout{Rows: 8, Cols: 40})
+
+	firstLine := strings.Split(out.String(), "\r\n")[0]
+	if !strings.Contains(firstLine, " Projects ") {
+		t.Fatalf("native output first line = %q, want optional titlebar", firstLine)
+	}
+}
+
 func TestNativeInteractiveSeparatesSearchHeaderFromList(t *testing.T) {
 	t.Parallel()
 

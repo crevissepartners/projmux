@@ -47,6 +47,34 @@ func TestRendererRenderFramePreservesExactGeometry(t *testing.T) {
 	}
 }
 
+func TestRendererRenderFrameWithTitleKeepsDefaultWhenTitleEmpty(t *testing.T) {
+	t.Parallel()
+
+	var plain bytes.Buffer
+	var titled bytes.Buffer
+	DefaultRenderer().RenderFrame(&plain, "hello", Layout{Rows: 4, Cols: 20})
+	DefaultRenderer().RenderFrameWithTitle(&titled, "hello", "", Layout{Rows: 4, Cols: 20})
+
+	if got, want := titled.String(), plain.String(); got != want {
+		t.Fatalf("RenderFrameWithTitle(empty) = %q, want default frame %q", got, want)
+	}
+}
+
+func TestRendererRenderFrameWithTitleUsesTopBorderTitle(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	DefaultRenderer().RenderFrameWithTitle(&out, "hello", "Projects", Layout{Rows: 4, Cols: 24})
+
+	lines := strings.Split(out.String(), "\r\n")
+	if !strings.Contains(lines[0], " Projects ") {
+		t.Fatalf("top frame row = %q, want title in top border", lines[0])
+	}
+	if got, want := VisibleLen(lines[0]), 24; got != want {
+		t.Fatalf("top frame width = %d, want %d: %q", got, want, lines[0])
+	}
+}
+
 func TestRendererContentLayoutUsesFrameInnerWidth(t *testing.T) {
 	t.Parallel()
 

@@ -54,6 +54,7 @@ type Preview struct {
 type Options struct {
 	UI              string
 	Items           []Item
+	Title           string
 	Prompt          string
 	Header          string
 	Footer          string
@@ -1239,7 +1240,7 @@ func nativeInteractiveFrame(options Options, items []Item, query string, queryCu
 	var body strings.Builder
 	renderNativeInteractiveContent(&body, options, items, query, queryCursor, selected, previewOffset, contentLayout)
 	var frame strings.Builder
-	renderNativeFrame(&frame, body.String(), layout)
+	renderNativeFrameWithTitle(&frame, body.String(), options.Title, layout)
 	return frame.String()
 }
 
@@ -1345,6 +1346,10 @@ func nativeSearchSeparatorLine(cols int) string {
 
 func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 	projmuxpicker.DefaultRenderer().RenderFrame(w, content, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+}
+
+func renderNativeFrameWithTitle(w io.Writer, content, title string, layout nativeLayout) {
+	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(w, content, title, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
 func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {

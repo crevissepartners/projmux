@@ -65,6 +65,9 @@ The fzf compatibility surface for the native engine is tracked in
 - Popup-toggle commands use tmux `display-popup -B` when the native backend is
   active so the native picker owns the visible frame and does not double-draw
   with tmux's outer popup border.
+- Native Alt-1 sidebar popups use the same responsive width calculation as fzf
+  with a smaller native-only minimum, so the borderless native frame is not
+  wider than the existing fzf sidebar surface on normal terminals.
 - Simple native lists use the available terminal height after header, prompt,
   footer, and preview reservations instead of a fixed page-sized viewport.
 - Navigation-only native lists mirror fzf `--disabled --no-input`: the input
@@ -72,6 +75,8 @@ The fzf compatibility surface for the native engine is tracked in
   expect/action keys still work.
 - Native frame content now uses the full inner border width so prompt/list/footer
   separators reach the right border like fzf.
+- Native frames can render an optional title inside the top border when
+  `picker.Options.Title` is set; empty titles keep the default border unchanged.
 - Native width/truncation uses terminal cell width for Korean/CJK text, emoji,
   and combining marks instead of raw rune count, so localized project names and
   decorated notify headers do not push the right frame border out of alignment.
