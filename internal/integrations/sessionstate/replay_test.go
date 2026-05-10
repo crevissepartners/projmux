@@ -158,7 +158,45 @@ func TestReplayActivePaneSelection(t *testing.T) {
 	}
 }
 
-func TestReplayDoesNotExecuteRecipes(t *testing.T) {
+func TestReplayResumesClaudeAgentRecipeAfterLayoutAndPaneSelection(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{
+		{
+			Index:           0,
+			Name:            "agent",
+			Layout:          "d3a9,120x36,0,0{60x36,0,0,1,59x36,61,0,2}",
+			ActivePaneIndex: 1,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: ShellRecipe()},
+				{Index: 1, CWD: cwd, Recipe: AgentRecipe("claude", "abcdef-1234", "topic")},
+			},
+		},
+	}
+	runner := &recordingReplayRunner{}
+
+	result, err := Replay(context.Background(), runner, snap, ReplayOptions{})
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("Replay() warnings = %#v, want none", result.Warnings)
+	}
+
+	layoutIndex := replayCommandIndex(runner.commands, []string{"select-layout", "-t", "home:0", "d3a9,120x36,0,0{60x36,0,0,1,59x36,61,0,2}"})
+	sendIndex := replayCommandIndex(runner.commands, []string{"send-keys", "-t", "home:0.1", "claude --resume abcdef-1234", "Enter"})
+	selectIndex := replayCommandIndex(runner.commands, []string{"select-pane", "-t", "home:0.1"})
+	if layoutIndex < 0 || sendIndex < 0 || selectIndex < 0 {
+		t.Fatalf("commands = %#v, want layout, claude resume, and active pane select", runner.commands)
+	}
+	if !(layoutIndex < selectIndex && selectIndex < sendIndex) {
+		t.Fatalf("command order layout=%d select=%d send=%d, want resume after layout and active pane selection", layoutIndex, selectIndex, sendIndex)
+	}
+}
+
+func TestReplaySkipsClaudeResumeWithEmptyResumeID(t *testing.T) {
 	t.Parallel()
 
 	cwd := t.TempDir()
@@ -169,21 +207,56 @@ func TestReplayDoesNotExecuteRecipes(t *testing.T) {
 			Name:            "agent",
 			ActivePaneIndex: 0,
 			Panes: []Pane{
-				{Index: 0, CWD: cwd, Recipe: AgentRecipe("claude", "abcdef-1234", "topic")},
+				{Index: 0, CWD: cwd, Recipe: AgentRecipe("claude", "", "topic")},
 			},
 		},
 	}
 	runner := &recordingReplayRunner{}
 
-	if _, err := Replay(context.Background(), runner, snap, ReplayOptions{}); err != nil {
+	result, err := Replay(context.Background(), runner, snap, ReplayOptions{})
+	if err != nil {
 		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("warnings = %#v, want one empty resume warning", result.Warnings)
+	}
+	if result.Warnings[0].Scope != "agent" || !strings.Contains(result.Warnings[0].Reason, "invalid claude resume id") {
+		t.Fatalf("warning = %#v, want empty claude resume id warning", result.Warnings[0])
 	}
 	for _, command := range runner.commands {
 		if len(command.args) > 0 && command.args[0] == "send-keys" {
-			t.Fatalf("Replay() executed recipe via send-keys: %#v", command)
+			t.Fatalf("Replay() sent unsafe resume command: %#v", command)
 		}
-		if strings.Contains(strings.Join(command.args, " "), "abcdef-1234") {
-			t.Fatalf("Replay() included resume metadata in tmux commands: %#v", command)
+	}
+}
+
+func TestReplayDoesNotResumeUnsupportedAgent(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{
+		{
+			Index:           0,
+			Name:            "agent",
+			ActivePaneIndex: 0,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: AgentRecipe("codex", "abcdef-1234", "topic")},
+			},
+		},
+	}
+	runner := &recordingReplayRunner{}
+
+	result, err := Replay(context.Background(), runner, snap, ReplayOptions{})
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", result.Warnings)
+	}
+	for _, command := range runner.commands {
+		if len(command.args) > 0 && command.args[0] == "send-keys" {
+			t.Fatalf("Replay() resumed unsupported agent: %#v", command)
 		}
 	}
 }
@@ -215,10 +288,14 @@ func (r *recordingReplayRunner) Run(_ context.Context, name string, args ...stri
 }
 
 func hasReplayCommand(commands []replayCommand, args []string) bool {
-	for _, command := range commands {
+	return replayCommandIndex(commands, args) >= 0
+}
+
+func replayCommandIndex(commands []replayCommand, args []string) int {
+	for i, command := range commands {
 		if reflect.DeepEqual(command.args, args) {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
 }
