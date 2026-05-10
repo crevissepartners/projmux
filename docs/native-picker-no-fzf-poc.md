@@ -70,6 +70,8 @@ The fzf compatibility surface for the native engine is tracked in
   wider than the existing fzf sidebar surface on normal terminals.
 - Native Alt-2 notify sidebar popups keep the fzf baseline width contract
   (`32%`, minimum `72`) while still letting the native picker own the frame.
+- Native sidebar popups reserve the bottom tmux statusbar row instead of using
+  the full client height.
 - Simple native lists use the available terminal height after header, prompt,
   footer, and preview reservations instead of a fixed page-sized viewport.
 - Navigation-only native lists mirror fzf `--disabled --no-input`: the input
@@ -112,6 +114,9 @@ The fzf compatibility surface for the native engine is tracked in
 - Native preview panes normalize tabs and control bytes before horizontal
   clipping, preventing long preview rows from wrapping and consuming extra
   vertical viewport rows in Alt-3/session popups.
+- Native sidebar list scrollbars use the fixed list viewport as their track and
+  measure multi-line cards in rendered rows, so the thumb does not shrink or
+  jump when card heights vary.
 - Switch picker git branch badges are capped more tightly for the native card
   surface, so inactive branch backgrounds do not dominate narrow Alt-1 sidebar
   rows.

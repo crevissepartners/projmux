@@ -1339,6 +1339,58 @@ func TestNativeVisibleRangeCountsMultilineRenderedRows(t *testing.T) {
 	}
 }
 
+func TestNativeListScrollbarUnitsUseRenderedRowsForMultiline(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Label: "item 0\n  detail", Value: "0"},
+		{Label: "item 1\n  detail", Value: "1"},
+		{Label: "item 2\n  detail", Value: "2"},
+	}
+
+	total, start, end := nativeListScrollbarUnits(items, 1, 3, true)
+
+	if got, want := total, 8; got != want {
+		t.Fatalf("total scroll units = %d, want rendered row total %d", got, want)
+	}
+	if got, want := start, 3; got != want {
+		t.Fatalf("start scroll units = %d, want rendered start offset %d", got, want)
+	}
+	if got, want := end, 8; got != want {
+		t.Fatalf("end scroll units = %d, want rendered end offset %d", got, want)
+	}
+}
+
+func TestNativeInteractiveKeepsMultilineScrollbarOnViewportTrack(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 0, 8)
+	for i := range 8 {
+		items = append(items, Item{
+			Label: "item " + strconv.Itoa(i) + "\n  detail",
+			Value: strconv.Itoa(i),
+		})
+	}
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:        "sidebar",
+		Items:     items,
+		MultiLine: true,
+	}, items, "", 4, 0, nativeLayout{Rows: 12, Cols: 40})
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\r\n"), "\r\n")
+	scrollbarRows := 0
+	for _, line := range lines {
+		if strings.Contains(line, nativeScrollbar) {
+			scrollbarRows++
+		}
+	}
+	if scrollbarRows < 2 {
+		t.Fatalf("native output = %q, want proportional multiline scrollbar on viewport track", out.String())
+	}
+}
+
 func TestNativePreviewWidthUsesPreviewWindowPercent(t *testing.T) {
 	t.Parallel()
 
