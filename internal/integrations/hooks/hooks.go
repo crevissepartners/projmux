@@ -16,27 +16,67 @@ import (
 	"time"
 )
 
-// DefaultPostCreateTimeout is the maximum wall-clock time the post-create hook
-// is allowed to run before it gets killed.
-const DefaultPostCreateTimeout = 5 * time.Second
+// Event names the user-facing lifecycle hook event.
+type Event string
 
-const postCreatePrefix = "[post-create] "
+const (
+	EventPreCreate   Event = "pre-create"
+	EventPostCreate  Event = "post-create"
+	EventPaneStartup Event = "pane-startup"
+	EventPostAttach  Event = "post-attach"
+)
 
-var projectPostCreateCandidates = []string{
-	filepath.Join(".projmux", "post-create"),
-	filepath.Join(".projmux", "hooks", "post-create"),
+var SupportedEvents = []Event{
+	EventPreCreate,
+	EventPostCreate,
+	EventPaneStartup,
+	EventPostAttach,
 }
 
-// PostCreateContext describes the tmux session that was just created and is
-// passed to the hook script as PROJMUX_* environment variables.
-type PostCreateContext struct {
+// DefaultPostCreateTimeout is the maximum wall-clock time a lifecycle hook is
+// allowed to run before it gets killed. The name is preserved for the existing
+// post-create public API.
+const DefaultPostCreateTimeout = 5 * time.Second
+
+// Context describes the tmux lifecycle point and is passed to hook scripts as
+// PROJMUX_* environment variables.
+type Context struct {
 	SessionName string
 	CWD         string
 	Kind        string
 	Socket      string
+	PaneID      string
 	// Version is optional. When empty the runner's Version is used.
 	Version string
 }
+
+// PostCreateContext describes the tmux session that was just created and is
+// passed to the post-create hook script as PROJMUX_* environment variables.
+type PostCreateContext = Context
+
+// RunResult is the observable hook output returned for events that consume
+// stdout, such as pane-startup.
+type RunResult struct {
+	Stdout string
+}
+
+// Runner runs optional global and project-local lifecycle hooks. Missing,
+// non-executable, or empty paths degrade to no-ops.
+type Runner struct {
+	GlobalHookPaths      map[Event][]string
+	DiscoverProjectHooks bool
+	ProjectHooksFilePath string
+	TrustStorePath       string
+	ProjectHookPrompt    ProjectHookPrompt
+	PromptReader         io.Reader
+	PromptWriter         io.Writer
+	Logger               io.Writer
+	Timeout              time.Duration
+	Version              string
+}
+
+// RunnerByEvent is the event-oriented lifecycle hook runner surface.
+type RunnerByEvent = Runner
 
 // PostCreateRunner runs the optional global post-create hook at HookPath, then
 // an optional project-local post-create hook when DiscoverProjectHooks is set.
@@ -55,17 +95,21 @@ type PostCreateRunner struct {
 	Version              string
 }
 
-// Run executes configured post-create hooks for c. Hook failures
-// (missing file, non-executable, non-zero exit, exec error, timeout) are
-// recorded as a single warning line on Logger and never returned.
-func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
+// Run executes configured lifecycle hooks for event. Hook failures are logged
+// and ignored except for EventPreCreate, where a non-zero exit, exec error, or
+// timeout aborts creation by returning an error.
+func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, error) {
 	if r == nil {
-		return
+		return RunResult{}, nil
+	}
+	event = normalizeEvent(event)
+	if event == "" {
+		return RunResult{}, nil
 	}
 
-	paths := r.postCreateHookPaths(c.CWD)
+	paths := r.hookPaths(event, c.CWD)
 	if len(paths.global) == 0 && paths.project.path == "" {
-		return
+		return RunResult{}, nil
 	}
 
 	timeout := r.Timeout
@@ -73,56 +117,130 @@ func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 		timeout = DefaultPostCreateTimeout
 	}
 
+	var result RunResult
 	for _, path := range paths.global {
-		r.runHook(ctx, c, path, timeout)
+		hookResult, err := r.runHook(ctx, event, c, path, timeout, hookOutputMode(event))
+		if err != nil {
+			if event == EventPreCreate {
+				return result, err
+			}
+			r.warnf(event, "hook %q: %v", path, err)
+			continue
+		}
+		result = mergeResult(event, result, hookResult)
 	}
 	if paths.project.path != "" && r.authorizeProjectHook(paths.project) {
-		r.runHook(ctx, c, paths.project.path, timeout)
+		hookResult, err := r.runHook(ctx, event, c, paths.project.path, timeout, hookOutputMode(event))
+		if err != nil {
+			if event == EventPreCreate {
+				return result, err
+			}
+			r.warnf(event, "hook %q: %v", paths.project.path, err)
+			return result, nil
+		}
+		result = mergeResult(event, result, hookResult)
 	}
+	return result, nil
 }
 
-type postCreateHookPaths struct {
+// HasHooks reports whether an executable global or project-local hook exists
+// for event. It does not perform project trust prompting.
+func (r *Runner) HasHooks(event Event, cwd string) bool {
+	if r == nil {
+		return false
+	}
+	event = normalizeEvent(event)
+	if event == "" {
+		return false
+	}
+	paths := r.hookPaths(event, cwd)
+	return len(paths.global) > 0 || paths.project.path != ""
+}
+
+// Run executes configured post-create hooks for c. Hook failures
+// (missing file, non-executable, non-zero exit, exec error, timeout) are
+// recorded as a single warning line on Logger and never returned.
+func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
+	if r == nil {
+		return
+	}
+	_, _ = r.runner().Run(ctx, EventPostCreate, c)
+}
+
+type hookPaths struct {
 	global  []string
-	project projectPostCreateHook
+	project projectHook
 }
 
-type projectPostCreateHook struct {
-	repo string
-	rel  string
-	path string
+type projectHook struct {
+	event Event
+	repo  string
+	rel   string
+	path  string
 }
 
-func (r *PostCreateRunner) postCreateHookPaths(cwd string) postCreateHookPaths {
-	var paths postCreateHookPaths
-	if path := strings.TrimSpace(r.HookPath); isExecutableHook(path) {
-		paths.global = append(paths.global, path)
+func (r *PostCreateRunner) runner() *Runner {
+	return &Runner{
+		GlobalHookPaths: map[Event][]string{
+			EventPostCreate: {r.HookPath},
+		},
+		DiscoverProjectHooks: r.DiscoverProjectHooks,
+		ProjectHooksFilePath: r.ProjectHooksFilePath,
+		TrustStorePath:       r.TrustStorePath,
+		ProjectHookPrompt:    r.ProjectHookPrompt,
+		PromptReader:         r.PromptReader,
+		PromptWriter:         r.PromptWriter,
+		Logger:               r.Logger,
+		Timeout:              r.Timeout,
+		Version:              r.Version,
 	}
-	if r.DiscoverProjectHooks && !projectHooksDisabled(r.ProjectHooksFilePath, r.Logger) {
-		paths.project = discoverProjectPostCreateHook(cwd)
+}
+
+func (r *Runner) hookPaths(event Event, cwd string) hookPaths {
+	var paths hookPaths
+	for _, path := range r.GlobalHookPaths[event] {
+		if path = strings.TrimSpace(path); isExecutableHook(path) {
+			paths.global = append(paths.global, path)
+		}
+	}
+	if r.DiscoverProjectHooks && !projectHooksDisabled(event, r.ProjectHooksFilePath, r.Logger) {
+		paths.project = discoverProjectHook(event, cwd)
 	}
 	return paths
 }
 
-func discoverProjectPostCreateHook(cwd string) projectPostCreateHook {
+func discoverProjectHook(event Event, cwd string) projectHook {
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
-		return projectPostCreateHook{}
+		return projectHook{}
 	}
 	repo, err := filepath.Abs(cwd)
 	if err != nil {
-		return projectPostCreateHook{}
+		return projectHook{}
 	}
-	for _, candidate := range projectPostCreateCandidates {
+	for _, candidate := range projectHookCandidates(event) {
 		path := filepath.Join(repo, candidate)
 		if isExecutableHook(path) {
-			return projectPostCreateHook{
-				repo: repo,
-				rel:  filepath.ToSlash(candidate),
-				path: path,
+			return projectHook{
+				event: event,
+				repo:  repo,
+				rel:   filepath.ToSlash(candidate),
+				path:  path,
 			}
 		}
 	}
-	return projectPostCreateHook{}
+	return projectHook{}
+}
+
+func projectHookCandidates(event Event) []string {
+	name := string(normalizeEvent(event))
+	if name == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(".projmux", name),
+		filepath.Join(".projmux", "hooks", name),
+	}
 }
 
 func isExecutableHook(path string) bool {
@@ -139,7 +257,31 @@ func isExecutableHook(path string) bool {
 	return info.Mode().Perm()&0o100 != 0
 }
 
-func (r *PostCreateRunner) runHook(ctx context.Context, c PostCreateContext, path string, timeout time.Duration) {
+type outputMode int
+
+const (
+	outputLog outputMode = iota
+	outputCaptureStdout
+)
+
+func hookOutputMode(event Event) outputMode {
+	if event == EventPaneStartup {
+		return outputCaptureStdout
+	}
+	return outputLog
+}
+
+func mergeResult(event Event, current, next RunResult) RunResult {
+	if event == EventPaneStartup {
+		if trimmed := strings.TrimSpace(next.Stdout); trimmed != "" {
+			current.Stdout = trimmed
+		}
+		return current
+	}
+	return current
+}
+
+func (r *Runner) runHook(ctx context.Context, event Event, c Context, path string, timeout time.Duration, mode outputMode) (RunResult, error) {
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -153,28 +295,41 @@ func (r *PostCreateRunner) runHook(ctx context.Context, c PostCreateContext, pat
 	cmd.WaitDelay = 250 * time.Millisecond
 
 	logger := r.Logger
-	prefixed := newLinePrefixer(logger, postCreatePrefix)
-	cmd.Stdout = prefixed
+	prefixed := newLinePrefixer(logger, "["+string(event)+"] ")
+	var stdout bytes.Buffer
+	if mode == outputCaptureStdout {
+		cmd.Stdout = &stdout
+	} else {
+		cmd.Stdout = prefixed
+	}
 	cmd.Stderr = prefixed
 
 	err := cmd.Run()
 	prefixed.Flush()
 
 	if runCtx.Err() == context.DeadlineExceeded {
-		warnf(logger, "hook %q timed out after %s", path, timeout)
-		return
+		return RunResult{}, fmt.Errorf("timed out after %s", timeout)
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			warnf(logger, "hook %q exited with status %d", path, exitErr.ExitCode())
-			return
+			return RunResult{}, fmt.Errorf("exited with status %d", exitErr.ExitCode())
 		}
-		warnf(logger, "hook %q: %v", path, err)
+		return RunResult{}, err
+	}
+	return RunResult{Stdout: strings.TrimSpace(stdout.String())}, nil
+}
+
+func normalizeEvent(event Event) Event {
+	switch event {
+	case EventPreCreate, EventPostCreate, EventPaneStartup, EventPostAttach:
+		return event
+	default:
+		return ""
 	}
 }
 
-func buildHookEnv(c PostCreateContext, fallbackVersion string) []string {
+func buildHookEnv(c Context, fallbackVersion string) []string {
 	env := append([]string{}, os.Environ()...)
 	version := c.Version
 	if version == "" {
@@ -188,6 +343,9 @@ func buildHookEnv(c PostCreateContext, fallbackVersion string) []string {
 	)
 	if strings.TrimSpace(c.Socket) != "" {
 		env = append(env, "PROJMUX_SOCKET="+c.Socket)
+	}
+	if strings.TrimSpace(c.PaneID) != "" {
+		env = append(env, "PROJMUX_PANE="+c.PaneID)
 	}
 	return env
 }
@@ -240,9 +398,13 @@ func (p *linePrefixer) Flush() {
 	p.buf.Reset()
 }
 
-func warnf(w io.Writer, format string, args ...any) {
+func (r *Runner) warnf(event Event, format string, args ...any) {
+	warnf(r.Logger, event, format, args...)
+}
+
+func warnf(w io.Writer, event Event, format string, args ...any) {
 	if w == nil {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "projmux: post-create hook: "+format+"\n", args...)
+	_, _ = fmt.Fprintf(w, "projmux: %s hook: "+format+"\n", append([]any{event}, args...)...)
 }

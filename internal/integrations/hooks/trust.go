@@ -58,10 +58,10 @@ type trustedFile struct {
 	TrustedAt time.Time `json:"trusted_at"`
 }
 
-func (r *PostCreateRunner) authorizeProjectHook(h projectPostCreateHook) bool {
+func (r *Runner) authorizeProjectHook(h projectHook) bool {
 	sum, preview, err := hashHookFile(h.path)
 	if err != nil {
-		warnf(r.Logger, "project hook %q could not be hashed: %v", h.path, err)
+		r.warnf(h.event, "project hook %q could not be hashed: %v", h.path, err)
 		return false
 	}
 
@@ -70,13 +70,13 @@ func (r *PostCreateRunner) authorizeProjectHook(h projectPostCreateHook) bool {
 		storePath = defaultTrustStorePath()
 	}
 	if storePath == "" {
-		warnf(r.Logger, "project hook %q requires trust, but the trust store path could not be resolved", h.path)
+		r.warnf(h.event, "project hook %q requires trust, but the trust store path could not be resolved", h.path)
 		return false
 	}
 
 	store, err := loadTrustedProjects(storePath)
 	if err != nil {
-		warnf(r.Logger, "project hook %q requires trust, but the trust store could not be read: %v", h.path, err)
+		r.warnf(h.event, "project hook %q requires trust, but the trust store could not be read: %v", h.path, err)
 		return false
 	}
 	if existing, ok := store.trustedFile(h.repo, h.rel); ok && existing.SHA256 == sum {
@@ -94,9 +94,9 @@ func (r *PostCreateRunner) authorizeProjectHook(h projectPostCreateHook) bool {
 	decision, prompted := r.promptProjectHookTrust(req)
 	if !prompted {
 		if req.PreviousSHA256 != "" {
-			warnf(r.Logger, "project hook %q hash changed; trusted sha256=%s current sha256=%s; skipping in non-interactive context", h.rel, req.PreviousSHA256, req.SHA256)
+			r.warnf(h.event, "project hook %q hash changed; trusted sha256=%s current sha256=%s; skipping in non-interactive context", h.rel, req.PreviousSHA256, req.SHA256)
 		} else {
-			warnf(r.Logger, "project hook %q requires trust; skipping in non-interactive context", h.rel)
+			r.warnf(h.event, "project hook %q requires trust; skipping in non-interactive context", h.rel)
 		}
 		return false
 	}
@@ -107,7 +107,7 @@ func (r *PostCreateRunner) authorizeProjectHook(h projectPostCreateHook) bool {
 	case ProjectHookAllowAlways:
 		store.trust(h.repo, h.rel, sum, time.Now().UTC())
 		if err := store.save(storePath); err != nil {
-			warnf(r.Logger, "project hook %q trust could not be saved: %v", h.rel, err)
+			r.warnf(h.event, "project hook %q trust could not be saved: %v", h.rel, err)
 			return false
 		}
 		return true
@@ -116,7 +116,7 @@ func (r *PostCreateRunner) authorizeProjectHook(h projectPostCreateHook) bool {
 	}
 }
 
-func projectHooksDisabled(settingPath string, logger io.Writer) bool {
+func projectHooksDisabled(event Event, settingPath string, logger io.Writer) bool {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROJMUX_PROJECT_HOOKS")), "off") {
 		return true
 	}
@@ -130,7 +130,7 @@ func projectHooksDisabled(settingPath string, logger io.Writer) bool {
 	}
 	mode, err := config.LoadProjectHooksFile(settingPath)
 	if err != nil {
-		warnf(logger, "project hook setting could not be read: %v", err)
+		warnf(logger, event, "project hook setting could not be read: %v", err)
 		return false
 	}
 	return mode == config.ProjectHooksOff
@@ -284,7 +284,7 @@ func sanitizeHookPreview(raw string) string {
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }
 
-func (r *PostCreateRunner) promptProjectHookTrust(req ProjectHookPromptRequest) (ProjectHookDecision, bool) {
+func (r *Runner) promptProjectHookTrust(req ProjectHookPromptRequest) (ProjectHookDecision, bool) {
 	if r.ProjectHookPrompt != nil {
 		return r.ProjectHookPrompt(req), true
 	}

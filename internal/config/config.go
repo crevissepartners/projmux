@@ -10,15 +10,18 @@ import (
 )
 
 const (
-	AppName                = "projmux"
-	PinsFileName           = "pins"
-	TagsFileName           = "tags"
-	PreviewStateFileName   = "preview-state"
-	ProjdirFileName        = "projdir"
-	KeymapFileName         = "keymap.toml"
-	HooksDirName           = "hooks"
-	ProjectHooksFileName   = "project-hooks"
-	PostCreateHookFileName = "post-create"
+	AppName                 = "projmux"
+	PinsFileName            = "pins"
+	TagsFileName            = "tags"
+	PreviewStateFileName    = "preview-state"
+	ProjdirFileName         = "projdir"
+	KeymapFileName          = "keymap.toml"
+	HooksDirName            = "hooks"
+	ProjectHooksFileName    = "project-hooks"
+	PostCreateHookFileName  = "post-create"
+	PaneStartupHookFileName = "pane-startup"
+	PostAttachHookFileName  = "post-attach"
+	PreCreateHookFileName   = "pre-create"
 )
 
 var ErrHomeDirRequired = errors.New("home directory is required when XDG homes are unset")
@@ -74,7 +77,12 @@ func (p Paths) KeymapFile() string {
 // PostCreateHookPath returns the default location for the optional
 // post-create hook script.
 func (p Paths) PostCreateHookPath() string {
-	return filepath.Join(p.ConfigDir, HooksDirName, PostCreateHookFileName)
+	return p.HookPath(PostCreateHookFileName)
+}
+
+// HookPath returns the default location for a named global lifecycle hook.
+func (p Paths) HookPath(name string) string {
+	return filepath.Join(p.ConfigDir, HooksDirName, name)
 }
 
 // ProjdirFile returns the path to the persisted projdir file rooted at the

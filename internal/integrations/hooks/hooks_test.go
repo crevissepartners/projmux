@@ -691,6 +691,141 @@ func TestPostCreateRunnerTimeoutKillsHookAndWarns(t *testing.T) {
 	}
 }
 
+func TestRunnerPaneStartupCapturesLastNonEmptyCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixtures require POSIX")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global-pane-startup")
+	cwd := filepath.Join(dir, "repo")
+	writeHook(t, globalPath, "echo global-command\n", 0o755)
+	writeHook(t, filepath.Join(cwd, ".projmux", "pane-startup"), "echo project-command\n", 0o755)
+
+	var logger bytes.Buffer
+	runner := &Runner{
+		GlobalHookPaths: map[Event][]string{
+			EventPaneStartup: {globalPath},
+		},
+		DiscoverProjectHooks: true,
+		ProjectHooksFilePath: testProjectHooksFilePath(t),
+		TrustStorePath:       testTrustStorePath(t),
+		ProjectHookPrompt:    func(ProjectHookPromptRequest) ProjectHookDecision { return ProjectHookAllowOnce },
+		Logger:               &logger,
+	}
+
+	result, err := runner.Run(context.Background(), EventPaneStartup, Context{
+		SessionName: "workspace",
+		CWD:         cwd,
+		Kind:        "persistent",
+		PaneID:      "%7",
+		Version:     "0.0.0-test",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Stdout != "project-command" {
+		t.Fatalf("pane-startup stdout = %q, want project-command", result.Stdout)
+	}
+	if logger.Len() != 0 {
+		t.Fatalf("pane-startup stdout should not be logged, got:\n%s", logger.String())
+	}
+}
+
+func TestRunnerPaneStartupProjectHookUsesHooksSubdirFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixtures require POSIX")
+	}
+	t.Parallel()
+
+	cwd := t.TempDir()
+	writeHook(t, filepath.Join(cwd, ".projmux", "pane-startup"), "echo skipped\n", 0o644)
+	writeHook(t, filepath.Join(cwd, ".projmux", "hooks", "pane-startup"), "echo hooks-dir-command\n", 0o755)
+
+	runner := &Runner{
+		DiscoverProjectHooks: true,
+		ProjectHooksFilePath: testProjectHooksFilePath(t),
+		TrustStorePath:       testTrustStorePath(t),
+		ProjectHookPrompt:    func(ProjectHookPromptRequest) ProjectHookDecision { return ProjectHookAllowOnce },
+	}
+
+	result, err := runner.Run(context.Background(), EventPaneStartup, Context{CWD: cwd})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Stdout != "hooks-dir-command" {
+		t.Fatalf("pane-startup stdout = %q, want hooks-dir-command", result.Stdout)
+	}
+}
+
+func TestRunnerPreCreateNonZeroExitAborts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixtures require POSIX")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	hookPath := filepath.Join(dir, "pre-create")
+	writeHook(t, hookPath, "echo before-abort\nexit 12\n", 0o755)
+
+	var logger bytes.Buffer
+	runner := &Runner{
+		GlobalHookPaths: map[Event][]string{
+			EventPreCreate: {hookPath},
+		},
+		Logger: &logger,
+	}
+
+	_, err := runner.Run(context.Background(), EventPreCreate, Context{
+		SessionName: "workspace",
+		CWD:         t.TempDir(),
+		Kind:        "persistent",
+	})
+	if err == nil {
+		t.Fatal("expected pre-create error")
+	}
+	if !strings.Contains(err.Error(), "exited with status 12") {
+		t.Fatalf("pre-create error = %v, want exit status", err)
+	}
+	if !strings.Contains(logger.String(), "[pre-create] before-abort") {
+		t.Fatalf("pre-create output missing from logger:\n%s", logger.String())
+	}
+}
+
+func TestRunnerProjectHooksKillSwitchAppliesToPaneStartup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixtures require POSIX")
+	}
+
+	t.Setenv("PROJMUX_PROJECT_HOOKS", "off")
+	cwd := t.TempDir()
+	writeHook(t, filepath.Join(cwd, ".projmux", "pane-startup"), "echo should-not-run\n", 0o755)
+
+	var logger bytes.Buffer
+	runner := &Runner{
+		DiscoverProjectHooks: true,
+		ProjectHooksFilePath: testProjectHooksFilePath(t),
+		TrustStorePath:       testTrustStorePath(t),
+		ProjectHookPrompt: func(ProjectHookPromptRequest) ProjectHookDecision {
+			t.Fatal("project hook prompt should not be called when kill switch is off")
+			return ProjectHookDeny
+		},
+		Logger: &logger,
+	}
+
+	result, err := runner.Run(context.Background(), EventPaneStartup, Context{CWD: cwd})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Stdout != "" {
+		t.Fatalf("pane-startup stdout = %q, want empty", result.Stdout)
+	}
+	if strings.Contains(logger.String(), "should-not-run") {
+		t.Fatalf("project hook ran with kill switch:\n%s", logger.String())
+	}
+}
+
 func absFixture(t *testing.T, name string) string {
 	t.Helper()
 	abs, err := filepath.Abs(filepath.Join("testdata", name))

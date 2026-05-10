@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
@@ -73,11 +74,22 @@ type postCreateRunner interface {
 	Run(ctx context.Context, c hooks.PostCreateContext)
 }
 
+// lifecycleHookRunner is the event-oriented hook surface the tmux client uses
+// for lifecycle events beyond the legacy post-create callback.
+type lifecycleHookRunner interface {
+	Run(ctx context.Context, event hooks.Event, c hooks.Context) (hooks.RunResult, error)
+}
+
+type lifecycleHookInspector interface {
+	HasHooks(event hooks.Event, cwd string) bool
+}
+
 // Client exposes typed tmux queries used by CLI commands.
 type Client struct {
 	runner     commandRunner
 	lookupEnv  func(string) string
 	postCreate postCreateRunner
+	lifecycle  lifecycleHookRunner
 	socket     string
 }
 
@@ -93,6 +105,17 @@ func WithPostCreateRunner(r *hooks.PostCreateRunner) ClientOption {
 			return
 		}
 		c.postCreate = r
+	}
+}
+
+// WithLifecycleHookRunner attaches the generic lifecycle hook runner.
+func WithLifecycleHookRunner(r *hooks.Runner) ClientOption {
+	return func(c *Client) {
+		if r == nil {
+			c.lifecycle = nil
+			return
+		}
+		c.lifecycle = r
 	}
 }
 
@@ -408,11 +431,17 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 		return nil
 	}
 
-	if _, err := c.runner.Run(ctx, "tmux", "new-session", "-d", "-s", sessionName, "-c", cwd); err != nil {
+	if err := c.runPreCreate(ctx, sessionName, cwd, "persistent"); err != nil {
+		return err
+	}
+
+	paneID, err := c.createDetachedSession(ctx, sessionName, cwd)
+	if err != nil {
 		return fmt.Errorf("create tmux session %q: %w", sessionName, err)
 	}
 
 	c.runPostCreate(ctx, sessionName, cwd, "persistent")
+	c.runPaneStartup(ctx, sessionName, cwd, "persistent", paneID)
 	return nil
 }
 
@@ -426,7 +455,12 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 		return errSessionCWDRequired
 	}
 
-	if _, err := c.runner.Run(ctx, "tmux", "new-session", "-d", "-s", sessionName, "-c", cwd); err != nil {
+	if err := c.runPreCreate(ctx, sessionName, cwd, "ephemeral"); err != nil {
+		return err
+	}
+
+	paneID, err := c.createDetachedSession(ctx, sessionName, cwd)
+	if err != nil {
 		return fmt.Errorf("create tmux ephemeral session %q: %w", sessionName, err)
 	}
 	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", "@projmux_ephemeral", "1"); err != nil {
@@ -435,11 +469,52 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 		// lifecycle treatment as one whose marker stuck.
 	}
 	c.runPostCreate(ctx, sessionName, cwd, "ephemeral")
+	c.runPaneStartup(ctx, sessionName, cwd, "ephemeral", paneID)
 
 	return nil
 }
 
+func (c *Client) createDetachedSession(ctx context.Context, sessionName, cwd string) (string, error) {
+	args := []string{"new-session", "-d", "-s", sessionName, "-c", cwd}
+	if c.lifecycle == nil {
+		_, err := c.runner.Run(ctx, "tmux", args...)
+		return "", err
+	}
+	args = append(args, "-P", "-F", "#{pane_id}")
+	output, err := c.runner.Run(ctx, "tmux", args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func (c *Client) runPreCreate(ctx context.Context, sessionName, cwd, kind string) error {
+	if c.lifecycle == nil {
+		return nil
+	}
+	_, err := c.lifecycle.Run(ctx, hooks.EventPreCreate, hooks.Context{
+		SessionName: sessionName,
+		CWD:         cwd,
+		Kind:        kind,
+		Socket:      c.socket,
+	})
+	if err != nil {
+		return fmt.Errorf("pre-create hook for tmux session %q: %w", sessionName, err)
+	}
+	return nil
+}
+
 func (c *Client) runPostCreate(ctx context.Context, sessionName, cwd, kind string) {
+	context := hooks.Context{
+		SessionName: sessionName,
+		CWD:         cwd,
+		Kind:        kind,
+		Socket:      c.socket,
+	}
+	if c.lifecycle != nil {
+		_, _ = c.lifecycle.Run(ctx, hooks.EventPostCreate, context)
+		return
+	}
 	if c.postCreate == nil {
 		return
 	}
@@ -449,6 +524,73 @@ func (c *Client) runPostCreate(ctx context.Context, sessionName, cwd, kind strin
 		Kind:        kind,
 		Socket:      c.socket,
 	})
+}
+
+func (c *Client) runPaneStartup(ctx context.Context, sessionName, cwd, kind, paneID string) {
+	if c.lifecycle == nil || strings.TrimSpace(paneID) == "" {
+		return
+	}
+	if inspector, ok := c.lifecycle.(lifecycleHookInspector); ok && !inspector.HasHooks(hooks.EventPaneStartup, cwd) {
+		return
+	}
+	if err := c.waitForPaneShellReady(ctx, paneID, 2*time.Second, 50*time.Millisecond); err != nil {
+		return
+	}
+	result, err := c.lifecycle.Run(ctx, hooks.EventPaneStartup, hooks.Context{
+		SessionName: sessionName,
+		CWD:         cwd,
+		Kind:        kind,
+		Socket:      c.socket,
+		PaneID:      paneID,
+	})
+	if err != nil {
+		return
+	}
+	command := strings.TrimSpace(result.Stdout)
+	if command == "" {
+		return
+	}
+	_, _ = c.runner.Run(ctx, "tmux", "send-keys", "-t", paneID, command, "Enter")
+}
+
+func (c *Client) waitForPaneShellReady(ctx context.Context, paneID string, timeout, interval time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", "#{pane_current_command}")
+		if err != nil {
+			return err
+		}
+		if c.isShellCommand(strings.TrimSpace(string(output))) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("pane %s shell did not become ready before %s", paneID, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
+func (c *Client) isShellCommand(command string) bool {
+	command = filepathBase(command)
+	switch command {
+	case "sh", "bash", "zsh", "fish", "nu", "xonsh", "dash", "ksh", "tcsh", "csh", "elvish":
+		return true
+	}
+	if c.lookupEnv == nil {
+		return false
+	}
+	return command != "" && command == filepathBase(c.lookupEnv("SHELL"))
+}
+
+func filepathBase(command string) string {
+	if idx := strings.LastIndex(command, "/"); idx >= 0 {
+		return command[idx+1:]
+	}
+	return command
 }
 
 // SessionExists reports whether the named tmux session already exists.
@@ -468,7 +610,8 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 
 	command := []string{"attach-session", "-t", sessionName}
 	action := "attach"
-	if c.InsideSession() {
+	inside := c.InsideSession()
+	if inside {
 		command = []string{"switch-client", "-t", sessionName}
 		action = "switch"
 	}
@@ -477,6 +620,9 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 		return fmt.Errorf("%s tmux session %q: %w", action, sessionName, err)
 	}
 
+	if inside {
+		c.runPostAttach(ctx, sessionName, sessionName)
+	}
 	return nil
 }
 
@@ -497,8 +643,9 @@ func (c *Client) OpenSessionTarget(ctx context.Context, sessionName, windowIndex
 	target := sessionName
 	action := "attach"
 	command := []string{"attach-session", "-t", target}
+	inside := c.InsideSession()
 
-	if c.InsideSession() {
+	if inside {
 		target = sessionPaneTarget(sessionName, windowIndex, paneIndex)
 		action = "switch"
 		command = []string{"switch-client", "-t", target}
@@ -511,7 +658,30 @@ func (c *Client) OpenSessionTarget(ctx context.Context, sessionName, windowIndex
 		return fmt.Errorf("%s tmux target %q: %w", action, target, err)
 	}
 
+	if inside {
+		c.runPostAttach(ctx, sessionName, target)
+	}
 	return nil
+}
+
+func (c *Client) runPostAttach(ctx context.Context, sessionName, target string) {
+	if c.lifecycle == nil {
+		return
+	}
+	cwd := c.resolveTargetCWD(ctx, target)
+	_, _ = c.lifecycle.Run(ctx, hooks.EventPostAttach, hooks.Context{
+		SessionName: sessionName,
+		CWD:         cwd,
+		Socket:      c.socket,
+	})
+}
+
+func (c *Client) resolveTargetCWD(ctx context.Context, target string) string {
+	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-t", target, "-F", "#{pane_current_path}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }
 
 // SwitchClient switches the active tmux client to the target session.

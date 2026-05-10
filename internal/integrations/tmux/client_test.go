@@ -1357,6 +1357,38 @@ func TestClientOpenSessionTargetSwitchesToPaneInsideTmux(t *testing.T) {
 	}
 }
 
+func TestClientOpenSessionTargetRunsPostAttachAfterInsideTmuxSwitch(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{},
+			{output: []byte("/tmp/projmux-target\n")},
+		},
+	}
+	hook := &fakeLifecycleRunner{}
+	client := newClientWithEnv(runner, func(string) string { return "/tmp/tmux-sock" }, withLifecycleHookRunnerInterface(hook))
+
+	if err := client.OpenSessionTarget(context.Background(), "workspace", "3", "8"); err != nil {
+		t.Fatalf("OpenSessionTarget returned error: %v", err)
+	}
+
+	want := []commandCall{
+		{name: "tmux", args: []string{"switch-client", "-t", "workspace:3.8"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "workspace:3.8", "-F", "#{pane_current_path}"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("unexpected calls %#v", runner.calls)
+	}
+	if gotEvents := hook.events(); !reflect.DeepEqual(gotEvents, []hooks.Event{hooks.EventPostAttach}) {
+		t.Fatalf("hook events = %#v, want post-attach", gotEvents)
+	}
+	if got := hook.calls[0].context.CWD; got != "/tmp/projmux-target" {
+		t.Fatalf("post-attach cwd = %q, want /tmp/projmux-target", got)
+	}
+}
+
 func TestClientOpenSessionTargetAttachesToWindowOutsideTmux(t *testing.T) {
 	t.Parallel()
 
@@ -1375,6 +1407,31 @@ func TestClientOpenSessionTargetAttachesToWindowOutsideTmux(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
+	}
+}
+
+func TestClientOpenSessionTargetSkipsPostAttachOutsideTmux(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{}},
+	}
+	hook := &fakeLifecycleRunner{}
+	client := newClientWithEnv(runner, func(string) string { return "" }, withLifecycleHookRunnerInterface(hook))
+
+	if err := client.OpenSessionTarget(context.Background(), "workspace", "3", "8"); err != nil {
+		t.Fatalf("OpenSessionTarget returned error: %v", err)
+	}
+
+	want := []commandCall{
+		{name: "tmux", args: []string{"attach-session", "-t", "workspace:3"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("unexpected calls %#v", runner.calls)
+	}
+	if gotEvents := hook.events(); len(gotEvents) != 0 {
+		t.Fatalf("hook events = %#v, want none outside tmux", gotEvents)
 	}
 }
 
@@ -1641,6 +1698,80 @@ func TestClientEnsureSessionInvokesPostCreateRunnerOnNewSession(t *testing.T) {
 	}
 }
 
+func TestClientEnsureSessionRunsLifecycleHooksForNewSession(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: exitError(t, 1)},
+			{output: []byte("%7\n")},
+			{output: []byte("zsh\n")},
+			{},
+		},
+	}
+	hook := &fakeLifecycleRunner{
+		results: map[hooks.Event]hooks.RunResult{
+			hooks.EventPaneStartup: {Stdout: "echo ready"},
+		},
+	}
+	client := NewClient(runner, withLifecycleHookRunnerInterface(hook), WithSocketName("projmux"))
+
+	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
+		t.Fatalf("EnsureSession returned error: %v", err)
+	}
+
+	wantCalls := []commandCall{
+		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_current_command}"}},
+		{name: "tmux", args: []string{"send-keys", "-t", "%7", "echo ready", "Enter"}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("unexpected tmux calls %#v", runner.calls)
+	}
+
+	gotEvents := hook.events()
+	wantEvents := []hooks.Event{hooks.EventPreCreate, hooks.EventPostCreate, hooks.EventPaneStartup}
+	if !reflect.DeepEqual(gotEvents, wantEvents) {
+		t.Fatalf("hook events = %#v, want pre-create, post-create, then pane-startup", gotEvents)
+	}
+	if got := hook.calls[2].context.PaneID; got != "%7" {
+		t.Fatalf("pane-startup pane id = %q, want %%7", got)
+	}
+}
+
+func TestClientEnsureSessionPreCreateAbortSkipsNewSession(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: exitError(t, 1)},
+		},
+	}
+	hook := &fakeLifecycleRunner{
+		errs: map[hooks.Event]error{
+			hooks.EventPreCreate: errors.New("blocked"),
+		},
+	}
+	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
+
+	err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux")
+	if err == nil {
+		t.Fatal("expected pre-create error")
+	}
+	if !strings.Contains(err.Error(), "pre-create hook") || !strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("EnsureSession error = %v, want pre-create blocked", err)
+	}
+	wantCalls := []commandCall{
+		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("unexpected tmux calls %#v", runner.calls)
+	}
+}
+
 func TestClientEnsureSessionSkipsPostCreateWhenSessionExists(t *testing.T) {
 	t.Parallel()
 
@@ -1753,6 +1884,63 @@ func TestClientCreateEphemeralSessionSkipsPostCreateWhenNewSessionFails(t *testi
 	}
 }
 
+func TestClientOpenSessionRunsPostAttachAfterInsideTmuxSwitch(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{},
+			{output: []byte("/tmp/projmux\n")},
+		},
+	}
+	hook := &fakeLifecycleRunner{}
+	client := newClientWithEnv(runner, func(string) string { return "/tmp/tmux-sock" }, withLifecycleHookRunnerInterface(hook), WithSocketName("projmux"))
+
+	if err := client.OpenSession(context.Background(), "workspace"); err != nil {
+		t.Fatalf("OpenSession returned error: %v", err)
+	}
+
+	wantCalls := []commandCall{
+		{name: "tmux", args: []string{"switch-client", "-t", "workspace"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "workspace", "-F", "#{pane_current_path}"}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("unexpected tmux calls %#v", runner.calls)
+	}
+	if gotEvents := hook.events(); !reflect.DeepEqual(gotEvents, []hooks.Event{hooks.EventPostAttach}) {
+		t.Fatalf("hook events = %#v, want post-attach", gotEvents)
+	}
+	if got := hook.calls[0].context.CWD; got != "/tmp/projmux" {
+		t.Fatalf("post-attach cwd = %q, want /tmp/projmux", got)
+	}
+}
+
+func TestClientOpenSessionSkipsPostAttachOutsideTmux(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{}},
+	}
+	hook := &fakeLifecycleRunner{}
+	client := newClientWithEnv(runner, func(string) string { return "" }, withLifecycleHookRunnerInterface(hook))
+
+	if err := client.OpenSession(context.Background(), "workspace"); err != nil {
+		t.Fatalf("OpenSession returned error: %v", err)
+	}
+
+	wantCalls := []commandCall{
+		{name: "tmux", args: []string{"attach-session", "-t", "workspace"}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("unexpected tmux calls %#v", runner.calls)
+	}
+	if gotEvents := hook.events(); len(gotEvents) != 0 {
+		t.Fatalf("hook events = %#v, want none outside tmux", gotEvents)
+	}
+}
+
 func TestClientEnsureSessionRequiresCWD(t *testing.T) {
 	t.Parallel()
 
@@ -1811,11 +1999,52 @@ func (f *fakePostCreateRunner) Run(_ context.Context, c hooks.PostCreateContext)
 	f.calls = append(f.calls, c)
 }
 
+type lifecycleHookCall struct {
+	event   hooks.Event
+	context hooks.Context
+}
+
+type fakeLifecycleRunner struct {
+	mu      sync.Mutex
+	calls   []lifecycleHookCall
+	results map[hooks.Event]hooks.RunResult
+	errs    map[hooks.Event]error
+}
+
+func (f *fakeLifecycleRunner) Run(_ context.Context, event hooks.Event, c hooks.Context) (hooks.RunResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, lifecycleHookCall{
+		event:   event,
+		context: c,
+	})
+	if err := f.errs[event]; err != nil {
+		return hooks.RunResult{}, err
+	}
+	return f.results[event], nil
+}
+
+func (f *fakeLifecycleRunner) events() []hooks.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	events := make([]hooks.Event, 0, len(f.calls))
+	for _, call := range f.calls {
+		events = append(events, call.event)
+	}
+	return events
+}
+
 // withPostCreateRunnerInterface wires a test stub through the same field that
 // WithPostCreateRunner targets without depending on a real *hooks.PostCreateRunner.
 func withPostCreateRunnerInterface(r postCreateRunner) ClientOption {
 	return func(c *Client) {
 		c.postCreate = r
+	}
+}
+
+func withLifecycleHookRunnerInterface(r lifecycleHookRunner) ClientOption {
+	return func(c *Client) {
+		c.lifecycle = r
 	}
 }
 
