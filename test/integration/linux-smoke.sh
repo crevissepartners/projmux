@@ -12,7 +12,6 @@ bin="$PROJMUX_SMOKE_BIN"
 
 "$bin" doctor --json >"$PROJMUX_SMOKE_WORKDIR/doctor.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"name": "tmux"'
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"name": "fzf"'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"status": "ok"'
 
 "$bin" tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux.conf"

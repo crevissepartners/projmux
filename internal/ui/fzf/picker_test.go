@@ -107,34 +107,6 @@ func TestPickerOptionsMapsFZFBindingsToContractActions(t *testing.T) {
 	}
 }
 
-func TestPickerRunnerAdaptsContractRunnerToFZF(t *testing.T) {
-	t.Parallel()
-
-	var got Options
-	runner := PickerRunner{Runner: pickerRunnerFunc(func(options Options) (Result, error) {
-		got = options
-		return Result{Key: "enter", Value: "/repo/api"}, nil
-	})}
-
-	result, err := runner.Run(picker.Options{
-		UI:      "switch",
-		Items:   []picker.Item{{Label: "api", Value: "/repo/api", SearchText: "api service"}},
-		Actions: picker.CloseActions("esc"),
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if result.Value != "/repo/api" || result.Closed {
-		t.Fatalf("Run() = %#v, want fzf selection adapted to picker result", result)
-	}
-	if got.UI != "switch" || len(got.Entries) != 1 || got.Entries[0].SearchKey != "api service" {
-		t.Fatalf("fzf options = %#v, want picker contract converted to fzf options", got)
-	}
-	if got.Bindings[0] != "esc:abort" {
-		t.Fatalf("fzf bindings = %#v, want close binding", got.Bindings)
-	}
-}
-
 func TestResultToPickerMarksEmptyResultClosed(t *testing.T) {
 	t.Parallel()
 
@@ -144,10 +116,4 @@ func TestResultToPickerMarksEmptyResultClosed(t *testing.T) {
 	if got := ResultToPicker(Result{Key: "ctrl-x"}); got.Closed {
 		t.Fatalf("ResultToPicker(key).Closed = true, want false")
 	}
-}
-
-type pickerRunnerFunc func(options Options) (Result, error)
-
-func (f pickerRunnerFunc) Run(options Options) (Result, error) {
-	return f(options)
 }

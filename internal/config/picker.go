@@ -11,7 +11,6 @@ import (
 const (
 	PickerBackendFileName = "picker-backend"
 
-	PickerBackendFZF     PickerBackend = "fzf"
 	PickerBackendNative  PickerBackend = "native"
 	DefaultPickerBackend               = PickerBackendNative
 )
@@ -20,8 +19,6 @@ type PickerBackend string
 
 func NormalizePickerBackend(value string) PickerBackend {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case string(PickerBackendFZF):
-		return PickerBackendFZF
 	case string(PickerBackendNative):
 		return PickerBackendNative
 	default:

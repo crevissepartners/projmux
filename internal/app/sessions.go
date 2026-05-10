@@ -55,7 +55,6 @@ func newSessionsCommand() *sessionsCommand {
 		store:      newSessionPopupCommand().store,
 		opener:     client,
 		killer:     client,
-		runner:     intfzf.NewRunner(),
 		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		executable: os.Executable,
 		lookupEnv:  os.Getenv,
@@ -95,8 +94,8 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
-	if c.runner == nil {
-		return fmt.Errorf("sessions runner is not configured")
+	if c.native == nil {
+		return fmt.Errorf("native picker is not configured")
 	}
 	if c.executable == nil {
 		return fmt.Errorf("sessions executable resolver is not configured")

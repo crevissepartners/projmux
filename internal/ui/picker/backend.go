@@ -26,7 +26,6 @@ const (
 type Backend string
 
 const (
-	BackendFZF    Backend = "fzf"
 	BackendNative Backend = "native"
 )
 
@@ -80,18 +79,10 @@ type Runner interface {
 }
 
 func ResolveBackend(lookup func(string) string) Backend {
-	raw := ""
 	if lookup != nil {
-		raw = lookup(BackendEnv)
+		_ = lookup(BackendEnv)
 	}
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case string(BackendFZF):
-		return BackendFZF
-	case string(BackendNative):
-		return BackendNative
-	default:
-		return BackendNative
-	}
+	return BackendNative
 }
 
 func CloseActions(keys ...string) []Action {
@@ -1319,8 +1310,10 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		displayItems = nativeHighlightSimpleItems(options, items, query)
 	}
 	listLines := nativeInteractiveListLines(displayItems, start, end, selected, options.MultiLine)
+	prependedRows := 0
 	if options.MultiLine {
 		listLines = nativeAppendPartialNextItemLines(displayItems, listLines, end, selected, listLimit)
+		listLines, prependedRows = nativePrependPartialPreviousItemLines(displayItems, listLines, start, selected, listLimit)
 	}
 	var main strings.Builder
 	if len(items) == 0 {
@@ -1332,6 +1325,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		scrollTotal, scrollStart, scrollEnd := len(items), start, end
 		if options.MultiLine {
 			scrollTotal, scrollStart, _ = nativeListScrollbarUnits(items, start, end, true)
+			scrollStart = max(scrollStart-prependedRows, 0)
 			scrollEnd = min(scrollStart+len(listLines), scrollTotal)
 		}
 		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, scrollTotal, scrollStart, scrollEnd, listLimit)
@@ -1344,6 +1338,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	}
 	scrollTotal, scrollStart, scrollEnd := nativeListScrollbarUnits(items, start, end, options.MultiLine)
 	if options.MultiLine {
+		scrollStart = max(scrollStart-prependedRows, 0)
 		scrollEnd = min(scrollStart+len(listLines), scrollTotal)
 	}
 	listLines = nativeListLinesWithScrollbarRows(listLines, scrollTotal, scrollStart, scrollEnd, layout.Cols, scrollRows)
@@ -1386,6 +1381,36 @@ func nativeAppendPartialNextItemLines(items []Item, lines []string, next, select
 		nextLines = nextLines[:remaining]
 	}
 	return append(out, nextLines...)
+}
+
+func nativePrependPartialPreviousItemLines(items []Item, lines []string, start, selected, limit int) ([]string, int) {
+	if limit <= 0 || len(lines) >= limit || start <= 0 || start > len(items) {
+		return lines, 0
+	}
+	remaining := limit - len(lines)
+	if remaining <= 0 {
+		return lines, 0
+	}
+	prefix := nativeLinesBeforeItem(items, start, selected)
+	if len(prefix) > remaining {
+		prefix = prefix[len(prefix)-remaining:]
+	}
+	out := make([]string, 0, len(prefix)+len(lines))
+	out = append(out, prefix...)
+	out = append(out, lines...)
+	return out, len(prefix)
+}
+
+func nativeLinesBeforeItem(items []Item, index, selected int) []string {
+	if index <= 0 || index >= len(items) {
+		return nil
+	}
+	withCurrent := nativeInteractiveListLines(items, 0, index+1, selected, true)
+	current := nativeInteractiveListLines(items, index, index+1, selected, true)
+	if len(current) == 0 || len(withCurrent) <= len(current) {
+		return nil
+	}
+	return withCurrent[:len(withCurrent)-len(current)]
 }
 
 func nativePartialNextItemLines(items []Item, next, selected int) []string {

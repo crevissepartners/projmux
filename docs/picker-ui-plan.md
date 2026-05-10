@@ -2,42 +2,26 @@
 
 ## Goal
 
-The project switcher needs a richer picker surface than a single-line fzf row.
-The target interaction is a card-like list where each item can show a title plus
-small contextual lines such as session state, window/pane summary, branch, or
-path. Search should stay focused on stable identity text, especially the project
-or session title, instead of matching every contextual preview line.
+The project switcher needs a rich native picker surface. The target interaction
+is a card-like list where each item can show a title plus small contextual lines
+such as session state, window/pane summary, branch, or path. Search should stay
+focused on stable identity text, especially the project or session title,
+instead of matching every contextual preview line.
 
 ## Current Contract
 
 The picker contract is split in two layers:
 
 - `internal/ui/picker` owns backend-neutral items, actions, preview metadata,
-  backend selection, title-focused filtering, and the default native runner.
-- `internal/ui/fzf` adapts that model into the historical fzf command line.
-
-The fzf fallback backend sends one logical row per item:
-
-```text
-<visible label>\t<selection value>
-```
-
-fzf is configured with:
-
-- `--delimiter "\t"`
-- `--with-nth 1`
-- `--exit-0`
-- optional `--preview` and `--preview-window`
-
-The app depends on fzf returning the selected row and then extracts the hidden
-value after the first tab. This contract is simple and stable, but it limits each
-row to one visible line.
+  title-focused filtering, and the native runner.
+- `internal/ui/fzf` is a retired compatibility adapter for old option/result
+  structs. Product flows do not execute the external fzf binary.
 
 ## fzf Capability Check
 
-The installed fzf version supports multi-line items with `--read0`. That means a
-single item can contain newline characters when input records are NUL-delimited.
-This can render card-like rows.
+This section is historical context. Earlier design work evaluated fzf because it
+supported multi-line items with `--read0`, where a single item can contain
+newline characters when input records are NUL-delimited.
 
 The simple fzf option path is not enough for the desired search behavior:
 
@@ -59,7 +43,7 @@ Use `--read0` and NUL-delimited multi-line entries. This is the smallest change,
 but contextual card text will participate in search unless the visible card is
 kept title-only. This does not meet the intended search model.
 
-This path is acceptable only as a temporary visual experiment.
+This path is retired and is not supported.
 
 ### 2. fzf custom filtering
 
@@ -73,13 +57,12 @@ Tradeoffs:
 - More edge cases around selection identity and tracking.
 - Still constrained by fzf's list layout and event model.
 
-This is viable, but it is a bridge rather than a clean long-term model.
+This bridge path is retired and is not supported.
 
 ### 3. Native picker TUI
 
 Introduce a picker abstraction and implement a native terminal UI for card rows,
-title-focused search, stable selection identity, and app-owned key handling. fzf
-remains the default backend until parity is reached.
+title-focused search, stable selection identity, and app-owned key handling.
 
 This best matches the desired product direction:
 
@@ -90,9 +73,9 @@ This best matches the desired product direction:
 
 ## Implemented Direction
 
-Do not extend the current fzf row format again as the main implementation. The
-previous hidden-field attempt showed that small fzf encoding changes can break
-selection and navigation in subtle ways.
+Do not extend the retired fzf row format again. The previous hidden-field attempt
+showed that small fzf encoding changes can break selection and navigation in
+subtle ways.
 
 Current implementation:
 
@@ -100,12 +83,8 @@ Current implementation:
   `SearchText`, `MetaLines`, `Badges`, and `PreviewTarget`.
 - `picker.Options` carries backend-neutral actions, preview metadata, prompt,
   footer, initial query, and multiline intent.
-- Native is the default backend and renders the popup/sidebar surfaces.
-- `PROJMUX_PICKER_BACKEND=fzf` opts into the external fzf runner. Native supports
-  multiline item rendering, title-focused search via `SearchText`, numeric
-  selection, and shared close actions.
-- Switcher popup/sidebar use the selected backend for preview and key action
-  parity, including native preview panes, raw-key navigation, and sidebar focus
-  tracking.
-
-fzf can stay as the stable fallback while the native picker continues to mature.
+- Native is the picker backend and renders the popup/sidebar surfaces.
+- Native supports multiline item rendering, title-focused search via
+  `SearchText`, numeric selection, and shared close actions.
+- Switcher popup/sidebar use native preview panes, raw-key navigation, and
+  sidebar focus tracking.

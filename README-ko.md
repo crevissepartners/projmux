@@ -27,10 +27,8 @@ notification, settings 사이를 오가고 싶을 때 사용합니다.
 
 - [Node.js](https://nodejs.org/)와 npm: 기본 설치 경로에 필요합니다.
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) **3.4 이상**.
-- [fzf](https://github.com/junegunn/fzf#installation) **0.65.0 이상**.
 
-설치 후 `projmux doctor`로 로컬 runtime을 확인하세요. 필요한 `fzf`는
-junegunn/fzf CLI binary입니다. `npm i fzf`는 다른 JavaScript library입니다.
+설치 후 `projmux doctor`로 로컬 runtime을 확인하세요.
 
 ## 설치
 

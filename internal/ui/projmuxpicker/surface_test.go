@@ -167,6 +167,33 @@ func TestInteractiveRowLinesUsesContinuationMarkerForSelectedMultiline(t *testin
 	}
 }
 
+func TestInteractiveRowLinesIndentsMetadataOneExtraColumn(t *testing.T) {
+	t.Parallel()
+
+	lines := InteractiveRowLines(Row{
+		Label:     "api",
+		MetaLines: []string{"~rp/api main"},
+	}, false, true)
+
+	if got, want := lines[1], "   ~rp/api main"; got != want {
+		t.Fatalf("metadata line = %q, want %q", got, want)
+	}
+}
+
+func TestInteractiveRowLinesIndentsSelectedMetadataAfterContinuation(t *testing.T) {
+	t.Parallel()
+
+	lines := InteractiveRowLines(Row{
+		Label:     "api",
+		MetaLines: []string{"~rp/api main"},
+	}, true, true)
+
+	plain := stripANSIForSurfaceTest(lines[1])
+	if got, want := plain, "▌  ~rp/api main"; got != want {
+		t.Fatalf("selected metadata line = %q, want %q", plain, want)
+	}
+}
+
 func TestInteractiveRowLinesUsesCompactSelectedMetaIndent(t *testing.T) {
 	t.Parallel()
 

@@ -57,7 +57,7 @@ type doctorDep struct {
 	// the binary name. Missing entries default to the binary name.
 	PackageNames map[string]string
 	// FallbackHint is a non-OS-specific extra suggestion appended after the
-	// detected install command (e.g. `go install` for fzf).
+	// detected install command.
 	FallbackHint string
 	// ManualInstallHint is rendered as guidance but is never treated as an
 	// automatically runnable install command.
@@ -92,16 +92,6 @@ type doctorResult struct {
 func doctorDeps() []doctorDep {
 	return []doctorDep{
 		{Name: "tmux", Required: true, Category: doctorCategoryCore, MinVersion: "3.4"},
-		{
-			Name:     "fzf",
-			Required: true,
-			Category: doctorCategoryCore,
-			ManualInstallHint: "install the junegunn/fzf CLI executable >= 0.65.0 from " +
-				"https://github.com/junegunn/fzf/releases, Homebrew, or another source that passes " +
-				"`fzf --version`; distro packages such as Ubuntu 24 apt may be too old; " +
-				"`npm i fzf` is a JavaScript library, not the CLI projmux executes",
-			MinVersion: "0.65.0",
-		},
 		{Name: "git", Required: true, Category: doctorCategoryWorkflow},
 		{Name: "stty", Required: true, Category: doctorCategoryWorkflow, SkipOnWindows: true},
 		{

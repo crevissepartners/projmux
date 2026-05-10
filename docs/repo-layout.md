@@ -22,6 +22,8 @@ projmux/
     state/
     ui/
       fzf/
+      picker/
+      projmuxpicker/
       render/
     version/
   docs/
@@ -36,7 +38,8 @@ projmux/
 - `cmd/projmux` contains only CLI wiring.
 - `internal/core` contains product behavior that should be testable without tmux.
 - `internal/integrations/tmux` should be the only place that knows tmux command strings and output formats.
-- `internal/ui/fzf` may depend on shelling out to `fzf`, but should call typed core services.
+- `internal/ui/picker` and `internal/ui/projmuxpicker` own native picker behavior.
+- `internal/ui/fzf` remains as a legacy option/result adapter; product code should route through the native picker.
 - `scripts/` is for development tooling only, not product logic.
 
 ## Early implementation order
@@ -46,5 +49,5 @@ projmux/
 3. `internal/core/pins`
 4. `internal/state`
 5. `internal/integrations/tmux`
-6. `internal/ui/fzf`
+6. `internal/ui/picker`
 7. CLI command wiring

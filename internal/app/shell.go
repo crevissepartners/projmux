@@ -45,14 +45,13 @@ type shellUpdateSkipState struct {
 
 func newShellCommand(update *updateCommand) *shellCommand {
 	return &shellCommand{
-		executable:         os.Executable,
-		lookupEnv:          os.Getenv,
-		homeDir:            os.UserHomeDir,
-		writeFile:          os.WriteFile,
-		runCommand:         runForegroundCommand,
-		update:             update,
-		updatePromptRunner: intfzf.NewRunner(),
-		nativePicker:       intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		executable:   os.Executable,
+		lookupEnv:    os.Getenv,
+		homeDir:      os.UserHomeDir,
+		writeFile:    os.WriteFile,
+		runCommand:   runForegroundCommand,
+		update:       update,
+		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 	}
 }
 
@@ -110,7 +109,7 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *shellCommand) promptForUpdate(stdout, stderr io.Writer) error {
-	if c.update == nil || c.updatePromptRunner == nil {
+	if c.update == nil || c.nativePicker == nil {
 		return nil
 	}
 	status, err := c.update.status()

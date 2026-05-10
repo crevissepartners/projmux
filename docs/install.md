@@ -18,8 +18,8 @@ After installing, run:
 projmux doctor
 ```
 
-`doctor` checks that runtime tools such as `tmux` and the junegunn/fzf CLI are
-available and new enough.
+`doctor` checks that runtime tools such as `tmux`, `git`, and `stty` are
+available.
 
 ## Runtime Tools
 
@@ -27,7 +27,6 @@ Normal use needs:
 
 - Node.js and npm for the npm install channel.
 - tmux 3.4 or newer.
-- fzf 0.65.0 or newer.
 
 Useful optional tools:
 

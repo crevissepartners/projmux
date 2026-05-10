@@ -41,11 +41,10 @@ Responsibilities:
 - convert failures into typed errors
 
 ### 3. UI orchestration
-Picker data is modeled independently from fzf rows. The app builds
+Picker data is modeled independently from row rendering. The app builds
 backend-neutral `picker.Item` values (`Title`, `Value`, `SearchText`,
-`MetaLines`, `Badges`, `PreviewTarget`) and then adapts them to the selected
-backend. Native is the default backend, while `PROJMUX_PICKER_BACKEND=fzf`
-keeps the external fzf backend available as an explicit fallback.
+`MetaLines`, `Badges`, `PreviewTarget`) and renders them through the native
+picker.
 
 Responsibilities:
 - rows for popup and sidebar views

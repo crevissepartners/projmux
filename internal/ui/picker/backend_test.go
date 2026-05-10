@@ -23,7 +23,7 @@ func TestResolveBackendDefaultsToNative(t *testing.T) {
 	}
 }
 
-func TestResolveBackendAllowsFZFOverride(t *testing.T) {
+func TestResolveBackendIgnoresLegacyFZFOverride(t *testing.T) {
 	t.Parallel()
 
 	got := ResolveBackend(func(name string) string {
@@ -32,8 +32,8 @@ func TestResolveBackendAllowsFZFOverride(t *testing.T) {
 		}
 		return "fzf"
 	})
-	if got != BackendFZF {
-		t.Fatalf("ResolveBackend(fzf) = %q, want %q", got, BackendFZF)
+	if got != BackendNative {
+		t.Fatalf("ResolveBackend(fzf) = %q, want %q", got, BackendNative)
 	}
 }
 
@@ -1553,6 +1553,34 @@ func TestNativeInteractiveKeepsMultilineScrollbarOnViewportTrack(t *testing.T) {
 	}
 	if scrollbarRows < 2 {
 		t.Fatalf("native output = %q, want proportional multiline scrollbar on viewport track", out.String())
+	}
+}
+
+func TestNativeInteractiveBackfillsBottomMultilineViewport(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 0, 8)
+	for i := range 8 {
+		items = append(items, Item{
+			Label: "item " + strconv.Itoa(i) + "\n  detail " + strconv.Itoa(i),
+			Value: strconv.Itoa(i),
+		})
+	}
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:        "sidebar",
+		Items:     items,
+		MultiLine: true,
+	}, items, "", len(items)-1, 0, nativeLayout{Rows: 10, Cols: 40})
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\r\n"), "\r\n")
+	if len(lines) < 2 {
+		t.Fatalf("native output = %q, want framed output", out.String())
+	}
+	lastContent := lines[len(lines)-2]
+	if !strings.Contains(lastContent, "detail 7") {
+		t.Fatalf("last content row = %q in %q, want final item tight to bottom border", lastContent, out.String())
 	}
 }
 

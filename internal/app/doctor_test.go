@@ -24,8 +24,6 @@ func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
 				switch name {
 				case "tmux":
 					return "tmux 3.6"
-				case "fzf":
-					return "0.71.0 (62899fd7)"
 				}
 				return name + " 1.2.3"
 			}
@@ -38,7 +36,7 @@ func TestDoctorRunAllRequiredPresentSucceeds(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true,
+		"tmux": true, "git": true, "stty": true, "kubectl": true,
 	})
 
 	var stdout, stderr bytes.Buffer
@@ -46,12 +44,12 @@ func TestDoctorRunAllRequiredPresentSucceeds(t *testing.T) {
 		t.Fatalf("Run() error = %v\nstderr=%s", err, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"[ok]", "tmux", "fzf", "git", "stty", "kubectl"} {
+	for _, want := range []string{"[ok]", "tmux", "git", "stty", "kubectl"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "5 ok, 0 missing, 0 stale, 0 skipped, 0 hint.") {
+	if !strings.Contains(out, "4 ok, 0 missing, 0 stale, 0 skipped, 0 hint.") {
 		t.Fatalf("summary line wrong:\n%s", out)
 	}
 }
@@ -60,7 +58,7 @@ func TestDoctorRunRequiredMissingReturnsError(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "fzf": true, "stty": true, "apt-get": true,
+		"tmux": true, "stty": true, "apt-get": true,
 	})
 
 	var stdout, stderr bytes.Buffer
@@ -81,7 +79,7 @@ func TestDoctorInstallMissingDryRunPrintsCommands(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "fzf": true, "stty": true, "apt-get": true,
+		"tmux": true, "stty": true, "apt-get": true,
 	})
 
 	var stdout bytes.Buffer
@@ -98,7 +96,7 @@ func TestDoctorInstallMissingRunsCommands(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "fzf": true, "stty": true, "apt-get": true,
+		"tmux": true, "stty": true, "apt-get": true,
 	})
 	var ran []string
 	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
@@ -123,7 +121,7 @@ func TestDoctorInstallMissingCanIncludeOptional(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("darwin", map[string]bool{
-		"tmux": true, "fzf": true, "git": true, "stty": true, "brew": true,
+		"tmux": true, "git": true, "stty": true, "brew": true,
 	})
 
 	var stdout bytes.Buffer
@@ -179,7 +177,7 @@ func TestDoctorEvaluateOptionalMissingIsHintNotError(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "fzf": true, "git": true, "stty": true,
+		"tmux": true, "git": true, "stty": true,
 	})
 
 	var stdout bytes.Buffer
@@ -193,7 +191,7 @@ func TestDoctorEvaluateOptionalMissingIsHintNotError(t *testing.T) {
 	if !strings.Contains(out, "optional; install if you use the kubectl switcher") {
 		t.Fatalf("hint note not rendered:\n%s", out)
 	}
-	if !strings.Contains(out, "4 ok, 0 missing, 0 stale, 0 skipped, 1 hint.") {
+	if !strings.Contains(out, "3 ok, 0 missing, 0 stale, 0 skipped, 1 hint.") {
 		t.Fatalf("summary line wrong:\n%s", out)
 	}
 }
@@ -202,7 +200,7 @@ func TestDoctorEvaluateSkipsSttyOnWindows(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("windows", map[string]bool{
-		"tmux": true, "fzf": true, "git": true, "kubectl": true,
+		"tmux": true, "git": true, "kubectl": true,
 	})
 
 	var stdout bytes.Buffer
@@ -222,7 +220,7 @@ func TestDoctorRunJSONOutputIsValid(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "fzf": true, "git": true, "stty": true,
+		"tmux": true, "git": true, "stty": true,
 	})
 
 	var stdout bytes.Buffer
@@ -234,8 +232,8 @@ func TestDoctorRunJSONOutputIsValid(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
 		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
 	}
-	if len(results) != 5 {
-		t.Fatalf("len(results) = %d, want 5", len(results))
+	if len(results) != 4 {
+		t.Fatalf("len(results) = %d, want 4", len(results))
 	}
 	byName := map[string]doctorResult{}
 	for _, r := range results {
@@ -316,20 +314,6 @@ func TestDetectInstallHintByOSAndPM(t *testing.T) {
 			want:    "scoop install git",
 		},
 		{
-			name:    "manual install hint suppresses linux apt command",
-			dep:     doctorDep{Name: "fzf", ManualInstallHint: "install the junegunn/fzf CLI >= 0.65.0"},
-			host:    "linux",
-			present: map[string]bool{"apt-get": true},
-			want:    "manual: install the junegunn/fzf CLI >= 0.65.0",
-		},
-		{
-			name:    "manual install hint works without package manager",
-			dep:     doctorDep{Name: "fzf", ManualInstallHint: "install the junegunn/fzf CLI >= 0.65.0"},
-			host:    "linux",
-			present: map[string]bool{},
-			want:    "manual: install the junegunn/fzf CLI >= 0.65.0",
-		},
-		{
 			name:    "linux no package manager returns empty",
 			dep:     doctorDep{Name: "git"},
 			host:    "linux",
@@ -370,60 +354,11 @@ func TestDetectInstallHintByOSAndPM(t *testing.T) {
 	}
 }
 
-func TestDoctorFzfHintIsManualCLIGuidance(t *testing.T) {
-	t.Parallel()
-
-	hosts := []struct {
-		name    string
-		host    string
-		present map[string]bool
-	}{
-		{"linux apt", "linux", map[string]bool{"apt-get": true}},
-		{"linux pacman", "linux", map[string]bool{"pacman": true}},
-		{"darwin brew", "darwin", map[string]bool{"brew": true}},
-		{"windows", "windows", map[string]bool{}},
-		{"linux bare", "linux", map[string]bool{}},
-	}
-
-	deps := doctorDeps()
-	var fzfDep doctorDep
-	for _, d := range deps {
-		if d.Name == "fzf" {
-			fzfDep = d
-			break
-		}
-	}
-	if fzfDep.Name == "" {
-		t.Fatalf("fzf dep not present in doctorDeps()")
-	}
-
-	for _, tc := range hosts {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			lookPath := func(name string) (string, error) {
-				if tc.present[name] {
-					return "/usr/bin/" + name, nil
-				}
-				return "", errors.New("not found")
-			}
-			got := detectInstallHint(fzfDep, tc.host, lookPath)
-			for _, want := range []string{"manual:", "junegunn/fzf CLI", "0.65.0", "`fzf --version`", "`npm i fzf`"} {
-				if !strings.Contains(got, want) {
-					t.Fatalf("fzf hint on %s missing %q: %q", tc.name, want, got)
-				}
-			}
-			if strings.Contains(got, "apt-get install") {
-				t.Fatalf("fzf hint should not imply apt installs a sufficient version: %q", got)
-			}
-		})
-	}
-}
-
 func TestDoctorRunWindowsMissingHintIncludesScoop(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("windows", map[string]bool{
-		"tmux": true, "fzf": true, "kubectl": true,
+		"tmux": true, "kubectl": true,
 	})
 
 	var stdout bytes.Buffer
@@ -440,7 +375,7 @@ func TestDoctorRunDarwinMissingHintIncludesBrew(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("darwin", map[string]bool{
-		"tmux": true, "fzf": true, "stty": true, "brew": true,
+		"tmux": true, "stty": true, "brew": true,
 	})
 
 	var stdout bytes.Buffer
@@ -457,7 +392,7 @@ func TestDoctorRunLinuxPacmanMissingHint(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "fzf": true, "stty": true, "pacman": true,
+		"tmux": true, "stty": true, "pacman": true,
 	})
 
 	var stdout bytes.Buffer
@@ -490,8 +425,6 @@ func newStubDoctorCommandWithVersions(host string, present map[string]bool, vers
 			switch name {
 			case "tmux":
 				return "tmux 3.6"
-			case "fzf":
-				return "0.71.0 (62899fd7)"
 			}
 			return name + " 1.2.3"
 		},
@@ -512,8 +445,8 @@ func TestParseDoctorVersion(t *testing.T) {
 		{"tmux 3.6", "tmux 3.6", 3, 6, 0, true},
 		{"tmux 3.4a", "tmux 3.4a", 3, 4, 0, true},
 		{"plain 3.4", "3.4", 3, 4, 0, true},
-		{"fzf full", "0.71.0 (62899fd7)", 0, 71, 0, true},
-		{"fzf devel", "0.54 (devel)", 0, 54, 0, true},
+		{"semver with suffix", "0.71.0 (62899fd7)", 0, 71, 0, true},
+		{"minor with suffix", "0.54 (devel)", 0, 54, 0, true},
 		{"git long", "git version 2.53.0", 2, 53, 0, true},
 		{"empty", "", 0, 0, 0, false},
 		{"unrecognized", "unrecognized", 0, 0, 0, false},
@@ -563,75 +496,12 @@ func TestVersionAtLeast(t *testing.T) {
 	}
 }
 
-func TestDoctorStaleFzfFailsRequired(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommandWithVersions(
-		"linux",
-		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
-		map[string]string{"fzf": "fzf 0.64.0 (distro build)"},
-	)
-
-	var stdout, stderr bytes.Buffer
-	err := cmd.Run(nil, &stdout, &stderr)
-	if err == nil {
-		t.Fatalf("Run() error = nil, want stale-required failure")
-	}
-	if !strings.Contains(err.Error(), "missing required dependencies") {
-		t.Fatalf("error = %v, want mention of missing required dependencies", err)
-	}
-	out := stdout.String()
-	for _, want := range []string{"[stale]", "fzf", "minimum 0.65.0; found fzf 0.64.0 (distro build)", "junegunn/fzf CLI", "`npm i fzf`"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "sudo apt-get install -y fzf") {
-		t.Fatalf("stale fzf guidance should not imply apt install is enough:\n%s", out)
-	}
-	if !strings.Contains(out, "1 stale") {
-		t.Fatalf("summary line missing stale count:\n%s", out)
-	}
-}
-
-func TestDoctorInstallMissingStaleFzfRequiresManualInstall(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommandWithVersions(
-		"linux",
-		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
-		map[string]string{"fzf": "0.64.0 (Ubuntu package)"},
-	)
-
-	var stdout bytes.Buffer
-	err := cmd.Run([]string{"--install-missing", "--dry-run"}, &stdout, &bytes.Buffer{})
-	if err == nil {
-		t.Fatalf("Run() error = nil, want manual install failure")
-	}
-	out := stdout.String()
-	for _, want := range []string{
-		"manual install required for fzf",
-		"junegunn/fzf CLI executable >= 0.65.0",
-		"Ubuntu 24 apt may be too old",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "would install fzf: sudo apt-get install") {
-		t.Fatalf("install-missing should not dry-run apt for stale fzf:\n%s", out)
-	}
-	if !strings.Contains(err.Error(), "manual install required for fzf") {
-		t.Fatalf("Run() error = %v, want manual install mention", err)
-	}
-}
-
 func TestDoctorStaleTmuxFailsRequired(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
+		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
 		map[string]string{"tmux": "tmux 3.2"},
 	)
 
@@ -661,7 +531,7 @@ func TestDoctorNoMinVersionSkipsCheck(t *testing.T) {
 	// version comparison happens even if the version output is empty.
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true},
+		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true},
 		map[string]string{"git": "", "stty": "", "kubectl": ""},
 	)
 
@@ -673,7 +543,7 @@ func TestDoctorNoMinVersionSkipsCheck(t *testing.T) {
 	if strings.Contains(out, "[stale]") {
 		t.Fatalf("output should not flag any dep as stale:\n%s", out)
 	}
-	if !strings.Contains(out, "5 ok, 0 missing, 0 stale, 0 skipped, 0 hint.") {
+	if !strings.Contains(out, "4 ok, 0 missing, 0 stale, 0 skipped, 0 hint.") {
 		t.Fatalf("summary line wrong:\n%s", out)
 	}
 }
@@ -683,33 +553,33 @@ func TestDoctorVersionParseFailureDoesNotMarkStale(t *testing.T) {
 
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true},
-		map[string]string{"fzf": ""},
+		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true},
+		map[string]string{"tmux": ""},
 	)
 
 	results := cmd.evaluate()
-	var fzf doctorResult
+	var tmux doctorResult
 	for _, r := range results {
-		if r.Name == "fzf" {
-			fzf = r
+		if r.Name == "tmux" {
+			tmux = r
 			break
 		}
 	}
-	if fzf.Name == "" {
-		t.Fatalf("fzf result missing")
+	if tmux.Name == "" {
+		t.Fatalf("tmux result missing")
 	}
-	if fzf.Status != doctorStatusOK {
-		t.Fatalf("fzf status = %q, want ok (parse glitch should not mark stale)", fzf.Status)
+	if tmux.Status != doctorStatusOK {
+		t.Fatalf("tmux status = %q, want ok (parse glitch should not mark stale)", tmux.Status)
 	}
 }
 
-func TestDoctorStaleFzfSerializesToJSON(t *testing.T) {
+func TestDoctorStaleTmuxSerializesToJSON(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "fzf": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
-		map[string]string{"fzf": "0.64.0 (devel)"},
+		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
+		map[string]string{"tmux": "tmux 3.2"},
 	)
 
 	var stdout bytes.Buffer
@@ -725,15 +595,15 @@ func TestDoctorStaleFzfSerializesToJSON(t *testing.T) {
 	for _, r := range results {
 		byName[r.Name] = r
 	}
-	fzf, ok := byName["fzf"]
+	tmux, ok := byName["tmux"]
 	if !ok {
-		t.Fatalf("fzf result missing from JSON output")
+		t.Fatalf("tmux result missing from JSON output")
 	}
-	if fzf.Status != doctorStatusStale {
-		t.Fatalf("fzf JSON status = %q, want stale", fzf.Status)
+	if tmux.Status != doctorStatusStale {
+		t.Fatalf("tmux JSON status = %q, want stale", tmux.Status)
 	}
-	if fzf.Hint == "" {
-		t.Fatalf("fzf JSON hint unset, want minimum/found message")
+	if tmux.Hint == "" {
+		t.Fatalf("tmux JSON hint unset, want minimum/found message")
 	}
 	if !strings.Contains(string(stdout.Bytes()), `"status": "stale"`) {
 		t.Fatalf("raw JSON missing %q:\n%s", `"status": "stale"`, stdout.String())

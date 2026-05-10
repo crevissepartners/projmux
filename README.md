@@ -27,11 +27,8 @@ keys to move between projects, windows, panes, notifications, and settings.
 
 - [Node.js](https://nodejs.org/) and npm, for the main install path.
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) **3.4 or newer**.
-- [fzf](https://github.com/junegunn/fzf#installation) **0.65.0 or newer**.
 
-Run `projmux doctor` after installing to check the local runtime. The `fzf`
-requirement is the junegunn/fzf CLI binary; `npm i fzf` is a different
-JavaScript library.
+Run `projmux doctor` after installing to check the local runtime.
 
 ## Install
 
