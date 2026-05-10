@@ -71,6 +71,22 @@ func TestRenderableListLinePadsUnselectedStyleAfterReset(t *testing.T) {
 	}
 }
 
+func TestRenderableListLineRendersGapAtFullListWidth(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderableListLine(gapSentinel, 12)
+
+	if strings.HasPrefix(rendered, " ") {
+		t.Fatalf("RenderableListLine(gap) = %q, want no leading indent", rendered)
+	}
+	if got := VisibleLen(rendered); got != 12 {
+		t.Fatalf("VisibleLen(RenderableListLine(gap)) = %d, want 12", got)
+	}
+	if !strings.Contains(rendered, strings.Repeat(GapLine, 12)) {
+		t.Fatalf("RenderableListLine(gap) = %q, want full-width gap line", rendered)
+	}
+}
+
 func TestInteractiveRowLinesUsesCurrentStyleForSimpleSelection(t *testing.T) {
 	t.Parallel()
 

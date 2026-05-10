@@ -228,10 +228,10 @@ func RenderableListLine(line string, width int) string {
 	if line != gapSentinel {
 		return PadStyledLine(line, width)
 	}
-	if width <= 4 {
-		return SeparatorLine(1)
+	if width <= 0 {
+		return ""
 	}
-	return "  " + SeparatorLine(width-2)
+	return SeparatorLine(width)
 }
 
 func PadStyledLine(line string, width int) string {
