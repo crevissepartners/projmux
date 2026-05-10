@@ -33,9 +33,10 @@ The fzf compatibility surface for the native engine is tracked in
   expect keys such as notify `Ctrl-X`, `start:pos(N)` initial focus, preview
   command output, preview cycle command bindings, and sidebar focus command
   bindings.
-- FZF-style movement keys are supported for native selection: `Ctrl-N` moves
-  down, while `Ctrl-P` and `Ctrl-K` move up unless the app claims the key as a
-  custom action.
+- FZF-style movement keys are supported for native selection: `Ctrl-N` and
+  `Ctrl-J` move down, while `Ctrl-P` and `Ctrl-K` move up unless the app claims
+  the key as a custom action. Up/down-family movement wraps at list boundaries;
+  PageUp/PageDown and Home/End remain clamped or explicit jumps.
 - Typed-query prompts support cursor-aware insertion/deletion with a visible
   prompt cursor, Left/Right, Ctrl-A/E, Delete, Backspace, Ctrl-U, and Ctrl-W
   for settings path entry.
