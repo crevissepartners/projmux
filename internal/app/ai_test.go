@@ -82,14 +82,14 @@ func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	if got, want := runner.options.UI, "ai-settings"; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
-	if got, want := runner.options.Title, "AI Settings"; got != want {
+	if got, want := runner.options.Title, "AI Settings - Default Ctrl+Shift+R/L split mode"; got != want {
 		t.Fatalf("runner title = %q, want %q", got, want)
 	}
 	if got, want := runner.options.Prompt, "AI Setting > "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := runner.options.Header, "Default Ctrl+Shift+R/L split mode"; got != want {
-		t.Fatalf("runner header = %q, want %q", got, want)
+	if got := runner.options.Header; got != "" {
+		t.Fatalf("runner header = %q, want description only in title", got)
 	}
 	if got, want := runner.options.Footer, "Enter: set default  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
@@ -111,11 +111,11 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	if got, want := runner.options.UI, "ai-picker"; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
-	if got, want := runner.options.Title, "AI Launch"; got != want {
+	if got, want := runner.options.Title, "AI Launch - Split direction: right"; got != want {
 		t.Fatalf("runner title = %q, want %q", got, want)
 	}
-	if got, want := runner.options.Header, "Split direction: right"; got != want {
-		t.Fatalf("runner header = %q, want %q", got, want)
+	if got := runner.options.Header; got != "" {
+		t.Fatalf("runner header = %q, want direction only in title", got)
 	}
 	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiModeClaude, aiModeShell}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("runner entry order = %#v, want %#v", got, want)

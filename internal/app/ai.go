@@ -581,9 +581,8 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 		UI:         "ai-settings",
 		Entries:    c.settingsRows(),
-		Title:      "AI Settings",
+		Title:      "AI Settings - Default Ctrl+Shift+R/L split mode",
 		Prompt:     "AI Setting > ",
-		Header:     "Default Ctrl+Shift+R/L split mode",
 		Footer:     projmuxFooter("Enter: set default  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-5", "ctrl-alt-s", "alt-4"),
@@ -607,9 +606,8 @@ func (c *aiCommand) runAgentPicker(direction string) (intfzf.Result, error) {
 	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intfzf.Options{
 		UI:         "ai-picker",
 		Entries:    c.agentRows(),
-		Title:      "AI Launch",
+		Title:      "AI Launch - Split direction: " + direction,
 		Prompt:     "AI Launch > ",
-		Header:     "Split direction: " + direction,
 		Footer:     projmuxFooter("Enter: launch  |  Esc/Alt+4/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-4", "alt-5", "ctrl-alt-s"),
