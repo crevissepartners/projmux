@@ -176,16 +176,26 @@ func defaultTrustStorePath() string {
 	return filepath.Join(paths.StateDir, trustedProjectsFileName)
 }
 
-func TrustProjectConfig(repoPath, trustStorePath string) (string, error) {
+// TrustProjectFile hashes the file at repoPath/relPath and records the hash
+// in the trust store so the runner will accept it on the next invocation.
+// relPath must be a slash-separated path relative to the repo root (e.g.
+// ".projmux/config.toml" or ".projmux/hooks/post-create"). An empty relPath is
+// rejected to keep callers explicit about which surface they trust.
+func TrustProjectFile(repoPath, relPath, trustStorePath string) (string, error) {
 	repoPath = strings.TrimSpace(repoPath)
 	if repoPath == "" {
 		return "", errors.New("repo path is required")
+	}
+	relPath = strings.TrimSpace(relPath)
+	if relPath == "" {
+		return "", errors.New("relative path is required")
 	}
 	repo, err := filepath.Abs(repoPath)
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(repo, projectConfigRelativePath)
+	rel := filepath.ToSlash(filepath.Clean(relPath))
+	path := filepath.Join(repo, filepath.FromSlash(rel))
 	sum, _, err := hashHookFile(path)
 	if err != nil {
 		return "", err
@@ -200,11 +210,17 @@ func TrustProjectConfig(repoPath, trustStorePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	store.trust(repo, projectConfigRelativePath, sum, time.Now().UTC())
+	store.trust(repo, rel, sum, time.Now().UTC())
 	if err := store.save(trustStorePath); err != nil {
 		return "", err
 	}
 	return sum, nil
+}
+
+// TrustProjectConfig is a thin wrapper around TrustProjectFile that targets
+// the well-known .projmux/config.toml file.
+func TrustProjectConfig(repoPath, trustStorePath string) (string, error) {
+	return TrustProjectFile(repoPath, projectConfigRelativePath, trustStorePath)
 }
 
 func loadTrustedProjects(path string) (trustedProjects, error) {

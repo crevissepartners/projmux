@@ -91,6 +91,9 @@ var settingsEntryPrefixCatalog = []struct {
 }{
 	{settingsActionPrefixAI, settingsEntryMeta{Name: "AI Settings", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHooks, settingsEntryMeta{Name: "Project hook policy", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixHookAdd, settingsEntryMeta{Name: "Hook maker - add", Axis: settingsAxisBoth}},
+	{settingsActionPrefixHookEdit, settingsEntryMeta{Name: "Hook maker - edit", Axis: settingsAxisBoth}},
+	{settingsActionPrefixHookRemove, settingsEntryMeta{Name: "Hook maker - remove", Axis: settingsAxisBoth}},
 	{settingsActionPrefixKeymap, settingsEntryMeta{Name: "Keybindings", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixLabKeymap, settingsEntryMeta{Name: "Keybinding diagnostics", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixPicker, settingsEntryMeta{Name: "Picker backend", Axis: settingsAxisGlobal}},
@@ -223,6 +226,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionProjectHooks {
 		return c.runProjectHooksSection(stdout, stderr)
+	}
+	if section == settingsSectionGlobalHooks {
+		return c.runGlobalHooksSection(stdout, stderr)
 	}
 	if section == settingsSectionProjectConfig {
 		return c.runProjectConfigSection(stdout, stderr)
@@ -581,7 +587,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.globalHookEntries(),
 			Title:      "Hooks - Global lifecycle hook paths",
 			Prompt:     "Settings > Hooks > ",
-			Footer:     projmuxFooter("Enter: inspect  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -592,7 +598,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.projectHookEntries(ctx),
 			Title:      "Hooks - Project lifecycle hook paths",
 			Prompt:     "Settings > Project > Hooks > ",
-			Footer:     projmuxFooter("Enter: inspect  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil

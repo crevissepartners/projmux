@@ -202,8 +202,12 @@ run = "echo post"
 			if !hasEntryValue(options.Entries, settingsActionPrefixProjectConfig+"startup:set") {
 				t.Fatalf("project config entries = %#v, want startup set action", options.Entries)
 			}
-			if !hasEntryLabelContaining(options.Entries, "1 preserved") {
-				t.Fatalf("project config entries = %#v, want hook commands preserved row", options.Entries)
+			// Phase 2.5 (A): hook commands are authored from the Hooks page,
+			// so the config.toml section must not advertise them. The labels
+			// "Hook commands" / "preserved" only appear when the legacy row
+			// is rendered.
+			if hasEntryLabelContaining(options.Entries, "Hook commands") {
+				t.Fatalf("project config entries = %#v, want no hook commands row", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "startup:set"}, nil
 		case 4:
@@ -343,4 +347,365 @@ func assertEntryLabelContainsAll(t *testing.T, entries []intpickercompat.Entry, 
 		}
 	}
 	t.Fatalf("entries = %#v, want one label containing all %#v", entries, parts)
+}
+
+// --- Phase 2.5 hook maker tests -------------------------------------------
+
+// hookMakerTestSettings builds a settingsCommand wired so it can drive the
+// project hook page using a scripted runner. The runner is the same one
+// returned, so callers can mutate it between calls if needed.
+func hookMakerTestSettings(t *testing.T, home, configHome, stateHome, repo string, run func(intpickercompat.Options) (intpickercompat.Result, error)) *settingsCommand {
+	t.Helper()
+	runner := switchRunnerFunc(run)
+	return &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			switch name {
+			case "PROJMUX_CWD":
+				return repo
+			case "XDG_CONFIG_HOME":
+				return configHome
+			case "XDG_STATE_HOME":
+				return stateHome
+			default:
+				return ""
+			}
+		},
+		runner:       runner,
+		nativePicker: nativePickerFromCompatRunner(runner),
+	}
+}
+
+func TestSettingsHookMakerProjectAddDeclarativeWritesConfigAndTrusts(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+	repo := t.TempDir()
+
+	var calls int
+	cmd := hookMakerTestSettings(t, home, configHome, stateHome, repo, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			// Page render: expect [+ Add] declarative row for post-create.
+			if !hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"project:post-create") {
+				t.Fatalf("hook entries = %#v, want declarative add for post-create", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookAdd + "project:post-create"}, nil
+		case 2:
+			// Add branch picker.
+			if !hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"project:post-create:declarative") {
+				t.Fatalf("add picker = %#v, want declarative branch", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookAdd + "project:post-create:declarative"}, nil
+		case 3:
+			// Typed field for [hooks.post-create] run.
+			if options.UI != "settings-project-config-typed" {
+				t.Fatalf("typed UI = %q", options.UI)
+			}
+			return intpickercompat.Result{Key: "enter", Query: "echo from-declarative"}, nil
+		case 4:
+			// Page refresh — declarative row is now active.
+			if !hasEntryLabelContaining(options.Entries, "echo from-declarative") {
+				t.Fatalf("refreshed entries = %#v, want declarative active", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		default:
+			t.Fatalf("unexpected runner call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.runProjectHooksSection(&stdout, &stderr); err != nil {
+		t.Fatalf("runProjectHooksSection: %v", err)
+	}
+	configPath := filepath.Join(repo, ".projmux", "config.toml")
+	body := readFile(t, configPath)
+	if !strings.Contains(body, "[hooks.post-create]") || !strings.Contains(body, `run = "echo from-declarative"`) {
+		t.Fatalf("config.toml =\n%s\nwant [hooks.post-create] run line", body)
+	}
+	trustStore := readFile(t, filepath.Join(stateHome, "projmux", "trusted-projects.json"))
+	if !strings.Contains(trustStore, ".projmux/config.toml") {
+		t.Fatalf("trust store = %s, want config.toml trust", trustStore)
+	}
+}
+
+func TestSettingsHookMakerProjectAddScriptCreatesAndTrusts(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+	repo := t.TempDir()
+
+	var editedPath string
+	var calls int
+	cmd := hookMakerTestSettings(t, home, configHome, stateHome, repo, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			if !hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"project:post-create") {
+				t.Fatalf("page entries = %#v, want post-create add", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookAdd + "project:post-create"}, nil
+		case 2:
+			if !hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"project:post-create:script") {
+				t.Fatalf("add picker = %#v, want script branch", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookAdd + "project:post-create:script"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		default:
+			t.Fatalf("unexpected runner call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.runCommand = func(name string, args ...string) error {
+		if len(args) == 0 {
+			t.Fatalf("editor invoked without path: %s", name)
+		}
+		editedPath = args[len(args)-1]
+		// Simulate a user save: append a comment line.
+		body, err := os.ReadFile(editedPath)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(editedPath, append(body, []byte("# edited by test\n")...), 0o755)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.runProjectHooksSection(&stdout, &stderr); err != nil {
+		t.Fatalf("runProjectHooksSection: %v", err)
+	}
+	wantPath := filepath.Join(repo, ".projmux", "hooks", "post-create")
+	if editedPath != wantPath {
+		t.Fatalf("editor opened %q, want %q", editedPath, wantPath)
+	}
+	info, err := os.Stat(wantPath)
+	if err != nil {
+		t.Fatalf("stat hook: %v", err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("hook %s not executable: %v", wantPath, info.Mode())
+	}
+	trustStore := readFile(t, filepath.Join(stateHome, "projmux", "trusted-projects.json"))
+	if !strings.Contains(trustStore, ".projmux/hooks/post-create") {
+		t.Fatalf("trust store = %s, want hook script trusted", trustStore)
+	}
+	if !strings.Contains(trustStore, repo) {
+		t.Fatalf("trust store = %s, want repo entry", trustStore)
+	}
+}
+
+func TestSettingsHookMakerEditScriptUpdatesTrustHash(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+	repo := t.TempDir()
+
+	hookPath := filepath.Join(repo, ".projmux", "hooks", "post-create")
+	mkdirAll(t, filepath.Dir(hookPath))
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\necho original\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-seed trust with an outdated hash so we can verify the edit updates it.
+	trustPath := filepath.Join(stateHome, "projmux", "trusted-projects.json")
+	mkdirAll(t, filepath.Dir(trustPath))
+	const staleHash = "0000000000000000000000000000000000000000000000000000000000000000"
+	staleTrust := `{"` + repo + `":{"trusted_at":"2024-01-01T00:00:00Z","files":{".projmux/hooks/post-create":{"sha256":"` + staleHash + `","trusted_at":"2024-01-01T00:00:00Z"}}}}`
+	if err := os.WriteFile(trustPath, []byte(staleTrust), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls int
+	cmd := hookMakerTestSettings(t, home, configHome, stateHome, repo, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			if !hasEntryValue(options.Entries, settingsActionPrefixHookEdit+"script:project:post-create") {
+				t.Fatalf("entries = %#v, want script edit row", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookEdit + "script:project:post-create"}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		default:
+			t.Fatalf("unexpected runner call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.runCommand = func(name string, args ...string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		path := args[len(args)-1]
+		return os.WriteFile(path, []byte("#!/bin/sh\necho updated\n"), 0o755)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.runProjectHooksSection(&stdout, &stderr); err != nil {
+		t.Fatalf("runProjectHooksSection: %v", err)
+	}
+	trustBody := readFile(t, trustPath)
+	if strings.Contains(trustBody, staleHash) {
+		t.Fatalf("trust store still has stale hash:\n%s", trustBody)
+	}
+	if !strings.Contains(trustBody, ".projmux/hooks/post-create") {
+		t.Fatalf("trust store missing entry:\n%s", trustBody)
+	}
+}
+
+func TestSettingsHookMakerHooksPageRendersBothSources(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	// Active script hook.
+	scriptPath := filepath.Join(repo, ".projmux", "hooks", "post-create")
+	mkdirAll(t, filepath.Dir(scriptPath))
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Declarative hook for the same event.
+	cfgPath := filepath.Join(repo, ".projmux", "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(`
+[hooks.post-create]
+run = "echo declared"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &settingsCommand{
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return repo
+			}
+			return ""
+		},
+	}
+	entries := cmd.projectHookEntries(cmd.resolveSettingsProjectContext())
+	// Expect a script row (active) and a declarative row (active) for
+	// post-create — distinguishable by their source label suffixes.
+	if !hasEntryValue(entries, settingsActionPrefixHookEdit+"script:project:post-create") {
+		t.Fatalf("entries missing script edit row: %#v", entries)
+	}
+	if !hasEntryValue(entries, settingsActionPrefixHookEdit+"declarative:project:post-create") {
+		t.Fatalf("entries missing declarative edit row: %#v", entries)
+	}
+	assertEntryLabelContainsAll(t, entries, "post-create", "(script)")
+	assertEntryLabelContainsAll(t, entries, "post-create", "(declarative)", "echo declared")
+}
+
+func TestSettingsHookMakerGlobalPageSkipsTrust(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+
+	var editedPath string
+	var calls int
+	cmd := hookMakerTestSettings(t, home, configHome, stateHome, "", func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			if !hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"global:post-create") {
+				t.Fatalf("global hook entries = %#v, want add row", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookAdd + "global:post-create"}, nil
+		case 2:
+			// Branch picker still appears, but declarative is disabled for
+			// global. Pick script.
+			if !hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"global:post-create:script") {
+				t.Fatalf("branch picker = %#v, want script", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookAdd + "global:post-create:script"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		default:
+			t.Fatalf("unexpected runner call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.runCommand = func(name string, args ...string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		editedPath = args[len(args)-1]
+		return nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.runGlobalHooksSection(&stdout, &stderr); err != nil {
+		t.Fatalf("runGlobalHooksSection: %v", err)
+	}
+	wantPath := filepath.Join(configHome, "projmux", "hooks", "post-create")
+	if editedPath != wantPath {
+		t.Fatalf("editor opened %q, want %q", editedPath, wantPath)
+	}
+	info, err := os.Stat(wantPath)
+	if err != nil {
+		t.Fatalf("stat global hook: %v", err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("global hook not executable: %v", info.Mode())
+	}
+	// Global edits must not write a trust store entry.
+	if _, err := os.Stat(filepath.Join(stateHome, "projmux", "trusted-projects.json")); !os.IsNotExist(err) {
+		t.Fatalf("trust store stat = %v, want missing (global hooks bypass trust)", err)
+	}
+}
+
+func TestSettingsHookMakerExcludesInternalEventsFromAdd(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	cmd := &settingsCommand{
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return repo
+			}
+			return ""
+		},
+	}
+	entries := cmd.projectHookEntries(cmd.resolveSettingsProjectContext())
+	for _, banned := range []string{"after-select-pane", "pane-focus-in", "pane-focus-out"} {
+		for _, entry := range entries {
+			if strings.Contains(entry.Value, banned) {
+				t.Fatalf("entry %#v exposes internal event %q", entry, banned)
+			}
+		}
+	}
+}
+
+func TestSettingsHookMakerConfigSectionHasNoHookCommandsRow(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	cfgPath := filepath.Join(repo, ".projmux", "config.toml")
+	writeFile(t, cfgPath, `
+[hooks.post-create]
+run = "echo a"
+
+[hooks.pane-startup]
+run = "echo b"
+`)
+	cmd := &settingsCommand{
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return repo
+			}
+			return ""
+		},
+	}
+	ctx := cmd.resolveSettingsProjectContext()
+	entries := cmd.projectConfigEntries(ctx)
+	for _, entry := range entries {
+		if strings.Contains(entry.Label, "Hook commands") {
+			t.Fatalf("config.toml section still renders hook commands row: %#v", entry)
+		}
+	}
 }
