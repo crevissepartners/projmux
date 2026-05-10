@@ -28,7 +28,7 @@ func defaultLifecycleHookRunner() *hooks.Runner {
 		return nil
 	}
 	prompt := hooks.ProjectHookPrompt(nil)
-	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
+	if strings.TrimSpace(os.Getenv("TMUX")) != "" && strings.TrimSpace(os.Getenv(hookTrustInlineEnv)) == "" {
 		prompt = tmuxProjectHookPrompt(os.Getenv, os.Executable, inttmux.ExecRunner{})
 	}
 	return &hooks.Runner{

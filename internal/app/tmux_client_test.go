@@ -57,3 +57,20 @@ func TestDefaultLifecycleHookRunnerUsesPopupPromptInsideTmux(t *testing.T) {
 		t.Fatal("ProjectHookPrompt = nil inside tmux, want popup prompt")
 	}
 }
+
+func TestDefaultLifecycleHookRunnerUsesTerminalPromptWhenInlineTrustSet(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	t.Setenv("TMUX", "/tmp/tmux/default,1,0")
+	t.Setenv(hookTrustInlineEnv, "1")
+
+	runner := defaultLifecycleHookRunner()
+	if runner == nil {
+		t.Fatal("defaultLifecycleHookRunner() = nil")
+	}
+	if runner.ProjectHookPrompt != nil {
+		t.Fatal("ProjectHookPrompt = non-nil with inline trust env, want terminal fallback")
+	}
+}

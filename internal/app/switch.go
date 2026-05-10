@@ -28,6 +28,7 @@ const (
 	switchUIFlag             = "ui"
 	switchUIPopup            = "popup"
 	switchUISidebar          = "sidebar"
+	switchOpenTrustPopup     = "open"
 	switchKillExpectKey      = "ctrl-x"
 	switchPinExpectKey       = "alt-p"
 	switchSettingsSentinel   = "__projmux_settings__"
@@ -97,6 +98,7 @@ type switchCommand struct {
 	pinStore        switchPinStoreFactory
 	tagStore        switchTagStoreFactory
 	runner          switchRunner
+	tmuxRunner      tmuxRunner
 	sessions        switchSessionExecutor
 	previewStore    switchPreviewStore
 	previewStoreErr error
@@ -147,6 +149,7 @@ func newSwitchCommand() *switchCommand {
 		discover:     candidates.Discover,
 		pinStore:     newDefaultSwitchPinStore,
 		tagStore:     newDefaultSwitchTagStore,
+		tmuxRunner:   inttmux.ExecRunner{},
 		sessions:     client,
 		inventory:    tmuxPreviewInventory{client: client},
 		executable:   os.Executable,
@@ -202,6 +205,8 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return c.runTogglePin(args[1:], stdout, stderr)
 		case "kill":
 			return c.runKill(args[1:], stdout, stderr)
+		case "open":
+			return c.runOpen(args[1:], stderr)
 		case "settings":
 			return c.runSettings(stdout, stderr)
 		case "preview":
@@ -353,6 +358,23 @@ func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return c.killFocusedSession(context.Background(), sessionName, "", stdout)
+}
+
+func (c *switchCommand) runOpen(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("switch open", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printSwitchUsage(stderr)
+	}
+	if err := fs.Parse(args); err != nil {
+		printSwitchUsage(stderr)
+		return err
+	}
+	if fs.NArg() != 1 {
+		printSwitchUsage(stderr)
+		return fmt.Errorf("switch open requires exactly 1 argument: <path>")
+	}
+	return c.openTarget(context.Background(), cleanOptionalPath(fs.Arg(0)))
 }
 
 func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) error {
@@ -1401,14 +1423,122 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		return false, fmt.Errorf("switch session executor is not configured")
 	}
 
-	if err := c.sessions.EnsureSession(ctx, plan.SessionName, plan.Selection); err != nil {
-		return false, fmt.Errorf("ensure tmux session %q: %w", plan.SessionName, err)
-	}
-	if err := c.sessions.OpenSession(ctx, plan.SessionName); err != nil {
-		return false, fmt.Errorf("open tmux session %q: %w", plan.SessionName, err)
+	if plan.UI == switchUISidebar && c.projectMayNeedHookTrust(plan.Selection) {
+		exists, err := c.switchSessionExists(ctx, plan.SessionName)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			return false, c.openTarget(ctx, plan.Selection)
+		}
+		if err := c.launchSidebarOpenPopup(ctx, plan.Selection); err != nil {
+			return false, err
+		}
+		return false, nil
 	}
 
+	if err := c.openTarget(ctx, plan.Selection); err != nil {
+		return false, err
+	}
 	return false, nil
+}
+
+func (c *switchCommand) openTarget(ctx context.Context, target string) error {
+	target = cleanOptionalPath(target)
+	if target == "" || target == switchSettingsSentinel {
+		return nil
+	}
+	if c.identityErr != nil {
+		return fmt.Errorf("configure session identity resolver: %w", c.identityErr)
+	}
+	if c.identity == nil {
+		return fmt.Errorf("switch session identity resolver is not configured")
+	}
+	if c.sessions == nil {
+		return fmt.Errorf("switch session executor is not configured")
+	}
+
+	sessionName, err := c.identity.SessionIdentityForPath(target)
+	if err != nil {
+		return fmt.Errorf("resolve switch session identity: %w", err)
+	}
+	if sessionName == "" {
+		return fmt.Errorf("switch command requires a target session")
+	}
+	if err := c.sessions.EnsureSession(ctx, sessionName, target); err != nil {
+		return fmt.Errorf("ensure tmux session %q: %w", sessionName, err)
+	}
+	if err := c.sessions.OpenSession(ctx, sessionName); err != nil {
+		return fmt.Errorf("open tmux session %q: %w", sessionName, err)
+	}
+	return nil
+}
+
+func (c *switchCommand) launchSidebarOpenPopup(ctx context.Context, target string) error {
+	if c.tmuxRunner == nil {
+		return fmt.Errorf("switch tmux runner is not configured")
+	}
+	if c.executable == nil {
+		return fmt.Errorf("switch executable resolver is not configured")
+	}
+	binaryPath, err := c.executable()
+	if err != nil {
+		return fmt.Errorf("resolve switch executable: %w", err)
+	}
+	command := strings.Join([]string{
+		tmuxShellQuote(binaryPath),
+		"switch",
+		switchOpenTrustPopup,
+		tmuxShellQuote(target),
+	}, " ")
+	args, err := inttmux.BuildDisplayPopupArgs(command, inttmux.PopupOptions{
+		Client:        strings.TrimSpace(c.env(hookTrustPopupTargetClientEnv)),
+		CloseBehavior: inttmux.PopupCloseOnExit,
+		Cwd:           target,
+		Env: map[string]string{
+			hookTrustInlineEnv: "1",
+		},
+		Width:  hookTrustPopupWidth,
+		Height: hookTrustPopupHeight,
+		Title:  "Open project",
+	})
+	if err != nil {
+		return fmt.Errorf("build switch open popup: %w", err)
+	}
+	displayCommand := tmuxShellCommand(append([]string{"tmux"}, args...)...)
+	if _, err := c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", "sleep 0.05; "+displayCommand); err != nil {
+		return fmt.Errorf("launch switch open popup: %w", err)
+	}
+	return nil
+}
+
+func (c *switchCommand) projectMayNeedHookTrust(target string) bool {
+	target = cleanOptionalPath(target)
+	if target == "" {
+		return false
+	}
+	paths := []string{
+		filepath.Join(target, ".projmux", "config.toml"),
+		filepath.Join(target, ".projmux", "post-create"),
+		filepath.Join(target, ".projmux", "hooks", "pre-create"),
+		filepath.Join(target, ".projmux", "hooks", "post-create"),
+		filepath.Join(target, ".projmux", "hooks", "pane-startup"),
+		filepath.Join(target, ".projmux", "hooks", "post-attach"),
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func tmuxShellCommand(parts ...string) string {
+	quoted := make([]string, 0, len(parts))
+	for _, part := range parts {
+		quoted = append(quoted, tmuxShellQuote(part))
+	}
+	return strings.Join(quoted, " ")
 }
 
 func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Writer) error {
@@ -2077,6 +2207,7 @@ func printSwitchUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux switch toggle-tag [path]")
 	fmt.Fprintln(w, "  projmux switch toggle-pin [path]")
 	fmt.Fprintln(w, "  projmux switch kill [path]")
+	fmt.Fprintln(w, "  projmux switch open <path>")
 	fmt.Fprintln(w, "  projmux switch settings")
 	fmt.Fprintln(w, "  projmux switch preview [path]")
 	fmt.Fprintln(w, "  projmux switch cycle-pane <path> <next|prev>")
