@@ -15,6 +15,17 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
+)
+
+// tmux 256-color tone tokens shared with the projmux picker chip primitives.
+// Both surfaces source from the same palette so the popup tab chip strip
+// stays visually congruent with the tmux window-status row.
+const (
+	tmuxWindowInactiveBg = projmuxpicker.TmuxWindowInactiveBg
+	tmuxWindowInactiveFg = projmuxpicker.TmuxWindowInactiveFg
+	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
+	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
 )
 
 type tmuxPopupClient interface {
@@ -928,8 +939,8 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decoration config.Statusb
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
 		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
 		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
-		"set -g window-status-format "+tmuxConfigQuote("#[fg=colour245,bg=colour235] #("+bin+" attention window #{window_id})#[fg=colour245] #I #W #[default]"),
-		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg=colour231,bg=colour238] #("+bin+" attention window #{window_id})#[fg=colour231] #I #W #[default]"),
+		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tmuxWindowInactiveFg+",bg="+tmuxWindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowInactiveFg+"] #I #W #[default]"),
+		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tmuxWindowActiveFg+",bg="+tmuxWindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowActiveFg+"] #I #W #[default]"),
 		"set -g status 2",
 		"set -g status-right-length 140",
 		"set -g status-left "+tmuxConfigQuote("#[range=user|session][#S] #[norange]"),
@@ -998,7 +1009,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 		"set -g automatic-rename-format \"#{pane_title}\"",
 		"set -g mode-keys vi",
 		"set -sg escape-time 100",
-		"set -g status-style \"bg=colour235,fg=colour245\"",
+		"set -g status-style \"bg=" + tmuxWindowInactiveBg + ",fg=" + tmuxWindowInactiveFg + "\"",
 		"set -g message-style \"bg=colour208,fg=colour16,bold\"",
 		"set -g message-command-style \"bg=colour208,fg=colour16,bold\"",
 		"set -g pane-border-style \"fg=colour236\"",

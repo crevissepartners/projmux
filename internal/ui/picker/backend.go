@@ -54,6 +54,7 @@ type Options struct {
 	UI              string
 	Items           []Item
 	Title           string
+	TitleChips      []projmuxpicker.Chip
 	Prompt          string
 	Header          string
 	Footer          string
@@ -722,13 +723,13 @@ func nativeMouseItemIndex(options Options, items []Item, selected int, layout na
 	if x <= 1 || y <= 1 {
 		return selected, false
 	}
-	contentLayout := nativeContentLayout(layout, options.Title)
+	contentLayout := nativeContentLayoutForOptions(layout, options)
 	contentX := x - 2
 	if contentX < 0 || contentX >= contentLayout.Cols {
 		return selected, false
 	}
 	contentRow := y - 2
-	contentRow -= projmuxpicker.TitlebarRows(options.Title)
+	contentRow -= nativeTitlebarRowsForOptions(options)
 	if contentRow < 0 || contentRow >= contentLayout.Rows {
 		return selected, false
 	}
@@ -1266,17 +1267,29 @@ func renderNativeInteractiveWithCursor(w io.Writer, options Options, items []Ite
 }
 
 func nativeInteractiveFrame(options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) string {
-	contentLayout := nativeContentLayout(layout, options.Title)
+	contentLayout := nativeContentLayoutForOptions(layout, options)
 	var body strings.Builder
 	renderNativeInteractiveContent(&body, options, items, query, queryCursor, selected, previewOffset, contentLayout)
 	var frame strings.Builder
-	renderNativeFrameWithTitle(&frame, body.String(), options.Title, layout)
+	if len(options.TitleChips) > 0 {
+		renderNativeFrameWithChips(&frame, body.String(), options.TitleChips, layout)
+	} else {
+		renderNativeFrameWithTitle(&frame, body.String(), options.Title, layout)
+	}
 	return frame.String()
 }
 
 func nativeContentLayout(layout nativeLayout, title string) nativeLayout {
 	content := projmuxpicker.DefaultRenderer().ContentLayoutWithTitle(projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols}, title)
 	return nativeLayout{Rows: content.Rows, Cols: content.Cols}
+}
+
+func nativeContentLayoutForOptions(layout nativeLayout, options Options) nativeLayout {
+	if len(options.TitleChips) > 0 {
+		content := projmuxpicker.DefaultRenderer().ContentLayoutWithChips(projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols}, options.TitleChips)
+		return nativeLayout{Rows: content.Rows, Cols: content.Cols}
+	}
+	return nativeContentLayout(layout, options.Title)
 }
 
 func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
@@ -1465,6 +1478,17 @@ func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 
 func renderNativeFrameWithTitle(w io.Writer, content, title string, layout nativeLayout) {
 	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(w, content, title, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+}
+
+func renderNativeFrameWithChips(w io.Writer, content string, chips []projmuxpicker.Chip, layout nativeLayout) {
+	projmuxpicker.DefaultRenderer().RenderFrameWithChips(w, content, chips, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+}
+
+func nativeTitlebarRowsForOptions(options Options) int {
+	if len(options.TitleChips) > 0 {
+		return projmuxpicker.ChipsTitlebarRows(options.TitleChips)
+	}
+	return projmuxpicker.TitlebarRows(options.Title)
 }
 
 func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {

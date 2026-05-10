@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -65,17 +66,26 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 	if got, want := options.Title, "Settings"; got != want {
 		t.Fatalf("root settings title = %q, want %q", got, want)
 	}
-	if got := options.Header; !strings.Contains(got, "[Global]") || !strings.Contains(got, "Project (no project)") {
-		t.Fatalf("root settings header = %q, want global tab and no-project context", got)
+	if got, want := options.Header, "Project context: (none)"; got != want {
+		t.Fatalf("root settings header = %q, want plain project context header %q", got, want)
 	}
-	if got, want := options.Footer, "Enter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+	wantChips := []projmuxpicker.Chip{
+		{Label: "Global", Active: true},
+		{Label: "Project", Disabled: true},
+	}
+	if got := options.TitleChips; !reflect.DeepEqual(got, wantChips) {
+		t.Fatalf("root settings title chips = %#v, want %#v", got, wantChips)
+	}
+	if got, want := options.Footer, "Enter: open  |  Alt-Left/Alt-Right: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
+	}
+	if got, want := options.ExpectKeys, []string{"enter", "ctrl-g", "ctrl-p", "alt-left", "alt-right"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("root settings expect keys = %#v, want %#v", got, want)
 	}
 	if got, want := options.Bindings, []string{"esc:abort", "ctrl-c:abort", "alt-5:abort", "ctrl-alt-s:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings close bindings = %#v, want %#v", got, want)
 	}
 	if got, want := entryValues(options.Entries), []string{
-		settingsRootTabProjectValue,
 		settingsSectionProject,
 		settingsSectionAI,
 		settingsSectionGlobalHooks,
@@ -97,8 +107,8 @@ func TestSettingsRootSwitchesToProjectTab(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			if got := options.Header; !strings.Contains(got, "[Global]") {
-				t.Fatalf("first root header = %q, want Global tab", got)
+			if got := options.TitleChips; len(got) < 1 || !got[0].Active {
+				t.Fatalf("first root chips = %#v, want Global active", got)
 			}
 			return intpickercompat.Result{Key: "ctrl-p"}, nil
 		case 2:
@@ -118,14 +128,176 @@ func TestSettingsRootSwitchesToProjectTab(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	// Without a project context, Ctrl-P remains a no-op so the second
+	// picker call still renders the Global tab.
+	if got, want := projectOptions.Prompt, "Settings > "; got != want {
+		t.Fatalf("second tab prompt = %q, want %q (no project context blocks tab switch)", got, want)
+	}
+	if got := projectOptions.TitleChips; len(got) < 2 || !got[0].Active || !got[1].Disabled {
+		t.Fatalf("second tab chips = %#v, want Global active and Project disabled (no project context)", got)
+	}
+}
+
+func TestSettingsRootAltArrowTogglesTabsWhenProjectAvailable(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+
+	var calls int
+	var projectOptions intpickercompat.Options
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "alt-right"}, nil
+		case 2:
+			projectOptions = options
+			return intpickercompat.Result{}, nil
+		default:
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd := &settingsCommand{
+		runner:       runner,
+		nativePicker: nativePickerFromCompatRunner(runner),
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
 	if got, want := projectOptions.Prompt, "Settings > Project > "; got != want {
-		t.Fatalf("project tab prompt = %q, want %q", got, want)
+		t.Fatalf("project tab prompt = %q, want %q after alt-right", got, want)
 	}
-	if got := projectOptions.Header; !strings.Contains(got, "[Project]") || !strings.Contains(got, "(no project)") {
-		t.Fatalf("project tab header = %q, want selected Project no-project tab", got)
+	if got := projectOptions.TitleChips; len(got) < 2 || got[0].Active || !got[1].Active || got[1].Disabled {
+		t.Fatalf("project tab chips after alt-right = %#v, want Project active and not disabled", got)
 	}
-	if !hasEntryLabelContaining(projectOptions.Entries, "Project context") {
-		t.Fatalf("project tab entries = %#v, want project context row", projectOptions.Entries)
+}
+
+func TestSettingsRootAltArrowToggleInvariantWithProjectContext(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+
+	var calls int
+	var third intpickercompat.Options
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			// Global tab — pivot right.
+			return intpickercompat.Result{Key: "alt-right"}, nil
+		case 2:
+			// Project tab — pivot back left.
+			return intpickercompat.Result{Key: "alt-left"}, nil
+		case 3:
+			third = options
+			return intpickercompat.Result{}, nil
+		default:
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd := &settingsCommand{
+		runner:       runner,
+		nativePicker: nativePickerFromCompatRunner(runner),
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := third.Prompt, "Settings > "; got != want {
+		t.Fatalf("toggled-back prompt = %q, want %q", got, want)
+	}
+	if got := third.TitleChips; len(got) < 2 || !got[0].Active || got[1].Active {
+		t.Fatalf("toggled-back chips = %#v, want Global active after alt-right then alt-left", got)
+	}
+}
+
+func TestSettingsRootAltArrowDoesNotShadowGlobalSelectPaneChords(t *testing.T) {
+	t.Parallel()
+
+	// The settings popup binds Alt-Left/Alt-Right for tab navigation while
+	// global tmux select-pane chords keep the same physical keys. This is
+	// safe because tmux popups consume their own stdin and the popup is the
+	// active terminal client when Alt-Left/Right is pressed — the global
+	// chord only fires outside the popup. Verify the catalog still ships
+	// M-Left / M-Right so the global behaviour does not regress.
+	catalog := defaultKeyBindingCatalog()
+	wantChords := map[string]string{
+		"select-pane-left":  "M-Left",
+		"select-pane-right": "M-Right",
+	}
+	for id, chord := range wantChords {
+		var got string
+		for _, action := range catalog {
+			if action.ID == id {
+				got = action.PlainChord
+				break
+			}
+		}
+		if got != chord {
+			t.Fatalf("keybinding catalog %q chord = %q, want %q", id, got, chord)
+		}
+	}
+
+	rootOpts := (&settingsCommand{}).rootOptions(settingsRootTabGlobal)
+	popupKeys := map[string]bool{}
+	for _, key := range rootOpts.ExpectKeys {
+		popupKeys[key] = true
+	}
+	for _, key := range []string{"alt-left", "alt-right"} {
+		if !popupKeys[key] {
+			t.Fatalf("settings popup expect keys = %#v, want %q", rootOpts.ExpectKeys, key)
+		}
+	}
+}
+
+func TestSettingsRootAltArrowIsNoopWithoutProjectContext(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	var secondOptions intpickercompat.Options
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "alt-right"}, nil
+		case 2:
+			secondOptions = options
+			return intpickercompat.Result{}, nil
+		default:
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd := &settingsCommand{
+		runner:       runner,
+		nativePicker: nativePickerFromCompatRunner(runner),
+		lookupEnv:    func(string) string { return "" },
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := secondOptions.Prompt, "Settings > "; got != want {
+		t.Fatalf("alt-right with no project context = %q, want still on Global tab %q", got, want)
+	}
+	if got := secondOptions.TitleChips; len(got) < 2 || !got[0].Active || got[1].Active || !got[1].Disabled {
+		t.Fatalf("alt-right chips = %#v, want Global active and Project disabled (single-tab no-op)", got)
 	}
 }
 
@@ -135,12 +307,15 @@ func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
 	options := cmd.rootOptions(settingsRootTabProject)
 
-	if got := options.Header; !strings.Contains(got, "[Project]") || !strings.Contains(got, "(no project)") {
-		t.Fatalf("project tab header = %q, want no-project state", got)
+	if got, want := options.Header, "Project context: (none) - open Settings from a project pane or set PROJMUX_CWD"; got != want {
+		t.Fatalf("project tab header = %q, want %q", got, want)
+	}
+	if got := options.TitleChips; len(got) < 2 || got[0].Active || !got[1].Active || !got[1].Disabled {
+		t.Fatalf("project tab chips (no project) = %#v, want Project chip active+disabled", got)
 	}
 	for _, value := range entryValues(options.Entries) {
-		if value != settingsRootTabGlobalValue && value != settingsNoopValue {
-			t.Fatalf("project tab entry values = %#v, want global tab switch plus disabled/noop rows only", entryValues(options.Entries))
+		if value != settingsNoopValue {
+			t.Fatalf("project tab entry values = %#v, want disabled/noop rows only without inline tab toggle", entryValues(options.Entries))
 		}
 	}
 	for _, label := range []string{"no project", "Trust", "Hooks (project)", "config.toml", "Effective merge view"} {
@@ -402,14 +577,13 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got, want := rootOptions.Title, "Settings"; got != want {
 		t.Fatalf("root settings title = %q, want %q", got, want)
 	}
-	if got := rootOptions.Header; !strings.Contains(got, "[Global]") {
-		t.Fatalf("root settings header = %q, want Global tab chrome", got)
+	if got := rootOptions.TitleChips; len(got) < 1 || !got[0].Active {
+		t.Fatalf("root settings chips = %#v, want Global active", got)
 	}
-	if got, want := rootOptions.Footer, "Enter: open  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := rootOptions.Footer, "Enter: open  |  Alt-Left/Alt-Right: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
 	if got, want := entryValues(rootOptions.Entries), []string{
-		settingsRootTabProjectValue,
 		settingsSectionProject,
 		settingsSectionAI,
 		settingsSectionGlobalHooks,

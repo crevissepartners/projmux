@@ -235,3 +235,117 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 	w.writeCount++
 	return w.Buffer.Write(p)
 }
+
+func TestRendererRenderFrameWithChipsUsesTmuxToneTokens(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	DefaultRenderer().RenderFrameWithChips(
+		&out,
+		"hello",
+		[]Chip{
+			{Label: "Global", Active: true},
+			{Label: "Project"},
+		},
+		Layout{Rows: 5, Cols: 40},
+	)
+
+	lines := strings.Split(out.String(), "\r\n")
+	if got, want := len(lines), 5; got != want {
+		t.Fatalf("frame line count = %d, want exact layout rows %d: %q", got, want, out.String())
+	}
+	if strings.Contains(lines[0], "Global") || strings.Contains(lines[0], "Project") {
+		t.Fatalf("top frame row = %q, want plain border without chip labels", lines[0])
+	}
+	chipRow := lines[1]
+	if !strings.Contains(chipRow, " Global ") || !strings.Contains(chipRow, " Project ") {
+		t.Fatalf("chip row = %q, want both chip labels padded with single cells", chipRow)
+	}
+	if !strings.Contains(chipRow, ChipActiveStart) {
+		t.Fatalf("chip row = %q, want active chip ANSI tone", chipRow)
+	}
+	if !strings.Contains(chipRow, ChipInactiveStart) {
+		t.Fatalf("chip row = %q, want inactive chip ANSI tone", chipRow)
+	}
+	// Active chip should occur before inactive chip in the strip.
+	if strings.Index(chipRow, ChipActiveStart) > strings.LastIndex(chipRow, ChipInactiveStart) {
+		t.Fatalf("chip row = %q, want active chip rendered before inactive chip", chipRow)
+	}
+	if got, want := VisibleLen(chipRow), 40; got != want {
+		t.Fatalf("chip row width = %d, want %d: %q", got, want, chipRow)
+	}
+	if !strings.HasPrefix(lines[2], "├") || !strings.HasSuffix(lines[2], "┤") {
+		t.Fatalf("titlebar divider = %q, want full-width divider below chip row", lines[2])
+	}
+	if !strings.Contains(lines[3], "hello") {
+		t.Fatalf("content row = %q, want body content below chip row", lines[3])
+	}
+}
+
+func TestRendererRenderFrameWithChipsDisabledChipReadsDim(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	DefaultRenderer().RenderFrameWithChips(
+		&out,
+		"hello",
+		[]Chip{
+			{Label: "Global", Active: true},
+			{Label: "Project", Disabled: true},
+		},
+		Layout{Rows: 5, Cols: 40},
+	)
+
+	lines := strings.Split(out.String(), "\r\n")
+	chipRow := lines[1]
+	if !strings.Contains(chipRow, ChipDisabledStart) {
+		t.Fatalf("chip row = %q, want disabled chip ANSI tone", chipRow)
+	}
+	// Disabled chip still occupies the same geometry — both labels visible.
+	if !strings.Contains(chipRow, " Project ") {
+		t.Fatalf("chip row = %q, want Project chip label visible even when disabled", chipRow)
+	}
+}
+
+func TestRendererRenderFrameWithEmptyChipsHasNoTitlebar(t *testing.T) {
+	t.Parallel()
+
+	var plain bytes.Buffer
+	var chipped bytes.Buffer
+	DefaultRenderer().RenderFrame(&plain, "hello", Layout{Rows: 4, Cols: 20})
+	DefaultRenderer().RenderFrameWithChips(&chipped, "hello", nil, Layout{Rows: 4, Cols: 20})
+
+	if got, want := chipped.String(), plain.String(); got != want {
+		t.Fatalf("RenderFrameWithChips(nil) = %q, want default frame %q", got, want)
+	}
+}
+
+func TestChipANSIGoldenMatchesTmuxWindowStatusPalette(t *testing.T) {
+	t.Parallel()
+
+	// Chips reuse the tmux window-status palette so the popup tab strip
+	// stays visually congruent with the tmux status row. Pin the ANSI
+	// escape sequences and palette tokens together so future changes to
+	// either side surface as a single golden diff.
+	if got, want := TmuxWindowInactiveBg, "colour235"; got != want {
+		t.Fatalf("inactive bg palette = %q, want %q", got, want)
+	}
+	if got, want := TmuxWindowInactiveFg, "colour245"; got != want {
+		t.Fatalf("inactive fg palette = %q, want %q", got, want)
+	}
+	if got, want := TmuxWindowActiveBg, "colour238"; got != want {
+		t.Fatalf("active bg palette = %q, want %q", got, want)
+	}
+	if got, want := TmuxWindowActiveFg, "colour231"; got != want {
+		t.Fatalf("active fg palette = %q, want %q", got, want)
+	}
+	if got, want := ChipInactiveStart, "\x1b[48;5;235m\x1b[38;5;245m"; got != want {
+		t.Fatalf("inactive chip ANSI = %q, want %q", got, want)
+	}
+	if got, want := ChipActiveStart, "\x1b[1m\x1b[48;5;238m\x1b[38;5;231m"; got != want {
+		t.Fatalf("active chip ANSI = %q, want %q", got, want)
+	}
+	if got, want := ChipDisabledStart, "\x1b[2m\x1b[48;5;235m\x1b[38;5;245m"; got != want {
+		t.Fatalf("disabled chip ANSI = %q, want %q", got, want)
+	}
+}

@@ -1,11 +1,14 @@
 package pickercompat
 
+import "github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
+
 type Options struct {
 	UI             string
 	Candidates     []string
 	Entries        []Entry
 	Read0          bool
 	Title          string
+	TitleChips     []projmuxpicker.Chip
 	Prompt         string
 	Header         string
 	Footer         string
