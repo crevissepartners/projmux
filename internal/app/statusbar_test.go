@@ -272,6 +272,9 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	if !strings.HasPrefix(command, "printf %s ") {
 		t.Fatalf("popup command = %q, want single-payload printf %%s", command)
 	}
+	if !strings.Contains(command, "Current path") || !strings.Contains(command, projmuxpicker.CurrentStart) {
+		t.Fatalf("path popup command = %q, want styled content title", command)
+	}
 	if !strings.Contains(command, "; IFS= read -r _") {
 		t.Fatalf("popup command = %q, want simple Enter read", command)
 	}
@@ -478,7 +481,7 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !sawTmuxPopupCommandContaining(runner.calls, "80%") {
 		t.Fatalf("missing percentage value; calls = %#v", runner.calls)
 	}
-	if sawTmuxPopupCommandContaining(runner.calls, "/usr/local/bin/projmux") || sawTmuxPopupCommandContaining(runner.calls, " usage") {
+	if sawTmuxPopupCommandContaining(runner.calls, "/usr/local/bin/projmux") || sawTmuxPopupCommandContaining(runner.calls, "'usage'") {
 		t.Fatalf("usage popup should render structured content, not run raw projmux usage; calls = %#v", runner.calls)
 	}
 	if sawTmuxPopupCommandContaining(runner.calls, "read -n1 -s") {
@@ -490,6 +493,9 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	}
 	if !strings.HasPrefix(command, "printf %s ") || strings.Contains(command, "printf '%s\\n'") {
 		t.Fatalf("usage popup command = %q, want single-payload printf", command)
+	}
+	if !strings.Contains(command, "Usage HUD") || !strings.Contains(command, projmuxpicker.CurrentStart) {
+		t.Fatalf("usage popup command = %q, want styled content title", command)
 	}
 	if !strings.Contains(command, "; IFS= read -r _") {
 		t.Fatalf("usage popup command = %q, want simple Enter read", command)
