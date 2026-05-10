@@ -160,6 +160,11 @@ already mapped to a *different* action are left untouched and reported as
 mappings. Re-running `projmux init --apply` after editing the file refreshes
 just the projmux-owned region.
 
+`projmux init` always uses the built-in terminal fallback map. To override the
+tmux chords rendered by `projmux tmux print-config`, `projmux tmux install`,
+or `projmux shell`, use `~/.config/projmux/keymap.toml`; see
+[Configuration](configuration.md#keymap-file).
+
 ### Supported terminals
 
 #### Ghostty
