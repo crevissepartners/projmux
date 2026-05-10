@@ -149,7 +149,8 @@ When the hook is set, projmux invokes it with positional arguments:
 summary body urgency app-name tag group icon-path
 ```
 
-Hook details for new-session lifecycle hooks live in [Hooks](hooks.md).
+Hook details for new-session lifecycle hooks and project-local
+`.projmux/config.toml` live in [Hooks](hooks.md).
 
 ## Usage Tracking
 

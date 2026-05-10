@@ -1772,6 +1772,82 @@ func TestClientEnsureSessionPreCreateAbortSkipsNewSession(t *testing.T) {
 	}
 }
 
+func TestClientEnsureSessionAppliesProjectSessionEnvOnCreateAndAfterCreate(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: exitError(t, 1)},
+			{},
+			{},
+			{},
+		},
+	}
+	hook := &fakeLifecycleRunner{
+		sessionEnv: map[string]string{
+			"ZED": "last",
+			"FOO": "bar",
+		},
+	}
+	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
+
+	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
+		t.Fatalf("EnsureSession returned error: %v", err)
+	}
+
+	wantCalls := []commandCall{
+		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-e", "FOO=bar", "-e", "ZED=last", "-P", "-F", "#{pane_id}"}},
+		{name: "tmux", args: []string{"set-environment", "-t", "workspace", "FOO", "bar"}},
+		{name: "tmux", args: []string{"set-environment", "-t", "workspace", "ZED", "last"}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("unexpected tmux calls %#v", runner.calls)
+	}
+}
+
+func TestClientEnsureSessionAppliesProjectKubeSessionEnvOnCreate(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: exitError(t, 1)},
+			{},
+			{},
+			{},
+			{},
+			{},
+		},
+	}
+	hook := &fakeLifecycleRunner{
+		sessionEnv: map[string]string{
+			"PROJMUX_KUBE_CONTEXT":   "dev",
+			"KUBE_CONTEXT":           "dev",
+			"PROJMUX_KUBE_NAMESPACE": "tools",
+			"KUBE_NAMESPACE":         "tools",
+		},
+	}
+	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
+
+	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
+		t.Fatalf("EnsureSession returned error: %v", err)
+	}
+
+	wantCreate := []string{
+		"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux",
+		"-e", "KUBE_CONTEXT=dev",
+		"-e", "KUBE_NAMESPACE=tools",
+		"-e", "PROJMUX_KUBE_CONTEXT=dev",
+		"-e", "PROJMUX_KUBE_NAMESPACE=tools",
+		"-P", "-F", "#{pane_id}",
+	}
+	if !reflect.DeepEqual(runner.calls[1].args, wantCreate) {
+		t.Fatalf("new-session args = %#v, want %#v", runner.calls[1].args, wantCreate)
+	}
+}
+
 func TestClientEnsureSessionSkipsPostCreateWhenSessionExists(t *testing.T) {
 	t.Parallel()
 
@@ -2005,10 +2081,11 @@ type lifecycleHookCall struct {
 }
 
 type fakeLifecycleRunner struct {
-	mu      sync.Mutex
-	calls   []lifecycleHookCall
-	results map[hooks.Event]hooks.RunResult
-	errs    map[hooks.Event]error
+	mu         sync.Mutex
+	calls      []lifecycleHookCall
+	results    map[hooks.Event]hooks.RunResult
+	errs       map[hooks.Event]error
+	sessionEnv map[string]string
 }
 
 func (f *fakeLifecycleRunner) Run(_ context.Context, event hooks.Event, c hooks.Context) (hooks.RunResult, error) {
@@ -2032,6 +2109,10 @@ func (f *fakeLifecycleRunner) events() []hooks.Event {
 		events = append(events, call.event)
 	}
 	return events
+}
+
+func (f *fakeLifecycleRunner) ProjectSessionEnv(string) map[string]string {
+	return f.sessionEnv
 }
 
 // withPostCreateRunnerInterface wires a test stub through the same field that
