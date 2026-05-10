@@ -1461,7 +1461,7 @@ func TestNativeInteractiveShowsPartialNextMultilineItem(t *testing.T) {
 	if !strings.Contains(rendered, "item 1") {
 		t.Fatalf("native output = %q, want next multiline item to start in remaining viewport", rendered)
 	}
-	if !strings.Contains(rendered, "  "+projmuxpicker.MutedStart+strings.Repeat(nativeGapLine, 8)) {
+	if !strings.Contains(rendered, projmuxpicker.MutedStart+strings.Repeat(nativeGapLine, 8)) {
 		t.Fatalf("native output = %q, want separator before partial next multiline item", rendered)
 	}
 	if strings.Contains(rendered, "detail 1a") || strings.Contains(rendered, "detail 1b") {
@@ -1752,8 +1752,8 @@ func TestNativeInteractiveRendersMultilineGapLine(t *testing.T) {
 	}, "", 0, 0, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "  "+projmuxpicker.MutedStart+strings.Repeat(nativeGapLine, 8)) {
-		t.Fatalf("native output = %q, want muted fzf-like multiline gap line", rendered)
+	if !strings.Contains(rendered, projmuxpicker.MutedStart+strings.Repeat(nativeGapLine, 8)) {
+		t.Fatalf("native output = %q, want muted fzf-like full-width multiline gap line", rendered)
 	}
 	if strings.Contains(rendered, nativeGapSentinel) {
 		t.Fatalf("native output leaked gap sentinel: %q", rendered)
