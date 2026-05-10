@@ -77,6 +77,68 @@ run = "echo nope"
 	}
 }
 
+func TestUpdateProjectConfigPreservesHooksAndWritesEditableSections(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	path := writeProjectConfig(t, cwd, `
+[hooks.post-create]
+run = "echo post"
+
+[env]
+ZED = "last"
+`)
+
+	_, err := UpdateProjectConfig(path, func(cfg *ProjectConfig) error {
+		cfg.StartupRun = "codex"
+		cfg.Env["ALPHA"] = "first"
+		cfg.Kube.Context = "dev"
+		cfg.Kube.Namespace = "tools"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateProjectConfig() error = %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[hooks.post-create]
+run = "echo post"
+
+[startup]
+run = "codex"
+
+[env]
+ALPHA = "first"
+ZED = "last"
+
+[kube]
+context = "dev"
+namespace = "tools"
+`
+	if string(got) != want {
+		t.Fatalf("config.toml =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestUpdateProjectConfigRejectsInvalidEnvKey(t *testing.T) {
+	t.Parallel()
+
+	if err := ValidateProjectEnvKey("1BAD"); err == nil {
+		t.Fatal("ValidateProjectEnvKey accepted invalid key")
+	}
+	path := filepath.Join(t.TempDir(), ".projmux", "config.toml")
+	_, err := UpdateProjectConfig(path, func(cfg *ProjectConfig) error {
+		cfg.Env["1BAD"] = "value"
+		return nil
+	})
+	if err == nil {
+		t.Fatal("UpdateProjectConfig accepted invalid env key")
+	}
+}
+
 func TestRunnerPaneStartupUsesTrustedProjectConfigWithoutHookFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")
@@ -259,6 +321,40 @@ run = "echo ready"
 	}
 	if file.SHA256 != sum {
 		t.Fatalf("stored sha256 = %q, want %q", file.SHA256, sum)
+	}
+}
+
+func TestTrustProjectConfigPersistsHash(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	configPath := writeProjectConfig(t, cwd, `
+[startup]
+run = "echo ready"
+`)
+	trustPath := testTrustStorePath(t)
+
+	sum, err := TrustProjectConfig(cwd, trustPath)
+	if err != nil {
+		t.Fatalf("TrustProjectConfig() error = %v", err)
+	}
+	wantSum, _, err := hashHookFile(configPath)
+	if err != nil {
+		t.Fatalf("hashHookFile() error = %v", err)
+	}
+	if sum != wantSum {
+		t.Fatalf("TrustProjectConfig hash = %q, want %q", sum, wantSum)
+	}
+	store, err := loadTrustedProjects(trustPath)
+	if err != nil {
+		t.Fatalf("loadTrustedProjects() error = %v", err)
+	}
+	file, ok := store.trustedFile(cwd, projectConfigRelativePath)
+	if !ok {
+		t.Fatalf("trusted config missing: %#v", store)
+	}
+	if file.SHA256 != wantSum {
+		t.Fatalf("stored sha256 = %q, want %q", file.SHA256, wantSum)
 	}
 }
 

@@ -176,6 +176,37 @@ func defaultTrustStorePath() string {
 	return filepath.Join(paths.StateDir, trustedProjectsFileName)
 }
 
+func TrustProjectConfig(repoPath, trustStorePath string) (string, error) {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return "", errors.New("repo path is required")
+	}
+	repo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(repo, projectConfigRelativePath)
+	sum, _, err := hashHookFile(path)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(trustStorePath) == "" {
+		trustStorePath = defaultTrustStorePath()
+	}
+	if strings.TrimSpace(trustStorePath) == "" {
+		return "", errors.New("trust store path could not be resolved")
+	}
+	store, err := loadTrustedProjects(trustStorePath)
+	if err != nil {
+		return "", err
+	}
+	store.trust(repo, projectConfigRelativePath, sum, time.Now().UTC())
+	if err := store.save(trustStorePath); err != nil {
+		return "", err
+	}
+	return sum, nil
+}
+
 func loadTrustedProjects(path string) (trustedProjects, error) {
 	file, err := os.Open(path)
 	if err != nil {

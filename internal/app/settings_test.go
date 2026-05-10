@@ -270,6 +270,7 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsRootTabProjectValue, settingsAxisBoth},
 		{settingsSectionGlobalHooks, settingsAxisGlobal},
 		{settingsSectionProjectHooks, settingsAxisProject},
+		{settingsSectionProjectConfig, settingsAxisProject},
 		{settingsProjectRootManage, settingsAxisGlobal},
 		{settingsWorkdirList, settingsAxisGlobal},
 		{settingsProjectPins, settingsAxisGlobal},
@@ -277,6 +278,7 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsActionPrefixStatusbar + string(config.StatusbarDecorationSymbol), settingsAxisGlobal},
 		{settingsActionPrefixKeymap + "settings", settingsAxisGlobal},
 		{settingsActionPrefixHooks + string(config.ProjectHooksOn), settingsAxisGlobal},
+		{settingsActionPrefixProjectConfig + "startup:set", settingsAxisProject},
 	}
 
 	for _, tc := range cases {

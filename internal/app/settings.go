@@ -57,30 +57,31 @@ type settingsEntryMeta struct {
 }
 
 var settingsEntryCatalog = map[string]settingsEntryMeta{
-	settingsBackValue:           {Name: "Back", Axis: settingsAxisBoth},
-	settingsNoopValue:           {Name: "Info", Axis: settingsAxisBoth},
-	settingsRootTabGlobalValue:  {Name: "Global Settings", Axis: settingsAxisBoth},
-	settingsRootTabProjectValue: {Name: "Project Settings", Axis: settingsAxisBoth},
-	settingsSectionProject:      {Name: "Project Picker", Axis: settingsAxisGlobal},
-	settingsSectionGlobalHooks:  {Name: "Hooks", Axis: settingsAxisGlobal},
-	settingsSectionProjectHooks: {Name: "Hooks", Axis: settingsAxisProject},
-	settingsSectionAI:           {Name: "AI Settings", Axis: settingsAxisGlobal},
-	settingsSectionStatusbar:    {Name: "Appearance", Axis: settingsAxisGlobal},
-	settingsSectionKeybindings:  {Name: "Keybindings", Axis: settingsAxisGlobal},
-	settingsSectionLabs:         {Name: "Labs", Axis: settingsAxisGlobal},
-	settingsSectionAbout:        {Name: "About", Axis: settingsAxisGlobal},
-	settingsProjectAdd:          {Name: "Add Project", Axis: settingsAxisGlobal},
-	settingsProjectPins:         {Name: "Pinned Projects", Axis: settingsAxisGlobal},
-	settingsProjectRootManage:   {Name: "Project Root", Axis: settingsAxisGlobal},
-	settingsProjdirClear:        {Name: "Clear Project Root", Axis: settingsAxisGlobal},
-	settingsProjdirSetCurrent:   {Name: "Use Current Project as Root", Axis: settingsAxisGlobal},
-	settingsProjdirSetTyped:     {Name: "Set Project Root", Axis: settingsAxisGlobal},
-	settingsWorkdirAdd:          {Name: "Add Workdir", Axis: settingsAxisGlobal},
-	settingsWorkdirList:         {Name: "Workdirs", Axis: settingsAxisGlobal},
-	settingsWorkdirTyped:        {Name: "Type Workdir", Axis: settingsAxisGlobal},
-	settingsLabKeybindings:      {Name: "Diagnose Keybindings", Axis: settingsAxisGlobal},
-	settingsUpdateApply:         {Name: "Update Now", Axis: settingsAxisGlobal},
-	settingsUpdateCheck:         {Name: "Check Updates", Axis: settingsAxisGlobal},
+	settingsBackValue:            {Name: "Back", Axis: settingsAxisBoth},
+	settingsNoopValue:            {Name: "Info", Axis: settingsAxisBoth},
+	settingsRootTabGlobalValue:   {Name: "Global Settings", Axis: settingsAxisBoth},
+	settingsRootTabProjectValue:  {Name: "Project Settings", Axis: settingsAxisBoth},
+	settingsSectionProject:       {Name: "Project Picker", Axis: settingsAxisGlobal},
+	settingsSectionGlobalHooks:   {Name: "Hooks", Axis: settingsAxisGlobal},
+	settingsSectionProjectHooks:  {Name: "Hooks", Axis: settingsAxisProject},
+	settingsSectionProjectConfig: {Name: "Project Config", Axis: settingsAxisProject},
+	settingsSectionAI:            {Name: "AI Settings", Axis: settingsAxisGlobal},
+	settingsSectionStatusbar:     {Name: "Appearance", Axis: settingsAxisGlobal},
+	settingsSectionKeybindings:   {Name: "Keybindings", Axis: settingsAxisGlobal},
+	settingsSectionLabs:          {Name: "Labs", Axis: settingsAxisGlobal},
+	settingsSectionAbout:         {Name: "About", Axis: settingsAxisGlobal},
+	settingsProjectAdd:           {Name: "Add Project", Axis: settingsAxisGlobal},
+	settingsProjectPins:          {Name: "Pinned Projects", Axis: settingsAxisGlobal},
+	settingsProjectRootManage:    {Name: "Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirClear:         {Name: "Clear Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetCurrent:    {Name: "Use Current Project as Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetTyped:      {Name: "Set Project Root", Axis: settingsAxisGlobal},
+	settingsWorkdirAdd:           {Name: "Add Workdir", Axis: settingsAxisGlobal},
+	settingsWorkdirList:          {Name: "Workdirs", Axis: settingsAxisGlobal},
+	settingsWorkdirTyped:         {Name: "Type Workdir", Axis: settingsAxisGlobal},
+	settingsLabKeybindings:       {Name: "Diagnose Keybindings", Axis: settingsAxisGlobal},
+	settingsUpdateApply:          {Name: "Update Now", Axis: settingsAxisGlobal},
+	settingsUpdateCheck:          {Name: "Check Updates", Axis: settingsAxisGlobal},
 }
 
 var settingsEntryPrefixCatalog = []struct {
@@ -92,6 +93,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixKeymap, settingsEntryMeta{Name: "Keybindings", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixLabKeymap, settingsEntryMeta{Name: "Keybinding diagnostics", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixPicker, settingsEntryMeta{Name: "Picker backend", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixProjectConfig, settingsEntryMeta{Name: "Project Config", Axis: settingsAxisProject}},
 	{settingsActionPrefixProjdir, settingsEntryMeta{Name: "Project Root", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixStatusbar, settingsEntryMeta{Name: "Appearance", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixSwitch, settingsEntryMeta{Name: "Pinned Projects", Axis: settingsAxisGlobal}},
@@ -112,42 +114,44 @@ func settingsEntryMetaForValue(value string) (settingsEntryMeta, bool) {
 }
 
 const (
-	settingsBackValue             = "__settings_back__"
-	settingsNoopValue             = "__settings_noop__"
-	settingsRootTabGlobalValue    = "__settings_tab_global__"
-	settingsRootTabProjectValue   = "__settings_tab_project__"
-	settingsSectionAI             = "section:ai"
-	settingsSectionGlobalHooks    = "section:hooks-global"
-	settingsSectionProjectHooks   = "section:hooks-project"
-	settingsSectionKeybindings    = "section:keybindings"
-	settingsSectionProject        = "section:project-picker"
-	settingsSectionStatusbar      = "section:statusbar"
-	settingsSectionLabs           = "section:labs"
-	settingsSectionAbout          = "section:about"
-	settingsActionPrefixAI        = "ai:"
-	settingsActionPrefixHooks     = "project-hooks:"
-	settingsActionPrefixKeymap    = "keymap:"
-	settingsActionPrefixLabKeymap = "lab-keymap:"
-	settingsActionPrefixPicker    = "picker-backend:"
-	settingsActionPrefixProjdir   = "projdir:"
-	settingsActionPrefixStatusbar = "statusbar-decoration:"
-	settingsActionPrefixSwitch    = "switch:"
-	settingsActionPrefixUpdate    = "update:"
-	settingsActionPrefixWorkdir   = "workdir:"
-	settingsProjectAdd            = "project:add"
-	settingsProjectPins           = "project:pins"
-	settingsProjectRootManage     = "project-root:manage"
-	settingsProjdirClear          = "projdir:clear"
-	settingsProjdirSetCurrent     = "projdir:set-current"
-	settingsProjdirSetTyped       = "projdir:set-typed"
-	settingsUpdateApply           = "update:apply"
-	settingsUpdateCheck           = "update:check"
-	settingsWorkdirAdd            = "workdir:add"
-	settingsWorkdirList           = "workdir:list"
-	settingsWorkdirTyped          = "workdir:typed"
-	settingsLabKeybindings        = "labs:keybindings"
-	settingsKeymapFieldPlain      = "plain"
-	settingsKeymapFieldPrefix     = "prefix"
+	settingsBackValue                 = "__settings_back__"
+	settingsNoopValue                 = "__settings_noop__"
+	settingsRootTabGlobalValue        = "__settings_tab_global__"
+	settingsRootTabProjectValue       = "__settings_tab_project__"
+	settingsSectionAI                 = "section:ai"
+	settingsSectionGlobalHooks        = "section:hooks-global"
+	settingsSectionProjectHooks       = "section:hooks-project"
+	settingsSectionProjectConfig      = "section:project-config"
+	settingsSectionKeybindings        = "section:keybindings"
+	settingsSectionProject            = "section:project-picker"
+	settingsSectionStatusbar          = "section:statusbar"
+	settingsSectionLabs               = "section:labs"
+	settingsSectionAbout              = "section:about"
+	settingsActionPrefixAI            = "ai:"
+	settingsActionPrefixHooks         = "project-hooks:"
+	settingsActionPrefixKeymap        = "keymap:"
+	settingsActionPrefixLabKeymap     = "lab-keymap:"
+	settingsActionPrefixPicker        = "picker-backend:"
+	settingsActionPrefixProjectConfig = "project-config:"
+	settingsActionPrefixProjdir       = "projdir:"
+	settingsActionPrefixStatusbar     = "statusbar-decoration:"
+	settingsActionPrefixSwitch        = "switch:"
+	settingsActionPrefixUpdate        = "update:"
+	settingsActionPrefixWorkdir       = "workdir:"
+	settingsProjectAdd                = "project:add"
+	settingsProjectPins               = "project:pins"
+	settingsProjectRootManage         = "project-root:manage"
+	settingsProjdirClear              = "projdir:clear"
+	settingsProjdirSetCurrent         = "projdir:set-current"
+	settingsProjdirSetTyped           = "projdir:set-typed"
+	settingsUpdateApply               = "update:apply"
+	settingsUpdateCheck               = "update:check"
+	settingsWorkdirAdd                = "workdir:add"
+	settingsWorkdirList               = "workdir:list"
+	settingsWorkdirTyped              = "workdir:typed"
+	settingsLabKeybindings            = "labs:keybindings"
+	settingsKeymapFieldPlain          = "plain"
+	settingsKeymapFieldPrefix         = "prefix"
 )
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand) *settingsCommand {
@@ -206,6 +210,12 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) error {
 	if section == settingsSectionProject {
 		return c.runProjectPickerSection(stdout, stderr)
+	}
+	if section == settingsSectionProjectHooks {
+		return c.runProjectHooksSection(stdout, stderr)
+	}
+	if section == settingsSectionProjectConfig {
+		return c.runProjectConfigSection(stdout, stderr)
 	}
 	if section == settingsSectionKeybindings {
 		return c.runKeybindingsSection(stdout, stderr)
@@ -407,6 +417,10 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 		intpickercompat.Entry{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Hooks (project)", filepath.Join(ctx.Path, ".projmux")),
 			Value: settingsSectionProjectHooks,
+		},
+		intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "config.toml", "edit env, kube, and startup"),
+			Value: settingsSectionProjectConfig,
 		},
 		intpickercompat.Entry{
 			Label: settingsLabelDim("Effective merge view", "Phase 3"),
