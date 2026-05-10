@@ -24,7 +24,7 @@ Project-local hooks, discovered from the new session's `PROJMUX_CWD`:
 
 Each hook file must exist, be a regular file or symlink (not a directory), and
 have the owner-execute bit set. Anything else is silently skipped — no warning,
-no log. There is no enable flag.
+no log.
 
 ```sh
 mkdir -p ~/.config/projmux/hooks
@@ -35,6 +35,26 @@ For project-local hooks, projmux runs at most one file: first
 `.projmux/post-create` if executable, otherwise `.projmux/hooks/post-create` if
 executable. Discovery does not walk parent directories and does not run hooks
 from status, preview, or picker hot paths.
+
+Project-local hooks are gated by trust-on-first-use. The global hook under
+`$XDG_CONFIG_HOME` remains prompt-free, but a repository hook must be approved
+before projmux runs it. Approving "always" records the hook content hash in:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/projmux/trusted-projects.json
+```
+
+The trust key is the absolute repository path and each executable hook path is
+stored relative to that repository. Each project entry has a `trusted_at`
+timestamp and a `files` map of relative hook paths to SHA-256 hashes. When the
+file content changes, projmux asks again and shows the old and new SHA-256
+hashes. In non-interactive contexts such as tmux run-shell or CI, untrusted or
+changed project-local hooks fail closed with a warning and session creation
+continues.
+
+Set `PROJMUX_PROJECT_HOOKS=off` to disable project-local hook discovery
+entirely. Project-local hooks can also be disabled from
+`projmux settings` under Labs. The global hook still runs either way.
 
 ## When it runs
 
@@ -108,6 +128,9 @@ it does not retroactively change the current shell. Open new panes via tmux
   (`ls -l ~/.config/projmux/hooks/post-create`) or the project hook
   (`ls -l .projmux/post-create .projmux/hooks/post-create`). A missing bit
   makes projmux skip silently by design.
+- **`project hook ... requires trust; skipping in non-interactive context`.**
+  Run the same projmux command from an interactive terminal to approve the hook,
+  or set `PROJMUX_PROJECT_HOOKS=off` if project-local hooks should be disabled.
 - **`projmux: post-create hook: ... timed out after 5s`.** Long-running work
   belongs in a backgrounded child (`(slow-thing &) >/dev/null 2>&1`). The hook
   itself must return within 5s or projmux kills it.

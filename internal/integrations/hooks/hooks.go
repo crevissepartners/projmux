@@ -45,6 +45,11 @@ type PostCreateContext struct {
 type PostCreateRunner struct {
 	HookPath             string
 	DiscoverProjectHooks bool
+	ProjectHooksFilePath string
+	TrustStorePath       string
+	ProjectHookPrompt    ProjectHookPrompt
+	PromptReader         io.Reader
+	PromptWriter         io.Writer
 	Logger               io.Writer
 	Timeout              time.Duration
 	Version              string
@@ -59,7 +64,7 @@ func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 	}
 
 	paths := r.postCreateHookPaths(c.CWD)
-	if len(paths) == 0 {
+	if len(paths.global) == 0 && paths.project.path == "" {
 		return
 	}
 
@@ -68,36 +73,56 @@ func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
 		timeout = DefaultPostCreateTimeout
 	}
 
-	for _, path := range paths {
+	for _, path := range paths.global {
 		r.runHook(ctx, c, path, timeout)
+	}
+	if paths.project.path != "" && r.authorizeProjectHook(paths.project) {
+		r.runHook(ctx, c, paths.project.path, timeout)
 	}
 }
 
-func (r *PostCreateRunner) postCreateHookPaths(cwd string) []string {
-	var paths []string
+type postCreateHookPaths struct {
+	global  []string
+	project projectPostCreateHook
+}
+
+type projectPostCreateHook struct {
+	repo string
+	rel  string
+	path string
+}
+
+func (r *PostCreateRunner) postCreateHookPaths(cwd string) postCreateHookPaths {
+	var paths postCreateHookPaths
 	if path := strings.TrimSpace(r.HookPath); isExecutableHook(path) {
-		paths = append(paths, path)
+		paths.global = append(paths.global, path)
 	}
-	if r.DiscoverProjectHooks {
-		if path := discoverProjectPostCreateHook(cwd); path != "" {
-			paths = append(paths, path)
-		}
+	if r.DiscoverProjectHooks && !projectHooksDisabled(r.ProjectHooksFilePath, r.Logger) {
+		paths.project = discoverProjectPostCreateHook(cwd)
 	}
 	return paths
 }
 
-func discoverProjectPostCreateHook(cwd string) string {
+func discoverProjectPostCreateHook(cwd string) projectPostCreateHook {
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" {
-		return ""
+		return projectPostCreateHook{}
+	}
+	repo, err := filepath.Abs(cwd)
+	if err != nil {
+		return projectPostCreateHook{}
 	}
 	for _, candidate := range projectPostCreateCandidates {
-		path := filepath.Join(cwd, candidate)
+		path := filepath.Join(repo, candidate)
 		if isExecutableHook(path) {
-			return path
+			return projectPostCreateHook{
+				repo: repo,
+				rel:  filepath.ToSlash(candidate),
+				path: path,
+			}
 		}
 	}
-	return ""
+	return projectPostCreateHook{}
 }
 
 func isExecutableHook(path string) bool {

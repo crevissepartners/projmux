@@ -41,6 +41,7 @@ const (
 	settingsSectionLabs           = "section:labs"
 	settingsSectionAbout          = "section:about"
 	settingsActionPrefixAI        = "ai:"
+	settingsActionPrefixHooks     = "project-hooks:"
 	settingsActionPrefixPicker    = "picker-backend:"
 	settingsActionPrefixProjdir   = "projdir:"
 	settingsActionPrefixStatusbar = "statusbar-decoration:"
@@ -996,8 +997,31 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 
 func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	current, source := c.currentPickerBackend()
-	entries := make([]intpickercompat.Entry, 0, 2)
+	hookMode, hookSource := c.currentProjectHooksMode()
+	entries := make([]intpickercompat.Entry, 0, 5)
 	entries = append(entries, settingsBackEntry())
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabelInfo("Project hooks", string(hookMode), hookSource),
+		Value: settingsNoopValue,
+	})
+	for _, item := range []struct {
+		mode config.ProjectHooksMode
+		desc string
+	}{
+		{config.ProjectHooksOn, "allow trusted project-local post-create hooks"},
+		{config.ProjectHooksOff, "disable project-local hooks; global hook still runs"},
+	} {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if item.mode == hookMode {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabel(glyph, color, "Project hooks "+string(item.mode), item.desc),
+			Value: settingsActionPrefixHooks + string(item.mode),
+		})
+	}
 	if source != "" {
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Picker source", string(current), source),
@@ -1005,6 +1029,39 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 		})
 	}
 	return entries
+}
+
+func (c *settingsCommand) currentProjectHooksMode() (config.ProjectHooksMode, string) {
+	if c.lookupEnv != nil && strings.EqualFold(strings.TrimSpace(c.lookupEnv("PROJMUX_PROJECT_HOOKS")), string(config.ProjectHooksOff)) {
+		return config.ProjectHooksOff, "PROJMUX_PROJECT_HOOKS env"
+	}
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return config.ProjectHooksOn, "default"
+	}
+	mode, err := config.LoadProjectHooksFile(paths.ProjectHooksFile())
+	if err != nil {
+		return config.ProjectHooksOn, "default"
+	}
+	if _, err := osStat(paths.ProjectHooksFile()); err == nil {
+		return mode, "saved"
+	}
+	return mode, "default"
+}
+
+func (c *settingsCommand) setProjectHooksMode(value string) error {
+	mode := config.NormalizeProjectHooksMode(value)
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+	if err := config.SaveProjectHooksFile(paths.ProjectHooksFile(), mode); err != nil {
+		return err
+	}
+	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
+		_ = c.runCommand("tmux", "display-message", "project hooks: "+string(mode))
+	}
+	return nil
 }
 
 func (c *settingsCommand) currentPickerBackend() (config.PickerBackend, string) {
@@ -1122,6 +1179,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return errors.New("ai settings are not configured")
 		}
 		return c.ai.setMode(mode)
+	case strings.HasPrefix(value, settingsActionPrefixHooks):
+		return c.setProjectHooksMode(strings.TrimPrefix(value, settingsActionPrefixHooks))
 	case strings.HasPrefix(value, settingsActionPrefixPicker):
 		return c.setPickerBackend(strings.TrimPrefix(value, settingsActionPrefixPicker))
 	case strings.HasPrefix(value, settingsActionPrefixProjdir):

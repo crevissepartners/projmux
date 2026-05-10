@@ -17,6 +17,7 @@ const (
 	ProjdirFileName        = "projdir"
 	KeymapFileName         = "keymap.toml"
 	HooksDirName           = "hooks"
+	ProjectHooksFileName   = "project-hooks"
 	PostCreateHookFileName = "post-create"
 )
 

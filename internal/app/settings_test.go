@@ -174,6 +174,12 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	if got, want := labsOptions.UI, "settings-labs"; got != want {
 		t.Fatalf("labs settings UI = %q, want %q", got, want)
 	}
+	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOn)) {
+		t.Fatalf("labs settings entries = %#v, want project hooks on row", labsOptions.Entries)
+	}
+	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
+		t.Fatalf("labs settings entries = %#v, want project hooks off row", labsOptions.Entries)
+	}
 	for _, entry := range labsOptions.Entries {
 		if strings.HasPrefix(entry.Value, settingsActionPrefixPicker) {
 			t.Fatalf("labs settings entries = %#v, want no picker backend choices", labsOptions.Entries)
@@ -193,6 +199,78 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	}
 	if len(tmuxCalls) != 0 {
 		t.Fatalf("tmux calls = %#v, want none", tmuxCalls)
+	}
+}
+
+func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	var labsOptions intpickercompat.Options
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		ai:       testAICommand(home),
+		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+			case 2:
+				labsOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHooks + string(config.ProjectHooksOff)}, nil
+			default:
+				return intpickercompat.Result{}, nil
+			}
+		}),
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+			case 2:
+				labsOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHooks + string(config.ProjectHooksOff)}, nil
+			default:
+				return intpickercompat.Result{}, nil
+			}
+		})),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
+		t.Fatalf("labs settings entries = %#v, want project hooks off row", labsOptions.Entries)
+	}
+
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.LoadProjectHooksFile(paths.ProjectHooksFile())
+	if err != nil {
+		t.Fatalf("LoadProjectHooksFile() error = %v", err)
+	}
+	if got != config.ProjectHooksOff {
+		t.Fatalf("project hooks mode = %q, want %q", got, config.ProjectHooksOff)
+	}
+	if !reflect.DeepEqual(tmuxCalls, [][]string{
+		{"tmux", "display-message", "project hooks: off"},
+	}) {
+		t.Fatalf("tmux calls = %#v", tmuxCalls)
 	}
 }
 
