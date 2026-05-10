@@ -8,9 +8,10 @@ The recommended path when a key does not fire:
 
 1. Press the key inside `projmux shell` and see what works on your terminal
    out of the box ([Quick start](#quick-start-no-setup)).
-2. If something is swallowed, run [`projmux setup`](#diagnose-projmux-setup)
-   outside tmux — it tells you exactly which sequences reach the process and
-   which the terminal is eating.
+2. If something is swallowed, open Settings > Labs > Diagnose keybindings, or
+   run [`projmux setup`](#diagnose-projmux-setup) outside tmux. Both paths tell
+   you exactly which sequences reach the process and which the terminal is
+   eating.
 3. For terminals projmux knows how to configure, run
    [`projmux init [terminal]`](#auto-config-projmux-init) as the fallback:
    preview first, then add `--apply` to merge the right bindings into your
@@ -25,6 +26,12 @@ in-app editor writes `~/.config/projmux/keymap.toml`, regenerates
 Settings is running inside tmux. Terminal fallback mappings are separate:
 after changing fallback keys, rerun `projmux init` and restart the terminal
 where applicable.
+
+Settings > Labs > Diagnose keybindings reuses the same probe and terminal
+fallback engines from `projmux setup` and `projmux init`. It lists the
+keybinding catalog, lets you press one action key at a time from inside the
+app, distinguishes plain / CSI-u / unexpected / timeout outcomes, and exposes
+preview/apply rows for supported terminal fallbacks.
 
 > 한국어 요약: 대부분의 터미널은 `projmux shell` 만으로 아래 키가 바로 동작합니다.
 > 동작하지 않으면 `projmux setup` 으로 어떤 키가 막혔는지 진단하고,
@@ -112,6 +119,10 @@ Run `projmux setup` *outside* tmux (in your raw terminal window) to find out
 which projmux keys actually reach the process. The command auto-detects your
 terminal, then asks you to press each shortcut in turn and classifies the
 result:
+
+The same diagnostic is available in-app at Settings > Labs > Diagnose
+keybindings. The Lab flow reads the controlling TTY directly, so it can probe a
+key while Settings itself is running inside tmux.
 
 | Status | Meaning |
 | --- | --- |

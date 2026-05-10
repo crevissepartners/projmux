@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -20,14 +21,17 @@ import (
 var osStat = os.Stat
 
 type settingsCommand struct {
-	ai           *aiCommand
-	switcher     *switchCommand
-	update       *updateCommand
-	runner       intpickercompat.Runner
-	nativePicker intpicker.Runner
-	homeDir      func() (string, error)
-	lookupEnv    func(string) string
-	runCommand   func(name string, args ...string) error
+	ai                 *aiCommand
+	switcher           *switchCommand
+	update             *updateCommand
+	runner             intpickercompat.Runner
+	nativePicker       intpicker.Runner
+	homeDir            func() (string, error)
+	lookupEnv          func(string) string
+	runCommand         func(name string, args ...string) error
+	probeKeybinding    func(probeKey, time.Duration) (probeResult, error)
+	runInitKeybindings func(args []string, stdout, stderr io.Writer) error
+	lastLabProbe       map[string]probeResult
 }
 
 var errSettingsClosed = errors.New("settings closed")
@@ -44,6 +48,7 @@ const (
 	settingsActionPrefixAI        = "ai:"
 	settingsActionPrefixHooks     = "project-hooks:"
 	settingsActionPrefixKeymap    = "keymap:"
+	settingsActionPrefixLabKeymap = "lab-keymap:"
 	settingsActionPrefixPicker    = "picker-backend:"
 	settingsActionPrefixProjdir   = "projdir:"
 	settingsActionPrefixStatusbar = "statusbar-decoration:"
@@ -61,6 +66,7 @@ const (
 	settingsWorkdirAdd            = "workdir:add"
 	settingsWorkdirList           = "workdir:list"
 	settingsWorkdirTyped          = "workdir:typed"
+	settingsLabKeybindings        = "labs:keybindings"
 	settingsKeymapFieldPlain      = "plain"
 	settingsKeymapFieldPrefix     = "prefix"
 )
@@ -124,6 +130,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionKeybindings {
 		return c.runKeybindingsSection(stdout, stderr)
+	}
+	if section == settingsSectionLabs {
+		return c.runLabsSection(stdout, stderr)
 	}
 
 	for {
@@ -1272,6 +1281,351 @@ func (c *settingsCommand) saveKeymapAndApply(actionID, field string, value *stri
 	return err
 }
 
+func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
+	for {
+		options, err := c.sectionOptions(settingsSectionLabs)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsLabKeybindings:
+			if err := c.runLabKeybindingsSection(stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixHooks):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown labs settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runLabKeybindingsSection(stdout, stderr io.Writer) error {
+	for {
+		entries, err := c.labKeybindingEntries()
+		if err != nil {
+			entries = []intpickercompat.Entry{
+				settingsBackEntry(),
+				{
+					Label: settingsLabelDim("Keymap error", err.Error()),
+					Value: settingsNoopValue,
+				},
+			}
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-lab-keybindings",
+			Entries:    entries,
+			Title:      "Keybinding Lab - Diagnose delivery",
+			Prompt:     "Settings > Labs > Keybindings > ",
+			Footer:     projmuxFooter("Enter: diagnose  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		if id, ok := strings.CutPrefix(action, settingsActionPrefixLabKeymap); ok {
+			if err := c.runLabKeybindingDetail(id, stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
+		return fmt.Errorf("unknown lab keybinding action: %s", action)
+	}
+}
+
+func (c *settingsCommand) runLabKeybindingDetail(actionID string, stdout, stderr io.Writer) error {
+	for {
+		entries, title, err := c.labKeybindingDetailEntries(actionID)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-lab-keybinding-detail",
+			Entries:    entries,
+			Title:      title,
+			Prompt:     "Settings > Labs > Keybindings > Action > ",
+			Footer:     projmuxFooter("Enter: probe/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		value := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || value == "" {
+			return errSettingsClosed
+		}
+		if value == settingsBackValue {
+			return nil
+		}
+		if value == settingsNoopValue {
+			continue
+		}
+		op, ok := parseLabKeybindingAction(value, actionID)
+		if !ok {
+			return fmt.Errorf("unknown lab keybinding detail action: %s", value)
+		}
+		switch op {
+		case "probe":
+			key, err := c.labProbeKey(actionID)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "press %s for %s\n", key.Label, key.Action)
+			res, err := c.probeLabKeybinding(key, defaultProbeTimeout)
+			if err != nil {
+				return err
+			}
+			if c.lastLabProbe == nil {
+				c.lastLabProbe = map[string]probeResult{}
+			}
+			c.lastLabProbe[actionID] = res
+			fmt.Fprintf(stdout, "probe %s: %s\n", key.Label, renderProbeStatus(res))
+		case "init-preview":
+			if err := c.runLabTerminalInit(false, stdout, stderr); err != nil {
+				return err
+			}
+		case "init-apply":
+			if err := c.runLabTerminalInit(true, stdout, stderr); err != nil {
+				return err
+			}
+		case "save-plain":
+			if err := c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, nil, stdout); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown lab keybinding operation: %s", op)
+		}
+	}
+}
+
+func parseLabKeybindingAction(value, actionID string) (string, bool) {
+	prefix := settingsActionPrefixLabKeymap + actionID + ":"
+	if !strings.HasPrefix(value, prefix) {
+		return "", false
+	}
+	op := strings.TrimPrefix(value, prefix)
+	switch op {
+	case "probe", "init-preview", "init-apply", "save-plain":
+		return op, true
+	default:
+		return "", false
+	}
+}
+
+func (c *settingsCommand) labKeybindingEntries() ([]intpickercompat.Entry, error) {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return nil, err
+	}
+	terminal := detectTerminal(c.lookupEnv)
+	keys := probeKeysFromActions(actions)
+	entries := make([]intpickercompat.Entry, 0, len(keys)+3)
+	entries = append(entries, settingsBackEntry())
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabelInfo("Terminal", terminal.Display(), labTerminalSupportSummary(terminal)),
+		Value: settingsNoopValue,
+	})
+	for _, key := range keys {
+		action, ok := keyBindingActionByID(actions, key.ActionID)
+		if !ok {
+			continue
+		}
+		defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+		desc := strings.TrimSpace(action.Description + "  plain " + keybindingValueSummary(action.PlainChord, defaultAction.PlainChord))
+		if key.UserKey != "" {
+			desc += "  " + key.UserKey
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, key.Label, desc),
+			Value:     settingsActionPrefixLabKeymap + key.ActionID,
+			SearchKey: key.ActionID + " " + key.Label + " " + key.Action + " " + action.Description,
+		})
+	}
+	return entries, nil
+}
+
+func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpickercompat.Entry, string, error) {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return nil, "", err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	key, err := c.labProbeKeyFromActions(actionID, actions)
+	if err != nil {
+		return nil, "", err
+	}
+	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	terminal := detectTerminal(c.lookupEnv)
+	prefix := settingsActionPrefixLabKeymap + actionID + ":"
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Action ID", action.ID, ""),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Probe key", key.Label, key.Action),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Terminal", terminal.Display(), labTerminalSupportSummary(terminal)),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Plain chord", keybindingValueSummary(action.PlainChord, defaultAction.PlainChord), "tmux"),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabel(settingsGlyphType, settingsColorType, "Press the key", "read one raw keypress from /dev/tty"),
+			Value: prefix + "probe",
+		},
+	}
+	if terminal.InitCommand() != "" {
+		entries = append(entries,
+			intpickercompat.Entry{
+				Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview terminal fallback", strings.TrimSuffix(terminal.InitCommand(), " --apply")),
+				Value: prefix + "init-preview",
+			},
+			intpickercompat.Entry{
+				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Apply terminal fallback", terminal.InitCommand()),
+				Value: prefix + "init-apply",
+			},
+		)
+	} else if hint := terminal.RemediationHint(); hint != "" {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Manual fallback", hint, ""),
+			Value: settingsNoopValue,
+		})
+	}
+	if res, ok := c.lastLabProbe[actionID]; ok {
+		entries = append(entries, labProbeOutcomeEntries(prefix, action, defaultAction, res, terminal)...)
+	}
+	return entries, "Keybinding Lab - " + action.Description, nil
+}
+
+func labProbeOutcomeEntries(prefix string, action, defaultAction keyBindingAction, res probeResult, terminal terminalInfo) []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
+		{
+			Label: settingsLabelInfo("Probe result", string(res.Status), renderProbeStatus(res)),
+			Value: settingsNoopValue,
+		},
+	}
+	switch res.Status {
+	case probeStatusPlain:
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Plain key reached", "tmux-level binding can work immediately", res.Reason),
+			Value: settingsNoopValue,
+		})
+		if defaultAction.PlainChord != "" && action.PlainChord != defaultAction.PlainChord {
+			entries = append(entries, intpickercompat.Entry{
+				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save plain tmux binding", "reset keymap.toml to "+defaultAction.PlainChord+" and reload app config"),
+				Value: prefix + "save-plain",
+			})
+		}
+	case probeStatusCSIu:
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("CSI-u reached", "already routed through terminal fallback", res.Key.UserKey),
+			Value: settingsNoopValue,
+		})
+	case probeStatusUnknown:
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Unexpected sequence", visibleEscape(string(res.Sequence)), "no keymap overwrite"),
+			Value: settingsNoopValue,
+		})
+	case probeStatusTimeout:
+		desc := "terminal fallback unavailable"
+		if cmd := terminal.InitCommand(); cmd != "" {
+			desc = cmd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Timeout or swallowed", "no bytes reached projmux", desc),
+			Value: settingsNoopValue,
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) labProbeKey(actionID string) (probeKey, error) {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return probeKey{}, err
+	}
+	return c.labProbeKeyFromActions(actionID, actions)
+}
+
+func (c *settingsCommand) labProbeKeyFromActions(actionID string, actions []keyBindingAction) (probeKey, error) {
+	for _, key := range probeKeysFromActions(actions) {
+		if key.ActionID == actionID {
+			return key, nil
+		}
+	}
+	return probeKey{}, fmt.Errorf("keybinding action %s has no probe key", actionID)
+}
+
+func (c *settingsCommand) probeLabKeybinding(key probeKey, timeout time.Duration) (probeResult, error) {
+	if c.probeKeybinding != nil {
+		return c.probeKeybinding(key, timeout)
+	}
+	cmd := &setupCommand{openTTY: openControllingTTY}
+	return cmd.probeControllingTTYKey(key, timeout)
+}
+
+func (c *settingsCommand) runLabTerminalInit(apply bool, stdout, stderr io.Writer) error {
+	terminal := detectTerminal(c.lookupEnv)
+	if terminal.InitCommand() == "" {
+		return fmt.Errorf("keybinding lab: terminal fallback is not supported for %s", terminal.Display())
+	}
+	args := []string{terminal.Slug, "--dry-run"}
+	if apply {
+		args[1] = "--apply"
+	}
+	if c.runInitKeybindings != nil {
+		return c.runInitKeybindings(args, stdout, stderr)
+	}
+	cmd := newInitCommand()
+	cmd.getenv = c.lookupEnv
+	return cmd.Run(args, stdout, stderr)
+}
+
+func labTerminalSupportSummary(terminal terminalInfo) string {
+	if cmd := terminal.InitCommand(); cmd != "" {
+		return "supported fallback: " + strings.TrimSuffix(cmd, " --apply")
+	}
+	if hint := terminal.RemediationHint(); hint != "" {
+		return hint
+	}
+	return "no automatic fallback adapter"
+}
+
 func (c *settingsCommand) writeTmuxAppConfig() (string, error) {
 	home := ""
 	if c.homeDir != nil {
@@ -1324,8 +1678,12 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	current, source := c.currentPickerBackend()
 	hookMode, hookSource := c.currentProjectHooksMode()
-	entries := make([]intpickercompat.Entry, 0, 5)
+	entries := make([]intpickercompat.Entry, 0, 6)
 	entries = append(entries, settingsBackEntry())
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Diagnose keybindings", "probe delivery and apply terminal fallbacks"),
+		Value: settingsLabKeybindings,
+	})
 	entries = append(entries, intpickercompat.Entry{
 		Label: settingsLabelInfo("Project hooks", string(hookMode), hookSource),
 		Value: settingsNoopValue,
