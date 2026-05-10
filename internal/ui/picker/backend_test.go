@@ -644,6 +644,130 @@ func TestNativeInteractiveSupportsFZFNavigationKeys(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveWrapsPreviousNavigationKeys(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "api", Value: "/repo/api"},
+		{Title: "web", Value: "/repo/web"},
+		{Title: "tools", Value: "/repo/tools"},
+	}
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "up", input: "\x1b[A\r"},
+		{name: "ctrl-p", input: "\x10\r"},
+		{name: "ctrl-k", input: "\x0b\r"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := runNativeInteractive(strings.NewReader(tt.input), io.Discard, Options{
+				UI:    "switch",
+				Items: items,
+			})
+			if err != nil {
+				t.Fatalf("runNativeInteractive() error = %v", err)
+			}
+			if result.Key != "enter" || result.Value != "/repo/tools" {
+				t.Fatalf("result = %#v, want previous navigation to wrap to last item", result)
+			}
+		})
+	}
+}
+
+func TestNativeInteractiveWrapsNextNavigationKeys(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "api", Value: "/repo/api"},
+		{Title: "web", Value: "/repo/web"},
+		{Title: "tools", Value: "/repo/tools"},
+	}
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "down", input: "\x1b[B\r"},
+		{name: "ctrl-n", input: "\x0e\r"},
+		{name: "ctrl-j", input: "\x1b[106;5u\r"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := runNativeInteractive(strings.NewReader(tt.input), io.Discard, Options{
+				UI:           "switch",
+				InitialIndex: 2,
+				Items:        items,
+			})
+			if err != nil {
+				t.Fatalf("runNativeInteractive() error = %v", err)
+			}
+			if result.Key != "enter" || result.Value != "/repo/api" {
+				t.Fatalf("result = %#v, want next navigation to wrap to first item", result)
+			}
+		})
+	}
+}
+
+func TestNativeInteractiveNavigationKeysAreNoopForEmptyList(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[A\x10\x0b\x1b[B\x0e\x1b[106;5u"), io.Discard, Options{
+		UI: "switch",
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if !result.Closed {
+		t.Fatalf("result = %#v, want EOF close after empty-list navigation no-op", result)
+	}
+}
+
+func TestNativeInteractiveJumpNavigationRemainsClamped(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Title: "api", Value: "/repo/api"},
+		{Title: "web", Value: "/repo/web"},
+		{Title: "tools", Value: "/repo/tools"},
+	}
+	tests := []struct {
+		name         string
+		input        string
+		initialIndex int
+		wantValue    string
+	}{
+		{name: "page-up at first", input: "\x1b[5~\r", wantValue: "/repo/api"},
+		{name: "page-down at last", input: "\x1b[6~\r", initialIndex: 2, wantValue: "/repo/tools"},
+		{name: "home jumps to first", input: "\x1b[H\r", initialIndex: 2, wantValue: "/repo/api"},
+		{name: "end jumps to last", input: "\x1b[F\r", wantValue: "/repo/tools"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := runNativeInteractive(strings.NewReader(tt.input), io.Discard, Options{
+				UI:           "switch",
+				InitialIndex: tt.initialIndex,
+				Items:        items,
+			})
+			if err != nil {
+				t.Fatalf("runNativeInteractive() error = %v", err)
+			}
+			if result.Key != "enter" || result.Value != tt.wantValue {
+				t.Fatalf("result = %#v, want %s", result, tt.wantValue)
+			}
+		})
+	}
+}
+
 func TestNativeInteractiveTreatsCarriageReturnAsEnter(t *testing.T) {
 	t.Parallel()
 

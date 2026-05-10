@@ -504,12 +504,12 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			nativeDebugLogf("interactive ui=%q result=closed key=%q query=%q", options.UI, key.Name, query)
 			return Result{Key: key.Name, Query: query, Closed: true}, nil
 		case "up", "ctrl-p", "ctrl-k":
-			if selected > 0 {
-				selected--
+			if len(items) > 0 {
+				selected = (selected - 1 + len(items)) % len(items)
 			}
 		case "down", "ctrl-n", "ctrl-j":
-			if selected < len(items)-1 {
-				selected++
+			if len(items) > 0 {
+				selected = (selected + 1) % len(items)
 			}
 		case "home":
 			selected = 0
