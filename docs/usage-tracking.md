@@ -129,6 +129,19 @@ The age indicator's colour ramps with staleness: dim grey
 because the rollout file is always near-current (no throttle gap to
 report).
 
+### Statusbar usage popup
+
+`projmux statusbar click usage` renders a native-framed popup from the same
+cache instead of shelling out to `projmux usage`. This keeps `projmux usage
+--json` backwards-compatible for CLI consumers while giving the tmux click path
+a structured table with aligned rows, right-aligned numeric values, dim
+unavailable cells, amber usage at 80%, and red usage at 95%.
+
+The popup sync line uses the maximum authoritative `LastCollect` timestamp from
+the cache. If that field is unavailable, it falls back to the snapshots file
+mtime. The sync line turns amber when the timestamp is more than 60 seconds
+old. Enter closes the popup.
+
 ## Force semantics
 
 `--force` / `-f` does two things:

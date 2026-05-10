@@ -64,7 +64,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
-| `usage`   | 1 | `display-popup -E -h 60% -w 80% -- projmux usage`, then wait for Enter | `prefix s u`  |
+| `usage`   | 1 | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on focus success | `prefix s n`  |
 
 `notify` reads the pending queue only. For a live pane-state view that is
@@ -74,15 +74,22 @@ The notify segment renders the newest queued item as a single notification
 block: project, state (`NEED`/`INFO`/`WARN`/`CRIT`), optional agent, text,
 age, and `+N` for older pending entries. Window/pane ids are not shown in the
 compact status segment.
-`usage` deliberately opens the detailed `projmux usage` table popup; it is the
-clear action surface for the compact HUD bar.
+`usage` opens a native-framed detail HUD for the compact usage bar. It reads
+the cached usage state in-process, keeps the existing `projmux usage` CLI
+output shape unchanged for external consumers, aligns model/window rows with
+right-aligned numeric values, dims unavailable values, and colors rows at the
+same alert thresholds as the popup: amber at 80% and red at 95%.
 
 The path popup uses the native picker frame chrome, a one-line title,
 the full wrapped current path, cheap project/git metadata when available, and
 an `Enter closes this popup` prompt. The click is display-only: it does not
 invoke system clipboard tools and does not write a tmux paste buffer. The
 popup command prints one quoted payload and waits for a plain Enter read so it
-does not leave terminal key state behind. The notification HUD detail surface
+does not leave terminal key state behind. The usage popup uses the same
+single-payload print and plain Enter-close pattern. It shows the authoritative
+last collect timestamp when present, falls back to the cache file mtime when
+needed, and colors that sync line amber once it is more than 60 seconds old.
+The notification HUD detail surface
 (`Alt-2` / `User2`) opens the
 right-side notification popup with newest-first rows. The popup itself is
 untitled; when decoration mode is `symbol` or `emoji`, the bell appears before
@@ -127,8 +134,8 @@ them as `display-message` toasts:
 - `settings` popup launch failure: toast `statusbar settings: popup failed`.
 - `pwd` path popup failure: fall back to a short `display-message`
   containing the current path.
-- `usage` popup failure: fall back to inlining the rendered table
-  into a single `display-message`.
+- `usage` popup failure: fall back to a compact usage summary
+  `display-message`.
 
 `MouseX` / `MouseY` are accepted but not consumed today; the fields
 are wired through so click telemetry can land without changing the
