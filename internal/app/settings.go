@@ -62,6 +62,8 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsRootTabGlobalValue:  {Name: "Global Settings", Axis: settingsAxisBoth},
 	settingsRootTabProjectValue: {Name: "Project Settings", Axis: settingsAxisBoth},
 	settingsSectionProject:      {Name: "Project Picker", Axis: settingsAxisGlobal},
+	settingsSectionGlobalHooks:  {Name: "Hooks", Axis: settingsAxisGlobal},
+	settingsSectionProjectHooks: {Name: "Hooks", Axis: settingsAxisProject},
 	settingsSectionAI:           {Name: "AI Settings", Axis: settingsAxisGlobal},
 	settingsSectionStatusbar:    {Name: "Appearance", Axis: settingsAxisGlobal},
 	settingsSectionKeybindings:  {Name: "Keybindings", Axis: settingsAxisGlobal},
@@ -115,6 +117,8 @@ const (
 	settingsRootTabGlobalValue    = "__settings_tab_global__"
 	settingsRootTabProjectValue   = "__settings_tab_project__"
 	settingsSectionAI             = "section:ai"
+	settingsSectionGlobalHooks    = "section:hooks-global"
+	settingsSectionProjectHooks   = "section:hooks-project"
 	settingsSectionKeybindings    = "section:keybindings"
 	settingsSectionProject        = "section:project-picker"
 	settingsSectionStatusbar      = "section:statusbar"
@@ -310,6 +314,10 @@ func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompa
 			Value: settingsSectionAI,
 		},
 		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Hooks", "global lifecycle hook paths"),
+			Value: settingsSectionGlobalHooks,
+		},
+		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Appearance", "status and popup decoration mode"),
 			Value: settingsSectionStatusbar,
 		},
@@ -397,12 +405,8 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 			Value: settingsNoopValue,
 		},
 		intpickercompat.Entry{
-			Label: settingsLabelDim("Hooks (project)", filepath.Join(ctx.Path, ".projmux", "hooks")),
-			Value: settingsNoopValue,
-		},
-		intpickercompat.Entry{
-			Label: settingsLabelDim("config.toml", filepath.Join(ctx.Path, ".projmux", "config.toml")),
-			Value: settingsNoopValue,
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Hooks (project)", filepath.Join(ctx.Path, ".projmux")),
+			Value: settingsSectionProjectHooks,
 		},
 		intpickercompat.Entry{
 			Label: settingsLabelDim("Effective merge view", "Phase 3"),
@@ -533,6 +537,27 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Title:      "AI Settings - Default Ctrl+Shift+R/L split mode",
 			Prompt:     "Settings > AI Settings > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		}, nil
+	case settingsSectionGlobalHooks:
+		return intpickercompat.Options{
+			UI:         "settings-hooks-global",
+			Entries:    c.globalHookEntries(),
+			Title:      "Hooks - Global lifecycle hook paths",
+			Prompt:     "Settings > Hooks > ",
+			Footer:     projmuxFooter("Enter: inspect  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		}, nil
+	case settingsSectionProjectHooks:
+		ctx := c.resolveSettingsProjectContext()
+		return intpickercompat.Options{
+			UI:         "settings-hooks-project",
+			Entries:    c.projectHookEntries(ctx),
+			Title:      "Hooks - Project lifecycle hook paths",
+			Prompt:     "Settings > Project > Hooks > ",
+			Footer:     projmuxFooter("Enter: inspect  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
