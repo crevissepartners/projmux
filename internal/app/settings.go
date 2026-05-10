@@ -70,6 +70,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsSectionGlobalHooks:    {Name: "Hooks", Axis: settingsAxisGlobal},
 	settingsSectionProjectHooks:   {Name: "Hooks", Axis: settingsAxisProject},
 	settingsSectionProjectConfig:  {Name: "Project Config", Axis: settingsAxisProject},
+	settingsSectionProjectTrust:   {Name: "Trust", Axis: settingsAxisProject},
 	settingsSectionEffectiveMerge: {Name: "Effective merge view", Axis: settingsAxisProject},
 	settingsSectionAI:             {Name: "AI Settings", Axis: settingsAxisGlobal},
 	settingsSectionStatusbar:      {Name: "Appearance", Axis: settingsAxisGlobal},
@@ -103,6 +104,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixLabKeymap, settingsEntryMeta{Name: "Keybinding diagnostics", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixPicker, settingsEntryMeta{Name: "Picker backend", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixProjectConfig, settingsEntryMeta{Name: "Project Config", Axis: settingsAxisProject}},
+	{settingsActionPrefixTrust, settingsEntryMeta{Name: "Trust", Axis: settingsAxisProject}},
 	{settingsActionPrefixProjdir, settingsEntryMeta{Name: "Project Root", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixStatusbar, settingsEntryMeta{Name: "Appearance", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixSwitch, settingsEntryMeta{Name: "Pinned Projects", Axis: settingsAxisGlobal}},
@@ -131,6 +133,7 @@ const (
 	settingsSectionGlobalHooks        = "section:hooks-global"
 	settingsSectionProjectHooks       = "section:hooks-project"
 	settingsSectionProjectConfig      = "section:project-config"
+	settingsSectionProjectTrust       = "section:project-trust"
 	settingsSectionEffectiveMerge     = "section:effective-merge"
 	settingsSectionKeybindings        = "section:keybindings"
 	settingsSectionProject            = "section:project-picker"
@@ -143,6 +146,7 @@ const (
 	settingsActionPrefixLabKeymap     = "lab-keymap:"
 	settingsActionPrefixPicker        = "picker-backend:"
 	settingsActionPrefixProjectConfig = "project-config:"
+	settingsActionPrefixTrust         = "trust:"
 	settingsActionPrefixProjdir       = "projdir:"
 	settingsActionPrefixStatusbar     = "statusbar-decoration:"
 	settingsActionPrefixSwitch        = "switch:"
@@ -238,6 +242,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionProjectConfig {
 		return c.runProjectConfigSection(stdout, stderr)
+	}
+	if section == settingsSectionProjectTrust {
+		return c.runProjectTrustSection(stdout, stderr)
 	}
 	if section == settingsSectionEffectiveMerge {
 		return c.runEffectiveMergeSection(stdout, stderr)
@@ -471,11 +478,12 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 
 	// The project context label is conveyed by the chip strip plus the
 	// popup header — keep the picker entries focused on actionable rows.
+	// The Trust row is rendered with state-aware tone (untrusted /
+	// trusted / stale / absent) and routes Enter into the trust subsection
+	// that decides whether to register, refresh, or untrust the
+	// project-local .projmux/config.toml hash.
 	return []intpickercompat.Entry{
-		{
-			Label: settingsLabelDim("Trust", "read-only preview arrives in Phase 4"),
-			Value: settingsNoopValue,
-		},
+		c.projectTrustEntry(ctx),
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Hooks (project)", filepath.Join(ctx.Path, ".projmux")),
 			Value: settingsSectionProjectHooks,
