@@ -988,6 +988,15 @@ func nativeKeyFromCSIu(params string) nativeKey {
 			return nativeKey{Name: "ctrl-alt-" + letter}
 		}
 	}
+	if codepoint >= 1 && codepoint <= 26 {
+		letter := string(rune('a' + codepoint - 1))
+		switch mod {
+		case "", "5":
+			return nativeKey{Name: "ctrl-" + letter}
+		case "3", "7":
+			return nativeKey{Name: "ctrl-alt-" + letter}
+		}
+	}
 	if codepoint >= 'A' && codepoint <= 'Z' {
 		letter := strings.ToLower(string(rune(codepoint)))
 		switch mod {
@@ -1296,6 +1305,9 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		displayItems = nativeHighlightSimpleItems(options, items, query)
 	}
 	listLines := nativeInteractiveListLines(displayItems, start, end, selected, options.MultiLine)
+	if options.MultiLine {
+		listLines = nativeAppendPartialNextItemLines(displayItems, listLines, end, selected, listLimit)
+	}
 	var main strings.Builder
 	if len(items) == 0 {
 		fmt.Fprintln(&main, "  no matches")
@@ -1303,7 +1315,12 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		return
 	}
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
-		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, len(items), start, end, listLimit)
+		scrollTotal, scrollStart, scrollEnd := len(items), start, end
+		if options.MultiLine {
+			scrollTotal, scrollStart, _ = nativeListScrollbarUnits(items, start, end, true)
+			scrollEnd = min(scrollStart+len(listLines), scrollTotal)
+		}
+		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, scrollTotal, scrollStart, scrollEnd, listLimit)
 		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
@@ -1312,6 +1329,9 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		scrollRows = len(listLines)
 	}
 	scrollTotal, scrollStart, scrollEnd := nativeListScrollbarUnits(items, start, end, options.MultiLine)
+	if options.MultiLine {
+		scrollEnd = min(scrollStart+len(listLines), scrollTotal)
+	}
 	listLines = nativeListLinesWithScrollbarRows(listLines, scrollTotal, scrollStart, scrollEnd, layout.Cols, scrollRows)
 	for _, line := range listLines {
 		fmt.Fprintln(&main, line)
@@ -1336,6 +1356,22 @@ func nativeListLimit(options Options, layout nativeLayout, previewPlacement stri
 		return 1
 	}
 	return available
+}
+
+func nativeAppendPartialNextItemLines(items []Item, lines []string, next, selected, limit int) []string {
+	if limit <= 0 || len(lines) >= limit || next < 0 || next >= len(items) {
+		return lines
+	}
+	remaining := limit - len(lines)
+	if remaining <= 0 {
+		return lines
+	}
+	out := append([]string(nil), lines...)
+	nextLines := nativeInteractiveItemLines(items[next], next == selected, true)
+	if len(nextLines) > remaining {
+		nextLines = nextLines[:remaining]
+	}
+	return append(out, nextLines...)
 }
 
 func nativeChromeLineCount(options Options) int {
