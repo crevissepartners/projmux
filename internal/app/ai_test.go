@@ -75,7 +75,7 @@ func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: "shell"}}
 	cmd := testAICommand(home)
 	cmd.runner = runner
-	cmd.nativePicker = nativePickerFromLegacyRunner(runner)
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if err := cmd.Run([]string{"settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run settings picker error = %v", err)
@@ -105,7 +105,7 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
 	cmd.runner = runner
-	cmd.nativePicker = nativePickerFromLegacyRunner(runner)
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if _, err := cmd.runAgentPicker("right"); err != nil {
 		t.Fatalf("runAgentPicker error = %v", err)
@@ -1366,7 +1366,7 @@ func testAICommand(home string) *aiCommand {
 	recorder := &aiCommandRecorder{}
 	cmd := &aiCommand{
 		runner:       &capturingAIRunner{},
-		nativePicker: nativePickerFromLegacyRunner(&capturingAIRunner{}),
+		nativePicker: nativePickerFromCompatRunner(&capturingAIRunner{}),
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv: func(name string) string {
 			switch name {

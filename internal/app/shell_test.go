@@ -345,7 +345,7 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 			t.Fatalf("unexpected daily update prompt: %#v", options)
 			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			t.Fatalf("unexpected daily update prompt: %#v", options)
 			return intpickercompat.Result{}, nil
 		})),
@@ -397,7 +397,7 @@ func TestShellWelcomeDeclinePrintsUpdateCommand(t *testing.T) {
 			t.Fatalf("unexpected daily update prompt: %#v", options)
 			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			t.Fatalf("unexpected daily update prompt: %#v", options)
 			return intpickercompat.Result{}, nil
 		})),
@@ -532,7 +532,7 @@ func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
 			promptOptions = options
 			return intpickercompat.Result{Value: shellUpdateApply}, nil
 		}),
-		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			promptOptions = options
 			return intpickercompat.Result{Value: shellUpdateApply}, nil
 		})),
@@ -598,7 +598,7 @@ func TestShellUpdatePromptLaterContinuesWithoutApplying(t *testing.T) {
 		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			return intpickercompat.Result{Value: shellUpdateLater}, nil
 		}),
-		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			return intpickercompat.Result{Value: shellUpdateLater}, nil
 		})),
 	}
@@ -643,7 +643,7 @@ func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
 			promptCalls++
 			return intpickercompat.Result{Value: shellUpdateSkip}, nil
 		}),
-		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			promptCalls++
 			return intpickercompat.Result{Value: shellUpdateSkip}, nil
 		})),
@@ -705,7 +705,7 @@ func TestShellSkipsPromptWithoutFreshSupportedUpdate(t *testing.T) {
 			t.Fatalf("unexpected update prompt: %#v", options)
 			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromLegacyRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			t.Fatalf("unexpected update prompt: %#v", options)
 			return intpickercompat.Result{}, nil
 		})),

@@ -37,7 +37,7 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 				gotOptions = options
 				return intpickercompat.Result{Value: "repo-b"}, nil
 			}),
-			native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 				gotOptions = options
 				return intpickercompat.Result{Value: "repo-b"}, nil
 			})),
@@ -111,7 +111,7 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 			gotOptions = options
 			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotOptions = options
 			return intpickercompat.Result{}, nil
 		})),
@@ -136,17 +136,17 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	}
 }
 
-func TestSessionsCommandNativeBackendDoesNotCallLegacyRunner(t *testing.T) {
+func TestSessionsCommandNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 	t.Parallel()
 
-	var fzfCalled bool
+	var compatCalled bool
 	opener := &recordingSessionsOpener{}
 	cmd := &sessionsCommand{
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 		}),
 		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			fzfCalled = true
+			compatCalled = true
 			return intpickercompat.Result{}, nil
 		}),
 		native: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
@@ -171,8 +171,8 @@ func TestSessionsCommandNativeBackendDoesNotCallLegacyRunner(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if fzfCalled {
-		t.Fatal("legacy runner was called for native sessions backend")
+	if compatCalled {
+		t.Fatal("compat runner was called for native sessions backend")
 	}
 	if opener.openSessionName != "repo-b" {
 		t.Fatalf("open session = %q, want repo-b", opener.openSessionName)
@@ -206,7 +206,7 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 			}
 			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotOptions = append(gotOptions, options)
 			runnerCalls++
 			if runnerCalls == 1 {
@@ -263,7 +263,7 @@ func TestSessionsCommandCtrlXSwitchesToFallbackBeforeKillingAttachedSession(t *t
 			}
 			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
 				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
@@ -303,7 +303,7 @@ func TestSessionsCommandCtrlXBlocksAttachedSessionKillWithoutFallback(t *testing
 			}
 			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
 				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
@@ -340,7 +340,7 @@ func TestSessionsCommandAllowsEmptySelection(t *testing.T) {
 		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			return intpickercompat.Result{}, nil
 		})),
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -367,7 +367,7 @@ func TestSessionsCommandReturnsWithoutPickerWhenRecentListIsEmpty(t *testing.T) 
 			called = true
 			return intpickercompat.Result{}, nil
 		}),
-		native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			called = true
 			return intpickercompat.Result{}, nil
 		})),
@@ -465,7 +465,7 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{}, nil
 				}),
-				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{}, nil
 				})),
 			},
@@ -478,7 +478,7 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
 				runner:     sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-				native:     nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+				native:     nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 				executable: func() (string, error) { return "", errors.New("not found") },
 			},
 			want: "resolve sessions executable",
@@ -492,7 +492,7 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{}, errors.New("picker failed")
 				}),
-				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{}, errors.New("picker failed")
 				})),
 				executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -508,7 +508,7 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{Value: "repo-b"}, nil
 				}),
-				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{Value: "repo-b"}, nil
 				})),
 				executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -525,7 +525,7 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{Value: "repo-b"}, nil
 				}),
-				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{Value: "repo-b"}, nil
 				})),
 				executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -542,7 +542,7 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{Value: "repo-b"}, nil
 				}),
-				native: nativePickerFromLegacyRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{Value: "repo-b"}, nil
 				})),
 				executable: func() (string, error) { return "/tmp/projmux", nil },

@@ -1938,7 +1938,7 @@ func nativeFuzzyScoreGreedy(sourceRunes, pattern []rune, caseSensitive bool) (in
 		}
 	}
 
-	score := nativeFZFLikeScore(sourceRunes, pattern, start, end, caseSensitive)
+	score := nativeFuzzyReferenceScore(sourceRunes, pattern, start, end, caseSensitive)
 	return score, true
 }
 
@@ -2068,7 +2068,7 @@ const (
 	nativeCharNumber
 )
 
-func nativeFZFLikeScore(source, pattern []rune, start, end int, caseSensitive bool) int {
+func nativeFuzzyReferenceScore(source, pattern []rune, start, end int, caseSensitive bool) int {
 	score := 0
 	pidx := 0
 	inGap := false

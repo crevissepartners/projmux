@@ -42,7 +42,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 			}
 			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			if calls == 1 {
 				rootOptions = options
@@ -154,7 +154,7 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -229,7 +229,7 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -315,7 +315,7 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 			}
 			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			if calls == 1 {
 				if got, want := options.UI, "settings"; got != want {
@@ -393,7 +393,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -510,7 +510,7 @@ func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -581,7 +581,7 @@ func TestSettingsHubRunsUpdateCheckAction(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -673,7 +673,7 @@ func TestSettingsHubAddProjectScansFilesystem(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -756,7 +756,7 @@ func TestSettingsHubPinnedProjectsRemovesPins(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -864,7 +864,7 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -961,7 +961,7 @@ func TestSettingsHubWorkdirsListRemovesSavedEntry(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -1078,7 +1078,7 @@ func TestAddWorkdirEntriesIncludesTypedRow(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -1153,7 +1153,7 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -1246,7 +1246,7 @@ func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -1314,7 +1314,7 @@ func TestSettingsHubBackReturnsToRoot(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -1368,7 +1368,7 @@ func testSettingsSwitchCommandWithHome(t *testing.T, home string, store *stubSwi
 		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			return intpickercompat.Result{}, nil
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			return intpickercompat.Result{}, nil
 		})),
 		sessions:   &capturingSwitchSessionExecutor{},
@@ -1699,7 +1699,7 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -1798,7 +1798,7 @@ func TestSettingsHubUseCurrentProjectAsRootSavesProjdir(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
@@ -1877,7 +1877,7 @@ func TestSettingsHubClearProjectRootRemovesSavedProjdir(t *testing.T) {
 				return intpickercompat.Result{}, nil
 			}
 		}),
-		nativePicker: nativePickerFromLegacyRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			calls++
 			switch calls {
 			case 1:
