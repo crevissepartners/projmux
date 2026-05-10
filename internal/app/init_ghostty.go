@@ -9,30 +9,16 @@ import (
 )
 
 // ghosttyBinding is one keybind = trigger=action pair the projmux init
-// command guarantees in the user's Ghostty config. The list is the single
-// source of truth in code; docs/keybindings.md mirrors it for users.
+// command guarantees in the user's Ghostty config. Entries are derived from
+// the built-in keybinding catalog; docs/keybindings.md mirrors it for users.
 type ghosttyBinding struct {
 	Trigger string
 	Action  string
 }
 
 // ghosttyDesiredBindings mirrors the "Ghostty" section of docs/keybindings.md.
-// Update both when adjusting CSI-u routing.
-var ghosttyDesiredBindings = []ghosttyBinding{
-	{Trigger: "alt+1", Action: "csi:9005u"},
-	{Trigger: "alt+2", Action: "csi:9003u"},
-	{Trigger: "alt+3", Action: "csi:9004u"},
-	{Trigger: "alt+4", Action: "csi:9006u"},
-	{Trigger: "alt+5", Action: "csi:9007u"},
-	{Trigger: "alt+6", Action: "csi:9013u"},
-	{Trigger: "ctrl+shift+r", Action: "csi:9001u"},
-	{Trigger: "ctrl+shift+l", Action: "csi:9002u"},
-	{Trigger: "ctrl+shift+n", Action: "csi:9008u"},
-	{Trigger: "ctrl+m", Action: "csi:9011u"},
-	{Trigger: "ctrl+shift+m", Action: "csi:9012u"},
-	{Trigger: "alt+shift+left", Action: "csi:9009u"},
-	{Trigger: "alt+shift+right", Action: "csi:9010u"},
-}
+// Update the built-in keybinding catalog and docs when adjusting CSI-u routing.
+var ghosttyDesiredBindings = ghosttyBindingsFromCatalog()
 
 // ghosttyManagedHeader marks the projmux-managed block in the Ghostty config.
 const (

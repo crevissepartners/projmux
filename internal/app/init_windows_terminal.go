@@ -15,9 +15,9 @@ import (
 )
 
 // wtBinding mirrors one Windows Terminal action+keybinding pair the projmux
-// init command guarantees in the user's settings.json. Each entry corresponds
-// to one of the 12 projmux app shortcuts; the table is the single source of
-// truth in code (docs/keybindings.md mirrors it for users).
+// init command guarantees in the user's settings.json. Entries are derived
+// from the built-in keybinding catalog; docs/keybindings.md mirrors it for
+// users.
 type wtBinding struct {
 	// ID is the stable settings.json identifier (prefixed with User.projmux).
 	// Same value is used in both the actions[] entry and the keybindings[]
@@ -35,23 +35,10 @@ type wtBinding struct {
 // with this string in `id` is owned by the merge; anything else is the user's.
 const wtIDPrefix = "User.projmux"
 
-// wtDesiredBindings is the canonical list inlined from docs/keybindings.md.
-// Update both sites together when CSI-u routing changes.
-var wtDesiredBindings = []wtBinding{
-	{ID: "User.projmuxSidebar", Keys: "alt+1", Input: "\x1b1"},
-	{ID: "User.projmuxNotifySidebar", Keys: "alt+2", Input: "\x1b2"},
-	{ID: "User.projmuxSessions", Keys: "alt+3", Input: "\x1b3"},
-	{ID: "User.projmuxAIPicker", Keys: "alt+4", Input: "\x1b4"},
-	{ID: "User.projmuxSettings", Keys: "alt+5", Input: "\x1b5"},
-	{ID: "User.projmuxSwitch", Keys: "alt+6", Input: "\x1b6"},
-	{ID: "User.projmuxAISplitRight", Keys: "ctrl+shift+r", Input: "\x02r"},
-	{ID: "User.projmuxAISplitDown", Keys: "ctrl+shift+l", Input: "\x02l"},
-	{ID: "User.projmuxNewWindow", Keys: "ctrl+n", Input: "\x0e"},
-	{ID: "User.projmuxPrevWindow", Keys: "alt+shift+left", Input: "\x1b[1;4D"},
-	{ID: "User.projmuxNextWindow", Keys: "alt+shift+right", Input: "\x1b[1;4C"},
-	{ID: "User.projmuxRenameWindow", Keys: "ctrl+m", Input: "\x1b[9011u"},
-	{ID: "User.projmuxRenamePane", Keys: "ctrl+shift+m", Input: "\x1b[9012u"},
-}
+// wtDesiredBindings mirrors the "Windows Terminal" section of
+// docs/keybindings.md. Update the built-in keybinding catalog and docs when
+// adjusting terminal routing.
+var wtDesiredBindings = windowsTerminalBindingsFromCatalog()
 
 // WindowsTerminalAdapter implements TerminalAdapter for Windows Terminal,
 // covering both native Windows installs and WSL where the host shell is WT.
