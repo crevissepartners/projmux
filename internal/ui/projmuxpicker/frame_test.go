@@ -82,8 +82,8 @@ func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	if strings.Contains(lines[1], "▌") {
 		t.Fatalf("titlebar row = %q, want no red accent marker next to title", lines[1])
 	}
-	if !strings.Contains(lines[1], TitlebarRule+"─") {
-		t.Fatalf("titlebar row = %q, want rule fill after title", lines[1])
+	if strings.Contains(lines[1], TitlebarRule+"─") || strings.Contains(lines[1], strings.Repeat("─", 2)) {
+		t.Fatalf("titlebar row = %q, want no rule fill after title", lines[1])
 	}
 	if got, want := VisibleLen(lines[1]), 24; got != want {
 		t.Fatalf("titlebar row width = %d, want %d: %q", got, want, lines[1])

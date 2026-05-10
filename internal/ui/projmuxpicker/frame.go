@@ -158,8 +158,7 @@ func frameTitlebarLine(theme Theme, innerWidth int, title string) string {
 	return theme.Vertical +
 		TitlebarStart +
 		titleBlock +
-		TitlebarRule +
-		strings.Repeat(theme.Horizontal, max(innerWidth-titleBlockWidth, 0)) +
+		strings.Repeat(" ", max(innerWidth-titleBlockWidth, 0)) +
 		Reset +
 		theme.Vertical
 }

@@ -698,8 +698,11 @@ func TestNativeInteractiveRendersOptionalTitlebar(t *testing.T) {
 	if !strings.Contains(lines[1], " Projects ") {
 		t.Fatalf("native titlebar row = %q, want optional titlebar", lines[1])
 	}
-	if !strings.Contains(lines[1], projmuxpicker.TitlebarStart) || !strings.Contains(lines[1], projmuxpicker.TitlebarRule+"─") {
-		t.Fatalf("native titlebar row = %q, want styled titlebar with rule fill", lines[1])
+	if !strings.Contains(lines[1], projmuxpicker.TitlebarStart) {
+		t.Fatalf("native titlebar row = %q, want styled titlebar", lines[1])
+	}
+	if strings.Contains(lines[1], projmuxpicker.TitlebarRule+"─") || strings.Contains(lines[1], strings.Repeat("─", 2)) {
+		t.Fatalf("native titlebar row = %q, want no rule fill after title", lines[1])
 	}
 	if !strings.HasPrefix(lines[2], "├") || !strings.Contains(lines[2], projmuxpicker.TitlebarRule+"─") {
 		t.Fatalf("native titlebar divider row = %q, want divider between title and search", lines[2])
@@ -1024,6 +1027,40 @@ func TestNativeInteractiveSupportsControlExpectKeys(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveSupportsRawCtrlXCustomAction(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x18"), io.Discard, Options{
+		UI:      "switch",
+		Items:   []Item{{Title: "api", Value: "/repo/api"}},
+		Actions: CustomActions("ctrl-x"),
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "ctrl-x" || result.Value != "/repo/api" {
+		t.Fatalf("result = %#v, want raw ctrl-x custom action on selected item", result)
+	}
+}
+
+func TestNativeInteractiveSupportsCSIuCtrlXCustomAction(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{"\x1b[120;5u", "\x1b[24;5u"} {
+		result, err := runNativeInteractive(strings.NewReader(input), io.Discard, Options{
+			UI:      "switch",
+			Items:   []Item{{Title: "api", Value: "/repo/api"}},
+			Actions: CustomActions("ctrl-x"),
+		})
+		if err != nil {
+			t.Fatalf("runNativeInteractive(%q) error = %v", input, err)
+		}
+		if result.Key != "ctrl-x" || result.Value != "/repo/api" {
+			t.Fatalf("result for %q = %#v, want CSI-u ctrl-x custom action on selected item", input, result)
+		}
+	}
+}
+
 func TestNativeInteractiveSupportsControlAltCloseKeys(t *testing.T) {
 	t.Parallel()
 
@@ -1055,6 +1092,8 @@ func TestNativeInteractiveSupportsCSIuAppKeyBindings(t *testing.T) {
 		{name: "ctrl-alt-s generic csi", in: "\x1b[115;7u", want: "ctrl-alt-s"},
 		{name: "alt-p generic csi", in: "\x1b[112;3u", want: "alt-p"},
 		{name: "ctrl-a generic csi", in: "\x1b[97;5u", want: "ctrl-a"},
+		{name: "ctrl-x generic csi", in: "\x1b[120;5u", want: "ctrl-x"},
+		{name: "ctrl-x control-code csi", in: "\x1b[24;5u", want: "ctrl-x"},
 		{name: "enter generic csi", in: "\x1b[13u", want: "enter"},
 		{name: "esc generic csi", in: "\x1b[27u", want: "esc"},
 		{name: "backspace generic csi", in: "\x1b[127u", want: "backspace"},
@@ -1366,6 +1405,34 @@ func TestNativeVisibleRangeCountsMultilineRenderedRows(t *testing.T) {
 	}
 	if got := end - start; got >= 8 {
 		t.Fatalf("range item count = %d, want multiline rows to reduce visible items below row budget", got)
+	}
+}
+
+func TestNativeInteractiveShowsPartialNextMultilineItem(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{
+		{Label: "item 0\n  detail 0a\n  detail 0b", Value: "0"},
+		{Label: "item 1\n  detail 1a\n  detail 1b", Value: "1"},
+		{Label: "item 2\n  detail 2a\n  detail 2b", Value: "2"},
+	}
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:        "sidebar",
+		Items:     items,
+		MultiLine: true,
+	}, items, "", 0, 0, nativeLayout{Rows: 9, Cols: 48})
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "item 1") || !strings.Contains(rendered, "detail 1a") {
+		t.Fatalf("native output = %q, want first rows of next multiline item in remaining viewport", rendered)
+	}
+	if strings.Contains(rendered, "detail 1b") {
+		t.Fatalf("native output = %q, want next item clipped to available viewport rows", rendered)
+	}
+	if !strings.Contains(rendered, nativeScrollbar) {
+		t.Fatalf("native output = %q, want scrollbar for clipped multiline list", rendered)
 	}
 }
 
