@@ -91,9 +91,9 @@ The fzf compatibility surface for the native engine is tracked in
   multi-line card gaps share the same `projmuxpicker` separator primitive for a
   more consistent native surface.
 - Native interactive mode enables SGR mouse reporting while the alternate screen
-  is active. Primary click applies the clicked row, release events are ignored,
-  mouse wheel moves selection up/down, and reporting is disabled again during
-  screen restore.
+  is active. Primary mouse down focuses the row under the cursor, primary mouse
+  up applies it, mouse wheel moves selection up/down, and reporting is disabled
+  again during screen restore.
 - When terminal size detection is unavailable, native picker falls back to a
   conservative 80x24 terminal instead of assuming a wider surface. Interactive
   tmux popups still use the detected popup size when `stty size` is available.

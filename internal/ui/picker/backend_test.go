@@ -760,10 +760,10 @@ func TestNativeInteractiveSupportsApplicationCursorKeys(t *testing.T) {
 	}
 }
 
-func TestNativeInteractiveSupportsMouseClickSelection(t *testing.T) {
+func TestNativeInteractiveSelectsOnMouseRelease(t *testing.T) {
 	t.Parallel()
 
-	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5M"), io.Discard, Options{
+	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5M\x1b[<0;3;5m"), io.Discard, Options{
 		UI: "switch",
 		Items: []Item{
 			{Title: "api", Value: "/repo/api"},
@@ -774,14 +774,14 @@ func TestNativeInteractiveSupportsMouseClickSelection(t *testing.T) {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
 	if result.Key != "enter" || result.Value != "/repo/web" {
-		t.Fatalf("result = %#v, want mouse click to select web", result)
+		t.Fatalf("result = %#v, want mouse release to select web", result)
 	}
 }
 
-func TestNativeInteractiveIgnoresMouseReleaseBeforeClick(t *testing.T) {
+func TestNativeInteractiveMouseDownOnlyFocuses(t *testing.T) {
 	t.Parallel()
 
-	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5m\x1b[<0;3;5M"), io.Discard, Options{
+	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5M\r"), io.Discard, Options{
 		UI: "switch",
 		Items: []Item{
 			{Title: "api", Value: "/repo/api"},
@@ -792,7 +792,25 @@ func TestNativeInteractiveIgnoresMouseReleaseBeforeClick(t *testing.T) {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
 	if result.Key != "enter" || result.Value != "/repo/web" {
-		t.Fatalf("result = %#v, want release ignored and next click to select web", result)
+		t.Fatalf("result = %#v, want mouse down to focus web before enter", result)
+	}
+}
+
+func TestNativeInteractiveIgnoresMouseReleaseBeforeDown(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("\x1b[<0;3;5m\x1b[<0;3;5M\x1b[<0;3;5m"), io.Discard, Options{
+		UI: "switch",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want release before down ignored and later mouse up to select web", result)
 	}
 }
 
