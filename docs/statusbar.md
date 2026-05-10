@@ -60,7 +60,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | Range id | Row | Click action                              | Keyboard      |
 | -------- | --- | ----------------------------------------- | ------------- |
 | `session` | 0 | `projmux tmux popup-toggle sessionizer-sidebar` | `prefix s s` |
-| `pwd`     | 0 | copy `#{pane_current_path}` to the system clipboard when available, falling back to the tmux buffer, and show a native-framed `Path copied` popup | `prefix s p`  |
+| `pwd`     | 0 | show a native-framed current-path popup; no clipboard or tmux buffer copy | `prefix s p`  |
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
@@ -77,15 +77,12 @@ compact status segment.
 `usage` deliberately opens the detailed `projmux usage` table popup; it is the
 clear action surface for the compact HUD bar.
 
-The path popup uses the native picker frame chrome, a one-line copy status,
+The path popup uses the native picker frame chrome, a one-line title,
 the full wrapped current path, cheap project/git metadata when available, and
-an `Enter closes this popup` prompt. Copy status distinguishes system
-clipboard success (`Copied to system clipboard`) from tmux-only fallback
-(`tmux buffer only - install a clipboard tool for system clipboard`). The
-system clipboard adapter tries WSL `clip.exe`, macOS `pbcopy`, Wayland
-`wl-copy`, then X11 `xclip`/`xsel` before falling back to tmux OSC52-capable
-`load-buffer -w -`, `set-buffer -w`, and the legacy `tmux set-buffer`
-behavior. The notification HUD detail surface
+an `Enter closes this popup` prompt. The click is display-only: it does not
+invoke system clipboard tools and does not write a tmux paste buffer. The
+popup command prints one quoted payload and waits for a plain Enter read so it
+does not leave terminal key state behind. The notification HUD detail surface
 (`Alt-2` / `User2`) opens the
 right-side notification popup with newest-first rows. The popup itself is
 untitled; when decoration mode is `symbol` or `emoji`, the bell appears before
@@ -128,9 +125,8 @@ them as `display-message` toasts:
 - `session`, `kube`, or `git` popup launch failure: toast
   `statusbar <range>: popup failed`.
 - `settings` popup launch failure: toast `statusbar settings: popup failed`.
-- `pwd` path popup failure: keep the copied path in the system
-  clipboard or tmux paste buffer when possible and fall back to a short
-  `display-message` with the same success/fallback wording.
+- `pwd` path popup failure: fall back to a short `display-message`
+  containing the current path.
 - `usage` popup failure: fall back to inlining the rendered table
   into a single `display-message`.
 

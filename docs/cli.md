@@ -246,8 +246,8 @@ Click/keyboard dispatcher for the two-line status bar. Implemented range ids:
 range fall through to `select-window -t @<mouse_window>` so the native
 click-to-switch tab affordance is preserved on row 0. Unknown range ids are
 non-specialized placeholders and no-op. `session` opens the existing-session
-popup; `pwd` copies the current pane path to the tmux paste buffer and shows
-it in a compact popup; `kube` and `git` open the project switcher popup;
+popup; `pwd` shows the current pane path in a native-framed display-only
+popup; `kube` and `git` open the project switcher popup;
 `settings` toggles the settings popup for the tmux client; `usage` opens the
 detailed `projmux usage` table popup; `notify` focuses and acks the newest
 actionable queue target.
