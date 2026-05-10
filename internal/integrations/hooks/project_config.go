@@ -115,6 +115,54 @@ func ParseProjectConfig(content string) (ProjectConfig, error) {
 	return cfg, nil
 }
 
+func UpdateProjectConfig(path string, update func(*ProjectConfig) error) (ProjectConfig, error) {
+	cfg := ProjectConfig{
+		Hooks: map[Event]string{},
+		Env:   map[string]string{},
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return ProjectConfig{}, err
+		}
+	} else {
+		cfg, err = ParseProjectConfig(string(content))
+		if err != nil {
+			return ProjectConfig{}, err
+		}
+	}
+	if cfg.Hooks == nil {
+		cfg.Hooks = map[Event]string{}
+	}
+	if cfg.Env == nil {
+		cfg.Env = map[string]string{}
+	}
+	if update != nil {
+		if err := update(&cfg); err != nil {
+			return ProjectConfig{}, err
+		}
+	}
+	if err := validateProjectConfig(cfg); err != nil {
+		return ProjectConfig{}, err
+	}
+	normalizeProjectConfig(&cfg)
+	if err := writeProjectConfigFile(path, cfg); err != nil {
+		return ProjectConfig{}, err
+	}
+	return cfg, nil
+}
+
+func ValidateProjectEnvKey(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("env key is required")
+	}
+	if !envKeyPattern.MatchString(key) {
+		return fmt.Errorf("invalid env key %q", key)
+	}
+	return nil
+}
+
 func loadProjectConfig(path string) (ProjectConfig, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -220,6 +268,106 @@ func sortedEnvKeys(env map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func normalizeProjectConfig(cfg *ProjectConfig) {
+	cfg.StartupRun = strings.TrimSpace(cfg.StartupRun)
+	if len(cfg.Hooks) == 0 {
+		cfg.Hooks = nil
+	}
+	if len(cfg.Env) == 0 {
+		cfg.Env = nil
+	}
+	cfg.Kube.Context = strings.TrimSpace(cfg.Kube.Context)
+	cfg.Kube.Namespace = strings.TrimSpace(cfg.Kube.Namespace)
+}
+
+func validateProjectConfig(cfg ProjectConfig) error {
+	for key := range cfg.Env {
+		if err := ValidateProjectEnvKey(key); err != nil {
+			return err
+		}
+	}
+	for event := range cfg.Hooks {
+		if normalizeEvent(event) == "" {
+			return fmt.Errorf("unsupported hook event %q", event)
+		}
+	}
+	return nil
+}
+
+func writeProjectConfigFile(path string, cfg ProjectConfig) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "config.toml.tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+
+	if _, err := tmp.WriteString(renderProjectConfig(cfg)); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+func renderProjectConfig(cfg ProjectConfig) string {
+	var sections []string
+	for _, event := range SupportedEvents {
+		run := ""
+		if cfg.Hooks != nil {
+			run = strings.TrimSpace(cfg.Hooks[event])
+		}
+		if run == "" {
+			continue
+		}
+		sections = append(sections, fmt.Sprintf("[hooks.%s]\nrun = %s\n", event, strconv.Quote(run)))
+	}
+	if strings.TrimSpace(cfg.StartupRun) != "" {
+		sections = append(sections, fmt.Sprintf("[startup]\nrun = %s\n", strconv.Quote(strings.TrimSpace(cfg.StartupRun))))
+	}
+	if len(cfg.Env) > 0 {
+		var b strings.Builder
+		b.WriteString("[env]\n")
+		for _, key := range sortedEnvKeys(cfg.Env) {
+			b.WriteString(key)
+			b.WriteString(" = ")
+			b.WriteString(strconv.Quote(cfg.Env[key]))
+			b.WriteString("\n")
+		}
+		sections = append(sections, b.String())
+	}
+	if cfg.Kube.Context != "" || cfg.Kube.Namespace != "" {
+		var b strings.Builder
+		b.WriteString("[kube]\n")
+		if cfg.Kube.Context != "" {
+			b.WriteString("context = ")
+			b.WriteString(strconv.Quote(cfg.Kube.Context))
+			b.WriteString("\n")
+		}
+		if cfg.Kube.Namespace != "" {
+			b.WriteString("namespace = ")
+			b.WriteString(strconv.Quote(cfg.Kube.Namespace))
+			b.WriteString("\n")
+		}
+		sections = append(sections, b.String())
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+	return strings.Join(sections, "\n")
 }
 
 type projectConfigFile struct {
