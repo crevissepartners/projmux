@@ -92,8 +92,11 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got, want := aiOptions.UI, "settings-ai"; got != want {
 		t.Fatalf("AI settings UI = %q, want %q", got, want)
 	}
-	if got, want := aiOptions.Title, "AI Settings"; got != want {
+	if got, want := aiOptions.Title, "AI Settings - Default Ctrl+Shift+R/L split mode"; got != want {
 		t.Fatalf("AI settings title = %q, want %q", got, want)
+	}
+	if got := aiOptions.Header; got != "" {
+		t.Fatalf("AI settings header = %q, want description only in title", got)
 	}
 	if got, want := aiOptions.Prompt, "Settings > AI Settings > "; got != want {
 		t.Fatalf("AI settings prompt = %q, want %q", got, want)
@@ -214,14 +217,14 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 	if got, want := statusbarOptions.UI, "settings-statusbar"; got != want {
 		t.Fatalf("statusbar settings UI = %q, want %q", got, want)
 	}
-	if got, want := statusbarOptions.Title, "Appearance"; got != want {
+	if got, want := statusbarOptions.Title, "Appearance - Status and popup decoration mode"; got != want {
 		t.Fatalf("statusbar settings title = %q, want %q", got, want)
 	}
 	if got, want := statusbarOptions.Prompt, "Settings > Appearance > "; got != want {
 		t.Fatalf("statusbar settings prompt = %q, want %q", got, want)
 	}
-	if got, want := statusbarOptions.Header, "Status and popup decoration mode"; got != want {
-		t.Fatalf("statusbar settings header = %q, want %q", got, want)
+	if got := statusbarOptions.Header; got != "" {
+		t.Fatalf("statusbar settings header = %q, want description only in title", got)
 	}
 	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(config.StatusbarDecorationOff)) {
 		t.Fatalf("statusbar settings entries = %#v, want off row", statusbarOptions.Entries)
@@ -347,8 +350,11 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	if got, want := aboutOptions.UI, "settings-about"; got != want {
 		t.Fatalf("settings about UI = %q, want %q", got, want)
 	}
-	if got, want := aboutOptions.Title, "About"; got != want {
+	if got, want := aboutOptions.Title, "About - Version, updates, key setup"; got != want {
 		t.Fatalf("settings about title = %q, want %q", got, want)
+	}
+	if got := aboutOptions.Header; got != "" {
+		t.Fatalf("settings about header = %q, want description only in title", got)
 	}
 	if got, want := aboutOptions.Prompt, "Settings > About > "; got != want {
 		t.Fatalf("settings about prompt = %q, want %q", got, want)
@@ -1313,8 +1319,11 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 				if got, want := options.UI, "settings-project-root"; got != want {
 					t.Fatalf("project root UI = %q, want %q", got, want)
 				}
-				if !strings.Contains(options.Header, "Workdirs are separate search roots") {
-					t.Fatalf("project root header = %q, want Workdirs distinction", options.Header)
+				if got, want := options.Title, "Project Root - Manage the primary root"; got != want {
+					t.Fatalf("project root title = %q, want %q", got, want)
+				}
+				if got := options.Header; got != "" {
+					t.Fatalf("project root header = %q, want description only in title", got)
 				}
 				return intfzf.Result{Key: "enter", Value: settingsProjdirSetTyped}, nil
 			case 4:
