@@ -1,0 +1,39 @@
+package app
+
+import (
+	"path/filepath"
+	"testing"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+)
+
+func TestDefaultLifecycleHookRunnerWiresGlobalEventPaths(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	stateHome := filepath.Join(home, ".local", "state")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	runner := defaultLifecycleHookRunner()
+	if runner == nil {
+		t.Fatal("defaultLifecycleHookRunner() = nil")
+	}
+
+	want := map[hooks.Event]string{
+		hooks.EventPreCreate:   filepath.Join(configHome, "projmux", config.HooksDirName, config.PreCreateHookFileName),
+		hooks.EventPostCreate:  filepath.Join(configHome, "projmux", config.HooksDirName, config.PostCreateHookFileName),
+		hooks.EventPaneStartup: filepath.Join(configHome, "projmux", config.HooksDirName, config.PaneStartupHookFileName),
+		hooks.EventPostAttach:  filepath.Join(configHome, "projmux", config.HooksDirName, config.PostAttachHookFileName),
+	}
+	for event, path := range want {
+		got := runner.GlobalHookPaths[event]
+		if len(got) != 1 || got[0] != path {
+			t.Fatalf("GlobalHookPaths[%s] = %#v, want [%q]", event, got, path)
+		}
+	}
+	if !runner.DiscoverProjectHooks {
+		t.Fatal("DiscoverProjectHooks = false, want true")
+	}
+}
