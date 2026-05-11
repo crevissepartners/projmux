@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/crevissepartners/projmux/compare/v0.5.0...v0.5.1) (2026-05-11)
+
+
+### Features
+
+* add stale/gone notify state badges ([#170](https://github.com/crevissepartners/projmux/issues/170)) ([02baedd](https://github.com/crevissepartners/projmux/commit/02baedd19ecd0a4278f712a6cda3ef93b17111ab))
+
 ## [0.5.0](https://github.com/crevissepartners/projmux/compare/v0.4.10...v0.5.0) (2026-05-11)
 
 
