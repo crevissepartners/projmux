@@ -435,6 +435,193 @@ func TestFocus_AppDispatcherRoutesFocus(t *testing.T) {
 	}
 }
 
+func TestFocus_URIResolvesToSwitchClient(t *testing.T) {
+	t.Parallel()
+
+	// Build a URI as the Toast XML would carry it. Round-tripping through
+	// buildFocusURI guarantees this test stays aligned with the encoder.
+	uri := buildFocusURI("%8", "/tmp/projmux.sock")
+
+	var displayArgs []string
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "display-message"):
+				// Record so we can assert the pane-id query was sent against
+				// the URI's socket.
+				displayArgs = append([]string(nil), args...)
+				return []byte("workspace" + focusFieldSeparator + "1\n"), nil
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tworkspace\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tworkspace\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"--uri", uri, "--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run returned error: %v (stderr=%s)", err, stderr.String())
+	}
+
+	var res focusResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode JSON: %v (raw=%q)", err, stdout.String())
+	}
+	if !res.OK {
+		t.Fatalf("result = %#v, want ok=true", res)
+	}
+	if res.Target != "workspace:1.%8" {
+		t.Fatalf("Target = %q, want workspace:1.%%8", res.Target)
+	}
+	if res.Socket != "/tmp/projmux.sock" {
+		t.Fatalf("Socket = %q, want /tmp/projmux.sock (uri override)", res.Socket)
+	}
+	for _, sub := range []string{"display-message", "list-sessions", "list-clients", "switch-client", "select-window", "select-pane"} {
+		if !sawSubcommand(runner.calls, sub) {
+			t.Errorf("expected tmux call with %q, got %#v", sub, runner.calls)
+		}
+	}
+	// display-message must be addressed at the pane id and run against the
+	// uri's socket (-S /tmp/projmux.sock display-message -p -t %8 #S__SEP__#I).
+	wantInDisplay := []string{"-S", "/tmp/projmux.sock", "display-message", "-p", "-t", "%8"}
+	for _, w := range wantInDisplay {
+		if !slices.Contains(displayArgs, w) {
+			t.Fatalf("display-message args missing %q: %v", w, displayArgs)
+		}
+	}
+}
+
+func TestFocus_URITakesPrecedenceOverSocketFlag(t *testing.T) {
+	t.Parallel()
+
+	uri := buildFocusURI("%4", "/from/uri.sock")
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "display-message"):
+				return []byte("ws" + focusFieldSeparator + "0\n"), nil
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tws\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tws\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"--uri", uri, "--socket", "/from/flag.sock", "--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	for _, c := range runner.calls {
+		if slices.Contains(c.args, "/from/flag.sock") {
+			t.Fatalf("URI socket should override --socket flag, but saw call with /from/flag.sock: %#v", c.args)
+		}
+	}
+}
+
+func TestFocus_URIRejectsCombinedWithTarget(t *testing.T) {
+	t.Parallel()
+
+	cmd := newFocusTestCommand(&focusFakeRunner{}, nil, nil)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := cmd.Run([]string{"--uri", "projmux://focus?pane_id=%251", "--target", "ws"}, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected --uri + --target combination to error, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("err = %v, want mutually-exclusive message", err)
+	}
+}
+
+func TestFocus_URIRejectsMalformedURI(t *testing.T) {
+	t.Parallel()
+
+	cmd := newFocusTestCommand(&focusFakeRunner{}, nil, nil)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	err := cmd.Run([]string{"--uri", "http://focus?pane_id=%251"}, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected wrong-scheme URI to error")
+	}
+}
+
+func TestFocus_URISetsToastClickTelemetryKind(t *testing.T) {
+	t.Parallel()
+
+	uri := buildFocusURI("%2", "/sock")
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "display-message"):
+				return []byte("ws" + focusFieldSeparator + "0\n"), nil
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tws\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tws\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, map[string]string{"PROJMUX_FOCUS_DEBUG": "1"}, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"--uri", uri, "--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	// Telemetry line is human-readable and contains `source=` + `kind=`
+	// fields; uri-mode should surface source=toast kind=toast-click so
+	// downstream debugging can distinguish click-driven focus.
+	if !strings.Contains(stderr.String(), "source=toast") {
+		t.Fatalf("stderr = %q, want source=toast", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "kind=toast-click") {
+		t.Fatalf("stderr = %q, want kind=toast-click", stderr.String())
+	}
+}
+
+func TestFocus_URITargetWindowAtIndexZero(t *testing.T) {
+	t.Parallel()
+
+	// Pane that belongs to window index 0 should still produce a
+	// session:0.%paneID target rather than collapsing to session:%paneID.
+	uri := buildFocusURI("%99", "/sock")
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "display-message"):
+				return []byte("only-session" + focusFieldSeparator + "0\n"), nil
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tonly-session\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tonly-session\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"--uri", uri, "--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	var res focusResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if res.Target != "only-session:0.%99" {
+		t.Fatalf("Target = %q, want only-session:0.%%99", res.Target)
+	}
+}
+
 func containsArg(args []string, needle string) bool {
 	return slices.Contains(args, needle)
 }

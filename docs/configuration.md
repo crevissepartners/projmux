@@ -170,6 +170,38 @@ Settings info row labels the effective source as `env`, `setting`, or
 Hook details for new-session lifecycle hooks and project-local
 `.projmux/config.toml` live in [Hooks](hooks.md).
 
+### Toast click handler (WSL + Windows Terminal)
+
+On WSL, projmux registers a `projmux://` URL scheme on the Windows side the
+first time a Toast is dispatched on each tmux server. Clicking the Toast
+hands control back to projmux inside WSL via the registered command:
+
+```text
+wsl.exe -d $WSL_DISTRO_NAME -- projmux focus --uri "%1"
+```
+
+The URI carries the originating pane id and tmux socket so the click
+round-trips back to the exact pane that fired the notification, which
+the `projmux focus` path then redirects via `tmux switch-client`.
+
+Registration markers and the writes involved:
+
+- Registry keys (HKCU): `SOFTWARE\Classes\projmux\(Default)`,
+  `SOFTWARE\Classes\projmux\URL Protocol`, and
+  `SOFTWARE\Classes\projmux\shell\open\command\(Default)`.
+- tmux user-option marker `@projmux_uri_protocol_registered` records that
+  registration has been attempted on this server so the script runs at most
+  once per server boot.
+
+Limitations:
+
+- The handler captures the user's current `WSL_DISTRO_NAME` at registration
+  time. Users running multiple WSL distros get one handler bound to the
+  first distro that fired a toast — clicks from a different distro's toast
+  will route back through the first distro. Tier-2 follow-up.
+- WSL2 cold-start latency: the first click after a long idle goes through
+  WSL boot and typically takes 2-3s to surface the focus on the pane.
+
 ## Usage Tracking
 
 `projmux usage` and the status-bar usage segment store snapshots under:

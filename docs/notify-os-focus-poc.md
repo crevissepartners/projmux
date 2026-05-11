@@ -169,8 +169,13 @@ talk to and falls through to the next on detect failure.
   **(b) on-click/keypress is primary; (a) on-push is deferred** (the WSL
   toast already serves as the (a) substitute).
 - [x] System notification daemon integration — in scope for tier-1, or
-  deferred to a follow-on PR. → **deferred** (WSL toast path already in
-  place).
+  deferred to a follow-on PR. → **shipped (Windows scope only)**. The WSL
+  toast now carries a `projmux://focus?pane_id=…&socket=…&source=toast`
+  launch URI; a one-shot HKCU registration on first dispatch wires
+  `wsl.exe -d <distro> -- projmux focus --uri "%1"` so the click
+  round-trips back into the (b) focus path. Tier-2 covers
+  non-WSL/non-Windows daemons (libnotify, UNUserNotificationCenter) and
+  the multi-distro handler.
 - [x] Adapter module path — proposed `internal/integrations/osfocus/`. Confirm
   or pick alternative. → confirmed `internal/integrations/osfocus/`.
 - [x] Adapter call style — synchronous from `projmux focus`, or background
@@ -188,6 +193,25 @@ Locked 2026-05-11.
 Tier-1 adapter shipped: `internal/integrations/osfocus/` with
 `WindowsTerminalWSLAdapter`. Other matrix rows remain pending tier-2
 measurements.
+
+### Tier-1.5 shipped — Toast click handler (WSL + Windows Terminal)
+
+The Toast notification produced by `aiDesktopNotifier.Notify` on WSL now
+carries a `launch="projmux://focus?..." activationType="protocol"` attribute,
+and the first dispatch of a tmux server boot registers the `projmux://`
+scheme in `HKCU\SOFTWARE\Classes\projmux\…` so Windows routes the click
+to `wsl.exe -d <distro> -- projmux focus --uri "%1"`. Inside WSL,
+`projmux focus --uri` parses the URI, resolves the pane id to its
+`session:window.%paneID` target via `tmux display-message`, and reuses the
+existing focus dispatch. This closes the previously-deferred (a) on-push
+trigger mode in the Windows-only scope: the Toast becomes the (a)
+surface and its click drops into the (b) `projmux focus` path.
+
+Multi-distro dispatch (one handler per distro, or a distro-selector
+arg) is a known tier-2 follow-up — current registration captures the
+first distro to fire a toast and pins the handler to it. See
+docs/configuration.md → "Toast click handler" for the limitation
+summary.
 
 ## Out of scope
 
