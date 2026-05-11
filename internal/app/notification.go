@@ -52,6 +52,14 @@ type aiDesktopNotifier struct {
 }
 
 func (n aiDesktopNotifier) Notify(notification aiNotification) error {
+	// Phase 1 desktop-notification gate. The in-app notify queue, the
+	// statusbar segment, and the attention badge are intentionally
+	// untouched — this only suppresses the OS-level dispatch so users
+	// can silence the popup/Toast/notify-send fan-out without losing
+	// the in-app surfaces.
+	if !n.command.desktopNotifyEnabled() {
+		return nil
+	}
 	if n.command.isWSL() {
 		_ = n.ensureWSLToastAppID(notification)
 		if err := n.dispatchWSLToast(notification); err == nil {

@@ -108,6 +108,7 @@ configured key opens and closes the popup.
 | `PROJMUX_MANAGED_ROOTS` | Search-root override. Uses the OS-native path-list separator and takes priority over the saved workdirs file and default weak probes. |
 | `TMUX_SESSIONIZER_ROOTS` | Legacy alias still honored at runtime for managed roots. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in Linux/WSL sender. |
+| `PROJMUX_DESKTOP_NOTIFY` | OS desktop notification on/off override. `on`/`off` (case insensitive). When set, this takes priority over the saved tmux option and the default. The in-app notify queue is not affected. |
 | `PROJMUX_WSL_TOAST_ICON_DIR` | Directory used when copying the WSL toast icon into a Windows-readable path. |
 | `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. |
 | `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from `projmux status usage` to stderr. |
@@ -148,6 +149,17 @@ When the hook is set, projmux invokes it with positional arguments:
 ```text
 summary body urgency app-name tag group icon-path
 ```
+
+OS desktop notifications can be silenced without touching the in-app notify
+queue. The resolution order is:
+
+1. `PROJMUX_DESKTOP_NOTIFY` env (`on` / `off`).
+2. Tmux global option `@projmux_desktop_notify` (`1` / `0`).
+3. Default = on.
+
+Toggle from Settings > AI Settings > `Desktop notifications on/off`. The
+Settings info row labels the effective source as `env`, `setting`, or
+`default` so an env-pinned value is visible at a glance.
 
 Hook details for new-session lifecycle hooks and project-local
 `.projmux/config.toml` live in [Hooks](hooks.md).
