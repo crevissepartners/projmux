@@ -116,8 +116,10 @@ does not diagnose terminal key delivery; use `projmux setup` for that.
 
 ```
 projmux focus --target SESSION[:WINDOW[.PANE]] [--socket <path>]
-              [--source ai|status-bar|external|os-notification]
-              [--kind reply-ready|busy-cleared|segment-click|custom]
+              [--source ai|status-bar|external|os-notification|toast]
+              [--kind reply-ready|busy-cleared|segment-click|toast-click|custom]
+              [--json]
+projmux focus --uri "projmux://focus?pane_id=%N&socket=<path>&source=toast"
               [--json]
 ```
 
@@ -127,6 +129,13 @@ client on the selected socket. It never force-detaches other clients. If no
 client is attached on that socket, it emits the configured desktop
 notification instead. `--socket` is explicit; when omitted, the socket is
 derived from `$TMUX`.
+
+`--uri` is the entry point used by the WSL Toast click handler (see
+[configuration.md](configuration.md#toast-click-handler-wsl--windows-terminal)).
+The pane id from the URI is resolved to a `SESSION:WINDOW.%paneID` target
+via `tmux display-message`, and the URI's `socket` overrides any
+`--socket` flag so the click round-trips back to the right tmux server.
+`--uri` and `--target` are mutually exclusive.
 
 Exit codes:
 

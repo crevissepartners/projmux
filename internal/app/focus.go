@@ -52,6 +52,7 @@ type focusOptions struct {
 	Socket string
 	Source string
 	Kind   string
+	URI    string
 	JSON   bool
 }
 
@@ -89,6 +90,10 @@ func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	opts, err := parseFocusArgs(args, stderr)
 	if err != nil {
+		return err
+	}
+
+	if err := c.resolveURIOption(&opts); err != nil {
 		return err
 	}
 
@@ -139,10 +144,11 @@ func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {
 	fs.SetOutput(stderr)
 
 	opts := focusOptions{}
-	fs.StringVar(&opts.Target, "target", "", "Focus target SESSION[:WINDOW[.PANE]] (required)")
+	fs.StringVar(&opts.Target, "target", "", "Focus target SESSION[:WINDOW[.PANE]] (mutually exclusive with --uri)")
 	fs.StringVar(&opts.Socket, "socket", "", "tmux socket path (overrides $TMUX)")
-	fs.StringVar(&opts.Source, "source", "", "Telemetry label: ai|status-bar|external|os-notification")
-	fs.StringVar(&opts.Kind, "kind", "", "Telemetry label: reply-ready|busy-cleared|segment-click|custom")
+	fs.StringVar(&opts.Source, "source", "", "Telemetry label: ai|status-bar|external|os-notification|toast")
+	fs.StringVar(&opts.Kind, "kind", "", "Telemetry label: reply-ready|busy-cleared|segment-click|toast-click|custom")
+	fs.StringVar(&opts.URI, "uri", "", "projmux:// URI from a Toast click (resolves to --target via tmux)")
 	fs.BoolVar(&opts.JSON, "json", false, "Emit a single-line JSON result")
 
 	if err := fs.Parse(args); err != nil {
@@ -151,8 +157,15 @@ func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {
 	if fs.NArg() != 0 {
 		return focusOptions{}, fmt.Errorf("focus does not accept positional arguments")
 	}
-	if strings.TrimSpace(opts.Target) == "" {
-		return focusOptions{}, fmt.Errorf("--target is required")
+	// --uri and --target are alternative entry points and must not be
+	// combined: --uri carries everything --target+--socket+--source would
+	// have carried, so accepting both would silently let the URI override
+	// (or be overridden by) explicit flags in ways callers can't predict.
+	if strings.TrimSpace(opts.URI) != "" && strings.TrimSpace(opts.Target) != "" {
+		return focusOptions{}, fmt.Errorf("--uri and --target are mutually exclusive")
+	}
+	if strings.TrimSpace(opts.URI) == "" && strings.TrimSpace(opts.Target) == "" {
+		return focusOptions{}, fmt.Errorf("one of --target or --uri is required")
 	}
 	return opts, nil
 }
@@ -266,6 +279,93 @@ func focusSessionState(resolution corefocus.Resolution) string {
 		return "fallback"
 	}
 	return "exact"
+}
+
+// resolveURIOption inflates a `--uri` invocation into the existing
+// `--target`/`--socket`/`--source` shape so the rest of focus dispatch is
+// unchanged.
+//
+// A toast click hands us a tmux pane id like `%8` plus the originating tmux
+// socket. corefocus.Target requires a SESSION[:WINDOW[.PANE]] coordinate,
+// so we resolve the pane id to its enclosing session + window via
+// `tmux display-message -p -t %N '#S__SEP__#I'` against the URI's socket.
+// The translated target preserves the explicit pane id (`session:window.%8`)
+// so the pane-level focus stays exact even if a layout change shifts pane
+// indices between toast emission and click.
+//
+// Telemetry default: `--kind toast-click` is applied when the caller hasn't
+// already set it. `--source` follows the URI's hint (defaults to `toast`).
+func (c *focusCommand) resolveURIOption(opts *focusOptions) error {
+	raw := strings.TrimSpace(opts.URI)
+	if raw == "" {
+		return nil
+	}
+	parsed, err := parseFocusURI(raw)
+	if err != nil {
+		return err
+	}
+	// URI's socket wins over an explicit --socket (the toast click path
+	// carried the socket from the producer side; an additional --socket
+	// flag would generally be a misuse and we surface that by overriding).
+	if strings.TrimSpace(parsed.Socket) != "" {
+		opts.Socket = parsed.Socket
+	}
+	// URI's source wins over --source — the click path is the canonical
+	// telemetry source for this invocation.
+	if strings.TrimSpace(parsed.Source) != "" {
+		opts.Source = parsed.Source
+	}
+	if strings.TrimSpace(opts.Kind) == "" && opts.Source == focusURISourceDef {
+		opts.Kind = "toast-click"
+	}
+
+	socket := c.resolveSocket(opts.Socket)
+	target, err := c.translatePaneIDToTarget(context.Background(), socket, parsed.PaneID)
+	if err != nil {
+		return err
+	}
+	opts.Target = target
+	return nil
+}
+
+// translatePaneIDToTarget resolves a tmux pane id (`%N`) to the
+// `SESSION[:WINDOW.%N]` coordinate corefocus.Target expects. The pane id is
+// preserved on both ends — we read only the session and window index/id —
+// so that the resulting target still pins down the exact pane the toast
+// referenced.
+func (c *focusCommand) translatePaneIDToTarget(ctx context.Context, socket, paneID string) (string, error) {
+	paneID = strings.TrimSpace(paneID)
+	if paneID == "" {
+		return "", errors.New("focus: uri pane_id is empty")
+	}
+	format := "#S" + focusFieldSeparator + "#I"
+	args := c.tmuxArgs(socket, "display-message", "-p", "-t", paneID, format)
+	out, err := c.runner.Run(ctx, "tmux", args...)
+	if err != nil {
+		return "", fmt.Errorf("focus: resolve uri pane %q via tmux: %w", paneID, err)
+	}
+	line := strings.TrimSpace(string(out))
+	if line == "" {
+		return "", fmt.Errorf("focus: tmux returned no metadata for pane %q", paneID)
+	}
+	fields := strings.SplitN(line, focusFieldSeparator, 2)
+	if len(fields) != 2 {
+		// Be tolerant of users whose tmux drops our separator and falls
+		// back to tab (rare but documented in the test fixtures).
+		fields = strings.SplitN(line, "\t", 2)
+	}
+	if len(fields) != 2 {
+		return "", fmt.Errorf("focus: parse pane metadata %q", line)
+	}
+	session := strings.TrimSpace(fields[0])
+	window := strings.TrimSpace(fields[1])
+	if session == "" {
+		return "", fmt.Errorf("focus: pane %q has no session", paneID)
+	}
+	if window == "" {
+		return session + ":" + paneID, nil
+	}
+	return session + ":" + window + "." + paneID, nil
 }
 
 func (c *focusCommand) resolveSocket(explicit string) string {

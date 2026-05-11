@@ -1726,7 +1726,23 @@ func aiAttentionMismatch(nextState, attentionState string) bool {
 	}
 }
 
-func buildToastPowerShell(summary, body, appName, tag, group, iconPath string) string {
+// buildToastPowerShell composes the PowerShell snippet that Windows runs to
+// surface a Toast notification.
+//
+// When launchURI is non-empty the root <toast> element gains a
+// `launch="<uri>" activationType="protocol"` pair. Windows then hands the
+// URI to the registered scheme handler on click — for the WSL scope shipped
+// today that is `wsl.exe -d <distro> -- projmux focus --uri "%1"`, wired
+// from buildRegisterURIProtocolPowerShell. The URI itself is produced by
+// buildFocusURI (already URL-encoded once); we xml-escape it for the
+// attribute so the two layers compose without double-decoding.
+//
+// When launchURI is empty the launch attribute is omitted entirely and the
+// toast behaves as a passive notification — the existing pre-protocol path.
+// This lets the WSL hook short-circuit cleanly when the inbound
+// notification has no pane id (`aiNotification.Tag` empty) without breaking
+// non-WSL notify paths that never compute a URI.
+func buildToastPowerShell(summary, body, appName, tag, group, iconPath, launchURI string) string {
 	tagLine := ""
 	if tag != "" {
 		tagLine = "$toast.Tag = '" + psEscape(truncate64(tag)) + "'"
@@ -1739,10 +1755,14 @@ func buildToastPowerShell(summary, body, appName, tag, group, iconPath string) s
 	if iconPath != "" {
 		iconXML = "\n      <image placement=\"appLogoOverride\" hint-crop=\"circle\" src=\"" + xmlEscape(iconPath) + "\"/>"
 	}
+	toastAttrs := ""
+	if launchURI != "" {
+		toastAttrs = ` launch="` + xmlEscape(launchURI) + `" activationType="protocol"`
+	}
 	return `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] | Out-Null
 $xml = @'
-<toast>
+<toast` + toastAttrs + `>
   <visual>
     <binding template="ToastGeneric">` + iconXML + `
       <text>` + xmlEscape(summary) + `</text>
@@ -1757,6 +1777,45 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 ` + tagLine + `
 ` + groupLine + `
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('` + psEscape(appName) + `').Show($toast)
+`
+}
+
+// buildRegisterURIProtocolPowerShell emits an idempotent PowerShell script
+// that registers the `projmux://` URI scheme in the user's HKCU registry so
+// a Toast click can hand control back to projmux running inside WSL.
+//
+// Registry layout (HKCU\SOFTWARE\Classes\<scheme>):
+//
+//	(Default)                          = "URL:projmux"
+//	URL Protocol                       = ""
+//	shell\open\command\(Default)       = wsl.exe -d <distro> -- projmux focus --uri "%1"
+//
+// The handler captures the user's *current* WSL_DISTRO_NAME because the
+// click is received on the Windows side with no knowledge of which distro
+// produced the notification. This is the documented limitation: users with
+// multiple WSL distros only get the handler bound to whichever distro fired
+// the first toast on this tmux server. The follow-up roadmap entry covers
+// multi-distro dispatch.
+//
+// The script is safe to re-run — every Set-ItemProperty is overwriting
+// idempotently, and the New-Item is gated on Test-Path. Caller gates the
+// invocation behind a tmux user-option marker so this runs at most once per
+// server boot anyway (see ensureWSLURIProtocol).
+func buildRegisterURIProtocolPowerShell(scheme, distro string) string {
+	return `$regPath = "HKCU:\SOFTWARE\Classes\` + psEscape(scheme) + `"
+$cmdPath = "$regPath\shell\open\command"
+try {
+  if (-not (Test-Path $regPath)) {
+    New-Item -Path $regPath -Force | Out-Null
+  }
+  if (-not (Test-Path $cmdPath)) {
+    New-Item -Path $cmdPath -Force | Out-Null
+  }
+  Set-ItemProperty -Path $regPath -Name '(Default)' -Value 'URL:` + psEscape(scheme) + `' -Type String
+  Set-ItemProperty -Path $regPath -Name 'URL Protocol' -Value '' -Type String
+  $launchCmd = 'wsl.exe -d ` + psEscape(distro) + ` -- projmux focus --uri "%1"'
+  Set-ItemProperty -Path $cmdPath -Name '(Default)' -Value $launchCmd -Type String
+} catch { }
 `
 }
 
