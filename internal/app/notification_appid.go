@@ -24,4 +24,24 @@ const (
 	// Stored as a global tmux user-option so the marker survives across
 	// sessions on the same tmux server.
 	legacyAppIDCleanedTmuxOption = "@projmux_legacy_appid_cleaned"
+
+	// desktopURIScheme is the custom URI scheme the Windows side registers
+	// so that a Toast click can hand control back to projmux running inside
+	// WSL. The scheme is shared across all environments — only WSL +
+	// Windows Terminal users actually register the handler today (other
+	// platforms keep the in-app focus path). The handler command we register
+	// looks like `wsl.exe -d <distro> -- projmux focus --uri "%1"`.
+	//
+	// This implements the "(a) on-push (자동)" trigger mode from the
+	// roadmap detail (Notify 시 터미널 OS 포커스) by piping the user's
+	// click on the system notification through the existing (b)
+	// `projmux focus` path. See docs/notify-os-focus-poc.md for the spike
+	// trail.
+	desktopURIScheme = "projmux"
+
+	// uriProtocolRegisteredTmuxOption marks that the one-shot URI protocol
+	// registration has already been attempted on this server. Same shape
+	// and rationale as legacyAppIDCleanedTmuxOption: we register at most
+	// once per tmux server lifetime to keep the notify path fast.
+	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered"
 )
