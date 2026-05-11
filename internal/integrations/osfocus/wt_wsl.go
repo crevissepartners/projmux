@@ -56,25 +56,28 @@ func (a WindowsTerminalWSLAdapter) Detect() bool {
 	return interop != ""
 }
 
-// Focus spawns `wt.exe -w 0 focus-tab -t 0` in a goroutine and returns
-// immediately. The call is best-effort: if the spawn fails (wt.exe missing
-// from $PATH, interop misconfigured, etc.) the error is dropped because the
-// chain documents silent fallback as the failure policy. The Target argument
-// is accepted for forward compatibility with tier-2 adapters but not
-// consumed here.
+// Focus shells out to `wt.exe -w 0 focus-tab -t 0` synchronously and returns
+// the runner's error verbatim. The Chain owns the silent-fallback policy and
+// discards adapter errors; the adapter just surfaces what the OS told it.
+// The Target argument is accepted for forward compatibility with tier-2
+// adapters but not consumed here.
+//
+// Synchronous on purpose: defaultWTRun uses cmd.Start() (which returns as soon
+// as the OS confirms the spawn — it does NOT block on wt.exe's own execution)
+// and reaps the child in its own goroutine, so the adapter is already
+// non-blocking enough for the focus hot path. Wrapping this call in an outer
+// `go func()` previously caused a race with short-lived callers: when
+// `projmux ai notify` (invoked from tmux hooks as a one-shot subprocess)
+// returned from Notify, main exited and the Go runtime tore the goroutine
+// down before it had a chance to call Start(), so wt.exe never spawned and
+// `mode=raise` did nothing visible. Calling synchronously guarantees the
+// spawn syscall completes before the parent process can exit.
 func (a WindowsTerminalWSLAdapter) Focus(_ Target) error {
 	runner := a.Run
 	if runner == nil {
 		runner = defaultWTRun
 	}
-	// Background dispatch keeps Focus non-blocking — the caller is on the
-	// focus hot path and must not wait on an external process. We discard
-	// the runner's error intentionally; the chain's contract is silent
-	// fallback on adapter failure.
-	go func() {
-		_ = runner("wt.exe", "-w", "0", "focus-tab", "-t", "0")
-	}()
-	return nil
+	return runner("wt.exe", "-w", "0", "focus-tab", "-t", "0")
 }
 
 // defaultWTRun spawns the command without waiting on it. stdout/stderr are
