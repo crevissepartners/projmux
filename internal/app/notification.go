@@ -62,6 +62,7 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	}
 	if n.command.isWSL() {
 		n.command.ensureWSLLegacyAppIDCleaned(notification)
+		n.command.ensureWSLURIProtocol()
 		_ = n.ensureWSLToastAppID(notification)
 		if err := n.dispatchWSLToast(notification); err == nil {
 			return nil
@@ -97,6 +98,17 @@ func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification) error {
 	if powerShell == "" {
 		return errors.New("powershell.exe is unavailable")
 	}
+	// `notification.Tag` carries the originating pane id (e.g. `%8`); the
+	// Toast click handler needs that plus the live tmux socket path so it
+	// can route back to the right server. Reading `#{socket_path}` here
+	// (rather than threading it through the producer) keeps the existing
+	// notify call sites unchanged and naturally tracks the user's
+	// current tmux server, which is what we want for click round-trip.
+	socket := ""
+	if strings.TrimSpace(notification.Tag) != "" {
+		socket = n.command.readTrimmed("tmux", "display-message", "-p", "#{socket_path}")
+	}
+	launchURI := buildFocusURI(notification.Tag, socket)
 	script := buildToastPowerShell(
 		notification.Summary,
 		notification.Body,
@@ -104,6 +116,7 @@ func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification) error {
 		notification.Tag,
 		notification.Group,
 		n.command.wslToastIconPath(notification.Icon),
+		launchURI,
 	)
 	return n.command.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script))
 }
@@ -133,6 +146,47 @@ func (n aiDesktopNotifier) ensureWSLToastAppID(notification aiNotification) erro
 	}
 	script := buildRegisterToastAppIDPowerShell(appID, displayName, n.command.wslToastIconPath(notification.Icon))
 	return n.command.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script))
+}
+
+// ensureWSLURIProtocol registers the `projmux://` URL scheme in the user's
+// HKCU registry so a Toast click is routed back into `projmux focus --uri`
+// running inside the same WSL distro that produced the notification. It
+// runs at most once per tmux server, gated by
+// `@projmux_uri_protocol_registered`.
+//
+// The handler command binds to the *current* WSL_DISTRO_NAME at
+// registration time — users who switch distros mid-server keep the
+// originally-registered handler. This is the documented multi-distro
+// limitation captured in docs/configuration.md.
+//
+// The marker is only set on a successful PowerShell launch. Failure cases
+// (missing distro env, no PowerShell available, run error) leave the
+// marker unset so a later Notify call retries. The registration script
+// itself swallows individual errors so even a partial registry write
+// doesn't break the notification dispatch.
+func (c *aiCommand) ensureWSLURIProtocol() {
+	if !c.isWSL() {
+		return
+	}
+	if strings.TrimSpace(c.readTrimmed("tmux", "show-option", "-gqv", uriProtocolRegisteredTmuxOption)) == "1" {
+		return
+	}
+	distro := strings.TrimSpace(c.env("WSL_DISTRO_NAME"))
+	if distro == "" {
+		// We don't know which distro the click should target — skipping
+		// without setting the marker lets a later call (after WSLENV is
+		// populated) retry the registration.
+		return
+	}
+	powerShell := c.resolvePowerShell()
+	if powerShell == "" {
+		return
+	}
+	script := buildRegisterURIProtocolPowerShell(desktopURIScheme, distro)
+	if err := c.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script)); err != nil {
+		return
+	}
+	_ = c.run("tmux", "set-option", "-g", uriProtocolRegisteredTmuxOption, "1")
 }
 
 // ensureWSLLegacyAppIDCleaned removes the Start Menu shortcut and the

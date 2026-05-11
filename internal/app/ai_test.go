@@ -732,10 +732,15 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 			powershellCommands = append(powershellCommands, command)
 		}
 	}
-	// One-shot legacy cleanup runs before the register + toast PS calls
-	// because the `@projmux_legacy_appid_cleaned` marker is unset for a
-	// fresh aiCommand fixture.
-	if got, want := len(powershellCommands), 3; got != want {
+	// Notify wiring (notification.go) runs PowerShell in this order on the
+	// first WSL toast of a fresh tmux server:
+	//   [0] legacy AppID cleanup    (ensureWSLLegacyAppIDCleaned)
+	//   [1] projmux:// URI register (ensureWSLURIProtocol)
+	//   [2] new AppID register      (ensureWSLToastAppID)
+	//   [3] toast XML show          (dispatchWSLToast)
+	// The legacy + URI registration markers are then written to tmux so
+	// subsequent notifications skip the one-shots.
+	if got, want := len(powershellCommands), 4; got != want {
 		t.Fatalf("powershell commands len = %d, want %d, commands = %#v", got, want, cmdRecorder(cmd).commands)
 	}
 	cleanupScript := decodePowerShellEncodedCommand(t, powershellCommands[0])
@@ -751,7 +756,22 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", legacyAppIDCleanedTmuxOption, "1"}) {
 		t.Fatalf("commands = %#v, want legacy cleanup marker write", cmdRecorder(cmd).commands)
 	}
-	registerScript := decodePowerShellEncodedCommand(t, powershellCommands[1])
+	uriScript := decodePowerShellEncodedCommand(t, powershellCommands[1])
+	for _, want := range []string{
+		`HKCU:\SOFTWARE\Classes\` + desktopURIScheme,
+		`URL:` + desktopURIScheme,
+		"URL Protocol",
+		"shell\\open\\command",
+		`wsl.exe -d Ubuntu-24.04 -- projmux focus --uri "%1"`,
+	} {
+		if !strings.Contains(uriScript, want) {
+			t.Fatalf("uri register script = %q, want substring %q", uriScript, want)
+		}
+	}
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", uriProtocolRegisteredTmuxOption, "1"}) {
+		t.Fatalf("commands = %#v, want uri protocol marker write", cmdRecorder(cmd).commands)
+	}
+	registerScript := decodePowerShellEncodedCommand(t, powershellCommands[2])
 	if !strings.Contains(registerScript, `HKCU:\SOFTWARE\Classes\AppUserModelId\`+desktopAppID) {
 		t.Fatalf("register script = %q, want AppUserModelId registration for new id", registerScript)
 	}
@@ -770,7 +790,7 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 			t.Fatalf("register script = %q, want substring %q", registerScript, want)
 		}
 	}
-	toastScript := decodePowerShellEncodedCommand(t, powershellCommands[2])
+	toastScript := decodePowerShellEncodedCommand(t, powershellCommands[3])
 	for _, want := range []string{
 		"CreateToastNotifier('" + desktopAppID + "').Show($toast)",
 		"$toast.Tag = '%2'",
@@ -779,6 +799,11 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		"검토 대기: approval needed · projmux/main",
 		iconWin,
 		"appLogoOverride",
+		// The toast now carries the projmux:// click target so a desktop
+		// click round-trips back into `projmux focus --uri`.
+		`activationType="protocol"`,
+		"projmux://focus?",
+		"pane_id=%252",
 	} {
 		if !strings.Contains(toastScript, want) {
 			t.Fatalf("toast script = %q, want substring %q", toastScript, want)
