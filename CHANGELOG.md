@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.2](https://github.com/crevissepartners/projmux/compare/v0.5.1...v0.5.2) (2026-05-11)
+
+
+### Features
+
+* **notify:** 3-way desktop notification mode (none/notify/raise) + Defender-safe shortcut + on-push auto-raise ([#180](https://github.com/crevissepartners/projmux/issues/180)) ([e960456](https://github.com/crevissepartners/projmux/commit/e960456ae8974a720a7c3fde72307f02c13ce481))
+* **notify:** desktop notification on/off toggle + AppName branding ([#175](https://github.com/crevissepartners/projmux/issues/175)) ([5254882](https://github.com/crevissepartners/projmux/commit/52548826b323f577656ebb1766e87ce2f17dd487))
+* **notify:** Toast click → projmux focus via projmux:// URI (Tier 1.5, Windows scope) ([#178](https://github.com/crevissepartners/projmux/issues/178)) ([64e83f2](https://github.com/crevissepartners/projmux/commit/64e83f226f967c97592eea1ecd695768eda830b7))
+* **osfocus:** tier-1 adapter for Windows Terminal × WSL → Windows ([#177](https://github.com/crevissepartners/projmux/issues/177)) ([a7ed6d2](https://github.com/crevissepartners/projmux/commit/a7ed6d210f7d5cc65da3951416c8cde3ce28f941))
+
+
+### Bug Fixes
+
+* **notify:** correct projmux:// registry command to bypass zsh shell ([#179](https://github.com/crevissepartners/projmux/issues/179)) ([451e38f](https://github.com/crevissepartners/projmux/commit/451e38fe41be6bca7bf0ef62f4d4cd2e1df2ff90))
+* **notify:** use client-visible check for auto-ack, not pane_active ([#172](https://github.com/crevissepartners/projmux/issues/172)) ([4c5fd55](https://github.com/crevissepartners/projmux/commit/4c5fd55f612b83df002d96a89aaf657de338e8b7))
+* **osfocus:** remove racing goroutine wrap in Focus so wt.exe actually spawns ([2321527](https://github.com/crevissepartners/projmux/commit/2321527c52f2ab91a2c7e667104ab2d32f88bb09))
+* **osfocus:** remove racing goroutine wrap so wt.exe actually spawns ([#181](https://github.com/crevissepartners/projmux/issues/181)) ([2321527](https://github.com/crevissepartners/projmux/commit/2321527c52f2ab91a2c7e667104ab2d32f88bb09))
+* **osfocus:** wrap wt.exe spawn through bash -c for WSL foreground rights ([#182](https://github.com/crevissepartners/projmux/issues/182)) ([608de42](https://github.com/crevissepartners/projmux/commit/608de42c374941092c7ab1783b5d4aa01f8ad33e))
+
 ## [0.5.1](https://github.com/crevissepartners/projmux/compare/v0.5.0...v0.5.1) (2026-05-11)
 
 
