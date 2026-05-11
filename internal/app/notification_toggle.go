@@ -172,16 +172,6 @@ func (r desktopNotifyResolver) resolveMode() (desktopNotifyMode, desktopNotifySo
 	return desktopNotifyModeNotify, desktopNotifySourceDefault
 }
 
-// resolve is a transitional shim mirroring the legacy 2-state API
-// (enabled bool + source) on top of the 3-way resolver. Kept so the
-// Settings catalog row left over from the old on/off toggle keeps
-// building until the follow-up commit replaces that render with the
-// 3-way selector.
-func (r desktopNotifyResolver) resolve() (bool, desktopNotifySource) {
-	mode, source := r.resolveMode()
-	return mode != desktopNotifyModeNone, source
-}
-
 // desktopNotifyMode is the convenience accessor used by the
 // `aiDesktopNotifier.Notify` gate. The gate uses the mode directly to
 // decide whether to dispatch the toast and whether to follow it up with

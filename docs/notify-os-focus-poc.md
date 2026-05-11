@@ -196,16 +196,81 @@ measurements.
 
 ### Tier-1.5 shipped — Toast click handler (WSL + Windows Terminal)
 
-The Toast notification produced by `aiDesktopNotifier.Notify` on WSL now
-carries a `launch="projmux://focus?..." activationType="protocol"` attribute,
-and the first dispatch of a tmux server boot registers the `projmux://`
-scheme in `HKCU\SOFTWARE\Classes\projmux\…` so Windows routes the click
-to `wsl.exe -d <distro> -- projmux focus --uri "%1"`. Inside WSL,
+The toast notification produced by `aiDesktopNotifier.Notify` on WSL
+carries a `launch="projmux://focus?..." activationType="protocol"`
+attribute, and the first dispatch of a tmux server boot registers the
+`projmux://` scheme in `HKCU\SOFTWARE\Classes\projmux\…` so Windows
+routes the click to
+`wsl.exe -d <distro> --exec <abs-path> focus --uri "%1"`. Inside WSL,
 `projmux focus --uri` parses the URI, resolves the pane id to its
-`session:window.%paneID` target via `tmux display-message`, and reuses the
-existing focus dispatch. This closes the previously-deferred (a) on-push
-trigger mode in the Windows-only scope: the Toast becomes the (a)
-surface and its click drops into the (b) `projmux focus` path.
+`session:window.%paneID` target via `tmux display-message`, and reuses
+the existing focus dispatch. This closes the previously-deferred (a)
+on-push trigger mode in the Windows-only scope: the toast becomes the
+(a) surface and its click drops into the (b) `projmux focus` path.
+
+Trigger mode is a 3-way selector now (Settings > AI Settings > Desktop
+notifications, tmux option `@projmux_desktop_notify_mode`):
+
+| Mode | On push | On click |
+|---|---|---|
+| `none` | no toast | n/a |
+| `notify` | show toast | toast click → `projmux focus` via URI handler |
+| `raise` | show toast + raise host terminal via osfocus chain | toast click → `projmux focus` via URI handler |
+
+Click handling is always wired regardless of mode — the URI handler
+registration is gated on its own one-shot marker, not on the mode.
+
+#### Retrospective — what the working configuration is
+
+An earlier Tier-1.5 spike explored a COM Toast Activator path (PR-H
+tree: the `feat/toast-com-activator` branch and tooling under
+`tools/win-toast-activator`). That path is **abandoned**: an unpackaged
+Win32 binary running under WSL cannot reliably take a
+`INotificationActivationCallback` dispatch even with a fully-wired
+registry chain. The configuration that works in live testing on this
+machine is:
+
+1. **No COM activator** at all. The shortcut writes only
+   `PKEY_AppUserModel_ID` (pid=5) and intentionally omits
+   `PKEY_AppUserModel_ToastActivatorCLSID` (pid=26). When a COM activator
+   is registered, Windows tries COM first and silently fails — it does
+   not fall through to the launch URI. Stripping the COM side makes
+   Windows ShellExecute the URI on click.
+2. **AppID-tagged shortcut present** (`projmux.lnk` in the Start Menu's
+   Programs folder, target `cmd.exe /c exit`). The toast platform
+   requires an AppID-tagged shortcut to be discoverable for the toast to
+   route under the right DisplayName + icon. The target is never
+   launched — it is a property bag.
+3. **Shortcut target = `cmd.exe /c exit`**. Earlier code used
+   `powershell.exe -WindowStyle Hidden -Command exit`. Windows Defender
+   silently quarantines such shortcuts within seconds of creation, which
+   leaves no AppID-tagged shortcut at all and breaks both the toast
+   routing and (since the AppID has to be live when the toast fires) the
+   click path. `cmd.exe /c exit` is benign and survives.
+4. **WSL handler command uses `--exec` not `--`**. `wsl.exe -- <cmd>`
+   routes its tail through the user's default login shell, which parses
+   `&` query-string separators as background-job operators (zsh emits
+   `parse error near '&'`). `--exec` skips the shell and invokes the
+   binary directly. PATH is empty under `--exec`, so the registry
+   command uses the absolute WSL filesystem path captured at registration
+   time.
+
+#### Lessons (so future readers don't repeat them)
+
+- Do not "fix" the shortcut target back to `powershell.exe -WindowStyle
+  Hidden -Command exit`. It triggers Defender quarantine and breaks
+  every routing path that depends on the AppID shortcut existing.
+- Do not add `PKEY_AppUserModel_ToastActivatorCLSID` (pid=26) thinking
+  it would "unlock click activation". For unpackaged binaries it does
+  the opposite — Windows routes through the COM path, the COM call
+  silently fails, and the launch URI is never invoked.
+- Do not use `wsl.exe -- projmux ...` in the registry handler.
+  Re-introducing the login-shell hop will surface as `parse error near
+  '&'` from the user's shell at click time.
+- The `@projmux_uri_protocol_registered_v2` marker exists because the
+  v1 marker came before the `--exec` fix. Re-registration is idempotent
+  so upgrades from v1 transparently install the new handler — the old
+  marker key just goes orphaned.
 
 Multi-distro dispatch (one handler per distro, or a distro-selector
 arg) is a known tier-2 follow-up — current registration captures the

@@ -19,7 +19,7 @@ func TestDesktopNotifyResolverModeCascade(t *testing.T) {
 		wantSource desktopNotifySource
 	}{
 		{
-			name: "default in WSL with WT",
+			name:  "default in WSL with WT",
 			isWSL: true, wtPresent: true,
 			wantMode: desktopNotifyModeRaise, wantSource: desktopNotifySourceDefault,
 		},

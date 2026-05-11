@@ -96,7 +96,7 @@ var settingsEntryPrefixCatalog = []struct {
 	meta   settingsEntryMeta
 }{
 	{settingsActionPrefixAI, settingsEntryMeta{Name: "AI Settings", Axis: settingsAxisGlobal}},
-	{settingsActionPrefixDesktopNotify, settingsEntryMeta{Name: "Desktop notifications", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixDesktopNotifyMode, settingsEntryMeta{Name: "Desktop notifications", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHooks, settingsEntryMeta{Name: "Project hook policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHookAdd, settingsEntryMeta{Name: "Hook maker - add", Axis: settingsAxisBoth}},
 	{settingsActionPrefixHookEdit, settingsEntryMeta{Name: "Hook maker - edit", Axis: settingsAxisBoth}},
@@ -126,48 +126,48 @@ func settingsEntryMetaForValue(value string) (settingsEntryMeta, bool) {
 }
 
 const (
-	settingsBackValue                 = "__settings_back__"
-	settingsNoopValue                 = "__settings_noop__"
-	settingsRootTabGlobalValue        = "__settings_tab_global__"
-	settingsRootTabProjectValue       = "__settings_tab_project__"
-	settingsSectionAI                 = "section:ai"
-	settingsSectionGlobalHooks        = "section:hooks-global"
-	settingsSectionProjectHooks       = "section:hooks-project"
-	settingsSectionProjectConfig      = "section:project-config"
-	settingsSectionProjectTrust       = "section:project-trust"
-	settingsSectionEffectiveMerge     = "section:effective-merge"
-	settingsSectionKeybindings        = "section:keybindings"
-	settingsSectionProject            = "section:project-picker"
-	settingsSectionStatusbar          = "section:statusbar"
-	settingsSectionLabs               = "section:labs"
-	settingsSectionAbout              = "section:about"
-	settingsActionPrefixAI            = "ai:"
-	settingsActionPrefixDesktopNotify = "desktop-notify:"
-	settingsActionPrefixHooks         = "project-hooks:"
-	settingsActionPrefixKeymap        = "keymap:"
-	settingsActionPrefixLabKeymap     = "lab-keymap:"
-	settingsActionPrefixPicker        = "picker-backend:"
-	settingsActionPrefixProjectConfig = "project-config:"
-	settingsActionPrefixTrust         = "trust:"
-	settingsActionPrefixProjdir       = "projdir:"
-	settingsActionPrefixStatusbar     = "statusbar-decoration:"
-	settingsActionPrefixSwitch        = "switch:"
-	settingsActionPrefixUpdate        = "update:"
-	settingsActionPrefixWorkdir       = "workdir:"
-	settingsProjectAdd                = "project:add"
-	settingsProjectPins               = "project:pins"
-	settingsProjectRootManage         = "project-root:manage"
-	settingsProjdirClear              = "projdir:clear"
-	settingsProjdirSetCurrent         = "projdir:set-current"
-	settingsProjdirSetTyped           = "projdir:set-typed"
-	settingsUpdateApply               = "update:apply"
-	settingsUpdateCheck               = "update:check"
-	settingsWorkdirAdd                = "workdir:add"
-	settingsWorkdirList               = "workdir:list"
-	settingsWorkdirTyped              = "workdir:typed"
-	settingsLabKeybindings            = "labs:keybindings"
-	settingsKeymapFieldPlain          = "plain"
-	settingsKeymapFieldPrefix         = "prefix"
+	settingsBackValue                     = "__settings_back__"
+	settingsNoopValue                     = "__settings_noop__"
+	settingsRootTabGlobalValue            = "__settings_tab_global__"
+	settingsRootTabProjectValue           = "__settings_tab_project__"
+	settingsSectionAI                     = "section:ai"
+	settingsSectionGlobalHooks            = "section:hooks-global"
+	settingsSectionProjectHooks           = "section:hooks-project"
+	settingsSectionProjectConfig          = "section:project-config"
+	settingsSectionProjectTrust           = "section:project-trust"
+	settingsSectionEffectiveMerge         = "section:effective-merge"
+	settingsSectionKeybindings            = "section:keybindings"
+	settingsSectionProject                = "section:project-picker"
+	settingsSectionStatusbar              = "section:statusbar"
+	settingsSectionLabs                   = "section:labs"
+	settingsSectionAbout                  = "section:about"
+	settingsActionPrefixAI                = "ai:"
+	settingsActionPrefixDesktopNotifyMode = "desktop-notify-mode:"
+	settingsActionPrefixHooks             = "project-hooks:"
+	settingsActionPrefixKeymap            = "keymap:"
+	settingsActionPrefixLabKeymap         = "lab-keymap:"
+	settingsActionPrefixPicker            = "picker-backend:"
+	settingsActionPrefixProjectConfig     = "project-config:"
+	settingsActionPrefixTrust             = "trust:"
+	settingsActionPrefixProjdir           = "projdir:"
+	settingsActionPrefixStatusbar         = "statusbar-decoration:"
+	settingsActionPrefixSwitch            = "switch:"
+	settingsActionPrefixUpdate            = "update:"
+	settingsActionPrefixWorkdir           = "workdir:"
+	settingsProjectAdd                    = "project:add"
+	settingsProjectPins                   = "project:pins"
+	settingsProjectRootManage             = "project-root:manage"
+	settingsProjdirClear                  = "projdir:clear"
+	settingsProjdirSetCurrent             = "projdir:set-current"
+	settingsProjdirSetTyped               = "projdir:set-typed"
+	settingsUpdateApply                   = "update:apply"
+	settingsUpdateCheck                   = "update:check"
+	settingsWorkdirAdd                    = "workdir:add"
+	settingsWorkdirList                   = "workdir:list"
+	settingsWorkdirTyped                  = "workdir:typed"
+	settingsLabKeybindings                = "labs:keybindings"
+	settingsKeymapFieldPlain              = "plain"
+	settingsKeymapFieldPrefix             = "prefix"
 )
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand) *settingsCommand {
@@ -1384,11 +1384,11 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 		{aiModeShell, "always open plain shell split"},
 	}
 
-	notifyOn, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolve()
+	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
 
-	// Reserve room for: back row + split modes + 1 info row + 2 toggle
-	// rows (on/off) for the desktop-notify switch.
-	entries := make([]intpickercompat.Entry, 0, len(modes)+4)
+	// Reserve room for: back row + split modes + 1 info row + 3 toggle
+	// rows (none/notify/raise) for the desktop-notify mode selector.
+	entries := make([]intpickercompat.Entry, 0, len(modes)+5)
 	entries = append(entries, settingsBackEntry())
 	for _, item := range modes {
 		glyph := settingsGlyphInactive
@@ -1403,34 +1403,31 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 		})
 	}
 
-	// Phase 1: desktop notification on/off toggle. The info row shows the
-	// effective value plus where it came from (env / setting / default) so
-	// users mid-troubleshooting see immediately why a toggle press might
-	// not stick (env override pins the value).
-	notifyValue := "off"
-	if notifyOn {
-		notifyValue = "on"
-	}
+	// Desktop notification mode selector. The info row shows the effective
+	// value plus where it came from (env / env (legacy) / setting / setting
+	// (legacy) / default) so users mid-troubleshooting see immediately why
+	// a toggle press might not stick (env override pins the value).
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabelInfo("Desktop notifications", notifyValue, string(notifySource)),
+		Label: settingsLabelInfo("Desktop notifications", string(notifyMode), string(notifySource)),
 		Value: settingsNoopValue,
 	})
 	for _, item := range []struct {
-		state string
-		desc  string
+		mode desktopNotifyMode
+		desc string
 	}{
-		{"on", "fire OS desktop notifications for AI reply-ready"},
-		{"off", "silence OS notifications; in-app notify queue is unaffected"},
+		{desktopNotifyModeNone, "silence OS notifications; in-app notify queue is unaffected"},
+		{desktopNotifyModeNotify, "fire toast / notify-send for AI reply-ready (click → focus via projmux://)"},
+		{desktopNotifyModeRaise, "fire toast and auto-raise host terminal via osfocus chain"},
 	} {
 		glyph := settingsGlyphInactive
 		color := settingsColorDim
-		if (item.state == "on") == notifyOn {
+		if item.mode == notifyMode {
 			glyph = settingsGlyphToggle
 			color = settingsColorAdd
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, "Desktop notifications "+item.state, item.desc),
-			Value: settingsActionPrefixDesktopNotify + item.state,
+			Label: settingsLabel(glyph, color, "Desktop notifications "+string(item.mode), item.desc),
+			Value: settingsActionPrefixDesktopNotifyMode + string(item.mode),
 		})
 	}
 	return entries
@@ -2128,44 +2125,41 @@ func (c *settingsCommand) currentStatusbarDecoration() config.StatusbarDecoratio
 	return loadStatusbarDecoration(c.homeDir, c.lookupEnv)
 }
 
-// setDesktopNotify writes the user-facing on/off choice into the
-// `@projmux_desktop_notify` global tmux user-option. The env variable
-// `PROJMUX_DESKTOP_NOTIFY` continues to take priority at resolve time,
-// so toggling here when env is set will appear to "do nothing" — the
+// setDesktopNotifyMode writes the user-facing 3-way choice into the
+// `@projmux_desktop_notify_mode` global tmux user-option. The env
+// variables (`PROJMUX_DESKTOP_NOTIFY_MODE`, plus the legacy
+// `PROJMUX_DESKTOP_NOTIFY`) continue to take priority at resolve time, so
+// toggling here when an env is set will appear to "do nothing" — the
 // Settings info row surfaces the source so users see why.
+//
+// The legacy `@projmux_desktop_notify` option is intentionally NOT
+// rewritten here. Read-time migration keeps honoring it for users who
+// never opened the Settings row; once they pick a value via this code
+// path the new option pins the resolution and the legacy one is
+// effectively orphaned.
 //
 // When projmux runs outside tmux we silently skip the live update; the
 // gate at `aiDesktopNotifier.Notify` only reads the option inside tmux
 // anyway, so there's nothing to persist elsewhere.
-func (c *settingsCommand) setDesktopNotify(value string) error {
-	value = strings.ToLower(strings.TrimSpace(value))
-	var optionValue string
-	switch value {
-	case "on", "1", "true", "yes":
-		optionValue = "1"
-	case "off", "0", "false", "no":
-		optionValue = "0"
-	default:
-		return fmt.Errorf("unknown desktop notification value: %s", value)
+func (c *settingsCommand) setDesktopNotifyMode(value string) error {
+	mode, ok := parseDesktopNotifyMode(value)
+	if !ok {
+		return fmt.Errorf("unknown desktop notification mode: %s", value)
 	}
 	if c.lookupEnv == nil || strings.TrimSpace(c.lookupEnv("TMUX")) == "" {
 		// Outside tmux there is no server to persist to. The toggle is
 		// inherently a tmux-scoped surface (resolve order checks env
-		// first, then this option, then default) so this isn't an error
-		// — just a no-op with a friendly hint.
+		// first, then this option, then default) so this isn't an
+		// error — just a no-op with a friendly hint.
 		return nil
 	}
 	if c.runCommand == nil {
 		return errors.New("settings runner is not configured")
 	}
-	if err := c.runCommand("tmux", "set-option", "-g", desktopNotifyTmuxOption, optionValue); err != nil {
-		return fmt.Errorf("set live tmux desktop-notify option: %w", err)
+	if err := c.runCommand("tmux", "set-option", "-g", desktopNotifyModeTmuxOption, string(mode)); err != nil {
+		return fmt.Errorf("set live tmux desktop-notify-mode option: %w", err)
 	}
-	stateLabel := "on"
-	if optionValue == "0" {
-		stateLabel = "off"
-	}
-	_ = c.runCommand("tmux", "display-message", "desktop notifications: "+stateLabel)
+	_ = c.runCommand("tmux", "display-message", "desktop notifications: "+string(mode))
 	return nil
 }
 
@@ -2375,8 +2369,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return errors.New("ai settings are not configured")
 		}
 		return c.ai.setMode(mode)
-	case strings.HasPrefix(value, settingsActionPrefixDesktopNotify):
-		return c.setDesktopNotify(strings.TrimPrefix(value, settingsActionPrefixDesktopNotify))
+	case strings.HasPrefix(value, settingsActionPrefixDesktopNotifyMode):
+		return c.setDesktopNotifyMode(strings.TrimPrefix(value, settingsActionPrefixDesktopNotifyMode))
 	case strings.HasPrefix(value, settingsActionPrefixHooks):
 		return c.setProjectHooksMode(strings.TrimPrefix(value, settingsActionPrefixHooks))
 	case strings.HasPrefix(value, settingsActionPrefixPicker):
