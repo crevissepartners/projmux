@@ -377,7 +377,15 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 	}
 
 	metadata := c.statusbarPathMetadata(ctx, path)
-	popup := statusbarPathPopup(path, metadata)
+	// Binary path is best-effort: a failure here only loses the any-key
+	// close path; the popup itself can still render and falls back to the
+	// Enter-only close shape inside statusbarPopupCommand.
+	binaryPath, binErr := c.resolveBinary()
+	if binErr != nil {
+		fmt.Fprintf(stderr, "statusbar pwd: resolve projmux binary for any-key close: %v\n", binErr)
+		binaryPath = ""
+	}
+	popup := statusbarPathPopup(path, metadata, binaryPath)
 	if err := c.runTmuxNoFallback(stderr,
 		"display-popup",
 		"-E",
@@ -445,7 +453,12 @@ func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Wri
 		fmt.Fprintf(stderr, "statusbar usage: load usage state: %v\n", err)
 		state.LoadError = err
 	}
-	popup := statusbarUsagePopup(state, c.nowTime())
+	binaryPath, binErr := c.resolveBinary()
+	if binErr != nil {
+		fmt.Fprintf(stderr, "statusbar usage: resolve projmux binary for any-key close: %v\n", binErr)
+		binaryPath = ""
+	}
+	popup := statusbarUsagePopup(state, c.nowTime(), binaryPath)
 	if err := c.runTmuxNoFallback(stderr,
 		"display-popup",
 		"-E",
@@ -713,14 +726,14 @@ type statusbarUsagePopupView struct {
 
 const statusbarUsageSyncStaleAfter = time.Minute
 
-func statusbarUsagePopup(state statusbarUsageState, now time.Time) statusbarUsagePopupView {
+func statusbarUsagePopup(state statusbarUsageState, now time.Time, binaryPath string) statusbarUsagePopupView {
 	const width = 96
 	title := "Usage"
 	lines := statusbarUsagePopupLines(state, now, width-2)
 	content := strings.Join(lines, "\n")
 	height := projmuxpicker.RenderedTextLineCount(content) + 2
 	payload := strings.TrimRight(content, "\n") + "\n"
-	command := "printf %s " + tmuxShellQuote(payload) + "; IFS= read -r _"
+	command := statusbarPopupCommand(payload, binaryPath)
 	return statusbarUsagePopupView{
 		Title:   title,
 		Toast:   statusbarUsageToast(state),
@@ -732,8 +745,13 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time) statusbarUsag
 
 func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int) []string {
 	rows := statusbarUsageRows(state.Snapshots)
+	// The popup border title chrome (`display-popup -T "Usage"`) already
+	// communicates which view this is; an inline title here would duplicate
+	// that and — because the picker-style highlight ANSI it used to wear
+	// reads as "this row is selected" — also misrepresent a non-input popup
+	// as an active row in a picker. So the body opens with just the
+	// subdued subtitle.
 	lines := []string{
-		statusbarPopupTitleLine("Usage HUD"),
 		dimANSI("AI token usage windows from the local cache."),
 		"",
 		statusbarUsageSyncLine(state, now),
@@ -996,13 +1014,15 @@ type statusbarPathPopupView struct {
 	Height  int
 }
 
-func statusbarPathPopup(path string, metadata statusbarPathMetadata) statusbarPathPopupView {
+func statusbarPathPopup(path string, metadata statusbarPathMetadata, binaryPath string) statusbarPathPopupView {
 	title := "Current path"
 
 	const width = 84
 	contentWidth := width - 2
+	// Border title `-T "Current path"` already labels the popup; the body
+	// opens with a quiet subtitle instead of a duplicate inline title so we
+	// don't borrow picker-active-row styling for a non-input surface.
 	lines := []string{
-		statusbarPopupTitleLine("Current path"),
 		dimANSI("Active pane working directory."),
 		"",
 	}
@@ -1021,7 +1041,7 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata) statusbarPa
 	content := strings.Join(lines, "\n")
 	height := projmuxpicker.RenderedTextLineCount(content) + 2
 	payload := strings.TrimRight(content, "\n") + "\n"
-	command := "printf %s " + tmuxShellQuote(payload) + "; IFS= read -r _"
+	command := statusbarPopupCommand(payload, binaryPath)
 	return statusbarPathPopupView{
 		Title:   title,
 		Toast:   "path",
@@ -1031,15 +1051,26 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata) statusbarPa
 	}
 }
 
-func statusbarPopupTitleLine(title string) string {
-	return projmuxpicker.CurrentStart + " " + strings.TrimSpace(title) + " " + projmuxpicker.Reset
+// statusbarPopupCommand renders a display-only popup payload plus its
+// any-key close path. The close path prefers the hidden `popup-wait-key`
+// subcommand so we don't depend on the popup's underlying shell supporting
+// `read -n1` / `stty` directly. When the binary path is empty (resolveBinary
+// failed) we fall back to the legacy Enter-only `IFS= read -r _` shape so
+// the popup at least remains dismissable.
+func statusbarPopupCommand(payload, binaryPath string) string {
+	prefix := "printf %s " + tmuxShellQuote(payload)
+	binaryPath = strings.TrimSpace(binaryPath)
+	if binaryPath == "" {
+		return prefix + "; IFS= read -r _"
+	}
+	return prefix + "; " + tmuxShellQuote(binaryPath) + " popup-wait-key"
 }
 
 func statusbarPopupFooterLines(cols int) []string {
 	return []string{
 		"",
 		projmuxpicker.SeparatorLine(cols),
-		projmuxpicker.MutedStart + "Enter closes this popup." + projmuxpicker.Reset,
+		projmuxpicker.MutedStart + "Press any key to close." + projmuxpicker.Reset,
 	}
 }
 
