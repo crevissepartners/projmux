@@ -3,6 +3,7 @@ package osfocus
 import (
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // WindowsTerminalWSLAdapter raises the Windows Terminal window when projmux
@@ -82,8 +83,17 @@ func (a WindowsTerminalWSLAdapter) Focus(_ Target) error {
 
 // defaultWTRun spawns the command without waiting on it. stdout/stderr are
 // discarded so the spawn cannot leak handles into the projmux process.
+//
+// WSL interop quirk: a direct Go exec of `wt.exe` (the binfmt_misc shim
+// routes us into Windows) spawns the resulting Windows process WITHOUT
+// foreground-window rights. wt.exe runs but cannot raise its window.
+// Wrapping through `bash -c` lets bash set up the process (controlling
+// tty / session) such that foreground rights propagate and the raise
+// actually fires. Verified empirically vs three alternatives during the
+// tier-1 ship.
 func defaultWTRun(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+	quoted := shellQuoteArgs(append([]string{name}, args...))
+	cmd := exec.Command("bash", "-c", quoted)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
@@ -97,4 +107,16 @@ func defaultWTRun(name string, args ...string) error {
 		_ = cmd.Wait()
 	}()
 	return nil
+}
+
+// shellQuoteArgs joins argv into a single bash command line, quoting each
+// arg with POSIX single-quote rules so embedded characters (including
+// none for the tier-1 path, but defensive for tier-2 adapters reusing
+// this helper) cannot reinterpret as shell metachars.
+func shellQuoteArgs(argv []string) string {
+	parts := make([]string, 0, len(argv))
+	for _, a := range argv {
+		parts = append(parts, "'"+strings.ReplaceAll(a, "'", "'\\''")+"'")
+	}
+	return strings.Join(parts, " ")
 }
