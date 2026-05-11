@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.5.0](https://github.com/crevissepartners/projmux/compare/v0.4.10...v0.5.0) (2026-05-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* file-form lifecycle hook (`pre-create`/`post-create`/`pane-startup`/`post-attach`) 이 더 이상 실행되지 않는다. 자동 마이그레이션이 한 줄짜리 script 만 declarative 로 옮기며, multi-line 과 symlink 는 silent stop 위험이 있어 Settings UI 에 legacy 행을 표시한다. 복잡한 명령은 `run = "bash -c '...'"` 또는 외부 스크립트 호출 (`run = "./scripts/foo.sh"`) 으로 표현.
+
+### Features
+
+* add project config form editor ([#158](https://github.com/crevissepartners/projmux/issues/158)) ([1a64043](https://github.com/crevissepartners/projmux/commit/1a64043ce17242441ace4bc6c9526dad6b100089))
+* add projmux hook cli surface ([#167](https://github.com/crevissepartners/projmux/issues/167)) ([1dd9fdd](https://github.com/crevissepartners/projmux/commit/1dd9fddb328d07784ea410db005f5e2212e84321))
+* add session snapshot replay ([#156](https://github.com/crevissepartners/projmux/issues/156)) ([85a189a](https://github.com/crevissepartners/projmux/commit/85a189a71b33984cc4e44834a7c71700a286cbeb))
+* add session snapshot store ([#154](https://github.com/crevissepartners/projmux/issues/154)) ([9a6b9ea](https://github.com/crevissepartners/projmux/commit/9a6b9eaacb99b043662ba30a6b375fe12d351784))
+* add settings axis metadata ([#152](https://github.com/crevissepartners/projmux/issues/152)) ([788e4a1](https://github.com/crevissepartners/projmux/commit/788e4a1ebd5b20e3b130f76267459ec56492617d))
+* add settings chip click and alt-shift chord ([#163](https://github.com/crevissepartners/projmux/issues/163)) ([ce3441f](https://github.com/crevissepartners/projmux/commit/ce3441fa2757f99aae0ec312d37107630610a843))
+* add settings effective merge view ([#162](https://github.com/crevissepartners/projmux/issues/162)) ([f52d3de](https://github.com/crevissepartners/projmux/commit/f52d3def92734df98a1b35a8fe6a05bfcc5248ec))
+* add settings global project tabs ([#155](https://github.com/crevissepartners/projmux/issues/155)) ([e562d89](https://github.com/crevissepartners/projmux/commit/e562d892f7b9ccb556eb029b95dff5652c9b5f01))
+* add settings hooks read-only page ([#157](https://github.com/crevissepartners/projmux/issues/157)) ([28851d9](https://github.com/crevissepartners/projmux/commit/28851d9da8a0cf7b45c0067a93bb4da2692dd541))
+* align alt-shift-arrow chord with xterm standard ([8db9e41](https://github.com/crevissepartners/projmux/commit/8db9e4198c2c5839cb9d16cac979f56b3dedac18))
+* align alt-shift-arrow chord with xterm standard (Settings 2.8) ([#169](https://github.com/crevissepartners/projmux/issues/169)) ([8db9e41](https://github.com/crevissepartners/projmux/commit/8db9e4198c2c5839cb9d16cac979f56b3dedac18))
+* complete hook maker authoring ui ([#160](https://github.com/crevissepartners/projmux/issues/160)) ([5a61afe](https://github.com/crevissepartners/projmux/commit/5a61afee8529180e4e9db15ed7e1e91327412281))
+* drop redundant project context header and info rows ([#168](https://github.com/crevissepartners/projmux/issues/168)) ([2e08632](https://github.com/crevissepartners/projmux/commit/2e08632beded4248606d91693f44c42d92c7d796))
+* drop script hook runner for declarative-only ([#164](https://github.com/crevissepartners/projmux/issues/164)) ([dd2803f](https://github.com/crevissepartners/projmux/commit/dd2803f720c30fd07cb97eff0be5c5724bba015f))
+* extend effective merge view with hook entries ([#165](https://github.com/crevissepartners/projmux/issues/165)) ([8b2a4af](https://github.com/crevissepartners/projmux/commit/8b2a4afbbfa89211a5b7d1349f3ba300274bad08))
+* integrate trust badge into project settings tab ([#166](https://github.com/crevissepartners/projmux/issues/166)) ([cdeee0d](https://github.com/crevissepartners/projmux/commit/cdeee0d9623366801efdc2827c8537ea64a0b2b7))
+* restore Claude session state panes ([#159](https://github.com/crevissepartners/projmux/issues/159)) ([d04f2ec](https://github.com/crevissepartners/projmux/commit/d04f2ec3d9a0ce2517a782f597d3471bee052668))
+* ship settings tab chips and alt-arrow chord ([#161](https://github.com/crevissepartners/projmux/issues/161)) ([3fb3257](https://github.com/crevissepartners/projmux/commit/3fb32574c0dabd60b776d2609986ff168e7ed075))
+
 ## [0.4.10](https://github.com/crevissepartners/projmux/compare/v0.4.9...v0.4.10) (2026-05-10)
 
 
