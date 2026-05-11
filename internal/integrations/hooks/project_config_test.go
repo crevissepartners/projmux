@@ -366,6 +366,42 @@ run = "echo ready"
 	}
 }
 
+func TestUntrustProjectConfigClearsIsTrusted(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	writeProjectConfig(t, cwd, `
+[startup]
+run = "echo ready"
+`)
+	trustPath := testTrustStorePath(t)
+
+	if _, err := TrustProjectConfig(cwd, trustPath); err != nil {
+		t.Fatalf("TrustProjectConfig() error = %v", err)
+	}
+	removed, err := UntrustProjectConfig(cwd, trustPath)
+	if err != nil {
+		t.Fatalf("UntrustProjectConfig() error = %v", err)
+	}
+	if !removed {
+		t.Fatalf("UntrustProjectConfig returned removed=false, want true")
+	}
+	trusted, _, err := IsProjectConfigTrusted(cwd, trustPath)
+	if err != nil {
+		t.Fatalf("IsProjectConfigTrusted() error = %v", err)
+	}
+	if trusted {
+		t.Fatalf("config still reported as trusted after untrust")
+	}
+	removedAgain, err := UntrustProjectConfig(cwd, trustPath)
+	if err != nil {
+		t.Fatalf("UntrustProjectConfig() second call error = %v", err)
+	}
+	if removedAgain {
+		t.Fatalf("UntrustProjectConfig second call removed=true, want false (idempotent)")
+	}
+}
+
 func TestRunnerProjectConfigKillSwitchDisablesConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")
