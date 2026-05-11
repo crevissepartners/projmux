@@ -74,7 +74,7 @@ a different command worked better.
 | Kitty | Any | `kitty @ focus-window --match <expr>` | | [ ] |
 | WezTerm | Any | `wezterm cli activate-pane --pane-id <id>` | | [ ] |
 | Windows Terminal | Windows | `wt -w <id> focus-tab -t <n>` (same instance only) | | [ ] |
-| Windows Terminal | WSL → Windows | WSL interop + `wt.exe -w <id> focus-tab` | | [ ] |
+| Windows Terminal | WSL → Windows | WSL interop + `wt.exe -w <id> focus-tab` | OK — `wt.exe -w 0 focus-tab -t 0` raises the WT window (verified WSL2 Ubuntu-24.04, WT host) | [x] |
 | iTerm2 | macOS | AppleScript (`tell application "iTerm" ...`) or Python API | | [ ] |
 | Alacritty | Any | No remote IPC. OS-window focus only — fall back to the table below. | | [ ] |
 | Foot | Linux | `footclient` is limited. OS-window focus only — fall back to the table below. | | [ ] |
@@ -93,7 +93,7 @@ Independent of the terminal: "raise this app to the foreground." Fill the
 | Linux Wayland (KDE) | `kdotool windowactivate <wid>` | KWin script bridge; requires `kdotool`. | | [ ] |
 | Linux Wayland (sway) | `swaymsg '[con_id=<id>] focus'` | Works for sway / wlroots compositors. | | [ ] |
 | Windows | `SetForegroundWindow` via PowerShell + P/Invoke | Foreground-lock policy: if the target hasn't recently been active, the OS will only flash the taskbar entry. | | [ ] |
-| WSL → Windows | Same as Windows, invoked through `powershell.exe` interop | Inherits Windows foreground-lock. | | [ ] |
+| WSL → Windows | Same as Windows, invoked through `powershell.exe` interop | Inherits Windows foreground-lock. | Partial — raw `SetForegroundWindow` returns `False` under foreground-lock; the `AttachThreadInput` + `BringWindowToTop` + `SetForegroundWindow` workaround does bypass the lock (verified WSL2 Ubuntu-24.04, WT host). Caveat: pairing it with `ShowWindow(SW_RESTORE)` unconditionally restores **maximized** windows to normal size — adapter must `IsIconic`-guard `ShowWindow` so only minimized windows are restored. | [x] |
 
 ## Detection signals
 
@@ -115,6 +115,43 @@ the new `osfocus` adapters should reuse the same detect-then-dispatch pattern.
 | WezTerm | `WEZTERM_PANE`, `WEZTERM_EXECUTABLE`, `WEZTERM_UNIX_SOCKET` |
 | Alacritty | `ALACRITTY_LOG`, `ALACRITTY_WINDOW_ID`, `ALACRITTY_SOCKET` |
 | Foot | `FOOT_SOCK_*`, `FOOTCLIENT` (varies by build) |
+
+Notes for adapter authors (from Test 1, WSL2 Ubuntu-24.04 inside Windows
+Terminal):
+
+- Inside tmux, `TERM_PROGRAM` is rewritten to `tmux` and masks the host
+  terminal. Detect Windows Terminal via `WT_SESSION` / `WT_PROFILE_ID`
+  (forwarded into WSL via `WSLENV`), not `TERM_PROGRAM`.
+- `WAYLAND_DISPLAY=wayland-0` is present in WSL2 via WSLg. Do **not** treat it
+  as a "running on native Wayland" signal — gate Wayland adapters on a real
+  Wayland session (e.g. absence of `WSL_INTEROP`).
+- `WSL_INTEROP` + `WSL_DISTRO_NAME` reliably identify WSL2; use them to gate
+  the WSL → Windows adapter branch.
+
+Notes from Test 2 (WSL → Windows OS-level activation):
+
+- Raw `SetForegroundWindow` is unreliable under Windows foreground-lock; it
+  returns `False` whenever the calling process isn't already foreground (the
+  common case for a background-triggered focus).
+- The `AttachThreadInput(fgThread, thisThread, true)` + `BringWindowToTop` +
+  `SetForegroundWindow` + detach combo bypasses the lock and does raise the
+  target window in this configuration.
+- `ShowWindow(handle, SW_RESTORE)` un-maximizes maximized windows as a side
+  effect. The adapter must `IsIconic`-guard the call so it only restores
+  minimized windows; do not call `ShowWindow` unconditionally.
+- For Windows Terminal specifically, prefer the Test 1 path
+  (`wt.exe -w 0 focus-tab`) — it raises WT without any of the above
+  ceremony and has no side effect on window state. The `SetForegroundWindow`
+  combo is the fallback for non-WT Windows apps.
+
+Notes from Test 3 (`wt.exe -w 0` bare, no subcommand):
+
+- Raises the WT window OK and preserves maximization, **but adds a new tab
+  as a side effect** (the bare invocation defaults to "new tab in window
+  0"). Unsuitable as a raise-only call.
+- Always pair `wt.exe -w 0` with a no-op subcommand such as `focus-tab -t 0`
+  (Test 1) to raise without creating a tab. Treat the bare form as
+  reserved for the "open new tab" case only.
 
 If multiple signals are present (e.g. tmux inside VS Code's embedded
 terminal), the adapter chain picks the innermost match the IPC can actually
