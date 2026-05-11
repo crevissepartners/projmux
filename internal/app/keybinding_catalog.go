@@ -328,48 +328,52 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:     "\x0e",
 		},
 		{
+			// Phase 2.8: dropped UserSlot/CSIu (9009u) detour — tmux now
+			// listens directly for the xterm-standard `M-S-Left` chord that
+			// Ghostty and Windows Terminal emit out of the box. Keeping
+			// `WTInput` ensures Windows Terminal explicitly sends the same
+			// `\x1b[1;4D` sequence (it does not always forward modifier-arrow
+			// chords unless mapped). Ghostty drops the explicit keybind
+			// entirely because its default behaviour already emits the
+			// xterm sequence.
 			ID:             "previous-window",
 			Description:    "Previous tmux window",
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "M-S-Left",
-			UserSlot:       8,
-			CSIu:           "9009",
+			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "previous-window",
 			PlainBindOrder: 60,
-			UserBindOrder:  20,
-			GhosttyTrigger: "alt+shift+left",
-			GhosttyOrder:   120,
 			WTID:           "User.projmuxPrevWindow",
 			WTKeys:         "alt+shift+left",
 			WTInput:        "\x1b[1;4D",
 			WTOrder:        100,
 			ProbeOrder:     120,
 			ProbeLabel:     "Alt-Shift-Left",
-			ProbeAction:    "Previous window (User8)",
+			ProbeAction:    "Previous window (M-S-Left)",
 			ProbePlain:     "\x1b[1;4D",
+			ProbeCSIu:      "-",
 		},
 		{
+			// See `previous-window` above — the same reasoning applies to the
+			// next-window chord (xterm sequence `\x1b[1;4C`).
 			ID:             "next-window",
 			Description:    "Next tmux window",
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "M-S-Right",
-			UserSlot:       9,
-			CSIu:           "9010",
+			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "next-window",
 			PlainBindOrder: 70,
-			UserBindOrder:  30,
-			GhosttyTrigger: "alt+shift+right",
-			GhosttyOrder:   130,
 			WTID:           "User.projmuxNextWindow",
 			WTKeys:         "alt+shift+right",
 			WTInput:        "\x1b[1;4C",
 			WTOrder:        110,
 			ProbeOrder:     130,
 			ProbeLabel:     "Alt-Shift-Right",
-			ProbeAction:    "Next window (User9)",
+			ProbeAction:    "Next window (M-S-Right)",
 			ProbePlain:     "\x1b[1;4C",
+			ProbeCSIu:      "-",
 		},
 		{
 			ID:             "select-pane-left",

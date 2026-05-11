@@ -1226,8 +1226,6 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"#{@projmux_ai_topic}",
 		"#{pane_current_command},#{pane_title}",
 		"set -s user-keys[7] \"\\033[9008u\"",
-		"set -s user-keys[8] \"\\033[9009u\"",
-		"set -s user-keys[9] \"\\033[9010u\"",
 		"set -s user-keys[10] \"\\033[9011u\"",
 		"bind-key -n User11 command-prompt",
 		"select-pane -T '%1'",
@@ -1242,8 +1240,6 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"bind-key -n M-S-Right next-window",
 		"bind-key -n M-r command-prompt",
 		"bind-key -n User7 new-window -c \"#{pane_current_path}\"",
-		"bind-key -n User8 previous-window",
-		"bind-key -n User9 next-window",
 		"bind-key -n User10 command-prompt",
 		"bind-key R command-prompt",
 		"bind-key M if -F \"#{mouse}\"",
@@ -1271,6 +1267,17 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 	for _, banned := range []string{
 		"set -g status 3",
 		"set -g status-format[2] \"",
+		// Phase 2.8 regression guard: prev/next window must rely on the
+		// xterm-standard M-S-Left/Right chord — the legacy `User8`/`User9`
+		// detour and its `9009u`/`9010u` user-keys CSI form are gone so
+		// Ghostty (which emits the xterm sequence by default) can drive
+		// the popup chord through the same parser as the rest of the app.
+		"set -s user-keys[8]",
+		"set -s user-keys[9]",
+		"\\033[9009u",
+		"\\033[9010u",
+		"bind-key -n User8",
+		"bind-key -n User9",
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)
