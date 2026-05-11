@@ -214,14 +214,6 @@ func (c *aiCommand) desktopNotifyModeResolution() (desktopNotifyMode, desktopNot
 	return resolver.resolveMode()
 }
 
-// desktopNotifyEnabled is a transitional shim mapping the new 3-way
-// mode back to the legacy boolean gate so the existing call site in
-// `aiDesktopNotifier.Notify` keeps building. The follow-up commit
-// replaces the call site with a direct mode read and drops this shim.
-func (c *aiCommand) desktopNotifyEnabled() bool {
-	return c.desktopNotifyMode() != desktopNotifyModeNone
-}
-
 // settingsDesktopNotifyResolver builds the same resolver from a
 // `settingsCommand`. settingsCommand uses raw `runCommand` / direct
 // `exec.Command` for its tmux reads, so we wire the lookup through

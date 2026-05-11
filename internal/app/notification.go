@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/integrations/osfocus"
 )
 
 type aiNotification struct {
@@ -49,15 +51,28 @@ func (n aiHookNotifier) Notify(notification aiNotification) error {
 
 type aiDesktopNotifier struct {
 	command *aiCommand
+	// osFocusChain is an optional injection seam for the auto-raise hook
+	// fired when the resolved mode is `raise`. When nil, defaultOSFocusChain()
+	// builds the production tier-1 chain (Windows Terminal × WSL adapter
+	// today). Tests inject a stub so they don't shell out to wt.exe.
+	osFocusChain osFocusDispatcher
 }
 
 func (n aiDesktopNotifier) Notify(notification aiNotification) error {
-	// Phase 1 desktop-notification gate. The in-app notify queue, the
-	// statusbar segment, and the attention badge are intentionally
-	// untouched — this only suppresses the OS-level dispatch so users
-	// can silence the popup/Toast/notify-send fan-out without losing
-	// the in-app surfaces.
-	if !n.command.desktopNotifyEnabled() {
+	// 3-way mode gate. The in-app notify queue, the statusbar segment,
+	// and the attention badge are intentionally untouched — this only
+	// suppresses the OS-level dispatch so users can silence the
+	// popup/Toast/notify-send fan-out without losing the in-app
+	// surfaces.
+	//
+	// `mode=none` skips dispatch entirely. `mode=notify` dispatches the
+	// toast / notify-send but does not auto-raise; click-to-focus is
+	// still wired via the projmux:// URI handler regardless of mode (the
+	// handler registration is gated on its own marker, not the mode).
+	// `mode=raise` dispatches and follows up with an osfocus chain call
+	// to bring the host terminal to the foreground.
+	mode := n.command.desktopNotifyMode()
+	if mode == desktopNotifyModeNone {
 		return nil
 	}
 	if n.command.isWSL() {
@@ -65,6 +80,7 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 		n.command.ensureWSLURIProtocol()
 		_ = n.ensureWSLToastAppID(notification)
 		if err := n.dispatchWSLToast(notification); err == nil {
+			n.maybeRaiseHostTerminal(mode, notification)
 			return nil
 		}
 		if n.command.readTrimmed("command", "-v", "wsl-notify-send.exe") != "" {
@@ -73,6 +89,7 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 				message += "\n" + notification.Body
 			}
 			if err := n.command.run("wsl-notify-send.exe", "--category", notification.AppName, message); err == nil {
+				n.maybeRaiseHostTerminal(mode, notification)
 				return nil
 			}
 		}
@@ -84,13 +101,43 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	if n.command.readTrimmed("command", "-v", "notify-send") == "" {
 		return errors.New("notify-send is unavailable")
 	}
-	return n.command.run("notify-send",
+	if err := n.command.run("notify-send",
 		"--app-name="+notification.AppName,
 		"--icon="+icon,
 		"--urgency="+notification.Urgency,
 		notification.Summary,
 		notification.Body,
-	)
+	); err != nil {
+		return err
+	}
+	n.maybeRaiseHostTerminal(mode, notification)
+	return nil
+}
+
+// maybeRaiseHostTerminal fires the osfocus chain to bring the host
+// terminal to the foreground when mode=raise. The call is intentionally
+// best-effort:
+//
+//   - The chain swallows adapter errors and returns nil when no adapter
+//     detects (the silent-fallback policy documented on osfocus.Chain).
+//   - The dispatch is paired with a *successful* notification dispatch,
+//     so the user always sees both the toast and the raised terminal as
+//     a pair — we never raise without an accompanying notification.
+//
+// The Target's Pane is set to the originating pane id (aiNotification.Tag);
+// other Target fields stay empty because the tier-1
+// WindowsTerminalWSLAdapter ignores everything but `wt.exe -w 0
+// focus-tab` semantics. Tier-2 adapters that route to specific
+// windows/tabs can use Pane as a hint without changing the call site.
+func (n aiDesktopNotifier) maybeRaiseHostTerminal(mode desktopNotifyMode, notification aiNotification) {
+	if mode != desktopNotifyModeRaise {
+		return
+	}
+	chain := n.osFocusChain
+	if chain == nil {
+		chain = defaultOSFocusChain()
+	}
+	_ = chain.Focus(osfocus.Target{Pane: strings.TrimSpace(notification.Tag)})
 }
 
 func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification) error {
