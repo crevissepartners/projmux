@@ -1199,6 +1199,21 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
+// filterFocusCalls returns runner calls that target the projmux binary,
+// stripping out the preflight `tmux list-panes` probe the sidebar/statusbar
+// fire to classify stale/gone display state. Tests that only care about the
+// focus dispatch use this to keep their assertions stable.
+func filterFocusCalls(calls []focusFakeCall) []focusFakeCall {
+	out := make([]focusFakeCall, 0, len(calls))
+	for _, call := range calls {
+		if call.name == "tmux" {
+			continue
+		}
+		out = append(out, call)
+	}
+	return out
+}
+
 func sliceContainsPair(values []string, key, value string) bool {
 	for i := 0; i < len(values)-1; i++ {
 		if values[i] == key && values[i+1] == value {

@@ -281,6 +281,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		return errors.New("native picker is not configured")
 	}
 	now := c.clock()
+	liveByID := c.notifyLiveByIDBestEffort()
 	compatOptions := intpickercompat.Options{
 		UI:            "notify-sidebar",
 		Read0:         true,
@@ -290,7 +291,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		Footer:        "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
 		ExpectKeys:    []string{"x", "ctrl-x"},
 		Bindings:      []string{"alt-2:abort"},
-		Entries:       notifySidebarEntries(entries, now),
+		Entries:       notifySidebarEntriesWithLive(entries, now, liveByID),
 		DisableSearch: true,
 	}
 	result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.picker, compatOptions)
@@ -337,6 +338,14 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 const notifySidebarEmptyValue = "__projmux_notify_empty__"
 
 func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpickercompat.Entry {
+	return notifySidebarEntriesWithLive(entries, now, nil)
+}
+
+// notifySidebarEntriesWithLive renders sidebar rows with awareness of
+// stale/gone display state. `liveByID` may be nil when live data is
+// unavailable; in that case rows fall back to the live-row palette so a
+// missing tmux server does not falsely dim every entry.
+func notifySidebarEntriesWithLive(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane) []intpickercompat.Entry {
 	if len(entries) == 0 {
 		return []intpickercompat.Entry{{
 			Label: "No pending notifications",
@@ -345,7 +354,7 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpic
 	}
 	out := make([]intpickercompat.Entry, 0, len(entries))
 	for _, e := range entries {
-		label := notifySidebarLabel(e, now)
+		label := notifySidebarLabelFor(e, now, classifyNotifyRowState(e, liveByID))
 		out = append(out, intpickercompat.Entry{
 			Label: label,
 			Value: e.ID,
@@ -355,11 +364,18 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpic
 }
 
 func notifySidebarLabel(e notify.Notification, now time.Time) string {
+	return notifySidebarLabelFor(e, now, notifyDisplayLive)
+}
+
+func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyRowDisplayState) string {
 	age := formatAge(now.Sub(e.CreatedAt))
 	agent, text := splitAgentPrefix(e)
 	text = notifySidebarLabelCell(text)
 	if text == "" {
 		text = "(empty notification)"
+	}
+	if display != notifyDisplayLive {
+		text = notifySidebarDimText(text)
 	}
 	metaParts := []string{
 		notifySidebarAge(age),
@@ -368,7 +384,7 @@ func notifySidebarLabel(e notify.Notification, now time.Time) string {
 	if agent != "" {
 		metaParts = append(metaParts, notifySidebarAgentBadge(agent))
 	}
-	metaParts = append(metaParts, notifySidebarStateBadge(notifyStateLabel(e, text)))
+	metaParts = append(metaParts, notifySidebarStateBadge(notifyStateLabelFor(e, text, display)))
 	if window := notifySidebarTargetPart("window", e.Window); window != "" {
 		metaParts = append(metaParts, window)
 	}
@@ -376,6 +392,16 @@ func notifySidebarLabel(e notify.Notification, now time.Time) string {
 		metaParts = append(metaParts, pane)
 	}
 	return text + "\n  " + strings.Join(metaParts, " ")
+}
+
+// notifySidebarDimText wraps the row's body text in the dim foreground so
+// STALE/GONE rows visibly recede from active ones.
+func notifySidebarDimText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return text
+	}
+	return notifySidebarDimOpen + text + notifySidebarReset
 }
 
 func notifySidebarLabelCell(value string) string {
@@ -405,6 +431,13 @@ const (
 	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;45m"
 	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;220m"
 	notifySidebarCrit    = "\x1b[1;38;5;231;48;5;160m"
+	// Stale/gone badges share a muted grey palette so the ack-only state is
+	// visually distinct from active rows without competing for attention.
+	// STALE keeps the dim italic-equivalent (no italic SGR is universally
+	// supported on tmux palettes, so we lean on the dim attribute), while
+	// GONE adds strikethrough to telegraph "the target no longer exists".
+	notifySidebarStale = "\x1b[2;38;5;231;48;5;240m"
+	notifySidebarGone  = "\x1b[2;9;38;5;231;48;5;238m"
 )
 
 func notifySidebarAge(age string) string {
@@ -447,6 +480,10 @@ func notifySidebarStateBadge(label string) string {
 		open = notifySidebarWarn
 	case "CRIT":
 		open = notifySidebarCrit
+	case "STALE":
+		open = notifySidebarStale
+	case "GONE":
+		open = notifySidebarGone
 	}
 	return open + " " + label + " " + notifySidebarReset
 }
@@ -746,14 +783,47 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 		}
 		state := "queue-only"
 		explanation := "queue entry is pending; no matching live AI reply pane was found"
-		if strings.HasPrefix(entry.ID, "ai:") {
+		switch classifyNotifyRowState(entry, liveByID) {
+		case notifyDisplayStale:
 			state = "queue-stale"
 			explanation = "queue entry exists but live pane no longer matches reply+agent state; it remains pending until explicit ack"
+		case notifyDisplayGone:
+			state = "queue-gone"
+			explanation = "queue entry has no routable target; it can only be ack'd"
 		}
 		report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, state, explanation))
 	}
 
 	return report, nil
+}
+
+// notifyLiveByIDBestEffort returns the map of live AI reply-state panes keyed
+// by notify id, swallowing any tmux error. The sidebar/statusbar use this so
+// a missing tmux server only suppresses the stale/gone classification —
+// listing entries themselves continues to work.
+func (c *notifyCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
+	if c == nil || c.runner == nil {
+		return nil
+	}
+	panes, err := c.listNotifyLivePanes()
+	if err != nil {
+		return nil
+	}
+	return notifyLiveShouldQueueByID(panes)
+}
+
+// notifyLiveShouldQueueByID indexes the subset of live panes that satisfy
+// AI reply+agent state (i.e. ShouldQueue). This is the same condition
+// [notifyCommand.buildNotifyLiveReport] uses to decide which queue entries
+// are stale.
+func notifyLiveShouldQueueByID(panes []notifyLivePane) map[string]notifyLivePane {
+	out := make(map[string]notifyLivePane, len(panes))
+	for _, live := range panes {
+		if live.ShouldQueue {
+			out[live.ID] = live
+		}
+	}
+	return out
 }
 
 func (c *notifyCommand) listNotifyLivePanes() ([]notifyLivePane, error) {

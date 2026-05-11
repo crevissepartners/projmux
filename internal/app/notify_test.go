@@ -317,12 +317,13 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if store.ackedID != "abc" {
 		t.Fatalf("ackedID = %q, want abc", store.ackedID)
 	}
-	if len(runner.calls) != 1 || runner.calls[0].name != "/usr/local/bin/projmux" {
-		t.Fatalf("runner calls = %#v", runner.calls)
+	focusCalls := filterFocusCalls(runner.calls)
+	if len(focusCalls) != 1 || focusCalls[0].name != "/usr/local/bin/projmux" {
+		t.Fatalf("focus calls = %#v", focusCalls)
 	}
 	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux"}
-	if !equalStringSlices(runner.calls[0].args, wantArgs) {
-		t.Fatalf("focus args = %#v, want %#v", runner.calls[0].args, wantArgs)
+	if !equalStringSlices(focusCalls[0].args, wantArgs) {
+		t.Fatalf("focus args = %#v, want %#v", focusCalls[0].args, wantArgs)
 	}
 }
 
@@ -458,12 +459,13 @@ func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 	if store.ackedID != "abc" {
 		t.Fatalf("ackedID = %q, want abc", store.ackedID)
 	}
-	if len(runner.calls) != 1 || runner.calls[0].name != "/usr/local/bin/projmux" {
-		t.Fatalf("runner calls = %#v, want one focus call", runner.calls)
+	focusCalls := filterFocusCalls(runner.calls)
+	if len(focusCalls) != 1 || focusCalls[0].name != "/usr/local/bin/projmux" {
+		t.Fatalf("focus calls = %#v, want one focus call", focusCalls)
 	}
 	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux"}
-	if !equalStringSlices(runner.calls[0].args, wantArgs) {
-		t.Fatalf("focus args = %#v, want %#v", runner.calls[0].args, wantArgs)
+	if !equalStringSlices(focusCalls[0].args, wantArgs) {
+		t.Fatalf("focus args = %#v, want %#v", focusCalls[0].args, wantArgs)
 	}
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want no output for focus + ack path", stdout.String())
