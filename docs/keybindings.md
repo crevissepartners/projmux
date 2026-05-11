@@ -284,11 +284,15 @@ action fires.
 | `ESC [ 9006 u` | `User5` | AI split picker |
 | `ESC [ 9007 u` | `User6` | Settings |
 | `ESC [ 9008 u` | `User7` | New tmux window in the current pane directory |
-| `ESC [ 9009 u` | `User8` | Previous tmux window |
-| `ESC [ 9010 u` | `User9` | Next tmux window |
 | `ESC [ 9011 u` | `User10` | Rename the current tmux window |
 | `ESC [ 9012 u` | `User11` | Rename the current tmux pane label |
 | `ESC [ 9013 u` | `User12` | Project switcher popup |
+
+> Previous/Next window (Alt-Shift-Left/Right) intentionally **do not** use a
+> CSI-u detour — both projmux and modern terminals already agree on the
+> xterm-standard modifier sequence (`\x1b[1;4D` / `\x1b[1;4C`), so tmux binds
+> directly to `M-S-Left` / `M-S-Right`. This keeps the popup-side chord
+> handler and the tmux root binding consuming the same sequence.
 
 ### Ghostty (manual)
 
@@ -312,9 +316,13 @@ keybind = ctrl+shift+l=csi:9002u
 keybind = ctrl+shift+n=csi:9008u
 keybind = ctrl+m=csi:9011u
 keybind = ctrl+shift+m=csi:9012u
-keybind = alt+shift+left=csi:9009u
-keybind = alt+shift+right=csi:9010u
 ```
+
+`Alt-Shift-Left` and `Alt-Shift-Right` are intentionally absent: Ghostty
+already emits the xterm-standard `\x1b[1;4D` / `\x1b[1;4C` sequences for
+those chords, which tmux now binds directly. Adding a `csi:9009u` /
+`csi:9010u` override would re-introduce the detour that hid the chord from
+projmux popup handlers.
 
 Reload Ghostty or restart the terminal after changing the config.
 

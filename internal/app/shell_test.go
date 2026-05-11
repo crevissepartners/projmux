@@ -61,8 +61,8 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"set -s user-keys[7] \"\\033[9008u\"",
 		"bind-key -n C-n new-window -c \"#{pane_current_path}\"",
 		"bind-key -n M-r command-prompt",
-		"bind-key -n User8 previous-window",
-		"bind-key -n User9 next-window",
+		"bind-key -n M-S-Left previous-window",
+		"bind-key -n M-S-Right next-window",
 		"bind-key -n User10 command-prompt",
 		"bind-key -n User11 command-prompt",
 		"set -g status-left-length 20",
@@ -87,6 +87,16 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 	for _, banned := range []string{
 		"set -g status 3",
 		"set -g status-format[2] \"",
+		// Phase 2.8 regression guard: alt-shift-arrow chords now bind to the
+		// xterm-standard `M-S-Left/Right` form. Their `User8`/`User9` detour
+		// is gone; if the generator regresses, popup-inside chords break in
+		// Ghostty (the original bug).
+		"set -s user-keys[8]",
+		"set -s user-keys[9]",
+		"\\033[9009u",
+		"\\033[9010u",
+		"bind-key -n User8",
+		"bind-key -n User9",
 	} {
 		if strings.Contains(config, banned) {
 			t.Fatalf("config = %q, did not expect substring %q", config, banned)
