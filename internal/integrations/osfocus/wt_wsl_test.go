@@ -151,6 +151,22 @@ func TestWindowsTerminalWSLAdapter_Focus_SynchronousReturnsRunnerError(t *testin
 	}
 }
 
+func TestShellQuoteArgs_(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"wt.exe", "-w", "0", "ft", "-t", "0"}, `'wt.exe' '-w' '0' 'ft' '-t' '0'`},
+		{[]string{"path with space"}, `'path with space'`},
+		{[]string{"x'y"}, `'x'\''y'`},
+	}
+	for _, c := range cases {
+		if got := shellQuoteArgs(c.in); got != c.want {
+			t.Errorf("shellQuoteArgs(%v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
