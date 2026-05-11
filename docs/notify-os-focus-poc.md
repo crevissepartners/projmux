@@ -74,7 +74,7 @@ a different command worked better.
 | Kitty | Any | `kitty @ focus-window --match <expr>` | | [ ] |
 | WezTerm | Any | `wezterm cli activate-pane --pane-id <id>` | | [ ] |
 | Windows Terminal | Windows | `wt -w <id> focus-tab -t <n>` (same instance only) | | [ ] |
-| Windows Terminal | WSL → Windows | WSL interop + `wt.exe -w <id> focus-tab` | | [ ] |
+| Windows Terminal | WSL → Windows | WSL interop + `wt.exe -w <id> focus-tab` | OK — `wt.exe -w 0 focus-tab -t 0` raises the WT window (verified WSL2 Ubuntu-24.04, WT host) | [x] |
 | iTerm2 | macOS | AppleScript (`tell application "iTerm" ...`) or Python API | | [ ] |
 | Alacritty | Any | No remote IPC. OS-window focus only — fall back to the table below. | | [ ] |
 | Foot | Linux | `footclient` is limited. OS-window focus only — fall back to the table below. | | [ ] |
@@ -115,6 +115,18 @@ the new `osfocus` adapters should reuse the same detect-then-dispatch pattern.
 | WezTerm | `WEZTERM_PANE`, `WEZTERM_EXECUTABLE`, `WEZTERM_UNIX_SOCKET` |
 | Alacritty | `ALACRITTY_LOG`, `ALACRITTY_WINDOW_ID`, `ALACRITTY_SOCKET` |
 | Foot | `FOOT_SOCK_*`, `FOOTCLIENT` (varies by build) |
+
+Notes for adapter authors (from Test 1, WSL2 Ubuntu-24.04 inside Windows
+Terminal):
+
+- Inside tmux, `TERM_PROGRAM` is rewritten to `tmux` and masks the host
+  terminal. Detect Windows Terminal via `WT_SESSION` / `WT_PROFILE_ID`
+  (forwarded into WSL via `WSLENV`), not `TERM_PROGRAM`.
+- `WAYLAND_DISPLAY=wayland-0` is present in WSL2 via WSLg. Do **not** treat it
+  as a "running on native Wayland" signal — gate Wayland adapters on a real
+  Wayland session (e.g. absence of `WSL_INTEROP`).
+- `WSL_INTEROP` + `WSL_DISTRO_NAME` reliably identify WSL2; use them to gate
+  the WSL → Windows adapter branch.
 
 If multiple signals are present (e.g. tmux inside VS Code's embedded
 terminal), the adapter chain picks the innermost match the IPC can actually
