@@ -102,7 +102,10 @@ output becomes `{queue, live, rows, errors}`. Typical states:
 - `live-ai-reply-missing-queue` — a live AI reply pane lacks the derived
   queue entry; run `projmux notify reconcile` to back-fill it.
 - `queue-stale` — an `ai:` queue entry exists, but the live pane no longer
-  matches reply+agent state; it remains pending until explicit ack.
+  matches reply+agent state; it remains pending until explicit ack. Surfaced
+  in the sidebar/statusbar as `STALE` / `STL`.
+- `queue-gone` — a queue entry has no routable target (empty session); it
+  can only be ack'd. Surfaced as `GONE` / `GON`.
 - `queue-only` — a non-AI/external queue entry is pending and has no live AI
   reply-pane requirement.
 

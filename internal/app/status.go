@@ -417,12 +417,43 @@ func (c *statusCommand) runNotify(args []string, stdout, stderr io.Writer) error
 	if c.now != nil {
 		now = c.now()
 	}
-	out := formatStatusNotify(entries, *maxWidth, now)
+	liveByID := c.notifyLiveByIDBestEffort()
+	out := formatStatusNotifyWithLive(entries, *maxWidth, now, liveByID)
 	if out == "" {
 		return nil
 	}
 	_, err = fmt.Fprint(stdout, out)
 	return err
+}
+
+// notifyLiveByIDBestEffort returns the live AI reply-state pane index keyed
+// by notify id, swallowing tmux errors so the status segment never fails
+// loudly. Returns nil when the runner is unavailable or tmux refuses to
+// list panes — in that case the segment renders without stale/gone hints.
+func (c *statusCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
+	if c == nil || c.readCommand == nil {
+		return nil
+	}
+	runner := statusCommandRunnerAdapter{read: c.readCommand}
+	panes, err := (&notifyCommand{runner: runner}).listNotifyLivePanes()
+	if err != nil {
+		return nil
+	}
+	return notifyLiveShouldQueueByID(panes)
+}
+
+// statusCommandRunnerAdapter wraps statusCommand.readCommand so the existing
+// notifyCommand.listNotifyLivePanes helper can be reused without exporting
+// the underlying runner.
+type statusCommandRunnerAdapter struct {
+	read func(ctx context.Context, name string, args ...string) ([]byte, error)
+}
+
+func (a statusCommandRunnerAdapter) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if a.read == nil {
+		return nil, errors.New("status command reader is not configured")
+	}
+	return a.read(ctx, name, args...)
 }
 
 func (c *statusCommand) notifyStore() (notifyStore, error) {
@@ -443,16 +474,22 @@ const (
 	notifyBadgeInfoOpen = "#[bg=brightcyan,fg=black,bold]"
 	notifyBadgeWarnOpen = "#[bg=yellow,fg=black,bold]"
 	notifyBadgeCritOpen = "#[bg=red,fg=white,bold]"
-	notifyAgentOpen     = "#[bg=colour51,fg=black,bold]"
-	notifyAgentClaude   = "#[bg=colour208,fg=black,bold]"
-	notifyAgentCodex    = "#[bg=colour33,fg=colour231,bold]"
-	notifySeverityInfo  = "#[bg=colour24,fg=brightcyan]"
-	notifySeverityWarn  = "#[bg=colour24,fg=yellow]"
-	notifySeverityCrit  = "#[bg=colour24,fg=red,bold]"
-	notifyIcon          = "●"
-	notifyMidDot        = "·"
-	notifyEllipsis      = "…"
-	notifyReset         = "#[default]"
+	// Stale/gone badges share a muted palette so the ack-only state is
+	// visually distinct from the active NEED/INFO/WARN/CRIT badges without
+	// stealing focus. The colours land in the same neutral grey family the
+	// sidebar uses so users learn a single ack-only affordance.
+	notifyBadgeStaleOpen = "#[bg=colour240,fg=colour231,bold]"
+	notifyBadgeGoneOpen  = "#[bg=colour238,fg=colour231,dim]"
+	notifyAgentOpen      = "#[bg=colour51,fg=black,bold]"
+	notifyAgentClaude    = "#[bg=colour208,fg=black,bold]"
+	notifyAgentCodex     = "#[bg=colour33,fg=colour231,bold]"
+	notifySeverityInfo   = "#[bg=colour24,fg=brightcyan]"
+	notifySeverityWarn   = "#[bg=colour24,fg=yellow]"
+	notifySeverityCrit   = "#[bg=colour24,fg=red,bold]"
+	notifyIcon           = "●"
+	notifyMidDot         = "·"
+	notifyEllipsis       = "…"
+	notifyReset          = "#[default]"
 )
 
 // known agent prefixes recognised when stripping a leading `<agent>:` from
@@ -480,16 +517,25 @@ var notifyKnownAgents = []string{"claude", "codex"}
 // `now` is the wall-clock used to compute the relative age. Pass the zero
 // time to suppress the age field entirely.
 func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Time) string {
+	return formatStatusNotifyWithLive(entries, maxWidth, now, nil)
+}
+
+// formatStatusNotifyWithLive renders the status segment with awareness of
+// stale/gone display state for the head entry. `liveByID` may be nil when
+// the caller could not read live tmux pane state; in that case the segment
+// degrades to the legacy NEED/INFO/WARN/CRIT badge set.
+func formatStatusNotifyWithLive(entries []notify.Notification, maxWidth int, now time.Time, liveByID map[string]notifyLivePane) string {
 	if len(entries) == 0 {
 		return ""
 	}
 	head := entries[0]
 	extras := len(entries) - 1
 
+	display := classifyNotifyRowState(head, liveByID)
 	agent, text := splitAgentPrefix(head)
 	badge := assembleNotifyBadges(
 		renderNotifyProjectBadge(notifyProjectName(head.Session)),
-		renderNotifyBadge(notifyStateLabel(head, text), head.Severity),
+		renderNotifyStateBadgeFor(head, text, display),
 		renderNotifyAgentBadge(agent),
 	)
 	icon := renderNotifyIcon(head.Severity)
@@ -610,6 +656,31 @@ func renderNotifyBadge(label, severity string) string {
 	return renderNotifyBlockBadge(label, notifyBadgeOpen(severity))
 }
 
+// renderNotifyStateBadgeFor renders the head-entry state badge using the
+// 3-rune short label (STL/GON) when the entry is stale/gone, and the legacy
+// 4-rune NEED/INFO/WARN/CRIT label otherwise. The palette is overridden for
+// stale/gone so the ack-only condition stands out before the user clicks.
+func renderNotifyStateBadgeFor(n notify.Notification, text string, display notifyRowDisplayState) string {
+	open := notifyDisplayStateOpen(display)
+	if open == "" {
+		open = notifyBadgeOpen(n.Severity)
+	}
+	return renderNotifyBlockBadge(notifyStateShortLabel(n, text, display), open)
+}
+
+// notifyDisplayStateOpen maps a stale/gone display state to its tmux color
+// directive. Live entries return the empty string so the caller falls back
+// to the severity palette.
+func notifyDisplayStateOpen(state notifyRowDisplayState) string {
+	switch state {
+	case notifyDisplayStale:
+		return notifyBadgeStaleOpen
+	case notifyDisplayGone:
+		return notifyBadgeGoneOpen
+	}
+	return ""
+}
+
 func renderNotifyAgentBadge(agent string) string {
 	agent = strings.TrimSpace(agent)
 	if agent == "" {
@@ -656,6 +727,17 @@ func notifyBadgeOpen(severity string) string {
 }
 
 func notifyStateLabel(n notify.Notification, text string) string {
+	return notifyStateLabelFor(n, text, notifyDisplayLive)
+}
+
+// notifyStateLabelFor renders the long-form state badge label. When the
+// classifier reports STALE/GONE it overrides the severity-derived label so
+// the ack-only condition is visible before the user clicks. Unknown display
+// states fall through to the live-row classification.
+func notifyStateLabelFor(n notify.Notification, text string, display notifyRowDisplayState) string {
+	if override := notifyDisplayStateLabel(display); override != "" {
+		return override
+	}
 	switch n.Severity {
 	case notify.SeverityWarn:
 		return "WARN"
@@ -670,6 +752,16 @@ func notifyStateLabel(n notify.Notification, text string) string {
 		return "NEED"
 	}
 	return "INFO"
+}
+
+// notifyStateShortLabel returns the statusbar abbreviation (3 runes) for the
+// resolved label. STALE/GONE collapse to `STL` / `GON` so the segment stays
+// inside its width budget.
+func notifyStateShortLabel(n notify.Notification, text string, display notifyRowDisplayState) string {
+	if override := notifyDisplayStateShortLabel(display); override != "" {
+		return override
+	}
+	return notifyStateLabelFor(n, text, notifyDisplayLive)
 }
 
 // shrinkText shrinks s so its rune length is at most maxRunes, replacing
