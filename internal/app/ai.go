@@ -1964,8 +1964,30 @@ Set-ItemProperty -Path $regPath -Name 'ShowInSettings' -Value 1 -Type DWord
 ` + iconLine + `
 $shortcutDir = [Environment]::GetFolderPath('Programs')
 $shortcutPath = Join-Path $shortcutDir 'projmux.lnk'
-$targetPath = [Environment]::ExpandEnvironmentVariables('%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe')
-$arguments = '-NoProfile -WindowStyle Hidden -Command exit'
+# The shortcut target is intentionally cmd.exe /c exit (a no-op). The
+# shortcut is never actually launched — it exists solely as a property bag
+# so the Windows toast platform can attach the
+# PKEY_AppUserModel_ID (pid=5) value via IPropertyStore.SetValue in
+# ProjmuxToastShortcut::Save. That AppUserModelID is what routes the toast
+# under our DisplayName + icon.
+#
+# DO NOT change this target back to
+#   powershell.exe -WindowStyle Hidden -Command exit
+# Windows Defender silently quarantines Start Menu shortcuts whose target
+# is "powershell.exe -WindowStyle Hidden ..." within seconds of creation,
+# which leaves no shortcut at all and silently breaks the AppID routing
+# (and, since the URI-launch click handler depends on the AppID being live
+# when the toast fires, breaks click activation too). cmd.exe /c exit
+# is treated as benign and survives Defender's heuristics.
+#
+# Note: PKEY_AppUserModel_ToastActivatorCLSID (pid=26) is intentionally
+# NOT set on this shortcut. The Win32 unpackaged toast click path falls
+# back to ShellExecute on the launch URI ONLY when no COM Toast Activator
+# is registered alongside the AppID. Setting ToastActivatorCLSID would
+# route Windows down the COM activator path first, which silently fails
+# in our unpackaged setup and does not fall through to the URI handler.
+$targetPath = [Environment]::ExpandEnvironmentVariables('%SystemRoot%\System32\cmd.exe')
+$arguments = '/c exit'
 $description = 'projmux tmux AI notifications'
 $iconLocation = ''
 if ('` + psEscape(iconURI) + `' -ne '') {

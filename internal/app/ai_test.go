@@ -1721,3 +1721,84 @@ func TestAITopicErrorsWhenNoPaneAvailable(t *testing.T) {
 		t.Fatalf("expected no tmux set-option commands, got %#v", cmdRecorder(cmd).commands)
 	}
 }
+
+// TestBuildRegisterToastAppIDShortcutTargetIsCmdExe pins the Start Menu
+// shortcut target produced by buildRegisterToastAppIDPowerShell to
+// `cmd.exe /c exit`. The shortcut is a property bag for PKEY_AppUserModel_ID
+// (pid=5) so the toast routes under our DisplayName; its target is never
+// actually launched. We do NOT want `powershell.exe -WindowStyle Hidden ...`
+// here — Windows Defender quarantines such shortcuts moments after creation,
+// which silently breaks toast AppID routing and (because the click path
+// depends on the AppID being live) silently breaks click activation.
+func TestBuildRegisterToastAppIDShortcutTargetIsCmdExe(t *testing.T) {
+	script := buildRegisterToastAppIDPowerShell(desktopAppID, desktopDisplayName, "")
+	for _, want := range []string{
+		`$targetPath = [Environment]::ExpandEnvironmentVariables('%SystemRoot%\System32\cmd.exe')`,
+		`$arguments = '/c exit'`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("register script missing %q: %s", want, script)
+		}
+	}
+	// Strip PS `#` comment lines before scanning for forbidden tokens —
+	// the source-level guidance comment mentions the historical
+	// powershell.exe target by name and we don't want the assertion to
+	// flag its own do-not-do-this commentary.
+	var noComments strings.Builder
+	for _, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		noComments.WriteString(line)
+		noComments.WriteByte('\n')
+	}
+	effective := noComments.String()
+	for _, forbidden := range []string{
+		`WindowsPowerShell\v1.0\powershell.exe`,
+		`-WindowStyle Hidden`,
+	} {
+		if strings.Contains(effective, forbidden) {
+			t.Fatalf("register script contains forbidden token %q (Defender quarantines such shortcuts): %s", forbidden, effective)
+		}
+	}
+}
+
+// TestBuildRegisterToastAppIDDoesNotSetToastActivatorCLSID guards against a
+// well-meaning "fix" that adds PKEY_AppUserModel_ToastActivatorCLSID
+// (pid=26) to the shortcut. Setting that property routes Windows toast
+// activation down the COM path first; in our unpackaged Win32 setup the
+// COM call silently fails and Windows does NOT fall through to the
+// ShellExecute(launch URI) path — i.e. click activation breaks. The
+// shortcut intentionally carries only the AppUserModelID (pid=5) so the
+// URI launch path is taken on click.
+//
+// We strip PowerShell comment lines before scanning so the source-level
+// guidance comment that mentions ToastActivatorCLSID by name doesn't
+// trigger the substring assertion. The check intentionally targets
+// executable PS lines only.
+func TestBuildRegisterToastAppIDDoesNotSetToastActivatorCLSID(t *testing.T) {
+	script := buildRegisterToastAppIDPowerShell(desktopAppID, desktopDisplayName, "")
+	var noComments strings.Builder
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		noComments.WriteString(line)
+		noComments.WriteByte('\n')
+	}
+	effective := noComments.String()
+	for _, forbidden := range []string{
+		"ToastActivatorCLSID",
+		// pid=26 is the property id for ToastActivatorCLSID. The shortcut's
+		// only property write is the AppUserModel_ID (pid=5) — any pid=26
+		// PROPERTYKEY introduction would be a regression.
+		`PROPERTYKEY("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3", 26)`,
+		// Cover the PROPERTYKEY constructor by raw pid form too.
+		", 26)",
+	} {
+		if strings.Contains(effective, forbidden) {
+			t.Fatalf("register script must not configure ToastActivatorCLSID (%q): %s", forbidden, effective)
+		}
+	}
+}

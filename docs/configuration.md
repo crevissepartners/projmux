@@ -108,7 +108,8 @@ configured key opens and closes the popup.
 | `PROJMUX_MANAGED_ROOTS` | Search-root override. Uses the OS-native path-list separator and takes priority over the saved workdirs file and default weak probes. |
 | `TMUX_SESSIONIZER_ROOTS` | Legacy alias still honored at runtime for managed roots. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in Linux/WSL sender. |
-| `PROJMUX_DESKTOP_NOTIFY` | OS desktop notification on/off override. `on`/`off` (case insensitive). When set, this takes priority over the saved tmux option and the default. The in-app notify queue is not affected. |
+| `PROJMUX_DESKTOP_NOTIFY_MODE` | OS desktop notification mode override. `none` / `notify` / `raise` (case insensitive). When set, this takes priority over every other resolution rung. The in-app notify queue is not affected. |
+| `PROJMUX_DESKTOP_NOTIFY` | Legacy on/off override kept for backward compatibility. `on` maps to `notify`, `off` maps to `none`. Honored only when `PROJMUX_DESKTOP_NOTIFY_MODE` is unset. |
 | `PROJMUX_WSL_TOAST_ICON_DIR` | Directory used when copying the WSL toast icon into a Windows-readable path. |
 | `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. |
 | `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from `projmux status usage` to stderr. |
@@ -156,36 +157,87 @@ the Linux `--app-name`, the macOS sender label, and the Windows
 ships with a one-shot Windows cleanup that removes the legacy Start Menu
 shortcut and registry entry the first time projmux runs.
 
-OS desktop notifications can be silenced without touching the in-app notify
-queue. The resolution order is:
+### Desktop notification mode
 
-1. `PROJMUX_DESKTOP_NOTIFY` env (`on` / `off`).
-2. Tmux global option `@projmux_desktop_notify` (`1` / `0`).
-3. Default = on.
+The OS-level dispatch carries three modes. The in-app notify queue, the
+statusbar segment, and the attention badge stay live regardless of which
+mode is active — only the toast / notify-send / auto-raise fan-out is
+gated here.
 
-Toggle from Settings > AI Settings > `Desktop notifications on/off`. The
-Settings info row labels the effective source as `env`, `setting`, or
-`default` so an env-pinned value is visible at a glance.
+| Mode | On push | On click |
+| --- | --- | --- |
+| `none` | no toast | n/a |
+| `notify` | toast / notify-send fires | toast click invokes `projmux focus --uri` via the `projmux://` handler |
+| `raise` | toast / notify-send fires AND the host terminal is auto-raised via the osfocus chain | same as `notify` — click is always available |
+
+Click activation is always wired. The `projmux://` URI handler is
+registered on the first Notify of each tmux server (gated by the
+`@projmux_uri_protocol_registered_v2` marker) regardless of mode. The
+mode only controls whether a toast fires at all and whether to follow it
+up with an on-push auto-raise.
+
+Resolution order (highest priority first):
+
+1. `PROJMUX_DESKTOP_NOTIFY_MODE` env (`none` / `notify` / `raise`).
+2. `PROJMUX_DESKTOP_NOTIFY` env (legacy `on` / `off`; `on` → `notify`,
+   `off` → `none`).
+3. Tmux global option `@projmux_desktop_notify_mode`.
+4. Tmux global option `@projmux_desktop_notify` (legacy `1` / `0`, same
+   mapping as the env above).
+5. Default = `raise` when running inside WSL with `$WT_SESSION` set
+   (Windows Terminal × WSL is the measured-working cell for osfocus
+   raise today); otherwise `notify`.
+
+Migration is intentionally read-time. Users with the previous legacy
+toggle set keep their behavior — `@projmux_desktop_notify=0` resolves to
+`none`, `@projmux_desktop_notify=1` resolves to `notify`. The first
+Settings press through the new row writes the new key and the legacy key
+goes unused. No eager rewrite of tmux state.
+
+Toggle from Settings > AI Settings > `Desktop notifications`. The
+Settings info row labels the effective source as `env`, `env (legacy)`,
+`setting`, `setting (legacy)`, or `default` so users see which rung of
+the cascade pinned the value.
 
 Hook details for new-session lifecycle hooks and project-local
 `.projmux/config.toml` live in [Hooks](hooks.md).
 
 ### Toast click handler (WSL + Windows Terminal)
 
-On WSL, projmux registers a `projmux://` URL scheme on the Windows side the
-first time a Toast is dispatched on each tmux server. Clicking the Toast
-hands control back to projmux inside WSL via the registered command:
+On WSL, projmux registers a `projmux://` URL scheme on the Windows side
+the first time a Toast is dispatched on each tmux server. Clicking the
+toast hands control back to projmux inside WSL via the registered command:
 
 ```text
 wsl.exe -d $WSL_DISTRO_NAME --exec <absolute-path-to-projmux> focus --uri "%1"
 ```
 
-`--exec` (rather than `--`) is required so the URI bypasses the user's
-default login shell — `wsl.exe -- <cmd>` routes its tail through that shell,
-which then parses `&` query-string separators as background-job operators
-(zsh emits `parse error near '&'`). The absolute WSL filesystem path to the
-binary is captured at registration time so the launch doesn't depend on
-PATH being set under `--exec`.
+For click activation to work in our unpackaged Win32 setup, four
+conditions must hold simultaneously — all of them are arranged by the
+notify path so users do not configure anything:
+
+1. No COM Toast Activator is registered. The shortcut writes only
+   `PKEY_AppUserModel_ID` (pid=5) and intentionally omits
+   `PKEY_AppUserModel_ToastActivatorCLSID` (pid=26). When a COM activator
+   is registered alongside the AppID, Windows tries COM first, silently
+   fails for unpackaged exes, and does *not* fall through to the launch
+   URI. Stripping the COM side makes Windows ShellExecute the launch URI
+   on click.
+2. The Start Menu shortcut exists with the AppID set. The shortcut is
+   never launched — it is a property bag so the toast can route under
+   the right DisplayName + icon.
+3. The shortcut target is `cmd.exe /c exit`. Earlier code used
+   `powershell.exe -WindowStyle Hidden -Command exit`; Windows Defender
+   silently quarantines such shortcuts moments after creation, which
+   leaves no AppID-tagged shortcut and breaks both the routing and the
+   click path. `cmd.exe /c exit` is treated as benign and survives.
+4. The WSL handler command uses `--exec`, not `--`. `wsl.exe -- <cmd>`
+   routes its tail through the user's login shell, which parses `&`
+   query-string separators as background-job operators (zsh emits
+   `parse error near '&'`). `--exec` skips the shell and invokes the
+   binary directly. The absolute WSL filesystem path to the binary is
+   captured at registration so PATH does not need to be populated under
+   `--exec`.
 
 The URI carries the originating pane id and tmux socket so the click
 round-trips back to the exact pane that fired the notification, which
