@@ -70,6 +70,7 @@ type App struct {
 	kill         *killCommand
 	notify       *notifyCommand
 	pin          *pinCommand
+	popupWaitKey *popupWaitKeyCommand
 	preview      *previewCommand
 	prune        *pruneCommand
 	sessions     *sessionsCommand
@@ -104,6 +105,7 @@ func New() *App {
 		kill:         newKillCommand(),
 		notify:       newNotifyCommand(),
 		pin:          newPinCommand(),
+		popupWaitKey: newPopupWaitKeyCommand(),
 		preview:      newPreviewCommand(),
 		prune:        newPruneCommand(),
 		sessions:     newSessionsCommand(),
@@ -153,6 +155,11 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.notify.Run(args[1:], stdout, stderr)
 	case "pin":
 		return a.pin.Run(args[1:], stdout, stderr)
+	case "popup-wait-key":
+		// Hidden helper: invoked from statusbar display-only popup payloads to
+		// read a single key from /dev/tty and exit. Intentionally absent from
+		// printUsage so `projmux help` stays focused on user-facing commands.
+		return a.popupWaitKey.Run(args[1:], stdout, stderr)
 	case "preview":
 		return a.preview.Run(args[1:], stdout, stderr)
 	case "prune":

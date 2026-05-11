@@ -272,11 +272,18 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	if !strings.HasPrefix(command, "printf %s ") {
 		t.Fatalf("popup command = %q, want single-payload printf %%s", command)
 	}
-	if !strings.Contains(command, "Current path") || !strings.Contains(command, projmuxpicker.CurrentStart) {
-		t.Fatalf("path popup command = %q, want styled content title", command)
+	// Inline title removed: the popup border `-T "Current path"` already
+	// labels the surface, and the prior inline title borrowed the picker
+	// active-row ANSI which read as a selected row in a non-input popup.
+	if strings.Contains(command, projmuxpicker.CurrentStart) {
+		t.Fatalf("path popup must not embed picker active-row ANSI: %q", command)
 	}
-	if !strings.Contains(command, "; IFS= read -r _") {
-		t.Fatalf("popup command = %q, want simple Enter read", command)
+	// Any-key close: helper subcommand replaces the legacy Enter-only read.
+	if strings.Contains(command, "; IFS= read -r _") {
+		t.Fatalf("popup command = %q, must not use Enter-only read", command)
+	}
+	if !strings.Contains(command, "popup-wait-key") {
+		t.Fatalf("popup command = %q, want any-key helper invocation", command)
 	}
 	if strings.Contains(command, "printf '%s\\n'") || strings.Contains(command, "read -n1") {
 		t.Fatalf("popup command uses brittle output/read shape: %q", command)
@@ -469,8 +476,11 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !sawTmuxArgsContainInOrder(runner.calls, []string{"display-popup", "-T", "Usage"}) {
 		t.Fatalf("missing usage popup title; calls = %#v", runner.calls)
 	}
-	if !sawTmuxPopupCommandContaining(runner.calls, "Enter closes this popup.") {
-		t.Fatalf("missing enter-to-close prompt; calls = %#v", runner.calls)
+	if !sawTmuxPopupCommandContaining(runner.calls, "Press any key to close.") {
+		t.Fatalf("missing any-key-to-close prompt; calls = %#v", runner.calls)
+	}
+	if sawTmuxPopupCommandContaining(runner.calls, "Enter closes this popup.") {
+		t.Fatalf("legacy Enter-only prompt must be gone; calls = %#v", runner.calls)
 	}
 	if !sawTmuxPopupCommandContaining(runner.calls, "Claude") || !sawTmuxPopupCommandContaining(runner.calls, "Codex") {
 		t.Fatalf("missing model rows; calls = %#v", runner.calls)
@@ -481,7 +491,11 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !sawTmuxPopupCommandContaining(runner.calls, "80%") {
 		t.Fatalf("missing percentage value; calls = %#v", runner.calls)
 	}
-	if sawTmuxPopupCommandContaining(runner.calls, "/usr/local/bin/projmux") || sawTmuxPopupCommandContaining(runner.calls, "'usage'") {
+	// The popup body must render structured content rather than shelling
+	// out to `projmux usage`. We do however expect the binary path to appear
+	// in the close path (`<bin> popup-wait-key`) — so we forbid only the
+	// `usage` subcommand invocation, not the binary path itself.
+	if sawTmuxPopupCommandContaining(runner.calls, "'usage'") || sawTmuxPopupCommandContaining(runner.calls, " usage\n") {
 		t.Fatalf("usage popup should render structured content, not run raw projmux usage; calls = %#v", runner.calls)
 	}
 	if sawTmuxPopupCommandContaining(runner.calls, "read -n1 -s") {
@@ -494,11 +508,16 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !strings.HasPrefix(command, "printf %s ") || strings.Contains(command, "printf '%s\\n'") {
 		t.Fatalf("usage popup command = %q, want single-payload printf", command)
 	}
-	if !strings.Contains(command, "Usage HUD") || !strings.Contains(command, projmuxpicker.CurrentStart) {
-		t.Fatalf("usage popup command = %q, want styled content title", command)
+	// Inline `Usage HUD` title removed in favor of the tmux `-T "Usage"`
+	// border title; the popup body opens with the subdued subtitle.
+	if strings.Contains(command, projmuxpicker.CurrentStart) {
+		t.Fatalf("usage popup must not embed picker active-row ANSI: %q", command)
 	}
-	if !strings.Contains(command, "; IFS= read -r _") {
-		t.Fatalf("usage popup command = %q, want simple Enter read", command)
+	if strings.Contains(command, "; IFS= read -r _") {
+		t.Fatalf("usage popup command = %q, must not use Enter-only read", command)
+	}
+	if !strings.Contains(command, "popup-wait-key") {
+		t.Fatalf("usage popup command = %q, want any-key helper invocation", command)
 	}
 	if strings.ContainsAny(command, "╭╮╰╯│") {
 		t.Fatalf("usage popup must rely on tmux chrome, not an inner frame: %q", command)
@@ -521,7 +540,7 @@ func TestStatusbarUsagePopupColorsThresholdsAndStaleSync(t *testing.T) {
 			{Model: "claude", Window: coreusage.Window5h, Pct: 94.9, ResetsAt: now.Add(time.Hour)},
 			{Model: "codex", Window: coreusage.Window5h, Pct: 95, ResetsAt: now.Add(time.Hour)},
 		},
-	}, now)
+	}, now, "/usr/local/bin/projmux")
 
 	if !strings.Contains(popup.Command, "\x1b[38;5;214m") {
 		t.Fatalf("popup missing amber ANSI for stale sync / >=80%% usage: %q", popup.Command)
@@ -577,7 +596,7 @@ func TestStatusbarUsagePopupDimsUnavailableValues(t *testing.T) {
 		Snapshots: []coreusage.Snapshot{
 			{Model: "claude", Window: coreusage.WindowWeekly, Pct: 33},
 		},
-	}, now)
+	}, now, "/usr/local/bin/projmux")
 
 	if !strings.Contains(popup.Command, projmuxpicker.MutedStart) {
 		t.Fatalf("popup missing dim ANSI for unavailable values: %q", popup.Command)
@@ -1238,3 +1257,84 @@ type fakeExitError struct {
 
 func (e *fakeExitError) Error() string { return e.msg }
 func (e *fakeExitError) ExitCode() int { return e.code }
+
+// TestStatusbarPathPopupRemovesInlineTitle locks in that the path popup body
+// no longer borrows the picker active-row ANSI for an inline title. The
+// border title chrome (`display-popup -T "Current path"`) is the sole label
+// for this surface.
+func TestStatusbarPathPopupRemovesInlineTitle(t *testing.T) {
+	t.Parallel()
+
+	popup := statusbarPathPopup("/tmp/example", statusbarPathMetadata{}, "/usr/local/bin/projmux")
+	if strings.Contains(popup.Command, projmuxpicker.CurrentStart) {
+		t.Fatalf("path popup command must not contain picker active-row ANSI: %q", popup.Command)
+	}
+	if strings.Contains(popup.Command, "Current path") {
+		t.Fatalf("path popup body must not duplicate the border title: %q", popup.Command)
+	}
+}
+
+// TestStatusbarUsagePopupRemovesInlineTitle locks in that the usage popup
+// body no longer renders an inline `Usage HUD` row using picker active-row
+// ANSI. The tmux border `-T "Usage"` is the sole label.
+func TestStatusbarUsagePopupRemovesInlineTitle(t *testing.T) {
+	t.Parallel()
+
+	popup := statusbarUsagePopup(statusbarUsageState{}, time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC), "/usr/local/bin/projmux")
+	if strings.Contains(popup.Command, projmuxpicker.CurrentStart) {
+		t.Fatalf("usage popup command must not contain picker active-row ANSI: %q", popup.Command)
+	}
+	if strings.Contains(popup.Command, "Usage HUD") {
+		t.Fatalf("usage popup body must not contain inline `Usage HUD` title: %q", popup.Command)
+	}
+}
+
+// TestStatusbarPopupFooterReadsAsAnyKey locks in the updated footer prompt.
+// `Enter closes this popup.` was Enter-only and misled users about the new
+// any-key close behavior.
+func TestStatusbarPopupFooterReadsAsAnyKey(t *testing.T) {
+	t.Parallel()
+
+	footer := strings.Join(statusbarPopupFooterLines(60), "\n")
+	if !strings.Contains(footer, "Press any key to close.") {
+		t.Fatalf("footer missing any-key prompt: %q", footer)
+	}
+	if strings.Contains(footer, "Enter closes this popup.") {
+		t.Fatalf("footer still advertises legacy Enter-only prompt: %q", footer)
+	}
+}
+
+// TestStatusbarPopupCommandPrefersHelperSubcommand locks in that the popup
+// payload routes its close path through the hidden `popup-wait-key` helper
+// rather than `IFS= read -r _`, removing the popup shell's dependency on
+// bash/zsh-specific `read -n1` semantics.
+func TestStatusbarPopupCommandPrefersHelperSubcommand(t *testing.T) {
+	t.Parallel()
+
+	cmd := statusbarPopupCommand("hello", "/usr/local/bin/projmux")
+	if strings.Contains(cmd, "IFS= read -r _") {
+		t.Fatalf("popup command must not retain Enter-only read: %q", cmd)
+	}
+	if !strings.Contains(cmd, "popup-wait-key") {
+		t.Fatalf("popup command missing helper subcommand: %q", cmd)
+	}
+	if !strings.Contains(cmd, "'/usr/local/bin/projmux'") {
+		t.Fatalf("popup command missing quoted binary path: %q", cmd)
+	}
+}
+
+// TestStatusbarPopupCommandFallsBackWhenBinaryUnknown documents that the
+// helper invocation degrades to the legacy Enter-only read when the
+// projmux binary path could not be resolved — the popup still has *a*
+// close path even in that degraded state.
+func TestStatusbarPopupCommandFallsBackWhenBinaryUnknown(t *testing.T) {
+	t.Parallel()
+
+	cmd := statusbarPopupCommand("hello", "")
+	if !strings.Contains(cmd, "IFS= read -r _") {
+		t.Fatalf("popup command must retain Enter fallback when binary path is empty: %q", cmd)
+	}
+	if strings.Contains(cmd, "popup-wait-key") {
+		t.Fatalf("popup command must not reference helper when binary is unknown: %q", cmd)
+	}
+}

@@ -261,3 +261,30 @@ func (r *recordingCurrentSessionExecutor) OpenSession(_ context.Context, session
 func contains(haystack, needle string) bool {
 	return bytes.Contains([]byte(haystack), []byte(needle))
 }
+
+// TestAppRunDispatchesPopupWaitKey verifies the hidden helper subcommand is
+// wired into the top-level argv dispatch. The statusbar display-only popups
+// embed `<binary> popup-wait-key` into their payloads, so a missing dispatch
+// entry would silently turn every popup into an Enter-only surface.
+func TestAppRunDispatchesPopupWaitKey(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	app := &App{
+		popupWaitKey: &popupWaitKeyCommand{
+			openTTY: func() (popupTTY, error) {
+				called = true
+				return &fakePopupTTY{readBuf: []byte("k"), name: "/dev/tty"}, nil
+			},
+			setRawMode: func(_ popupTTY) (func(), error) {
+				return func() {}, nil
+			},
+		},
+	}
+	if err := app.Run([]string{"popup-wait-key"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !called {
+		t.Fatalf("popup-wait-key dispatch did not invoke handler")
+	}
+}
