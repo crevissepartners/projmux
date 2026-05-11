@@ -976,6 +976,100 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 	}
 }
 
+func TestSettingsSetDesktopNotifyWritesTmuxOption(t *testing.T) {
+	t.Parallel()
+
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+	}
+	if err := cmd.setDesktopNotify("off"); err != nil {
+		t.Fatalf("setDesktopNotify(off) error = %v", err)
+	}
+	if !reflect.DeepEqual(tmuxCalls, [][]string{
+		{"tmux", "set-option", "-g", desktopNotifyTmuxOption, "0"},
+		{"tmux", "display-message", "desktop notifications: off"},
+	}) {
+		t.Fatalf("tmux calls = %#v", tmuxCalls)
+	}
+
+	tmuxCalls = nil
+	if err := cmd.setDesktopNotify("on"); err != nil {
+		t.Fatalf("setDesktopNotify(on) error = %v", err)
+	}
+	if !reflect.DeepEqual(tmuxCalls, [][]string{
+		{"tmux", "set-option", "-g", desktopNotifyTmuxOption, "1"},
+		{"tmux", "display-message", "desktop notifications: on"},
+	}) {
+		t.Fatalf("tmux calls = %#v", tmuxCalls)
+	}
+}
+
+func TestSettingsSetDesktopNotifyOutsideTmuxIsNoop(t *testing.T) {
+	t.Parallel()
+
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		lookupEnv: func(string) string { return "" },
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+	}
+	if err := cmd.setDesktopNotify("off"); err != nil {
+		t.Fatalf("setDesktopNotify(off) outside tmux returned error: %v", err)
+	}
+	if len(tmuxCalls) != 0 {
+		t.Fatalf("outside tmux: tmux calls = %#v, want no live update", tmuxCalls)
+	}
+}
+
+func TestSettingsAIEntriesIncludesDesktopNotifyToggle(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		ai:      testAICommand(home),
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_DESKTOP_NOTIFY" {
+				return "off"
+			}
+			return ""
+		},
+	}
+	entries := cmd.aiEntries()
+	if !hasEntryValue(entries, settingsActionPrefixDesktopNotify+"on") {
+		t.Fatalf("ai entries = %#v, want desktop-notify on row", entries)
+	}
+	if !hasEntryValue(entries, settingsActionPrefixDesktopNotify+"off") {
+		t.Fatalf("ai entries = %#v, want desktop-notify off row", entries)
+	}
+	// Env override sets source = env and effective value = off; confirm
+	// the info row reflects that so users see why a toggle press might
+	// look like a no-op.
+	var sawInfo bool
+	for _, entry := range entries {
+		if strings.Contains(entry.Label, "Desktop notifications") &&
+			strings.Contains(entry.Label, "off") &&
+			strings.Contains(entry.Label, "env") {
+			sawInfo = true
+		}
+	}
+	if !sawInfo {
+		t.Fatalf("ai entries = %#v, want info row with off + env source", entries)
+	}
+}
+
 func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 	t.Parallel()
 

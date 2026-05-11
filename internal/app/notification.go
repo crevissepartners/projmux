@@ -52,7 +52,16 @@ type aiDesktopNotifier struct {
 }
 
 func (n aiDesktopNotifier) Notify(notification aiNotification) error {
+	// Phase 1 desktop-notification gate. The in-app notify queue, the
+	// statusbar segment, and the attention badge are intentionally
+	// untouched — this only suppresses the OS-level dispatch so users
+	// can silence the popup/Toast/notify-send fan-out without losing
+	// the in-app surfaces.
+	if !n.command.desktopNotifyEnabled() {
+		return nil
+	}
 	if n.command.isWSL() {
+		n.command.ensureWSLLegacyAppIDCleaned(notification)
 		_ = n.ensureWSLToastAppID(notification)
 		if err := n.dispatchWSLToast(notification); err == nil {
 			return nil
@@ -108,12 +117,55 @@ func (n aiDesktopNotifier) ensureWSLToastAppID(notification aiNotification) erro
 	if appID == "" {
 		return errors.New("toast app id is empty")
 	}
-	displayName := "Tmux Codex"
-	if appID != "projmux.TmuxCodex" {
+	// During the AppName migration we accept both the new reverse-domain
+	// id and the legacy `projmux.TmuxCodex` so users mid-migration keep
+	// getting toasts. New installs pick up `desktopDisplayName`; the
+	// legacy id still resolves to the old "Tmux Codex" label so we don't
+	// surprise users who somehow re-register the old AppID.
+	var displayName string
+	switch appID {
+	case desktopAppID:
+		displayName = desktopDisplayName
+	case legacyDesktopAppID:
+		displayName = "Tmux Codex"
+	default:
 		displayName = appID
 	}
 	script := buildRegisterToastAppIDPowerShell(appID, displayName, n.command.wslToastIconPath(notification.Icon))
 	return n.command.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script))
+}
+
+// ensureWSLLegacyAppIDCleaned removes the Start Menu shortcut and the
+// AppUserModelID registry key left over from the `projmux.TmuxCodex` era.
+// It runs at most once per tmux server, gated by the
+// `@projmux_legacy_appid_cleaned` user-option marker. The marker is set
+// even on failure so we don't keep retrying on a broken environment —
+// the registration helper still emits the new AppID artifacts each toast
+// so the user is never blocked.
+//
+// _ = notification: the cleanup script is self-contained and intentionally
+// does not depend on the inbound notification payload. Keeping the
+// parameter symmetric with `ensureWSLToastAppID` lets call sites pair them
+// without ceremony.
+func (c *aiCommand) ensureWSLLegacyAppIDCleaned(_ aiNotification) {
+	if !c.isWSL() {
+		return
+	}
+	if strings.TrimSpace(c.readTrimmed("tmux", "show-option", "-gqv", legacyAppIDCleanedTmuxOption)) == "1" {
+		return
+	}
+	powerShell := c.resolvePowerShell()
+	if powerShell == "" {
+		return
+	}
+	script := buildLegacyToastCleanupPowerShell()
+	// Best effort — the helper script itself swallows individual errors
+	// so a successful return here just means PowerShell launched. Any
+	// failure leaves the marker unset so a future Notify retries.
+	if err := c.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script)); err != nil {
+		return
+	}
+	_ = c.run("tmux", "set-option", "-g", legacyAppIDCleanedTmuxOption, "1")
 }
 
 func (c *aiCommand) notificationIcon(string) string {

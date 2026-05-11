@@ -561,8 +561,8 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 		t.Fatalf("commands = %#v, want notify-send dispatch", commands)
 	}
 	for _, want := range []string{
-		"--app-name=projmux.TmuxCodex",
-		"projmux.TmuxCodex",
+		"--app-name=" + desktopAppID,
+		desktopAppID,
 		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
 		"Codex 승인 필요 · approval needed",
 		"검토 대기: approval needed · projmux/main",
@@ -638,7 +638,7 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 		"Codex 입력 필요 · answer ready",
 		"검토 대기: answer ready · projmux/main",
 		"critical",
-		"projmux.TmuxCodex",
+		desktopAppID,
 		"%9",
 		"repo",
 		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
@@ -732,31 +732,47 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 			powershellCommands = append(powershellCommands, command)
 		}
 	}
-	if got, want := len(powershellCommands), 2; got != want {
+	// One-shot legacy cleanup runs before the register + toast PS calls
+	// because the `@projmux_legacy_appid_cleaned` marker is unset for a
+	// fresh aiCommand fixture.
+	if got, want := len(powershellCommands), 3; got != want {
 		t.Fatalf("powershell commands len = %d, want %d, commands = %#v", got, want, cmdRecorder(cmd).commands)
 	}
-	registerScript := decodePowerShellEncodedCommand(t, powershellCommands[0])
-	if !strings.Contains(registerScript, `HKCU:\SOFTWARE\Classes\AppUserModelId\projmux.TmuxCodex`) {
-		t.Fatalf("register script = %q, want AppUserModelId registration", registerScript)
+	cleanupScript := decodePowerShellEncodedCommand(t, powershellCommands[0])
+	for _, want := range []string{
+		"Get-StartApps",
+		"projmux Tmux Codex",
+		`HKCU:\Software\Classes\AppUserModelId\projmux.TmuxCodex`,
+	} {
+		if !strings.Contains(cleanupScript, want) {
+			t.Fatalf("legacy cleanup script = %q, want substring %q", cleanupScript, want)
+		}
 	}
-	if !strings.Contains(registerScript, "Tmux Codex") {
-		t.Fatalf("register script = %q, want display name", registerScript)
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", legacyAppIDCleanedTmuxOption, "1"}) {
+		t.Fatalf("commands = %#v, want legacy cleanup marker write", cmdRecorder(cmd).commands)
+	}
+	registerScript := decodePowerShellEncodedCommand(t, powershellCommands[1])
+	if !strings.Contains(registerScript, `HKCU:\SOFTWARE\Classes\AppUserModelId\`+desktopAppID) {
+		t.Fatalf("register script = %q, want AppUserModelId registration for new id", registerScript)
+	}
+	if !strings.Contains(registerScript, desktopDisplayName) {
+		t.Fatalf("register script = %q, want display name %q", registerScript, desktopDisplayName)
 	}
 	if !strings.Contains(registerScript, iconWin) {
 		t.Fatalf("register script = %q, want icon uri", registerScript)
 	}
 	for _, want := range []string{
-		"projmux Tmux Codex.lnk",
-		"Save($shortcutPath, $targetPath, $arguments, $description, $iconLocation, 'projmux.TmuxCodex')",
+		"projmux.lnk",
+		"Save($shortcutPath, $targetPath, $arguments, $description, $iconLocation, '" + desktopAppID + "')",
 		"shellLink.SetPath(targetPath)",
 	} {
 		if !strings.Contains(registerScript, want) {
 			t.Fatalf("register script = %q, want substring %q", registerScript, want)
 		}
 	}
-	toastScript := decodePowerShellEncodedCommand(t, powershellCommands[1])
+	toastScript := decodePowerShellEncodedCommand(t, powershellCommands[2])
 	for _, want := range []string{
-		"CreateToastNotifier('projmux.TmuxCodex').Show($toast)",
+		"CreateToastNotifier('" + desktopAppID + "').Show($toast)",
 		"$toast.Tag = '%2'",
 		"$toast.Group = 'repo'",
 		"Codex 승인 필요 · approval needed",
@@ -981,7 +997,7 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 		t.Fatalf("commands = %#v, want notify-send dispatch", commands)
 	}
 	for _, want := range []string{
-		"projmux.TmuxCodex",
+		desktopAppID,
 		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
 		"Claude 승인 필요 · approval needed",
 	} {
