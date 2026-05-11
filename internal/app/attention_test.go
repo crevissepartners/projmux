@@ -119,7 +119,7 @@ func TestAttentionClearKeepsUnarmedReplyPane(t *testing.T) {
 		outputs: map[string][]byte{
 			"tmux display-message -p -t %5 #{@projmux_attention_state}":       []byte("reply\n"),
 			"tmux display-message -p -t %5 #{@projmux_attention_focus_armed}": []byte("\n"),
-			"tmux display-message -p -t %5 #{pane_active}":                    []byte("0\n"),
+			"tmux list-clients -F #{client_active_pane}":                      []byte("%99\n"),
 		},
 	}
 	cmd := &attentionCommand{runner: runner}
@@ -131,7 +131,7 @@ func TestAttentionClearKeepsUnarmedReplyPane(t *testing.T) {
 	want := []attentionCall{
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%5", "#{@projmux_attention_state}"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%5", "#{@projmux_attention_focus_armed}"}},
-		{name: "tmux", args: []string{"display-message", "-p", "-t", "%5", "#{pane_active}"}},
+		{name: "tmux", args: []string{"list-clients", "-F", "#{client_active_pane}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
@@ -145,7 +145,7 @@ func TestAttentionClearKeepsInactiveUnarmedReplyPaneWithTitleBadge(t *testing.T)
 		outputs: map[string][]byte{
 			"tmux display-message -p -t %8 #{@projmux_attention_state}":       []byte("reply\n"),
 			"tmux display-message -p -t %8 #{@projmux_attention_focus_armed}": []byte("\n"),
-			"tmux display-message -p -t %8 #{pane_active}":                    []byte("0\n"),
+			"tmux list-clients -F #{client_active_pane}":                      []byte("%99\n"),
 			"tmux display-message -p -t %8 #{pane_title}":                     []byte("✔ review\n"),
 		},
 	}
@@ -158,7 +158,7 @@ func TestAttentionClearKeepsInactiveUnarmedReplyPaneWithTitleBadge(t *testing.T)
 	want := []attentionCall{
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%8", "#{@projmux_attention_state}"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%8", "#{@projmux_attention_focus_armed}"}},
-		{name: "tmux", args: []string{"display-message", "-p", "-t", "%8", "#{pane_active}"}},
+		{name: "tmux", args: []string{"list-clients", "-F", "#{client_active_pane}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
@@ -172,7 +172,7 @@ func TestAttentionClearAcksActiveUnarmedReplyPane(t *testing.T) {
 		outputs: map[string][]byte{
 			"tmux display-message -p -t %7 #{@projmux_attention_state}":       []byte("reply\n"),
 			"tmux display-message -p -t %7 #{@projmux_attention_focus_armed}": []byte("\n"),
-			"tmux display-message -p -t %7 #{pane_active}":                    []byte("1\n"),
+			"tmux list-clients -F #{client_active_pane}":                      []byte("%7\n"),
 			"tmux display-message -p -t %7 #{pane_title}":                     []byte("repo\n"),
 		},
 	}
@@ -185,11 +185,39 @@ func TestAttentionClearAcksActiveUnarmedReplyPane(t *testing.T) {
 	want := []attentionCall{
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{@projmux_attention_state}"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{@projmux_attention_focus_armed}"}},
-		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{pane_active}"}},
+		{name: "tmux", args: []string{"list-clients", "-F", "#{client_active_pane}"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%7", "@projmux_attention_state"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_attention_ack", "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%7", "@projmux_attention_focus_armed"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{pane_title}"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+// Regression: pane_active is true even when every client has switched to a
+// different window/session. The auto-ack must NOT fire in that case.
+func TestAttentionClearKeepsReplyPaneWhenClientOnDifferentWindow(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux display-message -p -t %7 #{@projmux_attention_state}":       []byte("reply\n"),
+			"tmux display-message -p -t %7 #{@projmux_attention_focus_armed}": []byte("\n"),
+			"tmux list-clients -F #{client_active_pane}":                      []byte("%42\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	if err := cmd.Run([]string{"clear", "%7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []attentionCall{
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{@projmux_attention_state}"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{@projmux_attention_focus_armed}"}},
+		{name: "tmux", args: []string{"list-clients", "-F", "#{client_active_pane}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)

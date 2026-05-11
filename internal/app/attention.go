@@ -182,7 +182,7 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 	if state == attentionStateBusy {
 		return nil
 	}
-	if state == attentionStateReply && c.paneOption(paneID, attentionFocusArmedOption) != "1" && !c.paneActive(paneID) {
+	if state == attentionStateReply && c.paneOption(paneID, attentionFocusArmedOption) != "1" && !c.paneVisibleToClient(paneID) {
 		return nil
 	}
 	c.unsetPaneOption(paneID, attentionStateOption)
@@ -281,8 +281,21 @@ func (c *attentionCommand) paneAttentionState(paneID string) string {
 	return c.paneOption(paneID, attentionStateOption)
 }
 
-func (c *attentionCommand) paneActive(paneID string) bool {
-	return c.paneOption(paneID, "pane_active") == "1"
+// paneVisibleToClient reports whether some attached tmux client is currently
+// viewing paneID. The naive #{pane_active} check is wrong here: a pane stays
+// pane_active=1 even when every client has switched to a different window or
+// session, which caused auto-ack to silently swallow reply notifications.
+func (c *attentionCommand) paneVisibleToClient(paneID string) bool {
+	output, err := c.run("tmux", "list-clients", "-F", "#{client_active_pane}")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimRight(string(output), "\r\n"), "\n") {
+		if strings.TrimSpace(line) == paneID {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *attentionCommand) paneOption(paneID, option string) string {
