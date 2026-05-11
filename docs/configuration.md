@@ -177,8 +177,15 @@ first time a Toast is dispatched on each tmux server. Clicking the Toast
 hands control back to projmux inside WSL via the registered command:
 
 ```text
-wsl.exe -d $WSL_DISTRO_NAME -- projmux focus --uri "%1"
+wsl.exe -d $WSL_DISTRO_NAME --exec <absolute-path-to-projmux> focus --uri "%1"
 ```
+
+`--exec` (rather than `--`) is required so the URI bypasses the user's
+default login shell — `wsl.exe -- <cmd>` routes its tail through that shell,
+which then parses `&` query-string separators as background-job operators
+(zsh emits `parse error near '&'`). The absolute WSL filesystem path to the
+binary is captured at registration time so the launch doesn't depend on
+PATH being set under `--exec`.
 
 The URI carries the originating pane id and tmux socket so the click
 round-trips back to the exact pane that fired the notification, which
@@ -189,9 +196,12 @@ Registration markers and the writes involved:
 - Registry keys (HKCU): `SOFTWARE\Classes\projmux\(Default)`,
   `SOFTWARE\Classes\projmux\URL Protocol`, and
   `SOFTWARE\Classes\projmux\shell\open\command\(Default)`.
-- tmux user-option marker `@projmux_uri_protocol_registered` records that
+- tmux user-option marker `@projmux_uri_protocol_registered_v2` records that
   registration has been attempted on this server so the script runs at most
-  once per server boot.
+  once per server boot. (The v1 marker `@projmux_uri_protocol_registered`
+  was bumped when the registry command switched to `--exec`; existing v1
+  users re-register transparently on the next Notify after upgrade and the
+  orphaned v1 key requires no cleanup.)
 
 Limitations:
 

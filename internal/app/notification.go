@@ -178,11 +178,23 @@ func (c *aiCommand) ensureWSLURIProtocol() {
 		// populated) retry the registration.
 		return
 	}
+	// Resolve the absolute WSL path to this projmux binary so the registry
+	// command can use `wsl.exe --exec <abs-path>` (no shell, no PATH
+	// dependency). If we can't resolve the path, skip without setting the
+	// marker so a later Notify retries with a healthier environment.
+	binaryPath, err := c.binaryPath()
+	if err != nil {
+		return
+	}
+	binaryPath = strings.TrimSpace(binaryPath)
+	if binaryPath == "" {
+		return
+	}
 	powerShell := c.resolvePowerShell()
 	if powerShell == "" {
 		return
 	}
-	script := buildRegisterURIProtocolPowerShell(desktopURIScheme, distro)
+	script := buildRegisterURIProtocolPowerShell(desktopURIScheme, distro, binaryPath)
 	if err := c.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script)); err != nil {
 		return
 	}

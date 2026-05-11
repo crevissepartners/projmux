@@ -762,7 +762,10 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		`URL:` + desktopURIScheme,
 		"URL Protocol",
 		"shell\\open\\command",
-		`wsl.exe -d Ubuntu-24.04 -- projmux focus --uri "%1"`,
+		// `--exec <abs-path>` (no shell, no PATH dependency) — see the
+		// hot-fix note on buildRegisterURIProtocolPowerShell. The binary
+		// path comes from testAICommand's fake executable resolver.
+		`wsl.exe -d Ubuntu-24.04 --exec /tmp/projmux focus --uri "%1"`,
 	} {
 		if !strings.Contains(uriScript, want) {
 			t.Fatalf("uri register script = %q, want substring %q", uriScript, want)
