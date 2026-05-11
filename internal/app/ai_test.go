@@ -489,8 +489,8 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 			return []byte("dev\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_current_path}"}):
 			return []byte(work + "\n"), nil
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_active}"}):
-			return []byte("0\n"), nil
+		case reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}):
+			return []byte("%99\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -575,8 +575,8 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 			return []byte("dev\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#{pane_current_path}"}):
 			return []byte(work + "\n"), nil
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#{pane_active}"}):
-			return []byte("0\n"), nil
+		case reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}):
+			return []byte("%99\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -668,8 +668,8 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 			return []byte("dev\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_current_path}"}):
 			return []byte(work + "\n"), nil
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_active}"}):
-			return []byte("0\n"), nil
+		case reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}):
+			return []byte("%99\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -725,12 +725,12 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 	}
 }
 
-func TestAIStatusSetWaitingAcksActivePane(t *testing.T) {
+func TestAIStatusSetWaitingAcksVisiblePane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%15", "#{pane_active}"}) {
-			return []byte("1\n"), nil
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}) {
+			return []byte("%15\n"), nil
 		}
 		return []byte("\n"), nil
 	}
@@ -751,7 +751,36 @@ func TestAIStatusSetWaitingAcksActivePane(t *testing.T) {
 		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
 	}
 	if containsAICommand(commands, "notify-send") {
-		t.Fatalf("commands = %#v, did not expect notify-send for active pane", commands)
+		t.Fatalf("commands = %#v, did not expect notify-send for visible pane", commands)
+	}
+}
+
+// Regression: pane_active=1 is not sufficient — when every client has moved to
+// a different window/session the pane is not visible and the reply must NOT be
+// auto-acked.
+func TestAIStatusSetWaitingDoesNotAckWhenNoClientViewingPane(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}) {
+			return []byte("%99\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.Run([]string{"status", "set", "waiting", "%15"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run status set waiting error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	wantPrefix := []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%15", "@projmux_attention_ack"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_state", "reply"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_focus_armed", "1"}},
+	}
+	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
 	}
 }
 

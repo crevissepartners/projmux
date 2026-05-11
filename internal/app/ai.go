@@ -172,7 +172,7 @@ func (c *aiCommand) applyAIStatus(state, paneID string) error {
 	case "waiting":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "waiting")
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
-		if c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_active}") == "1" {
+		if c.paneVisibleToClient(paneID) {
 			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionAckOption, "1")
 			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
@@ -1192,6 +1192,23 @@ func (c *aiCommand) readTrimmed(name string, args ...string) string {
 
 func (c *aiCommand) readTmuxPaneOption(paneID, option string) string {
 	return c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{"+option+"}")
+}
+
+// paneVisibleToClient mirrors attentionCommand.paneVisibleToClient: a pane is
+// only "visible" when some attached client's #{client_active_pane} matches it.
+// pane_active alone is true even when every client has moved to a different
+// window or session, which made the auto-ack silently swallow reply pings.
+func (c *aiCommand) paneVisibleToClient(paneID string) bool {
+	output, err := c.read("tmux", "list-clients", "-F", "#{client_active_pane}")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimRight(string(output), "\r\n"), "\n") {
+		if strings.TrimSpace(line) == paneID {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *aiCommand) duplicateAINotificationRecent(paneID, key string) bool {
