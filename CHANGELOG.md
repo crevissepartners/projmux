@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/crevissepartners/projmux/compare/v0.5.2...v0.5.3) (2026-05-11)
+
+
+### Bug Fixes
+
+* **osfocus:** setsid bash subprocess so wt.exe survives parent exit ([#183](https://github.com/crevissepartners/projmux/issues/183)) ([55c1f69](https://github.com/crevissepartners/projmux/commit/55c1f69c168973f05f4c595f57de6692cea9b9bd))
+
 ## [0.5.2](https://github.com/crevissepartners/projmux/compare/v0.5.1...v0.5.2) (2026-05-11)
 
 
