@@ -41,6 +41,10 @@ type focusCommand struct {
 	stdout       io.Writer
 	stderr       io.Writer
 	notifierOnce func(stderr io.Writer) focusNotifier
+	// osFocusChain is the OS-window/terminal raise dispatcher invoked after
+	// the tmux pane focus succeeds. Tests stub it to avoid shelling out to
+	// adapters like wt.exe; production code defaults to defaultOSFocusChain.
+	osFocusChain osFocusDispatcher
 }
 
 type focusOptions struct {
@@ -205,6 +209,11 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 		base.Reason = "switch-client-failed"
 		return base, err
 	}
+	// tmux pane focus succeeded — fire the OS-focus chain so the host
+	// terminal window is raised. Adapter dispatch is asynchronous and
+	// silent on failure (see internal/integrations/osfocus), so this never
+	// blocks the focus path or surfaces an error.
+	c.dispatchOSFocus(target, socket)
 
 	if target.HasWindow() {
 		windowTarget := fmt.Sprintf("%s:%s", resolution.Name, target.WindowSelector())

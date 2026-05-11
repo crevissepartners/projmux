@@ -55,9 +55,11 @@ Two entry points are possible:
 
 Lock the decision once the matrix below is filled in:
 
-- [ ] Primary trigger mode confirmed as (b).
-- [ ] (a) shipped as opt-in only, or deferred entirely.
-- [ ] System notification daemon path adopted in place of (a), or deferred.
+- [x] Primary trigger mode confirmed as (b).
+- [x] (a) shipped as opt-in only, or deferred entirely. — **deferred**.
+- [x] System notification daemon path adopted in place of (a), or deferred. —
+  **deferred**; the WSL toast path already in place covers the (a) substitute
+  role for tier-1.
 
 ## Terminal × OS matrix
 
@@ -159,17 +161,33 @@ talk to and falls through to the next on detect failure.
 
 ## Decisions to lock after measurement
 
-- [ ] Tier-1 support matrix — which terminal × OS cells ship in the first
-  adapter PR.
-- [ ] Trigger mode — confirm (a), (b), or both (b primary + (a) opt-in).
-- [ ] System notification daemon integration — in scope for tier-1, or
-  deferred to a follow-on PR.
-- [ ] Adapter module path — proposed `internal/integrations/osfocus/`. Confirm
-  or pick alternative.
-- [ ] Adapter call style — synchronous from `projmux focus`, or background
-  (`tmux run-shell -b`-style) so the click → toast path stays responsive.
-- [ ] Failure policy — silent fallback (keep entry in queue, no error
-  surfaced) confirmed as the default.
+- [x] Tier-1 support matrix — which terminal × OS cells ship in the first
+  adapter PR. → **Windows Terminal × WSL → Windows only** (the single
+  combination measured this session). Other matrix rows stay pending tier-2
+  measurements.
+- [x] Trigger mode — confirm (a), (b), or both (b primary + (a) opt-in). →
+  **(b) on-click/keypress is primary; (a) on-push is deferred** (the WSL
+  toast already serves as the (a) substitute).
+- [x] System notification daemon integration — in scope for tier-1, or
+  deferred to a follow-on PR. → **deferred** (WSL toast path already in
+  place).
+- [x] Adapter module path — proposed `internal/integrations/osfocus/`. Confirm
+  or pick alternative. → confirmed `internal/integrations/osfocus/`.
+- [x] Adapter call style — synchronous from `projmux focus`, or background
+  (`tmux run-shell -b`-style) so the click → toast path stays responsive. →
+  **background goroutine, non-blocking** inside the adapter; the chain
+  itself returns immediately to the caller.
+- [x] Failure policy — silent fallback (keep entry in queue, no error
+  surfaced) confirmed as the default. → confirmed; the chain returns nil
+  even when an adapter's Focus errors.
+
+Locked 2026-05-11.
+
+### Tier-1 status
+
+Tier-1 adapter shipped: `internal/integrations/osfocus/` with
+`WindowsTerminalWSLAdapter`. Other matrix rows remain pending tier-2
+measurements.
 
 ## Out of scope
 
