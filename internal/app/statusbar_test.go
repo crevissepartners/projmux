@@ -242,8 +242,22 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	if !sawTmuxSubcommand(runner.calls, "display-popup") {
 		t.Fatalf("missing path display-popup; calls = %#v", runner.calls)
 	}
-	if !sawTmuxArgsContainInOrder(runner.calls, []string{"display-popup", "-T", "Current path"}) {
-		t.Fatalf("missing path popup title; calls = %#v", runner.calls)
+	// The popup payload now renders its own native picker frame chrome
+	// (outer box + title bar). tmux's `-T` border title was dropped to
+	// avoid double-decoration, and `-B` was added so tmux's own popup
+	// border doesn't compete with the inline chrome.
+	popupArgs, ok := firstTmuxPopupArgs(runner.calls)
+	if !ok {
+		t.Fatalf("missing display-popup invocation; calls = %#v", runner.calls)
+	}
+	if slices.Contains(popupArgs, "-T") {
+		t.Fatalf("path popup must not pass tmux `-T` (frame chrome owns the title); args = %#v", popupArgs)
+	}
+	if !slices.Contains(popupArgs, "-B") {
+		t.Fatalf("path popup must pass tmux `-B` to suppress tmux's popup border; args = %#v", popupArgs)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Current path") {
+		t.Fatalf("missing inline frame title `Current path`; calls = %#v", runner.calls)
 	}
 	if !sawTmuxPopupCommandContaining(runner.calls, "/home/es5h/source/repos/projmux") {
 		t.Fatalf("missing full path in popup; calls = %#v", runner.calls)
@@ -288,8 +302,21 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	if strings.Contains(command, "printf '%s\\n'") || strings.Contains(command, "read -n1") {
 		t.Fatalf("popup command uses brittle output/read shape: %q", command)
 	}
-	if strings.ContainsAny(command, "╭╮╰╯│") {
-		t.Fatalf("path popup must rely on tmux chrome, not an inner frame: %q", command)
+	// Frame chrome regression guard: the payload now renders the native
+	// picker frame so the outer box glyphs must appear, paired with the
+	// title bar (`TitlebarStart`) and divider (`TitlebarRule`) the picker
+	// uses for the input variants. Missing any of these means we lost
+	// alignment with the picker visual language.
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+		if !strings.Contains(command, glyph) {
+			t.Fatalf("path popup missing frame glyph %q: %q", glyph, command)
+		}
+	}
+	if !strings.Contains(command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("path popup missing frame titlebar ANSI: %q", command)
+	}
+	if !strings.Contains(command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("path popup missing frame divider ANSI: %q", command)
 	}
 }
 
@@ -473,8 +500,20 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !sawTmuxSubcommand(runner.calls, "display-popup") {
 		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
 	}
-	if !sawTmuxArgsContainInOrder(runner.calls, []string{"display-popup", "-T", "Usage"}) {
-		t.Fatalf("missing usage popup title; calls = %#v", runner.calls)
+	// Frame chrome owns the title; tmux's `-T` is gone and `-B` is added
+	// so tmux's popup border doesn't double-decorate the surface.
+	popupArgs, ok := firstTmuxPopupArgs(runner.calls)
+	if !ok {
+		t.Fatalf("missing display-popup invocation; calls = %#v", runner.calls)
+	}
+	if slices.Contains(popupArgs, "-T") {
+		t.Fatalf("usage popup must not pass tmux `-T` (frame chrome owns the title); args = %#v", popupArgs)
+	}
+	if !slices.Contains(popupArgs, "-B") {
+		t.Fatalf("usage popup must pass tmux `-B` to suppress tmux's popup border; args = %#v", popupArgs)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Usage") {
+		t.Fatalf("missing inline frame title `Usage`; calls = %#v", runner.calls)
 	}
 	if !sawTmuxPopupCommandContaining(runner.calls, "Press any key to close.") {
 		t.Fatalf("missing any-key-to-close prompt; calls = %#v", runner.calls)
@@ -519,8 +558,19 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !strings.Contains(command, "popup-wait-key") {
 		t.Fatalf("usage popup command = %q, want any-key helper invocation", command)
 	}
-	if strings.ContainsAny(command, "╭╮╰╯│") {
-		t.Fatalf("usage popup must rely on tmux chrome, not an inner frame: %q", command)
+	// Native picker frame chrome must wrap the body: outer glyphs, title
+	// bar ANSI, divider ANSI all required so the popup mirrors the picker
+	// surface one-to-one.
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+		if !strings.Contains(command, glyph) {
+			t.Fatalf("usage popup missing frame glyph %q: %q", glyph, command)
+		}
+	}
+	if !strings.Contains(command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("usage popup missing frame titlebar ANSI: %q", command)
+	}
+	if !strings.Contains(command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("usage popup missing frame divider ANSI: %q", command)
 	}
 	for _, call := range runner.calls {
 		if call.name == "/usr/local/bin/projmux" || sawArgsContain(call.args, "popup-toggle") {
@@ -1196,6 +1246,16 @@ func firstTmuxPopupCommand(calls []statusbarFakeCall) (string, bool) {
 	return "", false
 }
 
+func firstTmuxPopupArgs(calls []statusbarFakeCall) ([]string, bool) {
+	for _, c := range calls {
+		if c.name != "tmux" || len(c.args) < 2 || c.args[0] != "display-popup" {
+			continue
+		}
+		return c.args, true
+	}
+	return nil, false
+}
+
 func lastDisplayMessage(calls []statusbarFakeCall) (string, bool) {
 	for i := len(calls) - 1; i >= 0; i-- {
 		c := calls[i]
@@ -1258,26 +1318,39 @@ type fakeExitError struct {
 func (e *fakeExitError) Error() string { return e.msg }
 func (e *fakeExitError) ExitCode() int { return e.code }
 
-// TestStatusbarPathPopupRemovesInlineTitle locks in that the path popup body
-// no longer borrows the picker active-row ANSI for an inline title. The
-// border title chrome (`display-popup -T "Current path"`) is the sole label
-// for this surface.
-func TestStatusbarPathPopupRemovesInlineTitle(t *testing.T) {
+// TestStatusbarPathPopupWearsFrameChrome locks in the picker frame chrome
+// wrap: the popup payload must include the native frame title bar (so the
+// surface reads as a picker, not a bare text dump) but must still not
+// borrow the picker active-row highlight ANSI for any body row (that would
+// misrepresent a non-input popup as a selected picker row).
+func TestStatusbarPathPopupWearsFrameChrome(t *testing.T) {
 	t.Parallel()
 
 	popup := statusbarPathPopup("/tmp/example", statusbarPathMetadata{}, "/usr/local/bin/projmux")
 	if strings.Contains(popup.Command, projmuxpicker.CurrentStart) {
 		t.Fatalf("path popup command must not contain picker active-row ANSI: %q", popup.Command)
 	}
-	if strings.Contains(popup.Command, "Current path") {
-		t.Fatalf("path popup body must not duplicate the border title: %q", popup.Command)
+	if !strings.Contains(popup.Command, "Current path") {
+		t.Fatalf("path popup body must render the frame title bar: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("path popup missing frame titlebar ANSI: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("path popup missing frame divider ANSI: %q", popup.Command)
+	}
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+		if !strings.Contains(popup.Command, glyph) {
+			t.Fatalf("path popup missing frame glyph %q: %q", glyph, popup.Command)
+		}
 	}
 }
 
-// TestStatusbarUsagePopupRemovesInlineTitle locks in that the usage popup
-// body no longer renders an inline `Usage HUD` row using picker active-row
-// ANSI. The tmux border `-T "Usage"` is the sole label.
-func TestStatusbarUsagePopupRemovesInlineTitle(t *testing.T) {
+// TestStatusbarUsagePopupWearsFrameChrome locks in the picker frame chrome
+// wrap: the native frame title bar is drawn inline, but no body row may
+// borrow the picker active-row highlight ANSI (display-only popup, not a
+// picker surface).
+func TestStatusbarUsagePopupWearsFrameChrome(t *testing.T) {
 	t.Parallel()
 
 	popup := statusbarUsagePopup(statusbarUsageState{}, time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC), "/usr/local/bin/projmux")
@@ -1286,6 +1359,20 @@ func TestStatusbarUsagePopupRemovesInlineTitle(t *testing.T) {
 	}
 	if strings.Contains(popup.Command, "Usage HUD") {
 		t.Fatalf("usage popup body must not contain inline `Usage HUD` title: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, "Usage") {
+		t.Fatalf("usage popup body must render the frame title `Usage`: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("usage popup missing frame titlebar ANSI: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("usage popup missing frame divider ANSI: %q", popup.Command)
+	}
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+		if !strings.Contains(popup.Command, glyph) {
+			t.Fatalf("usage popup missing frame glyph %q: %q", glyph, popup.Command)
+		}
 	}
 }
 

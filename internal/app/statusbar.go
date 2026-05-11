@@ -386,12 +386,17 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 		binaryPath = ""
 	}
 	popup := statusbarPathPopup(path, metadata, binaryPath)
+	// The frame chrome (outer box + titlebar + divider) is drawn inside the
+	// payload, so we suppress tmux's own popup border with `-B` and drop the
+	// `-T` border title — `frame.go` renders an identical title bar inline so
+	// duplicating it via tmux chrome would offset the visual header and
+	// double-decorate the surface.
 	if err := c.runTmuxNoFallback(stderr,
 		"display-popup",
 		"-E",
+		"-B",
 		"-w", strconv.Itoa(popup.Width),
 		"-h", strconv.Itoa(popup.Height),
-		"-T", popup.Title,
 		popup.Command,
 	); err == nil {
 		return nil
@@ -459,12 +464,16 @@ func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Wri
 		binaryPath = ""
 	}
 	popup := statusbarUsagePopup(state, c.nowTime(), binaryPath)
+	// Same as `handlePwd`: the payload renders its own picker-style frame
+	// chrome (outer box + titlebar + divider) so we drop tmux's `-T` border
+	// title and pass `-B` to suppress tmux's popup border entirely. Mixing
+	// both would double-decorate the popup and offset the geometry.
 	if err := c.runTmuxNoFallback(stderr,
 		"display-popup",
 		"-E",
+		"-B",
 		"-w", strconv.Itoa(popup.Width),
 		"-h", strconv.Itoa(popup.Height),
-		"-T", popup.Title,
 		popup.Command,
 	); err == nil {
 		return nil
@@ -729,10 +738,30 @@ const statusbarUsageSyncStaleAfter = time.Minute
 func statusbarUsagePopup(state statusbarUsageState, now time.Time, binaryPath string) statusbarUsagePopupView {
 	const width = 96
 	title := "Usage"
-	lines := statusbarUsagePopupLines(state, now, width-2)
-	content := strings.Join(lines, "\n")
-	height := projmuxpicker.RenderedTextLineCount(content) + 2
-	payload := strings.TrimRight(content, "\n") + "\n"
+	// The popup wears the native picker frame chrome: outer box (top+bottom
+	// border = 2 rows), title bar + divider (2 rows), and the body content
+	// laid out within the inner column budget the renderer reserves. We
+	// derive the *inner* layout from ContentLayoutWithTitle so body wrap
+	// width matches the chrome the renderer will draw around it.
+	innerLayout := projmuxpicker.DefaultRenderer().ContentLayoutWithTitle(
+		projmuxpicker.Layout{Rows: 0, Cols: width}, title,
+	)
+	lines := statusbarUsagePopupLines(state, now, innerLayout.Cols)
+	bodyContent := strings.Join(lines, "\n")
+	// Outer rows = inner rows + 2 (top/bottom border) + 2 (titlebar +
+	// divider). RenderedTextLineCount strips trailing blank lines, so use
+	// the raw len(lines) as the row budget instead — that way the frame
+	// reserves a row for every body line we asked it to render.
+	innerRows := len(lines)
+	if innerRows < 1 {
+		innerRows = 1
+	}
+	height := innerRows + 4
+	outerLayout := projmuxpicker.Layout{Rows: height, Cols: width}
+
+	var framed strings.Builder
+	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&framed, bodyContent, title, outerLayout)
+	payload := strings.TrimRight(framed.String(), "\n") + "\n"
 	command := statusbarPopupCommand(payload, binaryPath)
 	return statusbarUsagePopupView{
 		Title:   title,
@@ -745,12 +774,10 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time, binaryPath st
 
 func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int) []string {
 	rows := statusbarUsageRows(state.Snapshots)
-	// The popup border title chrome (`display-popup -T "Usage"`) already
-	// communicates which view this is; an inline title here would duplicate
-	// that and — because the picker-style highlight ANSI it used to wear
-	// reads as "this row is selected" — also misrepresent a non-input popup
-	// as an active row in a picker. So the body opens with just the
-	// subdued subtitle.
+	// The native picker frame chrome wrapping this body already renders the
+	// `Usage` title bar (and the divider below it). Body opens with the
+	// subdued subtitle so the popup mirrors the picker layout one-to-one
+	// without duplicating the title or borrowing picker active-row ANSI.
 	lines := []string{
 		dimANSI("AI token usage windows from the local cache."),
 		"",
@@ -1018,10 +1045,16 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata, binaryPath 
 	title := "Current path"
 
 	const width = 84
-	contentWidth := width - 2
-	// Border title `-T "Current path"` already labels the popup; the body
-	// opens with a quiet subtitle instead of a duplicate inline title so we
-	// don't borrow picker-active-row styling for a non-input surface.
+	// Reserve the inner column budget the picker frame renderer will leave
+	// us after drawing the outer box + title bar. Body wraps to inner.Cols
+	// so right-edge characters never collide with the frame vertical bar.
+	innerLayout := projmuxpicker.DefaultRenderer().ContentLayoutWithTitle(
+		projmuxpicker.Layout{Rows: 0, Cols: width}, title,
+	)
+	contentWidth := innerLayout.Cols
+	// The frame chrome around this body renders the `Current path` title
+	// bar; the body opens with a subdued subtitle, identical layout to the
+	// native picker (description row right under the divider).
 	lines := []string{
 		dimANSI("Active pane working directory."),
 		"",
@@ -1038,9 +1071,20 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata, binaryPath 
 	}
 	lines = append(lines, statusbarPopupFooterLines(contentWidth)...)
 
-	content := strings.Join(lines, "\n")
-	height := projmuxpicker.RenderedTextLineCount(content) + 2
-	payload := strings.TrimRight(content, "\n") + "\n"
+	bodyContent := strings.Join(lines, "\n")
+	// Outer rows = inner rows + 2 (top/bottom border) + 2 (titlebar +
+	// divider). Use raw len(lines) — RenderedTextLineCount trims trailing
+	// blank lines and the footer would lose its leading separator row.
+	innerRows := len(lines)
+	if innerRows < 1 {
+		innerRows = 1
+	}
+	height := innerRows + 4
+	outerLayout := projmuxpicker.Layout{Rows: height, Cols: width}
+
+	var framed strings.Builder
+	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&framed, bodyContent, title, outerLayout)
+	payload := strings.TrimRight(framed.String(), "\n") + "\n"
 	command := statusbarPopupCommand(payload, binaryPath)
 	return statusbarPathPopupView{
 		Title:   title,
