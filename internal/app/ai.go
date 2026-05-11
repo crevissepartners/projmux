@@ -278,7 +278,7 @@ func (c *aiCommand) notifyAIWithMode(paneID string, force bool) error {
 		Summary: aiSummaryForKind(replyKind, agentName, cleanTitle),
 		Body:    aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
 		Urgency: aiUrgencyForKind(replyKind),
-		AppName: "projmux.TmuxCodex",
+		AppName: desktopAppID,
 		Icon:    c.notificationIcon(agentName),
 		Tag:     paneID,
 		Group:   sessionName,
@@ -1894,7 +1894,7 @@ Set-ItemProperty -Path $regPath -Name 'DisplayName' -Value '` + psEscape(display
 Set-ItemProperty -Path $regPath -Name 'ShowInSettings' -Value 1 -Type DWord
 ` + iconLine + `
 $shortcutDir = [Environment]::GetFolderPath('Programs')
-$shortcutPath = Join-Path $shortcutDir 'projmux Tmux Codex.lnk'
+$shortcutPath = Join-Path $shortcutDir 'projmux.lnk'
 $targetPath = [Environment]::ExpandEnvironmentVariables('%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe')
 $arguments = '-NoProfile -WindowStyle Hidden -Command exit'
 $description = 'projmux tmux AI notifications'
@@ -1903,6 +1903,39 @@ if ('` + psEscape(iconURI) + `' -ne '') {
   $iconLocation = '` + psEscape(iconURI) + `'
 }
 [ProjmuxToastShortcut]::Save($shortcutPath, $targetPath, $arguments, $description, $iconLocation, '` + psEscape(appID) + `')
+`
+}
+
+// buildLegacyToastCleanupPowerShell removes the Windows artifacts left over
+// from the `projmux.TmuxCodex` era. It is intentionally idempotent and
+// swallows every error: the script may run on machines that never had the
+// legacy registration (fresh installs after the rename), and we never want
+// the cleanup attempt itself to break notification dispatch.
+//
+// Two things are scrubbed:
+//  1. The legacy `projmux Tmux Codex.lnk` shortcut in the Start Menu's
+//     Programs folder (where `buildRegisterToastAppIDPowerShell` used to
+//     drop it). Get-StartApps confirms presence before delete so we don't
+//     touch unrelated shortcuts named similarly by users.
+//  2. The legacy `HKCU:\Software\Classes\AppUserModelId\projmux.TmuxCodex`
+//     registry key, which carried DisplayName / IconUri / ShowInSettings
+//     metadata for the old AppID.
+//
+// The cleanup is gated by the caller (see `ensureWSLLegacyAppIDCleaned` in
+// `notification.go`) with the `@projmux_legacy_appid_cleaned` tmux marker
+// so we attempt it at most once per tmux server.
+func buildLegacyToastCleanupPowerShell() string {
+	return `try {
+  $legacy = Get-StartApps | Where-Object Name -eq 'projmux Tmux Codex'
+  if ($legacy) {
+    $shortcutDir = [Environment]::GetFolderPath('Programs')
+    $shortcutPath = Join-Path $shortcutDir 'projmux Tmux Codex.lnk'
+    Remove-Item -Path $shortcutPath -Force -ErrorAction SilentlyContinue
+  }
+} catch { }
+try {
+  Remove-Item -Path 'HKCU:\Software\Classes\AppUserModelId\projmux.TmuxCodex' -Recurse -Force -ErrorAction SilentlyContinue
+} catch { }
 `
 }
 

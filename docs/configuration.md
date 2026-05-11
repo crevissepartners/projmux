@@ -150,6 +150,12 @@ When the hook is set, projmux invokes it with positional arguments:
 summary body urgency app-name tag group icon-path
 ```
 
+The app-name argument is `com.crevisse.projmux` (reverse-domain id used as
+the Linux `--app-name`, the macOS sender label, and the Windows
+`AppUserModelID`). Earlier releases used `projmux.TmuxCodex`; the new id
+ships with a one-shot Windows cleanup that removes the legacy Start Menu
+shortcut and registry entry the first time projmux runs.
+
 OS desktop notifications can be silenced without touching the in-app notify
 queue. The resolution order is:
 
