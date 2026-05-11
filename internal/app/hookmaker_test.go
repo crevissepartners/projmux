@@ -93,6 +93,73 @@ func TestSettingsProjectHooksListNoProjectUsesDisabledState(t *testing.T) {
 	}
 }
 
+// TestSettingsProjectHooksListOmitsProjectContextRow is a Phase 2.7
+// regression guard: the Hooks (project) page used to render a "Project
+// context" info row both with and without a project. The frame title
+// chip strip (Phase 2.5) is now the source of truth, so the redundant
+// row is dropped on both branches.
+func TestSettingsProjectHooksListOmitsProjectContextRow(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no project", func(t *testing.T) {
+		cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
+		options, err := cmd.sectionOptions(settingsSectionProjectHooks)
+		if err != nil {
+			t.Fatalf("sectionOptions(project hooks) error = %v", err)
+		}
+		if hasEntryLabelContaining(options.Entries, "Project context") {
+			t.Fatalf("project hooks entries (no project) = %#v, want no \"Project context\" row", options.Entries)
+		}
+	})
+
+	t.Run("with project", func(t *testing.T) {
+		repo := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(repo, ".projmux"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := &settingsCommand{
+			lookupEnv: func(name string) string {
+				if name == "PROJMUX_CWD" {
+					return repo
+				}
+				return ""
+			},
+		}
+		options, err := cmd.sectionOptions(settingsSectionProjectHooks)
+		if err != nil {
+			t.Fatalf("sectionOptions(project hooks) error = %v", err)
+		}
+		if hasEntryLabelContaining(options.Entries, "Project context") {
+			t.Fatalf("project hooks entries (with project) = %#v, want no \"Project context\" info row", options.Entries)
+		}
+	})
+}
+
+// TestSettingsProjectConfigOmitsProjectContextRow is a Phase 2.7
+// regression guard for the config.toml subpage — same reasoning as the
+// Hooks page guard above.
+func TestSettingsProjectConfigOmitsProjectContextRow(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".projmux"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &settingsCommand{
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return repo
+			}
+			return ""
+		},
+	}
+	ctx := cmd.resolveSettingsProjectContext()
+	entries := cmd.projectConfigEntries(ctx)
+	if hasEntryLabelContaining(entries, "Project context") {
+		t.Fatalf("project config entries = %#v, want no \"Project context\" info row", entries)
+	}
+}
+
 func TestSettingsProjectHooksListWithDeclarativeContext(t *testing.T) {
 	t.Parallel()
 

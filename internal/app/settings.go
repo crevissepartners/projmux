@@ -334,14 +334,17 @@ func settingsRootTabChips(active settingsRootTab, hasProject bool) []projmuxpick
 	}
 }
 
+// settingsRootContextHeader returns the popup header text above the
+// search bar. Phase 2.5 ships the titlebar chip strip whose labels (and
+// the Project chip's disabled/active state) already announce the active
+// scope and whether a project context exists. The dedicated
+// "Project context: (...)" header line was redundant with that chip
+// metaphor, so Phase 2.7 drops it entirely and returns the empty string
+// — the chip strip is the source of truth.
 func settingsRootContextHeader(tab settingsRootTab, ctx settingsProjectContext) string {
-	if !ctx.hasProject() {
-		if tab == settingsRootTabProject {
-			return "Project context: (none) - open Settings from a project pane or set PROJMUX_CWD"
-		}
-		return "Project context: (none)"
-	}
-	return "Project context: (" + ctx.Name + ")"
+	_ = tab
+	_ = ctx
+	return ""
 }
 
 func settingsRootPrompt(tab settingsRootTab) string {

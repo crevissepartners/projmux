@@ -30,6 +30,29 @@ func TestEffectiveMergeEntriesDisabledWithoutProject(t *testing.T) {
 	}
 }
 
+// TestEffectiveMergeEntriesOmitsProjectContextRow is a Phase 2.7 regression
+// guard: the redundant "Project context" info row that lived above the
+// Global/Project config rows is removed because the frame title chip
+// strip (Phase 2.5) already announces the active scope.
+func TestEffectiveMergeEntriesOmitsProjectContextRow(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "repo")
+	mustMkdirAll(t, filepath.Join(project, ".projmux"))
+
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+	ctx := newSettingsProjectContext(project, "test")
+	entries := cmd.effectiveMergeEntries(ctx)
+
+	if hasEntryLabelContaining(entries, "Project context") {
+		t.Fatalf("effective merge entries = %#v, want no \"Project context\" info row", entries)
+	}
+}
+
 // TestEffectiveMergeEntriesShowSourceLabels verifies the spec requirement:
 // each merged row carries one of the four source labels (project / global /
 // merged / default), and the project-wins policy applies on conflict.
