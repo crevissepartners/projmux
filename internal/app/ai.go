@@ -1732,8 +1732,8 @@ func aiAttentionMismatch(nextState, attentionState string) bool {
 // When launchURI is non-empty the root <toast> element gains a
 // `launch="<uri>" activationType="protocol"` pair. Windows then hands the
 // URI to the registered scheme handler on click — for the WSL scope shipped
-// today that is `wsl.exe -d <distro> -- projmux focus --uri "%1"`, wired
-// from buildRegisterURIProtocolPowerShell. The URI itself is produced by
+// today that is `wsl.exe -d <distro> --exec <abs-binary-path> focus --uri "%1"`,
+// wired from buildRegisterURIProtocolPowerShell. The URI itself is produced by
 // buildFocusURI (already URL-encoded once); we xml-escape it for the
 // attribute so the two layers compose without double-decoding.
 //
@@ -1788,7 +1788,17 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 //
 //	(Default)                          = "URL:projmux"
 //	URL Protocol                       = ""
-//	shell\open\command\(Default)       = wsl.exe -d <distro> -- projmux focus --uri "%1"
+//	shell\open\command\(Default)       = wsl.exe -d <distro> --exec <binaryPath> focus --uri "%1"
+//
+// `--exec` instead of `--` is load-bearing: `wsl.exe -- <cmd> <args>` routes
+// `<cmd> <args>` through the user's default login shell (zsh/bash). The
+// `projmux://` URI carries `&` characters as query-parameter separators, and
+// zsh parses `&` as a background-job operator before projmux ever runs,
+// emitting `zsh:1: parse error near '&'`. `--exec` skips the shell and
+// invokes the binary directly with the args verbatim. Because `--exec`
+// doesn't load shell init files, PATH may be empty, so we register the
+// absolute WSL filesystem path to the projmux binary captured at
+// registration time (whichever binary actually wrote the registry key).
 //
 // The handler captures the user's *current* WSL_DISTRO_NAME because the
 // click is received on the Windows side with no knowledge of which distro
@@ -1801,7 +1811,7 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 // idempotently, and the New-Item is gated on Test-Path. Caller gates the
 // invocation behind a tmux user-option marker so this runs at most once per
 // server boot anyway (see ensureWSLURIProtocol).
-func buildRegisterURIProtocolPowerShell(scheme, distro string) string {
+func buildRegisterURIProtocolPowerShell(scheme, distro, binaryPath string) string {
 	return `$regPath = "HKCU:\SOFTWARE\Classes\` + psEscape(scheme) + `"
 $cmdPath = "$regPath\shell\open\command"
 try {
@@ -1813,7 +1823,7 @@ try {
   }
   Set-ItemProperty -Path $regPath -Name '(Default)' -Value 'URL:` + psEscape(scheme) + `' -Type String
   Set-ItemProperty -Path $regPath -Name 'URL Protocol' -Value '' -Type String
-  $launchCmd = 'wsl.exe -d ` + psEscape(distro) + ` -- projmux focus --uri "%1"'
+  $launchCmd = 'wsl.exe -d ` + psEscape(distro) + ` --exec ` + psEscape(binaryPath) + ` focus --uri "%1"'
   Set-ItemProperty -Path $cmdPath -Name '(Default)' -Value $launchCmd -Type String
 } catch { }
 `

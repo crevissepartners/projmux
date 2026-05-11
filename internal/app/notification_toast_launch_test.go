@@ -45,7 +45,7 @@ func TestBuildToastPowerShell_InjectsLaunchAndProtocolActivation(t *testing.T) {
 func TestBuildRegisterURIProtocolPowerShell_WritesAllRegistryKeys(t *testing.T) {
 	t.Parallel()
 
-	script := buildRegisterURIProtocolPowerShell("projmux", "Ubuntu-24.04")
+	script := buildRegisterURIProtocolPowerShell("projmux", "Ubuntu-24.04", "/home/me/go/bin/projmux")
 	wantSubstrings := []string{
 		`$regPath = "HKCU:\SOFTWARE\Classes\projmux"`,
 		`$cmdPath = "$regPath\shell\open\command"`,
@@ -53,7 +53,7 @@ func TestBuildRegisterURIProtocolPowerShell_WritesAllRegistryKeys(t *testing.T) 
 		"New-Item -Path $cmdPath -Force",
 		`Set-ItemProperty -Path $regPath -Name '(Default)' -Value 'URL:projmux'`,
 		"Set-ItemProperty -Path $regPath -Name 'URL Protocol' -Value ''",
-		`wsl.exe -d Ubuntu-24.04 -- projmux focus --uri "%1"`,
+		`wsl.exe -d Ubuntu-24.04 --exec /home/me/go/bin/projmux focus --uri "%1"`,
 		`Set-ItemProperty -Path $cmdPath -Name '(Default)'`,
 	}
 	for _, want := range wantSubstrings {
@@ -63,14 +63,49 @@ func TestBuildRegisterURIProtocolPowerShell_WritesAllRegistryKeys(t *testing.T) 
 	}
 }
 
+func TestBuildRegisterURIProtocolPowerShell_BypassesShellWithExecAndAbsolutePath(t *testing.T) {
+	t.Parallel()
+
+	// Regression guard: the registered launch command must use `--exec`
+	// (skips the user's login shell so URI query `&` separators don't get
+	// parsed as background-job operators by zsh/bash) and must point at the
+	// absolute WSL filesystem path to the projmux binary (because `--exec`
+	// doesn't load shell init files, so PATH is unreliable). The bare
+	// `-- projmux focus` form shipped in PR #178 broke on the very first
+	// `&`-bearing toast click; do not let it come back.
+	script := buildRegisterURIProtocolPowerShell("projmux", "Ubuntu-24.04", "/home/me/go/bin/projmux")
+	wantLaunch := `wsl.exe -d Ubuntu-24.04 --exec /home/me/go/bin/projmux focus --uri "%1"`
+	if !strings.Contains(script, wantLaunch) {
+		t.Fatalf("expected launch command %q in script:\n%s", wantLaunch, script)
+	}
+	if strings.Contains(script, `-- projmux focus`) {
+		t.Fatalf("script must not use the legacy `-- projmux focus` form (shell-interpreted, breaks on `&`):\n%s", script)
+	}
+	if !strings.Contains(script, "--exec ") {
+		t.Fatalf("script must use `--exec` to bypass the login shell:\n%s", script)
+	}
+}
+
 func TestBuildRegisterURIProtocolPowerShell_PSEscapesDistro(t *testing.T) {
 	t.Parallel()
 
 	// Distro names with single quotes (unusual but technically allowed in
 	// WSL distro registration) must be PowerShell-escaped to keep the
 	// quoted string literal balanced.
-	script := buildRegisterURIProtocolPowerShell("projmux", "weird's-distro")
-	if !strings.Contains(script, `wsl.exe -d weird''s-distro -- projmux focus --uri "%1"`) {
+	script := buildRegisterURIProtocolPowerShell("projmux", "weird's-distro", "/home/me/go/bin/projmux")
+	if !strings.Contains(script, `wsl.exe -d weird''s-distro --exec /home/me/go/bin/projmux focus --uri "%1"`) {
 		t.Fatalf("expected single-quote-escaped distro in launch command; got:\n%s", script)
+	}
+}
+
+func TestBuildRegisterURIProtocolPowerShell_PSEscapesBinaryPath(t *testing.T) {
+	t.Parallel()
+
+	// Binary paths shouldn't contain single quotes in practice, but defend
+	// the quoted PowerShell literal so a pathological install location can't
+	// break the registration script.
+	script := buildRegisterURIProtocolPowerShell("projmux", "Ubuntu-24.04", "/home/o'brien/bin/projmux")
+	if !strings.Contains(script, `--exec /home/o''brien/bin/projmux focus`) {
+		t.Fatalf("expected single-quote-escaped binary path in launch command; got:\n%s", script)
 	}
 }
