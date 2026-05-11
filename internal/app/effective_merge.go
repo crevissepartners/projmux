@@ -63,11 +63,9 @@ func (c *settingsCommand) effectiveMergeEntries(ctx settingsProjectContext) []in
 	globalCfg, globalPath, globalErr := c.loadGlobalConfigForMerge()
 	projectCfg, projectPath, projectErr := c.loadProjectConfigForMerge(ctx)
 
+	// Phase 2.7: drop the redundant "Project context" info row — the
+	// frame title chip strip already conveys the active project scope.
 	entries = append(entries,
-		intpickercompat.Entry{
-			Label: settingsLabelInfo("Project context", ctx.Path, ctx.Source),
-			Value: settingsNoopValue,
-		},
 		intpickercompat.Entry{
 			Label: settingsLabelInfo("Global config", globalPath, sourceFileState(globalCfg, globalErr, globalPath)),
 			Value: settingsNoopValue,

@@ -66,8 +66,12 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 	if got, want := options.Title, "Settings"; got != want {
 		t.Fatalf("root settings title = %q, want %q", got, want)
 	}
-	if got, want := options.Header, "Project context: (none)"; got != want {
-		t.Fatalf("root settings header = %q, want plain project context header %q", got, want)
+	// Phase 2.7: the popup header is intentionally empty — the titlebar
+	// chip strip is the source of truth for the active scope, so the
+	// redundant "Project context: (...)" line above the search bar is
+	// dropped on every page.
+	if got := options.Header; got != "" {
+		t.Fatalf("root settings header = %q, want empty (chip strip is source of truth)", got)
 	}
 	wantChips := []projmuxpicker.Chip{
 		{Label: "Global", Active: true, ClickValue: settingsRootTabGlobalValue},
@@ -390,8 +394,11 @@ func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
 	options := cmd.rootOptions(settingsRootTabProject)
 
-	if got, want := options.Header, "Project context: (none) - open Settings from a project pane or set PROJMUX_CWD"; got != want {
-		t.Fatalf("project tab header = %q, want %q", got, want)
+	// Phase 2.7: the dedicated "Project context: (none) - open
+	// Settings..." header line is dropped. The Project chip rendering
+	// (active + disabled) below already conveys the no-project state.
+	if got := options.Header; got != "" {
+		t.Fatalf("project tab header = %q, want empty (chip strip carries the no-project hint)", got)
 	}
 	if got := options.TitleChips; len(got) < 2 || got[0].Active || !got[1].Active || !got[1].Disabled {
 		t.Fatalf("project tab chips (no project) = %#v, want Project chip active+disabled", got)

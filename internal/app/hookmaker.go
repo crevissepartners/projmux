@@ -99,22 +99,16 @@ func (c *settingsCommand) globalHookEntries() []intpickercompat.Entry {
 func (c *settingsCommand) projectHookEntries(ctx settingsProjectContext) []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{settingsBackEntry()}
 	if !ctx.hasProject() {
-		return append(entries,
-			intpickercompat.Entry{
-				Label: settingsLabelDim("Project context", "no project - open Settings from a project pane or set PROJMUX_CWD"),
-				Value: settingsNoopValue,
-			},
-			intpickercompat.Entry{
-				Label: settingsLabelDim("Hooks (project)", "disabled - no project context"),
-				Value: settingsNoopValue,
-			},
-		)
+		// Phase 2.7: the frame title chip strip already announces the
+		// active scope, so drop the redundant "Project context" row.
+		return append(entries, intpickercompat.Entry{
+			Label: settingsLabelDim("Hooks (project)", "disabled - no project context"),
+			Value: settingsNoopValue,
+		})
 	}
 
-	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabelInfo("Project context", ctx.Path, ctx.Source),
-		Value: settingsNoopValue,
-	})
+	// Phase 2.7: drop the "Project context" info row — chip strip is the
+	// source of truth.
 
 	configPath := filepath.Join(ctx.Path, ".projmux", "config.toml")
 	cfg, _ := loadProjectConfigForRead(configPath)
@@ -677,16 +671,12 @@ func (c *settingsCommand) projectConfigEntries(ctx settingsProjectContext) []int
 		})
 	}
 	path := settingsProjectConfigPath(ctx)
-	entries = append(entries,
-		intpickercompat.Entry{
-			Label: settingsLabelInfo("Project context", ctx.Path, ctx.Source),
-			Value: settingsNoopValue,
-		},
-		intpickercompat.Entry{
-			Label: settingsLabelInfo("Path", path, settingsProjectConfigState(path)),
-			Value: settingsNoopValue,
-		},
-	)
+	// Phase 2.7: drop the redundant "Project context" info row — the
+	// frame title chip strip already announces the active scope.
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabelInfo("Path", path, settingsProjectConfigState(path)),
+		Value: settingsNoopValue,
+	})
 	cfg, err := c.loadProjectConfigForEdit(ctx)
 	if err != nil {
 		return append(entries, intpickercompat.Entry{
