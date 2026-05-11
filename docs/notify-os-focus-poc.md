@@ -144,6 +144,15 @@ Notes from Test 2 (WSL → Windows OS-level activation):
   ceremony and has no side effect on window state. The `SetForegroundWindow`
   combo is the fallback for non-WT Windows apps.
 
+Notes from Test 3 (`wt.exe -w 0` bare, no subcommand):
+
+- Raises the WT window OK and preserves maximization, **but adds a new tab
+  as a side effect** (the bare invocation defaults to "new tab in window
+  0"). Unsuitable as a raise-only call.
+- Always pair `wt.exe -w 0` with a no-op subcommand such as `focus-tab -t 0`
+  (Test 1) to raise without creating a tab. Treat the bare form as
+  reserved for the "open new tab" case only.
+
 If multiple signals are present (e.g. tmux inside VS Code's embedded
 terminal), the adapter chain picks the innermost match the IPC can actually
 talk to and falls through to the next on detect failure.
