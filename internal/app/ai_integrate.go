@@ -45,6 +45,9 @@ var claudeHookEvents = []string{
 	"Stop",
 	"UserPromptSubmit",
 	"PermissionRequest",
+	"StopFailure",
+	"SubagentStop",
+	"TeammateIdle",
 }
 
 func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error {

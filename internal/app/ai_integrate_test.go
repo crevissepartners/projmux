@@ -287,7 +287,7 @@ func TestAIIntegrateClaudeRemoveOnlyManagedHooks(t *testing.T) {
 	if strings.Contains(got, claudeHookManagedMarker) || !strings.Contains(got, "echo user-notify") {
 		t.Fatalf("settings after remove =\n%s", got)
 	}
-	for _, event := range []string{"Stop", "UserPromptSubmit", "PermissionRequest"} {
+	for _, event := range []string{"Stop", "UserPromptSubmit", "PermissionRequest", "StopFailure", "SubagentStop", "TeammateIdle"} {
 		if strings.Contains(got, `"`+event+`"`) {
 			t.Fatalf("settings retained empty managed-only event %s:\n%s", event, got)
 		}
