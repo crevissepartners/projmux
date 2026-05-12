@@ -133,6 +133,21 @@ func TestPathsPickerBackendFile(t *testing.T) {
 	}
 }
 
+func TestPathsSessionStateFiles(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{ConfigDir: "/tmp/config/projmux", StateDir: "/tmp/state/projmux"}
+	if got, want := paths.SessionStateAutosaveFile(), filepath.Join(paths.ConfigDir, SessionStateAutosaveFileName); got != want {
+		t.Fatalf("SessionStateAutosaveFile() = %q, want %q", got, want)
+	}
+	if got, want := paths.SessionStateAutorestoreFile(), filepath.Join(paths.ConfigDir, SessionStateAutorestoreFileName); got != want {
+		t.Fatalf("SessionStateAutorestoreFile() = %q, want %q", got, want)
+	}
+	if got, want := paths.SessionStateDir(), filepath.Join(paths.StateDir, "sessions"); got != want {
+		t.Fatalf("SessionStateDir() = %q, want %q", got, want)
+	}
+}
+
 func TestPathsProjectHooksFile(t *testing.T) {
 	t.Parallel()
 
@@ -211,6 +226,42 @@ func TestProjectHooksNormalizesInvalidValues(t *testing.T) {
 	}
 	if got != ProjectHooksOn {
 		t.Fatalf("LoadProjectHooksFile() = %q, want %q", got, ProjectHooksOn)
+	}
+}
+
+func TestSessionStateToggleRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", SessionStateAutosaveFileName)
+	if got, err := LoadSessionStateToggleFile(path); err != nil || got != SessionStateToggleOn {
+		t.Fatalf("LoadSessionStateToggleFile(missing) = %q, %v; want %q, nil", got, err, SessionStateToggleOn)
+	}
+
+	if err := SaveSessionStateToggleFile(path, SessionStateToggleOff); err != nil {
+		t.Fatalf("SaveSessionStateToggleFile() error = %v", err)
+	}
+	got, err := LoadSessionStateToggleFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionStateToggleFile() error = %v", err)
+	}
+	if got != SessionStateToggleOff {
+		t.Fatalf("LoadSessionStateToggleFile() = %q, want %q", got, SessionStateToggleOff)
+	}
+}
+
+func TestSessionStateToggleNormalizesBooleanValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), SessionStateAutosaveFileName)
+	if err := os.WriteFile(path, []byte("false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadSessionStateToggleFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionStateToggleFile() error = %v", err)
+	}
+	if got != SessionStateToggleOff {
+		t.Fatalf("LoadSessionStateToggleFile() = %q, want %q", got, SessionStateToggleOff)
 	}
 }
 

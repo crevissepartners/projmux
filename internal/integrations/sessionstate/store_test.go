@@ -105,6 +105,53 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestStoreSummaryCountsWindowsAndPanes(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(t.TempDir())
+	snap := sampleSnapshot()
+	snap.Windows = append(snap.Windows, Window{
+		Index:           1,
+		Name:            "logs",
+		ActivePaneIndex: 0,
+		Panes: []Pane{
+			{Index: 0, CWD: "/tmp", Recipe: ShellRecipe()},
+			{Index: 1, CWD: "/tmp", Recipe: ShellRecipe()},
+		},
+	})
+	if err := store.Save(snap); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	got, err := store.Summary(snap.Session)
+	if err != nil {
+		t.Fatalf("Summary() error = %v", err)
+	}
+	if got.Session != snap.Session || got.WindowCount != 2 || got.PaneCount != 4 || !got.SavedAt.Equal(snap.SavedAt) {
+		t.Fatalf("Summary() = %#v, want session/window/pane/saved_at summary", got)
+	}
+}
+
+func TestStoreDeleteRemovesSnapshotAndIgnoresMissing(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(t.TempDir())
+	snap := sampleSnapshot()
+	if err := store.Save(snap); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if err := store.Delete(snap.Session); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if _, err := store.Load(snap.Session); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Load() after Delete error = %v, want %v", err, ErrNotFound)
+	}
+	if err := store.Delete(snap.Session); err != nil {
+		t.Fatalf("Delete() missing error = %v, want nil", err)
+	}
+}
+
 func TestLoadMalformedJSON(t *testing.T) {
 	t.Parallel()
 

@@ -145,6 +145,9 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 	if c.sessionStore == nil {
 		return c.finishAutosaveSessionState(errors.New("configure sessionstate store: sessionstate store is not configured"), *quiet, stderr)
 	}
+	if !sessionStateAutosaveEnabled(c.homeDir, c.lookupEnv) {
+		return nil
+	}
 
 	ctx := context.Background()
 	now := c.nowTime()
