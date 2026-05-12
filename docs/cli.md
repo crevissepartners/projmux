@@ -330,6 +330,7 @@ projmux ai status   set <thinking|waiting|idle> [--pane <id>]
 projmux ai notify   <reset|notify> [--pane <id>]
 projmux ai watch-title [--pane <id>]
 projmux ai ingest   codex-notify '<json>'
+projmux ai integrate codex [--dry-run] [--remove]
 projmux ai topic     ...
 ```
 
@@ -344,7 +345,24 @@ JSON. On `agent-turn-complete`, it matches a tmux pane by `$TMUX_PANE`,
 payload `cwd`, then cached thread/session pane options, marks the pane
 hook-active, sets AI state to waiting, and writes a metadata-bearing notify
 queue entry. Panes marked `@projmux_ai_hook_active=1` are skipped by the
-fallback title watcher.
+title watcher.
+
+`integrate codex` manages legacy Codex `notify` wiring in
+`~/.codex/config.toml`:
+
+```toml
+notify = ["projmux", "ai", "ingest", "codex-notify"]
+```
+
+The command writes that line inside a projmux-managed marker block so repeated
+runs are idempotent and `--remove` can delete only projmux-owned wiring.
+`--dry-run` prints the planned change without writing. If the Codex config
+already contains an unmanaged `notify = ...` setting, projmux refuses to
+install over it and leaves the file untouched; use `--dry-run` to inspect the
+conflict and then edit the user-owned setting manually if needed.
+
+Claude Code hooks, Codex hooks-engine mode, and tmux bell integration are not
+part of this command yet.
 
 ## tmux
 
