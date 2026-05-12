@@ -27,6 +27,7 @@ projmux <command> [args...]
 | `focus` | Switch the active client to a session/window/pane target. |
 | `init` | Apply supported terminal keybinding fallbacks. |
 | `kill` | Terminate tagged tmux sessions. |
+| `layout` | List and inspect project layout presets. |
 | `notify` | Manage the pending AI notify queue (push/list/ack/reconcile). |
 | `pin` | Manage pinned project directories. |
 | `preview` | Manage persisted tmux preview selection. |
@@ -63,6 +64,24 @@ the active session in sync).
 
 Settings > Labs remains available for experimental settings, but picker backend
 selection has been retired. The native picker is always used.
+
+## layout
+
+```
+projmux layout list [--json]
+projmux layout show <name>
+```
+
+Project layout presets are read from `<project>/.projmux/layouts/*.toml`,
+where the project context is `PROJMUX_CWD` when set, otherwise the nearest
+parent with `.projmux` or `.git`.
+
+`layout list` prints valid presets and skips malformed files with a warning on
+stderr. `--json` emits an array of `{name,path,description,mode,windows,panes}`.
+`layout show <name>` prints the raw preset file content.
+
+`layout save`, `layout remove`, and `layout apply` are intentionally deferred in
+this release.
 
 ## setup
 

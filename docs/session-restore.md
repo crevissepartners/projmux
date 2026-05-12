@@ -22,3 +22,9 @@ the same read model and CLI behavior:
 Delete, auto-save/auto-restore toggles, and restore execution remain in Settings
 or CLI for now. Destructive restore execution stays deferred until the popup has
 a dedicated safe policy for existing or non-empty live sessions.
+
+Project layout presets in `<project>/.projmux/layouts/*.toml` reuse the same
+window, pane, cwd, and startup recipe concepts as session snapshots. In this
+release they are discoverable with `projmux layout list` and inspectable with
+`projmux layout show <name>`; applying presets to live tmux sessions remains
+deferred.

@@ -68,6 +68,7 @@ type App struct {
 	hook         *hookCommand
 	initCmd      *initCommand
 	kill         *killCommand
+	layout       *layoutCommand
 	notify       *notifyCommand
 	pin          *pinCommand
 	popupWaitKey *popupWaitKeyCommand
@@ -105,6 +106,7 @@ func New() *App {
 		hook:         newHookCommand(),
 		initCmd:      newInitCommand(),
 		kill:         newKillCommand(),
+		layout:       newLayoutCommand(),
 		notify:       newNotifyCommand(),
 		pin:          newPinCommand(),
 		popupWaitKey: newPopupWaitKeyCommand(),
@@ -155,6 +157,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.initCmd.Run(args[1:], stdout, stderr)
 	case "kill":
 		return a.kill.Run(args[1:], stdout, stderr)
+	case "layout":
+		return a.layout.Run(args[1:], stdout, stderr)
 	case "notify":
 		return a.notify.Run(args[1:], stdout, stderr)
 	case "pin":
@@ -223,6 +227,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
 	fmt.Fprintln(w, "  init      Merge projmux keybindings into a terminal config")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
+	fmt.Fprintln(w, "  layout    List and inspect project layout presets")
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")

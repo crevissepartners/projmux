@@ -38,6 +38,48 @@ The saved workdir file is:
 It stores one absolute path per line. Lines beginning with `#` are comments.
 The file is read only when no env root list is set.
 
+## Project Layout Presets
+
+Projects may keep reusable tmux layout seeds in:
+
+```text
+<project>/.projmux/layouts/<name>.toml
+```
+
+The project context comes from `PROJMUX_CWD` when set, otherwise projmux walks
+upward from the current directory to the nearest `.projmux` or `.git` marker.
+Files outside that project tree are not discovered.
+
+The Phase 1 schema is intentionally close to the session-state snapshot shape:
+
+```toml
+schema_version = 1
+description = "Daily dev"
+mode = "inherit-autosave" # default; or "fresh-each-time"
+default_cwd = "${PROJMUX_CWD}"
+
+[[windows]]
+index = 0
+name = "main"
+layout = "..."
+active_pane_index = 0
+
+[[windows.panes]]
+index = 0
+cwd = "${PROJMUX_CWD}"
+command = "make watch"
+```
+
+`command` records a startup recipe, matching the supported session-state replay
+recipe. Panes without `command` may use `recipe = "shell"`. Supported
+interpolation placeholders are limited to `${PROJMUX_CWD}` and
+`${PROJMUX_SESSION}`; other `${...}` values are rejected during load.
+
+Unknown fields and unknown sections are ignored so future schema additions do
+not break older `layout list` and `layout show` flows. The built-in parser only
+accepts quoted strings and integer values for the known fields above; it does
+not implement the full TOML language.
+
 ## Keymap File
 
 Settings > Keybindings is the normal in-app editor for action keys. It lists
