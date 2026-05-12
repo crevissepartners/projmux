@@ -10,8 +10,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
@@ -896,6 +898,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	for _, banned := range []string{
 		"set -g status 3",
 		"set -g status-format[2] \"",
+		"tmux autosave-session-state --quiet",
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)
@@ -1257,6 +1260,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g status 2",
 		"range=user|notify",
 		"range=user|usage",
+		"#('/tmp/projmux' tmux autosave-session-state --quiet)",
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
@@ -1286,6 +1290,99 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)
 		}
+	}
+}
+
+func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
+	dir := t.TempDir()
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	paneFormat := strings.Join([]string{
+		"#{window_index}",
+		"#{pane_index}",
+		"#{?pane_active,1,0}",
+		"#{pane_current_path}",
+		"#{@projmux_recipe_kind}",
+		"#{@projmux_startup_command}",
+		"#{@projmux_ai_managed}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_ai_resume_id}",
+	}, "\x1f")
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):              "workspace\n",
+			strings.Join([]string{"tmux", "list-windows", "-t", "workspace", "-F", windowFormat}, "\x00"):   "0\x1fshell\x1flayout\n",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
+		},
+	}
+	cmd := &tmuxCommand{
+		runner: runner,
+		now:    func() time.Time { return now },
+		sessionStore: func() (sessionstate.Store, error) {
+			return sessionstate.NewStore(dir), nil
+		},
+	}
+
+	if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	loaded, err := sessionstate.NewStore(dir).Load("workspace")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Session != "workspace" || loaded.DefaultCWD != "/tmp" || len(loaded.Windows) != 1 {
+		t.Fatalf("snapshot = %#v, want current workspace session snapshot", loaded)
+	}
+	wantGate := recordedTmuxCall{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_sessionstate_autosave_at", "1778555045"}}
+	if got := runner.calls[len(runner.calls)-1]; !reflect.DeepEqual(got, wantGate) {
+		t.Fatalf("last tmux call = %#v, want %#v", got, wantGate)
+	}
+}
+
+func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):                                         "workspace\n",
+			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_autosave_at}"}, "\x00"): "1778555030\n",
+		},
+	}
+	cmd := &tmuxCommand{
+		runner:       runner,
+		now:          func() time.Time { return now },
+		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
+	}
+
+	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("tmux calls = %#v, want session resolution and debounce gate read only", runner.calls)
+	}
+}
+
+func TestTmuxAutosaveSessionStateQuietSwallowsRuntimeErrors(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingTmuxRunner{err: errors.New("tmux unavailable")}
+	cmd := &tmuxCommand{
+		runner:       runner,
+		now:          func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
+		lookupEnv:    func(string) string { return "" },
+		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
+	}
+
+	var stderr bytes.Buffer
+	if err := cmd.Run([]string{"autosave-session-state", "--quiet"}, &bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("Run() error = %v, want quiet nil", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want quiet", stderr.String())
 	}
 }
 

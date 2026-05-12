@@ -10,9 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -45,6 +48,8 @@ type tmuxCommand struct {
 	homeDir       func() (string, error)
 	writeFile     func(string, []byte, os.FileMode) error
 	readFile      func(string) ([]byte, error)
+	now           func() time.Time
+	sessionStore  func() (sessionstate.Store, error)
 	popupOptions  func(sessionName string, ctx tmuxPopupContext) inttmux.PopupOptions
 	switchPopup   func(ctx tmuxPopupContext) inttmux.PopupOptions
 	sessionsPopup func(ctx tmuxPopupContext) inttmux.PopupOptions
@@ -60,6 +65,8 @@ func newTmuxCommand() *tmuxCommand {
 		homeDir:       os.UserHomeDir,
 		writeFile:     os.WriteFile,
 		readFile:      os.ReadFile,
+		now:           time.Now,
+		sessionStore:  sessionstate.NewDefaultStoreFromEnv,
 		popupOptions:  defaultPopupPreviewOptions,
 		switchPopup:   defaultPopupSwitchOptions,
 		sessionsPopup: defaultPopupSessionsOptions,
@@ -104,6 +111,8 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runInstallApp(fs.Args()[1:], stdout, stderr)
 	case "apply":
 		return c.runApply(fs.Args()[1:], stdout, stderr)
+	case "autosave-session-state":
+		return c.runAutosaveSessionState(fs.Args()[1:], stderr)
 	case "help", "--help", "-h":
 		printTmuxUsage(stdout)
 		return nil
@@ -111,6 +120,99 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printTmuxUsage(stderr)
 		return fmt.Errorf("unknown tmux subcommand: %s", fs.Arg(0))
 	}
+}
+
+const (
+	sessionStateAutosaveOption          = "@projmux_sessionstate_autosave_at"
+	defaultSessionStateAutosaveInterval = 60 * time.Second
+)
+
+func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("tmux autosave-session-state", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	quiet := fs.Bool("quiet", false, "suppress autosave errors")
+	force := fs.Bool("force", false, "bypass the autosave debounce gate")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		err := errors.New("tmux autosave-session-state does not accept positional arguments")
+		return c.finishAutosaveSessionState(err, *quiet, stderr)
+	}
+	if c.runner == nil {
+		return c.finishAutosaveSessionState(errors.New("configure tmux runner: tmux runner is not configured"), *quiet, stderr)
+	}
+	if c.sessionStore == nil {
+		return c.finishAutosaveSessionState(errors.New("configure sessionstate store: sessionstate store is not configured"), *quiet, stderr)
+	}
+
+	ctx := context.Background()
+	now := c.nowTime()
+	sessionName, err := c.currentTmuxSessionName(ctx)
+	if err != nil {
+		return c.finishAutosaveSessionState(err, *quiet, stderr)
+	}
+	if !*force {
+		ok, err := c.sessionStateAutosaveDue(ctx, sessionName, now)
+		if err != nil || !ok {
+			return c.finishAutosaveSessionState(err, *quiet, stderr)
+		}
+	}
+
+	store, err := c.sessionStore()
+	if err != nil {
+		return c.finishAutosaveSessionState(fmt.Errorf("resolve sessionstate store: %w", err), *quiet, stderr)
+	}
+	client := inttmux.NewClient(c.runner)
+	if _, err := client.SaveSessionSnapshot(ctx, store, sessionName, now); err != nil {
+		return c.finishAutosaveSessionState(err, *quiet, stderr)
+	}
+	_, err = c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", sessionStateAutosaveOption, strconv.FormatInt(now.Unix(), 10))
+	return c.finishAutosaveSessionState(err, *quiet, stderr)
+}
+
+func (c *tmuxCommand) finishAutosaveSessionState(err error, quiet bool, stderr io.Writer) error {
+	if err == nil {
+		return nil
+	}
+	if quiet {
+		if envValue(c.lookupEnv, "PROJMUX_SESSIONSTATE_DEBUG") != "" && stderr != nil {
+			_, _ = fmt.Fprintf(stderr, "projmux sessionstate autosave: %v\n", err)
+		}
+		return nil
+	}
+	return err
+}
+
+func (c *tmuxCommand) sessionStateAutosaveDue(ctx context.Context, sessionName string, now time.Time) (bool, error) {
+	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "#{"+sessionStateAutosaveOption+"}")
+	if err != nil {
+		return false, fmt.Errorf("read sessionstate autosave gate: %w", err)
+	}
+	last := parsePositiveInt(strings.TrimSpace(string(output)))
+	if last <= 0 {
+		return true, nil
+	}
+	return now.Sub(time.Unix(int64(last), 0)) >= defaultSessionStateAutosaveInterval, nil
+}
+
+func (c *tmuxCommand) currentTmuxSessionName(ctx context.Context) (string, error) {
+	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "#{session_name}")
+	if err != nil {
+		return "", fmt.Errorf("resolve current tmux session: %w", err)
+	}
+	sessionName := strings.TrimSpace(string(output))
+	if sessionName == "" {
+		return "", errors.New("current tmux session is unavailable")
+	}
+	return sessionName, nil
+}
+
+func (c *tmuxCommand) nowTime() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
 }
 
 func (c *tmuxCommand) runRebalancePanes(args []string, stderr io.Writer) error {
@@ -1038,7 +1140,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 		"set -g status 2",
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
 		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M #[range=user|settings]#[bold,fg=colour16,bg=colour45] ⚙ #[norange]#[default]"),
-		"set -g status-format[1] "+tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 80)#[norange]#[align=right range=user|usage]#("+bin+" status usage --max-width 120)#[norange]"),
+		"set -g status-format[1] "+tmuxConfigQuote("#[align=left range=user|notify]#("+bin+" status notify --max-width 80)#[norange]#[align=right range=user|usage]#("+bin+" status usage --max-width 120)#[norange]#("+bin+" tmux autosave-session-state --quiet)"),
 		"set -gu status-format[2]",
 	)
 	return strings.Join(lines, "\n") + "\n"
