@@ -630,7 +630,7 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 // click-target head entry, swallowing any tmux failure as
 // [notifyDisplayLive]. Returning live on error preserves the legacy click
 // behaviour (focus + ack) so a missing tmux server does not strand every
-// click on a "ack to clear" toast.
+// click on a "cleared" toast.
 //
 // We also treat an empty live-pane map the same as a nil map (best-effort
 // fallback). `listNotifyLivePanes` returns an empty slice when tmux replies
@@ -665,11 +665,11 @@ func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notificatio
 func notifyAckOnlyToast(display notifyRowDisplayState) string {
 	switch display {
 	case notifyDisplayGone:
-		return "notify target gone; ack to clear"
+		return "notify target gone; cleared"
 	case notifyDisplayStale:
-		return "notify pane no longer in reply state; ack to clear"
+		return "notify pane no longer in reply state; cleared"
 	}
-	return "notify ack-only; ack to clear"
+	return "notify ack-only; cleared"
 }
 
 // isFocusTargetUnresolved reports whether the focus subprocess error

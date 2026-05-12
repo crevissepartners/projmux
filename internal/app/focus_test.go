@@ -285,8 +285,11 @@ func TestFocus_WindowIDFailureIsHardDiagnostic(t *testing.T) {
 		t.Fatal("expected hard error for unresolved explicit window id")
 	}
 	var coded focusExitError
-	if errors.As(err, &coded) {
-		t.Fatalf("explicit window id failure must not use unresolved-target exit code: %v", err)
+	if !errors.As(err, &coded) {
+		t.Fatalf("error %v does not unwrap to focusExitError", err)
+	}
+	if coded.ExitCode() != focusExitNotResolved {
+		t.Fatalf("exit code = %d, want %d", coded.ExitCode(), focusExitNotResolved)
 	}
 
 	var res focusResult
@@ -359,8 +362,11 @@ func TestFocus_PaneIDFailureIsHardDiagnostic(t *testing.T) {
 		t.Fatal("expected hard error for unresolved explicit pane id")
 	}
 	var coded focusExitError
-	if errors.As(err, &coded) {
-		t.Fatalf("explicit pane id failure must not use unresolved-target exit code: %v", err)
+	if !errors.As(err, &coded) {
+		t.Fatalf("error %v does not unwrap to focusExitError", err)
+	}
+	if coded.ExitCode() != focusExitNotResolved {
+		t.Fatalf("exit code = %d, want %d", coded.ExitCode(), focusExitNotResolved)
 	}
 
 	var res focusResult

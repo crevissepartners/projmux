@@ -16,9 +16,9 @@ import (
 	corefocus "github.com/crevissepartners/projmux/internal/core/focus"
 )
 
-// focusExitNotResolved is the exit code emitted when no session matches the
-// requested target and no reasonable fallback is available. It is documented
-// in the spec so callers (status bar, notification dispatch) can branch on it.
+// focusExitNotResolved is the exit code emitted when an explicit target cannot
+// be resolved and no reasonable fallback is available. It is documented in the
+// spec so callers (status bar, notification dispatch) can branch on it.
 const focusExitNotResolved = 2
 
 const focusFieldSeparator = "__PROJMUX_FOCUS_SEP__"
@@ -131,12 +131,21 @@ func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintln(stderr, err.Error())
 		}
 		var notResolved *focusUnresolvedError
-		if errors.As(err, &notResolved) {
+		if errors.As(err, &notResolved) || focusResultIsUnresolvedID(res) {
 			return focusExitError{code: focusExitNotResolved, err: err}
 		}
 		return err
 	}
 	return nil
+}
+
+func focusResultIsUnresolvedID(res focusResult) bool {
+	switch res.Reason {
+	case "window-id-unresolved", "pane-id-unresolved":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {

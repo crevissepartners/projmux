@@ -141,7 +141,8 @@ via `tmux display-message`, and the URI's `socket` overrides any
 Exit codes:
 
 - `0` — focused (or the notify-only fallback fired).
-- `2` — target session could not be resolved (`focusExitNotResolved`).
+- `2` — target session/window/pane could not be resolved
+  (`focusExitNotResolved`).
 
 `--source`/`--kind` are telemetry labels logged when
 `PROJMUX_FOCUS_DEBUG` is set. `--json` prints a single-line JSON payload
@@ -151,7 +152,7 @@ distinguish unresolved sessions (`reason=session-unresolved`, exit 2),
 session rename/prefix fallback (`session_state=fallback`), window index
 fallback (`window_state=index-fallback-session`), pane index fallback
 (`pane_state=index-fallback-window`), and explicit id failures
-(`window-id-unresolved` / `pane-id-unresolved`).
+(`window-id-unresolved` / `pane-id-unresolved`, exit 2).
 
 ## notify
 
