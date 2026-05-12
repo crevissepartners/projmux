@@ -342,6 +342,7 @@ projmux ai watch-title [--pane <id>]
 projmux ai ingest   codex-notify '<json>'
 projmux ai ingest   claude-hook < payload.json
 projmux ai integrate codex [--dry-run] [--remove]
+projmux ai integrate claude [--dry-run] [--remove]
 projmux ai topic     ...
 ```
 
@@ -388,8 +389,37 @@ install over it and leaves the file untouched; use `--dry-run` to inspect the
 conflict and then edit the user-owned setting manually if needed.
 
 Claude Code hook ingest is available through `ingest claude-hook`, but
-`integrate claude`, Codex hooks-engine mode, and tmux bell integration are not
-part of this command yet.
+`integrate claude` is the opt-in user-level wiring command for
+`~/.claude/settings.json`. It installs command hooks for `Notification`,
+`Stop`, `UserPromptSubmit`, and `PermissionRequest`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The managed command receives Claude's hook JSON on stdin, keeps stdout/stderr
+quiet, and exits successfully even if ingest fails so it does not block Claude
+Code behavior. `--dry-run` previews the JSON update, and `--remove` deletes
+only commands carrying the projmux marker. Existing unrelated Claude settings
+and hooks are preserved. If a supported event already contains an unmanaged
+`projmux ai ingest claude-hook` command, projmux refuses to install over it and
+leaves the settings file untouched.
+
+Codex hooks-engine mode and tmux bell integration are not part of this command
+yet.
 
 ## tmux
 
