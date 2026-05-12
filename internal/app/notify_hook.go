@@ -26,15 +26,16 @@ type notifyHookMeta struct {
 }
 
 type notifyHookPayload struct {
-	Event     string    `json:"event"`
-	ID        string    `json:"id"`
-	Type      string    `json:"type"`
-	Agent     string    `json:"agent"`
-	Topic     string    `json:"topic"`
-	Pane      string    `json:"pane"`
-	Session   string    `json:"session"`
-	Message   string    `json:"message"`
-	CreatedAt time.Time `json:"created_at"`
+	Event     string            `json:"event"`
+	ID        string            `json:"id"`
+	Type      string            `json:"type"`
+	Agent     string            `json:"agent"`
+	Topic     string            `json:"topic"`
+	Pane      string            `json:"pane"`
+	Session   string            `json:"session"`
+	Message   string            `json:"message"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
 }
 
 type sendNotiHookDispatcher struct {
@@ -69,6 +70,7 @@ func (d *sendNotiHookDispatcher) Dispatch(entry notify.Notification, meta notify
 		Pane:      strings.TrimSpace(entry.Pane),
 		Session:   strings.TrimSpace(entry.Session),
 		Message:   strings.TrimSpace(meta.Message),
+		Metadata:  entry.Metadata,
 		CreatedAt: entry.CreatedAt,
 	}
 	if payload.Type == "" {

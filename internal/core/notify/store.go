@@ -135,6 +135,7 @@ func (s *Store) Push(in PushInput) (Notification, PushResult, error) {
 		Window:    strings.TrimSpace(in.Target.Window),
 		Pane:      strings.TrimSpace(in.Target.Pane),
 		Source:    source,
+		Metadata:  sanitizeMetadata(in.Metadata),
 		CreatedAt: now,
 		ExpiresAt: now.Add(ttl),
 	}
@@ -166,6 +167,25 @@ func (s *Store) Push(in PushInput) (Notification, PushResult, error) {
 		return Notification{}, PushResult{}, err
 	}
 	return entry, result, nil
+}
+
+func sanitizeMetadata(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		key := strings.TrimSpace(k)
+		value := strings.TrimSpace(v)
+		if key == "" || value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // List returns all pending entries in recency-desc order. Expiration metadata

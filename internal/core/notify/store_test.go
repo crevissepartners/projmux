@@ -64,6 +64,34 @@ func TestPushRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPushRoundTripMetadataSanitizesAndCopies(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	metadata := map[string]string{
+		" agent ": " codex ",
+		"empty":   "",
+		"":        "ignored",
+	}
+	if _, _, err := store.Push(PushInput{
+		Text:     "Codex ready",
+		Source:   SourceAI,
+		Metadata: metadata,
+		Target:   Target{Session: "s"},
+	}); err != nil {
+		t.Fatalf("Push() error = %v", err)
+	}
+	metadata[" agent "] = "mutated"
+
+	entries, err := store.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if got := entries[0].Metadata; len(got) != 1 || got["agent"] != "codex" {
+		t.Fatalf("Metadata = %#v, want sanitized copy", got)
+	}
+}
+
 func TestPushDefaults(t *testing.T) {
 	t.Parallel()
 

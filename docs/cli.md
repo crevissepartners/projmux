@@ -299,6 +299,7 @@ projmux ai settings
 projmux ai status   set <thinking|waiting|idle> [--pane <id>]
 projmux ai notify   <reset|notify> [--pane <id>]
 projmux ai watch-title [--pane <id>]
+projmux ai ingest   codex-notify '<json>'
 projmux ai topic     ...
 ```
 
@@ -307,6 +308,13 @@ the `attention` badge, the `notify` queue producer, and the desktop
 notifier. `status set waiting` is the trigger that flips a pane to the
 reply-ready state — that transition pushes an `ai:<session>:<pane>`
 entry into the notify queue.
+
+`ingest codex-notify` is the hook-facing entrypoint for Codex legacy notify
+JSON. On `agent-turn-complete`, it matches a tmux pane by `$TMUX_PANE`,
+payload `cwd`, then cached thread/session pane options, marks the pane
+hook-active, sets AI state to waiting, and writes a metadata-bearing notify
+queue entry. Panes marked `@projmux_ai_hook_active=1` are skipped by the
+fallback title watcher.
 
 ## tmux
 

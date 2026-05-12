@@ -33,6 +33,9 @@ const (
 	aiPaneStateOption       = "@projmux_ai_state"
 	aiPaneTopicOption       = "@projmux_ai_topic"
 	aiPaneTopicManualOption = "@projmux_ai_topic_manual"
+	aiPaneHookActiveOption  = "@projmux_ai_hook_active"
+	aiPaneThreadIDOption    = "@projmux_ai_thread_id"
+	aiPaneSessionIDOption   = "@projmux_ai_session_id"
 )
 
 type aiCommandRunner interface {
@@ -122,6 +125,8 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runNotify(args[1:], stderr)
 	case "watch-title":
 		return c.runWatchTitle(args[1:], stderr)
+	case "ingest":
+		return c.runIngest(args[1:], stderr)
 	case "topic":
 		return c.runTopic(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
@@ -159,9 +164,17 @@ func (c *aiCommand) runStatus(args []string, stderr io.Writer) error {
 }
 
 func (c *aiCommand) applyAIStatus(state, paneID string) error {
+	return c.applyAIStatusWithNotify(state, paneID, attentionNotifyInput{})
+}
+
+func (c *aiCommand) applyAIStatusWithNotify(state, paneID string, notifyIn attentionNotifyInput) error {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
 		return nil
+	}
+	notifyIn.PaneID = paneID
+	if notifyIn.Lookup == nil {
+		notifyIn.Lookup = c.notifyLookup()
 	}
 
 	switch strings.TrimSpace(state) {
@@ -170,28 +183,28 @@ func (c *aiCommand) applyAIStatus(state, paneID string) error {
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateBusy)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
-		c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
+		c.notifyProducer().AckReplyReady(notifyIn)
 	case "waiting":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "waiting")
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
-		if c.paneVisibleToClient(paneID) {
+		if !notifyIn.Force && c.paneVisibleToClient(paneID) {
 			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionAckOption, "1")
 			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
 			// The pane is already active so no reply badge survives — clear
 			// any stale queue entry instead of pushing a new one.
-			c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
+			c.notifyProducer().AckReplyReady(notifyIn)
 		} else {
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateReply)
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionFocusArmedOption, "1")
 			_ = c.notifyAI(paneID)
-			c.notifyProducer().PushReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
+			c.notifyProducer().PushReplyReady(notifyIn)
 		}
 	case "idle", "":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
-		c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
+		c.notifyProducer().AckReplyReady(notifyIn)
 	default:
 		return fmt.Errorf("unknown ai status state: %s", state)
 	}
@@ -302,6 +315,9 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	if paneID == "" {
 		return nil
 	}
+	if isTruthyTmuxOption(c.readTmuxPaneOption(paneID, aiPaneHookActiveOption)) {
+		return nil
+	}
 
 	interval := c.watchInterval()
 	settleLimit := c.watchSettleLoops()
@@ -312,6 +328,9 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	for {
 		currentPaneID, err := c.read("tmux", "display-message", "-p", "-t", paneID, "#{pane_id}")
 		if err != nil || strings.TrimSpace(string(currentPaneID)) != paneID {
+			return nil
+		}
+		if isTruthyTmuxOption(c.readTmuxPaneOption(paneID, aiPaneHookActiveOption)) {
 			return nil
 		}
 		snapshot := c.readAIWatchSnapshot(paneID)
@@ -2195,6 +2214,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")
 	fmt.Fprintln(w, "  projmux ai notify [notify|reset] [pane]")
 	fmt.Fprintln(w, "  projmux ai watch-title [pane]")
+	fmt.Fprintln(w, "  projmux ai ingest <codex-notify> <json>")
 	fmt.Fprintln(w, "  projmux ai topic set <text> [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic clear [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic get [--pane <id>]")

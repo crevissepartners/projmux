@@ -209,6 +209,9 @@ stdin receives one JSON object:
   "pane": "%9",
   "session": "main",
   "message": "claude: reply ready · worker loop",
+  "metadata": {
+    "agent": "claude"
+  },
   "created_at": "2026-05-12T02:03:04Z"
 }
 ```

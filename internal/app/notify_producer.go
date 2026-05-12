@@ -28,8 +28,12 @@ type attentionNotifyProducer interface {
 // the only mandatory field; the producer reads everything else off tmux via
 // Lookup.
 type attentionNotifyInput struct {
-	PaneID string
-	Lookup attentionNotifyLookup
+	PaneID   string
+	Lookup   attentionNotifyLookup
+	ID       string
+	Text     string
+	Metadata map[string]string
+	Force    bool
 }
 
 // attentionNotifyLookup is the minimal tmux read surface the producer needs.
@@ -105,6 +109,14 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	socket := strings.TrimSpace(in.Lookup.PaneFormat(paneID, "#{socket_path}"))
 
 	topic := strings.TrimSpace(in.Lookup.PaneOption(paneID, aiPaneTopicOption))
+	text := strings.TrimSpace(in.Text)
+	if text == "" {
+		text = composeAttentionReplyText(agent, topic)
+	}
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		id = buildAttentionNotifyID(session, resolvedPane)
+	}
 
 	ttl := p.ttl
 	if ttl <= 0 {
@@ -112,10 +124,11 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	}
 
 	entry, _, err := p.store.Push(notify.PushInput{
-		ID:       buildAttentionNotifyID(session, resolvedPane),
-		Text:     composeAttentionReplyText(agent, topic),
+		ID:       id,
+		Text:     text,
 		Severity: notify.SeverityInfo,
 		Source:   notify.SourceAI,
+		Metadata: in.Metadata,
 		TTL:      ttl,
 		Target: notify.Target{
 			Socket:  socket,
