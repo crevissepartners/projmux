@@ -16,9 +16,10 @@ import (
 const welcomeStateVersion = 1
 
 type shellWelcomeState struct {
-	Version             int       `json:"version"`
-	LastWelcomedVersion string    `json:"last_welcomed_version"`
-	WelcomedAt          time.Time `json:"welcomed_at"`
+	Version              int       `json:"version"`
+	LastWelcomedVersion  string    `json:"last_welcomed_version"`
+	WelcomedAt           time.Time `json:"welcomed_at"`
+	PendingAttachWelcome bool      `json:"pending_attach_welcome,omitempty"`
 }
 
 func (c *shellCommand) prepareWelcomeState() (string, bool) {
@@ -52,9 +53,10 @@ func (c *shellCommand) prepareWelcomeState() (string, bool) {
 		return current, false
 	}
 	state := shellWelcomeState{
-		Version:             welcomeStateVersion,
-		LastWelcomedVersion: current,
-		WelcomedAt:          c.welcomeClock().UTC(),
+		Version:              welcomeStateVersion,
+		LastWelcomedVersion:  current,
+		WelcomedAt:           c.welcomeClock().UTC(),
+		PendingAttachWelcome: true,
 	}
 	data, err = json.MarshalIndent(state, "", "  ")
 	if err != nil {

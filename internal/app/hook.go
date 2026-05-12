@@ -270,9 +270,14 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook edit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	global := fs.Bool("global", false, "edit the global config.toml entry")
+	project := fs.Bool("project", false, "force a project-local override in .projmux/config.toml")
 	useEditor := fs.Bool("editor", false, "open the config.toml file in $EDITOR instead of the inline prompt")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *global && *project {
+		printHookUsage(stderr)
+		return usageError("hook edit: --global and --project are mutually exclusive")
 	}
 	if fs.NArg() != 1 {
 		printHookUsage(stderr)
@@ -301,6 +306,15 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 	if repo == "" {
 		return errors.New("hook edit requires a project context; run inside a project tree or set PROJMUX_CWD")
 	}
+	if !*project {
+		source, sourcePath, err := c.effectiveHookSource(event)
+		if err != nil {
+			return err
+		}
+		if source == hooks.EffectiveSourceGlobal {
+			return fmt.Errorf("hook %q is defined at %s; edit that file directly or run 'projmux hook edit %s --project' to create a project override", event, sourcePath, event)
+		}
+	}
 	path := filepath.Join(repo, ".projmux", "config.toml")
 	if *useEditor {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -309,6 +323,32 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 		return c.openInEditor(path, stdout, stderr)
 	}
 	return c.editProjectInline(repo, path, event, stdout, stderr)
+}
+
+func (c *hookCommand) effectiveHookSource(event string) (hooks.EffectiveSource, string, error) {
+	globalPath, globalCfg, globalErr := c.loadGlobal()
+	if globalErr != nil {
+		return "", "", globalErr
+	}
+	projectPath, projectCfg, projectErr, _ := c.loadProject()
+	if projectErr != nil {
+		return "", "", projectErr
+	}
+	merged := hooks.MergeEffective(globalCfg, projectCfg)
+	for _, entry := range merged.Hooks.Entries {
+		if entry.Key != event || strings.TrimSpace(entry.Value) == "" {
+			continue
+		}
+		switch entry.Source {
+		case hooks.EffectiveSourceProject:
+			return entry.Source, projectPath, nil
+		case hooks.EffectiveSourceGlobal:
+			return entry.Source, globalPath, nil
+		default:
+			return entry.Source, "", nil
+		}
+	}
+	return hooks.EffectiveSourceDefault, "", nil
 }
 
 func (c *hookCommand) editGlobalInline(path, event string, stdout, stderr io.Writer) error {
@@ -704,7 +744,7 @@ func supportedHookEventList() string {
 func printHookUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux hook list [--global|--project|--effective]")
-	fmt.Fprintln(w, "  projmux hook edit <event> [--global] [--editor]")
+	fmt.Fprintln(w, "  projmux hook edit <event> [--global|--project] [--editor]")
 	fmt.Fprintln(w, "  projmux hook validate")
 	fmt.Fprintln(w, "  projmux hook trust [<project>]")
 	fmt.Fprintln(w, "  projmux hook untrust [<project>]")

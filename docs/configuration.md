@@ -47,11 +47,19 @@ rewrites `~/.config/projmux/tmux.conf`, and, when Settings is running inside
 tmux, sources that app config so non-terminal-layer tmux chords take effect
 immediately.
 
-Settings > Labs > Diagnose keybindings is the in-app diagnostic/remediation
-surface for the same catalog. It probes one action key at a time through the
-controlling TTY, reports whether the key arrived as a plain tmux chord, CSI-u
-fallback, unexpected sequence, or timeout, and delegates supported terminal
-fallback preview/apply operations to the `projmux init` engine.
+Settings > Keybindings is the single in-app keybinding surface, split into
+chips:
+
+- `Bindings` (action-to-chord editing),
+- `Diagnostic` (key delivery checks),
+- `Probe` (raw sequence diagnostics),
+- `Init` (terminal fallback adapters).
+
+The `Diagnostic` chip is the in-app diagnostic/remediation surface for the same
+catalog. It probes one action key at a time through the controlling TTY, reports
+whether the key arrived as a plain tmux chord, CSI-u fallback, unexpected
+sequence, or timeout, and delegates supported terminal-fallback preview/apply
+operations to the `projmux init` engine.
 
 `~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
 absent, generated tmux config stays on the built-in defaults.
@@ -216,6 +224,9 @@ the cascade pinned the value.
 
 Hook details for new-session lifecycle hooks and project-local
 `.projmux/config.toml` live in [Hooks](hooks.md).
+Settings names that entry point as **Project recipe** (search still matches
+`config.toml` as an alias) to avoid leaking internal file names in the primary
+Settings view.
 
 ### Toast click handler (WSL + Windows Terminal)
 
@@ -301,6 +312,13 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/welcomed-v<version>.json
 If the marker is missing, the next shell launch shows the welcome again. If the
 marker is corrupt or cannot be written, shell startup continues without the
 welcome.
+
+The same guide is also available on demand through `projmux welcome`, and it is
+linked from Settings > About as `Welcome`.
+
+In this branch, `projmux welcome` is implemented as a revisit path only; it
+shows the guide but does not yet add a guaranteed attach-time popup. The
+`pending_attach_welcome` state is present so auto-popup can be enabled as a follow-up.
 
 ## Decoration Mode
 

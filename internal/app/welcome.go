@@ -57,22 +57,7 @@ func (c *shellCommand) promptWelcome(stdout, stderr io.Writer) (bool, error) {
 }
 
 func (c *shellCommand) welcomeUpdateStatus() (updateStatus, bool) {
-	if c.update == nil {
-		return updateStatus{}, false
-	}
-	status, err := c.update.status()
-	if err != nil {
-		return updateStatus{}, false
-	}
-	if status.CacheState != "fresh" || strings.TrimSpace(status.LatestVersion) == "" {
-		return updateStatus{}, false
-	}
-	switch status.UpdateState {
-	case "current", "update_available":
-		return status, true
-	default:
-		return updateStatus{}, false
-	}
+	return resolveWelcomeUpdateStatus(c.update)
 }
 
 func (c *shellCommand) readWelcomeUpdateAction(stdout io.Writer) (string, error) {
@@ -91,8 +76,16 @@ func (c *shellCommand) readWelcomeUpdateAction(stdout io.Writer) (string, error)
 }
 
 func (c *shellCommand) welcomeWidth() int {
+	return welcomeWidthFromEnv(c.env)
+}
+
+func welcomeWidthFromEnv(lookupEnv func(string) string) int {
 	width := 80
-	cols, err := strconv.Atoi(strings.TrimSpace(c.env("COLUMNS")))
+	colsRaw := ""
+	if lookupEnv != nil {
+		colsRaw = lookupEnv("COLUMNS")
+	}
+	cols, err := strconv.Atoi(strings.TrimSpace(colsRaw))
 	if err == nil && cols > 0 && cols < width {
 		width = cols
 	}
@@ -100,6 +93,25 @@ func (c *shellCommand) welcomeWidth() int {
 		width = 24
 	}
 	return width
+}
+
+func resolveWelcomeUpdateStatus(update *updateCommand) (updateStatus, bool) {
+	if update == nil {
+		return updateStatus{}, false
+	}
+	status, err := update.status()
+	if err != nil {
+		return updateStatus{}, false
+	}
+	if status.CacheState != "fresh" || strings.TrimSpace(status.LatestVersion) == "" {
+		return updateStatus{}, false
+	}
+	switch status.UpdateState {
+	case "current", "update_available":
+		return status, true
+	default:
+		return updateStatus{}, false
+	}
 }
 
 func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStatus, promptUpdate, skipped bool, width int) error {

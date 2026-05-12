@@ -33,6 +33,9 @@ when available. If an installer-supported update is available, pressing Enter
 at the inline prompt runs `projmux update apply`; answering `n` prints that
 manual command and continues into the shell.
 
+If you want to revisit that same guide later, run `projmux welcome`. Phase 2
+auto-popup on attach is not implemented yet in this branch.
+
 ## Runtime Tools
 
 Normal use needs:

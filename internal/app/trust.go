@@ -228,7 +228,7 @@ func (c *settingsCommand) projectTrustEntries(ctx settingsProjectContext) []intp
 		})
 	case hooks.ProjectConfigTrustAbsent:
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("No actions", "create "+filepath.Base(configPath)+" first via config.toml row"),
+			Label: settingsLabelDim("No actions", "create "+filepath.Base(configPath)+" first via Project recipe row"),
 			Value: settingsNoopValue,
 		})
 	}

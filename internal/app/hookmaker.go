@@ -36,6 +36,7 @@ const (
 	settingsActionPrefixHookAdd    = "hook-add:"
 	settingsActionPrefixHookEdit   = "hook-edit:"
 	settingsActionPrefixHookRemove = "hook-remove:"
+	settingsActionPrefixHookView   = "hook-view:"
 
 	hookScopeGlobal  = "global"
 	hookScopeProject = "project"
@@ -158,7 +159,8 @@ func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error
 			}
 		case strings.HasPrefix(action, settingsActionPrefixHookAdd),
 			strings.HasPrefix(action, settingsActionPrefixHookEdit),
-			strings.HasPrefix(action, settingsActionPrefixHookRemove):
+			strings.HasPrefix(action, settingsActionPrefixHookRemove),
+			strings.HasPrefix(action, settingsActionPrefixHookView):
 			if err := c.runHookMakerAction(ctx, action, stdout, stderr); err != nil {
 				return err
 			}
@@ -191,7 +193,8 @@ func (c *settingsCommand) runGlobalHooksSection(stdout, stderr io.Writer) error 
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixHookAdd),
 			strings.HasPrefix(action, settingsActionPrefixHookEdit),
-			strings.HasPrefix(action, settingsActionPrefixHookRemove):
+			strings.HasPrefix(action, settingsActionPrefixHookRemove),
+			strings.HasPrefix(action, settingsActionPrefixHookView):
 			if err := c.runHookMakerAction(settingsProjectContext{}, action, stdout, stderr); err != nil {
 				return err
 			}
@@ -213,13 +216,19 @@ func renderHookRowEntries(row settingsHookRow) []intpickercompat.Entry {
 	entries := make([]intpickercompat.Entry, 0, 2)
 	if strings.TrimSpace(row.Declared) != "" {
 		entries = append(entries, settingsHookActiveEntry(row))
-	} else {
+	} else if hookRowInAppEditable(row) {
 		entries = append(entries, settingsHookAddRow(row))
+	} else {
+		entries = append(entries, settingsHookReadonlyMissingEntry(row))
 	}
 	if row.Legacy.Path != "" {
 		entries = append(entries, settingsHookLegacyEntry(row))
 	}
 	return entries
+}
+
+func hookRowInAppEditable(row settingsHookRow) bool {
+	return row.Scope == hookScopeProject
 }
 
 func settingsHookAddRow(row settingsHookRow) intpickercompat.Entry {
@@ -232,9 +241,30 @@ func settingsHookAddRow(row settingsHookRow) intpickercompat.Entry {
 
 func settingsHookActiveEntry(row settingsHookRow) intpickercompat.Entry {
 	desc := "active - run = " + row.Declared
+	value := settingsActionPrefixHookEdit + row.Scope + ":" + row.Event
+	glyph := settingsGlyphToggle
+	color := settingsColorAdd
+	search := row.Event + " active run " + row.Declared
+	if !hookRowInAppEditable(row) {
+		desc = "read-only - " + row.ConfigPath + " [hooks." + row.Event + "]"
+		value = settingsActionPrefixHookView + row.Scope + ":" + row.Event
+		glyph = settingsGlyphOpen
+		color = settingsColorType
+		search += " read-only global system " + row.ConfigPath
+	}
 	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphToggle, settingsColorAdd, row.Event, desc),
-		Value: settingsActionPrefixHookEdit + row.Scope + ":" + row.Event,
+		Label:     settingsLabel(glyph, color, row.Event, desc),
+		Value:     value,
+		SearchKey: search,
+	}
+}
+
+func settingsHookReadonlyMissingEntry(row settingsHookRow) intpickercompat.Entry {
+	desc := "missing - " + row.ConfigPath + " [hooks." + row.Event + "] read-only"
+	return intpickercompat.Entry{
+		Label:     settingsLabelDim(row.Event, desc),
+		Value:     settingsNoopValue,
+		SearchKey: row.Event + " missing read-only global system " + row.ConfigPath,
 	}
 }
 
@@ -348,8 +378,9 @@ func settingsProjectConfigEntry(projectPath string) intpickercompat.Entry {
 	path := filepath.Join(projectPath, ".projmux", "config.toml")
 	state := settingsProjectConfigState(path)
 	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "config.toml", state),
-		Value: settingsSectionProjectConfig,
+		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Project recipe", state),
+		Value:     settingsSectionProjectConfig,
+		SearchKey: "Project recipe project config config.toml recipe " + state,
 	}
 }
 
@@ -433,6 +464,13 @@ func (c *settingsCommand) runHookMakerAction(ctx settingsProjectContext, action 
 			return fmt.Errorf("invalid hook remove action: %s", body)
 		}
 		return c.hookMakerRemoveDeclarative(ctx, scope, event, stdout)
+	case strings.HasPrefix(action, settingsActionPrefixHookView):
+		body := strings.TrimPrefix(action, settingsActionPrefixHookView)
+		scope, event, ok := parseHookActionBody(body)
+		if !ok {
+			return fmt.Errorf("invalid hook view action: %s", body)
+		}
+		return c.runReadonlyHookView(ctx, scope, event, stdout, stderr)
 	default:
 		return fmt.Errorf("unknown hook maker action: %s", action)
 	}
@@ -578,6 +616,47 @@ func (c *settingsCommand) hookMakerEditGlobalDeclarative(event string, stdout, s
 	return err
 }
 
+func (c *settingsCommand) runReadonlyHookView(ctx settingsProjectContext, scope, event string, stdout, stderr io.Writer) error {
+	if scope == hookScopeProject {
+		return c.hookMakerEditProjectDeclarative(ctx, event, stdout, stderr)
+	}
+	path, err := c.globalConfigPath()
+	if err != nil {
+		return err
+	}
+	cfg, err := hooks.LoadGlobalConfig(path)
+	if err != nil {
+		return err
+	}
+	run := ""
+	if cfg.Hooks != nil {
+		run = strings.TrimSpace(cfg.Hooks[hooks.Event(event)])
+	}
+	projectPath := "(open Settings > Project > Project recipe from a project)"
+	if projectCtx := c.resolveSettingsProjectContext(); projectCtx.hasProject() {
+		projectPath = settingsProjectConfigPath(projectCtx)
+	}
+	_, err = c.runPicker(intpickercompat.Options{
+		UI:     "settings-hook-readonly",
+		Title:  "Project recipe - [hooks." + event + "]",
+		Prompt: "Read-only hook > ",
+		Footer: projmuxFooter("Press Back row, Esc, Alt+5, or Ctrl+Alt+S to close"),
+		Entries: []intpickercompat.Entry{
+			settingsBackEntry(),
+			{Label: settingsLabelInfo("Defined in", path, "source: "+scope), Value: settingsNoopValue},
+			{Label: settingsLabelInfo("run", nonEmpty(run, "(unset)"), "[hooks."+event+"]"), Value: settingsNoopValue},
+			{Label: settingsLabelDim("Read-only", "managed outside this project; edit the source file directly"), Value: settingsNoopValue},
+			{Label: settingsLabelInfo("Project override", projectPath, "Settings > Project > Project recipe"), Value: settingsNoopValue},
+		},
+		ExpectKeys: []string{"enter"},
+		Bindings:   settingsCloseBindings(),
+	})
+	if errors.Is(err, errSettingsClosed) {
+		return nil
+	}
+	return err
+}
+
 // --- project config section ------------------------------------------------
 
 func (c *settingsCommand) runProjectConfigSection(stdout, stderr io.Writer) error {
@@ -654,8 +733,8 @@ func (c *settingsCommand) projectConfigOptions(ctx settingsProjectContext) intpi
 	return intpickercompat.Options{
 		UI:         "settings-project-config",
 		Entries:    c.projectConfigEntries(ctx),
-		Title:      "Project Config - env, kube, startup",
-		Prompt:     "Settings > Project > config.toml > ",
+		Title:      "Project recipe - env, kube, startup",
+		Prompt:     "Settings > Project > Project recipe > ",
 		Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
@@ -666,8 +745,9 @@ func (c *settingsCommand) projectConfigEntries(ctx settingsProjectContext) []int
 	entries := []intpickercompat.Entry{settingsBackEntry()}
 	if !ctx.hasProject() {
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("config.toml", "disabled - no project context"),
-			Value: settingsNoopValue,
+			Label:     settingsLabelDim("Project recipe", "disabled - no project context"),
+			Value:     settingsNoopValue,
+			SearchKey: "Project recipe config.toml",
 		})
 	}
 	path := settingsProjectConfigPath(ctx)
@@ -687,7 +767,7 @@ func (c *settingsCommand) projectConfigEntries(ctx settingsProjectContext) []int
 	entries = append(entries, projectConfigStartupEntries(cfg)...)
 	entries = append(entries, projectConfigKubeEntries(cfg)...)
 	entries = append(entries, projectConfigEnvEntries(cfg)...)
-	// Hooks are now authored from the Hooks page; the config.toml section is
+	// Hooks are now authored from the Hooks page; the Project recipe section is
 	// data-only for env / kube / startup. Hook commands are still parsed and
 	// preserved on save (UpdateProjectConfig round-trips them).
 	return entries

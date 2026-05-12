@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,7 +70,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsSectionProject:        {Name: "Project Picker", Axis: settingsAxisGlobal},
 	settingsSectionGlobalHooks:    {Name: "Hooks", Axis: settingsAxisGlobal},
 	settingsSectionProjectHooks:   {Name: "Hooks", Axis: settingsAxisProject},
-	settingsSectionProjectConfig:  {Name: "Project Config", Axis: settingsAxisProject},
+	settingsSectionProjectConfig:  {Name: "Project recipe", Axis: settingsAxisProject},
 	settingsSectionProjectTrust:   {Name: "Trust", Axis: settingsAxisProject},
 	settingsSectionEffectiveMerge: {Name: "Effective merge view", Axis: settingsAxisProject},
 	settingsSectionAI:             {Name: "AI Settings", Axis: settingsAxisGlobal},
@@ -86,9 +87,13 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsWorkdirAdd:            {Name: "Add Workdir", Axis: settingsAxisGlobal},
 	settingsWorkdirList:           {Name: "Workdirs", Axis: settingsAxisGlobal},
 	settingsWorkdirTyped:          {Name: "Type Workdir", Axis: settingsAxisGlobal},
-	settingsLabKeybindings:        {Name: "Diagnose Keybindings", Axis: settingsAxisGlobal},
+	settingsKeybindingsDiagnostic: {Name: "Keybinding Diagnostic", Axis: settingsAxisGlobal},
+	settingsKeybindingsProbe:      {Name: "Keybinding Probe", Axis: settingsAxisGlobal},
+	settingsKeybindingsInit:       {Name: "Keybinding Init", Axis: settingsAxisGlobal},
+	settingsLabKeybindings:        {Name: "Keybindings", Axis: settingsAxisGlobal},
 	settingsUpdateApply:           {Name: "Update Now", Axis: settingsAxisGlobal},
 	settingsUpdateCheck:           {Name: "Check Updates", Axis: settingsAxisGlobal},
+	settingsWelcomeShow:           {Name: "Welcome", Axis: settingsAxisGlobal},
 }
 
 var settingsEntryPrefixCatalog = []struct {
@@ -101,10 +106,12 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixHookAdd, settingsEntryMeta{Name: "Hook maker - add", Axis: settingsAxisBoth}},
 	{settingsActionPrefixHookEdit, settingsEntryMeta{Name: "Hook maker - edit", Axis: settingsAxisBoth}},
 	{settingsActionPrefixHookRemove, settingsEntryMeta{Name: "Hook maker - remove", Axis: settingsAxisBoth}},
+	{settingsActionPrefixHookView, settingsEntryMeta{Name: "Hook maker - view", Axis: settingsAxisBoth}},
 	{settingsActionPrefixKeymap, settingsEntryMeta{Name: "Keybindings", Axis: settingsAxisGlobal}},
-	{settingsActionPrefixLabKeymap, settingsEntryMeta{Name: "Keybinding diagnostics", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixLabKeymap, settingsEntryMeta{Name: "Keybindings diagnostics", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixPicker, settingsEntryMeta{Name: "Picker backend", Axis: settingsAxisGlobal}},
-	{settingsActionPrefixProjectConfig, settingsEntryMeta{Name: "Project Config", Axis: settingsAxisProject}},
+	{settingsActionPrefixProjectConfig, settingsEntryMeta{Name: "Project recipe", Axis: settingsAxisProject}},
+	{settingsActionPrefixWelcome, settingsEntryMeta{Name: "Welcome", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixTrust, settingsEntryMeta{Name: "Trust", Axis: settingsAxisProject}},
 	{settingsActionPrefixProjdir, settingsEntryMeta{Name: "Project Root", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixStatusbar, settingsEntryMeta{Name: "Appearance", Axis: settingsAxisGlobal}},
@@ -148,6 +155,7 @@ const (
 	settingsActionPrefixLabKeymap         = "lab-keymap:"
 	settingsActionPrefixPicker            = "picker-backend:"
 	settingsActionPrefixProjectConfig     = "project-config:"
+	settingsActionPrefixWelcome           = "welcome:"
 	settingsActionPrefixTrust             = "trust:"
 	settingsActionPrefixProjdir           = "projdir:"
 	settingsActionPrefixStatusbar         = "statusbar-decoration:"
@@ -165,7 +173,12 @@ const (
 	settingsWorkdirAdd                    = "workdir:add"
 	settingsWorkdirList                   = "workdir:list"
 	settingsWorkdirTyped                  = "workdir:typed"
+	settingsKeybindingsBindings           = "keybindings:bindings"
+	settingsKeybindingsDiagnostic         = "keybindings:diagnostic"
+	settingsKeybindingsProbe              = "keybindings:probe"
+	settingsKeybindingsInit               = "keybindings:init"
 	settingsLabKeybindings                = "labs:keybindings"
+	settingsWelcomeShow                   = "welcome:show"
 	settingsKeymapFieldPlain              = "plain"
 	settingsKeymapFieldPrefix             = "prefix"
 )
@@ -471,8 +484,9 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 				Value: settingsNoopValue,
 			},
 			{
-				Label: settingsLabelDim("config.toml", "disabled - no project context"),
-				Value: settingsNoopValue,
+				Label:     settingsLabelDim("Project recipe", "disabled - no project context"),
+				Value:     settingsNoopValue,
+				SearchKey: "Project recipe config.toml",
 			},
 			{
 				Label: settingsLabelDim("Effective merge view", "disabled - no project context"),
@@ -494,8 +508,9 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 			Value: settingsSectionProjectHooks,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "config.toml", "edit env, kube, and startup"),
-			Value: settingsSectionProjectConfig,
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Project recipe", "declare env, kube, startup"),
+			Value:     settingsSectionProjectConfig,
+			SearchKey: "Project recipe config.toml project config env kube startup",
 		},
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Effective merge view", "global + project merge with source labels"),
@@ -650,25 +665,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Bindings:   settingsCloseBindings(),
 		}, nil
 	case settingsSectionKeybindings:
-		entries, err := c.keybindingEntries()
-		if err != nil {
-			entries = []intpickercompat.Entry{
-				settingsBackEntry(),
-				{
-					Label: settingsLabelDim("Keymap error", err.Error()),
-					Value: settingsNoopValue,
-				},
-			}
-		}
-		return intpickercompat.Options{
-			UI:         "settings-keybindings",
-			Entries:    entries,
-			Title:      "Keybindings - Edit tmux plain and prefix chords",
-			Prompt:     "Settings > Keybindings > ",
-			Footer:     projmuxFooter("Enter: edit  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
-			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
-		}, nil
+		return c.keybindingsOptions(settingsKeybindingsBindings), nil
 	case settingsSectionLabs:
 		return intpickercompat.Options{
 			UI:         "settings-labs",
@@ -797,7 +794,7 @@ func (c *settingsCommand) runProjectRootSettings(stdout, stderr io.Writer) error
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-project-root",
 			Entries:    entries,
-			Title:      "Project Root - Manage the primary root",
+			Title:      "Project Root - Effective and saved root",
 			Prompt:     "Settings > Project Picker > Project Root > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
@@ -1014,9 +1011,9 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-workdirs",
 			Entries:    entries,
-			Title:      "Workdirs - Add or remove scan roots",
+			Title:      "Workdirs - Saved and inherited scan roots",
 			Prompt:     "Settings > Project Picker > Workdirs > ",
-			Footer:     projmuxFooter("Enter: add/remove  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: open/add/remove  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1046,16 +1043,10 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 }
 
 func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) {
-	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
-		{
-			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Workdir...", "append a directory to the saved workdirs list"),
-			Value: settingsWorkdirAdd,
-		},
-	}
+	entries := []intpickercompat.Entry{settingsBackEntry()}
 	if c.switcher == nil {
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("(no saved workdirs)", ""),
+			Label: settingsLabelDim("Saved workdirs", "unavailable"),
 			Value: settingsNoopValue,
 		}), nil
 	}
@@ -1067,10 +1058,14 @@ func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) 
 
 	if len(saved) == 0 {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("(no saved workdirs)", ""),
+			Label: settingsLabelInfo("Saved workdirs", "(none)", "~/.config/projmux/workdirs"),
 			Value: settingsNoopValue,
 		})
 	} else {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Saved workdirs", strconv.Itoa(len(saved)), "~/.config/projmux/workdirs"),
+			Value: settingsNoopValue,
+		})
 		for _, dir := range saved {
 			entries = append(entries, intpickercompat.Entry{
 				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Remove", dir+"  (saved)"),
@@ -1088,6 +1083,10 @@ func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) 
 			Value: settingsNoopValue,
 		})
 	}
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Workdir...", "append a directory to the saved workdirs list"),
+		Value: settingsWorkdirAdd,
+	})
 	return entries, nil
 }
 
@@ -1194,18 +1193,6 @@ func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) 
 		return nil, err
 	}
 
-	entries = append(entries,
-		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Set Project Root...", "save one primary root path directly"),
-			Value: settingsProjdirSetTyped,
-		},
-		c.setCurrentProjectRootEntry(),
-		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Clear Saved Project Root", "remove ~/.config/projmux/projdir"),
-			Value: settingsProjdirClear,
-		},
-	)
-
 	if info.EffectiveValue == "" {
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Effective Project Root", "not configured", "no env, tmux option, or saved value"),
@@ -1242,6 +1229,15 @@ func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) 
 	}
 
 	entries = append(entries,
+		intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Set Project Root...", "save one primary root path directly"),
+			Value: settingsProjdirSetTyped,
+		},
+		c.setCurrentProjectRootEntry(),
+		intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Clear Saved Project Root", "remove ~/.config/projmux/projdir"),
+			Value: settingsProjdirClear,
+		},
 		c.projectRootHintEntry(),
 		intpickercompat.Entry{
 			Label: "  " + settingsColorDim + "Env PROJMUX_PROJDIR and tmux @projmux_projdir override the saved value until unset." + settingsColorReset,
@@ -1461,12 +1457,107 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 	return entries
 }
 
-func (c *settingsCommand) runKeybindingsSection(stdout, stderr io.Writer) error {
-	for {
-		options, err := c.sectionOptions(settingsSectionKeybindings)
-		if err != nil {
-			return err
+func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Options {
+	active = normalizeKeybindingsTab(active)
+	entries, err := c.keybindingsTabEntries(active)
+	if err != nil {
+		entries = []intpickercompat.Entry{
+			settingsBackEntry(),
+			{
+				Label: settingsLabelDim("Keymap error", err.Error()),
+				Value: settingsNoopValue,
+			},
 		}
+	}
+	return intpickercompat.Options{
+		UI:         "settings-keybindings",
+		Entries:    entries,
+		Title:      "Keybindings",
+		TitleChips: keybindingsTitleChips(active),
+		Prompt:     "Settings > Keybindings > ",
+		Footer:     projmuxFooter("Enter: edit/apply  |  click chip: switch view  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys: []string{"enter"},
+		Bindings:   settingsCloseBindings(),
+	}
+}
+
+func normalizeKeybindingsTab(active string) string {
+	switch active {
+	case settingsKeybindingsBindings, settingsKeybindingsDiagnostic, settingsKeybindingsProbe, settingsKeybindingsInit:
+		return active
+	default:
+		return settingsKeybindingsBindings
+	}
+}
+
+func keybindingsTitleChips(active string) []projmuxpicker.Chip {
+	return []projmuxpicker.Chip{
+		{Label: "Bindings", Active: active == settingsKeybindingsBindings, ClickValue: settingsKeybindingsBindings},
+		{Label: "Diagnostic", Active: active == settingsKeybindingsDiagnostic, ClickValue: settingsKeybindingsDiagnostic},
+		{Label: "Probe", Active: active == settingsKeybindingsProbe, ClickValue: settingsKeybindingsProbe},
+		{Label: "Init", Active: active == settingsKeybindingsInit, ClickValue: settingsKeybindingsInit},
+	}
+}
+
+func (c *settingsCommand) keybindingsTabEntries(active string) ([]intpickercompat.Entry, error) {
+	switch normalizeKeybindingsTab(active) {
+	case settingsKeybindingsBindings:
+		return c.keybindingEntries()
+	case settingsKeybindingsDiagnostic:
+		return c.labKeybindingEntries()
+	case settingsKeybindingsProbe:
+		entries, err := c.labKeybindingEntries()
+		if err != nil {
+			return nil, err
+		}
+		if len(entries) > 1 {
+			entries = append(entries[:1], append([]intpickercompat.Entry{{
+				Label: settingsLabelInfo("Probe", "select an action, then press its key", "raw key delivery"),
+				Value: settingsNoopValue,
+			}}, entries[1:]...)...)
+		}
+		return entries, nil
+	case settingsKeybindingsInit:
+		terminal := detectTerminal(c.lookupEnv)
+		entries := []intpickercompat.Entry{
+			settingsBackEntry(),
+			{Label: settingsLabelInfo("Terminal", terminal.Display(), labTerminalSupportSummary(terminal)), Value: settingsNoopValue},
+			{Label: settingsLabelInfo("After fallback apply", terminal.ReloadCapability().Label, terminal.ReloadCapability().Summary), Value: settingsNoopValue},
+		}
+		if terminal.InitCommand() != "" {
+			entries = append(entries,
+				intpickercompat.Entry{
+					Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview terminal fallback", strings.TrimSuffix(terminal.InitCommand(), " --apply")),
+					Value: settingsKeybindingsInit + ":preview",
+				},
+				intpickercompat.Entry{
+					Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Apply terminal fallback", terminal.InitCommand()),
+					Value: settingsKeybindingsInit + ":apply",
+				},
+			)
+		} else if hint := terminal.RemediationHint(); hint != "" {
+			entries = append(entries, intpickercompat.Entry{
+				Label: settingsLabelInfo("Manual fallback", hint, ""),
+				Value: settingsNoopValue,
+			})
+		}
+		return entries, nil
+	default:
+		return c.keybindingEntries()
+	}
+}
+
+func (c *settingsCommand) runKeybindingsSection(stdout, stderr io.Writer) error {
+	return c.runKeybindingsSectionWithActive(settingsKeybindingsBindings, stdout, stderr)
+}
+
+func (c *settingsCommand) runKeybindingsSectionWithActive(initial string, stdout, stderr io.Writer) error {
+	active := settingsKeybindingsBindings
+	if normalized := normalizeKeybindingsTab(initial); normalized != "" {
+		active = normalized
+	}
+	for {
+		options := c.keybindingsOptions(active)
 		result, err := c.runPicker(options)
 		if err != nil {
 			return err
@@ -1478,12 +1569,35 @@ func (c *settingsCommand) runKeybindingsSection(stdout, stderr io.Writer) error 
 		if action == settingsBackValue {
 			return nil
 		}
+		if action == settingsKeybindingsBindings || action == settingsKeybindingsDiagnostic || action == settingsKeybindingsProbe || action == settingsKeybindingsInit {
+			active = action
+			continue
+		}
 		if action == settingsNoopValue {
 			continue
 		}
 		if after, ok := strings.CutPrefix(action, settingsActionPrefixKeymap); ok {
 			id := after
 			if err := c.runKeybindingDetail(id, stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
+		if after, ok := strings.CutPrefix(action, settingsActionPrefixLabKeymap); ok {
+			id := after
+			if err := c.runLabKeybindingDetail(id, stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
+		if action == settingsKeybindingsInit+":preview" {
+			if err := c.runLabTerminalInit(false, stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
+		if action == settingsKeybindingsInit+":apply" {
+			if err := c.runLabTerminalInit(true, stdout, stderr); err != nil {
 				return err
 			}
 			continue
@@ -1749,7 +1863,7 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 		case action == settingsNoopValue:
 			continue
 		case action == settingsLabKeybindings:
-			if err := c.runLabKeybindingsSection(stdout, stderr); err != nil {
+			if err := c.runKeybindingsSectionWithActive(settingsKeybindingsDiagnostic, stdout, stderr); err != nil {
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixHooks):
@@ -1990,7 +2104,7 @@ func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpick
 	if res, ok := c.lastLabProbe[actionID]; ok {
 		entries = append(entries, labProbeOutcomeEntries(prefix, action, defaultAction, res, terminal)...)
 	}
-	return entries, "Keybinding Lab - " + action.Description, nil
+	return entries, "Keybindings - " + action.Description, nil
 }
 
 func labProbeOutcomeEntries(prefix string, action, defaultAction keyBindingAction, res probeResult, terminal terminalInfo) []intpickercompat.Entry {
@@ -2184,12 +2298,8 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	current, source := c.currentPickerBackend()
 	hookMode, hookSource := c.currentProjectHooksMode()
-	entries := make([]intpickercompat.Entry, 0, 6)
+	entries := make([]intpickercompat.Entry, 0, 5)
 	entries = append(entries, settingsBackEntry())
-	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Diagnose keybindings", "probe delivery and apply terminal fallbacks"),
-		Value: settingsLabKeybindings,
-	})
 	entries = append(entries, intpickercompat.Entry{
 		Label: settingsLabelInfo("Project hooks", string(hookMode), hookSource),
 		Value: settingsNoopValue,
@@ -2313,6 +2423,10 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 	}
 	entries := make([]intpickercompat.Entry, 0, len(rows)+8)
 	entries = append(entries, settingsBackEntry())
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Welcome", "revisit the shell quickstart guide"),
+		Value: settingsWelcomeShow,
+	})
 	if statusErr != nil {
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Update", "status unavailable", statusErr.Error()),
@@ -2401,6 +2515,15 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return c.update.Run([]string{"check"}, stdout, stderr)
 		default:
 			return fmt.Errorf("unknown update settings action: %s", action)
+		}
+	case strings.HasPrefix(value, settingsActionPrefixWelcome):
+		switch strings.TrimPrefix(value, settingsActionPrefixWelcome) {
+		case "show":
+			welcome := newWelcomeCommand(c.update)
+			welcome.lookupEnv = c.lookupEnv
+			return welcome.Run(nil, stdout, stderr)
+		default:
+			return fmt.Errorf("unknown welcome settings action: %s", value)
 		}
 	case strings.HasPrefix(value, settingsActionPrefixWorkdir):
 		action := strings.TrimPrefix(value, settingsActionPrefixWorkdir)

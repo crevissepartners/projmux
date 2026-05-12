@@ -408,7 +408,7 @@ func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 			t.Fatalf("project tab entry values = %#v, want disabled/noop rows only without inline tab toggle", entryValues(options.Entries))
 		}
 	}
-	for _, label := range []string{"Trust", "Hooks (project)", "config.toml", "Effective merge view"} {
+	for _, label := range []string{"Trust", "Hooks (project)", "Project recipe", "Effective merge view"} {
 		if !hasEntryLabelContaining(options.Entries, label) {
 			t.Fatalf("project tab entries = %#v, want label containing %q", options.Entries, label)
 		}
@@ -810,6 +810,47 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	}
 	if len(tmuxCalls) != 0 {
 		t.Fatalf("tmux calls = %#v, want none", tmuxCalls)
+	}
+}
+
+func TestSettingsLabsKeybindingsRedirectsToUnifiedDiagnosticView(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	var keybindingOptions intpickercompat.Options
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+		case 3:
+			keybindingOptions = options
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 4:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := keybindingOptions.UI, "settings-keybindings"; got != want {
+		t.Fatalf("redirect UI = %q, want %q", got, want)
+	}
+	wantChips := []projmuxpicker.Chip{
+		{Label: "Bindings", Active: false, ClickValue: settingsKeybindingsBindings},
+		{Label: "Diagnostic", Active: true, ClickValue: settingsKeybindingsDiagnostic},
+		{Label: "Probe", Active: false, ClickValue: settingsKeybindingsProbe},
+		{Label: "Init", Active: false, ClickValue: settingsKeybindingsInit},
+	}
+	if got := keybindingOptions.TitleChips; !reflect.DeepEqual(got, wantChips) {
+		t.Fatalf("redirect chips = %#v, want %#v", got, wantChips)
 	}
 }
 
@@ -1503,7 +1544,7 @@ func TestSettingsHubKeybindingsInvalidKeymapShowsErrorRow(t *testing.T) {
 	}
 }
 
-func TestSettingsLabsKeybindingsListsActions(t *testing.T) {
+func TestSettingsKeybindingsDiagnosticListsActions(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1517,13 +1558,15 @@ func TestSettingsLabsKeybindingsListsActions(t *testing.T) {
 			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
 		case 2:
 			labsOptions = options
-			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
+		case 5:
 			listOptions = options
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
+		case 6:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -1543,11 +1586,11 @@ func TestSettingsLabsKeybindingsListsActions(t *testing.T) {
 	if got, want := labsOptions.UI, "settings-labs"; got != want {
 		t.Fatalf("labs UI = %q, want %q", got, want)
 	}
-	if !hasEntryValue(labsOptions.Entries, settingsLabKeybindings) {
-		t.Fatalf("labs entries = %#v, want keybinding lab row", labsOptions.Entries)
+	if hasEntryValue(labsOptions.Entries, settingsLabKeybindings) {
+		t.Fatalf("labs entries = %#v, did not want visible keybinding row", labsOptions.Entries)
 	}
-	if got, want := listOptions.UI, "settings-lab-keybindings"; got != want {
-		t.Fatalf("keybinding lab UI = %q, want %q", got, want)
+	if got, want := listOptions.UI, "settings-keybindings"; got != want {
+		t.Fatalf("keybindings UI = %q, want %q", got, want)
 	}
 	if !hasEntryLabelContaining(listOptions.Entries, "Ghostty") {
 		t.Fatalf("keybinding lab entries = %#v, want detected terminal", listOptions.Entries)
@@ -1560,6 +1603,23 @@ func TestSettingsLabsKeybindingsListsActions(t *testing.T) {
 	}
 	if !hasEntryLabelContaining(listOptions.Entries, "plain M-a (custom)") {
 		t.Fatalf("keybinding lab entries = %#v, want custom plain summary", listOptions.Entries)
+	}
+}
+
+func TestSettingsKeybindingsTitleChipsExposeUnifiedTabs(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{}
+	options := cmd.keybindingsOptions(settingsKeybindingsProbe)
+
+	want := []projmuxpicker.Chip{
+		{Label: "Bindings", Active: false, ClickValue: settingsKeybindingsBindings},
+		{Label: "Diagnostic", Active: false, ClickValue: settingsKeybindingsDiagnostic},
+		{Label: "Probe", Active: true, ClickValue: settingsKeybindingsProbe},
+		{Label: "Init", Active: false, ClickValue: settingsKeybindingsInit},
+	}
+	if got := options.TitleChips; !reflect.DeepEqual(got, want) {
+		t.Fatalf("TitleChips = %#v, want %#v", got, want)
 	}
 }
 
@@ -1659,9 +1719,9 @@ func TestSettingsLabsUnknownProbeSaveOverrideUsesSuggestedPlainChord(t *testing.
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
 		case 4:
@@ -1682,8 +1742,6 @@ func TestSettingsLabsUnknownProbeSaveOverrideUsesSuggestedPlainChord(t *testing.
 		case 7:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 8:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 9:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -1737,9 +1795,9 @@ func TestSettingsLabsPlainProbeSaveUsesKeymapApplyPath(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
 		case 4:
@@ -1757,8 +1815,6 @@ func TestSettingsLabsPlainProbeSaveUsesKeymapApplyPath(t *testing.T) {
 		case 7:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 8:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 9:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -1855,9 +1911,9 @@ func TestSettingsLabsInitPreviewApplyDelegatesToInitEngine(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
 		case 4:
@@ -1875,8 +1931,6 @@ func TestSettingsLabsInitPreviewApplyDelegatesToInitEngine(t *testing.T) {
 		case 7:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 8:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 9:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -1915,9 +1969,9 @@ func TestSettingsLabsWSLEnvDelegatesWindowsTerminalFallback(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
 		case 4:
@@ -1935,8 +1989,6 @@ func TestSettingsLabsWSLEnvDelegatesWindowsTerminalFallback(t *testing.T) {
 		case 7:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 8:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 9:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -2463,8 +2515,8 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 				if got, want := options.UI, "settings-workdirs"; got != want {
 					t.Fatalf("workdirs list UI = %q, want %q", got, want)
 				}
-				if got := entryIndexValue(options.Entries, settingsWorkdirAdd); got != 1 {
-					t.Fatalf("workdirs list entries = %#v, want Add Workdir at index 1, got %d", options.Entries, got)
+				if got := entryIndexValue(options.Entries, settingsWorkdirAdd); got < 0 {
+					t.Fatalf("workdirs list entries = %#v, want Add Workdir row", options.Entries)
 				}
 				return intpickercompat.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
 			case 4:
@@ -2495,8 +2547,8 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 				if got, want := options.UI, "settings-workdirs"; got != want {
 					t.Fatalf("workdirs list UI = %q, want %q", got, want)
 				}
-				if got := entryIndexValue(options.Entries, settingsWorkdirAdd); got != 1 {
-					t.Fatalf("workdirs list entries = %#v, want Add Workdir at index 1, got %d", options.Entries, got)
+				if got := entryIndexValue(options.Entries, settingsWorkdirAdd); got < 0 {
+					t.Fatalf("workdirs list entries = %#v, want Add Workdir row", options.Entries)
 				}
 				return intpickercompat.Result{Key: "enter", Value: settingsWorkdirAdd}, nil
 			case 4:
@@ -2643,8 +2695,8 @@ func TestWorkdirListEntriesSurfacesEnvSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workdirListEntries() error = %v", err)
 	}
-	if got := entryIndexValue(entries, settingsWorkdirAdd); got != 1 {
-		t.Fatalf("workdir list entries = %#v, want Add Workdir at index 1, got %d", entries, got)
+	if got, savedRow := entryIndexValue(entries, settingsWorkdirAdd), entryIndexLabelContaining(entries, "Saved workdirs"); got < 0 || savedRow < 0 || got <= savedRow {
+		t.Fatalf("workdir list entries = %#v, want Add Workdir after the saved summary block", entries)
 	}
 	if !hasEntryLabelContaining(entries, "/saved/a") {
 		t.Fatalf("workdir list entries = %#v, want saved entry", entries)
@@ -3257,8 +3309,8 @@ func TestProjectRootEntriesShowShadowedSavedProjdir(t *testing.T) {
 	if !hasEntryLabelContaining(entries, "Set PROJMUX_PROJDIR") {
 		t.Fatalf("project root entries = %#v, want project-root hint row", entries)
 	}
-	if got, wantBefore := entryIndexValue(entries, settingsProjdirSetTyped), entryIndexLabelContaining(entries, "Effective Project Root"); got < 0 || wantBefore < 0 || got > wantBefore {
-		t.Fatalf("project root entries = %#v, want action rows before informational rows", entries)
+	if got, wantBefore := entryIndexValue(entries, settingsProjdirSetTyped), entryIndexLabelContaining(entries, "Env PROJMUX_PROJDIR"); got < 0 || wantBefore < 0 || got > wantBefore {
+		t.Fatalf("project root entries = %#v, want action rows before the explanatory hint rows", entries)
 	}
 }
 
@@ -3295,7 +3347,7 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 				if got, want := options.UI, "settings-project-root"; got != want {
 					t.Fatalf("project root UI = %q, want %q", got, want)
 				}
-				if got, want := options.Title, "Project Root - Manage the primary root"; got != want {
+				if got, want := options.Title, "Project Root - Effective and saved root"; got != want {
 					t.Fatalf("project root title = %q, want %q", got, want)
 				}
 				if got := options.Header; got != "" {
@@ -3330,7 +3382,7 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 				if got, want := options.UI, "settings-project-root"; got != want {
 					t.Fatalf("project root UI = %q, want %q", got, want)
 				}
-				if got, want := options.Title, "Project Root - Manage the primary root"; got != want {
+				if got, want := options.Title, "Project Root - Effective and saved root"; got != want {
 					t.Fatalf("project root title = %q, want %q", got, want)
 				}
 				if got := options.Header; got != "" {

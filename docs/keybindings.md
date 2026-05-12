@@ -8,7 +8,7 @@ The recommended path when a key does not fire:
 
 1. Press the key inside `projmux shell` and see what works on your terminal
    out of the box ([Quick start](#quick-start-no-setup)).
-2. If something is swallowed, open Settings > Labs > Diagnose keybindings, or
+2. If something is swallowed, open Settings > Keybindings > Diagnostic, or
    run [`projmux setup`](#diagnose-projmux-setup) outside tmux. Both paths tell
    you exactly which sequences reach the process and which the terminal is
    eating.
@@ -27,15 +27,18 @@ Settings is running inside tmux. Terminal fallback mappings are separate:
 after changing fallback keys, rerun `projmux init` and restart the terminal
 where applicable.
 
-Settings > Labs > Diagnose keybindings reuses the same probe and terminal
+Settings > Keybindings is the single in-app surface, split by chips:
+`Bindings`, `Diagnostic`, `Probe`, and `Init`.
+
+The `Diagnostic` chip reuses the same probe and terminal
 fallback engines from `projmux setup` and `projmux init`. It lists the
 keybinding catalog, lets you press one action key at a time from inside the
 app, distinguishes plain / CSI-u / unexpected / timeout outcomes, and exposes
 preview/apply rows for supported terminal fallbacks. When an unexpected
-sequence can be safely read as a tmux plain chord, the Lab shows an explicit
+sequence can be safely read as a tmux plain chord, the `Diagnostic` chip shows an explicit
 `Save as plain override` row with the suggested chord; it never overwrites
 `keymap.toml` from an unexpected sequence unless you select that confirmation
-row. The Lab also shows whether the detected terminal can reload config after
+row. The chip also shows whether the detected terminal can reload config after
 fallback apply or needs a restart/manual reload.
 
 > 한국어 요약: 대부분의 터미널은 `projmux shell` 만으로 아래 키가 바로 동작합니다.
@@ -125,8 +128,8 @@ which projmux keys actually reach the process. The command auto-detects your
 terminal, then asks you to press each shortcut in turn and classifies the
 result:
 
-The same diagnostic is available in-app at Settings > Labs > Diagnose
-keybindings. The Lab flow reads the controlling TTY directly, so it can probe a
+The same diagnostic is available in-app at Settings > Keybindings > Diagnostic.
+The flow reads the controlling TTY directly, so it can probe a
 key while Settings itself is running inside tmux.
 
 | Status | Meaning |
@@ -141,7 +144,7 @@ tailored to the detected terminal (Ghostty, WezTerm, kitty, iTerm2,
 Alacritty, Windows Terminal, foot, VS Code, …). When projmux ships an init
 adapter for the terminal, the summary gives both the dry-run preview and the
 exact apply command, e.g. `projmux init ghostty --apply`.
-Settings > Labs also includes a concise after-apply hint: Ghostty/WezTerm/kitty
+The Keybindings > Diagnostic chip also includes a concise after-apply hint: Ghostty/WezTerm/kitty
 can reload config, Windows Terminal and iTerm2 generally need a restarted tab
 or session, and unknown terminals are marked manual.
 
