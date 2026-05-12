@@ -1449,8 +1449,10 @@ func testAICommand(home string) *aiCommand {
 				return ""
 			}
 		},
-		homeDir:  func() (string, error) { return home, nil },
-		readFile: func(string) ([]byte, error) { return nil, os.ErrNotExist },
+		homeDir:   func() (string, error) { return home, nil },
+		readFile:  func(string) ([]byte, error) { return nil, os.ErrNotExist },
+		writeFile: os.WriteFile,
+		mkdirAll:  os.MkdirAll,
 		runCommand: func(_ context.Context, name string, args ...string) error {
 			recorder.commands = append(recorder.commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
 			return nil

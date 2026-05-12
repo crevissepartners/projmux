@@ -49,6 +49,8 @@ type aiCommand struct {
 	lookupEnv    func(string) string
 	homeDir      func() (string, error)
 	readFile     func(string) ([]byte, error)
+	writeFile    func(string, []byte, os.FileMode) error
+	mkdirAll     func(string, os.FileMode) error
 	runCommand   func(ctx context.Context, name string, args ...string) error
 	readCommand  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	now          func() time.Time
@@ -63,6 +65,8 @@ func newAICommand() *aiCommand {
 		lookupEnv:    os.Getenv,
 		homeDir:      os.UserHomeDir,
 		readFile:     os.ReadFile,
+		writeFile:    os.WriteFile,
+		mkdirAll:     os.MkdirAll,
 		runCommand:   runExternalCommand,
 		readCommand:  readExternalCommand,
 		now:          time.Now,
@@ -127,6 +131,8 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runWatchTitle(args[1:], stderr)
 	case "ingest":
 		return c.runIngest(args[1:], stderr)
+	case "integrate":
+		return c.runIntegrate(args[1:], stdout, stderr)
 	case "topic":
 		return c.runTopic(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
@@ -2215,6 +2221,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai notify [notify|reset] [pane]")
 	fmt.Fprintln(w, "  projmux ai watch-title [pane]")
 	fmt.Fprintln(w, "  projmux ai ingest <codex-notify> <json>")
+	fmt.Fprintln(w, "  projmux ai integrate codex [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai topic set <text> [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic clear [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic get [--pane <id>]")

@@ -233,6 +233,25 @@ If a `send-noti` hook itself calls `projmux notify push`, projmux sees
 `PROJMUX_NOTIFY_HOOK_DEPTH=1` in the child environment and skips another
 `send-noti` hook fire. The queue write itself still succeeds.
 
+## Codex Legacy Notify
+
+`projmux ai integrate codex` is the opt-in wiring command for Codex legacy
+`notify` mode. It manages only `~/.codex/config.toml` and installs this notify
+command in a projmux-marked block:
+
+```toml
+notify = ["projmux", "ai", "ingest", "codex-notify"]
+```
+
+The managed block is idempotent and removable with
+`projmux ai integrate codex --remove`. `--dry-run` previews the file change
+without writing. If a user-owned `notify = ...` line already exists outside the
+managed block, projmux refuses to replace it automatically because Codex legacy
+notify has a single command slot.
+
+Codex hooks-engine mode, Claude Code hooks, and tmux bell fallback integration
+remain future slices.
+
 ## Pre Create Abort
 
 `pre-create` runs before `tmux new-session` on creation paths. A non-zero exit,
