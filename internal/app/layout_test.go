@@ -273,6 +273,127 @@ schema_version = 1
 	}
 }
 
+func TestLayoutApplyRequiresForceOrDryRun(t *testing.T) {
+	t.Parallel()
+
+	cmd := &layoutCommand{}
+	err := cmd.Run([]string{"apply", "dev"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "requires --force") || !strings.Contains(err.Error(), "--dry-run") {
+		t.Fatalf("error = %v, want force and dry-run guidance", err)
+	}
+}
+
+func TestLayoutApplyForceIsDeferred(t *testing.T) {
+	t.Parallel()
+
+	cmd := &layoutCommand{}
+	err := cmd.Run([]string{"apply", "dev", "--force"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "safe live tmux overwrite is not implemented") {
+		t.Fatalf("error = %v, want deferred destructive apply message", err)
+	}
+}
+
+func TestLayoutApplyDryRunPrintsSessionStatePreview(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	writeLayoutTestFile(t, project, "dev", `
+schema_version = 1
+description = "Daily dev"
+default_cwd = "${PROJMUX_CWD}"
+
+[[windows]]
+index = 0
+name = "main"
+layout = "layout-a"
+active_pane_index = 1
+
+[[windows.panes]]
+index = 0
+cwd = "${PROJMUX_CWD}"
+recipe = "shell"
+
+[[windows.panes]]
+index = 1
+cwd = "${PROJMUX_CWD}/service"
+command = "make watch"
+`)
+	service := filepath.Join(project, "service")
+	if err := os.MkdirAll(service, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{"#{session_name}": "workspace"}}
+	cmd := &layoutCommand{
+		runner: runner,
+		lookupEnv: func(name string) string {
+			switch name {
+			case "PROJMUX_CWD":
+				return project
+			case "TMUX":
+				return "/tmp/tmux,1,0"
+			default:
+				return ""
+			}
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply", "dev", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"Session State Restore Preview",
+		"session:      workspace",
+		"window 0 main (2 panes)",
+		"pane 0.1 startup make watch",
+		"Dry run only; no tmux commands were executed.",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, output)
+		}
+	}
+	if len(runner.calls) != 1 || runner.calls[0].name != "tmux" || strings.Join(runner.calls[0].args, " ") != "display-message -p -F #{session_name}" {
+		t.Fatalf("tmux calls = %#v, want only current-session resolution", runner.calls)
+	}
+}
+
+func TestLayoutApplyDryRunFailsWithoutCurrentSession(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	writeLayoutTestFile(t, project, "dev", `
+schema_version = 1
+`)
+	cmd := &layoutCommand{
+		runner: &recordingTmuxRunner{},
+		lookupEnv: func(name string) string {
+			switch name {
+			case "PROJMUX_CWD":
+				return project
+			case "TMUX":
+				return "/tmp/tmux,1,0"
+			default:
+				return ""
+			}
+		},
+	}
+
+	err := cmd.Run([]string{"apply", "dev", "--dry-run"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "current session") {
+		t.Fatalf("error = %v, want current-session failure", err)
+	}
+}
+
 func TestLayoutRequiresProjectContext(t *testing.T) {
 	t.Parallel()
 

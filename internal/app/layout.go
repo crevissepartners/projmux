@@ -53,7 +53,7 @@ func (c *layoutCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "remove":
 		return c.runRemove(fs.Args()[1:], stdout, stderr)
 	case "apply":
-		return fmt.Errorf("layout %s is not implemented in this release", fs.Arg(0))
+		return c.runApply(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printLayoutUsage(stdout)
 		return nil
@@ -203,6 +203,83 @@ func (c *layoutCommand) runRemove(args []string, stdout, stderr io.Writer) error
 	return err
 }
 
+type layoutApplyOptions struct {
+	name   string
+	dryRun bool
+	force  bool
+}
+
+func (c *layoutCommand) runApply(args []string, stdout, stderr io.Writer) error {
+	opts, err := parseLayoutApplyArgs(args)
+	if err != nil {
+		printLayoutUsage(stderr)
+		return err
+	}
+	if !opts.dryRun {
+		if !opts.force {
+			return fmt.Errorf("layout apply %q requires --force for destructive apply; use --dry-run to preview", opts.name)
+		}
+		return errors.New("layout apply --force is deferred: safe live tmux overwrite is not implemented; use --dry-run to preview")
+	}
+	if !c.insideTmux() {
+		return errors.New("layout apply --dry-run requires a current tmux session")
+	}
+	if c.runner == nil {
+		return errors.New("configure tmux runner: tmux runner is not configured")
+	}
+
+	ctx := context.Background()
+	client := inttmux.NewClient(c.runner)
+	sessionName, err := client.CurrentSessionName(ctx)
+	if err != nil {
+		return err
+	}
+	store, err := c.store()
+	if err != nil {
+		return err
+	}
+	preset, err := store.Load(opts.name)
+	if err != nil {
+		return err
+	}
+	snap, err := corelayout.ToSnapshot(preset, sessionName, store.ProjectRoot, c.nowTime())
+	if err != nil {
+		return fmt.Errorf("convert layout preset %q for session %q: %w", opts.name, sessionName, err)
+	}
+	for _, line := range sessionStateRestorePreviewLines(snap, c.nowTime(), 100) {
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func parseLayoutApplyArgs(args []string) (layoutApplyOptions, error) {
+	var opts layoutApplyOptions
+	for _, arg := range args {
+		switch arg {
+		case "--dry-run":
+			opts.dryRun = true
+		case "--force":
+			opts.force = true
+		case "--help", "-h":
+			return opts, errors.New("layout apply help is available from `projmux layout help`")
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return opts, fmt.Errorf("unknown layout apply flag: %s", arg)
+			}
+			if opts.name != "" {
+				return opts, errors.New("layout apply requires exactly 1 argument: <name>")
+			}
+			opts.name = arg
+		}
+	}
+	if opts.name == "" {
+		return opts, errors.New("layout apply requires exactly 1 argument: <name>")
+	}
+	return opts, nil
+}
+
 func (c *layoutCommand) store() (corelayout.Store, error) {
 	projectRoot, err := c.resolveProjectContext()
 	if err != nil {
@@ -268,7 +345,6 @@ func printLayoutUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux layout show <name>")
 	fmt.Fprintln(w, "  projmux layout save [--description <text>] [--fresh] <name>")
 	fmt.Fprintln(w, "  projmux layout remove --force <name>")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Deferred:")
-	fmt.Fprintln(w, "  projmux layout apply <name>")
+	fmt.Fprintln(w, "  projmux layout apply <name> --dry-run")
+	fmt.Fprintln(w, "  projmux layout apply <name> --force")
 }
