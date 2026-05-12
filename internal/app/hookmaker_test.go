@@ -31,7 +31,10 @@ func TestSettingsGlobalHooksListShowsConfigPathAndAddRows(t *testing.T) {
 	entries := cmd.globalHookEntries()
 	wantConfig := filepath.Join(configHome, "projmux", "config.toml")
 	assertEntryLabelContainsAll(t, entries, "Global config", wantConfig)
-	assertEntryLabelContainsAll(t, entries, "post-create", "missing", "[+ Add]")
+	assertEntryLabelContainsAll(t, entries, "post-create", "missing", "read-only")
+	if hasEntryValue(entries, settingsActionPrefixHookAdd+"global:post-create") {
+		t.Fatalf("entries = %#v, did not expect editable global add row", entries)
+	}
 }
 
 func TestSettingsGlobalHooksListShowsActiveDeclarativeEntry(t *testing.T) {
@@ -58,7 +61,10 @@ run = "echo global-active"
 		},
 	}
 	entries := cmd.globalHookEntries()
-	assertEntryLabelContainsAll(t, entries, "post-create", "active", "echo global-active")
+	assertEntryLabelContainsAll(t, entries, "post-create", "read-only", "[hooks.post-create]")
+	if !hasEntryValue(entries, settingsActionPrefixHookView+"global:post-create") {
+		t.Fatalf("entries = %#v, want read-only global view row", entries)
+	}
 }
 
 func TestSettingsProjectHooksListAllMissingRendersAddRows(t *testing.T) {
@@ -136,7 +142,7 @@ func TestSettingsProjectHooksListOmitsProjectContextRow(t *testing.T) {
 }
 
 // TestSettingsProjectConfigOmitsProjectContextRow is a Phase 2.7
-// regression guard for the config.toml subpage — same reasoning as the
+// regression guard for the Project recipe subpage — same reasoning as the
 // Hooks page guard above.
 func TestSettingsProjectConfigOmitsProjectContextRow(t *testing.T) {
 	t.Parallel()
@@ -191,7 +197,17 @@ run = "codex"
 	}
 	assertEntryLabelContainsAll(t, hookOptions.Entries, "post-create", "active", "echo declared-post")
 	assertEntryLabelContainsAll(t, hookOptions.Entries, "pre-create", "missing", "[+ Add]")
-	assertEntryLabelContainsAll(t, hookOptions.Entries, "config.toml", "present", "startup")
+	assertEntryLabelContainsAll(t, hookOptions.Entries, "Project recipe", "present", "startup")
+	foundAlias := false
+	for _, entry := range hookOptions.Entries {
+		if strings.Contains(entry.SearchKey, "config.toml") {
+			foundAlias = true
+			break
+		}
+	}
+	if !foundAlias {
+		t.Fatalf("hook options = %#v, want config.toml search alias", hookOptions.Entries)
+	}
 }
 
 func TestSettingsProjectHooksAddPickerHasNoBranch(t *testing.T) {
@@ -437,27 +453,37 @@ run = "echo original"
 	}
 }
 
-func TestSettingsHookMakerGlobalAddDeclarativeWritesGlobalConfig(t *testing.T) {
+func TestSettingsHookMakerGlobalHooksAreReadonlyInApp(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
 	configHome := t.TempDir()
 	stateHome := t.TempDir()
 
+	writeFile(t, filepath.Join(configHome, "projmux", "config.toml"), `
+[hooks.post-create]
+run = "echo global-declarative"
+`)
 	var calls int
 	cmd := hookMakerTestSettings(t, home, configHome, stateHome, "", func(options intpickercompat.Options) (intpickercompat.Result, error) {
 		calls++
 		switch calls {
 		case 1:
-			if !hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"global:post-create") {
-				t.Fatalf("entries = %#v, want global post-create add row", options.Entries)
+			if hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"global:post-create") {
+				t.Fatalf("entries = %#v, did not expect global add row", options.Entries)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookAdd + "global:post-create"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookView + "global:post-create"}, nil
 		case 2:
-			if options.UI != "settings-project-config-typed" {
-				t.Fatalf("UI = %q, want typed editor (no branch picker)", options.UI)
+			if got, want := options.UI, "settings-hook-readonly"; got != want {
+				t.Fatalf("UI = %q, want %q", got, want)
 			}
-			return intpickercompat.Result{Key: "enter", Query: "echo global-declarative"}, nil
+			if !hasEntryLabelContaining(options.Entries, "Read-only") {
+				t.Fatalf("readonly entries = %#v, want read-only notice", options.Entries)
+			}
+			if !hasEntryLabelContaining(options.Entries, "Project override") {
+				t.Fatalf("readonly entries = %#v, want project override hint", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		default:
@@ -470,14 +496,8 @@ func TestSettingsHookMakerGlobalAddDeclarativeWritesGlobalConfig(t *testing.T) {
 	if err := cmd.runGlobalHooksSection(&stdout, &stderr); err != nil {
 		t.Fatalf("runGlobalHooksSection: %v", err)
 	}
-	configPath := filepath.Join(configHome, "projmux", "config.toml")
-	body := readFile(t, configPath)
-	if !strings.Contains(body, "[hooks.post-create]") || !strings.Contains(body, `run = "echo global-declarative"`) {
-		t.Fatalf("global config.toml =\n%s\nwant declarative entry", body)
-	}
-	// Global hooks must not touch the trust store.
-	if _, err := os.Stat(filepath.Join(stateHome, "projmux", "trusted-projects.json")); !os.IsNotExist(err) {
-		t.Fatalf("trust store stat = %v, want missing (global hooks bypass trust)", err)
+	if got := readFile(t, filepath.Join(configHome, "projmux", "config.toml")); !strings.Contains(got, `run = "echo global-declarative"`) {
+		t.Fatalf("global config changed unexpectedly: %s", got)
 	}
 }
 
@@ -504,7 +524,7 @@ run = "echo post"
 			return intpickercompat.Result{Key: "ctrl-p"}, nil
 		case 2:
 			if !hasEntryValue(options.Entries, settingsSectionProjectConfig) {
-				t.Fatalf("project tab entries = %#v, want config.toml editor row", options.Entries)
+				t.Fatalf("project tab entries = %#v, want Project recipe row", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsSectionProjectConfig}, nil
 		case 3:

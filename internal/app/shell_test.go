@@ -239,6 +239,13 @@ func TestShellWelcomeShowsOncePerVersion(t *testing.T) {
 	if !strings.Contains(string(data), version.String()) {
 		t.Fatalf("welcome state = %s, want current version", data)
 	}
+	var state shellWelcomeState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("json.Unmarshal(welcome state) error = %v", err)
+	}
+	if !state.PendingAttachWelcome {
+		t.Fatalf("welcome state = %+v, want pending_attach_welcome=true", state)
+	}
 
 	var second bytes.Buffer
 	if err := cmd.Run([]string{"--no-install"}, &second, &bytes.Buffer{}); err != nil {

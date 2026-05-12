@@ -43,6 +43,7 @@ projmux <command> [args...]
 | `tmux` | Open tmux popup entry helpers / install generated config. |
 | `update` | Check installer-aware GitHub release update status. |
 | `upgrade` | Self-update via `go install`. |
+| `welcome` | Print the shell onboarding guide again. |
 | `usage` | Report AI token usage across 5h and weekly windows. |
 | `version` | Print the current version. |
 
@@ -384,6 +385,19 @@ to `~/.config/projmux/projdir`. npm-installed binaries reject this
 command; use `projmux update apply` or `npm update -g projmux` for npm
 installs.
 
+## welcome
+
+```
+projmux welcome
+```
+
+Prints the onboarding shell guide (`projmux shell` welcome view) without
+starting tmux. This is useful when you want to revisit the key/shortcut/update
+walkthrough at any time.
+
+Usage is argument-free. Passing positional arguments prints usage and returns a
+usage error.
+
 ## sessions / session-popup / preview / pin / kill / prune / tag
 
 The lifecycle helpers retained from earlier releases. They share their
@@ -412,7 +426,10 @@ flags with the top-level `switch` UX:
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI
   splits, Appearance mode, Project Root management, the
-  switcher's saved workdirs list, Labs, and About/Update status. In Project
+  switcher's saved workdirs list, Labs (experimental), Settings > Keybindings,
+  and About/Update status. The keybinding flow now lives under
+  `Settings > Keybindings` with `Bindings`, `Diagnostic`, `Probe`, and `Init`
+  chips, and includes the `Welcome` entry in About. In Project
   Picker, `Project Root` manages the saved
   primary root (`~/.config/projmux/projdir`) and displays whether the effective
   value comes from `PROJMUX_PROJDIR`, tmux `@projmux_projdir`, saved config, or

@@ -388,6 +388,64 @@ func TestHookEdit_ProjectInlineTrustsAfterWrite(t *testing.T) {
 	}
 }
 
+func TestHookEdit_RejectsGlobalEffectiveSourceWithoutProjectOverride(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "repo")
+	mustMkdirAll(t, filepath.Join(project, ".projmux"))
+	cmd, globalPath, _ := newHookTestCommand(t, home, project, "echo never-used\n")
+	writeHookFile(t, globalPath, `
+[hooks.post-create]
+run = "echo global-post-create"
+`)
+
+	var stdout, stderr bytes.Buffer
+	err := cmd.Run([]string{"edit", "post-create"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("edit post-create returned nil, want refusal")
+	}
+	if !strings.Contains(err.Error(), "defined at") || !strings.Contains(err.Error(), "--project") {
+		t.Fatalf("err = %v, want global-source refusal with --project hint", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, ".projmux", "config.toml")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("project config stat err = %v, want not-exist", statErr)
+	}
+}
+
+func TestHookEdit_ProjectFlagCreatesProjectOverrideFromGlobalEffectiveSource(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "repo")
+	mustMkdirAll(t, filepath.Join(project, ".projmux"))
+	cmd, globalPath, trustPath := newHookTestCommand(t, home, project, "echo project-post-create\n")
+	writeHookFile(t, globalPath, `
+[hooks.post-create]
+run = "echo global-post-create"
+`)
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"edit", "--project", "post-create"}, &stdout, &stderr); err != nil {
+		t.Fatalf("edit --project err = %v (stderr=%q)", err, stderr.String())
+	}
+	projectPath := filepath.Join(project, ".projmux", "config.toml")
+	cfg, err := hooks.LoadProjectConfigFile(projectPath)
+	if err != nil {
+		t.Fatalf("LoadProjectConfigFile() err = %v", err)
+	}
+	if got := cfg.Hooks[hooks.Event("post-create")]; got != "echo project-post-create" {
+		t.Fatalf("post-create run = %q, want project override", got)
+	}
+	trusted, _, err := hooks.IsProjectConfigTrusted(project, trustPath)
+	if err != nil {
+		t.Fatalf("IsProjectConfigTrusted() err = %v", err)
+	}
+	if !trusted {
+		t.Fatal("project override was not trusted")
+	}
+}
+
 // TestHookEdit_RejectsUnsupportedEvent confirms the CLI refuses events
 // not listed in hooks.SupportedEvents — the same allow-list the parser
 // uses, so the surfaces stay consistent.
