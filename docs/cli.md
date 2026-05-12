@@ -100,9 +100,16 @@ session, and prints the same restore preview used by `session-state restore
 --dry-run`. It does not execute tmux replay commands and accepts `--dry-run`
 before or after `<name>`.
 
-Destructive live apply remains deferred. `layout apply <name>` rejects without
-`--force`; `layout apply <name> --force` returns a clear deferred error instead
-of attempting to overwrite the live tmux session.
+`layout apply <name> --force` requires a current tmux session and destructively
+replaces that current session's windows with the preset. It stages the preset
+through the session-state replay path, moves the staged windows into the live
+session, removes extra live windows, and keeps the current session name. There
+is no `--session` target override. `layout apply <name>` without `--force`
+still rejects and points at `--dry-run`.
+
+`mode = "fresh-each-time"` is recorded by `layout save --fresh`; explicit
+`layout apply --force` already applies the preset itself, so the mode does not
+change live apply behavior yet.
 
 ## setup
 

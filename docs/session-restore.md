@@ -35,5 +35,11 @@ a current tmux session, converts the preset to a session-state snapshot for that
 session, and prints the same restore preview/read model as
 `projmux session-state restore --dry-run`. It does not execute replay commands,
 does not autosave the live session, and does not update the saved snapshot.
-Destructive `layout apply <name> --force` remains deferred until projmux has a
-safe overwrite policy for non-empty live tmux sessions.
+
+`projmux layout apply <name> --force` is the conservative destructive live
+apply path for project presets. It requires a current tmux session, uses that
+current session name as the only target, stages the converted snapshot through
+the session-state replay path, moves the staged windows into the live session,
+and removes extra live windows. General `session-state restore` execution
+remains dry-run-only; the live overwrite policy is currently scoped to layout
+presets.

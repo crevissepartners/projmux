@@ -2,8 +2,10 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -276,7 +278,7 @@ schema_version = 1
 func TestLayoutApplyRequiresForceOrDryRun(t *testing.T) {
 	t.Parallel()
 
-	cmd := &layoutCommand{}
+	cmd := &layoutCommand{lookupEnv: func(string) string { return "" }}
 	err := cmd.Run([]string{"apply", "dev"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error")
@@ -286,16 +288,16 @@ func TestLayoutApplyRequiresForceOrDryRun(t *testing.T) {
 	}
 }
 
-func TestLayoutApplyForceIsDeferred(t *testing.T) {
+func TestLayoutApplyForceRequiresCurrentSession(t *testing.T) {
 	t.Parallel()
 
-	cmd := &layoutCommand{}
+	cmd := &layoutCommand{lookupEnv: func(string) string { return "" }}
 	err := cmd.Run([]string{"apply", "dev", "--force"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "safe live tmux overwrite is not implemented") {
-		t.Fatalf("error = %v, want deferred destructive apply message", err)
+	if !strings.Contains(err.Error(), "requires a current tmux session") {
+		t.Fatalf("error = %v, want current-session failure", err)
 	}
 }
 
@@ -394,6 +396,70 @@ schema_version = 1
 	}
 }
 
+func TestLayoutApplyForceReplaysPresetIntoCurrentSession(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	writeLayoutTestFile(t, project, "dev", `
+schema_version = 1
+description = "Daily dev"
+default_cwd = "${PROJMUX_CWD}"
+
+[[windows]]
+index = 0
+name = "main"
+active_pane_index = 1
+
+[[windows.panes]]
+index = 0
+cwd = "${PROJMUX_CWD}"
+recipe = "shell"
+
+[[windows.panes]]
+index = 1
+cwd = "${PROJMUX_CWD}/service"
+command = "make watch"
+`)
+	service := filepath.Join(project, "service")
+	if err := os.MkdirAll(service, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &layoutApplyForceTestRunner{}
+	cmd := &layoutCommand{
+		runner: runner,
+		lookupEnv: func(name string) string {
+			switch name {
+			case "PROJMUX_CWD":
+				return project
+			case "TMUX":
+				return "/tmp/tmux,1,0"
+			default:
+				return ""
+			}
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply", "dev", "--force"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "applied layout preset: dev (1 window, 2 panes) -> workspace") {
+		t.Fatalf("stdout = %q, want applied summary", got)
+	}
+	for _, want := range [][]string{
+		{"move-window", "-d", "-k", "-s", "@20", "-t", "workspace:0"},
+		{"kill-window", "-t", "@old"},
+		{"select-window", "-t", "workspace:0"},
+	} {
+		if !layoutTestHasCall(runner.calls, want) {
+			t.Fatalf("tmux calls = %#v, want call %#v", runner.calls, want)
+		}
+	}
+	if got := layoutTestDisplayMessageCalls(runner.calls); got != 1 {
+		t.Fatalf("display-message calls = %d in %#v, want one current-session resolution", got, runner.calls)
+	}
+}
+
 func TestLayoutRequiresProjectContext(t *testing.T) {
 	t.Parallel()
 
@@ -449,4 +515,46 @@ func writeLayoutTestFile(t *testing.T, project, name, body string) {
 	if err := os.WriteFile(path, []byte(strings.TrimLeft(body, "\n")), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type layoutApplyForceTestRunner struct {
+	tempSession string
+	calls       []recordedTmuxCall
+}
+
+func (r *layoutApplyForceTestRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
+	if name == "tmux" && len(args) == 4 && reflect.DeepEqual(args[:3], []string{"display-message", "-p", "-F"}) && args[3] == "#{session_name}" {
+		return []byte("workspace\n"), nil
+	}
+	if name == "tmux" && len(args) >= 4 && reflect.DeepEqual(args[:3], []string{"new-session", "-d", "-s"}) {
+		r.tempSession = args[3]
+		return nil, nil
+	}
+	if name == "tmux" && reflect.DeepEqual(args, []string{"list-windows", "-t", r.tempSession, "-F", "#{window_id}\t#{window_index}"}) {
+		return []byte("@20\t0\n"), nil
+	}
+	if name == "tmux" && reflect.DeepEqual(args, []string{"list-windows", "-t", "workspace", "-F", "#{window_id}"}) {
+		return []byte("@20\n@old\n"), nil
+	}
+	return nil, nil
+}
+
+func layoutTestHasCall(calls []recordedTmuxCall, args []string) bool {
+	for _, call := range calls {
+		if call.name == "tmux" && reflect.DeepEqual(call.args, args) {
+			return true
+		}
+	}
+	return false
+}
+
+func layoutTestDisplayMessageCalls(calls []recordedTmuxCall) int {
+	count := 0
+	for _, call := range calls {
+		if call.name == "tmux" && len(call.args) >= 1 && call.args[0] == "display-message" {
+			count++
+		}
+	}
+	return count
 }

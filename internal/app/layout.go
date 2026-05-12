@@ -13,6 +13,7 @@ import (
 	"time"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -215,14 +216,11 @@ func (c *layoutCommand) runApply(args []string, stdout, stderr io.Writer) error 
 		printLayoutUsage(stderr)
 		return err
 	}
-	if !opts.dryRun {
-		if !opts.force {
-			return fmt.Errorf("layout apply %q requires --force for destructive apply; use --dry-run to preview", opts.name)
-		}
-		return errors.New("layout apply --force is deferred: safe live tmux overwrite is not implemented; use --dry-run to preview")
+	if !opts.dryRun && !opts.force {
+		return fmt.Errorf("layout apply %q requires --force for destructive apply; use --dry-run to preview", opts.name)
 	}
 	if !c.insideTmux() {
-		return errors.New("layout apply --dry-run requires a current tmux session")
+		return errors.New("layout apply requires a current tmux session")
 	}
 	if c.runner == nil {
 		return errors.New("configure tmux runner: tmux runner is not configured")
@@ -246,12 +244,24 @@ func (c *layoutCommand) runApply(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return fmt.Errorf("convert layout preset %q for session %q: %w", opts.name, sessionName, err)
 	}
-	for _, line := range sessionStateRestorePreviewLines(snap, c.nowTime(), 100) {
-		if _, err := fmt.Fprintln(stdout, line); err != nil {
-			return err
+	if opts.dryRun {
+		for _, line := range sessionStateRestorePreviewLines(snap, c.nowTime(), 100) {
+			if _, err := fmt.Fprintln(stdout, line); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
-	return nil
+
+	result, err := sessionstate.ApplyToExistingSession(ctx, c.runner, snap, sessionstate.ApplyToExistingSessionOptions{
+		ReplayOptions: sessionstate.ReplayOptions{FallbackCWD: store.ProjectRoot},
+	})
+	if err != nil {
+		return fmt.Errorf("apply layout preset %q to session %q: %w", opts.name, sessionName, err)
+	}
+	printSessionStateReplayWarnings(stderr, result.Warnings)
+	_, err = fmt.Fprintf(stdout, "applied layout preset: %s (%s, %s) -> %s\n", opts.name, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"), sessionName)
+	return err
 }
 
 func parseLayoutApplyArgs(args []string) (layoutApplyOptions, error) {
@@ -336,6 +346,19 @@ func layoutPresetPaneCount(preset corelayout.Preset) int {
 func printLayoutWarnings(w io.Writer, warnings []corelayout.Warning) {
 	for _, warning := range warnings {
 		fmt.Fprintf(w, "warning: skip layout preset %s: %v\n", warning.Path, warning.Err)
+	}
+}
+
+func printSessionStateReplayWarnings(w io.Writer, warnings []sessionstate.ReplayWarning) {
+	for _, warning := range warnings {
+		switch warning.Scope {
+		case "pane":
+			fmt.Fprintf(w, "warning: window %d pane %d cwd %s unavailable; using %s\n", warning.WindowIndex, warning.PaneIndex, warning.CWD, warning.FallbackCWD)
+		case "agent":
+			fmt.Fprintf(w, "warning: window %d pane %d agent replay skipped: %s\n", warning.WindowIndex, warning.PaneIndex, warning.Reason)
+		default:
+			fmt.Fprintf(w, "warning: session-state replay %s: %s\n", warning.Scope, warning.Reason)
+		}
 	}
 }
 
