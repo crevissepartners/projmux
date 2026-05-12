@@ -998,6 +998,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 		"set -ga update-environment \"VSCODE_INJECTION\"",
 		"set -ga update-environment \"TERM_PROGRAM\"",
 		"set -ga update-environment \"TERM_PROGRAM_VERSION\"",
+		"set -ga update-environment \"PROJMUX_WELCOME\"",
 		"set -g status on",
 		"set -g status-position bottom",
 		"set -g status-interval 5",
@@ -1018,6 +1019,9 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}
 	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymap(binaryPath, decoration, catalog, keymapPresent)), "\n")[1:]...)
+	lines = append(lines,
+		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
+	)
 	lines = append(lines, tmuxAppKeyBindings(catalog, keymapPresent)...)
 	// Two-line status bar:
 	//   [0] existing session/window/path/git/kube/clock row

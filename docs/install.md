@@ -33,8 +33,11 @@ when available. If an installer-supported update is available, pressing Enter
 at the inline prompt runs `projmux update apply`; answering `n` prints that
 manual command and continues into the shell.
 
-If you want to revisit that same guide later, run `projmux welcome`. Phase 2
-auto-popup on attach is not implemented yet in this branch.
+After the shell tmux client attaches, projmux consumes the pending welcome
+marker once and shows the same guide in a dismissable popup. If you want to
+revisit that guide later, run `projmux welcome`. Set `PROJMUX_WELCOME=off`
+before launching `projmux shell` to suppress the automatic attach popup without
+disabling the manual command.
 
 ## Runtime Tools
 
