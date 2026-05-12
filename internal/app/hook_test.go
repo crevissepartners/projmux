@@ -124,6 +124,12 @@ run = "echo global-focus"
 	if !strings.Contains(out, "echo global-focus") {
 		t.Fatalf("stdout missing global hook value: %q", out)
 	}
+	if !strings.Contains(out, "pane-startup (deprecated)") {
+		t.Fatalf("stdout missing pane-startup deprecation badge: %q", out)
+	}
+	if !strings.Contains(out, "send-noti") {
+		t.Fatalf("stdout missing send-noti row: %q", out)
+	}
 }
 
 // TestHookList_ProjectOnlyDegradesWithoutContext covers the headless
@@ -198,12 +204,18 @@ run = "echo global-attach"
 		t.Fatalf("stdout missing hooks effective table: %q", out)
 	}
 	// pane-startup is project-wins.
+	if !strings.Contains(out, "pane-startup (deprecated)") {
+		t.Fatalf("deprecated pane-startup badge missing: %q", out)
+	}
 	if !strings.Contains(out, "echo project-focus") {
 		t.Fatalf("project pane-startup value not surfaced: %q", out)
 	}
 	// post-attach is global-only — surfaced with global source.
 	if !strings.Contains(out, "echo global-attach") {
 		t.Fatalf("global post-attach value not surfaced: %q", out)
+	}
+	if !strings.Contains(out, "send-noti") {
+		t.Fatalf("stdout missing send-noti row: %q", out)
 	}
 	// Conflict resolution check: project value rendered, global shadowed.
 	if strings.Contains(out, "echo global-focus") {

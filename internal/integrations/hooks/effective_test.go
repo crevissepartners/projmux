@@ -334,8 +334,9 @@ func TestMergeEffectiveHooksOmitsUndefinedEvents(t *testing.T) {
 }
 
 // TestMergeEffectiveHooksRowOrderFollowsSupportedEvents pins the row order so
-// the popup renders lifecycle events in the same order Phase 2.6's hooks
-// catalog defines them — pre-create, post-create, pane-startup, post-attach.
+// the popup renders lifecycle events in the same order the hooks catalog
+// defines them — pre-create, post-create, pane-startup, post-attach,
+// send-noti.
 func TestMergeEffectiveHooksRowOrderFollowsSupportedEvents(t *testing.T) {
 	t.Parallel()
 
@@ -345,10 +346,11 @@ func TestMergeEffectiveHooksRowOrderFollowsSupportedEvents(t *testing.T) {
 			EventPreCreate:   "echo pre",
 			EventPaneStartup: "echo pane",
 			EventPostCreate:  "echo post",
+			EventSendNoti:    "echo send-noti",
 		},
 	}
 	got := MergeEffective(ProjectConfig{}, project).Hooks
-	wantOrder := []Event{EventPreCreate, EventPostCreate, EventPaneStartup, EventPostAttach}
+	wantOrder := []Event{EventPreCreate, EventPostCreate, EventPaneStartup, EventPostAttach, EventSendNoti}
 	if len(got.Entries) != len(wantOrder) {
 		t.Fatalf("hooks entries len = %d, want %d: %+v", len(got.Entries), len(wantOrder), got.Entries)
 	}

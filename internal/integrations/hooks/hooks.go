@@ -29,6 +29,7 @@ const (
 	EventPostCreate  Event = "post-create"
 	EventPaneStartup Event = "pane-startup"
 	EventPostAttach  Event = "post-attach"
+	EventSendNoti    Event = "send-noti"
 )
 
 var SupportedEvents = []Event{
@@ -36,6 +37,7 @@ var SupportedEvents = []Event{
 	EventPostCreate,
 	EventPaneStartup,
 	EventPostAttach,
+	EventSendNoti,
 }
 
 // DefaultPostCreateTimeout is the maximum wall-clock time a lifecycle hook is
@@ -52,6 +54,7 @@ type Context struct {
 	Socket      string
 	PaneID      string
 	Env         map[string]string
+	Stdin       []byte
 	// Version is optional. When empty the runner's Version is used.
 	Version string
 }
@@ -64,6 +67,12 @@ type PostCreateContext = Context
 // stdout, such as pane-startup.
 type RunResult struct {
 	Stdout string
+}
+
+// AsyncResult reports the eventual result of a best-effort background hook.
+type AsyncResult struct {
+	RunResult RunResult
+	Err       error
 }
 
 // Runner runs optional global and project-local lifecycle hooks. Missing or
@@ -131,6 +140,9 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 	if !hasGlobalCfg && !hasProjectCfg {
 		return RunResult{}, nil
 	}
+	if event == EventPaneStartup && ((hasGlobalCfg && globalCfg.hookRun(EventPaneStartup) != "") || (hasProjectCfg && projectCfg.hookRun(EventPaneStartup) != "")) {
+		r.warnf(event, "deprecated; move [hooks.pane-startup] run to [startup] run before the next breaking release")
+	}
 
 	timeout := r.Timeout
 	if timeout <= 0 {
@@ -164,6 +176,25 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 		}
 	}
 	return result, nil
+}
+
+// RunAsync executes configured hooks for event in a background goroutine. The
+// returned channel is buffered and closed after completion so tests and
+// diagnostic callers can observe the best-effort result without making the
+// production dispatch path block on the hook command.
+func (r *Runner) RunAsync(ctx context.Context, event Event, c Context) <-chan AsyncResult {
+	ch := make(chan AsyncResult, 1)
+	if r == nil {
+		ch <- AsyncResult{}
+		close(ch)
+		return ch
+	}
+	go func() {
+		result, err := r.Run(ctx, event, c)
+		ch <- AsyncResult{RunResult: result, Err: err}
+		close(ch)
+	}()
+	return ch
 }
 
 // ProjectSessionEnv returns trusted project-local config environment that
@@ -315,7 +346,9 @@ func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name st
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, name, args...)
-	cmd.Stdin = nil
+	if len(c.Stdin) > 0 {
+		cmd.Stdin = bytes.NewReader(c.Stdin)
+	}
 	cmd.Dir = c.CWD
 
 	cmd.Env = buildHookEnv(c, r.Version)
@@ -358,11 +391,27 @@ func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name st
 
 func normalizeEvent(event Event) Event {
 	switch event {
-	case EventPreCreate, EventPostCreate, EventPaneStartup, EventPostAttach:
+	case EventPreCreate, EventPostCreate, EventPaneStartup, EventPostAttach, EventSendNoti:
 		return event
 	default:
 		return ""
 	}
+}
+
+// IsDeprecatedEvent reports events that still run for compatibility but are
+// on the documented removal path.
+func IsDeprecatedEvent(event Event) bool {
+	return normalizeEvent(event) == EventPaneStartup
+}
+
+// DisplayEventName returns the human-facing event label used by CLI and
+// Settings surfaces.
+func DisplayEventName(event Event) string {
+	name := string(event)
+	if IsDeprecatedEvent(event) {
+		return name + " (deprecated)"
+	}
+	return name
 }
 
 func buildHookEnv(c Context, fallbackVersion string) []string {

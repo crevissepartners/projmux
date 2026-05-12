@@ -29,6 +29,9 @@ run = "echo pane-command"
 [hooks.post-attach]
 run = "echo attached"
 
+[hooks.send-noti]
+run = "echo send-noti"
+
 [env]
 FOO = "bar"
 QUOTED = "a \"quoted\" value"
@@ -43,7 +46,7 @@ namespace = "tools"
 	if cfg.StartupRun != "git status --short" {
 		t.Fatalf("StartupRun = %q", cfg.StartupRun)
 	}
-	if cfg.Hooks[EventPreCreate] != "echo pre" || cfg.Hooks[EventPostCreate] != "echo post" || cfg.Hooks[EventPaneStartup] != "echo pane-command" || cfg.Hooks[EventPostAttach] != "echo attached" {
+	if cfg.Hooks[EventPreCreate] != "echo pre" || cfg.Hooks[EventPostCreate] != "echo post" || cfg.Hooks[EventPaneStartup] != "echo pane-command" || cfg.Hooks[EventPostAttach] != "echo attached" || cfg.Hooks[EventSendNoti] != "echo send-noti" {
 		t.Fatalf("Hooks = %#v", cfg.Hooks)
 	}
 	if cfg.Env["FOO"] != "bar" || cfg.Env["QUOTED"] != `a "quoted" value` {

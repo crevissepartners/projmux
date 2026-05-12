@@ -17,6 +17,7 @@ projmux-owned internal tmux hooks such as `pane-focus-in`, `pane-focus-out`,
 | `post-create` | After projmux creates a brand-new persistent or ephemeral session | Logged and ignored; creation continues | Logged with `[post-create] ` |
 | `pane-startup` | After `post-create`, once the initial pane of a brand-new session reaches a shell prompt | Logged and ignored; empty output is no-op | Captured as the command to send into the pane |
 | `post-attach` | After projmux switches the current tmux client to an existing session/target from inside tmux | Logged and ignored | Logged with `[post-attach] ` |
+| `send-noti` | After `projmux notify push` (or the in-process AI notify producer) successfully writes a queue entry | Fired asynchronously and best-effort; queue write and desktop notifications continue even if the hook fails or times out | Receives JSON on stdin; stdout/stderr are logged with `[send-noti] ` |
 
 Deferred Phase A candidates remain future work until their behavior can be
 specified without exposing projmux's internal tmux hook machinery: pane exit,
@@ -87,6 +88,9 @@ run = "echo make test"
 [hooks.post-attach]
 run = "echo attached"
 
+[hooks.send-noti]
+run = "jq -r '.message' | xargs -I{} send-slack \"{}\""
+
 [env]
 FOO = "bar"
 
@@ -97,13 +101,20 @@ namespace = "tools"
 
 Only quoted string values are supported. Unknown sections or keys make the
 config file invalid for this run. Supported hook events are the public lifecycle
-events listed above: `pre-create`, `post-create`, `pane-startup`, and
-`post-attach`. Internal tmux hook names such as `after-select-pane` are rejected.
-Phase C secret interpolation is not implemented; values are used literally.
+events listed above: `pre-create`, `post-create`, `pane-startup`,
+`post-attach`, and `send-noti`. Internal tmux hook names such as
+`after-select-pane` are rejected. Phase C secret interpolation is not
+implemented; values are used literally.
 
 `[hooks.<event>] run` executes through `sh -c` with the same timeout, logging,
 environment, and failure model as file hooks. For `pane-startup`, stdout is
 captured as the pane command.
+
+`[hooks.send-noti] run` is the declarative forward path for queue-backed
+notifications. It does not replace desktop notifications or the in-app queue;
+it runs in parallel after the queue write succeeds so users can fan out to
+Slack, webhooks, or custom scripts without changing the built-in notification
+path.
 
 `[startup] run` is a direct shorthand for a startup pane command. It is not
 executed as shell by the hook runner; the string itself is sent to the new pane.
@@ -169,6 +180,55 @@ Empty stdout is a no-op. Hook stderr is still forwarded to projmux's stderr with
 the `[pane-startup] ` prefix. If both global and project-local hooks emit a
 command, the project-local command wins because project hooks run after global
 hooks.
+
+`pane-startup` is on the deprecation path. projmux still runs it today, but
+`projmux hook list --effective` and the Settings effective-merge view label it
+as `pane-startup (deprecated)`, and execution logs a warning that points users
+to `[startup] run`. Migrate new startup commands to `[startup]` now; the
+compatibility shim is planned to disappear in the next breaking release.
+
+## Send Noti
+
+`send-noti` fires only after the notify queue write succeeds. The queue entry is
+already durable before the hook starts, so a failing or slow hook cannot drop
+the notification or block the normal desktop notification flow.
+
+The hook runs asynchronously with the same default timeout (`5s`) as other
+hooks. projmux does not wait for completion before returning from
+`projmux notify push`.
+
+stdin receives one JSON object:
+
+```json
+{
+  "event": "send-noti",
+  "id": "ai:main:%9",
+  "type": "ai-reply-ready",
+  "agent": "claude",
+  "topic": "worker loop",
+  "pane": "%9",
+  "session": "main",
+  "message": "claude: reply ready · worker loop",
+  "created_at": "2026-05-12T02:03:04Z"
+}
+```
+
+The hook environment also includes:
+
+| Variable | Description |
+| --- | --- |
+| `PROJMUX_NOTIFY_ID` | Queue entry id |
+| `PROJMUX_NOTIFY_TYPE` | Notification kind (`ai-reply-ready`, `external`, etc.) |
+| `PROJMUX_NOTIFY_AGENT` | AI agent label when known |
+| `PROJMUX_NOTIFY_TOPIC` | AI topic when known |
+| `PROJMUX_NOTIFY_PANE` | Target pane id when known |
+| `PROJMUX_NOTIFY_SESSION` | Target tmux session |
+| `PROJMUX_NOTIFY_MESSAGE` | Human-readable message text |
+| `PROJMUX_NOTIFY_HOOK_DEPTH` | Recursion guard; values `>= 1` suppress nested `send-noti` dispatch |
+
+If a `send-noti` hook itself calls `projmux notify push`, projmux sees
+`PROJMUX_NOTIFY_HOOK_DEPTH=1` in the child environment and skips another
+`send-noti` hook fire. The queue write itself still succeeds.
 
 ## Pre Create Abort
 

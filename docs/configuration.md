@@ -107,7 +107,8 @@ configured key opens and closes the popup.
 | `PROJMUX_PROJDIR` | Explicit primary project root. Accepts an OS-native PATH-style multi-value: the first non-empty entry is the primary root and later entries are prepended to managed-root discovery. The primary value is memoized to `~/.config/projmux/projdir`. |
 | `PROJMUX_MANAGED_ROOTS` | Search-root override. Uses the OS-native path-list separator and takes priority over the saved workdirs file and default weak probes. |
 | `TMUX_SESSIONIZER_ROOTS` | Legacy alias still honored at runtime for managed roots. |
-| `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in Linux/WSL sender. |
+| `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in Linux/WSL sender. Separate from declarative `[hooks.send-noti]`. |
+| `PROJMUX_NOTIFY_HOOK_DEPTH` | Internal recursion guard for `send-noti` hooks. Depth `>= 1` suppresses nested hook dispatch while still allowing the queue write itself. |
 | `PROJMUX_DESKTOP_NOTIFY_MODE` | OS desktop notification mode override. `none` / `notify` / `raise` (case insensitive). When set, this takes priority over every other resolution rung. The in-app notify queue is not affected. |
 | `PROJMUX_DESKTOP_NOTIFY` | Legacy on/off override kept for backward compatibility. `on` maps to `notify`, `off` maps to `none`. Honored only when `PROJMUX_DESKTOP_NOTIFY_MODE` is unset. |
 | `PROJMUX_WSL_TOAST_ICON_DIR` | Directory used when copying the WSL toast icon into a Windows-readable path. |
@@ -150,6 +151,20 @@ When the hook is set, projmux invokes it with positional arguments:
 ```text
 summary body urgency app-name tag group icon-path
 ```
+
+This environment variable remains the imperative "replace desktop notification
+sender" escape hatch. It does not run through the declarative hook trust/config
+system and it does not receive the notify-queue JSON payload. For additive
+forwarding after a successful queue write, prefer `[hooks.send-noti]` in
+`config.toml`.
+
+`[hooks.send-noti]` and `PROJMUX_NOTIFY_HOOK` can coexist:
+
+- `PROJMUX_NOTIFY_HOOK` replaces the built-in Linux/WSL desktop sender.
+- `[hooks.send-noti]` fires after the queue write and does not replace desktop
+  notifications.
+- `PROJMUX_NOTIFY_HOOK_DEPTH` prevents a `send-noti` hook that calls
+  `projmux notify push` from recursively re-triggering itself.
 
 The app-name argument is `com.crevisse.projmux` (reverse-domain id used as
 the Linux `--app-name`, the macOS sender label, and the Windows
