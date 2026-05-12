@@ -335,6 +335,13 @@ prints the guide.
 autosave command is quiet and debounced per session, and stores snapshots under
 `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`.
 
+When auto-restore is enabled, `projmux shell` checks for a saved snapshot before
+attaching. Restore only runs when the target app session is absent; an existing
+live session is left untouched and the normal attach path continues. Missing
+snapshots are quiet. Invalid snapshots or replay failures are reported to
+stderr, then `projmux shell` falls back to the normal `tmux new-session -A`
+attach behavior.
+
 Settings > Session State shows the effective auto-save / auto-restore state,
 the current session snapshot summary, and a delete action. The saved toggles
 live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave`

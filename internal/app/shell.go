@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -34,6 +35,8 @@ type shellCommand struct {
 	writeFile          func(string, []byte, os.FileMode) error
 	readFile           func(string) ([]byte, error)
 	runCommand         func(ctx context.Context, env []string, name string, args ...string) error
+	tmuxRunner         tmuxRunner
+	sessionStore       func() (sessionstate.Store, error)
 	update             *updateCommand
 	updatePromptRunner intpickercompat.Runner
 	nativePicker       intpicker.Runner
@@ -54,6 +57,7 @@ func newShellCommand(update *updateCommand) *shellCommand {
 		writeFile:    os.WriteFile,
 		readFile:     os.ReadFile,
 		runCommand:   runForegroundCommand,
+		tmuxRunner:   shellTmuxExecRunner{},
 		update:       update,
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 	}
@@ -115,7 +119,123 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if cwd != "" {
 		runArgs = append(runArgs, "-c", cwd)
 	}
+	c.autorestoreSessionState(context.Background(), socketName, config, nonEmpty(strings.TrimSpace(*session), defaultAppSession), cwd, stderr)
 	return c.run(context.Background(), "tmux", runArgs...)
+}
+
+func (c *shellCommand) autorestoreSessionState(ctx context.Context, socketName, configPath, sessionName, cwd string, stderr io.Writer) {
+	if !sessionStateAutorestoreEnabled(c.homeDir, c.lookupEnv) {
+		return
+	}
+	if c.tmuxRunner == nil {
+		c.reportSessionStateAutorestore(stderr, "tmux runner is not configured")
+		return
+	}
+	store, err := c.shellSessionStateStore()
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("resolve store: %v", err))
+		return
+	}
+	snap, err := store.Load(sessionName)
+	if err != nil {
+		if errors.Is(err, sessionstate.ErrNotFound) {
+			return
+		}
+		c.reportSessionStateAutorestore(stderr, err.Error())
+		return
+	}
+
+	runner := shellAppTmuxRunner{runner: c.tmuxRunner, socketName: socketName, configPath: configPath}
+	exists, err := tmuxSessionExists(ctx, runner, sessionName)
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("check existing session: %v", err))
+		return
+	}
+	if exists {
+		return
+	}
+	if _, err := sessionstate.Replay(ctx, runner, snap, sessionstate.ReplayOptions{FallbackCWD: cwd}); err != nil {
+		c.reportSessionStateAutorestore(stderr, err.Error())
+	}
+}
+
+func (c *shellCommand) shellSessionStateStore() (sessionstate.Store, error) {
+	if c.sessionStore != nil {
+		return c.sessionStore()
+	}
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return sessionstate.Store{}, err
+	}
+	return sessionstate.NewStore(paths.SessionStateDir()), nil
+}
+
+func (c *shellCommand) reportSessionStateAutorestore(stderr io.Writer, message string) {
+	if stderr == nil || strings.TrimSpace(message) == "" {
+		return
+	}
+	_, _ = fmt.Fprintf(stderr, "projmux sessionstate autorestore: %s\n", message)
+}
+
+type shellAppTmuxRunner struct {
+	runner     tmuxRunner
+	socketName string
+	configPath string
+}
+
+func (r shellAppTmuxRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if name != "tmux" {
+		return r.runner.Run(ctx, name, args...)
+	}
+	wrapped := make([]string, 0, len(args)+4)
+	if strings.TrimSpace(r.socketName) != "" {
+		wrapped = append(wrapped, "-L", r.socketName)
+	}
+	if strings.TrimSpace(r.configPath) != "" {
+		wrapped = append(wrapped, "-f", r.configPath)
+	}
+	wrapped = append(wrapped, args...)
+	return r.runner.Run(ctx, name, wrapped...)
+}
+
+func tmuxSessionExists(ctx context.Context, runner tmuxRunner, sessionName string) (bool, error) {
+	if runner == nil {
+		return false, errors.New("tmux runner is not configured")
+	}
+	_, err := runner.Run(ctx, "tmux", "has-session", "-t", sessionName)
+	if err == nil {
+		return true, nil
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") || strings.Contains(msg, "can't find server") {
+		return false, nil
+	}
+	return false, err
+}
+
+type shellTmuxExecRunner struct {
+	env func() []string
+}
+
+func (r shellTmuxExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = withoutEnv(r.environ(), "TMUX")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed != "" {
+			return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, trimmed)
+		}
+		return nil, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return output, nil
+}
+
+func (r shellTmuxExecRunner) environ() []string {
+	if r.env != nil {
+		return r.env()
+	}
+	return os.Environ()
 }
 
 func (c *shellCommand) promptForUpdate(stdout, stderr io.Writer) error {
