@@ -72,14 +72,14 @@ a different command worked better.
 |---|---|---|---|---|
 | Ghostty | macOS | `osascript -e 'tell application "Ghostty" to activate'` + window-id match | | [ ] |
 | Ghostty | Linux X11 | `wmctrl -ia <wid>` | | [ ] |
-| Ghostty | Linux Wayland | Compositor-specific: gnome `dbus` (`org.gnome.Shell.Eval`), KDE `kdotool`, sway `swaymsg` | | [ ] |
-| Kitty | Any | `kitty @ focus-window --match <expr>` | | [ ] |
-| WezTerm | Any | `wezterm cli activate-pane --pane-id <id>` | | [ ] |
+| Ghostty | Linux Wayland | Compositor-specific: gnome `dbus` (`org.gnome.Shell.Eval`), KDE `kdotool`, sway `swaymsg` | No — Ubuntu GNOME 50 Wayland with Ghostty 1.3.1 exposes `GHOSTTY_*` detection signals, but Ghostty has no raise/focus CLI action and GNOME Shell `Eval` returns `(false, '')` outside unsafe mode. | [x] |
+| Kitty | Any | `kitty @ focus-window --match <expr>` | Partial — Ubuntu GNOME Wayland default kitty 0.45.0 attach exposes `KITTY_WINDOW_ID`/`KITTY_PID`, but no `KITTY_LISTEN_ON`; external `kitty @ ls` fails without a controlling TTY unless kitty is launched with a remote-control socket. | [x] |
+| WezTerm | Any | `wezterm cli activate-pane --pane-id <id>` | Partial — WezTerm 20240203 crashes on native GNOME 50 Wayland in this host, but the X11 fallback (`WAYLAND_DISPLAY` unset) attaches and `wezterm cli activate-pane --pane-id 0` succeeds. | [x] |
 | Windows Terminal | Windows | `wt -w <id> focus-tab -t <n>` (same instance only) | | [ ] |
 | Windows Terminal | WSL → Windows | WSL interop + `wt.exe -w <id> focus-tab` | OK — `wt.exe -w 0 focus-tab -t 0` raises the WT window (verified WSL2 Ubuntu-24.04, WT host) | [x] |
 | iTerm2 | macOS | AppleScript (`tell application "iTerm" ...`) or Python API | | [ ] |
-| Alacritty | Any | No remote IPC. OS-window focus only — fall back to the table below. | | [ ] |
-| Foot | Linux | `footclient` is limited. OS-window focus only — fall back to the table below. | | [ ] |
+| Alacritty | Any | No remote IPC. OS-window focus only — fall back to the table below. | No — Alacritty 0.16.1 IPC socket is reachable and can create windows/read config, but exposes no existing-window focus or raise command. | [x] |
+| Foot | Linux | `footclient` is limited. OS-window focus only — fall back to the table below. | No — foot 1.25.0 server/footclient can create a new terminal window, but exposes no existing-window focus or raise command. | [x] |
 | VS Code embedded | Any | Best-effort via `vscode://` URL handler or `code --command` | | [ ] |
 
 ## OS-level window activation matrix
@@ -91,7 +91,7 @@ Independent of the terminal: "raise this app to the foreground." Fill the
 |---|---|---|---|---|
 | macOS | `osascript -e 'tell application "<AppName>" to activate'` | Stable; no special permission. | | [ ] |
 | Linux X11 | `wmctrl -a <window-name>` or `xdotool windowactivate <wid>` | Requires `wmctrl` / `xdotool` installed; standard. | | [ ] |
-| Linux Wayland (GNOME) | `gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Eval ...` | Depends on shell version; recent GNOME locks `Eval` outside dev mode. | | [ ] |
+| Linux Wayland (GNOME) | `gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Eval ...` | Depends on shell version; recent GNOME locks `Eval` outside dev mode. | No — GNOME Shell 50 returns `(false, '')` for `Eval`; X11 fallbacks also do not see native Wayland Ghostty windows (`wmctrl -lx` empty, `xdotool` cannot resolve title/pid). | [x] |
 | Linux Wayland (KDE) | `kdotool windowactivate <wid>` | KWin script bridge; requires `kdotool`. | | [ ] |
 | Linux Wayland (sway) | `swaymsg '[con_id=<id>] focus'` | Works for sway / wlroots compositors. | | [ ] |
 | Windows | `SetForegroundWindow` via PowerShell + P/Invoke | Foreground-lock policy: if the target hasn't recently been active, the OS will only flash the taskbar entry. | | [ ] |
@@ -154,6 +154,84 @@ Notes from Test 3 (`wt.exe -w 0` bare, no subcommand):
 - Always pair `wt.exe -w 0` with a no-op subcommand such as `focus-tab -t 0`
   (Test 1) to raise without creating a tab. Treat the bare form as
   reserved for the "open new tab" case only.
+
+Notes from Test 4 (Ubuntu GNOME Wayland + Ghostty):
+
+- Environment: Ubuntu GNOME Wayland (`XDG_SESSION_TYPE=wayland`,
+  `XDG_CURRENT_DESKTOP=ubuntu:GNOME`, `WAYLAND_DISPLAY=wayland-0`) with
+  Ghostty 1.3.1 (`GHOSTTY_RESOURCES_DIR`, `GHOSTTY_BIN_DIR` set). Inside tmux,
+  `TERM_PROGRAM=tmux`, so Ghostty detection must use the `GHOSTTY_*` signals.
+- Ghostty 1.3.1 exposes helper actions such as `+new-window`,
+  `+show-config`, and `+list-actions`, but no CLI action that raises an
+  existing window, focuses a tab, or activates a split. Treat Ghostty on
+  native Linux Wayland as OS-window-focus-only unless a future Ghostty IPC
+  surface lands.
+- GNOME Shell `Eval` is not usable as a default adapter path on GNOME 50:
+  `gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell
+  --method org.gnome.Shell.Eval 'global.display.focus_window ?
+  global.display.focus_window.get_title() : ""'` returned `(false, '')`.
+- X11 fallbacks are insufficient for native Wayland windows in this
+  configuration: `wmctrl -lx` returned an empty list, and `xdotool
+  getactivewindow getwindowname getwindowpid` could only see an Xwayland
+  window id with no associated pid/title.
+
+Notes from Test 5 (Ubuntu GNOME Wayland + kitty default attach):
+
+- Environment: Ubuntu GNOME Wayland with kitty 0.45.0 attached to the projmux
+  tmux server (`client_termname=xterm-kitty`).
+- The tmux client process inherited `KITTY_WINDOW_ID=1`, `KITTY_PID=<pid>`,
+  `TERM=xterm-kitty`, and `COLORTERM=truecolor`, but not `KITTY_LISTEN_ON`.
+- From a non-interactive external process, `kitty @ ls` failed with
+  `open /dev/tty: no such device or address`. That confirms the default
+  no-socket launch cannot be driven by an osfocus adapter running outside the
+  kitty window.
+- The candidate command remains viable only when kitty is launched with a
+  remote-control surface (`--listen-on ...` or `listen_on` plus
+  `allow_remote_control`) and the adapter can discover that address.
+
+Notes from Test 6 (Ubuntu GNOME Wayland + kitty socket attach):
+
+- Launching kitty with `--listen-on unix:/tmp/projmux-kitty.sock --override
+  allow_remote_control=yes` passed `KITTY_LISTEN_ON` through to the tmux client
+  and allowed an external process to run `kitty @ --to
+  unix:/tmp/projmux-kitty.sock ls`.
+- `kitty @ --to unix:/tmp/projmux-kitty.sock focus-window --match id:1`
+  exited successfully. The adapter path is viable when the launch/config
+  exposes a discoverable remote-control socket.
+
+Notes from Test 7 (Ubuntu GNOME Wayland + WezTerm):
+
+- Native Wayland launch failed on GNOME 50 with `wl_surface ... Buffer size
+  ... must be an integer multiple of the buffer_scale (2)`.
+- X11 fallback launch (`WAYLAND_DISPLAY` unset) attached to tmux successfully
+  (`client_termname=xterm-256color`).
+- `wezterm cli list` failed while `WAYLAND_DISPLAY` pointed at the stale
+  Wayland socket, but `env -u WAYLAND_DISPLAY wezterm cli list` found the X11
+  GUI socket and reported `PANEID 0`.
+- `env -u WAYLAND_DISPLAY wezterm cli activate-pane --pane-id 0` exited
+  successfully. A WezTerm adapter on GNOME Wayland must avoid stale Wayland
+  socket selection when the GUI is actually running on X11.
+
+Notes from Test 8 (Ubuntu GNOME Wayland + Alacritty):
+
+- Alacritty 0.16.1 daemon mode created an IPC socket at
+  `/run/user/1000/Alacritty-wayland-0-<pid>.sock`; `alacritty msg --socket
+  ... create-window -e tmux -L projmux attach -t repos-projmux` attached a new
+  tmux client (`client_termname=alacritty`).
+- `alacritty msg --socket ... get-config` succeeded, confirming that the
+  socket is externally reachable.
+- `alacritty msg` exposes `create-window`, `config`, and `get-config`; it does
+  not expose an existing-window focus/raise command. Treat Alacritty as
+  OS-window-focus-only for this roadmap item.
+
+Notes from Test 9 (Ubuntu GNOME Wayland + foot):
+
+- Starting `foot-server.socket` and then running `footclient -N ... tmux -L
+  projmux attach -t repos-projmux` attached a new tmux client
+  (`client_termname=foot`).
+- The footclient surface is useful for creating terminals against the server,
+  but does not provide an IPC command to focus or raise an existing window.
+  Treat foot as OS-window-focus-only.
 
 If multiple signals are present (e.g. tmux inside VS Code's embedded
 terminal), the adapter chain picks the innermost match the IPC can actually
