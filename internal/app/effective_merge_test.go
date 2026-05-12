@@ -289,14 +289,14 @@ func TestEffectiveMergeEntriesHooksProjectWins(t *testing.T) {
 	// post-create defined on both → project wins; row label reads project.
 	requireEntryLabelContains(t, entries, "post-create", "(project)")
 	requireEntryLabelContains(t, entries, "post-create", "echo project-post")
-	// pane-startup only in project → project label.
-	requireEntryLabelContains(t, entries, "pane-startup", "(project)")
-	requireEntryLabelContains(t, entries, "pane-startup", "echo project-pane")
-	// post-attach defined nowhere — confirm omission so the popup stays
-	// uncluttered for unused lifecycle events.
+	// pane-startup only in project → project label + deprecated badge.
+	requireEntryLabelContains(t, entries, "pane-startup (deprecated)", "(project)")
+	requireEntryLabelContains(t, entries, "pane-startup (deprecated)", "echo project-pane")
+	// post-attach and send-noti defined nowhere — confirm omission so the
+	// popup stays uncluttered for unused lifecycle events.
 	for _, entry := range entries {
-		if strings.Contains(entry.Label, "post-attach") {
-			t.Fatalf("entries leaked an undefined post-attach hook row: %q", entry.Label)
+		if strings.Contains(entry.Label, "post-attach") || strings.Contains(entry.Label, "send-noti") {
+			t.Fatalf("entries leaked an undefined hook row: %q", entry.Label)
 		}
 	}
 }

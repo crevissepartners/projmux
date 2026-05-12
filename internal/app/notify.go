@@ -32,6 +32,7 @@ type notifyCommand struct {
 	storeErr   error
 	now        func() time.Time
 	runner     tmuxRunner
+	hooks      *sendNotiHookDispatcher
 	picker     intpickercompat.Runner
 	native     intpicker.Runner
 	executable func() (string, error)
@@ -43,6 +44,7 @@ func newNotifyCommand() *notifyCommand {
 	cmd := &notifyCommand{
 		now:        time.Now,
 		runner:     reconcileDefaultRunner(),
+		hooks:      newSendNotiHookDispatcher(),
 		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		executable: os.Executable,
 		lookupEnv:  os.Getenv,
@@ -170,6 +172,12 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 			return usageError(err.Error())
 		}
 		return fmt.Errorf("push notification: %w", err)
+	}
+	if c.hooks != nil {
+		c.hooks.Dispatch(entry, notifyHookMeta{
+			Type:    strings.TrimSpace(*source),
+			Message: strings.TrimSpace(entry.Text),
+		})
 	}
 
 	if *asJSON {

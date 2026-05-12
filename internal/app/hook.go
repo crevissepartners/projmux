@@ -187,7 +187,7 @@ func (c *hookCommand) writeScopeTable(stdout io.Writer, scope, path string, cfg 
 		if run != "" {
 			state = "active"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", event, state, run)
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", hooks.DisplayEventName(event), state, run)
 	}
 	return tw.Flush()
 }
@@ -220,11 +220,12 @@ func (c *hookCommand) writeEffectiveTable(stdout io.Writer, globalPath, projectP
 		resolved[entry.Key] = entry
 	}
 	for _, event := range hooks.SupportedEvents {
+		name := hooks.DisplayEventName(event)
 		if entry, ok := resolved[string(event)]; ok {
-			fmt.Fprintf(hookTW, "%s\t%s\t%s\n", entry.Key, entry.Source, entry.Value)
+			fmt.Fprintf(hookTW, "%s\t%s\t%s\n", name, entry.Source, entry.Value)
 			continue
 		}
-		fmt.Fprintf(hookTW, "%s\t%s\t%s\n", event, hooks.EffectiveSourceDefault, "(unset)")
+		fmt.Fprintf(hookTW, "%s\t%s\t%s\n", name, hooks.EffectiveSourceDefault, "(unset)")
 	}
 	if err := hookTW.Flush(); err != nil {
 		return err

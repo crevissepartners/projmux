@@ -173,7 +173,10 @@ projmux notify reconcile [--json]
 - `push` — append (or refresh, with `--id`) one entry. `--ttl` defaults to
   `600` seconds as freshness metadata; it does not remove rows from
   `notify list`. `--text` is hard-capped to 80 runes (longer text is
-  truncated server-side).
+  truncated server-side). After a successful queue write, projmux fires
+  declarative `[hooks.send-noti]` asynchronously if configured. That hook gets
+  a JSON payload on stdin plus `PROJMUX_NOTIFY_*` env vars, and it does not
+  replace the normal desktop notification path.
 - `list` — newest-first pending queue table `ID AGE SEV SRC TARGET TEXT`
   (or JSON). `--severity` and `--source` are repeatable filters.
   `--live` adds a non-mutating explanation table (or JSON report) that
@@ -433,4 +436,4 @@ flags with the top-level `switch` UX:
 - [notify-queue.md](notify-queue.md) — queue file format and lifecycle.
 - [usage-tracking.md](usage-tracking.md) — adapter HTTP/file behaviour.
 - [keybindings.md](keybindings.md) — terminal key delivery and CSI-u.
-- [hooks.md](hooks.md) — `post-create` hook contract.
+- [hooks.md](hooks.md) — lifecycle hooks, `send-noti` payload contract, and `pane-startup` deprecation path.

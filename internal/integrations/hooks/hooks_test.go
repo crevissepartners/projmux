@@ -275,6 +275,76 @@ run = "sleep 5"
 	}
 }
 
+func TestRunnerSendNotiPassesStdinAndNotifyEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixtures require POSIX")
+	}
+	t.Parallel()
+
+	cwd := t.TempDir()
+	writeProjectConfig(t, cwd, `
+[hooks.send-noti]
+run = "printf '%s|%s|%s\n' \"$PROJMUX_NOTIFY_ID\" \"$PROJMUX_NOTIFY_TYPE\" \"$PROJMUX_NOTIFY_MESSAGE\"; cat"
+`)
+
+	var logger bytes.Buffer
+	runner := &Runner{
+		DiscoverProjectHooks: true,
+		ProjectHooksFilePath: testProjectHooksFilePath(t),
+		TrustStorePath:       testTrustStorePath(t),
+		ProjectHookPrompt:    func(ProjectHookPromptRequest) ProjectHookDecision { return ProjectHookAllowOnce },
+		Logger:               &logger,
+	}
+	_, err := runner.Run(context.Background(), EventSendNoti, Context{
+		CWD: cwd,
+		Env: map[string]string{
+			"PROJMUX_NOTIFY_ID":      "n_123",
+			"PROJMUX_NOTIFY_TYPE":    "ai-reply-ready",
+			"PROJMUX_NOTIFY_MESSAGE": "claude: reply ready",
+		},
+		Stdin: []byte(`{"event":"send-noti"}`),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := logger.String()
+	if !strings.Contains(got, "n_123|ai-reply-ready|claude: reply ready") {
+		t.Fatalf("logger missing notify env output:\n%s", got)
+	}
+	if !strings.Contains(got, `{"event":"send-noti"}`) {
+		t.Fatalf("logger missing stdin payload:\n%s", got)
+	}
+}
+
+func TestRunnerPaneStartupWarnsDeprecated(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixtures require POSIX")
+	}
+	t.Parallel()
+
+	cwd := t.TempDir()
+	writeProjectConfig(t, cwd, `
+[hooks.pane-startup]
+run = "echo pane"
+`)
+
+	var logger bytes.Buffer
+	runner := &Runner{
+		DiscoverProjectHooks: true,
+		ProjectHooksFilePath: testProjectHooksFilePath(t),
+		TrustStorePath:       testTrustStorePath(t),
+		ProjectHookPrompt:    func(ProjectHookPromptRequest) ProjectHookDecision { return ProjectHookAllowOnce },
+		Logger:               &logger,
+	}
+	_, err := runner.Run(context.Background(), EventPaneStartup, Context{CWD: cwd})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(logger.String(), "deprecated; move [hooks.pane-startup] run to [startup] run before the next breaking release") {
+		t.Fatalf("logger missing deprecation warning:\n%s", logger.String())
+	}
+}
+
 func TestRunnerHooksKillSwitchDisablesProjectConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")
@@ -420,6 +490,17 @@ func TestBuildHookEnvOmitsSocketWhenEmpty(t *testing.T) {
 	joined := strings.Join(env, "\n")
 	if strings.Contains(joined, "PROJMUX_SOCKET") {
 		t.Fatalf("env should not include PROJMUX_SOCKET when empty:\n%s", joined)
+	}
+}
+
+func TestDisplayEventNameMarksDeprecatedEvents(t *testing.T) {
+	t.Parallel()
+
+	if got := DisplayEventName(EventPaneStartup); got != "pane-startup (deprecated)" {
+		t.Fatalf("DisplayEventName(pane-startup) = %q", got)
+	}
+	if got := DisplayEventName(EventSendNoti); got != "send-noti" {
+		t.Fatalf("DisplayEventName(send-noti) = %q", got)
 	}
 }
 

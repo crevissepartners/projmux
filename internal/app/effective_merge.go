@@ -119,7 +119,7 @@ func renderEffectiveHooksSection(section hooks.EffectiveSection) []intpickercomp
 	}
 	for _, entry := range section.Entries {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("  "+entry.Key, hookRunDisplayValue(entry.Value), string(entry.Source)),
+			Label: settingsLabelInfo("  "+hooks.DisplayEventName(hooks.Event(entry.Key)), hookRunDisplayValue(entry.Value), string(entry.Source)),
 			Value: settingsNoopValue,
 		})
 	}

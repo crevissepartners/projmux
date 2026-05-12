@@ -56,6 +56,7 @@ func (noopAttentionNotifyProducer) AckReplyReady(attentionNotifyInput) {}
 type storeAttentionNotifyProducer struct {
 	store notifyStore
 	ttl   time.Duration
+	hooks *sendNotiHookDispatcher
 }
 
 // newAttentionNotifyProducer builds a producer that uses the default notify
@@ -70,6 +71,7 @@ func newAttentionNotifyProducer() attentionNotifyProducer {
 	return &storeAttentionNotifyProducer{
 		store: notify.NewDefaultStore(paths),
 		ttl:   attentionNotifyTTL,
+		hooks: newSendNotiHookDispatcher(),
 	}
 }
 
@@ -109,7 +111,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 		ttl = attentionNotifyTTL
 	}
 
-	_, _, _ = p.store.Push(notify.PushInput{
+	entry, _, err := p.store.Push(notify.PushInput{
 		ID:       buildAttentionNotifyID(session, resolvedPane),
 		Text:     composeAttentionReplyText(agent, topic),
 		Severity: notify.SeverityInfo,
@@ -122,6 +124,17 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 			Pane:    resolvedPane,
 		},
 	})
+	if err != nil {
+		return
+	}
+	if p.hooks != nil {
+		p.hooks.Dispatch(entry, notifyHookMeta{
+			Type:    "ai-reply-ready",
+			Agent:   agent,
+			Topic:   topic,
+			Message: entry.Text,
+		})
+	}
 }
 
 // AckReplyReady is kept for the attention state-machine seam, but it no

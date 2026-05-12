@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -95,6 +96,43 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithTopic(t *testing.T) {
 	}
 	if got.ID != "ai:feat-notify-producer-attention:%2" {
 		t.Fatalf("ID = %q", got.ID)
+	}
+}
+
+func TestStoreAttentionNotifyProducerPushReplyReadyDispatchesSendNotiHook(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{}
+	runner := &recordingNotifyHookRunner{}
+	producer := &storeAttentionNotifyProducer{
+		store: store,
+		ttl:   time.Minute,
+		hooks: &sendNotiHookDispatcher{
+			runner:    runner,
+			lookupEnv: func(string) string { return "" },
+			getwd:     func() (string, error) { return t.TempDir(), nil },
+		},
+	}
+
+	lookup := newFakeAttentionLookup(map[string]string{
+		"%2|@projmux_ai_agent": "Codex",
+		"%2|@projmux_ai_topic": "wire-producer",
+		"%2|#S":                "feat-notify-producer-attention",
+		"%2|#{window_id}":      "@1",
+		"%2|#{pane_id}":        "%2",
+	})
+
+	producer.PushReplyReady(attentionNotifyInput{PaneID: "%2", Lookup: lookup})
+
+	if runner.calls != 1 {
+		t.Fatalf("RunAsync call count = %d, want 1", runner.calls)
+	}
+	var payload notifyHookPayload
+	if err := json.Unmarshal(runner.context.Stdin, &payload); err != nil {
+		t.Fatalf("decode stdin json: %v", err)
+	}
+	if payload.Type != "ai-reply-ready" || payload.Agent != "Codex" || payload.Topic != "wire-producer" {
+		t.Fatalf("payload = %+v", payload)
 	}
 }
 
