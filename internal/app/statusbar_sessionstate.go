@@ -33,22 +33,28 @@ type statusbarSessionStatePopupView struct {
 	Height  int
 }
 
-func (c *statusbarCommand) handleSessionState(_ statusbarClickOptions, _ io.Writer, stderr io.Writer) error {
+func (c *statusbarCommand) handleSessionState(opts statusbarClickOptions, _ io.Writer, stderr io.Writer) error {
 	ctx := context.Background()
 	state := c.loadSessionStateView(ctx)
 	binaryPath, binErr := c.resolveBinary()
 	if binErr != nil {
-		fmt.Fprintf(stderr, "statusbar sessionstate: resolve projmux binary for any-key close: %v\n", binErr)
-		binaryPath = ""
+		fmt.Fprintf(stderr, "statusbar sessionstate: resolve projmux binary for popup actions: %v\n", binErr)
+		return c.runTmux(stderr, "display-message", statusbarSessionStateToast(state))
 	}
-	popup := statusbarSessionStatePopup(state, c.nowTime(), binaryPath)
-	if err := c.runTmuxNoFallback(stderr,
+	popup := statusbarSessionStateActionPopup(state, binaryPath)
+	args := []string{
 		"display-popup",
 		"-E",
 		"-B",
 		"-w", strconv.Itoa(popup.Width),
 		"-h", strconv.Itoa(popup.Height),
-		popup.Command,
+	}
+	if client := strings.TrimSpace(opts.ClientTTY); client != "" {
+		args = append(args, "-c", client)
+	}
+	args = append(args, popup.Command)
+	if err := c.runTmuxNoFallback(stderr,
+		args...,
 	); err == nil {
 		return nil
 	}
@@ -126,6 +132,16 @@ func statusbarSessionStatePopup(state statusbarSessionStateView, now time.Time, 
 		Command: statusbarPopupCommand(payload, binaryPath),
 		Width:   width,
 		Height:  height,
+	}
+}
+
+func statusbarSessionStateActionPopup(state statusbarSessionStateView, binaryPath string) statusbarSessionStatePopupView {
+	return statusbarSessionStatePopupView{
+		Title:   "Session State",
+		Toast:   statusbarSessionStateToast(state),
+		Command: tmuxShellQuote(binaryPath) + " session-state popup",
+		Width:   104,
+		Height:  30,
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 func TestSessionStateStatusShowsToggleAndSnapshotReadModel(t *testing.T) {
@@ -211,6 +212,131 @@ func TestSessionStateRestoreRejectsExecutionWithoutDryRun(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "only supports --dry-run") {
 		t.Fatalf("error = %v, want dry-run gate", err)
+	}
+}
+
+func TestSessionStatePopupPreviewUsesDryRunReadModel(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC)
+	store := sessionstate.NewStore(t.TempDir())
+	saveSessionStateTestSnapshot(t, store, now.Add(-time.Minute))
+	var sawPopup bool
+	cmd := &sessionStateCommand{
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			sawPopup = true
+			if got, want := options.UI, "sessionstate-popup"; got != want {
+				t.Fatalf("popup UI = %q, want %q", got, want)
+			}
+			for _, forbidden := range []string{
+				"sessionstate-popup:delete",
+				"sessionstate-popup:toggle-autosave",
+				"sessionstate-popup:toggle-autorestore",
+			} {
+				if hasEntryValue(options.Entries, forbidden) {
+					t.Fatalf("popup entries include deferred action %q: %#v", forbidden, options.Entries)
+				}
+			}
+			if !hasEntryValue(options.Entries, sessionStatePopupSave) || !hasEntryValue(options.Entries, sessionStatePopupPreviewRestore) {
+				t.Fatalf("popup entries = %#v, want save and preview actions", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: sessionStatePopupPreviewRestore}, nil
+		})),
+		lookupEnv:    func(string) string { return "" },
+		now:          func() time.Time { return now },
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"popup", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sawPopup {
+		t.Fatal("popup picker was not opened")
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"Session State Restore Preview",
+		"Dry run only; no tmux commands were executed.",
+		"pane 0.1 startup make watch",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("popup preview output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestSessionStatePopupSaveNowCapturesCurrentSession(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 12, 3, 4, 5, 0, time.UTC)
+	dir := t.TempDir()
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	paneFormat := strings.Join([]string{
+		"#{window_index}",
+		"#{pane_index}",
+		"#{?pane_active,1,0}",
+		"#{pane_current_path}",
+		"#{@projmux_recipe_kind}",
+		"#{@projmux_startup_command}",
+		"#{@projmux_ai_managed}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_ai_resume_id}",
+	}, "\x1f")
+	runner := &recordingTmuxRunner{
+		formats: map[string]string{
+			"#{session_name}": "workspace",
+		},
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "list-windows", "-t", "workspace", "-F", windowFormat}, "\x00"):   "0\x1fshell\x1flayout\n",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
+		},
+	}
+	var calls int
+	cmd := &sessionStateCommand{
+		runner: runner,
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				if !hasEntryValue(options.Entries, sessionStatePopupSave) {
+					t.Fatalf("popup entries = %#v, want save action", options.Entries)
+				}
+				return intpickercompat.Result{Key: "enter", Value: sessionStatePopupSave}, nil
+			case 2:
+				return intpickercompat.Result{Key: "enter", Value: sessionStatePopupClose}, nil
+			default:
+				t.Fatalf("unexpected popup call %d", calls)
+				return intpickercompat.Result{}, nil
+			}
+		})),
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux,1,0"
+			}
+			return ""
+		},
+		homeDir: func() (string, error) { return t.TempDir(), nil },
+		now:     func() time.Time { return now },
+		sessionStore: func() (sessionstate.Store, error) {
+			return sessionstate.NewStore(dir), nil
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"popup"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "saved session snapshot: workspace (1 window, 1 pane)") {
+		t.Fatalf("stdout = %q, want saved summary", got)
+	}
+	loaded, err := sessionstate.NewStore(dir).Load("workspace")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Session != "workspace" || loaded.SavedAt != now.UTC() {
+		t.Fatalf("loaded snapshot = %#v, want saved current session", loaded)
 	}
 }
 

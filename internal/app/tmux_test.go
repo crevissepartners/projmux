@@ -1349,7 +1349,7 @@ func TestTmuxSessionStateStatusDisplaysPreviewPopup(t *testing.T) {
 		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
 	}
 	command := popup.args[len(popup.args)-1]
-	for _, want := range []string{"Session State", "workspace", "1m ago", "pane 0.0 startup make watch"} {
+	for _, want := range []string{"/tmp/projmux", "session-state popup"} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("popup command missing %q: %q", want, command)
 		}
