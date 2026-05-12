@@ -252,6 +252,31 @@ notify has a single command slot.
 Codex hooks-engine mode, Claude Code hooks, and tmux bell fallback integration
 remain future slices.
 
+## Claude Code Hook Ingest
+
+`projmux ai ingest claude-hook` is the conservative core ingest path for
+Claude Code hooks. It reads a single JSON payload from stdin and currently
+handles these events:
+
+| Event | Behavior |
+| --- | --- |
+| `UserPromptSubmit` | marks the matched pane hook-active and sets AI state to thinking/busy; no notify queue entry is pushed |
+| `Notification` | pushes a Claude notify row for response-ready, approval-required, or input-ready based on `notification_type` |
+| `PermissionRequest` | pushes a critical approval row with the tool name and a concise tool input summary |
+| `Stop` | pushes a Claude completion row, using the last assistant transcript text when `transcript_path` is readable |
+
+Pane matching follows the shared AI ingest order: inherited `$TMUX_PANE`, then
+payload `cwd`, then cached session id pane options. A matched pane is marked
+with `@projmux_ai_hook_active=1`, so `projmux ai watch-title` skips the pane
+and hook payloads become the primary signal.
+
+The Claude hook payload is intentionally accepted directly at the ingest
+boundary; `projmux ai integrate claude` is still deferred, so users must wire
+Claude settings manually for now. Deferred Claude events include
+`StopFailure`, `SubagentStop`, and `TeammateIdle`. Dedupe across simultaneous
+Claude events is also deferred; the current slice keeps each supported hook
+event explicit.
+
 ## Pre Create Abort
 
 `pre-create` runs before `tmux new-session` on creation paths. A non-zero exit,

@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
 func TestParseCodexNotifyPayload(t *testing.T) {
@@ -137,6 +141,224 @@ func TestIngestCodexNotifyPushesWaitingStatusAndMetadata(t *testing.T) {
 	}
 }
 
+func TestParseClaudeHookPayload(t *testing.T) {
+	t.Parallel()
+
+	payload, err := parseClaudeHookPayload([]byte(`{
+		"hook_event_name": "PermissionRequest",
+		"session_id": "claude-session",
+		"cwd": "/repo/projmux",
+		"transcript_path": "/tmp/transcript.jsonl",
+		"tool_name": "Bash",
+		"tool_use_id": "tool-123",
+		"tool_input": {"command": "go test ./internal/app", "description": "run focused tests"}
+	}`))
+	if err != nil {
+		t.Fatalf("parseClaudeHookPayload() error = %v", err)
+	}
+	if payload.EventName != "PermissionRequest" || payload.SessionID != "claude-session" || payload.CWD != "/repo/projmux" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if payload.TranscriptPath != "/tmp/transcript.jsonl" || payload.ToolName != "Bash" || payload.ToolUseID != "tool-123" {
+		t.Fatalf("tool fields = %+v", payload)
+	}
+	if got := stringFromAny(payload.ToolInput["command"]); got != "go test ./internal/app" {
+		t.Fatalf("tool input command = %q", got)
+	}
+}
+
+func TestClaudeTranscriptReaderReturnsLastAssistantText(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	content := strings.Join([]string{
+		`{"role":"assistant","content":[{"type":"text","text":"first assistant"}]}`,
+		`{"role":"user","content":"thanks"}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"last assistant"}]}}`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readClaudeTranscriptLastAssistantText(path); got != "last assistant" {
+		t.Fatalf("readClaudeTranscriptLastAssistantText() = %q", got)
+	}
+	if got := readClaudeTranscriptLastAssistantText(filepath.Join(t.TempDir(), "missing.jsonl")); got != "" {
+		t.Fatalf("missing transcript text = %q, want empty fallback", got)
+	}
+}
+
+func TestClaudePermissionTextFormatting(t *testing.T) {
+	t.Parallel()
+
+	got := claudePermissionNotifyText(claudeHookPayload{
+		ToolName:  "Bash",
+		ToolUseID: "tool-123",
+		ToolInput: map[string]any{"command": "rm -rf /tmp/old-cache"},
+	})
+	if got != "Claude · 승인 필요 · Bash: rm -rf /tmp/old-cache" {
+		t.Fatalf("Bash text = %q", got)
+	}
+
+	got = claudePermissionNotifyText(claudeHookPayload{
+		ToolName:  "WebFetch",
+		ToolUseID: "tool-456",
+		ToolInput: map[string]any{"url": "https://example.com/docs"},
+	})
+	if got != "Claude · 승인 필요 · WebFetch: https://example.com/docs" {
+		t.Fatalf("WebFetch text = %q", got)
+	}
+}
+
+func TestIngestClaudeUserPromptSetsThinkingWithoutQueue(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "UserPromptSubmit",
+		"session_id": "claude-session",
+		"cwd": "/repo/projmux",
+		"prompt": "implement claude hook ingest"
+	}`)
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX_PANE" {
+			return "%9"
+		}
+		return ""
+	}
+
+	err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run ingest claude-hook UserPromptSubmit error = %v", err)
+	}
+	if len(store.pushed) != 0 {
+		t.Fatalf("push count = %d, want 0", len(store.pushed))
+	}
+	for _, want := range []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneHookActiveOption, "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeClaude}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneStateOption, "thinking"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", attentionStateOption, attentionStateBusy}},
+	} {
+		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
+			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
+		}
+	}
+}
+
+func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "PermissionRequest",
+		"session_id": "claude-session",
+		"cwd": "/repo/projmux",
+		"tool_name": "Bash",
+		"tool_use_id": "tool-123",
+		"tool_input": {"command": "go test ./internal/app"}
+	}`)
+	cmd.readCommand = claudeIngestReadCommand("%7")
+
+	err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run ingest claude-hook PermissionRequest error = %v", err)
+	}
+	for _, want := range []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneSessionIDOption, "claude-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
+	} {
+		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
+			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
+		}
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:claude:permission:claude-session:tool-123" {
+		t.Fatalf("ID = %q", got.ID)
+	}
+	if got.Text != "Claude · 승인 필요 · Bash: go test ./internal/app" {
+		t.Fatalf("Text = %q", got.Text)
+	}
+	if got.Severity != notify.SeverityCritical {
+		t.Fatalf("Severity = %q", got.Severity)
+	}
+	if got.Metadata["agent"] != "claude" || got.Metadata["event"] != "PermissionRequest" || got.Metadata["tool_input.command"] != "go test ./internal/app" {
+		t.Fatalf("Metadata = %#v", got.Metadata)
+	}
+}
+
+func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
+	home := t.TempDir()
+	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
+	if err := os.WriteFile(transcript, []byte(`{"role":"assistant","content":[{"type":"text","text":"implemented and verified"}]}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "Stop",
+		"session_id": "claude-session",
+		"cwd": "/repo/projmux",
+		"transcript_path": "` + transcript + `"
+	}`)
+	cmd.readCommand = claudeIngestReadCommand("%7")
+	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest claude-hook Stop error = %v", err)
+	}
+	if len(store.pushed) != 1 || store.pushed[0].Text != "Claude · 응답 완료 · implemented and verified" {
+		t.Fatalf("pushed = %#v", store.pushed)
+	}
+
+	store = &stubNotifyStore{}
+	cmd = testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "Stop",
+		"session_id": "claude-session",
+		"cwd": "/repo/projmux"
+	}`)
+	cmd.readCommand = claudeIngestReadCommand("%7")
+	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest claude-hook Stop without transcript error = %v", err)
+	}
+	if len(store.pushed) != 1 || store.pushed[0].Text != "Claude · 응답 완료" {
+		t.Fatalf("fallback pushed = %#v", store.pushed)
+	}
+}
+
+func TestIngestClaudeNotificationMapsInputReady(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "Notification",
+		"session_id": "claude-session",
+		"cwd": "/repo/projmux",
+		"notification_type": "elicitation_dialog",
+		"message": "Need deployment target"
+	}`)
+	cmd.readCommand = claudeIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest claude-hook Notification error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.Text != "Claude · 입력 필요 · Need deployment target" || got.Severity != notify.SeverityCritical {
+		t.Fatalf("pushed = %#v", got)
+	}
+}
+
 func TestAIWatchTitleSkipsHookActivePane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
@@ -164,6 +386,29 @@ func TestAIWatchTitleSkipsHookActivePane(t *testing.T) {
 	}
 	if len(cmdRecorder(cmd).commands) != 0 {
 		t.Fatalf("commands = %#v, want no writes for hook-active pane", cmdRecorder(cmd).commands)
+	}
+}
+
+func claudeIngestReadCommand(paneID string) func(context.Context, string, ...string) ([]byte, error) {
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}):
+			return []byte(paneID + "\x1f/repo/projmux\x1f\x1f\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{@projmux_ai_agent}"}):
+			return []byte("claude\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#S"}):
+			return []byte("workspace\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{window_id}"}):
+			return []byte("@1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{pane_id}"}):
+			return []byte(paneID + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{socket_path}"}):
+			return []byte("/tmp/tmux-1000/projmux\n"), nil
+		}
+		return nil, os.ErrNotExist
 	}
 }
 
