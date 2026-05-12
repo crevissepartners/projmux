@@ -35,6 +35,7 @@
 - `make test` also covers the statusbar Session State popup entrypoint, manual save-now and restore dry-run preview actions, missing-snapshot messaging, and `projmux tmux sessionstate-status` helper wiring.
 - `make test` also covers project layout preset schema/discovery for `.projmux/layouts/*.toml`, supported interpolation validation, malformed-file list warnings, and user-facing `projmux layout list|show|save|remove|apply` behavior including portable save paths, `--description`, `--fresh`, `remove --force` safety, apply dry-run conversion to the session-state restore preview, missing current-session failure, and the deferred destructive `apply --force` error.
 - `make test` also covers `projmux ai integrate codex` legacy Codex notify config install/idempotence, dry-run preview, unmanaged `notify = ...` conflict refusal, and managed-block removal.
+- `make test` also covers `projmux ai ingest claude-hook` core Claude Code hook ingest for event parsing, transcript fallback, permission summary formatting, UserPromptSubmit busy/no-queue behavior, Notification severity/text mapping, and hook-active pane marking.
 - `make test` also now covers onboarding revisit and welcome wiring (`projmux welcome`, `Settings > About > Welcome`, `pending_attach_welcome`, attach-time `welcome --popup` one-time claim/env suppression/tmux popup payload, and generated `client-attached` app config wiring) via shell welcome tests.
 - Current focused unit coverage also includes strict notify SOT behavior
   (TTL does not remove rows, focus success and target-gone clicks ack,

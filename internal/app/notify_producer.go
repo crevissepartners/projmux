@@ -32,6 +32,7 @@ type attentionNotifyInput struct {
 	Lookup   attentionNotifyLookup
 	ID       string
 	Text     string
+	Severity string
 	Metadata map[string]string
 	Force    bool
 }
@@ -113,6 +114,10 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	if text == "" {
 		text = composeAttentionReplyText(agent, topic)
 	}
+	severity := strings.TrimSpace(in.Severity)
+	if severity == "" {
+		severity = notify.SeverityInfo
+	}
 	id := strings.TrimSpace(in.ID)
 	if id == "" {
 		id = buildAttentionNotifyID(session, resolvedPane)
@@ -126,7 +131,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	entry, _, err := p.store.Push(notify.PushInput{
 		ID:       id,
 		Text:     text,
-		Severity: notify.SeverityInfo,
+		Severity: severity,
 		Source:   notify.SourceAI,
 		Metadata: in.Metadata,
 		TTL:      ttl,

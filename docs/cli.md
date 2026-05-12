@@ -340,6 +340,7 @@ projmux ai status   set <thinking|waiting|idle> [--pane <id>]
 projmux ai notify   <reset|notify> [--pane <id>]
 projmux ai watch-title [--pane <id>]
 projmux ai ingest   codex-notify '<json>'
+projmux ai ingest   claude-hook < payload.json
 projmux ai integrate codex [--dry-run] [--remove]
 projmux ai topic     ...
 ```
@@ -357,6 +358,21 @@ hook-active, sets AI state to waiting, and writes a metadata-bearing notify
 queue entry. Panes marked `@projmux_ai_hook_active=1` are skipped by the
 title watcher.
 
+`ingest claude-hook` is the hook-facing entrypoint for Claude Code hooks. It
+reads one JSON payload from stdin and handles the core hook events:
+`Notification`, `Stop`, `UserPromptSubmit`, and `PermissionRequest`. It uses
+the same pane matching order as Codex ingest (`$TMUX_PANE`, payload `cwd`, then
+cached session id), marks matched panes hook-active, and writes
+metadata-bearing notify queue entries for reply-ready, input-ready, and
+approval-required events. `UserPromptSubmit` only moves the pane to
+thinking/busy and does not push a queue entry.
+
+For `Stop`, projmux reads `transcript_path` when present and extracts the last
+assistant text from the transcript tail; if that is unavailable, it falls back
+to a generic Claude completion row. `PermissionRequest` rows expose the tool
+name plus a concise input summary, preferring Bash commands, file paths, and
+URLs when those fields exist.
+
 `integrate codex` manages legacy Codex `notify` wiring in
 `~/.codex/config.toml`:
 
@@ -371,7 +387,8 @@ already contains an unmanaged `notify = ...` setting, projmux refuses to
 install over it and leaves the file untouched; use `--dry-run` to inspect the
 conflict and then edit the user-owned setting manually if needed.
 
-Claude Code hooks, Codex hooks-engine mode, and tmux bell integration are not
+Claude Code hook ingest is available through `ingest claude-hook`, but
+`integrate claude`, Codex hooks-engine mode, and tmux bell integration are not
 part of this command yet.
 
 ## tmux

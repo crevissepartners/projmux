@@ -48,6 +48,7 @@ type aiCommand struct {
 	executable   func() (string, error)
 	lookupEnv    func(string) string
 	homeDir      func() (string, error)
+	stdin        io.Reader
 	readFile     func(string) ([]byte, error)
 	writeFile    func(string, []byte, os.FileMode) error
 	mkdirAll     func(string, os.FileMode) error
@@ -64,6 +65,7 @@ func newAICommand() *aiCommand {
 		executable:   os.Executable,
 		lookupEnv:    os.Getenv,
 		homeDir:      os.UserHomeDir,
+		stdin:        os.Stdin,
 		readFile:     os.ReadFile,
 		writeFile:    os.WriteFile,
 		mkdirAll:     os.MkdirAll,
@@ -2220,7 +2222,8 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")
 	fmt.Fprintln(w, "  projmux ai notify [notify|reset] [pane]")
 	fmt.Fprintln(w, "  projmux ai watch-title [pane]")
-	fmt.Fprintln(w, "  projmux ai ingest <codex-notify> <json>")
+	fmt.Fprintln(w, "  projmux ai ingest codex-notify <json>")
+	fmt.Fprintln(w, "  projmux ai ingest claude-hook < payload.json")
 	fmt.Fprintln(w, "  projmux ai integrate codex [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai topic set <text> [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic clear [--pane <id>]")
