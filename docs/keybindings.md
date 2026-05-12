@@ -8,10 +8,10 @@ The recommended path when a key does not fire:
 
 1. Press the key inside `projmux shell` and see what works on your terminal
    out of the box ([Quick start](#quick-start-no-setup)).
-2. If something is swallowed, open Settings > Keybindings > Diagnostic, or
-   run [`projmux setup`](#diagnose-projmux-setup) outside tmux. Both paths tell
-   you exactly which sequences reach the process and which the terminal is
-   eating.
+2. If something is swallowed, open Settings > Keybindings and select the
+   action to capture the key, or run [`projmux setup`](#diagnose-projmux-setup)
+   outside tmux. Both paths tell you exactly which sequences reach the process
+   and which the terminal is eating.
 3. For terminals projmux knows how to configure, run
    [`projmux init [terminal]`](#auto-config-projmux-init) as the fallback:
    preview first, then add `--apply` to merge the right bindings into your
@@ -20,26 +20,20 @@ The recommended path when a key does not fire:
    hand), use the [Manual fallback / advanced (CSI-u)](#manual-fallback--advanced-csi-u)
    section.
 
-To change projmux's tmux-level chords, open Settings > Keybindings. The
-in-app editor writes `~/.config/projmux/keymap.toml`, regenerates
-`~/.config/projmux/tmux.conf`, and hot-reloads the live tmux config when
-Settings is running inside tmux. Terminal fallback mappings are separate:
-after changing fallback keys, rerun `projmux init` and restart the terminal
-where applicable.
+To change a user-facing key, open Settings > Keybindings, select an action,
+then choose `Press new key`. Settings captures one keypress through the same
+TTY probe path used by `projmux setup`, writes safe tmux plain chords to
+`~/.config/projmux/keymap.toml`, regenerates `~/.config/projmux/tmux.conf`,
+and hot-reloads the live tmux config when Settings is running inside tmux.
+CSI-u/User-key captures are reported as terminal fallback delivery and do not
+need a keymap write. Raw sequences that cannot be represented safely as a tmux
+plain chord are not persisted; configure terminal fallback with `projmux init`
+instead.
 
-Settings > Keybindings is the single in-app surface, split by chips:
-`Bindings`, `Diagnostic`, `Probe`, and `Init`.
-
-The `Diagnostic` chip reuses the same probe and terminal
-fallback engines from `projmux setup` and `projmux init`. It lists the
-keybinding catalog, lets you press one action key at a time from inside the
-app, distinguishes plain / CSI-u / unexpected / timeout outcomes, and exposes
-preview/apply rows for supported terminal fallbacks. When an unexpected
-sequence can be safely read as a tmux plain chord, the `Diagnostic` chip shows an explicit
-`Save as plain override` row with the suggested chord; it never overwrites
-`keymap.toml` from an unexpected sequence unless you select that confirmation
-row. The chip also shows whether the detected terminal can reload config after
-fallback apply or needs a restart/manual reload.
+The Settings surface no longer exposes plain/prefix tmux chord fields. Legacy
+`prefix = ...` entries in an existing `keymap.toml` still parse during
+migration, but Settings does not write new prefix entries and generated tmux
+config no longer binds the old action prefix chords.
 
 > 한국어 요약: 대부분의 터미널은 `projmux shell` 만으로 아래 키가 바로 동작합니다.
 > 동작하지 않으면 `projmux setup` 으로 어떤 키가 막혔는지 진단하고,
@@ -74,15 +68,6 @@ These open the projmux popups and the sidebar. No prefix needed.
 | `Alt-5` | Settings |
 | `Alt-6` | Project switcher popup |
 
-The same surfaces are also available from the prefix table:
-
-| Shortcut | Action |
-| --- | --- |
-| `Prefix F` | Project sidebar |
-| `Prefix b` | Existing session popup |
-| `Prefix f` | Project switcher popup |
-| `Prefix g` | Jump to the current pane's project session |
-
 ### Windows, panes, AI splits
 
 | Shortcut | Action |
@@ -91,9 +76,6 @@ The same surfaces are also available from the prefix table:
 | `Alt-Shift-Left` / `Alt-Shift-Right` | Previous / next window |
 | `Alt-Left` / `Right` / `Up` / `Down` | Move focus between panes |
 | `Alt-r` | Rename the current window |
-| `Prefix R` | Rename the current window |
-| `Prefix r` | Open an AI split to the right |
-| `Prefix l` | Open an AI split below |
 
 When a pane closes, projmux re-spreads remaining panes so the surviving split
 does not stretch lopsided.
@@ -143,10 +125,8 @@ The summary at the end lists the failing keys and a remediation hint
 tailored to the detected terminal (Ghostty, WezTerm, kitty, iTerm2,
 Alacritty, Windows Terminal, foot, VS Code, …). When projmux ships an init
 adapter for the terminal, the summary gives both the dry-run preview and the
-exact apply command, e.g. `projmux init ghostty --apply`.
-The Keybindings > Diagnostic chip also includes a concise after-apply hint: Ghostty/WezTerm/kitty
-can reload config, Windows Terminal and iTerm2 generally need a restarted tab
-or session, and unknown terminals are marked manual.
+exact apply command, e.g. `projmux init ghostty --apply`. Settings >
+Keybindings shows the same delivery categories after a capture.
 
 Useful flags:
 

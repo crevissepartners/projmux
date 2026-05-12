@@ -867,7 +867,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"select-pane -T '%1'",
 		"set-option -p @projmux_ai_topic '%1'",
 		"set-option -p @projmux_ai_topic_manual 1",
-		"bind-key R command-prompt",
+		"unbind-key -q R",
 		"set-hook -g pane-focus-out",
 		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane}",
 		"set-hook -g pane-focus-in",
@@ -901,6 +901,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set -g status 3",
 		"set -g status-format[2] \"",
 		"tmux autosave-session-state --quiet",
+		"bind-key R command-prompt",
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)
@@ -999,7 +1000,6 @@ func TestTmuxPrintConfigKeymapOverrideChangesBindAndUnbindsStaleDefault(t *testi
 		"unbind-key -q F",
 		"unbind-key -q A",
 		"bind-key -n M-a run-shell",
-		"bind-key A run-shell",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 	} {
 		if !strings.Contains(output, want) {
@@ -1011,6 +1011,9 @@ func TestTmuxPrintConfigKeymapOverrideChangesBindAndUnbindsStaleDefault(t *testi
 	}
 	if strings.Contains(output, "bind-key F run-shell") {
 		t.Fatalf("print-config output = %q, did not expect stale F bind", output)
+	}
+	if strings.Contains(output, "bind-key A run-shell") {
+		t.Fatalf("print-config output = %q, did not expect prefix override bind", output)
 	}
 }
 
@@ -1250,8 +1253,8 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"bind-key -n M-r command-prompt",
 		"bind-key -n User7 new-window -c \"#{pane_current_path}\"",
 		"bind-key -n User10 command-prompt",
-		"bind-key R command-prompt",
-		"bind-key M if -F \"#{mouse}\"",
+		"unbind-key -q R",
+		"unbind-key -q M",
 		"set -g status-left-length 20",
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
