@@ -1,0 +1,236 @@
+package app
+
+import (
+	"bytes"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+)
+
+func TestSessionStateStatusShowsToggleAndSnapshotReadModel(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC)
+	store := sessionstate.NewStore(t.TempDir())
+	saveSessionStateTestSnapshot(t, store, now.Add(-2*time.Minute))
+	configHome := t.TempDir()
+	paths := config.DefaultPaths(configHome, t.TempDir())
+	if err := config.SaveSessionStateToggleFile(paths.SessionStateAutorestoreFile(), config.SessionStateToggleOff); err != nil {
+		t.Fatalf("SaveSessionStateToggleFile() error = %v", err)
+	}
+	cmd := &sessionStateCommand{
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_CONFIG_HOME":
+				return configHome
+			case sessionStateAutosaveEnv:
+				return "off"
+			default:
+				return ""
+			}
+		},
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
+		now:          func() time.Time { return now },
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"status", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"Session State",
+		"session:      workspace",
+		"auto-save:    off (PROJMUX_SESSIONSTATE_AUTOSAVE env)",
+		"auto-restore: off (saved)",
+		"snapshot:     saved",
+		"2m ago",
+		"window 0 editor (2 panes)",
+		"pane 0.1 startup make watch",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("status output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestSessionStateSaveCapturesCurrentSessionEvenWhenAutosaveDisabled(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 12, 3, 4, 5, 0, time.UTC)
+	dir := t.TempDir()
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	paneFormat := strings.Join([]string{
+		"#{window_index}",
+		"#{pane_index}",
+		"#{?pane_active,1,0}",
+		"#{pane_current_path}",
+		"#{@projmux_recipe_kind}",
+		"#{@projmux_startup_command}",
+		"#{@projmux_ai_managed}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_ai_resume_id}",
+	}, "\x1f")
+	runner := &recordingTmuxRunner{
+		formats: map[string]string{
+			"#{session_name}": "workspace",
+		},
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "list-windows", "-t", "workspace", "-F", windowFormat}, "\x00"):   "0\x1fshell\x1flayout\n",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
+		},
+	}
+	cmd := &sessionStateCommand{
+		runner: runner,
+		lookupEnv: func(name string) string {
+			switch name {
+			case "TMUX":
+				return "/tmp/tmux,1,0"
+			case sessionStateAutosaveEnv:
+				return "off"
+			default:
+				return ""
+			}
+		},
+		homeDir: func() (string, error) { return t.TempDir(), nil },
+		now:     func() time.Time { return now },
+		sessionStore: func() (sessionstate.Store, error) {
+			return sessionstate.NewStore(dir), nil
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"save"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "saved session snapshot: workspace (1 window, 1 pane)") {
+		t.Fatalf("stdout = %q, want saved summary", got)
+	}
+	loaded, err := sessionstate.NewStore(dir).Load("workspace")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Session != "workspace" || loaded.SavedAt != now.UTC() {
+		t.Fatalf("loaded snapshot = %#v, want saved current session", loaded)
+	}
+	for _, call := range runner.calls {
+		if reflect.DeepEqual(call.args, []string{"display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_autosave_at}"}) {
+			t.Fatalf("manual save read autosave debounce gate; calls = %#v", runner.calls)
+		}
+	}
+}
+
+func TestSessionStateSaveFailsClearlyOutsideTmux(t *testing.T) {
+	t.Parallel()
+
+	cmd := &sessionStateCommand{
+		runner:       &recordingTmuxRunner{},
+		lookupEnv:    func(string) string { return "" },
+		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
+	}
+
+	err := cmd.Run([]string{"save"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "requires a current tmux session") {
+		t.Fatalf("error = %v, want clear outside-tmux failure", err)
+	}
+}
+
+func TestSessionStateDeleteRemovesExplicitSnapshotWithoutPrompt(t *testing.T) {
+	t.Parallel()
+
+	store := sessionstate.NewStore(t.TempDir())
+	saveSessionStateTestSnapshot(t, store, time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC))
+	cmd := &sessionStateCommand{
+		lookupEnv:    func(string) string { return "" },
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"delete", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "deleted session snapshot: workspace") {
+		t.Fatalf("stdout = %q, want deleted message", got)
+	}
+	if _, err := store.Load("workspace"); !errors.Is(err, sessionstate.ErrNotFound) {
+		t.Fatalf("Load() after delete error = %v, want %v", err, sessionstate.ErrNotFound)
+	}
+}
+
+func TestSessionStateRestoreDryRunPrintsPreviewWithoutTmux(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC)
+	store := sessionstate.NewStore(t.TempDir())
+	saveSessionStateTestSnapshot(t, store, now.Add(-time.Minute))
+	runner := &recordingTmuxRunner{}
+	cmd := &sessionStateCommand{
+		runner:       runner,
+		lookupEnv:    func(string) string { return "" },
+		now:          func() time.Time { return now },
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"restore", "--dry-run", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"Session State Restore Preview",
+		"Dry run only; no tmux commands were executed.",
+		"window 0 editor (2 panes)",
+		"pane 0.1 startup make watch",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, output)
+		}
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("dry-run tmux calls = %#v, want none", runner.calls)
+	}
+}
+
+func TestSessionStateRestoreRejectsExecutionWithoutDryRun(t *testing.T) {
+	t.Parallel()
+
+	cmd := &sessionStateCommand{}
+	err := cmd.Run([]string{"restore", "--session", "workspace"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "only supports --dry-run") {
+		t.Fatalf("error = %v, want dry-run gate", err)
+	}
+}
+
+func saveSessionStateTestSnapshot(t *testing.T, store sessionstate.Store, savedAt time.Time) {
+	t.Helper()
+	if err := store.Save(sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    "workspace",
+		DefaultCWD: "/tmp/workspace",
+		SavedAt:    savedAt,
+		Windows: []sessionstate.Window{{
+			Index:           0,
+			Name:            "editor",
+			ActivePaneIndex: 0,
+			Panes: []sessionstate.Pane{
+				{Index: 0, CWD: "/tmp/workspace", Recipe: sessionstate.ShellRecipe()},
+				{Index: 1, CWD: "/tmp/workspace", Recipe: sessionstate.StartupRecipe("make watch")},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+}

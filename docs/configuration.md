@@ -348,6 +348,23 @@ live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave`
 and `sessionstate-autorestore`; the environment variables above override those
 files.
 
+Manual snapshot actions are available from the CLI:
+
+```sh
+projmux session-state status [--session <name>]
+projmux session-state save
+projmux session-state delete [--session <name>]
+projmux session-state restore --dry-run [--session <name>]
+```
+
+`status` prints the effective auto-save / auto-restore state and a compact
+snapshot preview for the target session. `save` captures the current tmux
+session immediately and intentionally bypasses the autosave debounce and
+disabled-autosave gate; it still requires a current tmux session. `delete`
+removes the target snapshot without an interactive confirmation. `restore
+--dry-run` is preview-only in this release and does not create sessions or send
+tmux commands.
+
 ## Decoration Mode
 
 Settings > Appearance controls optional status and picker decoration:
