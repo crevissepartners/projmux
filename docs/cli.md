@@ -72,6 +72,8 @@ projmux layout list [--json]
 projmux layout show <name>
 projmux layout save [--description <text>] [--fresh] <name>
 projmux layout remove --force <name>
+projmux layout apply <name> --dry-run
+projmux layout apply <name> --force
 ```
 
 Project layout presets are read from `<project>/.projmux/layouts/*.toml`,
@@ -92,7 +94,15 @@ without it, the preset uses the default `inherit-autosave` mode.
 the command rejects deletion instead of prompting, so scripts cannot accidentally
 block on interactive input.
 
-`layout apply` is intentionally deferred in this release.
+`layout apply <name> --dry-run` requires a current tmux session, loads the
+project preset, converts it to the session-state snapshot shape for that
+session, and prints the same restore preview used by `session-state restore
+--dry-run`. It does not execute tmux replay commands and accepts `--dry-run`
+before or after `<name>`.
+
+Destructive live apply remains deferred. `layout apply <name>` rejects without
+`--force`; `layout apply <name> --force` returns a clear deferred error instead
+of attempting to overwrite the live tmux session.
 
 ## setup
 

@@ -28,5 +28,12 @@ window, pane, cwd, and startup recipe concepts as session snapshots. They are
 discoverable with `projmux layout list`, inspectable with
 `projmux layout show <name>`, capturable from the current tmux session with
 `projmux layout save <name>`, and removable with
-`projmux layout remove --force <name>`. Applying presets to live tmux sessions
-remains deferred.
+`projmux layout remove --force <name>`.
+
+`projmux layout apply <name> --dry-run` is the safe apply precursor. It requires
+a current tmux session, converts the preset to a session-state snapshot for that
+session, and prints the same restore preview/read model as
+`projmux session-state restore --dry-run`. It does not execute replay commands,
+does not autosave the live session, and does not update the saved snapshot.
+Destructive `layout apply <name> --force` remains deferred until projmux has a
+safe overwrite policy for non-empty live tmux sessions.

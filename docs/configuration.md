@@ -57,6 +57,13 @@ the project root are rendered as `${PROJMUX_CWD}` or `${PROJMUX_CWD}/rel` so
 the preset stays portable across checkouts. Use `projmux layout remove --force <name>`
 to delete a preset non-interactively.
 
+Use `projmux layout apply <name> --dry-run` from inside a tmux session to
+preview how a preset would convert into the current session's session-state
+restore plan. This preview does not run tmux replay commands. Destructive live
+apply is still deferred: `projmux layout apply <name>` requires `--force`, and
+`projmux layout apply <name> --force` reports that safe live overwrite is not
+implemented yet.
+
 The Phase 1 schema is intentionally close to the session-state snapshot shape:
 
 ```toml
