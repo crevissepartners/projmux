@@ -34,6 +34,7 @@ type Notification struct {
     Text      string    // capped at 80 runes
     Severity  string    // info | warn | critical
     Source    string    // ai | k8s | git | external
+    Metadata  map[string]string // optional producer metadata
     CreatedAt time.Time
     ExpiresAt time.Time
     Target            // session, window, pane, socket
@@ -52,6 +53,10 @@ freshness/display field, not a removal condition. `Severity` and
 `Source` are validated against the constants above; an invalid value
 returns `ErrInvalidSeverity` / `ErrInvalidSource` which the CLI maps to
 exit code 2.
+
+`Metadata` is optional and is omitted when empty. Hook producers use it for
+routing/debug context such as `agent`, `thread_id`, `turn_id`, `cwd`,
+`model`, and `client`; existing entries without metadata remain valid.
 
 ## CLI surface
 

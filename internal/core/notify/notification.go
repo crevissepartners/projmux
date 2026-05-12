@@ -40,16 +40,17 @@ const MaxTextLength = 80
 
 // Notification is a single queued status-bar entry.
 type Notification struct {
-	ID        string    `json:"id"`
-	Text      string    `json:"text"`
-	Severity  string    `json:"severity"`
-	Socket    string    `json:"socket,omitempty"`
-	Session   string    `json:"session"`
-	Window    string    `json:"window,omitempty"`
-	Pane      string    `json:"pane,omitempty"`
-	Source    string    `json:"source"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID        string            `json:"id"`
+	Text      string            `json:"text"`
+	Severity  string            `json:"severity"`
+	Socket    string            `json:"socket,omitempty"`
+	Session   string            `json:"session"`
+	Window    string            `json:"window,omitempty"`
+	Pane      string            `json:"pane,omitempty"`
+	Source    string            `json:"source"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+	ExpiresAt time.Time         `json:"expires_at"`
 }
 
 // Target groups the routing fields of a notification.
@@ -67,6 +68,7 @@ type PushInput struct {
 	Text     string
 	Severity string
 	Source   string
+	Metadata map[string]string
 	TTL      time.Duration
 	Target   Target
 }

@@ -99,6 +99,42 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithTopic(t *testing.T) {
 	}
 }
 
+func TestStoreAttentionNotifyProducerPushReplyReadyWithOverrides(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{}
+	producer := &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+
+	lookup := newFakeAttentionLookup(map[string]string{
+		"%2|@projmux_ai_agent": "Codex",
+		"%2|#S":                "feat-notify-producer-attention",
+		"%2|#{window_id}":      "@1",
+		"%2|#{pane_id}":        "%2",
+	})
+
+	producer.PushReplyReady(attentionNotifyInput{
+		PaneID: "%2",
+		Lookup: lookup,
+		ID:     "ai:codex:thread:turn",
+		Text:   "Codex · 응답 완료 · done",
+		Metadata: map[string]string{
+			"agent":     "codex",
+			"thread_id": "thread",
+		},
+	})
+
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:codex:thread:turn" || got.Text != "Codex · 응답 완료 · done" {
+		t.Fatalf("PushInput = %+v", got)
+	}
+	if got.Metadata["agent"] != "codex" || got.Metadata["thread_id"] != "thread" {
+		t.Fatalf("Metadata = %#v", got.Metadata)
+	}
+}
+
 func TestStoreAttentionNotifyProducerPushReplyReadyDispatchesSendNotiHook(t *testing.T) {
 	t.Parallel()
 
