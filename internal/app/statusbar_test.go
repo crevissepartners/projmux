@@ -80,7 +80,7 @@ func TestStatusbarDispatchTableCoversAllKnownRanges(t *testing.T) {
 	}
 }
 
-func TestStatusbarSessionStateClickShowsSnapshotPreview(t *testing.T) {
+func TestStatusbarSessionStateClickOpensActionPopup(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC)
@@ -145,18 +145,15 @@ func TestStatusbarSessionStateClickShowsSnapshotPreview(t *testing.T) {
 		t.Fatalf("missing popup command; calls = %#v", runner.calls)
 	}
 	for _, want := range []string{
-		"Session State",
-		"auto-save",
-		"auto-restore",
-		"2m ago",
-		"window 1 agents",
-		"pane 0.1 startup make watch",
-		"pane 1.0 agent codex resume 01973f21-abc topic session state",
-		"popup-wait-key",
+		"/usr/local/bin/projmux",
+		"session-state popup",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("session state popup command missing %q: %q", want, command)
 		}
+	}
+	if strings.Contains(command, "popup-wait-key") {
+		t.Fatalf("session state action popup must not use display-only wait helper: %q", command)
 	}
 	if strings.Contains(command, `"windows"`) || strings.Contains(command, `"version"`) {
 		t.Fatalf("session state popup must not dump raw JSON: %q", command)

@@ -13,10 +13,13 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 type sessionStateCommand struct {
 	runner       tmuxRunner
+	nativePicker intpicker.Runner
 	lookupEnv    func(string) string
 	homeDir      func() (string, error)
 	now          func() time.Time
@@ -26,6 +29,7 @@ type sessionStateCommand struct {
 func newSessionStateCommand() *sessionStateCommand {
 	return &sessionStateCommand{
 		runner:       inttmux.ExecRunner{},
+		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		lookupEnv:    os.Getenv,
 		homeDir:      os.UserHomeDir,
 		now:          time.Now,
@@ -56,6 +60,8 @@ func (c *sessionStateCommand) Run(args []string, stdout, stderr io.Writer) error
 		return c.runRestore(fs.Args()[1:], stdout, stderr)
 	case "preview":
 		return c.runPreview(fs.Args()[1:], stdout, stderr)
+	case "popup":
+		return c.runPopup(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printSessionStateUsage(stdout)
 		return nil
@@ -179,6 +185,67 @@ func (c *sessionStateCommand) runPreview(args []string, stdout, stderr io.Writer
 		return fmt.Errorf("session-state preview does not accept positional arguments")
 	}
 	return c.printRestorePreview(context.Background(), *session, stdout)
+}
+
+const (
+	sessionStatePopupClose          = "sessionstate-popup:close"
+	sessionStatePopupSave           = "sessionstate-popup:save"
+	sessionStatePopupPreviewRestore = "sessionstate-popup:preview-restore"
+)
+
+func (c *sessionStateCommand) runPopup(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("session-state popup", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	session := fs.String("session", "", "target session name")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printSessionStateUsage(stderr)
+		return fmt.Errorf("session-state popup does not accept positional arguments")
+	}
+	for {
+		state := c.loadView(context.Background(), *session)
+		result, err := c.runPopupPicker(sessionStatePopupOptions(state))
+		if err != nil {
+			if errors.Is(err, errSettingsClosed) {
+				return nil
+			}
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" || action == sessionStatePopupClose {
+			return nil
+		}
+		if err := c.executePopupAction(action, *session, stdout, stderr); err != nil {
+			return err
+		}
+		if action == sessionStatePopupPreviewRestore {
+			return nil
+		}
+	}
+}
+
+func (c *sessionStateCommand) runPopupPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, nil, options)
+	if err != nil {
+		if isNoSelectionExit(err) {
+			return intpickercompat.Result{}, errSettingsClosed
+		}
+		return intpickercompat.Result{}, fmt.Errorf("run session state popup: %w", err)
+	}
+	return result, nil
+}
+
+func (c *sessionStateCommand) executePopupAction(action, explicitSession string, stdout, stderr io.Writer) error {
+	switch action {
+	case sessionStatePopupSave:
+		return c.runSave(nil, stdout, stderr)
+	case sessionStatePopupPreviewRestore:
+		return c.printRestorePreview(context.Background(), explicitSession, stdout)
+	default:
+		return fmt.Errorf("unknown session state popup action: %s", action)
+	}
 }
 
 func (c *sessionStateCommand) printRestorePreview(ctx context.Context, explicitSession string, stdout io.Writer) error {
@@ -317,6 +384,99 @@ func sessionStateStatusLines(state statusbarSessionStateView, now time.Time, col
 	return lines
 }
 
+func sessionStatePopupOptions(state statusbarSessionStateView) intpickercompat.Options {
+	return intpickercompat.Options{
+		UI:            "sessionstate-popup",
+		Entries:       sessionStatePopupEntries(state),
+		Title:         "Session State",
+		Prompt:        "Session State > ",
+		Footer:        projmuxFooter("Enter: action  |  Esc/Ctrl-C: close"),
+		ExpectKeys:    []string{"enter"},
+		Bindings:      []string{"esc:abort", "ctrl-c:abort"},
+		DisableSearch: true,
+	}
+}
+
+func sessionStatePopupEntries(state statusbarSessionStateView) []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
+		{
+			Label: settingsLabelInfo("Session", nonEmpty(state.Session, "-"), ""),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Auto-save", statusbarSessionStateToggleText(state.Autosave), ""),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Auto-restore", statusbarSessionStateToggleText(state.Autorestore), ""),
+			Value: settingsNoopValue,
+		},
+	}
+	entries = append(entries, sessionStatePopupSnapshotEntries(state)...)
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save now", "capture current tmux session"),
+		Value: sessionStatePopupSave,
+	})
+	if state.LoadErr == nil && state.StoreErr == nil && state.SessionErr == nil {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview restore", "dry-run only"),
+			Value: sessionStatePopupPreviewRestore,
+		})
+	} else {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelDim("Preview restore", "unavailable without a valid snapshot"),
+			Value: settingsNoopValue,
+		})
+	}
+	entries = append(entries,
+		intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Close", "dismiss popup"),
+			Value: sessionStatePopupClose,
+		},
+	)
+	return entries
+}
+
+func sessionStatePopupSnapshotEntries(state statusbarSessionStateView) []intpickercompat.Entry {
+	switch {
+	case state.SessionErr != nil:
+		return []intpickercompat.Entry{{
+			Label: settingsLabelInfo("Snapshot", "unavailable", statusbarSessionStateErrorSummary(state.SessionErr)),
+			Value: settingsNoopValue,
+		}}
+	case state.StoreErr != nil:
+		return []intpickercompat.Entry{{
+			Label: settingsLabelInfo("Snapshot", "store unavailable", statusbarSessionStateErrorSummary(state.StoreErr)),
+			Value: settingsNoopValue,
+		}}
+	case state.LoadErr != nil:
+		status := "invalid"
+		if errors.Is(state.LoadErr, sessionstate.ErrNotFound) {
+			status = "missing"
+		}
+		return []intpickercompat.Entry{{
+			Label: settingsLabelInfo("Snapshot", status, statusbarSessionStateErrorSummary(state.LoadErr)),
+			Value: settingsNoopValue,
+		}}
+	default:
+		snap := state.Snapshot
+		return []intpickercompat.Entry{
+			{
+				Label: settingsLabelInfo("Snapshot", "saved", statusbarSessionStateSavedText(snap.SavedAt, time.Time{})),
+				Value: settingsNoopValue,
+			},
+			{
+				Label: settingsLabelInfo("Windows", fmt.Sprintf("%d", len(snap.Windows)), ""),
+				Value: settingsNoopValue,
+			},
+			{
+				Label: settingsLabelInfo("Panes", fmt.Sprintf("%d", statusbarSessionStatePaneCount(snap)), ""),
+				Value: settingsNoopValue,
+			},
+		}
+	}
+}
+
 func sessionStateRestorePreviewLines(snap sessionstate.Snapshot, now time.Time, cols int) []string {
 	lines := []string{
 		"Session State Restore Preview",
@@ -391,4 +551,5 @@ func printSessionStateUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux session-state delete [--session <name>]")
 	fmt.Fprintln(w, "  projmux session-state restore --dry-run [--session <name>]")
 	fmt.Fprintln(w, "  projmux session-state preview [--session <name>]")
+	fmt.Fprintln(w, "  projmux session-state popup [--session <name>]")
 }
