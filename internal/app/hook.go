@@ -677,6 +677,8 @@ func (c *hookCommand) loadProject() (string, hooks.ProjectConfig, error, string)
 // resolution but trimmed for CLI use: PROJMUX_CWD wins (so tmux-launched
 // CLI invocations inherit the pane's project), otherwise we fall back to
 // `os.Getwd()` and walk upward to the nearest `.projmux` or `.git` marker.
+// The implicit walk stops before considering the system temp root itself so
+// temp fixtures and other scratch parents do not become project contexts.
 // Returning an empty string is not an error; downstream commands decide
 // whether the context is required.
 func (c *hookCommand) resolveProjectContext() (string, error) {
@@ -693,17 +695,24 @@ func (c *hookCommand) resolveProjectContext() (string, error) {
 		return "", err
 	}
 	wd = filepath.Clean(wd)
-	if root := nearestProjectMarker(wd); root != "" {
+	if root := nearestProjectMarker(wd, os.TempDir()); root != "" {
 		return root, nil
 	}
 	return "", nil
 }
 
 // nearestProjectMarker walks parent directories looking for a `.projmux` or
-// `.git` marker. Returns "" when the walk reaches the filesystem root with
-// nothing found.
-func nearestProjectMarker(path string) string {
+// `.git` marker. Boundary paths are not considered candidates. Returns "" when
+// the walk reaches a boundary or the filesystem root with nothing found.
+func nearestProjectMarker(path string, boundaries ...string) string {
+	path = filepath.Clean(path)
 	for {
+		for _, boundary := range boundaries {
+			boundary = filepath.Clean(strings.TrimSpace(boundary))
+			if boundary != "" && boundary != "." && path == boundary {
+				return ""
+			}
+		}
 		if hookMarkerExists(filepath.Join(path, ".projmux")) || hookMarkerExists(filepath.Join(path, ".git")) {
 			return path
 		}
