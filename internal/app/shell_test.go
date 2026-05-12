@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -207,6 +209,264 @@ func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
 	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "home", "-c", home}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
+	}
+}
+
+func TestShellAutorestoreReplaysSnapshotBeforeAttachWhenSessionAbsent(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	workdir := t.TempDir()
+	store := sessionstate.NewStore(t.TempDir())
+	saveShellSnapshot(t, store, "dev", workdir)
+	foreground := &recordingShellRunner{}
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", filepath.Join(home, "tmux.conf"), "has-session", "-t", "dev"): errors.New("can't find session: dev"),
+		},
+	}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   foreground.run,
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	configPath := filepath.Join(home, "tmux.conf")
+	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	wantReplayCalls := []recordedTmuxCall{
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "new-session", "-d", "-s", "dev", "-c", workdir}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "rename-window", "-t", "dev:0", "main"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-layout", "-t", "dev:0", "layout"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-pane", "-t", "dev:0.0"}},
+	}
+	if !reflect.DeepEqual(tmux.calls, wantReplayCalls) {
+		t.Fatalf("tmux calls = %#v, want %#v", tmux.calls, wantReplayCalls)
+	}
+	wantAttach := []string{"-L", "pmx", "-f", configPath, "new-session", "-A", "-s", "dev", "-c", home}
+	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
+		t.Fatalf("attach command = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
+	}
+}
+
+func TestShellAutorestoreDisabledSkipsSnapshotLookupAndReplay(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	foreground := &recordingShellRunner{}
+	tmux := &scriptedShellTmuxRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == sessionStateAutorestoreEnv {
+				return "off"
+			}
+			return ""
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: foreground.run,
+		tmuxRunner: tmux,
+		sessionStore: func() (sessionstate.Store, error) {
+			t.Fatal("session store should not be resolved when autorestore is disabled")
+			return sessionstate.Store{}, nil
+		},
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(tmux.calls) != 0 {
+		t.Fatalf("tmux restore calls = %#v, want none", tmux.calls)
+	}
+	if foreground.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
+	}
+}
+
+func TestShellAutorestoreSavedToggleOffSkipsSnapshotLookupAndReplay(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := t.TempDir()
+	togglePath := filepath.Join(configHome, "projmux", "sessionstate-autorestore")
+	if err := os.MkdirAll(filepath.Dir(togglePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(togglePath, []byte("off\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	foreground := &recordingShellRunner{}
+	tmux := &scriptedShellTmuxRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return configHome
+			}
+			return ""
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: foreground.run,
+		tmuxRunner: tmux,
+		sessionStore: func() (sessionstate.Store, error) {
+			t.Fatal("session store should not be resolved when saved autorestore toggle is off")
+			return sessionstate.Store{}, nil
+		},
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(tmux.calls) != 0 {
+		t.Fatalf("tmux restore calls = %#v, want none", tmux.calls)
+	}
+	if foreground.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
+	}
+}
+
+func TestShellAutorestoreMissingSnapshotIsQuietNoop(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	foreground := &recordingShellRunner{}
+	tmux := &scriptedShellTmuxRunner{}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   foreground.run,
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
+	}
+
+	var stderr bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want quiet missing snapshot", stderr.String())
+	}
+	if len(tmux.calls) != 0 {
+		t.Fatalf("tmux restore calls = %#v, want none", tmux.calls)
+	}
+	if foreground.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
+	}
+}
+
+func TestShellAutorestoreExistingSessionSkipsReplay(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	workdir := t.TempDir()
+	store := sessionstate.NewStore(t.TempDir())
+	saveShellSnapshot(t, store, "home", workdir)
+	foreground := &recordingShellRunner{}
+	tmux := &scriptedShellTmuxRunner{}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   foreground.run,
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	wantCalls := []recordedTmuxCall{{
+		name: "tmux",
+		args: []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "has-session", "-t", "home"},
+	}}
+	if !reflect.DeepEqual(tmux.calls, wantCalls) {
+		t.Fatalf("tmux restore calls = %#v, want has-session only", tmux.calls)
+	}
+	if foreground.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
+	}
+}
+
+func TestShellAutorestoreReplayFailureFallsBackToAttachWithDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	workdir := t.TempDir()
+	store := sessionstate.NewStore(t.TempDir())
+	if err := store.Save(sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    "home",
+		DefaultCWD: workdir,
+		SavedAt:    time.Date(2026, 5, 12, 1, 2, 3, 0, time.UTC),
+		Windows: []sessionstate.Window{{
+			Index:           0,
+			Name:            "main",
+			ActivePaneIndex: 0,
+			Panes: []sessionstate.Pane{
+				{Index: 0, CWD: workdir, Recipe: sessionstate.ShellRecipe()},
+				{Index: 1, CWD: workdir, Recipe: sessionstate.ShellRecipe()},
+			},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	foreground := &recordingShellRunner{}
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "has-session", "-t", "home"):                           errors.New("no server running"),
+			shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "split-window", "-d", "-t", "home:0.0", "-c", workdir): errors.New("split failed"),
+		},
+	}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   foreground.run,
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	var stderr bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{"projmux sessionstate autorestore:", "replay tmux window 0 pane 1"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
+	if foreground.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
+	}
+}
+
+func TestShellTmuxExecRunnerStripsNestedTmuxEnv(t *testing.T) {
+	t.Parallel()
+
+	runner := shellTmuxExecRunner{env: func() []string {
+		return []string{
+			"PATH=" + os.Getenv("PATH"),
+			"TMUX=/tmp/nested-tmux,123,0",
+		}
+	}}
+
+	_, err := runner.Run(context.Background(), "/bin/sh", "-c", `if [ "${TMUX+x}" = x ]; then echo "inherited TMUX=$TMUX"; exit 7; fi`)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want TMUX stripped", err)
 	}
 }
 
@@ -809,6 +1069,47 @@ func (r *recordingShellRunner) run(_ context.Context, env []string, name string,
 	r.name = name
 	r.args = append([]string(nil), args...)
 	return nil
+}
+
+type scriptedShellTmuxRunner struct {
+	outputs map[string][]byte
+	errors  map[string]error
+	calls   []recordedTmuxCall
+}
+
+func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
+	key := shellTmuxCallKey(name, args...)
+	if err, ok := r.errors[key]; ok {
+		return nil, err
+	}
+	if output, ok := r.outputs[key]; ok {
+		return output, nil
+	}
+	return nil, nil
+}
+
+func shellTmuxCallKey(name string, args ...string) string {
+	return strings.Join(append([]string{name}, args...), "\x00")
+}
+
+func saveShellSnapshot(t *testing.T, store sessionstate.Store, sessionName, cwd string) {
+	t.Helper()
+	if err := store.Save(sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    sessionName,
+		DefaultCWD: cwd,
+		SavedAt:    time.Date(2026, 5, 12, 1, 2, 3, 0, time.UTC),
+		Windows: []sessionstate.Window{{
+			Index:           0,
+			Name:            "main",
+			Layout:          "layout",
+			ActivePaneIndex: 0,
+			Panes:           []sessionstate.Pane{{Index: 0, CWD: cwd, Recipe: sessionstate.ShellRecipe()}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type shellUpdateRunnerFunc func(options intpickercompat.Options) (intpickercompat.Result, error)

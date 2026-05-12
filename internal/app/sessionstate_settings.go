@@ -357,17 +357,29 @@ func (c *settingsCommand) currentSettingsSessionName() (string, error) {
 }
 
 func sessionStateAutosaveEnabled(homeDir func() (string, error), lookupEnv func(string) string) bool {
+	return sessionStateToggleEnabled(homeDir, lookupEnv, sessionStateAutosaveEnv, func(paths config.Paths) string {
+		return paths.SessionStateAutosaveFile()
+	})
+}
+
+func sessionStateAutorestoreEnabled(homeDir func() (string, error), lookupEnv func(string) string) bool {
+	return sessionStateToggleEnabled(homeDir, lookupEnv, sessionStateAutorestoreEnv, func(paths config.Paths) string {
+		return paths.SessionStateAutorestoreFile()
+	})
+}
+
+func sessionStateToggleEnabled(homeDir func() (string, error), lookupEnv func(string) string, envName string, file func(config.Paths) string) bool {
 	if lookupEnv == nil {
 		lookupEnv = os.Getenv
 	}
-	if raw := strings.TrimSpace(lookupEnv(sessionStateAutosaveEnv)); raw != "" {
+	if raw := strings.TrimSpace(lookupEnv(envName)); raw != "" {
 		return config.NormalizeSessionStateToggle(raw).Enabled()
 	}
 	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
 	if err != nil {
 		return true
 	}
-	mode, err := config.LoadSessionStateToggleFile(paths.SessionStateAutosaveFile())
+	mode, err := config.LoadSessionStateToggleFile(file(paths))
 	if err != nil {
 		return true
 	}
