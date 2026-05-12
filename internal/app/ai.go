@@ -2225,6 +2225,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai ingest codex-notify <json>")
 	fmt.Fprintln(w, "  projmux ai ingest claude-hook < payload.json")
 	fmt.Fprintln(w, "  projmux ai integrate codex [--dry-run] [--remove]")
+	fmt.Fprintln(w, "  projmux ai integrate claude [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai topic set <text> [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic clear [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic get [--pane <id>]")

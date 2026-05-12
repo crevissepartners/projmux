@@ -249,8 +249,8 @@ without writing. If a user-owned `notify = ...` line already exists outside the
 managed block, projmux refuses to replace it automatically because Codex legacy
 notify has a single command slot.
 
-Codex hooks-engine mode, Claude Code hooks, and tmux bell fallback integration
-remain future slices.
+Codex hooks-engine mode and tmux bell fallback integration remain future
+slices.
 
 ## Claude Code Hook Ingest
 
@@ -271,11 +271,76 @@ with `@projmux_ai_hook_active=1`, so `projmux ai watch-title` skips the pane
 and hook payloads become the primary signal.
 
 The Claude hook payload is intentionally accepted directly at the ingest
-boundary; `projmux ai integrate claude` is still deferred, so users must wire
-Claude settings manually for now. Deferred Claude events include
-`StopFailure`, `SubagentStop`, and `TeammateIdle`. Dedupe across simultaneous
-Claude events is also deferred; the current slice keeps each supported hook
-event explicit.
+boundary.
+
+`projmux ai integrate claude` manages user-level Claude Code hook settings in
+`~/.claude/settings.json`. Claude Code hooks are configured under the top-level
+`hooks` object, with each event containing matcher entries and each matcher
+entry containing a `hooks` array. Projmux omits `matcher`, which Claude Code
+treats as "match all" for the event; this keeps `Notification` notification
+types and `PermissionRequest` tool names broad while this integration remains
+an observability hook:
+
+```json
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The marker lives inside the command string because JSON settings cannot carry
+comments. Repeated installs are idempotent: projmux removes its marked commands
+and re-adds the current managed command while preserving unrelated settings and
+hooks. `--remove` deletes only marked commands, and `--dry-run` previews the
+JSON without writing. If any supported event already has an unmanaged command
+that invokes `projmux ai ingest claude-hook`, projmux refuses to install over it
+because it cannot tell whether the command is user-owned or stale projmux
+wiring.
+
+`PermissionRequest` is a current Claude Code hook event and is wired directly.
+Deferred Claude events include `StopFailure`, `SubagentStop`, and
+`TeammateIdle`. Dedupe across simultaneous Claude events is also deferred; the
+current slice keeps each supported hook event explicit.
 
 ## Pre Create Abort
 
