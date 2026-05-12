@@ -33,8 +33,8 @@
 - `make test` also covers Settings IA regression guards for `send-noti` visibility in Hooks, no nested Project recipe inside Hooks, Project recipe/AI/Labs view-first detail rows, and Desktop notifications under Labs.
 - `make test` also now covers onboarding revisit and welcome wiring (`projmux welcome`, `Settings > About > Welcome`, `pending_attach_welcome`, attach-time `welcome --popup` one-time claim/env suppression/tmux popup payload, and generated `client-attached` app config wiring) via shell welcome tests.
 - Current focused unit coverage also includes strict notify SOT behavior
-  (TTL does not remove rows, focus success acks, reconcile reports stale
-  rows), `notify list --live` queue/live explanations, notify sidebar
+  (TTL does not remove rows, focus success and target-gone clicks ack,
+  reconcile reports stale rows), `notify list --live` queue/live explanations, notify sidebar
   two-line card rendering with age/project/window/pane metadata plus focus/ack/clear-all
   actions, and `focus` dispatch diagnostics for session fallback, unresolved
   targets, window fallback, pane fallback, explicit id failures, and

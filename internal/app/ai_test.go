@@ -1745,7 +1745,7 @@ func TestBuildRegisterToastAppIDShortcutTargetIsCmdExe(t *testing.T) {
 	// powershell.exe target by name and we don't want the assertion to
 	// flag its own do-not-do-this commentary.
 	var noComments strings.Builder
-	for _, line := range strings.Split(script, "\n") {
+	for line := range strings.SplitSeq(script, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
@@ -1779,7 +1779,7 @@ func TestBuildRegisterToastAppIDShortcutTargetIsCmdExe(t *testing.T) {
 func TestBuildRegisterToastAppIDDoesNotSetToastActivatorCLSID(t *testing.T) {
 	script := buildRegisterToastAppIDPowerShell(desktopAppID, desktopDisplayName, "")
 	var noComments strings.Builder
-	for _, line := range strings.Split(script, "\n") {
+	for line := range strings.SplitSeq(script, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "#") {
 			continue

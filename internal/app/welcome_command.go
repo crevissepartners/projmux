@@ -218,7 +218,7 @@ func welcomeCurrentVersion() string {
 
 func welcomePopupWidth(payload string) string {
 	width := 80
-	for _, line := range strings.Split(payload, "\n") {
+	for line := range strings.SplitSeq(payload, "\n") {
 		if visible := visibleWelcomeLineLen(line); visible > width {
 			width = visible
 		}
@@ -227,10 +227,7 @@ func welcomePopupWidth(payload string) string {
 }
 
 func welcomePopupHeight(payload string) string {
-	height := strings.Count(payload, "\n")
-	if height < 1 {
-		height = 1
-	}
+	height := max(strings.Count(payload, "\n"), 1)
 	return strconv.Itoa(height)
 }
 

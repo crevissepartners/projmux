@@ -357,7 +357,7 @@ func countLegacyScriptLines(path string) int {
 		return 0
 	}
 	count := 0
-	for _, raw := range strings.Split(string(data), "\n") {
+	for raw := range strings.SplitSeq(string(data), "\n") {
 		trimmed := strings.TrimSpace(raw)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue

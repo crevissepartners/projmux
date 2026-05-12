@@ -825,7 +825,7 @@ func TestStatusbarClickNotifyTransientFocusFailureSurfacesToastAndKeepsEntry(t *
 	}
 }
 
-func TestStatusbarClickNotifyTargetGoneKeepsEntryAndShowsToast(t *testing.T) {
+func TestStatusbarClickNotifyTargetGoneAcksEntryAndShowsToast(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{
@@ -852,10 +852,10 @@ func TestStatusbarClickNotifyTargetGoneKeepsEntryAndShowsToast(t *testing.T) {
 	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v, want nil (target-gone must not surface as tmux error popup)", err)
 	}
-	if store.ackedID != "" {
-		t.Fatalf("store.ackedID = %q, want empty (target-gone must keep entry until explicit ack)", store.ackedID)
+	if store.ackedID != "abc" {
+		t.Fatalf("store.ackedID = %q, want abc (target-gone click should clear the stuck row)", store.ackedID)
 	}
-	if !sawTmuxDisplayMessage(runner.calls, "notify target gone; ack to clear") {
+	if !sawTmuxDisplayMessage(runner.calls, "notify target gone; cleared") {
 		t.Fatalf("missing 'notify target gone' display-message; calls = %#v", runner.calls)
 	}
 }
@@ -889,10 +889,10 @@ func TestStatusbarClickNotifyUsageErrorTreatedAsTargetGone(t *testing.T) {
 	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
-	if store.ackedID != "" {
-		t.Fatalf("store.ackedID = %q, want empty (UsageError should keep entry like target-gone)", store.ackedID)
+	if store.ackedID != "abc" {
+		t.Fatalf("store.ackedID = %q, want abc (UsageError should clear like target-gone)", store.ackedID)
 	}
-	if !sawTmuxDisplayMessage(runner.calls, "notify target gone; ack to clear") {
+	if !sawTmuxDisplayMessage(runner.calls, "notify target gone; cleared") {
 		t.Fatalf("missing target-gone display-message; calls = %#v", runner.calls)
 	}
 }

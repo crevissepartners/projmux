@@ -187,7 +187,6 @@ func TestMigrateProjectLegacyScriptsSymlinkIsNeverMigrated(t *testing.T) {
 		{name: "multi-line target", body: "#!/bin/sh\necho one\necho two\n"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
