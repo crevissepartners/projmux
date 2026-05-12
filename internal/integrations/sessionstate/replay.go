@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	claudeagent "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	codexagent "github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 )
 
 // Runner is the command execution surface used by replay. It intentionally
@@ -136,10 +137,16 @@ func replayPaneRecipe(ctx context.Context, runner Runner, session string, window
 	}
 
 	agent := strings.ToLower(strings.TrimSpace(pane.Recipe.Agent))
-	if agent != claudeagent.AgentName {
+	var command string
+	var err error
+	switch agent {
+	case claudeagent.AgentName:
+		command, err = claudeagent.ResumeCommand(pane.Recipe.ResumeID)
+	case codexagent.AgentName:
+		command, err = codexagent.ResumeCommand(pane.Recipe.ResumeID)
+	default:
 		return nil
 	}
-	command, err := claudeagent.ResumeCommand(pane.Recipe.ResumeID)
 	if err != nil {
 		appendReplayWarning(result, ReplayWarning{
 			Scope:       "agent",
@@ -150,7 +157,7 @@ func replayPaneRecipe(ctx context.Context, runner Runner, session string, window
 		return nil
 	}
 	if _, err := runner.Run(ctx, "tmux", "send-keys", "-t", paneTarget(session, windowIndex, pane.Index), command, "Enter"); err != nil {
-		return fmt.Errorf("replay tmux window %d pane %d claude resume: %w", windowIndex, pane.Index, err)
+		return fmt.Errorf("replay tmux window %d pane %d %s resume: %w", windowIndex, pane.Index, agent, err)
 	}
 	return nil
 }
