@@ -608,6 +608,75 @@ func TestHookTrust_RejectsWhenContextMissing(t *testing.T) {
 	}
 }
 
+func TestHookResolveProjectContextIgnoresTempRootMarker(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+	mustMkdirAll(t, filepath.Join(tempRoot, ".git"))
+	wd := filepath.Join(tempRoot, "scratch", "leaf")
+	mustMkdirAll(t, wd)
+
+	cmd := &hookCommand{
+		lookupEnv: func(string) string { return "" },
+		getwd:     func() (string, error) { return wd, nil },
+	}
+
+	got, err := cmd.resolveProjectContext()
+	if err != nil {
+		t.Fatalf("resolveProjectContext() err = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("resolveProjectContext() = %q, want no context from temp root marker", got)
+	}
+}
+
+func TestHookResolveProjectContextAllowsRepoUnderTempRoot(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+	repo := filepath.Join(tempRoot, "repo")
+	wd := filepath.Join(repo, "nested")
+	mustMkdirAll(t, filepath.Join(repo, ".git"))
+	mustMkdirAll(t, wd)
+
+	cmd := &hookCommand{
+		lookupEnv: func(string) string { return "" },
+		getwd:     func() (string, error) { return wd, nil },
+	}
+
+	got, err := cmd.resolveProjectContext()
+	if err != nil {
+		t.Fatalf("resolveProjectContext() err = %v", err)
+	}
+	if got != repo {
+		t.Fatalf("resolveProjectContext() = %q, want %q", got, repo)
+	}
+}
+
+func TestHookResolveProjectContextExplicitEnvWinsUnderTempRoot(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+	project := filepath.Join(tempRoot, "project")
+	wd := filepath.Join(tempRoot, "scratch")
+	mustMkdirAll(t, wd)
+
+	cmd := &hookCommand{
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+		getwd: func() (string, error) { return wd, nil },
+	}
+
+	got, err := cmd.resolveProjectContext()
+	if err != nil {
+		t.Fatalf("resolveProjectContext() err = %v", err)
+	}
+	if got != project {
+		t.Fatalf("resolveProjectContext() = %q, want explicit PROJMUX_CWD %q", got, project)
+	}
+}
+
 // --- small helpers --------------------------------------------------------
 
 // wrapLookupEnv returns a lookup function that overrides values for the
