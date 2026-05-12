@@ -316,9 +316,15 @@ welcome.
 The same guide is also available on demand through `projmux welcome`, and it is
 linked from Settings > About as `Welcome`.
 
-In this branch, `projmux welcome` is implemented as a revisit path only; it
-shows the guide but does not yet add a guaranteed attach-time popup. The
-`pending_attach_welcome` state is present so auto-popup can be enabled as a follow-up.
+When `pending_attach_welcome` is true, the generated projmux shell tmux config
+runs `projmux welcome --popup` asynchronously from the `client-attached` hook.
+That helper atomically claims the pending marker, flips it off, and shows the
+welcome guide in a tmux popup once for that version. Missing, corrupt, or
+already-consumed state is a quiet no-op.
+
+Set `PROJMUX_WELCOME=off` before launching or attaching to `projmux shell` to
+suppress the automatic attach popup. The manual `projmux welcome` command still
+prints the guide.
 
 ## Decoration Mode
 

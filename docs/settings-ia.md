@@ -26,5 +26,6 @@ Shell bootstrap UX is phase-split:
 
 - Phase 1 is complete in this branch: `projmux welcome`, the About-screen
   Welcome entry, and `pending_attach_welcome` state make the guide revisit-able.
-- Phase 2 is not implemented here: there is no automatic attach-time popup from
-  the status bar tick path in this branch.
+- Phase 2 is complete in this branch: the generated projmux shell tmux config
+  runs the low-noise `projmux welcome --popup` attach hook, which claims the
+  pending marker once and displays the welcome guide after attach.
