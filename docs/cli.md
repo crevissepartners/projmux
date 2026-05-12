@@ -70,6 +70,8 @@ selection has been retired. The native picker is always used.
 ```
 projmux layout list [--json]
 projmux layout show <name>
+projmux layout save [--description <text>] [--fresh] <name>
+projmux layout remove --force <name>
 ```
 
 Project layout presets are read from `<project>/.projmux/layouts/*.toml`,
@@ -80,8 +82,17 @@ parent with `.projmux` or `.git`.
 stderr. `--json` emits an array of `{name,path,description,mode,windows,panes}`.
 `layout show <name>` prints the raw preset file content.
 
-`layout save`, `layout remove`, and `layout apply` are intentionally deferred in
-this release.
+`layout save <name>` captures the current tmux session with the session-state
+capture path, converts paths under the project root to `${PROJMUX_CWD}` form,
+and writes `<project>/.projmux/layouts/<name>.toml`. `--description <text>`
+sets the preset description. `--fresh` writes `mode = "fresh-each-time"`;
+without it, the preset uses the default `inherit-autosave` mode.
+
+`layout remove --force <name>` deletes the project preset. Without `--force`,
+the command rejects deletion instead of prompting, so scripts cannot accidentally
+block on interactive input.
+
+`layout apply` is intentionally deferred in this release.
 
 ## setup
 

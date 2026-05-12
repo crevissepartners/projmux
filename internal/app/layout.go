@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,19 +10,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 type layoutCommand struct {
+	runner    tmuxRunner
 	lookupEnv func(string) string
 	getwd     func() (string, error)
+	now       func() time.Time
 }
 
 func newLayoutCommand() *layoutCommand {
 	return &layoutCommand{
+		runner:    inttmux.ExecRunner{},
 		lookupEnv: os.Getenv,
 		getwd:     os.Getwd,
+		now:       time.Now,
 	}
 }
 
@@ -41,7 +48,11 @@ func (c *layoutCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runList(fs.Args()[1:], stdout, stderr)
 	case "show":
 		return c.runShow(fs.Args()[1:], stdout, stderr)
-	case "save", "remove", "apply":
+	case "save":
+		return c.runSave(fs.Args()[1:], stdout, stderr)
+	case "remove":
+		return c.runRemove(fs.Args()[1:], stdout, stderr)
+	case "apply":
 		return fmt.Errorf("layout %s is not implemented in this release", fs.Arg(0))
 	case "help", "--help", "-h":
 		printLayoutUsage(stdout)
@@ -118,6 +129,80 @@ func (c *layoutCommand) runShow(args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
+func (c *layoutCommand) runSave(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("layout save", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	description := fs.String("description", "", "layout preset description")
+	fresh := fs.Bool("fresh", false, "start from the preset each time instead of autosave state")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		printLayoutUsage(stderr)
+		return fmt.Errorf("layout save requires exactly 1 argument: <name>")
+	}
+	if !c.insideTmux() {
+		return errors.New("layout save requires a current tmux session")
+	}
+	if c.runner == nil {
+		return errors.New("configure tmux runner: tmux runner is not configured")
+	}
+	store, err := c.store()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	client := inttmux.NewClient(c.runner)
+	sessionName, err := client.CurrentSessionName(ctx)
+	if err != nil {
+		return err
+	}
+	snap, err := client.CaptureSessionSnapshot(ctx, sessionName, c.nowTime())
+	if err != nil {
+		return fmt.Errorf("capture layout preset %q from session %q: %w", fs.Arg(0), sessionName, err)
+	}
+	mode := corelayout.ModeInheritAutosave
+	if *fresh {
+		mode = corelayout.ModeFreshEachTime
+	}
+	preset := corelayout.FromSnapshot(snap, store.ProjectRoot, *description, mode)
+	if err := store.Save(fs.Arg(0), preset); err != nil {
+		return err
+	}
+	path, err := store.Path(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "saved layout preset: %s (%s, %s) -> %s\n", fs.Arg(0), sessionStateCount(len(preset.Windows), "window"), sessionStateCount(layoutPresetPaneCount(preset), "pane"), path)
+	return err
+}
+
+func (c *layoutCommand) runRemove(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("layout remove", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	force := fs.Bool("force", false, "delete without an interactive confirmation prompt")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		printLayoutUsage(stderr)
+		return fmt.Errorf("layout remove requires exactly 1 argument: <name>")
+	}
+	if !*force {
+		return fmt.Errorf("layout remove %q requires --force for non-interactive deletion", fs.Arg(0))
+	}
+	store, err := c.store()
+	if err != nil {
+		return err
+	}
+	if err := store.Remove(fs.Arg(0)); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "removed layout preset: %s\n", fs.Arg(0))
+	return err
+}
+
 func (c *layoutCommand) store() (corelayout.Store, error) {
 	projectRoot, err := c.resolveProjectContext()
 	if err != nil {
@@ -149,6 +234,28 @@ func (c *layoutCommand) resolveProjectContext() (string, error) {
 	return "", nil
 }
 
+func (c *layoutCommand) insideTmux() bool {
+	if c.lookupEnv == nil {
+		return strings.TrimSpace(os.Getenv("TMUX")) != ""
+	}
+	return strings.TrimSpace(c.lookupEnv("TMUX")) != ""
+}
+
+func (c *layoutCommand) nowTime() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
+}
+
+func layoutPresetPaneCount(preset corelayout.Preset) int {
+	count := 0
+	for _, window := range preset.Windows {
+		count += len(window.Panes)
+	}
+	return count
+}
+
 func printLayoutWarnings(w io.Writer, warnings []corelayout.Warning) {
 	for _, warning := range warnings {
 		fmt.Fprintf(w, "warning: skip layout preset %s: %v\n", warning.Path, warning.Err)
@@ -159,9 +266,9 @@ func printLayoutUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux layout list [--json]")
 	fmt.Fprintln(w, "  projmux layout show <name>")
+	fmt.Fprintln(w, "  projmux layout save [--description <text>] [--fresh] <name>")
+	fmt.Fprintln(w, "  projmux layout remove --force <name>")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Deferred:")
-	fmt.Fprintln(w, "  projmux layout save <name>")
-	fmt.Fprintln(w, "  projmux layout remove <name>")
 	fmt.Fprintln(w, "  projmux layout apply <name>")
 }

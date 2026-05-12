@@ -50,6 +50,13 @@ The project context comes from `PROJMUX_CWD` when set, otherwise projmux walks
 upward from the current directory to the nearest `.projmux` or `.git` marker.
 Files outside that project tree are not discovered.
 
+Use `projmux layout save [--description <text>] [--fresh] <name>` from inside a
+tmux session to capture the current session into this directory. The save path
+uses the same tmux capture logic as `projmux session-state save`; paths inside
+the project root are rendered as `${PROJMUX_CWD}` or `${PROJMUX_CWD}/rel` so
+the preset stays portable across checkouts. Use `projmux layout remove --force <name>`
+to delete a preset non-interactively.
+
 The Phase 1 schema is intentionally close to the session-state snapshot shape:
 
 ```toml
