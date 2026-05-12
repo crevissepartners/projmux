@@ -1708,6 +1708,8 @@ func TestClientEnsureSessionRunsLifecycleHooksForNewSession(t *testing.T) {
 			{output: []byte("%7\n")},
 			{output: []byte("zsh\n")},
 			{},
+			{},
+			{},
 		},
 	}
 	hook := &fakeLifecycleRunner{
@@ -1726,6 +1728,8 @@ func TestClientEnsureSessionRunsLifecycleHooksForNewSession(t *testing.T) {
 		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_current_command}"}},
 		{name: "tmux", args: []string{"send-keys", "-t", "%7", "echo ready", "Enter"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_recipe_kind", "startup"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_startup_command", "echo ready"}},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("unexpected tmux calls %#v", runner.calls)
@@ -1738,6 +1742,118 @@ func TestClientEnsureSessionRunsLifecycleHooksForNewSession(t *testing.T) {
 	}
 	if got := hook.calls[2].context.PaneID; got != "%7" {
 		t.Fatalf("pane-startup pane id = %q, want %%7", got)
+	}
+}
+
+func TestClientEnsureSessionSkipsStartupMarkersWhenNoStartupHook(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: exitError(t, 1)},
+			{output: []byte("%7\n")},
+		},
+	}
+	hook := &fakeLifecycleInspectorRunner{hasHooks: false}
+	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
+
+	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
+		t.Fatalf("EnsureSession returned error: %v", err)
+	}
+
+	wantCalls := []commandCall{
+		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("unexpected tmux calls %#v", runner.calls)
+	}
+	if gotEvents := hook.events(); !reflect.DeepEqual(gotEvents, []hooks.Event{hooks.EventPreCreate, hooks.EventPostCreate}) {
+		t.Fatalf("hook events = %#v, want pre-create and post-create only", gotEvents)
+	}
+}
+
+func TestClientEnsureSessionSkipsStartupMarkersWhenNoCommandOrHookError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		result  hooks.RunResult
+		hookErr error
+	}{
+		{name: "empty command"},
+		{name: "hook error", hookErr: errors.New("startup failed")},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			runner := &scriptedRunner{
+				t: t,
+				steps: []scriptedStep{
+					{err: exitError(t, 1)},
+					{output: []byte("%7\n")},
+					{output: []byte("zsh\n")},
+				},
+			}
+			hook := &fakeLifecycleRunner{
+				results: map[hooks.Event]hooks.RunResult{
+					hooks.EventPaneStartup: tc.result,
+				},
+				errs: map[hooks.Event]error{
+					hooks.EventPaneStartup: tc.hookErr,
+				},
+			}
+			client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
+
+			if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
+				t.Fatalf("EnsureSession returned error: %v", err)
+			}
+
+			wantCalls := []commandCall{
+				{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+				{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
+				{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_current_command}"}},
+			}
+			if !reflect.DeepEqual(runner.calls, wantCalls) {
+				t.Fatalf("unexpected tmux calls %#v", runner.calls)
+			}
+		})
+	}
+}
+
+func TestClientEnsureSessionSkipsStartupMarkersWhenSendKeysFails(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: exitError(t, 1)},
+			{output: []byte("%7\n")},
+			{output: []byte("zsh\n")},
+			{err: errors.New("send failed")},
+		},
+	}
+	hook := &fakeLifecycleRunner{
+		results: map[hooks.Event]hooks.RunResult{
+			hooks.EventPaneStartup: {Stdout: "echo ready"},
+		},
+	}
+	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
+
+	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
+		t.Fatalf("EnsureSession returned error: %v", err)
+	}
+
+	wantCalls := []commandCall{
+		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_current_command}"}},
+		{name: "tmux", args: []string{"send-keys", "-t", "%7", "echo ready", "Enter"}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("unexpected tmux calls %#v", runner.calls)
 	}
 }
 
@@ -2086,6 +2202,15 @@ type fakeLifecycleRunner struct {
 	results    map[hooks.Event]hooks.RunResult
 	errs       map[hooks.Event]error
 	sessionEnv map[string]string
+}
+
+type fakeLifecycleInspectorRunner struct {
+	fakeLifecycleRunner
+	hasHooks bool
+}
+
+func (f *fakeLifecycleInspectorRunner) HasHooks(hooks.Event, string) bool {
+	return f.hasHooks
 }
 
 func (f *fakeLifecycleRunner) Run(_ context.Context, event hooks.Event, c hooks.Context) (hooks.RunResult, error) {

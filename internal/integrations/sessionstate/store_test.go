@@ -269,6 +269,11 @@ func TestRecipeJSONForms(t *testing.T) {
 			in:   AgentRecipe("claude", "abcdef-1234", "keybinding in-app"),
 			want: `{"kind":"agent","agent":"claude","resume_id":"abcdef-1234","topic":"keybinding in-app"}`,
 		},
+		{
+			name: "startup",
+			in:   StartupRecipe("npm run dev"),
+			want: `{"kind":"startup","command":"npm run dev"}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -283,6 +288,51 @@ func TestRecipeJSONForms(t *testing.T) {
 				t.Fatalf("Marshal() = %s, want %s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsShellRecipeWithReplayCommand(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(t.TempDir())
+	snap := sampleSnapshot()
+	snap.Windows[0].Panes = []Pane{
+		{
+			Index: 0,
+			CWD:   "/home/tester/source/repos/projmux",
+			Recipe: Recipe{
+				Kind:    RecipeKindShell,
+				Command: "rm -rf important",
+			},
+		},
+	}
+	snap.Windows[0].ActivePaneIndex = 0
+	writeSnapshotJSON(t, store, "home", snap)
+
+	_, err := store.Load("home")
+	if !errors.Is(err, ErrInvalidSnapshot) || !strings.Contains(err.Error(), "shell recipe cannot include replay metadata") {
+		t.Fatalf("Load() error = %v, want invalid shell replay metadata error", err)
+	}
+}
+
+func TestLoadRejectsStartupRecipeWithoutCommand(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(t.TempDir())
+	snap := sampleSnapshot()
+	snap.Windows[0].Panes = []Pane{
+		{
+			Index:  0,
+			CWD:    "/home/tester/source/repos/projmux",
+			Recipe: Recipe{Kind: RecipeKindStartup},
+		},
+	}
+	snap.Windows[0].ActivePaneIndex = 0
+	writeSnapshotJSON(t, store, "home", snap)
+
+	_, err := store.Load("home")
+	if !errors.Is(err, ErrInvalidSnapshot) || !strings.Contains(err.Error(), "startup recipe requires command") {
+		t.Fatalf("Load() error = %v, want invalid startup command error", err)
 	}
 }
 
