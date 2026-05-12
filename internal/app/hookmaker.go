@@ -23,6 +23,7 @@ var settingsHookEvents = []settingsHookEvent{
 	{Name: string(hooks.EventPostCreate)},
 	{Name: string(hooks.EventPaneStartup)},
 	{Name: string(hooks.EventPostAttach)},
+	{Name: string(hooks.EventSendNoti)},
 }
 
 // Hook maker action prefixes. Phase 2.6 dropped the script/declarative
@@ -125,7 +126,7 @@ func (c *settingsCommand) projectHookEntries(ctx settingsProjectContext) []intpi
 		}
 		entries = append(entries, renderHookRowEntries(row)...)
 	}
-	return append(entries, settingsProjectConfigEntry(ctx.Path))
+	return entries
 }
 
 func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error {
@@ -153,10 +154,6 @@ func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error
 			return nil
 		case action == settingsNoopValue:
 			continue
-		case action == settingsSectionProjectConfig:
-			if err := c.runProjectConfigSection(stdout, stderr); err != nil {
-				return err
-			}
 		case strings.HasPrefix(action, settingsActionPrefixHookAdd),
 			strings.HasPrefix(action, settingsActionPrefixHookEdit),
 			strings.HasPrefix(action, settingsActionPrefixHookRemove),
@@ -372,16 +369,6 @@ func countLegacyScriptLines(path string) int {
 
 func (c *settingsCommand) globalConfigPath() (string, error) {
 	return hooks.GlobalConfigPath(c.lookupEnv, c.homeDir)
-}
-
-func settingsProjectConfigEntry(projectPath string) intpickercompat.Entry {
-	path := filepath.Join(projectPath, ".projmux", "config.toml")
-	state := settingsProjectConfigState(path)
-	return intpickercompat.Entry{
-		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Project recipe", state),
-		Value:     settingsSectionProjectConfig,
-		SearchKey: "Project recipe project config config.toml recipe " + state,
-	}
 }
 
 func settingsProjectConfigState(path string) string {
@@ -676,56 +663,163 @@ func (c *settingsCommand) runProjectConfigSection(stdout, stderr io.Writer) erro
 			return nil
 		case action == settingsNoopValue:
 			continue
-		case action == settingsActionPrefixProjectConfig+"startup:set":
-			if err := c.runProjectConfigStringField(ctx, "Startup command", "Type startup command > ", c.currentProjectConfig(ctx).StartupRun, stdout, stderr, func(cfg *hooks.ProjectConfig, value string) {
-				cfg.StartupRun = strings.TrimSpace(value)
-			}); err != nil {
+		case action == settingsActionPrefixProjectConfig+"startup":
+			if err := c.runProjectConfigStartupSection(ctx, stdout, stderr); err != nil {
 				return err
 			}
-		case action == settingsActionPrefixProjectConfig+"startup:clear":
-			if err := c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
-				cfg.StartupRun = ""
-				return nil
-			}); err != nil {
+		case action == settingsActionPrefixProjectConfig+"kube":
+			if err := c.runProjectConfigKubeSection(ctx, stdout, stderr); err != nil {
 				return err
 			}
-		case action == settingsActionPrefixProjectConfig+"kube:context:set":
-			if err := c.runProjectConfigStringField(ctx, "Kube context", "Type kube context > ", c.currentProjectConfig(ctx).Kube.Context, stdout, stderr, func(cfg *hooks.ProjectConfig, value string) {
-				cfg.Kube.Context = strings.TrimSpace(value)
-			}); err != nil {
+		case action == settingsActionPrefixProjectConfig+"env":
+			if err := c.runProjectConfigEnvSection(ctx, stdout, stderr); err != nil {
 				return err
 			}
-		case action == settingsActionPrefixProjectConfig+"kube:context:clear":
-			if err := c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
-				cfg.Kube.Context = ""
-				return nil
-			}); err != nil {
-				return err
-			}
-		case action == settingsActionPrefixProjectConfig+"kube:namespace:set":
-			if err := c.runProjectConfigStringField(ctx, "Kube namespace", "Type kube namespace > ", c.currentProjectConfig(ctx).Kube.Namespace, stdout, stderr, func(cfg *hooks.ProjectConfig, value string) {
-				cfg.Kube.Namespace = strings.TrimSpace(value)
-			}); err != nil {
-				return err
-			}
-		case action == settingsActionPrefixProjectConfig+"kube:namespace:clear":
-			if err := c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
-				cfg.Kube.Namespace = ""
-				return nil
-			}); err != nil {
-				return err
-			}
-		case action == settingsActionPrefixProjectConfig+"env:add":
-			if err := c.runProjectConfigAddEnv(ctx, stdout, stderr); err != nil {
-				return err
-			}
-		case strings.HasPrefix(action, settingsActionPrefixProjectConfig+"env:"):
-			if err := c.runProjectConfigEnvAction(ctx, action, stdout, stderr); err != nil {
+		case strings.HasPrefix(action, settingsActionPrefixProjectConfig):
+			if err := c.executeProjectConfigAction(ctx, action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
 			return fmt.Errorf("unknown project config action: %s", action)
 		}
+	}
+}
+
+func (c *settingsCommand) runProjectConfigStartupSection(ctx settingsProjectContext, stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-project-config-startup",
+			Entries:    projectConfigStartupEntries(c.currentProjectConfig(ctx)),
+			Title:      "Project recipe - Startup command",
+			Prompt:     "Settings > Project > Project recipe > Startup command > ",
+			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixProjectConfig+"startup:"):
+			if err := c.executeProjectConfigAction(ctx, action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown startup project config action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runProjectConfigKubeSection(ctx settingsProjectContext, stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-project-config-kube",
+			Entries:    projectConfigKubeEntries(c.currentProjectConfig(ctx)),
+			Title:      "Project recipe - Kube",
+			Prompt:     "Settings > Project > Project recipe > Kube > ",
+			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixProjectConfig+"kube:"):
+			if err := c.executeProjectConfigAction(ctx, action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown kube project config action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runProjectConfigEnvSection(ctx settingsProjectContext, stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-project-config-env",
+			Entries:    projectConfigEnvEntries(c.currentProjectConfig(ctx)),
+			Title:      "Project recipe - Environment",
+			Prompt:     "Settings > Project > Project recipe > Environment > ",
+			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsActionPrefixProjectConfig+"env:add",
+			strings.HasPrefix(action, settingsActionPrefixProjectConfig+"env:"):
+			if err := c.executeProjectConfigAction(ctx, action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown environment project config action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) executeProjectConfigAction(ctx settingsProjectContext, action string, stdout, stderr io.Writer) error {
+	switch {
+	case action == settingsActionPrefixProjectConfig+"startup:set":
+		return c.runProjectConfigStringField(ctx, "Startup command", "Type startup command > ", c.currentProjectConfig(ctx).StartupRun, stdout, stderr, func(cfg *hooks.ProjectConfig, value string) {
+			cfg.StartupRun = strings.TrimSpace(value)
+		})
+	case action == settingsActionPrefixProjectConfig+"startup:clear":
+		return c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
+			cfg.StartupRun = ""
+			return nil
+		})
+	case action == settingsActionPrefixProjectConfig+"kube:context:set":
+		return c.runProjectConfigStringField(ctx, "Kube context", "Type kube context > ", c.currentProjectConfig(ctx).Kube.Context, stdout, stderr, func(cfg *hooks.ProjectConfig, value string) {
+			cfg.Kube.Context = strings.TrimSpace(value)
+		})
+	case action == settingsActionPrefixProjectConfig+"kube:context:clear":
+		return c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
+			cfg.Kube.Context = ""
+			return nil
+		})
+	case action == settingsActionPrefixProjectConfig+"kube:namespace:set":
+		return c.runProjectConfigStringField(ctx, "Kube namespace", "Type kube namespace > ", c.currentProjectConfig(ctx).Kube.Namespace, stdout, stderr, func(cfg *hooks.ProjectConfig, value string) {
+			cfg.Kube.Namespace = strings.TrimSpace(value)
+		})
+	case action == settingsActionPrefixProjectConfig+"kube:namespace:clear":
+		return c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
+			cfg.Kube.Namespace = ""
+			return nil
+		})
+	case action == settingsActionPrefixProjectConfig+"env:add":
+		return c.runProjectConfigAddEnv(ctx, stdout, stderr)
+	case strings.HasPrefix(action, settingsActionPrefixProjectConfig+"env:"):
+		return c.runProjectConfigEnvAction(ctx, action, stdout, stderr)
+	default:
+		return fmt.Errorf("unknown project config action: %s", action)
 	}
 }
 
@@ -764,13 +858,52 @@ func (c *settingsCommand) projectConfigEntries(ctx settingsProjectContext) []int
 			Value: settingsNoopValue,
 		})
 	}
-	entries = append(entries, projectConfigStartupEntries(cfg)...)
-	entries = append(entries, projectConfigKubeEntries(cfg)...)
-	entries = append(entries, projectConfigEnvEntries(cfg)...)
+	entries = append(entries, projectConfigRootEntries(cfg)...)
 	// Hooks are now authored from the Hooks page; the Project recipe section is
 	// data-only for env / kube / startup. Hook commands are still parsed and
 	// preserved on save (UpdateProjectConfig round-trips them).
 	return entries
+}
+
+func projectConfigRootEntries(cfg hooks.ProjectConfig) []intpickercompat.Entry {
+	startup := strings.TrimSpace(cfg.StartupRun)
+	if startup == "" {
+		startup = "(unset)"
+	}
+	kube := []string{}
+	if strings.TrimSpace(cfg.Kube.Context) != "" {
+		kube = append(kube, "context="+cfg.Kube.Context)
+	}
+	if strings.TrimSpace(cfg.Kube.Namespace) != "" {
+		kube = append(kube, "namespace="+cfg.Kube.Namespace)
+	}
+	kubeSummary := "(unset)"
+	if len(kube) > 0 {
+		kubeSummary = strings.Join(kube, ", ")
+	}
+	envSummary := "(none)"
+	if len(cfg.Env) == 1 {
+		envSummary = "1 var"
+	} else if len(cfg.Env) > 1 {
+		envSummary = fmt.Sprintf("%d vars", len(cfg.Env))
+	}
+	return []intpickercompat.Entry{
+		{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Startup command", startup),
+			Value:     settingsActionPrefixProjectConfig + "startup",
+			SearchKey: "startup command run set clear",
+		},
+		{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Kube", kubeSummary),
+			Value:     settingsActionPrefixProjectConfig + "kube",
+			SearchKey: "kube context namespace set clear",
+		},
+		{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Environment", envSummary),
+			Value:     settingsActionPrefixProjectConfig + "env",
+			SearchKey: "environment env variables add set remove",
+		},
+	}
 }
 
 func projectConfigStartupEntries(cfg hooks.ProjectConfig) []intpickercompat.Entry {

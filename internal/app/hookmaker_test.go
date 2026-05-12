@@ -32,6 +32,7 @@ func TestSettingsGlobalHooksListShowsConfigPathAndAddRows(t *testing.T) {
 	wantConfig := filepath.Join(configHome, "projmux", "config.toml")
 	assertEntryLabelContainsAll(t, entries, "Global config", wantConfig)
 	assertEntryLabelContainsAll(t, entries, "post-create", "missing", "read-only")
+	assertEntryLabelContainsAll(t, entries, "send-noti", "missing", "read-only")
 	if hasEntryValue(entries, settingsActionPrefixHookAdd+"global:post-create") {
 		t.Fatalf("entries = %#v, did not expect editable global add row", entries)
 	}
@@ -80,7 +81,7 @@ func TestSettingsProjectHooksListAllMissingRendersAddRows(t *testing.T) {
 		},
 	}
 	entries := cmd.projectHookEntries(cmd.resolveSettingsProjectContext())
-	for _, event := range []string{"pre-create", "post-create", "pane-startup", "post-attach"} {
+	for _, event := range []string{"pre-create", "post-create", "pane-startup", "post-attach", "send-noti"} {
 		assertEntryLabelContainsAll(t, entries, event, "missing", "[+ Add]")
 	}
 }
@@ -166,6 +167,70 @@ func TestSettingsProjectConfigOmitsProjectContextRow(t *testing.T) {
 	}
 }
 
+func TestSettingsProjectConfigRootUsesDetailRows(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, ".projmux", "config.toml"), `
+[startup]
+run = "codex"
+
+[kube]
+context = "dev"
+namespace = "apps"
+
+[env]
+FOO = "bar"
+`)
+	cmd := &settingsCommand{
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return repo
+			}
+			return ""
+		},
+	}
+
+	entries := cmd.projectConfigEntries(cmd.resolveSettingsProjectContext())
+	for _, want := range []string{
+		settingsActionPrefixProjectConfig + "startup",
+		settingsActionPrefixProjectConfig + "kube",
+		settingsActionPrefixProjectConfig + "env",
+	} {
+		if !hasEntryValue(entries, want) {
+			t.Fatalf("project config root entries = %#v, want detail row %q", entries, want)
+		}
+	}
+	for _, label := range []string{"Startup command", "Kube", "Environment"} {
+		if !hasEntryLabelContaining(entries, label) {
+			t.Fatalf("project config root entries = %#v, want label %q", entries, label)
+		}
+	}
+	for _, disallowed := range []string{
+		settingsActionPrefixProjectConfig + "startup:set",
+		settingsActionPrefixProjectConfig + "startup:clear",
+		settingsActionPrefixProjectConfig + "kube:context:set",
+		settingsActionPrefixProjectConfig + "kube:context:clear",
+		settingsActionPrefixProjectConfig + "kube:namespace:set",
+		settingsActionPrefixProjectConfig + "kube:namespace:clear",
+		settingsActionPrefixProjectConfig + "env:add",
+		settingsActionPrefixProjectConfig + "env:FOO:set",
+		settingsActionPrefixProjectConfig + "env:FOO:remove",
+	} {
+		if hasEntryValue(entries, disallowed) {
+			t.Fatalf("project config root entries = %#v, want no mutation action %q", entries, disallowed)
+		}
+	}
+
+	startupEntries := projectConfigStartupEntries(cmd.currentProjectConfig(cmd.resolveSettingsProjectContext()))
+	if !hasEntryValue(startupEntries, settingsActionPrefixProjectConfig+"startup:set") {
+		t.Fatalf("startup detail entries = %#v, want set action", startupEntries)
+	}
+	if !hasEntryValue(startupEntries, settingsActionPrefixProjectConfig+"startup:clear") {
+		t.Fatalf("startup detail entries = %#v, want clear action", startupEntries)
+	}
+}
+
 func TestSettingsProjectHooksListWithDeclarativeContext(t *testing.T) {
 	t.Parallel()
 
@@ -197,16 +262,10 @@ run = "codex"
 	}
 	assertEntryLabelContainsAll(t, hookOptions.Entries, "post-create", "active", "echo declared-post")
 	assertEntryLabelContainsAll(t, hookOptions.Entries, "pre-create", "missing", "[+ Add]")
-	assertEntryLabelContainsAll(t, hookOptions.Entries, "Project recipe", "present", "startup")
-	foundAlias := false
 	for _, entry := range hookOptions.Entries {
-		if strings.Contains(entry.SearchKey, "config.toml") {
-			foundAlias = true
-			break
+		if entry.Value == settingsSectionProjectConfig || strings.Contains(entry.Label, "Project recipe") {
+			t.Fatalf("hook options = %#v, want no nested Project recipe row", hookOptions.Entries)
 		}
-	}
-	if !foundAlias {
-		t.Fatalf("hook options = %#v, want config.toml search alias", hookOptions.Entries)
 	}
 }
 
@@ -531,34 +590,64 @@ run = "echo post"
 			if got, want := options.UI, "settings-project-config"; got != want {
 				t.Fatalf("project config UI = %q, want %q", got, want)
 			}
-			if !hasEntryValue(options.Entries, settingsActionPrefixProjectConfig+"startup:set") {
-				t.Fatalf("project config entries = %#v, want startup set action", options.Entries)
+			if !hasEntryValue(options.Entries, settingsActionPrefixProjectConfig+"startup") {
+				t.Fatalf("project config entries = %#v, want Startup command detail row", options.Entries)
+			}
+			if hasEntryValue(options.Entries, settingsActionPrefixProjectConfig+"startup:set") {
+				t.Fatalf("project config entries = %#v, want no root startup mutation action", options.Entries)
 			}
 			if hasEntryLabelContaining(options.Entries, "Hook commands") {
 				t.Fatalf("project config entries = %#v, want no hook commands row", options.Entries)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "startup:set"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "startup"}, nil
 		case 4:
+			if got, want := options.UI, "settings-project-config-startup"; got != want {
+				t.Fatalf("startup UI = %q, want %q", got, want)
+			}
+			if !hasEntryValue(options.Entries, settingsActionPrefixProjectConfig+"startup:set") {
+				t.Fatalf("startup entries = %#v, want startup set action", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "startup:set"}, nil
+		case 5:
 			if got, want := options.UI, "settings-project-config-typed"; got != want {
 				t.Fatalf("typed UI = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Query: "codex"}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "kube:context:set"}, nil
 		case 6:
-			return intpickercompat.Result{Key: "enter", Query: "dev"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 7:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "env:add"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "kube"}, nil
 		case 8:
-			return intpickercompat.Result{Key: "enter", Query: "FOO"}, nil
-		case 9:
-			return intpickercompat.Result{Key: "enter", Query: "bar"}, nil
-		case 10:
-			if !hasEntryLabelContaining(options.Entries, "codex") || !hasEntryLabelContaining(options.Entries, "dev") || !hasEntryLabelContaining(options.Entries, "FOO") {
-				t.Fatalf("refreshed project config entries = %#v, want saved values", options.Entries)
+			if got, want := options.UI, "settings-project-config-kube"; got != want {
+				t.Fatalf("kube UI = %q, want %q", got, want)
 			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "kube:context:set"}, nil
+		case 9:
+			return intpickercompat.Result{Key: "enter", Query: "dev"}, nil
+		case 10:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 11:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "env"}, nil
+		case 12:
+			if got, want := options.UI, "settings-project-config-env"; got != want {
+				t.Fatalf("environment UI = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "env:add"}, nil
+		case 13:
+			return intpickercompat.Result{Key: "enter", Query: "FOO"}, nil
+		case 14:
+			return intpickercompat.Result{Key: "enter", Query: "bar"}, nil
+		case 15:
+			if !hasEntryLabelContaining(options.Entries, "FOO") {
+				t.Fatalf("refreshed env entries = %#v, want saved env value", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 16:
+			if !hasEntryLabelContaining(options.Entries, "codex") || !hasEntryLabelContaining(options.Entries, "dev") || !hasEntryLabelContaining(options.Entries, "1 var") {
+				t.Fatalf("refreshed project config root entries = %#v, want saved section summaries", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 17:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)

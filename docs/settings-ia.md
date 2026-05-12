@@ -12,8 +12,16 @@ view-first layout:
 - `Settings > Labs` keeps experimental toggles, but keybindings no longer have a
   visible Labs row. The hidden compatibility action still redirects to the
   unified Keybindings page.
+- `Settings > Labs > Desktop notifications` owns the experimental desktop
+  notification mode. The detail choices are `none`, `notify`, and `raise`.
+- `Settings > AI Settings` is view-first. The root contains `Default split
+  mode`; the detail contains the `Claude`, `Codex`, and `Shell` choices.
 - `Settings > Project > Project recipe` is the functional label for
   `.projmux/config.toml`. Search still matches `config.toml` as an alias.
+- `Settings > Project > Project recipe` is view-first. The root contains section
+  rows such as `Startup command`, `Kube`, and `Environment`; mutation actions
+  such as `Set startup command...`, `Clear startup command`, kube edits, and env
+  add/remove rows live inside those details.
 
 Hooks remain the reference pattern for this IA:
 
@@ -21,6 +29,10 @@ Hooks remain the reference pattern for this IA:
 - global/system rows are read-only in-app
 - project overrides are created intentionally from the project surface or
   `projmux hook edit <event> --project`
+- `Settings > Project > Hooks` lists hook events only. It does not nest the
+  Project recipe row; Project recipe belongs under the Project tab.
+- The Settings hook event list includes `send-noti` for both global and project
+  hook views.
 
 Shell bootstrap UX is phase-split:
 

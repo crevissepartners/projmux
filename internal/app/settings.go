@@ -90,6 +90,8 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsKeybindingsDiagnostic: {Name: "Keybinding Diagnostic", Axis: settingsAxisGlobal},
 	settingsKeybindingsProbe:      {Name: "Keybinding Probe", Axis: settingsAxisGlobal},
 	settingsKeybindingsInit:       {Name: "Keybinding Init", Axis: settingsAxisGlobal},
+	settingsAIDefaultMode:         {Name: "Default split mode", Axis: settingsAxisGlobal},
+	settingsLabsDesktopNotify:     {Name: "Desktop notifications", Axis: settingsAxisGlobal},
 	settingsLabKeybindings:        {Name: "Keybindings", Axis: settingsAxisGlobal},
 	settingsUpdateApply:           {Name: "Update Now", Axis: settingsAxisGlobal},
 	settingsUpdateCheck:           {Name: "Check Updates", Axis: settingsAxisGlobal},
@@ -177,6 +179,8 @@ const (
 	settingsKeybindingsDiagnostic         = "keybindings:diagnostic"
 	settingsKeybindingsProbe              = "keybindings:probe"
 	settingsKeybindingsInit               = "keybindings:init"
+	settingsAIDefaultMode                 = "ai-default-mode"
+	settingsLabsDesktopNotify             = "labs:desktop-notify"
 	settingsLabKeybindings                = "labs:keybindings"
 	settingsWelcomeShow                   = "welcome:show"
 	settingsKeymapFieldPlain              = "plain"
@@ -263,6 +267,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionEffectiveMerge {
 		return c.runEffectiveMergeSection(stdout, stderr)
+	}
+	if section == settingsSectionAI {
+		return c.runAISection(stdout, stderr)
 	}
 	if section == settingsSectionKeybindings {
 		return c.runKeybindingsSection(stdout, stderr)
@@ -616,10 +623,10 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 	case settingsSectionAI:
 		return intpickercompat.Options{
 			UI:         "settings-ai",
-			Entries:    c.aiEntries(),
-			Title:      "AI Settings - Default Ctrl+Shift+R/L split mode",
+			Entries:    c.aiRootEntries(),
+			Title:      "AI Settings",
 			Prompt:     "Settings > AI Settings > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -1364,6 +1371,85 @@ func (c *settingsCommand) pinnedProjectEntries() ([]intpickercompat.Entry, error
 	return entries, nil
 }
 
+func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
+	for {
+		options, err := c.sectionOptions(settingsSectionAI)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsAIDefaultMode:
+			if err := c.runAIDefaultModeSection(stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixAI):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAIDefaultModeSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-ai-default-mode",
+			Entries:    c.aiEntries(),
+			Title:      "AI Settings - Default Ctrl+Shift+R/L split mode",
+			Prompt:     "Settings > AI Settings > Default split mode > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixAI):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI default mode action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{settingsBackEntry()}
+	if c.ai == nil {
+		return entries
+	}
+	current := c.ai.getMode()
+	return append(entries, intpickercompat.Entry{
+		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Default split mode", current),
+		Value:     settingsAIDefaultMode,
+		SearchKey: "default split mode claude codex shell selective",
+	})
+}
+
 func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 	if c.ai == nil {
 		return nil
@@ -1380,11 +1466,7 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 		{aiModeShell, "always open plain shell split"},
 	}
 
-	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
-
-	// Reserve room for: back row + split modes + 1 info row + 3 toggle
-	// rows (none/notify/raise) for the desktop-notify mode selector.
-	entries := make([]intpickercompat.Entry, 0, len(modes)+5)
+	entries := make([]intpickercompat.Entry, 0, len(modes)+1)
 	entries = append(entries, settingsBackEntry())
 	for _, item := range modes {
 		glyph := settingsGlyphInactive
@@ -1396,34 +1478,6 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabel(glyph, color, item.mode, item.desc),
 			Value: settingsActionPrefixAI + item.mode,
-		})
-	}
-
-	// Desktop notification mode selector. The info row shows the effective
-	// value plus where it came from (env / env (legacy) / setting / setting
-	// (legacy) / default) so users mid-troubleshooting see immediately why
-	// a toggle press might not stick (env override pins the value).
-	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabelInfo("Desktop notifications", string(notifyMode), string(notifySource)),
-		Value: settingsNoopValue,
-	})
-	for _, item := range []struct {
-		mode desktopNotifyMode
-		desc string
-	}{
-		{desktopNotifyModeNone, "silence OS notifications; in-app notify queue is unaffected"},
-		{desktopNotifyModeNotify, "fire toast / notify-send for AI reply-ready (click → focus via projmux://)"},
-		{desktopNotifyModeRaise, "fire toast and auto-raise host terminal via osfocus chain"},
-	} {
-		glyph := settingsGlyphInactive
-		color := settingsColorDim
-		if item.mode == notifyMode {
-			glyph = settingsGlyphToggle
-			color = settingsColorAdd
-		}
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, "Desktop notifications "+string(item.mode), item.desc),
-			Value: settingsActionPrefixDesktopNotifyMode + string(item.mode),
 		})
 	}
 	return entries
@@ -1866,12 +1920,53 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 			if err := c.runKeybindingsSectionWithActive(settingsKeybindingsDiagnostic, stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsLabsDesktopNotify:
+			if err := c.runLabsDesktopNotifySection(stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, settingsActionPrefixHooks):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixDesktopNotifyMode):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
 			return fmt.Errorf("unknown labs settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runLabsDesktopNotifySection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-labs-desktop-notify",
+			Entries:    c.labsDesktopNotifyEntries(),
+			Title:      "Labs - Desktop notifications",
+			Prompt:     "Settings > Labs > Desktop notifications > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixDesktopNotifyMode):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown desktop notification settings action: %s", action)
 		}
 	}
 }
@@ -2298,8 +2393,14 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	current, source := c.currentPickerBackend()
 	hookMode, hookSource := c.currentProjectHooksMode()
-	entries := make([]intpickercompat.Entry, 0, 5)
+	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
+	entries := make([]intpickercompat.Entry, 0, 6)
 	entries = append(entries, settingsBackEntry())
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Desktop notifications", string(notifyMode)+" - "+string(notifySource)),
+		Value:     settingsLabsDesktopNotify,
+		SearchKey: "Desktop notifications none notify raise toast osfocus",
+	})
 	entries = append(entries, intpickercompat.Entry{
 		Label: settingsLabelInfo("Project hooks", string(hookMode), hookSource),
 		Value: settingsNoopValue,
@@ -2326,6 +2427,37 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Picker source", string(current), source),
 			Value: settingsNoopValue,
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) labsDesktopNotifyEntries() []intpickercompat.Entry {
+	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Desktop notifications", string(notifyMode), string(notifySource)),
+			Value: settingsNoopValue,
+		},
+	}
+	for _, item := range []struct {
+		mode desktopNotifyMode
+		desc string
+	}{
+		{desktopNotifyModeNone, "silence OS notifications; in-app notify queue is unaffected"},
+		{desktopNotifyModeNotify, "fire toast / notify-send for AI reply-ready (click -> focus via projmux://)"},
+		{desktopNotifyModeRaise, "fire toast and auto-raise host terminal via osfocus chain"},
+	} {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if item.mode == notifyMode {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabel(glyph, color, string(item.mode), item.desc),
+			Value: settingsActionPrefixDesktopNotifyMode + string(item.mode),
 		})
 	}
 	return entries

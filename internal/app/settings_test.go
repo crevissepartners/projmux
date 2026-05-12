@@ -546,6 +546,8 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsProjectRootManage, settingsAxisGlobal},
 		{settingsWorkdirList, settingsAxisGlobal},
 		{settingsProjectPins, settingsAxisGlobal},
+		{settingsAIDefaultMode, settingsAxisGlobal},
+		{settingsLabsDesktopNotify, settingsAxisGlobal},
 		{settingsActionPrefixAI + aiModeCodex, settingsAxisGlobal},
 		{settingsActionPrefixStatusbar + string(config.StatusbarDecorationSymbol), settingsAxisGlobal},
 		{settingsActionPrefixKeymap + "settings", settingsAxisGlobal},
@@ -587,10 +589,12 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	}
 
 	assertCataloguedEntries("root", cmd.rootEntries())
-	assertCataloguedEntries("ai", cmd.aiEntries())
+	assertCataloguedEntries("ai root", cmd.aiRootEntries())
+	assertCataloguedEntries("ai default mode", cmd.aiEntries())
 	assertCataloguedEntries("appearance", cmd.statusbarEntries())
 	assertCataloguedEntries("project picker", cmd.projectPickerEntries())
 	assertCataloguedEntries("labs", cmd.labsEntries())
+	assertCataloguedEntries("desktop notifications", cmd.labsDesktopNotifyEntries())
 
 	projectRootEntries, err := cmd.projectRootEntries()
 	if err != nil {
@@ -633,6 +637,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	var calls int
 	var rootOptions intpickercompat.Options
 	var aiOptions intpickercompat.Options
+	var aiDetailOptions intpickercompat.Options
 	cmd := &settingsCommand{
 		ai:       ai,
 		switcher: switcher,
@@ -644,6 +649,10 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 			}
 			if calls == 2 {
 				aiOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsAIDefaultMode}, nil
+			}
+			if calls == 3 {
+				aiDetailOptions = options
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAI + "codex"}, nil
 			}
 			return intpickercompat.Result{}, nil
@@ -656,6 +665,10 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 			}
 			if calls == 2 {
 				aiOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsAIDefaultMode}, nil
+			}
+			if calls == 3 {
+				aiDetailOptions = options
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAI + "codex"}, nil
 			}
 			return intpickercompat.Result{}, nil
@@ -715,7 +728,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got, want := aiOptions.UI, "settings-ai"; got != want {
 		t.Fatalf("AI settings UI = %q, want %q", got, want)
 	}
-	if got, want := aiOptions.Title, "AI Settings - Default Ctrl+Shift+R/L split mode"; got != want {
+	if got, want := aiOptions.Title, "AI Settings"; got != want {
 		t.Fatalf("AI settings title = %q, want %q", got, want)
 	}
 	if got := aiOptions.Header; got != "" {
@@ -726,6 +739,26 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}
 	if !hasEntryValue(aiOptions.Entries, settingsBackValue) {
 		t.Fatalf("AI settings entries = %#v, want back entry", aiOptions.Entries)
+	}
+	if !hasEntryValue(aiOptions.Entries, settingsAIDefaultMode) {
+		t.Fatalf("AI settings entries = %#v, want Default split mode detail row", aiOptions.Entries)
+	}
+	if hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeClaude) ||
+		hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeCodex) ||
+		hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeShell) {
+		t.Fatalf("AI settings entries = %#v, want no direct mode choices at root", aiOptions.Entries)
+	}
+	if got, want := aiDetailOptions.UI, "settings-ai-default-mode"; got != want {
+		t.Fatalf("AI default mode UI = %q, want %q", got, want)
+	}
+	for _, want := range []string{
+		settingsActionPrefixAI + aiModeClaude,
+		settingsActionPrefixAI + aiModeCodex,
+		settingsActionPrefixAI + aiModeShell,
+	} {
+		if !hasEntryValue(aiDetailOptions.Entries, want) {
+			t.Fatalf("AI default mode entries = %#v, want %q", aiDetailOptions.Entries, want)
+		}
 	}
 	if got, want := readModeFile(t, home), "codex\n"; got != want {
 		t.Fatalf("mode file = %q, want %q", got, want)
@@ -1094,7 +1127,7 @@ func TestSettingsSetDesktopNotifyModeRejectsGarbage(t *testing.T) {
 	}
 }
 
-func TestSettingsAIEntriesIncludesDesktopNotifyModeRows(t *testing.T) {
+func TestSettingsAIRootNestsDefaultModeAndExcludesDesktopNotifications(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1108,21 +1141,87 @@ func TestSettingsAIEntriesIncludesDesktopNotifyModeRows(t *testing.T) {
 			return ""
 		},
 	}
-	entries := cmd.aiEntries()
+	root := cmd.aiRootEntries()
+	if !hasEntryValue(root, settingsAIDefaultMode) {
+		t.Fatalf("AI root entries = %#v, want Default split mode row", root)
+	}
+	if got, want := len(root), 2; got != want {
+		t.Fatalf("AI root entries = %#v, want back row plus Default split mode only", root)
+	}
 	for _, want := range []string{
-		settingsActionPrefixDesktopNotifyMode + "none",
-		settingsActionPrefixDesktopNotifyMode + "notify",
-		settingsActionPrefixDesktopNotifyMode + "raise",
+		settingsActionPrefixAI + aiModeClaude,
+		settingsActionPrefixAI + aiModeCodex,
+		settingsActionPrefixAI + aiModeShell,
+		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNone),
+		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
+		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
 	} {
-		if !hasEntryValue(entries, want) {
-			t.Fatalf("ai entries = %#v, want row %q", entries, want)
+		if hasEntryValue(root, want) {
+			t.Fatalf("AI root entries = %#v, want no direct row %q", root, want)
 		}
 	}
-	// Env override sets source = env and effective value = raise; confirm
-	// the info row reflects that so users see why a toggle press might
-	// look like a no-op.
+	if hasEntryLabelContaining(root, "Desktop notifications") {
+		t.Fatalf("AI root entries = %#v, want no Desktop notifications row", root)
+	}
+
+	detail := cmd.aiEntries()
+	for _, want := range []string{
+		settingsActionPrefixAI + aiModeClaude,
+		settingsActionPrefixAI + aiModeCodex,
+		settingsActionPrefixAI + aiModeShell,
+	} {
+		if !hasEntryValue(detail, want) {
+			t.Fatalf("AI default mode entries = %#v, want row %q", detail, want)
+		}
+	}
+	for _, entry := range detail {
+		if strings.Contains(entry.Label, "Desktop notifications") ||
+			strings.HasPrefix(entry.Value, settingsActionPrefixDesktopNotifyMode) {
+			t.Fatalf("AI default mode entries = %#v, want no Desktop notifications rows", detail)
+		}
+	}
+}
+
+func TestSettingsLabsDesktopNotifyDetailRows(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_DESKTOP_NOTIFY_MODE" {
+				return "raise"
+			}
+			return ""
+		},
+	}
+
+	root := cmd.labsEntries()
+	if !hasEntryValue(root, settingsLabsDesktopNotify) {
+		t.Fatalf("labs entries = %#v, want Desktop notifications detail row", root)
+	}
+	for _, value := range []string{
+		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNone),
+		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
+		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
+	} {
+		if hasEntryValue(root, value) {
+			t.Fatalf("labs entries = %#v, want no direct desktop notification choice %q", root, value)
+		}
+	}
+
+	detail := cmd.labsDesktopNotifyEntries()
+	for _, want := range []string{
+		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNone),
+		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
+		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
+	} {
+		if !hasEntryValue(detail, want) {
+			t.Fatalf("desktop notification entries = %#v, want row %q", detail, want)
+		}
+	}
 	var sawInfo bool
-	for _, entry := range entries {
+	for _, entry := range detail {
 		if strings.Contains(entry.Label, "Desktop notifications") &&
 			strings.Contains(entry.Label, "raise") &&
 			strings.Contains(entry.Label, "env") {
@@ -1130,7 +1229,7 @@ func TestSettingsAIEntriesIncludesDesktopNotifyModeRows(t *testing.T) {
 		}
 	}
 	if !sawInfo {
-		t.Fatalf("ai entries = %#v, want info row with raise + env source", entries)
+		t.Fatalf("desktop notification entries = %#v, want info row with raise + env source", detail)
 	}
 }
 
