@@ -10,7 +10,7 @@ segment only requires one wiring point.
 ```
 row 0  [#S] #{pane_current_path}  ⎈ <ctx>/<ns>  <git>               %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
-row 1  #[range=user|notify] <notify HUD pill> #[norange]
+row 1  #[range=user|notify] <notify HUD pill> #[norange] #[range=user|sessionstate]state#[norange]
                                            #[range=user|usage] <usage HUD bar> #[norange]
 ```
 
@@ -37,7 +37,7 @@ row 1  #[range=user|notify] <notify HUD pill> #[norange]
   existing branch block background.
 - Row 1 splits the line with `#[align=left]` (the pending AI notify
   queue, capped at 80
-  cells) and `#[align=right]` (usage, capped at 120 cells). `notify` is the
+  cells, plus the compact `state` entrypoint) and `#[align=right]` (usage, capped at 120 cells). `notify` is the
   explicit-ack pending queue; live pane attention badges are a separate
   state surface. Both
   segments degrade gracefully when the cell budget is tight; see
@@ -64,6 +64,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
+| `sessionstate` | 1 | show a native-framed Session State snapshot status and restore preview popup | `prefix s r` |
 | `usage`   | 1 | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on focus success | `prefix s n`  |
 
@@ -79,6 +80,12 @@ the cached usage state in-process, keeps the existing `projmux usage` CLI
 output shape unchanged for external consumers, aligns model/window rows with
 right-aligned numeric values, dims unavailable values, and colors rows at the
 same alert thresholds as the popup: amber at 80% and red at 95%.
+`sessionstate` opens a read-only snapshot status popup for the current tmux
+session. It shows the effective auto-save and auto-restore toggles, saved
+timestamp and age, window/pane counts, default cwd, and a bounded preview of
+windows, panes, recipe kinds, agent resume ids, and startup commands without
+dumping the raw JSON snapshot. Mutating actions remain in Settings, including
+delete confirmation.
 
 The path popup uses the native picker frame chrome, a one-line title,
 the full wrapped current path, cheap project/git metadata when available, and
@@ -110,6 +117,7 @@ bind-key -T projmux-status n run-shell '#{q:projmux} statusbar click notify'
 bind-key -T projmux-status g run-shell '#{q:projmux} statusbar click git'
 bind-key -T projmux-status k run-shell '#{q:projmux} statusbar click kube'
 bind-key -T projmux-status p run-shell '#{q:projmux} statusbar click pwd'
+bind-key -T projmux-status r run-shell '#{q:projmux} statusbar click sessionstate'
 bind-key -T projmux-status s run-shell '#{q:projmux} statusbar click session'
 ```
 
@@ -134,6 +142,8 @@ them as `display-message` toasts:
 - `settings` popup launch failure: toast `statusbar settings: popup failed`.
 - `pwd` path popup failure: fall back to a short `display-message`
   containing the current path.
+- `sessionstate` popup failure: fall back to a compact snapshot status
+  `display-message`.
 - `usage` popup failure: fall back to a compact usage summary
   `display-message`.
 

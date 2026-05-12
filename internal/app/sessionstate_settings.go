@@ -216,12 +216,16 @@ func (c *settingsCommand) currentSessionStateAutorestore() sessionStateEffective
 }
 
 func (c *settingsCommand) currentSessionStateToggle(envName string, file func(config.Paths) string) sessionStateEffectiveToggle {
-	if c.lookupEnv != nil {
-		if raw := strings.TrimSpace(c.lookupEnv(envName)); raw != "" {
+	return sessionStateToggleState(c.homeDir, c.lookupEnv, envName, file)
+}
+
+func sessionStateToggleState(homeDir func() (string, error), lookupEnv func(string) string, envName string, file func(config.Paths) string) sessionStateEffectiveToggle {
+	if lookupEnv != nil {
+		if raw := strings.TrimSpace(lookupEnv(envName)); raw != "" {
 			return sessionStateEffectiveToggle{Mode: config.NormalizeSessionStateToggle(raw), Source: envName + " env"}
 		}
 	}
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
 	if err != nil {
 		return sessionStateEffectiveToggle{Mode: config.SessionStateToggleOn, Source: "default"}
 	}
