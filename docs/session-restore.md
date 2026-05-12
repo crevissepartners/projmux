@@ -43,3 +43,12 @@ the session-state replay path, moves the staged windows into the live session,
 and removes extra live windows. General `session-state restore` execution
 remains dry-run-only; the live overwrite policy is currently scoped to layout
 presets.
+
+`projmux shell` also has explicit new-session startup selectors for the app
+session: `--saved`, `--layout <name>`, and `--empty`. `--saved` uses the same
+saved snapshot replay path as auto-restore, `--layout <name>` converts the
+project preset to a session-state snapshot and replays it, and `--empty` keeps
+the prior empty-session behavior. These selectors are only applied before a new
+target app session exists; existing sessions are attached without replay. The
+interactive startup picker that will choose among saved, preset, and empty rows
+is intentionally left for the next phase.
