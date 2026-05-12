@@ -96,6 +96,49 @@ func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	}
 }
 
+func TestFrameTitlebarLineResetsAroundBordersAndPadsBody(t *testing.T) {
+	t.Parallel()
+
+	const innerWidth = 18
+	line := frameTitlebarLine(DefaultTheme, innerWidth, "Projects")
+
+	if got, want := line, Reset+"│"+TitlebarStart+" Projects "+strings.Repeat(" ", 8)+Reset+"│"+Reset; got != want {
+		t.Fatalf("frameTitlebarLine() = %q, want %q", got, want)
+	}
+	if got, want := VisibleLen(line), innerWidth+2; got != want {
+		t.Fatalf("VisibleLen(titlebar line) = %d, want %d: %q", got, want, line)
+	}
+	if hasActiveStyle(line) {
+		t.Fatalf("frameTitlebarLine() = %q, want reset after right border", line)
+	}
+}
+
+func TestFrameTitlebarChipsLineResetsAroundBordersAndPadsBody(t *testing.T) {
+	t.Parallel()
+
+	const innerWidth = 18
+	line := frameTitlebarChipsLine(DefaultTheme, innerWidth, []Chip{
+		{Label: "A", Active: true},
+		{Label: "B"},
+	})
+
+	wantBody := " " +
+		ChipActiveStart + " A " + Reset +
+		ChipInactiveStart + " " + Reset +
+		ChipInactiveStart + " B " + Reset +
+		TitlebarStart +
+		strings.Repeat(" ", 10)
+	if got, want := line, Reset+"│"+TitlebarStart+wantBody+Reset+"│"+Reset; got != want {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want %q", got, want)
+	}
+	if got, want := VisibleLen(line), innerWidth+2; got != want {
+		t.Fatalf("VisibleLen(chip titlebar line) = %d, want %d: %q", got, want, line)
+	}
+	if hasActiveStyle(line) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want reset after right border", line)
+	}
+}
+
 func TestRendererContentLayoutWithTitleReservesTitlebarRow(t *testing.T) {
 	t.Parallel()
 
@@ -211,6 +254,15 @@ func TestVisibleLenUsesTerminalCellWidth(t *testing.T) {
 	}
 	if got, want := VisibleLen("e\u0301"), 1; got != want {
 		t.Fatalf("VisibleLen(combining) = %d, want terminal cell width %d", got, want)
+	}
+}
+
+func TestVisibleLenStripsTitlebarANSISequences(t *testing.T) {
+	t.Parallel()
+
+	value := TitlebarStart + " Usage " + Reset + TitlebarStart + strings.Repeat(" ", 4) + Reset
+	if got, want := VisibleLen(value), 11; got != want {
+		t.Fatalf("VisibleLen(titlebar ANSI) = %d, want %d: %q", got, want, value)
 	}
 }
 
