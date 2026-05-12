@@ -295,39 +295,33 @@ func ChipsTitlebarRows(chips []Chip) int {
 func frameTitlebarLine(theme Theme, innerWidth int, title string) string {
 	title = strings.TrimSpace(title)
 	if title == "" || innerWidth < 4 {
-		return theme.Vertical + TitlebarStart + strings.Repeat(" ", innerWidth) + Reset + theme.Vertical
+		return frameTitlebarStyledLine(theme, strings.Repeat(" ", innerWidth))
 	}
 	labelWidthLimit := max(innerWidth-2, 1)
 	label := TruncateANSI(title, labelWidthLimit)
 	label = strings.ReplaceAll(label, Reset, Reset+TitlebarStart)
 	titleBlock := " " + label + " "
 	titleBlockWidth := VisibleLen(titleBlock)
-	return theme.Vertical +
-		TitlebarStart +
-		titleBlock +
-		strings.Repeat(" ", max(innerWidth-titleBlockWidth, 0)) +
-		Reset +
-		theme.Vertical
+	body := titleBlock + strings.Repeat(" ", max(innerWidth-titleBlockWidth, 0))
+	return frameTitlebarStyledLine(theme, body)
 }
 
 func frameTitlebarChipsLine(theme Theme, innerWidth int, chips []Chip) string {
 	if innerWidth < 4 {
-		return theme.Vertical + TitlebarStart + strings.Repeat(" ", innerWidth) + Reset + theme.Vertical
+		return frameTitlebarStyledLine(theme, strings.Repeat(" ", innerWidth))
 	}
 	rendered, used := renderChipStrip(chips, innerWidth-1)
 	if used == 0 {
-		return theme.Vertical + TitlebarStart + strings.Repeat(" ", innerWidth) + Reset + theme.Vertical
+		return frameTitlebarStyledLine(theme, strings.Repeat(" ", innerWidth))
 	}
 	leading := " "
 	pad := max(innerWidth-used-VisibleLen(leading), 0)
-	return theme.Vertical +
-		TitlebarStart +
-		leading +
-		rendered +
-		TitlebarStart +
-		strings.Repeat(" ", pad) +
-		Reset +
-		theme.Vertical
+	body := leading + rendered + TitlebarStart + strings.Repeat(" ", pad)
+	return frameTitlebarStyledLine(theme, body)
+}
+
+func frameTitlebarStyledLine(theme Theme, body string) string {
+	return Reset + theme.Vertical + TitlebarStart + body + Reset + theme.Vertical + Reset
 }
 
 // renderChipStrip lays out the chip slice into a single visible-width-bound
