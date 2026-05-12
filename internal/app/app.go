@@ -74,6 +74,7 @@ type App struct {
 	preview      *previewCommand
 	prune        *pruneCommand
 	sessions     *sessionsCommand
+	sessionState *sessionStateCommand
 	sessionPopup *sessionPopupCommand
 	settings     *settingsCommand
 	setup        *setupCommand
@@ -110,6 +111,7 @@ func New() *App {
 		preview:      newPreviewCommand(),
 		prune:        newPruneCommand(),
 		sessions:     newSessionsCommand(),
+		sessionState: newSessionStateCommand(),
 		sessionPopup: newSessionPopupCommand(),
 		settings:     newSettingsCommand(ai, switcher, update),
 		setup:        newSetupCommand(),
@@ -168,6 +170,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.prune.Run(args[1:], stdout, stderr)
 	case "sessions":
 		return a.sessions.Run(args[1:], stdout, stderr)
+	case "session-state":
+		return a.sessionState.Run(args[1:], stdout, stderr)
 	case "session-popup":
 		return a.sessionPopup.Run(args[1:], stdout, stderr)
 	case "settings":
@@ -224,6 +228,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
 	fmt.Fprintln(w, "  prune     Trim stale tmux lifecycle state")
 	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
+	fmt.Fprintln(w, "  session-state  Inspect and manage saved tmux session snapshots")
 	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")
 	fmt.Fprintln(w, "  settings  Configure projmux")
 	fmt.Fprintln(w, "  setup     Probe terminal key delivery for projmux bindings")

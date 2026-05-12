@@ -1,0 +1,394 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+)
+
+type sessionStateCommand struct {
+	runner       tmuxRunner
+	lookupEnv    func(string) string
+	homeDir      func() (string, error)
+	now          func() time.Time
+	sessionStore func() (sessionstate.Store, error)
+}
+
+func newSessionStateCommand() *sessionStateCommand {
+	return &sessionStateCommand{
+		runner:       inttmux.ExecRunner{},
+		lookupEnv:    os.Getenv,
+		homeDir:      os.UserHomeDir,
+		now:          time.Now,
+		sessionStore: sessionstate.NewDefaultStoreFromEnv,
+	}
+}
+
+// Run manages user-facing session snapshot actions.
+func (c *sessionStateCommand) Run(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("session-state", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		printSessionStateUsage(stderr)
+		return errors.New("session-state requires a subcommand")
+	}
+
+	switch fs.Arg(0) {
+	case "status":
+		return c.runStatus(fs.Args()[1:], stdout, stderr)
+	case "save":
+		return c.runSave(fs.Args()[1:], stdout, stderr)
+	case "delete":
+		return c.runDelete(fs.Args()[1:], stdout, stderr)
+	case "restore":
+		return c.runRestore(fs.Args()[1:], stdout, stderr)
+	case "preview":
+		return c.runPreview(fs.Args()[1:], stdout, stderr)
+	case "help", "--help", "-h":
+		printSessionStateUsage(stdout)
+		return nil
+	default:
+		printSessionStateUsage(stderr)
+		return fmt.Errorf("unknown session-state subcommand: %s", fs.Arg(0))
+	}
+}
+
+func (c *sessionStateCommand) runStatus(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("session-state status", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	session := fs.String("session", "", "target session name")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printSessionStateUsage(stderr)
+		return fmt.Errorf("session-state status does not accept positional arguments")
+	}
+
+	state := c.loadView(context.Background(), *session)
+	for _, line := range sessionStateStatusLines(state, c.nowTime(), 100) {
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *sessionStateCommand) runSave(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("session-state save", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printSessionStateUsage(stderr)
+		return fmt.Errorf("session-state save does not accept positional arguments")
+	}
+	if !c.insideTmux() {
+		return errors.New("session-state save requires a current tmux session")
+	}
+	if c.runner == nil {
+		return errors.New("configure tmux runner: tmux runner is not configured")
+	}
+	store, err := c.store()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	sessionName, err := c.currentSessionName(ctx)
+	if err != nil {
+		return err
+	}
+	now := c.nowTime()
+	client := inttmux.NewClient(c.runner)
+	snap, err := client.SaveSessionSnapshot(ctx, store, sessionName, now)
+	if err != nil {
+		return fmt.Errorf("save session snapshot %q: %w", sessionName, err)
+	}
+	_, err = fmt.Fprintf(stdout, "saved session snapshot: %s (%s, %s)\n", snap.Session, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"))
+	return err
+}
+
+func (c *sessionStateCommand) runDelete(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("session-state delete", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	session := fs.String("session", "", "target session name")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printSessionStateUsage(stderr)
+		return fmt.Errorf("session-state delete does not accept positional arguments")
+	}
+	sessionName, err := c.resolveSessionName(context.Background(), *session)
+	if err != nil {
+		return err
+	}
+	store, err := c.store()
+	if err != nil {
+		return err
+	}
+	if err := store.Delete(sessionName); err != nil {
+		return fmt.Errorf("delete session snapshot %q: %w", sessionName, err)
+	}
+	_, err = fmt.Fprintf(stdout, "deleted session snapshot: %s\n", sessionName)
+	return err
+}
+
+func (c *sessionStateCommand) runRestore(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("session-state restore", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	session := fs.String("session", "", "target session name")
+	dryRun := fs.Bool("dry-run", false, "preview restore actions without running tmux commands")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printSessionStateUsage(stderr)
+		return fmt.Errorf("session-state restore does not accept positional arguments")
+	}
+	if !*dryRun {
+		printSessionStateUsage(stderr)
+		return errors.New("session-state restore only supports --dry-run in this release")
+	}
+	return c.printRestorePreview(context.Background(), *session, stdout)
+}
+
+func (c *sessionStateCommand) runPreview(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("session-state preview", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	session := fs.String("session", "", "target session name")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printSessionStateUsage(stderr)
+		return fmt.Errorf("session-state preview does not accept positional arguments")
+	}
+	return c.printRestorePreview(context.Background(), *session, stdout)
+}
+
+func (c *sessionStateCommand) printRestorePreview(ctx context.Context, explicitSession string, stdout io.Writer) error {
+	sessionName, err := c.resolveSessionName(ctx, explicitSession)
+	if err != nil {
+		return err
+	}
+	store, err := c.store()
+	if err != nil {
+		return err
+	}
+	snap, err := store.Load(sessionName)
+	if err != nil {
+		return fmt.Errorf("load session snapshot %q: %w", sessionName, err)
+	}
+
+	for _, line := range sessionStateRestorePreviewLines(snap, c.nowTime(), 100) {
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *sessionStateCommand) loadView(ctx context.Context, explicitSession string) statusbarSessionStateView {
+	state := statusbarSessionStateView{
+		Autosave:    sessionStateToggleState(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
+		Autorestore: sessionStateToggleState(c.homeDir, c.lookupEnv, sessionStateAutorestoreEnv, func(paths config.Paths) string { return paths.SessionStateAutorestoreFile() }),
+	}
+	sessionName, err := c.resolveSessionName(ctx, explicitSession)
+	if err != nil {
+		state.SessionErr = err
+		return state
+	}
+	state.Session = sessionName
+	store, err := c.store()
+	if err != nil {
+		state.StoreErr = err
+		return state
+	}
+	snap, err := store.Load(sessionName)
+	if err != nil {
+		state.LoadErr = err
+		return state
+	}
+	state.Snapshot = snap
+	return state
+}
+
+func (c *sessionStateCommand) resolveSessionName(ctx context.Context, explicit string) (string, error) {
+	if sessionName := strings.TrimSpace(explicit); sessionName != "" {
+		return sessionName, nil
+	}
+	if c.lookupEnv != nil {
+		if sessionName := strings.TrimSpace(c.lookupEnv("PROJMUX_SESSION")); sessionName != "" {
+			return sessionName, nil
+		}
+	}
+	if !c.insideTmux() {
+		return "", errors.New("session-state requires --session or a current tmux session")
+	}
+	return c.currentSessionName(ctx)
+}
+
+func (c *sessionStateCommand) currentSessionName(ctx context.Context) (string, error) {
+	if c.runner == nil {
+		return "", errors.New("configure tmux runner: tmux runner is not configured")
+	}
+	client := inttmux.NewClient(c.runner)
+	sessionName, err := client.CurrentSessionName(ctx)
+	if err != nil {
+		return "", err
+	}
+	return sessionName, nil
+}
+
+func (c *sessionStateCommand) store() (sessionstate.Store, error) {
+	if c.sessionStore == nil {
+		return sessionstate.Store{}, errors.New("configure sessionstate store: sessionstate store is not configured")
+	}
+	store, err := c.sessionStore()
+	if err != nil {
+		return sessionstate.Store{}, fmt.Errorf("resolve sessionstate store: %w", err)
+	}
+	return store, nil
+}
+
+func (c *sessionStateCommand) insideTmux() bool {
+	if c.lookupEnv == nil {
+		return strings.TrimSpace(os.Getenv("TMUX")) != ""
+	}
+	return strings.TrimSpace(c.lookupEnv("TMUX")) != ""
+}
+
+func (c *sessionStateCommand) nowTime() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
+}
+
+func sessionStateStatusLines(state statusbarSessionStateView, now time.Time, cols int) []string {
+	lines := []string{"Session State"}
+	session := state.Session
+	if session == "" {
+		session = "-"
+	}
+	lines = append(lines, sessionStateField("session", session))
+	lines = append(lines, sessionStateField("auto-save", statusbarSessionStateToggleText(state.Autosave)))
+	lines = append(lines, sessionStateField("auto-restore", statusbarSessionStateToggleText(state.Autorestore)))
+
+	switch {
+	case state.SessionErr != nil:
+		lines = append(lines, sessionStateField("snapshot", "unavailable - "+statusbarSessionStateErrorSummary(state.SessionErr)))
+	case state.StoreErr != nil:
+		lines = append(lines, sessionStateField("snapshot", "store unavailable - "+statusbarSessionStateErrorSummary(state.StoreErr)))
+	case state.LoadErr != nil:
+		status := "invalid - " + statusbarSessionStateErrorSummary(state.LoadErr)
+		if errors.Is(state.LoadErr, sessionstate.ErrNotFound) {
+			status = "missing"
+		}
+		lines = append(lines, sessionStateField("snapshot", status))
+	default:
+		snap := state.Snapshot
+		lines = append(lines, sessionStateField("snapshot", "saved"))
+		lines = append(lines, sessionStateField("saved", statusbarSessionStateSavedText(snap.SavedAt, now)))
+		lines = append(lines, sessionStateField("windows", fmt.Sprintf("%d", len(snap.Windows))))
+		lines = append(lines, sessionStateField("panes", fmt.Sprintf("%d", statusbarSessionStatePaneCount(snap))))
+		if strings.TrimSpace(snap.DefaultCWD) != "" {
+			lines = append(lines, sessionStateField("default cwd", snap.DefaultCWD))
+		}
+		lines = append(lines, "")
+		lines = append(lines, "Preview")
+		lines = append(lines, sessionStatePlainPreviewLines(snap, cols)...)
+	}
+	return lines
+}
+
+func sessionStateRestorePreviewLines(snap sessionstate.Snapshot, now time.Time, cols int) []string {
+	lines := []string{
+		"Session State Restore Preview",
+		sessionStateField("session", snap.Session),
+		sessionStateField("saved", statusbarSessionStateSavedText(snap.SavedAt, now)),
+		sessionStateField("windows", fmt.Sprintf("%d", len(snap.Windows))),
+		sessionStateField("panes", fmt.Sprintf("%d", statusbarSessionStatePaneCount(snap))),
+	}
+	if strings.TrimSpace(snap.DefaultCWD) != "" {
+		lines = append(lines, sessionStateField("default cwd", snap.DefaultCWD))
+	}
+	lines = append(lines, "", "Dry run only; no tmux commands were executed.", "")
+	lines = append(lines, sessionStatePlainPreviewLines(snap, cols)...)
+	return lines
+}
+
+func sessionStatePlainPreviewLines(snap sessionstate.Snapshot, cols int) []string {
+	const (
+		maxWindows = 12
+		maxPanes   = 30
+	)
+	windows := snap.Windows
+	lines := make([]string, 0, len(windows)+statusbarSessionStatePaneCount(snap))
+	panesSeen := 0
+	for wi, window := range windows {
+		if wi >= maxWindows {
+			lines = append(lines, fmt.Sprintf("... %d more windows", len(windows)-wi))
+			break
+		}
+		name := statusbarSessionStateClean(window.Name)
+		if name == "" {
+			name = "window"
+		}
+		lines = append(lines, statusbarSessionStateClip(fmt.Sprintf("window %d  %s  (%d panes)", window.Index, name, len(window.Panes)), cols))
+		for _, pane := range window.Panes {
+			if panesSeen >= maxPanes {
+				remaining := statusbarSessionStatePaneCount(snap) - panesSeen
+				if remaining > 0 {
+					lines = append(lines, fmt.Sprintf("  ... %d more panes", remaining))
+				}
+				return lines
+			}
+			panesSeen++
+			lines = append(lines, statusbarSessionStateClip("  "+statusbarSessionStatePanePreview(window.Index, pane), cols))
+		}
+	}
+	if len(lines) == 0 {
+		return []string{"No windows recorded."}
+	}
+	return lines
+}
+
+func sessionStateField(label, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "-"
+	}
+	return fmt.Sprintf("%-13s %s", label+":", value)
+}
+
+func sessionStateCount(count int, singular string) string {
+	if count == 1 {
+		return fmt.Sprintf("1 %s", singular)
+	}
+	return fmt.Sprintf("%d %ss", count, singular)
+}
+
+func printSessionStateUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  projmux session-state status [--session <name>]")
+	fmt.Fprintln(w, "  projmux session-state save")
+	fmt.Fprintln(w, "  projmux session-state delete [--session <name>]")
+	fmt.Fprintln(w, "  projmux session-state restore --dry-run [--session <name>]")
+	fmt.Fprintln(w, "  projmux session-state preview [--session <name>]")
+}
