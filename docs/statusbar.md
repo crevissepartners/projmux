@@ -126,7 +126,7 @@ click. Each handler therefore swallows runtime failures and surfaces
 them as `display-message` toasts:
 
 - `notify` click whose focus dispatch exits 2 (target unresolved):
-  keep the entry pending, toast `notify target gone; ack to clear`.
+  ack the entry, toast `notify target gone; cleared`.
 - Any other focus failure: keep the entry, toast `focus failed:
   <reason>`.
 - `session`, `kube`, or `git` popup launch failure: toast

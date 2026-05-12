@@ -334,6 +334,12 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
 		}
 		if err := c.focusNotification(entry, "notify-sidebar", "row-select"); err != nil {
+			if isFocusTargetUnresolved(err) {
+				if ackErr := store.Ack(id); ackErr != nil {
+					return fmt.Errorf("ack target-gone notification: %w", ackErr)
+				}
+				return nil
+			}
 			return err
 		}
 		if err := store.Ack(id); err != nil {

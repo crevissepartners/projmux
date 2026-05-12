@@ -510,6 +510,44 @@ func TestNotifyListSidebarDoesNotAckWhenFocusFails(t *testing.T) {
 	}
 }
 
+func TestNotifyListSidebarTargetGoneAcksSelectedRow(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{
+				ID:        "abc",
+				Text:      "deploy ok",
+				Severity:  notify.SeverityWarn,
+				Source:    notify.SourceAI,
+				Session:   "__gone",
+				Window:    "1",
+				Pane:      "0",
+				CreatedAt: now.Add(-30 * time.Second),
+				ExpiresAt: now.Add(time.Hour),
+			},
+		},
+	}
+	picker := &stubNotifyPicker{result: intpickercompat.Result{Value: "abc"}}
+	runner := &focusFakeRunner{respond: func([]string) ([]byte, error) {
+		return nil, &fakeExitError{code: focusExitNotResolved, msg: "target unresolved"}
+	}}
+	cmd := newCmd(store)
+	cmd.now = func() time.Time { return now }
+	cmd.picker = picker
+	cmd.native = nativePickerFromCompatRunner(picker)
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if store.ackedID != "abc" {
+		t.Fatalf("ackedID = %q, want abc", store.ackedID)
+	}
+}
+
 func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	t.Parallel()
 

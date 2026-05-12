@@ -183,8 +183,8 @@ Outcomes:
 
 - **Focus succeeded** — ack the entry. Focus is the single consume path for
   routed notification clicks.
-- **Focus exited 2 (target unresolved)** — keep the entry pending and toast
-  `notify target gone; ack to clear`.
+- **Focus exited 2 (target unresolved)** — ack the entry and toast
+  `notify target gone; cleared`.
 - **Other failure** — keep the entry, toast `focus failed: <reason>`
   so the user can retry without losing the row.
 

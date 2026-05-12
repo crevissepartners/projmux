@@ -290,7 +290,7 @@ func (c *attentionCommand) paneVisibleToClient(paneID string) bool {
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(strings.TrimRight(string(output), "\r\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(string(output), "\r\n"), "\n") {
 		if strings.TrimSpace(line) == paneID {
 			return true
 		}

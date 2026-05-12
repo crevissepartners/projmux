@@ -606,14 +606,17 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 	if _, runErr := c.runner.Run(context.Background(), binaryPath, args...); runErr != nil {
 		// The focus subprocess exits with a deterministic code 2 when the
 		// target session/window/pane cannot be resolved (see focus.go's
-		// focusExitNotResolved). Under notify SOT semantics, even an
-		// unroutable row remains pending until explicit ack; show a toast
-		// instead of silently deleting it. Any other exit code is treated as
-		// transient (network hiccup, tmux server churn, etc.) — keep the entry
-		// so the user can retry, and surface the reason as a toast instead of a
-		// tmux error popup.
+		// focusExitNotResolved). A click on that row is still a consume signal:
+		// there is nowhere useful to focus, so clear the stuck notification
+		// instead of making every later click repeat the same toast. Any other
+		// exit code is treated as transient (tmux server churn, etc.) — keep the
+		// entry so the user can retry, and surface the reason as a toast instead
+		// of a tmux error popup.
 		if isFocusTargetUnresolved(runErr) {
-			return c.runTmux(stderr, "display-message", "notify target gone; ack to clear")
+			if err := store.Ack(head.ID); err != nil {
+				return c.runTmux(stderr, "display-message", fmt.Sprintf("notify target gone; ack failed: %s", focusFailureSummary(err)))
+			}
+			return c.runTmux(stderr, "display-message", "notify target gone; cleared")
 		}
 		return c.runTmux(stderr, "display-message", fmt.Sprintf("focus failed: %s", focusFailureSummary(runErr)))
 	}
@@ -752,10 +755,7 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time, binaryPath st
 	// divider). RenderedTextLineCount strips trailing blank lines, so use
 	// the raw len(lines) as the row budget instead — that way the frame
 	// reserves a row for every body line we asked it to render.
-	innerRows := len(lines)
-	if innerRows < 1 {
-		innerRows = 1
-	}
+	innerRows := max(len(lines), 1)
 	height := innerRows + 4
 	outerLayout := projmuxpicker.Layout{Rows: height, Cols: width}
 
@@ -1075,10 +1075,7 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata, binaryPath 
 	// Outer rows = inner rows + 2 (top/bottom border) + 2 (titlebar +
 	// divider). Use raw len(lines) — RenderedTextLineCount trims trailing
 	// blank lines and the footer would lose its leading separator row.
-	innerRows := len(lines)
-	if innerRows < 1 {
-		innerRows = 1
-	}
+	innerRows := max(len(lines), 1)
 	height := innerRows + 4
 	outerLayout := projmuxpicker.Layout{Rows: height, Cols: width}
 
