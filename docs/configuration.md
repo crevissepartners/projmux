@@ -59,10 +59,16 @@ to delete a preset non-interactively.
 
 Use `projmux layout apply <name> --dry-run` from inside a tmux session to
 preview how a preset would convert into the current session's session-state
-restore plan. This preview does not run tmux replay commands. Destructive live
-apply is still deferred: `projmux layout apply <name>` requires `--force`, and
-`projmux layout apply <name> --force` reports that safe live overwrite is not
-implemented yet.
+restore plan. This preview does not run tmux replay commands.
+
+Use `projmux layout apply <name> --force` from inside a tmux session to
+destructively replace the current session's windows with the preset. The target
+is always the current session name; there is no alternate-session apply flag.
+The implementation stages the preset through the session-state replay path,
+moves the staged windows into the live session, and removes extra live windows.
+`mode = "fresh-each-time"` is stored in the schema for preset-vs-autosave
+selection, but explicit `layout apply --force` already applies the preset
+directly and does not add a separate mode-specific branch yet.
 
 The Phase 1 schema is intentionally close to the session-state snapshot shape:
 
