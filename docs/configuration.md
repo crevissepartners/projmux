@@ -397,6 +397,15 @@ snapshots are quiet. Invalid snapshots or replay failures are reported to
 stderr, then `projmux shell` falls back to the normal `tmux new-session -A`
 attach behavior.
 
+`projmux shell --saved` bypasses the saved auto-restore toggle and attempts the
+same saved-snapshot replay on the new-session path. `projmux shell --layout
+<name>` converts a project layout preset from `<project>/.projmux/layouts` into
+a session snapshot and replays it before attaching. The project context comes
+from `PROJMUX_CWD` when set, otherwise the nearest `.projmux` or `.git` marker
+from the current working directory. `projmux shell --empty` skips saved and
+layout replay. These flags are mutually exclusive and still honor the existing
+session guard: if the target app session already exists, no replay is attempted.
+
 Settings > Session State shows the effective auto-save / auto-restore state,
 the current session snapshot summary, and a delete action. The saved toggles
 live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave`

@@ -554,7 +554,12 @@ flags with the top-level `switch` UX:
   by the shell jump binding).
 - `shell` — boot the isolated `-L projmux` tmux server with the
   generated config. The generated app config uses absolute `$SHELL` as the
-  tmux default shell when set, otherwise `/bin/sh`.
+  tmux default shell when set, otherwise `/bin/sh`. On a new target app
+  session, `--saved` forces replay from the saved session snapshot, `--layout
+  <name>` forces replay from a project layout preset, and `--empty` skips
+  saved/preset replay. These flags are mutually exclusive and never overwrite
+  an existing app session; if the target already exists, `shell` follows the
+  normal attach path.
 - `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI

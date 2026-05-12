@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -40,6 +41,8 @@ type shellCommand struct {
 	update             *updateCommand
 	updatePromptRunner intpickercompat.Runner
 	nativePicker       intpicker.Runner
+	getwd              func() (string, error)
+	now                func() time.Time
 }
 
 type shellUpdateSkipState struct {
@@ -60,6 +63,8 @@ func newShellCommand(update *updateCommand) *shellCommand {
 		tmuxRunner:   shellTmuxExecRunner{},
 		update:       update,
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		getwd:        os.Getwd,
+		now:          time.Now,
 	}
 }
 
@@ -71,6 +76,9 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	configPath := fs.String("config", "", "tmux config path for the projmux app")
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the app config")
 	noInstall := fs.Bool("no-install", false, "run without writing the app tmux config")
+	layoutName := fs.String("layout", "", "start a new app session from a project layout preset")
+	saved := fs.Bool("saved", false, "start a new app session from the saved session snapshot")
+	empty := fs.Bool("empty", false, "start a new empty app session")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -80,6 +88,11 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if fs.NArg() != 0 {
 		printShellUsage(stderr)
 		return errors.New("shell does not accept positional arguments")
+	}
+	startMode, err := parseShellStartMode(*layoutName, *saved, *empty)
+	if err != nil {
+		printShellUsage(stderr)
+		return err
 	}
 
 	socketName := nonEmpty(strings.TrimSpace(*socket), defaultAppSocket)
@@ -119,14 +132,73 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if cwd != "" {
 		runArgs = append(runArgs, "-c", cwd)
 	}
-	c.autorestoreSessionState(context.Background(), socketName, config, nonEmpty(strings.TrimSpace(*session), defaultAppSession), cwd, stderr)
+	c.prepareShellSession(context.Background(), socketName, config, nonEmpty(strings.TrimSpace(*session), defaultAppSession), cwd, startMode, stderr)
 	return c.run(context.Background(), "tmux", runArgs...)
+}
+
+type shellStartMode struct {
+	kind   string
+	layout string
+}
+
+const (
+	shellStartAuto   = "auto"
+	shellStartSaved  = "saved"
+	shellStartLayout = "layout"
+	shellStartEmpty  = "empty"
+)
+
+func parseShellStartMode(layoutName string, saved, empty bool) (shellStartMode, error) {
+	layoutName = strings.TrimSpace(layoutName)
+	count := 0
+	if layoutName != "" {
+		count++
+	}
+	if saved {
+		count++
+	}
+	if empty {
+		count++
+	}
+	if count > 1 {
+		return shellStartMode{}, errors.New("shell accepts only one of --layout, --saved, or --empty")
+	}
+	switch {
+	case layoutName != "":
+		if err := corelayout.ValidateName(layoutName); err != nil {
+			return shellStartMode{}, err
+		}
+		return shellStartMode{kind: shellStartLayout, layout: layoutName}, nil
+	case saved:
+		return shellStartMode{kind: shellStartSaved}, nil
+	case empty:
+		return shellStartMode{kind: shellStartEmpty}, nil
+	default:
+		return shellStartMode{kind: shellStartAuto}, nil
+	}
+}
+
+func (c *shellCommand) prepareShellSession(ctx context.Context, socketName, configPath, sessionName, cwd string, mode shellStartMode, stderr io.Writer) {
+	switch mode.kind {
+	case shellStartEmpty:
+		return
+	case shellStartLayout:
+		c.restoreLayoutPreset(ctx, socketName, configPath, sessionName, cwd, mode.layout, stderr)
+	case shellStartSaved:
+		c.restoreSavedSessionState(ctx, socketName, configPath, sessionName, cwd, stderr)
+	default:
+		c.autorestoreSessionState(ctx, socketName, configPath, sessionName, cwd, stderr)
+	}
 }
 
 func (c *shellCommand) autorestoreSessionState(ctx context.Context, socketName, configPath, sessionName, cwd string, stderr io.Writer) {
 	if !sessionStateAutorestoreEnabled(c.homeDir, c.lookupEnv) {
 		return
 	}
+	c.restoreSavedSessionState(ctx, socketName, configPath, sessionName, cwd, stderr)
+}
+
+func (c *shellCommand) restoreSavedSessionState(ctx context.Context, socketName, configPath, sessionName, cwd string, stderr io.Writer) {
 	if c.tmuxRunner == nil {
 		c.reportSessionStateAutorestore(stderr, "tmux runner is not configured")
 		return
@@ -159,6 +231,44 @@ func (c *shellCommand) autorestoreSessionState(ctx context.Context, socketName, 
 	}
 }
 
+func (c *shellCommand) restoreLayoutPreset(ctx context.Context, socketName, configPath, sessionName, cwd, name string, stderr io.Writer) {
+	if c.tmuxRunner == nil {
+		c.reportSessionStateAutorestore(stderr, "tmux runner is not configured")
+		return
+	}
+	store, err := c.shellLayoutStore()
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("resolve layout store: %v", err))
+		return
+	}
+	preset, err := store.Load(name)
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, err.Error())
+		return
+	}
+	snap, err := corelayout.ToSnapshot(preset, sessionName, store.ProjectRoot, c.nowTime())
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("convert layout preset %q: %v", name, err))
+		return
+	}
+
+	runner := shellAppTmuxRunner{runner: c.tmuxRunner, socketName: socketName, configPath: configPath}
+	exists, err := tmuxSessionExists(ctx, runner, sessionName)
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("check existing session: %v", err))
+		return
+	}
+	if exists {
+		return
+	}
+	result, err := sessionstate.Replay(ctx, runner, snap, sessionstate.ReplayOptions{FallbackCWD: nonEmpty(store.ProjectRoot, cwd)})
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, err.Error())
+		return
+	}
+	printSessionStateReplayWarnings(stderr, result.Warnings)
+}
+
 func (c *shellCommand) shellSessionStateStore() (sessionstate.Store, error) {
 	if c.sessionStore != nil {
 		return c.sessionStore()
@@ -170,11 +280,92 @@ func (c *shellCommand) shellSessionStateStore() (sessionstate.Store, error) {
 	return sessionstate.NewStore(paths.SessionStateDir()), nil
 }
 
+func (c *shellCommand) shellLayoutStore() (corelayout.Store, error) {
+	projectRoot, err := c.resolveShellProjectContext()
+	if err != nil {
+		return corelayout.Store{}, err
+	}
+	if projectRoot == "" {
+		return corelayout.Store{}, errors.New("layout requires a project context; run inside a project tree or set PROJMUX_CWD")
+	}
+	return corelayout.NewStore(projectRoot), nil
+}
+
+func (c *shellCommand) resolveShellProjectContext() (string, error) {
+	if c.lookupEnv != nil {
+		if raw := strings.TrimSpace(c.lookupEnv("PROJMUX_CWD")); raw != "" {
+			return filepath.Clean(raw), nil
+		}
+	}
+	if c.getwd == nil {
+		return "", nil
+	}
+	wd, err := c.getwd()
+	if err != nil {
+		return "", err
+	}
+	wd = filepath.Clean(wd)
+	if root := nearestProjectMarker(wd, os.TempDir()); root != "" {
+		return root, nil
+	}
+	return "", nil
+}
+
+type shellSessionCandidate struct {
+	Kind        string
+	Name        string
+	Label       string
+	Description string
+}
+
+func (c *shellCommand) shellSessionCandidates(sessionName string) []shellSessionCandidate {
+	var candidates []shellSessionCandidate
+	if store, err := c.shellSessionStateStore(); err == nil {
+		if summary, err := store.Summary(sessionName); err == nil {
+			candidates = append(candidates, shellSessionCandidate{
+				Kind:        shellStartSaved,
+				Name:        summary.Session,
+				Label:       "Saved session",
+				Description: fmt.Sprintf("%s, %s", sessionStateCount(summary.WindowCount, "window"), sessionStateCount(summary.PaneCount, "pane")),
+			})
+		}
+	}
+	if store, err := c.shellLayoutStore(); err == nil {
+		entries, _, err := store.List()
+		if err == nil {
+			for _, entry := range entries {
+				candidates = append(candidates, shellSessionCandidate{
+					Kind:        shellStartLayout,
+					Name:        entry.Name,
+					Label:       entry.Name,
+					Description: strings.TrimSpace(entry.Description),
+				})
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	candidates = append(candidates, shellSessionCandidate{
+		Kind:        shellStartEmpty,
+		Label:       "Empty session",
+		Description: "start without restoring windows",
+	})
+	return candidates
+}
+
 func (c *shellCommand) reportSessionStateAutorestore(stderr io.Writer, message string) {
 	if stderr == nil || strings.TrimSpace(message) == "" {
 		return
 	}
 	_, _ = fmt.Fprintf(stderr, "projmux sessionstate autorestore: %s\n", message)
+}
+
+func (c *shellCommand) nowTime() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
 }
 
 type shellAppTmuxRunner struct {
@@ -529,5 +720,5 @@ func loginShellCommand(shell string) []string {
 
 func printShellUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux shell [--socket <name>] [--session <name>] [--config <path>] [--bin <path>] [--no-install]")
+	fmt.Fprintln(w, "  projmux shell [--socket <name>] [--session <name>] [--config <path>] [--bin <path>] [--no-install] [--saved|--layout <name>|--empty]")
 }
