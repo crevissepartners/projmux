@@ -472,12 +472,22 @@ func tmuxUnbindLines(actions []keyBindingAction) []string {
 		return user[i].UserSlot < user[j].UserSlot
 	})
 
-	lines := make([]string, 0, len(plain)+len(user))
+	prefix := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
+		return action.PrefixChord != ""
+	})
+	sort.SliceStable(prefix, func(i, j int) bool {
+		return prefix[i].PrefixBindOrder < prefix[j].PrefixBindOrder
+	})
+
+	lines := make([]string, 0, len(plain)+len(user)+len(prefix))
 	for _, action := range plain {
 		lines = append(lines, "unbind-key -q -n "+action.PlainChord)
 	}
 	for _, action := range user {
 		lines = append(lines, "unbind-key -q -n "+keyBindingUserKey(action))
+	}
+	for _, action := range prefix {
+		lines = append(lines, "unbind-key -q "+action.PrefixChord)
 	}
 	return lines
 }
@@ -569,25 +579,6 @@ func tmuxBindLines(binaryPath string, actions []keyBindingAction) []string {
 				chord: keyBindingUserKey(action),
 				line:  renderTmuxBindLine(binaryPath, keyBindingUserKey(action), true, action),
 				order: action.UserBindOrder,
-			})
-		}
-	}
-	sort.SliceStable(bindings, func(i, j int) bool { return bindings[i].order < bindings[j].order })
-	for _, binding := range bindings {
-		lines = append(lines, binding.line)
-	}
-
-	bindings = bindings[:0]
-	for _, action := range actions {
-		if action.PrefixChord != "" {
-			bindings = append(bindings, struct {
-				chord string
-				line  string
-				order int
-			}{
-				chord: action.PrefixChord,
-				line:  renderTmuxBindLine(binaryPath, action.PrefixChord, false, action),
-				order: action.PrefixBindOrder,
 			})
 		}
 	}

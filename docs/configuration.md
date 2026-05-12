@@ -40,26 +40,17 @@ The file is read only when no env root list is set.
 
 ## Keymap File
 
-Settings > Keybindings is the normal in-app editor for tmux key chords. It
-lists each action, opens a detail screen, and lets you type `plain` or
-`prefix` tmux chord strings. Saving writes `~/.config/projmux/keymap.toml`,
+Settings > Keybindings is the normal in-app editor for action keys. It lists
+each action, opens a detail screen, and uses `Press new key` to capture one
+keypress through the same controlling-TTY probe path as `projmux setup`.
+Saving writes safe tmux plain chords to `~/.config/projmux/keymap.toml`,
 rewrites `~/.config/projmux/tmux.conf`, and, when Settings is running inside
-tmux, sources that app config so non-terminal-layer tmux chords take effect
-immediately.
+tmux, sources that app config so tmux-level chords take effect immediately.
 
-Settings > Keybindings is the single in-app keybinding surface, split into
-chips:
-
-- `Bindings` (action-to-chord editing),
-- `Diagnostic` (key delivery checks),
-- `Probe` (raw sequence diagnostics),
-- `Init` (terminal fallback adapters).
-
-The `Diagnostic` chip is the in-app diagnostic/remediation surface for the same
-catalog. It probes one action key at a time through the controlling TTY, reports
-whether the key arrived as a plain tmux chord, CSI-u fallback, unexpected
-sequence, or timeout, and delegates supported terminal-fallback preview/apply
-operations to the `projmux init` engine.
+Settings reports CSI-u/User-key captures as terminal fallback delivery and
+does not write a keymap entry for them. Raw sequences that cannot be safely
+represented as a tmux plain chord are not persisted; configure terminal
+fallback with `projmux init` instead.
 
 `~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
 absent, generated tmux config stays on the built-in defaults.
@@ -69,7 +60,6 @@ Supported schema:
 ```toml
 [bindings.sessionizer-sidebar]
 plain = "M-a"
-prefix = "A"
 
 [bindings.new-window]
 plain = "C-t"
@@ -80,7 +70,10 @@ Each table is `[bindings.<action-id>]`. Supported keys are:
 | Key | Meaning |
 | --- | --- |
 | `plain` | A no-prefix tmux chord such as `M-a`, `C-t`, or `M-S-Left`. |
-| `prefix` | A tmux prefix-table chord such as `A` or `r`. |
+
+Legacy `prefix = ...` entries still parse during migration so existing files
+do not break, but Settings no longer writes prefix keys and generated tmux
+config no longer binds the old action prefix chords.
 
 Set a value to the empty string to disable that chord for the action:
 
@@ -89,12 +82,12 @@ Set a value to the empty string to disable that chord for the action:
 plain = ""
 ```
 
-In Settings, `Disable Plain/Prefix chord` writes the empty string override.
-`Reset Plain/Prefix chord` removes that override and returns to the built-in
-default. The Settings writer is deterministic and rewrites the supported
-subset only: `[bindings.<action-id>]` tables with `plain` and `prefix` string
-keys. If the existing file has parse errors or unknown action IDs, Settings
-shows the keymap error row and refuses to overwrite it until the file is fixed.
+In Settings, `Disable` writes the empty plain override. `Reset default`
+removes that override and returns to the built-in default. The Settings writer
+is deterministic and rewrites the supported saved subset only:
+`[bindings.<action-id>]` tables with `plain` string keys. If the existing file
+has parse errors or unknown action IDs, Settings shows the keymap error row and
+refuses to overwrite it until the file is fixed.
 
 The file currently affects generated tmux config from `projmux tmux
 print-config`, `projmux tmux install`, `projmux tmux print-app-config`,

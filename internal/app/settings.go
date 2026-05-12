@@ -1554,9 +1554,8 @@ func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Opti
 		UI:         "settings-keybindings",
 		Entries:    entries,
 		Title:      "Keybindings",
-		TitleChips: keybindingsTitleChips(active),
 		Prompt:     "Settings > Keybindings > ",
-		Footer:     projmuxFooter("Enter: edit/apply  |  click chip: switch view  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Enter: capture/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}
@@ -1698,7 +1697,7 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 			Entries:    entries,
 			Title:      title,
 			Prompt:     "Settings > Keybindings > Action > ",
-			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: capture/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1715,22 +1714,22 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 		if action == settingsNoopValue {
 			continue
 		}
-		field, op, ok := parseKeymapDetailAction(action, actionID)
+		op, ok := parseKeymapDetailAction(action, actionID)
 		if !ok {
 			return fmt.Errorf("unknown keybinding detail action: %s", action)
 		}
 		switch op {
-		case "set":
-			if err := c.runKeybindingTyped(actionID, field, stdout, stderr); err != nil {
+		case "capture":
+			if err := c.runKeybindingCapture(actionID, stdout); err != nil {
 				return err
 			}
 		case "disable":
 			disabled := ""
-			if err := c.saveKeymapAndApply(actionID, field, &disabled, stdout); err != nil {
+			if err := c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, &disabled, stdout); err != nil {
 				return err
 			}
 		case "reset":
-			if err := c.saveKeymapAndApply(actionID, field, nil, stdout); err != nil {
+			if err := c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, nil, stdout); err != nil {
 				return err
 			}
 		default:
@@ -1739,22 +1738,20 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 	}
 }
 
-func parseKeymapDetailAction(value, actionID string) (string, string, bool) {
+func parseKeymapDetailAction(value, actionID string) (string, bool) {
 	prefix := settingsActionPrefixKeymap + actionID + ":"
 	if !strings.HasPrefix(value, prefix) {
-		return "", "", false
+		return "", false
 	}
-	field, op, ok := strings.Cut(strings.TrimPrefix(value, prefix), ":")
-	if !ok {
-		return "", "", false
+	op := strings.TrimPrefix(value, prefix)
+	switch op {
+	case "capture", "disable", "reset":
+		return op, true
 	}
-	if field != settingsKeymapFieldPlain && field != settingsKeymapFieldPrefix {
-		return "", "", false
-	}
-	return field, op, op == "set" || op == "disable" || op == "reset"
+	return "", false
 }
 
-func (c *settingsCommand) runKeybindingTyped(actionID, field string, stdout, stderr io.Writer) error {
+func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer) error {
 	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
@@ -1763,33 +1760,65 @@ func (c *settingsCommand) runKeybindingTyped(actionID, field string, stdout, std
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	initial := action.PlainChord
-	if field == settingsKeymapFieldPrefix {
-		initial = action.PrefixChord
-	}
-	result, err := c.runPicker(intpickercompat.Options{
-		UI:           "settings-keybinding-typed",
-		Entries:      nil,
-		AcceptQuery:  true,
-		InitialQuery: initial,
-		Title:        "Set Keybinding - Type a tmux chord string",
-		Prompt:       "Type tmux chord > ",
-		Footer:       projmuxFooter("Enter: save empty disables  |  Esc/Alt+5/Ctrl+Alt+S: close"),
-		ExpectKeys:   []string{"enter"},
-		Bindings:     settingsCloseBindings(),
-	})
+	key := captureProbeKeyForAction(action)
+	fmt.Fprintf(stdout, "press %s for %s\n", key.Label, key.Action)
+	res, err := c.probeLabKeybinding(key, defaultProbeTimeout)
 	if err != nil {
 		return err
 	}
-	if result.Key != "enter" {
-		return nil
+	if c.lastLabProbe == nil {
+		c.lastLabProbe = map[string]probeResult{}
 	}
-	typed := strings.TrimSpace(result.Query)
-	if err := validateKeymapChord(typed); err != nil {
-		fmt.Fprintf(stderr, "invalid keybinding chord: %v\n", err)
-		return nil
+	c.lastLabProbe[actionID] = res
+	fmt.Fprintf(stdout, "capture %s: %s\n", key.Label, renderProbeStatus(res))
+	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if !ok {
+		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	return c.saveKeymapAndApply(actionID, field, &typed, stdout)
+
+	switch res.Status {
+	case probeStatusPlain:
+		if defaultAction.PlainChord == "" {
+			fmt.Fprintf(stdout, "captured key is plain, but this action has no safe tmux plain chord to save\n")
+			return nil
+		}
+		return c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, nil, stdout)
+	case probeStatusCSIu:
+		fmt.Fprintf(stdout, "captured key is routed through %s; no keymap.toml change needed\n", res.Key.UserKey)
+		return nil
+	case probeStatusUnknown:
+		chord, ok := suggestedPlainChordForSequence(res.Sequence)
+		if !ok {
+			fmt.Fprintf(stdout, "captured raw sequence %s is not safe to persist; configure terminal fallback instead\n", visibleEscape(string(res.Sequence)))
+			return nil
+		}
+		return c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, &chord, stdout)
+	case probeStatusTimeout:
+		fmt.Fprintf(stdout, "no key was captured; keymap.toml was not changed\n")
+		return nil
+	default:
+		return fmt.Errorf("unknown keybinding capture status: %s", res.Status)
+	}
+}
+
+func captureProbeKeyForAction(action keyBindingAction) probeKey {
+	for _, key := range probeKeysFromActions([]keyBindingAction{action}) {
+		return key
+	}
+	key := probeKey{
+		ActionID:   action.ID,
+		Label:      "new key",
+		Action:     action.Description,
+		Plain:      action.ProbePlain,
+		PlainChord: action.PlainChord,
+	}
+	if action.CSIu != "" {
+		key.CSIu = "\x1b[" + action.CSIu + "u"
+		if action.UserSlot != noUserSlot {
+			key.UserKey = keyBindingUserKey(action)
+		}
+	}
+	return key
 }
 
 func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
@@ -1806,13 +1835,11 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 	})
 	for _, action := range actions {
 		defaultAction, _ := keyBindingActionByID(defaults, action.ID)
-		plain := keybindingValueSummary(action.PlainChord, defaultAction.PlainChord)
-		prefix := keybindingValueSummary(action.PrefixChord, defaultAction.PrefixChord)
-		desc := strings.TrimSpace("plain " + plain + "  prefix " + prefix)
+		desc := keybindingCurrentSummary(action, defaultAction)
 		entries = append(entries, intpickercompat.Entry{
 			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, action.Description, desc),
 			Value:     settingsActionPrefixKeymap + action.ID,
-			SearchKey: action.ID + " " + action.Description + " " + action.PlainChord + " " + action.PrefixChord,
+			SearchKey: action.ID + " " + action.Description + " " + action.PlainChord,
 		})
 	}
 	return entries, nil
@@ -1835,50 +1862,38 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: settingsNoopValue,
 		},
 		{
+			Label: settingsLabelInfo("Current key", keybindingValueSummary(action.PlainChord, defaultAction.PlainChord), keybindingSource(action.PlainChord, defaultAction.PlainChord)),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Delivery path", keybindingDeliveryPath(action), keybindingDeliveryHint(action)),
+			Value: settingsNoopValue,
+		},
+		{
 			Label: "  " + settingsColorDim + "Terminal fallback mappings still require rerunning projmux init and restarting the terminal where applicable." + settingsColorReset,
 			Value: settingsNoopValue,
 		},
 	}
-	entries = append(entries, keybindingFieldEntries(action, defaultAction, settingsKeymapFieldPlain, "Plain chord")...)
-	entries = append(entries, keybindingFieldEntries(action, defaultAction, settingsKeymapFieldPrefix, "Prefix chord")...)
-	title := "Keybinding - " + action.Description
-	return entries, title, nil
-}
-
-func keybindingFieldEntries(action, defaultAction keyBindingAction, field, label string) []intpickercompat.Entry {
-	current := action.PlainChord
-	def := defaultAction.PlainChord
-	if field == settingsKeymapFieldPrefix {
-		current = action.PrefixChord
-		def = defaultAction.PrefixChord
-	}
-	value := current
-	source := "default"
-	if current == "" {
-		value = "disabled"
-	}
-	if current != def {
-		source = "keymap.toml"
-	}
-	prefix := settingsActionPrefixKeymap + action.ID + ":" + field + ":"
-	return []intpickercompat.Entry{
-		{
-			Label: settingsLabelInfo(label, value, source),
-			Value: settingsNoopValue,
+	prefix := settingsActionPrefixKeymap + action.ID + ":"
+	entries = append(entries,
+		intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphType, settingsColorType, "Press new key", "capture one keypress from /dev/tty"),
+			Value: prefix + "capture",
 		},
-		{
-			Label: settingsLabel(settingsGlyphType, settingsColorType, "Set "+label+"...", "type a tmux chord; empty disables"),
-			Value: prefix + "set",
-		},
-		{
-			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Disable "+label, "write empty string override"),
+		intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Disable", "write empty plain override"),
 			Value: prefix + "disable",
 		},
-		{
-			Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Reset "+label, "remove override and use default"),
+		intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Reset default", "remove plain override"),
 			Value: prefix + "reset",
 		},
+	)
+	if res, ok := c.lastLabProbe[actionID]; ok {
+		entries = append(entries, keybindingCaptureOutcomeEntries(res)...)
 	}
+	title := "Keybinding - " + action.Description
+	return entries, title, nil
 }
 
 func keybindingValueSummary(current, def string) string {
@@ -1889,6 +1904,77 @@ func keybindingValueSummary(current, def string) string {
 		return current + " (custom)"
 	}
 	return current
+}
+
+func keybindingSource(current, def string) string {
+	if current != def {
+		return "keymap.toml"
+	}
+	return "default"
+}
+
+func keybindingCurrentSummary(action, defaultAction keyBindingAction) string {
+	plain := "key " + keybindingValueSummary(action.PlainChord, defaultAction.PlainChord)
+	if action.UserSlot != noUserSlot && action.CSIu != "" {
+		return plain + "  fallback " + keyBindingUserKey(action)
+	}
+	return plain
+}
+
+func keybindingDeliveryPath(action keyBindingAction) string {
+	if action.UserSlot != noUserSlot && action.CSIu != "" {
+		if action.PlainChord != "" {
+			return "plain tmux + terminal fallback"
+		}
+		return "terminal fallback"
+	}
+	return "plain tmux"
+}
+
+func keybindingDeliveryHint(action keyBindingAction) string {
+	if action.UserSlot != noUserSlot && action.CSIu != "" {
+		return keyBindingUserKey(action) + " ESC[" + action.CSIu + "u"
+	}
+	return "tmux plain chord"
+}
+
+func keybindingCaptureOutcomeEntries(res probeResult) []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
+		{
+			Label: settingsLabelInfo("Last capture", string(res.Status), renderProbeStatus(res)),
+			Value: settingsNoopValue,
+		},
+	}
+	switch res.Status {
+	case probeStatusPlain:
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Saved path", "plain tmux binding", res.Reason),
+			Value: settingsNoopValue,
+		})
+	case probeStatusCSIu:
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Saved path", "terminal fallback", "no keymap.toml change needed"),
+			Value: settingsNoopValue,
+		})
+	case probeStatusUnknown:
+		if chord, ok := suggestedPlainChordForSequence(res.Sequence); ok {
+			entries = append(entries, intpickercompat.Entry{
+				Label: settingsLabelInfo("Saved path", "plain "+chord, "safe tmux chord"),
+				Value: settingsNoopValue,
+			})
+		} else {
+			entries = append(entries, intpickercompat.Entry{
+				Label: settingsLabelInfo("Not saved", visibleEscape(string(res.Sequence)), "unsafe raw sequence"),
+				Value: settingsNoopValue,
+			})
+		}
+	case probeStatusTimeout:
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Not saved", "timeout", "no bytes reached projmux"),
+			Value: settingsNoopValue,
+		})
+	}
+	return entries
 }
 
 func (c *settingsCommand) keymapStore() keymapStore {

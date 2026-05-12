@@ -25,7 +25,7 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "notify-sidebar
   --include "$XDG_CONFIG_HOME/tmux/projmux.conf" \
   >"$PROJMUX_SMOKE_WORKDIR/install.out"
 smoke_assert_file_contains "$HOME/.tmux.conf" "source-file"
-smoke_assert_file_contains "$XDG_CONFIG_HOME/tmux/projmux.conf" " current"
+smoke_assert_file_contains "$XDG_CONFIG_HOME/tmux/projmux.conf" "unbind-key -q R"
 
 PROJMUX_SMOKE_TMUX_SOCKET="projmux-it"
 export PROJMUX_SMOKE_TMUX_SOCKET
