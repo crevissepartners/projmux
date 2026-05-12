@@ -35,6 +35,7 @@ type settingsCommand struct {
 	homeDir            func() (string, error)
 	lookupEnv          func(string) string
 	runCommand         func(name string, args ...string) error
+	runOutput          func(name string, args ...string) ([]byte, error)
 	probeKeybinding    func(probeKey, time.Duration) (probeResult, error)
 	runInitKeybindings func(args []string, stdout, stderr io.Writer) error
 	lastLabProbe       map[string]probeResult
@@ -75,6 +76,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsSectionEffectiveMerge: {Name: "Effective merge view", Axis: settingsAxisProject},
 	settingsSectionAI:             {Name: "AI Settings", Axis: settingsAxisGlobal},
 	settingsSectionStatusbar:      {Name: "Appearance", Axis: settingsAxisGlobal},
+	settingsSectionSessionState:   {Name: "Session State", Axis: settingsAxisGlobal},
 	settingsSectionKeybindings:    {Name: "Keybindings", Axis: settingsAxisGlobal},
 	settingsSectionLabs:           {Name: "Labs", Axis: settingsAxisGlobal},
 	settingsSectionAbout:          {Name: "About", Axis: settingsAxisGlobal},
@@ -92,6 +94,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsKeybindingsInit:       {Name: "Keybinding Init", Axis: settingsAxisGlobal},
 	settingsAIDefaultMode:         {Name: "Default split mode", Axis: settingsAxisGlobal},
 	settingsLabsDesktopNotify:     {Name: "Desktop notifications", Axis: settingsAxisGlobal},
+	settingsSessionStateDelete:    {Name: "Delete session snapshot", Axis: settingsAxisGlobal},
 	settingsLabKeybindings:        {Name: "Keybindings", Axis: settingsAxisGlobal},
 	settingsUpdateApply:           {Name: "Update Now", Axis: settingsAxisGlobal},
 	settingsUpdateCheck:           {Name: "Check Updates", Axis: settingsAxisGlobal},
@@ -116,6 +119,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixWelcome, settingsEntryMeta{Name: "Welcome", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixTrust, settingsEntryMeta{Name: "Trust", Axis: settingsAxisProject}},
 	{settingsActionPrefixProjdir, settingsEntryMeta{Name: "Project Root", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixSessionState, settingsEntryMeta{Name: "Session State", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixStatusbar, settingsEntryMeta{Name: "Appearance", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixSwitch, settingsEntryMeta{Name: "Pinned Projects", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixUpdate, settingsEntryMeta{Name: "About", Axis: settingsAxisGlobal}},
@@ -148,6 +152,7 @@ const (
 	settingsSectionKeybindings            = "section:keybindings"
 	settingsSectionProject                = "section:project-picker"
 	settingsSectionStatusbar              = "section:statusbar"
+	settingsSectionSessionState           = "section:sessionstate"
 	settingsSectionLabs                   = "section:labs"
 	settingsSectionAbout                  = "section:about"
 	settingsActionPrefixAI                = "ai:"
@@ -160,6 +165,7 @@ const (
 	settingsActionPrefixWelcome           = "welcome:"
 	settingsActionPrefixTrust             = "trust:"
 	settingsActionPrefixProjdir           = "projdir:"
+	settingsActionPrefixSessionState      = "sessionstate:"
 	settingsActionPrefixStatusbar         = "statusbar-decoration:"
 	settingsActionPrefixSwitch            = "switch:"
 	settingsActionPrefixUpdate            = "update:"
@@ -182,6 +188,7 @@ const (
 	settingsAIDefaultMode                 = "ai-default-mode"
 	settingsLabsDesktopNotify             = "labs:desktop-notify"
 	settingsLabKeybindings                = "labs:keybindings"
+	settingsSessionStateDelete            = "sessionstate:delete"
 	settingsWelcomeShow                   = "welcome:show"
 	settingsKeymapFieldPlain              = "plain"
 	settingsKeymapFieldPrefix             = "prefix"
@@ -197,6 +204,9 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 		lookupEnv:    os.Getenv,
 		runCommand: func(name string, args ...string) error {
 			return exec.Command(name, args...).Run()
+		},
+		runOutput: func(name string, args ...string) ([]byte, error) {
+			return exec.Command(name, args...).Output()
 		},
 	}
 }
@@ -273,6 +283,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionKeybindings {
 		return c.runKeybindingsSection(stdout, stderr)
+	}
+	if section == settingsSectionSessionState {
+		return c.runSessionStateSection(stdout, stderr)
 	}
 	if section == settingsSectionLabs {
 		return c.runLabsSection(stdout, stderr)
@@ -439,6 +452,10 @@ func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompa
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Appearance", "status and popup decoration mode"),
 			Value: settingsSectionStatusbar,
+		},
+		{
+			Label: c.sessionStateRootLabel(),
+			Value: settingsSectionSessionState,
 		},
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Keybindings", "edit tmux plain and prefix chords"),
@@ -667,6 +684,16 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.statusbarEntries(),
 			Title:      "Appearance - Status and popup decoration mode",
 			Prompt:     "Settings > Appearance > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		}, nil
+	case settingsSectionSessionState:
+		return intpickercompat.Options{
+			UI:         "settings-sessionstate",
+			Entries:    c.sessionStateEntries(),
+			Title:      "Session State - Restore and autosave controls",
+			Prompt:     "Settings > Session State > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -2627,6 +2654,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return errors.New("project root settings are not configured")
 		}
 		return c.switcher.executeProjdirSettingsAction(action, stdout, stderr)
+	case strings.HasPrefix(value, settingsActionPrefixSessionState):
+		return c.executeSessionStateAction(strings.TrimPrefix(value, settingsActionPrefixSessionState), stdout, stderr)
 	case strings.HasPrefix(value, settingsActionPrefixStatusbar):
 		return c.setStatusbarDecoration(strings.TrimPrefix(value, settingsActionPrefixStatusbar))
 	case strings.HasPrefix(value, settingsActionPrefixSwitch):

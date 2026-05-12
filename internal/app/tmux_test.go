@@ -1319,8 +1319,10 @@ func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing
 		},
 	}
 	cmd := &tmuxCommand{
-		runner: runner,
-		now:    func() time.Time { return now },
+		runner:    runner,
+		now:       func() time.Time { return now },
+		homeDir:   func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(string) string { return "" },
 		sessionStore: func() (sessionstate.Store, error) {
 			return sessionstate.NewStore(dir), nil
 		},
@@ -1355,6 +1357,8 @@ func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
 	cmd := &tmuxCommand{
 		runner:       runner,
 		now:          func() time.Time { return now },
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:    func(string) string { return "" },
 		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
 	}
 
@@ -1366,6 +1370,31 @@ func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
 	}
 }
 
+func TestTmuxAutosaveSessionStateSkipsWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingTmuxRunner{}
+	cmd := &tmuxCommand{
+		runner:  runner,
+		now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
+		homeDir: func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(name string) string {
+			if name == sessionStateAutosaveEnv {
+				return "off"
+			}
+			return ""
+		},
+		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
+	}
+
+	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none when autosave disabled", runner.calls)
+	}
+}
+
 func TestTmuxAutosaveSessionStateQuietSwallowsRuntimeErrors(t *testing.T) {
 	t.Parallel()
 
@@ -1373,6 +1402,7 @@ func TestTmuxAutosaveSessionStateQuietSwallowsRuntimeErrors(t *testing.T) {
 	cmd := &tmuxCommand{
 		runner:       runner,
 		now:          func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
 		lookupEnv:    func(string) string { return "" },
 		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
 	}

@@ -101,6 +101,14 @@ type Store struct {
 	Dir string
 }
 
+// Summary is the compact status view for one saved snapshot.
+type Summary struct {
+	Session     string
+	SavedAt     time.Time
+	WindowCount int
+	PaneCount   int
+}
+
 // NewStore builds a session snapshot store rooted at dir. Tests should pass a
 // temp directory here to avoid writing to the real user state directory.
 func NewStore(dir string) Store {
@@ -164,6 +172,37 @@ func (s Store) Load(session string) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("%w: path session %q does not match snapshot session %q", ErrInvalidSnapshot, session, snap.Session)
 	}
 	return snap.normalize(), nil
+}
+
+// Summary loads one snapshot and returns the fields needed by status surfaces.
+func (s Store) Summary(session string) (Summary, error) {
+	snap, err := s.Load(session)
+	if err != nil {
+		return Summary{}, err
+	}
+	panes := 0
+	for _, window := range snap.Windows {
+		panes += len(window.Panes)
+	}
+	return Summary{
+		Session:     snap.Session,
+		SavedAt:     snap.SavedAt,
+		WindowCount: len(snap.Windows),
+		PaneCount:   panes,
+	}, nil
+}
+
+// Delete removes the saved snapshot for session. Missing snapshots are treated
+// as a successful no-op so Settings delete remains narrow and repeatable.
+func (s Store) Delete(session string) error {
+	path, err := s.Path(session)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("sessionstate: delete snapshot %s: %w", path, err)
+	}
+	return nil
 }
 
 // Save validates and atomically writes snap to its session path using a

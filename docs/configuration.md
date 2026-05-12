@@ -123,6 +123,9 @@ configured key opens and closes the popup.
 | `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. |
 | `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from `projmux status usage` to stderr. |
 | `PROJMUX_USAGE_LIMITS_PATH` | Deprecated. Read but ignored; limits now come from upstream APIs and local Codex rollout state. |
+| `PROJMUX_SESSIONSTATE_AUTOSAVE` | Session snapshot autosave override. Values such as `off`, `false`, or `0` disable autosave regardless of the saved Settings value. |
+| `PROJMUX_SESSIONSTATE_AUTORESTORE` | Session snapshot auto-restore override. Values such as `off`, `false`, or `0` disable auto-restore regardless of the saved Settings value. |
+| `PROJMUX_SESSIONSTATE_DEBUG` | When non-empty, quiet autosave surfaces suppressed session-state errors to stderr. |
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
 | `PROJMUX_PICKER_BACKEND` | Legacy picker backend override. Any value, including old `fzf` settings, now resolves to the native picker. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
@@ -325,6 +328,18 @@ already-consumed state is a quiet no-op.
 Set `PROJMUX_WELCOME=off` before launching or attaching to `projmux shell` to
 suppress the automatic attach popup. The manual `projmux welcome` command still
 prints the guide.
+
+## Session State
+
+`projmux shell` autosaves session snapshots from the app tmux status tick. The
+autosave command is quiet and debounced per session, and stores snapshots under
+`${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`.
+
+Settings > Session State shows the effective auto-save / auto-restore state,
+the current session snapshot summary, and a delete action. The saved toggles
+live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave`
+and `sessionstate-autorestore`; the environment variables above override those
+files.
 
 ## Decoration Mode
 
