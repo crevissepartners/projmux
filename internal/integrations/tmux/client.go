@@ -578,7 +578,15 @@ func (c *Client) runPaneStartup(ctx context.Context, sessionName, cwd, kind, pan
 	if command == "" {
 		return
 	}
-	_, _ = c.runner.Run(ctx, "tmux", "send-keys", "-t", paneID, command, "Enter")
+	if _, err := c.runner.Run(ctx, "tmux", "send-keys", "-t", paneID, command, "Enter"); err != nil {
+		return
+	}
+	c.markStartupPane(ctx, paneID, command)
+}
+
+func (c *Client) markStartupPane(ctx context.Context, paneID, command string) {
+	_, _ = c.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, "@projmux_recipe_kind", "startup")
+	_, _ = c.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, "@projmux_startup_command", command)
 }
 
 func (c *Client) waitForPaneShellReady(ctx context.Context, paneID string, timeout, interval time.Duration) error {

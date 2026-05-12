@@ -64,11 +64,13 @@ type Recipe struct {
 	Agent    string `json:"agent,omitempty"`
 	ResumeID string `json:"resume_id,omitempty"`
 	Topic    string `json:"topic,omitempty"`
+	Command  string `json:"command,omitempty"`
 }
 
 const (
-	RecipeKindShell = "shell"
-	RecipeKindAgent = "agent"
+	RecipeKindShell   = "shell"
+	RecipeKindAgent   = "agent"
+	RecipeKindStartup = "startup"
 )
 
 // ShellRecipe returns the plain-shell recipe form.
@@ -83,6 +85,14 @@ func AgentRecipe(agent, resumeID, topic string) Recipe {
 		Agent:    agent,
 		ResumeID: resumeID,
 		Topic:    topic,
+	}
+}
+
+// StartupRecipe returns the declarative startup command recipe form.
+func StartupRecipe(command string) Recipe {
+	return Recipe{
+		Kind:    RecipeKindStartup,
+		Command: strings.TrimSpace(command),
 	}
 }
 
@@ -261,12 +271,22 @@ func (s Snapshot) Validate() error {
 func (r Recipe) Validate() error {
 	switch r.Kind {
 	case RecipeKindShell:
-		if r.Agent != "" || r.ResumeID != "" || r.Topic != "" {
-			return fmt.Errorf("%w: shell recipe cannot include agent metadata", ErrInvalidSnapshot)
+		if r.Agent != "" || r.ResumeID != "" || r.Topic != "" || r.Command != "" {
+			return fmt.Errorf("%w: shell recipe cannot include replay metadata", ErrInvalidSnapshot)
 		}
 	case RecipeKindAgent:
 		if strings.TrimSpace(r.Agent) == "" {
 			return fmt.Errorf("%w: agent recipe requires agent", ErrInvalidSnapshot)
+		}
+		if r.Command != "" {
+			return fmt.Errorf("%w: agent recipe cannot include startup command", ErrInvalidSnapshot)
+		}
+	case RecipeKindStartup:
+		if strings.TrimSpace(r.Command) == "" {
+			return fmt.Errorf("%w: startup recipe requires command", ErrInvalidSnapshot)
+		}
+		if r.Agent != "" || r.ResumeID != "" || r.Topic != "" {
+			return fmt.Errorf("%w: startup recipe cannot include agent metadata", ErrInvalidSnapshot)
 		}
 	case "":
 		return fmt.Errorf("%w: recipe kind is required", ErrInvalidSnapshot)

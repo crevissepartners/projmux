@@ -234,6 +234,129 @@ func TestReplayResumesCodexAgentRecipeAfterLayoutAndPaneSelection(t *testing.T) 
 	}
 }
 
+func TestReplayRunsStartupRecipeAfterLayoutAndPaneSelection(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{
+		{
+			Index:           1,
+			Name:            "jobs",
+			ActivePaneIndex: 0,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: StartupRecipe("npm run jobs")},
+			},
+		},
+		{
+			Index:           0,
+			Name:            "main",
+			Layout:          "d3a9,120x36,0,0{60x36,0,0,1,59x36,61,0,2}",
+			ActivePaneIndex: 1,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: ShellRecipe()},
+				{Index: 1, CWD: cwd, Recipe: StartupRecipe("npm run dev")},
+			},
+		},
+	}
+	runner := &recordingReplayRunner{}
+
+	result, err := Replay(context.Background(), runner, snap, ReplayOptions{})
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("Replay() warnings = %#v, want none", result.Warnings)
+	}
+
+	layoutIndex := replayCommandIndex(runner.commands, []string{"select-layout", "-t", "home:0", "d3a9,120x36,0,0{60x36,0,0,1,59x36,61,0,2}"})
+	selectIndex := replayCommandIndex(runner.commands, []string{"select-pane", "-t", "home:0.1"})
+	sendIndex := replayCommandIndex(runner.commands, []string{"send-keys", "-t", "home:0.1", "npm run dev", "Enter"})
+	if layoutIndex < 0 || selectIndex < 0 || sendIndex < 0 {
+		t.Fatalf("commands = %#v, want layout, active pane select, and startup send-keys", runner.commands)
+	}
+	if !(layoutIndex < selectIndex && selectIndex < sendIndex) {
+		t.Fatalf("command order layout=%d select=%d send=%d, want startup after layout and active pane selection", layoutIndex, selectIndex, sendIndex)
+	}
+}
+
+func TestReplayRunsMultipleStartupRecipesInWindowPaneOrder(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{
+		{
+			Index:           1,
+			Name:            "jobs",
+			ActivePaneIndex: 0,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: StartupRecipe("npm run jobs")},
+			},
+		},
+		{
+			Index:           0,
+			Name:            "main",
+			ActivePaneIndex: 1,
+			Panes: []Pane{
+				{Index: 2, CWD: cwd, Recipe: StartupRecipe("npm run worker")},
+				{Index: 0, CWD: cwd, Recipe: StartupRecipe("npm run api")},
+				{Index: 1, CWD: cwd, Recipe: StartupRecipe("npm run web")},
+			},
+		},
+	}
+	runner := &recordingReplayRunner{}
+
+	if _, err := Replay(context.Background(), runner, snap, ReplayOptions{}); err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+
+	want := [][]string{
+		{"send-keys", "-t", "home:0.0", "npm run api", "Enter"},
+		{"send-keys", "-t", "home:0.1", "npm run web", "Enter"},
+		{"send-keys", "-t", "home:0.2", "npm run worker", "Enter"},
+		{"send-keys", "-t", "home:1.0", "npm run jobs", "Enter"},
+	}
+	lastIndex := -1
+	for _, args := range want {
+		index := replayCommandIndex(runner.commands, args)
+		if index < 0 {
+			t.Fatalf("commands = %#v, want startup command %#v", runner.commands, args)
+		}
+		if index <= lastIndex {
+			t.Fatalf("startup command order regressed: command %#v at %d after %d", args, index, lastIndex)
+		}
+		lastIndex = index
+	}
+}
+
+func TestReplayDoesNotSendKeysForShellRecipe(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{
+		{
+			Index:           0,
+			Name:            "main",
+			ActivePaneIndex: 0,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: ShellRecipe()},
+			},
+		},
+	}
+	runner := &recordingReplayRunner{}
+
+	if _, err := Replay(context.Background(), runner, snap, ReplayOptions{}); err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	for _, command := range runner.commands {
+		if len(command.args) > 0 && command.args[0] == "send-keys" {
+			t.Fatalf("Replay() sent shell pane command: %#v", command)
+		}
+	}
+}
+
 func TestReplaySkipsClaudeResumeWithEmptyResumeID(t *testing.T) {
 	t.Parallel()
 

@@ -132,10 +132,17 @@ func Replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOption
 }
 
 func replayPaneRecipe(ctx context.Context, runner Runner, session string, windowIndex int, pane Pane, result *ReplayResult) error {
-	if pane.Recipe.Kind != RecipeKindAgent {
+	switch pane.Recipe.Kind {
+	case RecipeKindAgent:
+		return replayAgentRecipe(ctx, runner, session, windowIndex, pane, result)
+	case RecipeKindStartup:
+		return replayStartupRecipe(ctx, runner, session, windowIndex, pane)
+	default:
 		return nil
 	}
+}
 
+func replayAgentRecipe(ctx context.Context, runner Runner, session string, windowIndex int, pane Pane, result *ReplayResult) error {
 	agent := strings.ToLower(strings.TrimSpace(pane.Recipe.Agent))
 	var command string
 	var err error
@@ -158,6 +165,17 @@ func replayPaneRecipe(ctx context.Context, runner Runner, session string, window
 	}
 	if _, err := runner.Run(ctx, "tmux", "send-keys", "-t", paneTarget(session, windowIndex, pane.Index), command, "Enter"); err != nil {
 		return fmt.Errorf("replay tmux window %d pane %d %s resume: %w", windowIndex, pane.Index, agent, err)
+	}
+	return nil
+}
+
+func replayStartupRecipe(ctx context.Context, runner Runner, session string, windowIndex int, pane Pane) error {
+	command := strings.TrimSpace(pane.Recipe.Command)
+	if command == "" {
+		return nil
+	}
+	if _, err := runner.Run(ctx, "tmux", "send-keys", "-t", paneTarget(session, windowIndex, pane.Index), command, "Enter"); err != nil {
+		return fmt.Errorf("replay tmux window %d pane %d startup: %w", windowIndex, pane.Index, err)
 	}
 	return nil
 }
