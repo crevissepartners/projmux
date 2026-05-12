@@ -886,7 +886,9 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour33] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		" %Y-%m-%d %H:%M",
 		"range=user|notify",
+		"range=user|sessionstate",
 		"range=user|usage",
+		"bind-key -T projmux-status r run-shell \"'/tmp/proj mux/bin/projmux' statusbar click sessionstate\"",
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
@@ -1259,8 +1261,10 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		" %Y-%m-%d %H:%M #[range=user|settings]#[bold,fg=colour16,bg=colour45] ⚙ #[norange]#[default]",
 		"set -g status 2",
 		"range=user|notify",
+		"range=user|sessionstate",
 		"range=user|usage",
 		"#('/tmp/projmux' tmux autosave-session-state --quiet)",
+		"bind-key -T projmux-status r run-shell \"'/tmp/projmux' statusbar click sessionstate\"",
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
@@ -1289,6 +1293,62 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)
+		}
+	}
+}
+
+func TestTmuxSessionStateStatusDisplaysPreviewPopup(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC)
+	store := sessionstate.NewStore(t.TempDir())
+	if err := store.Save(sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    "workspace",
+		DefaultCWD: "/tmp/workspace",
+		SavedAt:    now.Add(-time.Minute),
+		Windows: []sessionstate.Window{{
+			Index:           0,
+			Name:            "editor",
+			ActivePaneIndex: 0,
+			Panes: []sessionstate.Pane{
+				{Index: 0, CWD: "/tmp/workspace", Recipe: sessionstate.StartupRecipe("make watch")},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"): "workspace\n",
+		},
+	}
+	cmd := &tmuxCommand{
+		runner:       runner,
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		now:          func() time.Time { return now },
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:    func(string) string { return "" },
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	if err := cmd.Run([]string{"sessionstate-status"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	var popup *recordedTmuxCall
+	for i := range runner.calls {
+		if runner.calls[i].name == "tmux" && len(runner.calls[i].args) > 0 && runner.calls[i].args[0] == "display-popup" {
+			popup = &runner.calls[i]
+			break
+		}
+	}
+	if popup == nil {
+		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
+	}
+	command := popup.args[len(popup.args)-1]
+	for _, want := range []string{"Session State", "workspace", "1m ago", "pane 0.0 startup make watch"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("popup command missing %q: %q", want, command)
 		}
 	}
 }
