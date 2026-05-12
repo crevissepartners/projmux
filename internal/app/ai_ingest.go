@@ -52,6 +52,13 @@ type claudeHookPayload struct {
 	ToolName         string
 	ToolUseID        string
 	ToolInput        map[string]any
+	ErrorType        string
+	ErrorMessage     string
+	SubagentType     string
+	SubagentID       string
+	TeammateName     string
+	TeammateID       string
+	TeammateContext  string
 }
 
 func (c *aiCommand) runIngest(args []string, stderr io.Writer) error {
@@ -188,6 +195,30 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			Metadata: metadata,
 			Force:    true,
 		})
+	case "StopFailure":
+		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
+			ID:       claudeExtraNotifyID(payload, "stop-failure", payload.ErrorType, payload.ErrorMessage),
+			Text:     claudeStopFailureNotifyText(payload),
+			Severity: notify.SeverityCritical,
+			Metadata: metadata,
+			Force:    true,
+		})
+	case "SubagentStop":
+		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
+			ID:       claudeExtraNotifyID(payload, "subagent-stop", payload.SubagentType, payload.SubagentID),
+			Text:     claudeSubagentStopNotifyText(payload),
+			Severity: notify.SeverityInfo,
+			Metadata: metadata,
+			Force:    true,
+		})
+	case "TeammateIdle":
+		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
+			ID:       claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
+			Text:     claudeTeammateIdleNotifyText(payload),
+			Severity: notify.SeverityInfo,
+			Metadata: metadata,
+			Force:    true,
+		})
 	default:
 		return nil
 	}
@@ -241,6 +272,13 @@ func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
 		Prompt:           firstString(raw, "prompt", "user_prompt"),
 		ToolName:         firstString(raw, "tool_name", "toolName"),
 		ToolUseID:        firstString(raw, "tool_use_id", "toolUseID", "id"),
+		ErrorType:        firstString(raw, "error_type", "errorType", "failure_type", "failureType"),
+		ErrorMessage:     firstString(raw, "error_message", "errorMessage", "message", "reason"),
+		SubagentType:     firstString(raw, "subagent_type", "subagentType", "agent_type", "agentType"),
+		SubagentID:       firstString(raw, "subagent_id", "subagentId", "agent_id", "agentId"),
+		TeammateName:     firstString(raw, "teammate_name", "teammateName", "teammate"),
+		TeammateID:       firstString(raw, "teammate_id", "teammateId"),
+		TeammateContext:  firstString(raw, "teammate_context", "teammateContext", "context", "reason", "message"),
 	}
 	if payload.CWD == "" {
 		payload.CWD = firstNestedString(raw["workspace"], "cwd", "path")
@@ -256,6 +294,27 @@ func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
 	}
 	if payload.ToolUseID == "" {
 		payload.ToolUseID = firstNestedString(raw["tool"], "id", "tool_use_id")
+	}
+	if payload.ErrorType == "" {
+		payload.ErrorType = firstNestedString(raw["error"], "type", "name", "code")
+	}
+	if payload.ErrorMessage == "" {
+		payload.ErrorMessage = firstNestedString(raw["error"], "message", "text", "reason")
+	}
+	if payload.SubagentType == "" {
+		payload.SubagentType = firstNestedString(raw["subagent"], "type", "name", "kind")
+	}
+	if payload.SubagentID == "" {
+		payload.SubagentID = firstNestedString(raw["subagent"], "id", "subagent_id", "agent_id")
+	}
+	if payload.TeammateName == "" {
+		payload.TeammateName = firstNestedString(raw["teammate"], "name", "type", "kind")
+	}
+	if payload.TeammateID == "" {
+		payload.TeammateID = firstNestedString(raw["teammate"], "id", "teammate_id")
+	}
+	if payload.TeammateContext == "" {
+		payload.TeammateContext = firstNestedString(raw["teammate"], "context", "status", "reason", "message")
 	}
 	payload.ToolInput = mapFromAny(raw["tool_input"])
 	if len(payload.ToolInput) == 0 {
@@ -301,6 +360,13 @@ func (p claudeHookPayload) claudeMetadata() map[string]string {
 		"prompt":            truncateRunes(p.Prompt, 60),
 		"tool_name":         p.ToolName,
 		"tool_use_id":       p.ToolUseID,
+		"error_type":        p.ErrorType,
+		"error_message":     truncateRunes(p.ErrorMessage, 160),
+		"subagent_type":     p.SubagentType,
+		"subagent_id":       p.SubagentID,
+		"teammate_name":     p.TeammateName,
+		"teammate_id":       p.TeammateID,
+		"teammate_context":  truncateRunes(p.TeammateContext, 160),
 	}
 	for key, value := range p.ToolInput {
 		if text := stringFromAny(value); text != "" {
@@ -513,6 +579,52 @@ func claudeStopNotifyText(message string) string {
 		text += " · " + msg
 	}
 	return text
+}
+
+func claudeExtraNotifyID(p claudeHookPayload, kind string, values ...string) string {
+	parts := []string{"ai", "claude", kind}
+	if value := strings.TrimSpace(p.SessionID); value != "" {
+		parts = append(parts, value)
+	}
+	for _, value := range values {
+		if trimmed := truncateRunes(value, 40); trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return strings.Join(parts, ":")
+}
+
+func claudeStopFailureNotifyText(p claudeHookPayload) string {
+	text := "Claude · 오류"
+	if errorType := strings.TrimSpace(p.ErrorType); errorType != "" {
+		text += " · " + errorType
+	}
+	if message := truncateRunes(p.ErrorMessage, 80); message != "" {
+		text += " · " + message
+	}
+	return text
+}
+
+func claudeSubagentStopNotifyText(p claudeHookPayload) string {
+	var text strings.Builder
+	text.WriteString("Claude · 서브에이전트 종료")
+	for _, value := range []string{p.SubagentType, p.SubagentID} {
+		if trimmed := truncateRunes(value, 80); trimmed != "" {
+			text.WriteString(" · " + trimmed)
+		}
+	}
+	return text.String()
+}
+
+func claudeTeammateIdleNotifyText(p claudeHookPayload) string {
+	var text strings.Builder
+	text.WriteString("Claude · 팀메이트 대기")
+	for _, value := range []string{p.TeammateName, p.TeammateID, p.TeammateContext} {
+		if trimmed := truncateRunes(value, 80); trimmed != "" {
+			text.WriteString(" · " + trimmed)
+		}
+	}
+	return text.String()
 }
 
 func readClaudeTranscriptLastAssistantText(path string) string {

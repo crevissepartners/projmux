@@ -368,18 +368,29 @@ title watcher.
 
 `ingest claude-hook` is the hook-facing entrypoint for Claude Code hooks. It
 reads one JSON payload from stdin and handles the core hook events:
-`Notification`, `Stop`, `UserPromptSubmit`, and `PermissionRequest`. It uses
-the same pane matching order as Codex ingest (`$TMUX_PANE`, payload `cwd`, then
-cached session id), marks matched panes hook-active, and writes
-metadata-bearing notify queue entries for reply-ready, input-ready, and
-approval-required events. `UserPromptSubmit` only moves the pane to
-thinking/busy and does not push a queue entry.
+`Notification`, `Stop`, `UserPromptSubmit`, `PermissionRequest`,
+`StopFailure`, `SubagentStop`, and `TeammateIdle`. It uses the same pane
+matching order as Codex ingest (`$TMUX_PANE`, payload `cwd`, then cached
+session id), marks matched panes hook-active, and writes metadata-bearing
+notify queue entries for reply-ready, input-ready, approval-required, error,
+subagent-stop, and teammate-idle events. `UserPromptSubmit` only moves the
+pane to thinking/busy and does not push a queue entry.
 
 For `Stop`, projmux reads `transcript_path` when present and extracts the last
 assistant text from the transcript tail; if that is unavailable, it falls back
 to a generic Claude completion row. `PermissionRequest` rows expose the tool
 name plus a concise input summary, preferring Bash commands, file paths, and
 URLs when those fields exist.
+
+The extra Claude events accept conservative field aliases while Claude's event
+schemas settle. `StopFailure` reads `error_type`/`errorType`/`failure_type` and
+`error_message`/`errorMessage`/`message`/`reason`, plus nested
+`error.type|name|code` and `error.message|text|reason`. `SubagentStop` reads
+`subagent_type`/`subagentType`/`agent_type`, `subagent_id`/`subagentId`, and
+nested `subagent.type|name|kind|id`. `TeammateIdle` reads
+`teammate_name`/`teammateName`, `teammate_id`/`teammateId`,
+`teammate_context`/`teammateContext`/`context`/`reason`/`message`, and nested
+`teammate.name|id|context|status|reason|message`.
 
 `integrate codex` manages legacy Codex `notify` wiring in
 `~/.codex/config.toml`:
@@ -398,7 +409,8 @@ conflict and then edit the user-owned setting manually if needed.
 Claude Code hook ingest is available through `ingest claude-hook`, but
 `integrate claude` is the opt-in user-level wiring command for
 `~/.claude/settings.json`. It installs command hooks for `Notification`,
-`Stop`, `UserPromptSubmit`, and `PermissionRequest`:
+`Stop`, `UserPromptSubmit`, `PermissionRequest`, `StopFailure`,
+`SubagentStop`, and `TeammateIdle`:
 
 ```json
 {

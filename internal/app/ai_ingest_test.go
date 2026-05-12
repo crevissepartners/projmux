@@ -165,6 +165,30 @@ func TestParseClaudeHookPayload(t *testing.T) {
 	if got := stringFromAny(payload.ToolInput["command"]); got != "go test ./internal/app" {
 		t.Fatalf("tool input command = %q", got)
 	}
+
+	payload, err = parseClaudeHookPayload([]byte(`{
+		"hook_event_name": "StopFailure",
+		"session-id": "claude-session",
+		"workspace": {"path": "/repo/projmux"},
+		"error": {"type": "timeout", "message": "tool call exceeded deadline"},
+		"subagent": {"kind": "reviewer", "id": "sub-7"},
+		"teammate": {"name": "sam", "id": "team-3", "context": "waiting for review"}
+	}`))
+	if err != nil {
+		t.Fatalf("parseClaudeHookPayload() extra error = %v", err)
+	}
+	if payload.SessionID != "claude-session" || payload.CWD != "/repo/projmux" {
+		t.Fatalf("extra payload identity = %+v", payload)
+	}
+	if payload.ErrorType != "timeout" || payload.ErrorMessage != "tool call exceeded deadline" {
+		t.Fatalf("error fields = %+v", payload)
+	}
+	if payload.SubagentType != "reviewer" || payload.SubagentID != "sub-7" {
+		t.Fatalf("subagent fields = %+v", payload)
+	}
+	if payload.TeammateName != "sam" || payload.TeammateID != "team-3" || payload.TeammateContext != "waiting for review" {
+		t.Fatalf("teammate fields = %+v", payload)
+	}
 }
 
 func TestClaudeTranscriptReaderReturnsLastAssistantText(t *testing.T) {
@@ -356,6 +380,101 @@ func TestIngestClaudeNotificationMapsInputReady(t *testing.T) {
 	got := store.pushed[0]
 	if got.Text != "Claude · 입력 필요 · Need deployment target" || got.Severity != notify.SeverityCritical {
 		t.Fatalf("pushed = %#v", got)
+	}
+}
+
+func TestIngestClaudeExtraEvents(t *testing.T) {
+	tests := []struct {
+		name         string
+		payload      string
+		wantID       string
+		wantText     string
+		wantSeverity string
+		wantMetadata map[string]string
+	}{
+		{
+			name: "stop failure",
+			payload: `{
+				"hook_event_name": "StopFailure",
+				"session_id": "claude-session",
+				"cwd": "/repo/projmux",
+				"error_type": "timeout",
+				"error_message": "tool call exceeded deadline"
+			}`,
+			wantID:       "ai:claude:stop-failure:claude-session:timeout:tool call exceeded deadline",
+			wantText:     "Claude · 오류 · timeout · tool call exceeded deadline",
+			wantSeverity: notify.SeverityCritical,
+			wantMetadata: map[string]string{
+				"event":         "StopFailure",
+				"error_type":    "timeout",
+				"error_message": "tool call exceeded deadline",
+			},
+		},
+		{
+			name: "subagent stop",
+			payload: `{
+				"hook_event_name": "SubagentStop",
+				"session_id": "claude-session",
+				"cwd": "/repo/projmux",
+				"subagent": {"type": "reviewer", "id": "sub-7"}
+			}`,
+			wantID:       "ai:claude:subagent-stop:claude-session:reviewer:sub-7",
+			wantText:     "Claude · 서브에이전트 종료 · reviewer · sub-7",
+			wantSeverity: notify.SeverityInfo,
+			wantMetadata: map[string]string{
+				"event":         "SubagentStop",
+				"subagent_type": "reviewer",
+				"subagent_id":   "sub-7",
+			},
+		},
+		{
+			name: "teammate idle",
+			payload: `{
+				"hook_event_name": "TeammateIdle",
+				"session_id": "claude-session",
+				"cwd": "/repo/projmux",
+				"teammate": {"name": "sam", "id": "team-3", "context": "waiting for review"}
+			}`,
+			wantID:       "ai:claude:teammate-idle:claude-session:sam:team-3:waiting for review",
+			wantText:     "Claude · 팀메이트 대기 · sam · team-3 · waiting for review",
+			wantSeverity: notify.SeverityInfo,
+			wantMetadata: map[string]string{
+				"event":            "TeammateIdle",
+				"teammate_name":    "sam",
+				"teammate_id":      "team-3",
+				"teammate_context": "waiting for review",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			store := &stubNotifyStore{}
+			cmd := testAICommand(home)
+			cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+			cmd.stdin = strings.NewReader(tc.payload)
+			cmd.readCommand = claudeIngestReadCommand("%7")
+
+			if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run ingest claude-hook error = %v", err)
+			}
+			if len(store.pushed) != 1 {
+				t.Fatalf("push count = %d, want 1", len(store.pushed))
+			}
+			got := store.pushed[0]
+			if got.ID != tc.wantID || got.Text != tc.wantText || got.Severity != tc.wantSeverity {
+				t.Fatalf("pushed = %#v", got)
+			}
+			if got.Metadata["agent"] != "claude" || got.Metadata["session_id"] != "claude-session" || got.Metadata["cwd"] != "/repo/projmux" {
+				t.Fatalf("base metadata = %#v", got.Metadata)
+			}
+			for key, want := range tc.wantMetadata {
+				if got.Metadata[key] != want {
+					t.Fatalf("metadata[%s] = %q, want %q in %#v", key, got.Metadata[key], want, got.Metadata)
+				}
+			}
+		})
 	}
 }
 

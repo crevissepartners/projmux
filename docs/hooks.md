@@ -264,6 +264,9 @@ handles these events:
 | `Notification` | pushes a Claude notify row for response-ready, approval-required, or input-ready based on `notification_type` |
 | `PermissionRequest` | pushes a critical approval row with the tool name and a concise tool input summary |
 | `Stop` | pushes a Claude completion row, using the last assistant transcript text when `transcript_path` is readable |
+| `StopFailure` | pushes a critical Claude error row with error type/message metadata when present |
+| `SubagentStop` | pushes an info Claude subagent stop row with subagent type/id metadata when present |
+| `TeammateIdle` | pushes an info Claude teammate waiting row with teammate context metadata when present |
 
 Pane matching follows the shared AI ingest order: inherited `$TMUX_PANE`, then
 payload `cwd`, then cached session id pane options. A matched pane is marked
@@ -271,7 +274,16 @@ with `@projmux_ai_hook_active=1`, so `projmux ai watch-title` skips the pane
 and hook payloads become the primary signal.
 
 The Claude hook payload is intentionally accepted directly at the ingest
-boundary.
+boundary. Core identity fields accept `hook_event_name`/`event_name`,
+`session_id`/`session-id`, `cwd`/`workspace`/`project_dir`, and nested
+`workspace.cwd|path`. Extra-event fields are intentionally tolerant while the
+upstream schemas settle:
+
+| Event | Accepted fields |
+| --- | --- |
+| `StopFailure` | `error_type`, `errorType`, `failure_type`, `failureType`; `error_message`, `errorMessage`, `message`, `reason`; nested `error.type`, `error.name`, `error.code`, `error.message`, `error.text`, `error.reason` |
+| `SubagentStop` | `subagent_type`, `subagentType`, `agent_type`, `agentType`; `subagent_id`, `subagentId`, `agent_id`, `agentId`; nested `subagent.type`, `subagent.name`, `subagent.kind`, `subagent.id`, `subagent.subagent_id`, `subagent.agent_id` |
+| `TeammateIdle` | `teammate_name`, `teammateName`, `teammate`; `teammate_id`, `teammateId`; `teammate_context`, `teammateContext`, `context`, `reason`, `message`; nested `teammate.name`, `teammate.type`, `teammate.kind`, `teammate.id`, `teammate.teammate_id`, `teammate.context`, `teammate.status`, `teammate.reason`, `teammate.message` |
 
 `projmux ai integrate claude` manages user-level Claude Code hook settings in
 `~/.claude/settings.json`. Claude Code hooks are configured under the top-level
@@ -323,6 +335,36 @@ an observability hook:
           }
         ]
       }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+          }
+        ]
+      }
     ]
   }
 }
@@ -337,9 +379,8 @@ that invokes `projmux ai ingest claude-hook`, projmux refuses to install over it
 because it cannot tell whether the command is user-owned or stale projmux
 wiring.
 
-`PermissionRequest` is a current Claude Code hook event and is wired directly.
-Deferred Claude events include `StopFailure`, `SubagentStop`, and
-`TeammateIdle`. Dedupe across simultaneous Claude events is also deferred; the
+`PermissionRequest`, `StopFailure`, `SubagentStop`, and `TeammateIdle` are
+wired directly. Dedupe across simultaneous Claude events is deferred; the
 current slice keeps each supported hook event explicit.
 
 ## Pre Create Abort
