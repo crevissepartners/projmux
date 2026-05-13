@@ -1,16 +1,19 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -84,6 +87,15 @@ func (c *settingsCommand) runProjectSessionStateSection(stdout, stderr io.Writer
 		}
 		if action == settingsNoopValue {
 			continue
+		}
+		if action == settingsProjectSessionStateDelete {
+			confirmed, err := c.confirmProjectSessionStateDelete()
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				continue
+			}
 		}
 		if err := c.execute(action, stdout, stderr); err != nil {
 			return err
@@ -183,10 +195,75 @@ func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
 			Value: settingsNoopValue,
 		},
 	}
-	entries = append(entries, c.sessionStateSnapshotEntriesForSession(identity.Session)...)
+	entries = append(entries, c.projectSessionStateSnapshotEntriesForSession(identity.Session)...)
+	entries = append(entries, c.projectSessionStateActionEntries(identity)...)
 	entries = append(entries, c.sessionStateToggleEntries("Auto-save", "autosave", autosave.Mode)...)
 	entries = append(entries, c.sessionStateToggleEntries("Startup picker", "autorestore", autorestore.Mode)...)
 	return entries
+}
+
+func (c *settingsCommand) projectSessionStateActionEntries(identity projectSessionStateIdentity) []intpickercompat.Entry {
+	snapshotReady := false
+	store, err := c.settingsSessionStateStore()
+	if err == nil {
+		if _, err := store.Summary(identity.Session); err == nil {
+			snapshotReady = true
+		}
+	}
+
+	saveDesc := "capture live project session"
+	saveValue := settingsProjectSessionStateSave
+	if ok, reason := c.projectSessionStateLiveSessionAvailable(identity.Session); !ok {
+		saveDesc = "unavailable - " + reason
+		saveValue = settingsNoopValue
+	}
+
+	previewDesc := "dry-run only"
+	previewValue := settingsProjectSessionStatePreview
+	if !snapshotReady {
+		previewDesc = "unavailable without a valid snapshot"
+		previewValue = settingsNoopValue
+	}
+
+	deleteDesc := identity.Session
+	deleteValue := settingsProjectSessionStateDelete
+	if !snapshotReady {
+		deleteDesc = "unavailable without a valid snapshot"
+		deleteValue = settingsNoopValue
+	}
+
+	return []intpickercompat.Entry{
+		{
+			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save now", saveDesc),
+			Value: saveValue,
+		},
+		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview restore", previewDesc),
+			Value: previewValue,
+		},
+		{
+			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Delete snapshot", deleteDesc),
+			Value: deleteValue,
+		},
+	}
+}
+
+func (c *settingsCommand) projectSessionStateLiveSessionAvailable(sessionName string) (bool, string) {
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		return false, "project session identity unavailable"
+	}
+	if c.tmuxRunner == nil {
+		return false, "tmux runner unavailable"
+	}
+	ok, err := tmuxSessionExists(context.Background(), c.tmuxRunner, sessionName)
+	if err != nil {
+		return false, err.Error()
+	}
+	if !ok {
+		return false, "live project session not found"
+	}
+	return true, ""
 }
 
 func (c *settingsCommand) sessionStateToggleEntries(label, key string, current config.SessionStateToggle) []intpickercompat.Entry {
@@ -276,6 +353,96 @@ func (c *settingsCommand) sessionStateSnapshotEntriesForSession(sessionName stri
 	return entries
 }
 
+func (c *settingsCommand) projectSessionStateSnapshotEntriesForSession(sessionName string) []intpickercompat.Entry {
+	entries := c.sessionStateSnapshotEntriesForSession(sessionName)
+	store, err := c.settingsSessionStateStore()
+	if err != nil {
+		return entries
+	}
+	snap, err := store.Load(sessionName)
+	if err != nil {
+		return entries
+	}
+	for _, window := range snap.Windows {
+		windowName := statusbarSessionStateClean(window.Name)
+		if windowName == "" {
+			windowName = "window"
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Window", fmt.Sprintf("%d %s", window.Index, windowName), sessionStateCount(len(window.Panes), "pane")),
+			Value: settingsNoopValue,
+		})
+		for _, pane := range window.Panes {
+			paneTitle := projectSessionStatePaneTitle(pane)
+			entries = append(entries,
+				intpickercompat.Entry{
+					Label: settingsLabelInfo("Pane", fmt.Sprintf("%d.%d %s", window.Index, pane.Index, paneTitle), ""),
+					Value: settingsNoopValue,
+				},
+				intpickercompat.Entry{
+					Label: settingsLabelInfo("Pane cwd", nonEmpty(strings.TrimSpace(pane.CWD), "-"), ""),
+					Value: settingsNoopValue,
+				},
+				intpickercompat.Entry{
+					Label: settingsLabelInfo("Pane recipe", projectSessionStateRecipeText(pane.Recipe, snap.SavedAt), ""),
+					Value: settingsNoopValue,
+				},
+			)
+		}
+	}
+	return entries
+}
+
+func projectSessionStatePaneTitle(pane sessionstate.Pane) string {
+	for _, candidate := range []string{
+		pane.Title,
+		pane.Recipe.Command,
+		pane.Recipe.Topic,
+		filepath.Base(pane.CWD),
+	} {
+		if cleaned := statusbarSessionStateClean(candidate); cleaned != "" {
+			return cleaned
+		}
+	}
+	return "pane"
+}
+
+func projectSessionStateRecipeText(recipe sessionstate.Recipe, savedAt time.Time) string {
+	kind := strings.TrimSpace(recipe.Kind)
+	if kind == "" {
+		kind = "unknown"
+	}
+	switch kind {
+	case sessionstate.RecipeKindAgent:
+		parts := []string{"agent"}
+		if agent := strings.TrimSpace(recipe.Agent); agent != "" {
+			parts = append(parts, agent)
+		}
+		if topic := strings.TrimSpace(recipe.Topic); topic != "" {
+			parts = append(parts, "topic "+topic)
+		}
+		if strings.TrimSpace(recipe.ResumeID) != "" {
+			parts = append(parts, "resume available")
+		} else {
+			parts = append(parts, "resume unavailable")
+		}
+		if source := strings.TrimSpace(recipe.ResumeSource); source != "" {
+			parts = append(parts, "source "+source)
+		}
+		if health := sessionStateResumeHealthText(recipe, savedAt); health != "" {
+			parts = append(parts, health)
+		}
+		return strings.Join(parts, " ")
+	case sessionstate.RecipeKindStartup:
+		if command := strings.TrimSpace(recipe.Command); command != "" {
+			return "startup " + command
+		}
+		return "startup"
+	default:
+		return kind
+	}
+}
+
 func (c *settingsCommand) sessionStateDeleteEntry() intpickercompat.Entry {
 	sessionName, err := c.currentSettingsSessionName()
 	if err != nil {
@@ -307,7 +474,7 @@ func (c *settingsCommand) sessionStateDeleteEntry() intpickercompat.Entry {
 	}
 }
 
-func (c *settingsCommand) executeSessionStateAction(action string, _ io.Writer, _ io.Writer) error {
+func (c *settingsCommand) executeSessionStateAction(action string, stdout io.Writer, _ io.Writer) error {
 	switch action {
 	case "autosave:on":
 		return c.setSessionStateAutosave(config.SessionStateToggleOn)
@@ -319,9 +486,75 @@ func (c *settingsCommand) executeSessionStateAction(action string, _ io.Writer, 
 		return c.setSessionStateAutorestore(config.SessionStateToggleOff)
 	case "delete":
 		return c.deleteCurrentSessionStateSnapshot()
+	case "project-save":
+		return c.saveProjectSessionStateSnapshot(stdout)
+	case "project-preview":
+		return c.previewProjectSessionStateSnapshot(stdout)
+	case "project-delete":
+		return c.deleteProjectSessionStateSnapshot()
 	default:
 		return fmt.Errorf("unknown session state settings action: %s", action)
 	}
+}
+
+func (c *settingsCommand) saveProjectSessionStateSnapshot(stdout io.Writer) error {
+	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
+	if identity.Err != nil {
+		return identity.Err
+	}
+	if ok, reason := c.projectSessionStateLiveSessionAvailable(identity.Session); !ok {
+		return fmt.Errorf("save project session snapshot: %s", reason)
+	}
+	store, err := c.settingsSessionStateStore()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	snap, err := inttmux.NewClient(c.tmuxRunner).SaveSessionSnapshot(context.Background(), store, identity.Session, now)
+	if err != nil {
+		return fmt.Errorf("save project session snapshot %q: %w", identity.Session, err)
+	}
+	_, err = fmt.Fprintf(stdout, "saved project session snapshot: %s (%s, %s)\n", snap.Session, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"))
+	return err
+}
+
+func (c *settingsCommand) previewProjectSessionStateSnapshot(stdout io.Writer) error {
+	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
+	if identity.Err != nil {
+		return identity.Err
+	}
+	store, err := c.settingsSessionStateStore()
+	if err != nil {
+		return err
+	}
+	snap, err := store.Load(identity.Session)
+	if err != nil {
+		return fmt.Errorf("load project session snapshot %q: %w", identity.Session, err)
+	}
+	for _, line := range sessionStateRestorePreviewLines(snap, time.Now(), 100) {
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *settingsCommand) deleteProjectSessionStateSnapshot() error {
+	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
+	if identity.Err != nil {
+		return identity.Err
+	}
+	store, err := c.settingsSessionStateStore()
+	if err != nil {
+		return err
+	}
+	if err := store.Delete(identity.Session); err != nil {
+		return err
+	}
+	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
+		_ = c.runCommand("tmux", "display-message", "deleted project session snapshot: "+identity.Session)
+	}
+	return nil
 }
 
 func (c *settingsCommand) currentSessionStateAutosave() sessionStateEffectiveToggle {
@@ -410,8 +643,20 @@ func (c *settingsCommand) confirmSessionStateDelete() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	return c.confirmSessionStateDeleteForSession(sessionName, "settings-sessionstate-delete-confirm", "Settings > Session State > Delete snapshot > ")
+}
+
+func (c *settingsCommand) confirmProjectSessionStateDelete() (bool, error) {
+	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
+	if identity.Err != nil {
+		return false, identity.Err
+	}
+	return c.confirmSessionStateDeleteForSession(identity.Session, "settings-project-sessionstate-delete-confirm", "Settings > Project > Session State > Delete snapshot > ")
+}
+
+func (c *settingsCommand) confirmSessionStateDeleteForSession(sessionName, ui, prompt string) (bool, error) {
 	options := intpickercompat.Options{
-		UI: "settings-sessionstate-delete-confirm",
+		UI: ui,
 		Entries: []intpickercompat.Entry{
 			{
 				Label: settingsLabelInfo("Delete snapshot", sessionName, "destructive"),
@@ -427,7 +672,7 @@ func (c *settingsCommand) confirmSessionStateDelete() (bool, error) {
 			},
 		},
 		Title:      "Delete session snapshot - confirm",
-		Prompt:     "Settings > Session State > Delete snapshot > ",
+		Prompt:     prompt,
 		Footer:     projmuxFooter("Enter: confirm  |  Esc/Alt+5/Ctrl+Alt+S: cancel"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
@@ -527,6 +772,9 @@ func sessionStateToggleEnabled(homeDir func() (string, error), lookupEnv func(st
 }
 
 const (
-	settingsSessionStateConfirmYes = "sessionstate:confirm-yes"
-	settingsSessionStateConfirmNo  = "sessionstate:confirm-no"
+	settingsProjectSessionStateSave    = settingsActionPrefixSessionState + "project-save"
+	settingsProjectSessionStatePreview = settingsActionPrefixSessionState + "project-preview"
+	settingsProjectSessionStateDelete  = settingsActionPrefixSessionState + "project-delete"
+	settingsSessionStateConfirmYes     = "sessionstate:confirm-yes"
+	settingsSessionStateConfirmNo      = "sessionstate:confirm-no"
 )
