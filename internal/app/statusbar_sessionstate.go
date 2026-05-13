@@ -1,18 +1,13 @@
 package app
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -24,179 +19,6 @@ type statusbarSessionStateView struct {
 	SessionErr error
 	StoreErr   error
 	LoadErr    error
-}
-
-type statusbarSessionStatePopupView struct {
-	Title   string
-	Toast   string
-	Command string
-	Width   int
-	Height  int
-}
-
-func (c *statusbarCommand) handleSessionState(opts statusbarClickOptions, _ io.Writer, stderr io.Writer) error {
-	ctx := context.Background()
-	state := c.loadSessionStateView(ctx)
-	binaryPath, binErr := c.resolveBinary()
-	if binErr != nil {
-		fmt.Fprintf(stderr, "statusbar sessionstate: resolve projmux binary for popup actions: %v\n", binErr)
-		return c.runTmux(stderr, "display-message", statusbarSessionStateToast(state))
-	}
-	popup := statusbarSessionStateActionPopup(state, binaryPath)
-	args := []string{
-		"display-popup",
-		"-E",
-		"-B",
-		"-w", strconv.Itoa(popup.Width),
-		"-h", strconv.Itoa(popup.Height),
-	}
-	if client := strings.TrimSpace(opts.ClientTTY); client != "" {
-		args = append(args, "-c", client)
-	}
-	args = append(args, popup.Command)
-	if err := c.runTmuxNoFallback(stderr,
-		args...,
-	); err == nil {
-		return nil
-	}
-	return c.runTmux(stderr, "display-message", popup.Toast)
-}
-
-func (c *statusbarCommand) loadSessionStateView(ctx context.Context) statusbarSessionStateView {
-	state := statusbarSessionStateView{
-		Autosave: sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
-	}
-	sessionName, err := c.currentStatusbarSessionName(ctx)
-	if err != nil {
-		state.SessionErr = err
-		return state
-	}
-	state.Session = sessionName
-	state.Source = c.liveSessionStateSource(ctx, sessionName)
-	store, err := c.statusbarSessionStateStore()
-	if err != nil {
-		state.StoreErr = err
-		return state
-	}
-	snap, err := store.Load(sessionName)
-	if err != nil {
-		state.LoadErr = err
-		return state
-	}
-	state.Snapshot = snap
-	if strings.TrimSpace(state.Source) == "" {
-		state.Source = snap.SourceLabel()
-	}
-	return state
-}
-
-func (c *statusbarCommand) liveSessionStateSource(ctx context.Context, sessionName string) string {
-	if c.runner == nil || strings.TrimSpace(sessionName) == "" {
-		return ""
-	}
-	return inttmux.NewClient(c.runner).SessionStateSource(ctx, sessionName)
-}
-
-func (c *statusbarCommand) currentStatusbarSessionName(ctx context.Context) (string, error) {
-	if c.runner == nil {
-		return "", errors.New("runner unavailable")
-	}
-	out, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "#{session_name}")
-	if err != nil {
-		return "", fmt.Errorf("resolve current tmux session: %w", err)
-	}
-	sessionName := strings.TrimSpace(string(out))
-	if sessionName == "" {
-		return "", errors.New("current tmux session unavailable")
-	}
-	return sessionName, nil
-}
-
-func (c *statusbarCommand) statusbarSessionStateStore() (sessionstate.Store, error) {
-	if c.sessionStoreFn != nil {
-		return c.sessionStoreFn()
-	}
-	paths, err := statusbarConfigPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return sessionstate.Store{}, err
-	}
-	return sessionstate.NewStore(paths.SessionStateDir()), nil
-}
-
-func statusbarSessionStatePopup(state statusbarSessionStateView, now time.Time, binaryPath string) statusbarSessionStatePopupView {
-	const width = 104
-	title := "Session State"
-	innerLayout := projmuxpicker.DefaultRenderer().ContentLayoutWithTitle(
-		projmuxpicker.Layout{Rows: 0, Cols: width}, title,
-	)
-	lines := statusbarSessionStatePopupLines(state, now, innerLayout.Cols)
-	bodyContent := strings.Join(lines, "\n")
-	height := max(len(lines), 1) + 4
-	outerLayout := projmuxpicker.Layout{Rows: height, Cols: width}
-
-	var framed strings.Builder
-	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&framed, bodyContent, title, outerLayout)
-	payload := strings.TrimRight(framed.String(), "\n") + "\n"
-	return statusbarSessionStatePopupView{
-		Title:   title,
-		Toast:   statusbarSessionStateToast(state),
-		Command: statusbarPopupCommand(payload, binaryPath),
-		Width:   width,
-		Height:  height,
-	}
-}
-
-func statusbarSessionStateActionPopup(state statusbarSessionStateView, binaryPath string) statusbarSessionStatePopupView {
-	return statusbarSessionStatePopupView{
-		Title:   "Session State",
-		Toast:   statusbarSessionStateToast(state),
-		Command: tmuxShellQuote(binaryPath) + " session-state popup",
-		Width:   104,
-		Height:  30,
-	}
-}
-
-func statusbarSessionStatePopupLines(state statusbarSessionStateView, now time.Time, cols int) []string {
-	lines := []string{
-		dimANSI("Saved tmux layout and replay recipe preview."),
-		"",
-	}
-	session := state.Session
-	if session == "" {
-		session = "-"
-	}
-	lines = append(lines, statusbarFieldLines("session", session, cols)...)
-	lines = append(lines, statusbarFieldLines("source", statusbarSessionStateSourceText(state), cols)...)
-	lines = append(lines, statusbarFieldLines("auto-save", statusbarSessionStateToggleText(state.Autosave), cols)...)
-
-	switch {
-	case state.SessionErr != nil:
-		lines = append(lines, "")
-		lines = append(lines, statusbarFieldLines("snapshot", "unavailable - "+statusbarSessionStateErrorSummary(state.SessionErr), cols)...)
-	case state.StoreErr != nil:
-		lines = append(lines, "")
-		lines = append(lines, statusbarFieldLines("snapshot", "store unavailable - "+statusbarSessionStateErrorSummary(state.StoreErr), cols)...)
-	case state.LoadErr != nil:
-		status := "invalid - " + statusbarSessionStateErrorSummary(state.LoadErr)
-		if errors.Is(state.LoadErr, sessionstate.ErrNotFound) {
-			status = "missing"
-		}
-		lines = append(lines, "")
-		lines = append(lines, statusbarFieldLines("snapshot", status, cols)...)
-	default:
-		snap := state.Snapshot
-		lines = append(lines, "")
-		lines = append(lines, statusbarFieldLines("saved", statusbarSessionStateSavedText(snap.SavedAt, now), cols)...)
-		lines = append(lines, statusbarFieldLines("windows", fmt.Sprintf("%d", len(snap.Windows)), cols)...)
-		lines = append(lines, statusbarFieldLines("panes", fmt.Sprintf("%d", statusbarSessionStatePaneCount(snap)), cols)...)
-		if strings.TrimSpace(snap.DefaultCWD) != "" {
-			lines = append(lines, statusbarFieldLines("default cwd", snap.DefaultCWD, cols)...)
-		}
-		lines = append(lines, "", projmuxpicker.SeparatorLine(cols), dimANSI("Preview"))
-		lines = append(lines, statusbarSessionStatePreviewLines(snap, cols)...)
-	}
-	lines = append(lines, statusbarPopupFooterLines(cols)...)
-	return lines
 }
 
 func statusbarSessionStateToggleText(toggle sessionStateEffectiveToggle) string {
@@ -326,22 +148,6 @@ func statusbarSessionStatePanePreview(savedAt time.Time, windowIndex int, pane s
 		return fmt.Sprintf("pane %d.%d  %s", windowIndex, pane.Index, kind)
 	}
 	return fmt.Sprintf("pane %d.%d  %s  %s", windowIndex, pane.Index, kind, detail)
-}
-
-func statusbarSessionStateToast(state statusbarSessionStateView) string {
-	switch {
-	case state.SessionErr != nil:
-		return "session state unavailable"
-	case state.StoreErr != nil:
-		return "session state store unavailable"
-	case state.LoadErr != nil:
-		if errors.Is(state.LoadErr, sessionstate.ErrNotFound) {
-			return "session state: no snapshot"
-		}
-		return "session state snapshot invalid"
-	default:
-		return fmt.Sprintf("session state: %s, %d windows, %d panes", statusbarSessionStateSourceText(state), len(state.Snapshot.Windows), statusbarSessionStatePaneCount(state.Snapshot))
-	}
 }
 
 func statusbarSessionStateErrorSummary(err error) string {

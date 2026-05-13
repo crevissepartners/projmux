@@ -4,12 +4,37 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
 )
 
-const statusbarDecorationTmuxOption = "@projmux_statusbar_decoration"
+const (
+	statusbarDecorationTmuxOption       = "@projmux_statusbar_decoration"
+	statusbarDecorationCwdTmuxOption    = "@projmux_statusbar_decoration_cwd"
+	statusbarDecorationGitTmuxOption    = "@projmux_statusbar_decoration_git"
+	statusbarDecorationNotifyTmuxOption = "@projmux_statusbar_decoration_notify"
+)
+
+type statusbarDecorationTarget string
+
+const (
+	statusbarDecorationTargetCwd    statusbarDecorationTarget = "cwd"
+	statusbarDecorationTargetGit    statusbarDecorationTarget = "git"
+	statusbarDecorationTargetNotify statusbarDecorationTarget = "notify"
+)
+
+type statusbarDecorationSet struct {
+	Cwd    config.StatusbarDecoration
+	Git    config.StatusbarDecoration
+	Notify config.StatusbarDecoration
+}
+
+func statusbarDecorationSetFromGlobal(mode config.StatusbarDecoration) statusbarDecorationSet {
+	mode = config.NormalizeStatusbarDecoration(string(mode))
+	return statusbarDecorationSet{Cwd: mode, Git: mode, Notify: mode}
+}
 
 func statusbarConfigPaths(homeDir func() (string, error), lookupEnv func(string) string) (config.Paths, error) {
 	if homeDir == nil {
@@ -44,12 +69,72 @@ func loadStatusbarDecoration(homeDir func() (string, error), lookupEnv func(stri
 	return mode
 }
 
+func loadStatusbarDecorationSet(homeDir func() (string, error), lookupEnv func(string) string) statusbarDecorationSet {
+	global := loadStatusbarDecoration(homeDir, lookupEnv)
+	return statusbarDecorationSet{
+		Cwd:    loadStatusbarDecorationForTarget(homeDir, lookupEnv, statusbarDecorationTargetCwd, global),
+		Git:    loadStatusbarDecorationForTarget(homeDir, lookupEnv, statusbarDecorationTargetGit, global),
+		Notify: loadStatusbarDecorationForTarget(homeDir, lookupEnv, statusbarDecorationTargetNotify, global),
+	}
+}
+
+func loadStatusbarDecorationForTarget(homeDir func() (string, error), lookupEnv func(string) string, target statusbarDecorationTarget, fallback config.StatusbarDecoration) config.StatusbarDecoration {
+	if homeDir == nil {
+		return fallback
+	}
+	paths, err := statusbarConfigPaths(homeDir, lookupEnv)
+	if err != nil {
+		return fallback
+	}
+	path := statusbarDecorationTargetFile(paths, target)
+	if strings.TrimSpace(path) == "" {
+		return fallback
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return fallback
+		}
+		return fallback
+	}
+	mode, err := config.LoadStatusbarDecorationFile(path)
+	if err != nil {
+		return fallback
+	}
+	return mode
+}
+
+func statusbarDecorationTargetFile(paths config.Paths, target statusbarDecorationTarget) string {
+	switch target {
+	case statusbarDecorationTargetCwd:
+		return filepath.Join(paths.ConfigDir, "statusbar-decoration-cwd")
+	case statusbarDecorationTargetGit:
+		return filepath.Join(paths.ConfigDir, "statusbar-decoration-git")
+	case statusbarDecorationTargetNotify:
+		return filepath.Join(paths.ConfigDir, "statusbar-decoration-notify")
+	default:
+		return ""
+	}
+}
+
+func statusbarDecorationTmuxOptionForTarget(target statusbarDecorationTarget) string {
+	switch target {
+	case statusbarDecorationTargetCwd:
+		return statusbarDecorationCwdTmuxOption
+	case statusbarDecorationTargetGit:
+		return statusbarDecorationGitTmuxOption
+	case statusbarDecorationTargetNotify:
+		return statusbarDecorationNotifyTmuxOption
+	default:
+		return statusbarDecorationTmuxOption
+	}
+}
+
 func statusbarCwdSegmentFormat() string {
 	return "#[range=user|pwd]" + statusbarCwdDecoratorFormat() + "#[fg=colour250]#{=-28/...:pane_current_path}#[norange]"
 }
 
 func statusbarCwdDecoratorFormat() string {
-	return "#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour33] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}"
+	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=colour220] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=colour220]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=colour220] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=colour220]📁 ,}}}"
 }
 
 type gitRemoteProvider string

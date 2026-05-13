@@ -3,6 +3,14 @@
 This branch finishes the current Settings/onboarding roadmap slice with a
 view-first layout:
 
+- Every Settings surface keeps the Global/Project tab strip visible so nested
+  pages still show their scope. Detail pages may render the strip as passive
+  context when changing tabs from that nested page would skip an explicit Back
+  boundary.
+- Settings uses a view-first rule: overview rows open details; details show the
+  current state, source, and expected rendered result before offering mutation
+  rows. If a detail opens a dedicated `Change` page, that page is mutation-only
+  and does not repeat the same read-only view rows.
 - `Settings > Project Picker > Workdirs` is the list/overview entry. Add/remove
   actions live inside that view.
 - `Settings > Project Picker > Project Root` shows effective and saved values
@@ -33,6 +41,10 @@ view-first layout:
   rows such as `Startup command`, `Kube`, and `Environment`; mutation actions
   such as `Set startup command...`, `Clear startup command`, kube edits, and env
   add/remove rows live inside those details.
+- `Settings > Appearance` is view-first. The root opens `Path icon`, `Git icon`,
+  and `Notify icon` details. Each detail shows the current mode and off/symbol/
+  emoji rendered previews first, and its `Change` page contains only the
+  off/symbol/emoji mutation choices.
 
 Hooks remain the reference pattern for this IA:
 

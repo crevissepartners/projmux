@@ -317,6 +317,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	if section == settingsSectionSessionState {
 		return c.runSessionStateSection(stdout, stderr)
 	}
+	if section == settingsSectionStatusbar {
+		return c.runAppearanceSection(stdout, stderr)
+	}
 	if section == settingsSectionLabs {
 		return c.runLabsSection(stdout, stderr)
 	}
@@ -348,6 +351,7 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 }
 
 func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
+	options = c.withSettingsScopeTabs(options)
 	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, options)
 	if err != nil {
 		if isNoSelectionExit(err) {
@@ -356,6 +360,18 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 		return intpickercompat.Result{}, fmt.Errorf("run settings picker: %w", err)
 	}
 	return result, nil
+}
+
+func (c *settingsCommand) withSettingsScopeTabs(options intpickercompat.Options) intpickercompat.Options {
+	if !strings.HasPrefix(strings.TrimSpace(options.UI), "settings") || len(options.TitleChips) != 0 {
+		return options
+	}
+	active := settingsRootTabGlobal
+	if strings.HasPrefix(strings.TrimSpace(options.Prompt), "Settings > Project >") || strings.HasPrefix(strings.TrimSpace(options.UI), "settings-project") {
+		active = settingsRootTabProject
+	}
+	options.TitleChips = settingsPassiveRootTabChips(active, c.resolveSettingsProjectContext().hasProject())
+	return options
 }
 
 func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Options {
@@ -397,6 +413,14 @@ func settingsRootTabChips(active settingsRootTab, hasProject bool) []projmuxpick
 			ClickValue: settingsRootTabProjectValue,
 		},
 	}
+}
+
+func settingsPassiveRootTabChips(active settingsRootTab, hasProject bool) []projmuxpicker.Chip {
+	chips := settingsRootTabChips(active, hasProject)
+	for i := range chips {
+		chips[i].ClickValue = ""
+	}
+	return chips
 }
 
 // settingsRootContextHeader returns the popup header text above the
@@ -484,7 +508,7 @@ func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompa
 			Value: settingsSectionGlobalHooks,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Appearance", "status and popup decoration mode"),
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Appearance", "per-surface icon decoration"),
 			Value: settingsSectionStatusbar,
 		},
 		{
@@ -727,12 +751,14 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Bindings:   settingsCloseBindings(),
 		}, nil
 	case settingsSectionStatusbar:
+		ctx := c.resolveSettingsProjectContext()
 		return intpickercompat.Options{
 			UI:         "settings-statusbar",
 			Entries:    c.statusbarEntries(),
-			Title:      "Appearance - Status and popup decoration mode",
+			Title:      "Appearance - Icon decoration",
+			TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, ctx.hasProject()),
 			Prompt:     "Settings > Appearance > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -1904,31 +1930,333 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 }
 
 func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
-	current := c.currentStatusbarDecoration()
-	modes := []struct {
-		mode config.StatusbarDecoration
-		desc string
-	}{
-		{config.StatusbarDecorationOff, "no status or popup icon prefix; safest for all fonts"},
-		{config.StatusbarDecorationSymbol, "Nerd Font-style status and notification icons"},
-		{config.StatusbarDecorationEmoji, "emoji status and notification icons"},
+	current := c.currentStatusbarDecorations()
+	targets := []statusbarDecorationTarget{
+		statusbarDecorationTargetCwd,
+		statusbarDecorationTargetGit,
+		statusbarDecorationTargetNotify,
 	}
 
-	entries := make([]intpickercompat.Entry, 0, len(modes)+1)
+	entries := make([]intpickercompat.Entry, 0, len(targets)+1)
 	entries = append(entries, settingsBackEntry())
-	for _, item := range modes {
-		glyph := settingsGlyphInactive
-		color := settingsColorDim
-		if item.mode == current {
-			glyph = settingsGlyphToggle
-			color = settingsColorAdd
+	for _, target := range targets {
+		meta, ok := statusbarDecorationTargetMeta(target)
+		if !ok {
+			continue
 		}
+		mode := current.modeForTarget(target)
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, string(item.mode), item.desc),
-			Value: settingsActionPrefixStatusbar + string(item.mode),
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, meta.Name, string(mode)+" - "+statusbarDecorationPreview(target, mode)),
+			Value:     settingsActionPrefixStatusbar + string(target),
+			SearchKey: "appearance decoration statusbar " + string(target) + " " + string(mode) + " " + meta.Name + " " + meta.Description,
 		})
 	}
 	return entries
+}
+
+func (s statusbarDecorationSet) modeForTarget(target statusbarDecorationTarget) config.StatusbarDecoration {
+	switch target {
+	case statusbarDecorationTargetCwd:
+		return s.Cwd
+	case statusbarDecorationTargetGit:
+		return s.Git
+	case statusbarDecorationTargetNotify:
+		return s.Notify
+	default:
+		return config.StatusbarDecorationOff
+	}
+}
+
+type statusbarDecorationTargetDetails struct {
+	Name        string
+	Title       string
+	Description string
+}
+
+func statusbarDecorationTargetMeta(target statusbarDecorationTarget) (statusbarDecorationTargetDetails, bool) {
+	switch target {
+	case statusbarDecorationTargetCwd:
+		return statusbarDecorationTargetDetails{
+			Name:        "Path icon",
+			Title:       "Appearance - Path icon",
+			Description: "folder marker before cwd",
+		}, true
+	case statusbarDecorationTargetGit:
+		return statusbarDecorationTargetDetails{
+			Name:        "Git icon",
+			Title:       "Appearance - Git icon",
+			Description: "provider marker before branch",
+		}, true
+	case statusbarDecorationTargetNotify:
+		return statusbarDecorationTargetDetails{
+			Name:        "Notify icon",
+			Title:       "Appearance - Notify icon",
+			Description: "bell marker in notification sidebar",
+		}, true
+	default:
+		return statusbarDecorationTargetDetails{}, false
+	}
+}
+
+func (c *settingsCommand) runAppearanceSection(stdout, stderr io.Writer) error {
+	for {
+		options, err := c.sectionOptions(settingsSectionStatusbar)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixStatusbar):
+			target, ok := parseStatusbarDecorationTarget(strings.TrimPrefix(action, settingsActionPrefixStatusbar))
+			if !ok {
+				return fmt.Errorf("unknown appearance target: %s", action)
+			}
+			if err := c.runAppearanceTargetSection(target, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown appearance action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAppearanceTargetSection(target statusbarDecorationTarget, stdout, stderr io.Writer) error {
+	for {
+		options, err := c.statusbarDecorationTargetOptions(target)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixStatusbar):
+			raw := strings.TrimPrefix(action, settingsActionPrefixStatusbar)
+			actionTarget, op, ok := parseStatusbarDecorationDetailAction(raw)
+			if !ok || actionTarget != target {
+				return fmt.Errorf("unknown appearance detail action: %s", action)
+			}
+			switch op {
+			case "change":
+				if err := c.runAppearanceTargetChangeSection(actionTarget, stdout, stderr); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("unknown appearance detail action: %s", action)
+			}
+		default:
+			return fmt.Errorf("unknown appearance detail action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAppearanceTargetChangeSection(target statusbarDecorationTarget, stdout, stderr io.Writer) error {
+	for {
+		options, err := c.statusbarDecorationTargetChangeOptions(target)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case strings.HasPrefix(action, settingsActionPrefixStatusbar):
+			if err := c.setStatusbarDecoration(strings.TrimPrefix(action, settingsActionPrefixStatusbar)); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown appearance change action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) statusbarDecorationTargetOptions(target statusbarDecorationTarget) (intpickercompat.Options, error) {
+	meta, ok := statusbarDecorationTargetMeta(target)
+	if !ok {
+		return intpickercompat.Options{}, fmt.Errorf("unknown appearance target: %s", target)
+	}
+	return intpickercompat.Options{
+		UI:         "settings-statusbar-detail",
+		Entries:    c.statusbarDecorationTargetEntries(target),
+		Title:      meta.Title,
+		TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject()),
+		Prompt:     "Settings > Appearance > " + meta.Name + " > ",
+		Footer:     projmuxFooter("Enter: open  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys: []string{"enter"},
+		Bindings:   settingsCloseBindings(),
+	}, nil
+}
+
+func (c *settingsCommand) statusbarDecorationTargetChangeOptions(target statusbarDecorationTarget) (intpickercompat.Options, error) {
+	meta, ok := statusbarDecorationTargetMeta(target)
+	if !ok {
+		return intpickercompat.Options{}, fmt.Errorf("unknown appearance target: %s", target)
+	}
+	return intpickercompat.Options{
+		UI:         "settings-statusbar-change",
+		Entries:    c.statusbarDecorationTargetChangeEntries(target),
+		Title:      meta.Title + " - Change",
+		TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject()),
+		Prompt:     "Settings > Appearance > " + meta.Name + " > Change > ",
+		Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys: []string{"enter"},
+		Bindings:   settingsCloseBindings(),
+	}, nil
+}
+
+func (c *settingsCommand) statusbarDecorationTargetEntries(target statusbarDecorationTarget) []intpickercompat.Entry {
+	current := c.currentStatusbarDecorations().modeForTarget(target)
+	meta, _ := statusbarDecorationTargetMeta(target)
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{Label: settingsLabelInfo("Current", string(current), meta.Description), Value: settingsNoopValue},
+	}
+	for _, mode := range statusbarDecorationModes() {
+		source := "preview"
+		if mode == current {
+			source = "current preview"
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabelInfo("Preview "+string(mode), statusbarDecorationPreview(target, mode), source),
+			Value:     settingsNoopValue,
+			SearchKey: string(target) + " " + string(mode) + " preview " + statusbarDecorationPreview(target, mode),
+		})
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Change", "choose off, symbol, or emoji"),
+		Value:     settingsActionPrefixStatusbar + string(target) + ":change",
+		SearchKey: "appearance decoration statusbar change " + string(target) + " " + meta.Name,
+	})
+	return entries
+}
+
+func (c *settingsCommand) statusbarDecorationTargetChangeEntries(target statusbarDecorationTarget) []intpickercompat.Entry {
+	current := c.currentStatusbarDecorations().modeForTarget(target)
+	meta, _ := statusbarDecorationTargetMeta(target)
+	entries := []intpickercompat.Entry{settingsBackEntry()}
+	for _, mode := range statusbarDecorationModes() {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		desc := statusbarDecorationModeDescription(mode)
+		if mode == current {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+			desc += " - current"
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabel(glyph, color, "Set "+string(mode), desc),
+			Value:     settingsActionPrefixStatusbar + string(target) + ":" + string(mode),
+			SearchKey: "appearance decoration statusbar " + string(target) + " " + string(mode) + " " + meta.Name,
+		})
+	}
+	return entries
+}
+
+func statusbarDecorationModes() []config.StatusbarDecoration {
+	return []config.StatusbarDecoration{
+		config.StatusbarDecorationOff,
+		config.StatusbarDecorationSymbol,
+		config.StatusbarDecorationEmoji,
+	}
+}
+
+func statusbarDecorationModeDescription(mode config.StatusbarDecoration) string {
+	switch mode {
+	case config.StatusbarDecorationSymbol:
+		return "Nerd Font-style marker"
+	case config.StatusbarDecorationEmoji:
+		return "emoji marker"
+	default:
+		return "no icon prefix"
+	}
+}
+
+func statusbarDecorationPreview(target statusbarDecorationTarget, mode config.StatusbarDecoration) string {
+	mode = config.NormalizeStatusbarDecoration(string(mode))
+	switch target {
+	case statusbarDecorationTargetCwd:
+		switch mode {
+		case config.StatusbarDecorationSymbol:
+			return " ~/source/repos/projmux"
+		case config.StatusbarDecorationEmoji:
+			return "📁 ~/source/repos/projmux"
+		default:
+			return "~/source/repos/projmux"
+		}
+	case statusbarDecorationTargetGit:
+		switch mode {
+		case config.StatusbarDecorationSymbol:
+			return " main * ↑1"
+		case config.StatusbarDecorationEmoji:
+			return "🐱 main * ↑1"
+		default:
+			return "main * ↑1"
+		}
+	case statusbarDecorationTargetNotify:
+		switch mode {
+		case config.StatusbarDecorationSymbol:
+			return " Pending Notifications"
+		case config.StatusbarDecorationEmoji:
+			return "🔔 Pending Notifications"
+		default:
+			return "Pending Notifications"
+		}
+	default:
+		return string(mode)
+	}
+}
+
+func parseStatusbarDecorationTarget(value string) (statusbarDecorationTarget, bool) {
+	target := statusbarDecorationTarget(strings.TrimSpace(value))
+	switch target {
+	case statusbarDecorationTargetCwd, statusbarDecorationTargetGit, statusbarDecorationTargetNotify:
+		return target, true
+	default:
+		return "", false
+	}
+}
+
+func parseStatusbarDecorationDetailAction(value string) (statusbarDecorationTarget, string, bool) {
+	targetRaw, op, ok := strings.Cut(strings.TrimSpace(value), ":")
+	if !ok {
+		return "", "", false
+	}
+	target, ok := parseStatusbarDecorationTarget(targetRaw)
+	if !ok {
+		return "", "", false
+	}
+	op = strings.TrimSpace(op)
+	if op == "" {
+		return "", "", false
+	}
+	return target, op, true
 }
 
 func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Options {
@@ -2867,8 +3195,8 @@ func (c *settingsCommand) writeTmuxAppConfig() (string, error) {
 	return tmux.writeAppConfig("", filepath.Join(paths.ConfigDir, "tmux.conf"))
 }
 
-func (c *settingsCommand) currentStatusbarDecoration() config.StatusbarDecoration {
-	return loadStatusbarDecoration(c.homeDir, c.lookupEnv)
+func (c *settingsCommand) currentStatusbarDecorations() statusbarDecorationSet {
+	return loadStatusbarDecorationSet(c.homeDir, c.lookupEnv)
 }
 
 // setDesktopNotifyMode writes the user-facing 3-way choice into the
@@ -2910,21 +3238,42 @@ func (c *settingsCommand) setDesktopNotifyMode(value string) error {
 }
 
 func (c *settingsCommand) setStatusbarDecoration(value string) error {
-	mode := config.NormalizeStatusbarDecoration(value)
+	target, mode := parseStatusbarDecorationSetting(value)
 	paths, err := statusbarConfigPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}
-	if err := config.SaveStatusbarDecorationFile(paths.StatusbarDecorationFile(), mode); err != nil {
+	path := paths.StatusbarDecorationFile()
+	option := statusbarDecorationTmuxOption
+	label := "decoration mode"
+	if target != "" {
+		path = statusbarDecorationTargetFile(paths, target)
+		option = statusbarDecorationTmuxOptionForTarget(target)
+		label = "decoration " + string(target)
+	}
+	if err := config.SaveStatusbarDecorationFile(path, mode); err != nil {
 		return err
 	}
 	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
-		if err := c.runCommand("tmux", "set-option", "-g", statusbarDecorationTmuxOption, string(mode)); err != nil {
+		if err := c.runCommand("tmux", "set-option", "-g", option, string(mode)); err != nil {
 			return fmt.Errorf("set live tmux decoration mode: %w", err)
 		}
-		_ = c.runCommand("tmux", "display-message", "decoration mode: "+string(mode))
+		_ = c.runCommand("tmux", "display-message", label+": "+string(mode))
 	}
 	return nil
+}
+
+func parseStatusbarDecorationSetting(value string) (statusbarDecorationTarget, config.StatusbarDecoration) {
+	value = strings.TrimSpace(value)
+	parts := strings.Split(value, ":")
+	if len(parts) == 2 {
+		target := statusbarDecorationTarget(strings.TrimSpace(parts[0]))
+		switch target {
+		case statusbarDecorationTargetCwd, statusbarDecorationTargetGit, statusbarDecorationTargetNotify:
+			return target, config.NormalizeStatusbarDecoration(parts[1])
+		}
+	}
+	return "", config.NormalizeStatusbarDecoration(value)
 }
 
 func (c *settingsCommand) labsEntries() []intpickercompat.Entry {

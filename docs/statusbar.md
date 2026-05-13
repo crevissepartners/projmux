@@ -10,7 +10,7 @@ segment only requires one wiring point.
 ```
 row 0  #[range=user|notify] <notify HUD pill> #[norange]
                                       #[range=user|usage] <usage HUD bar> #[norange]
-row 1  [#S]#[range=user|sessionstate] State #[norange]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
+row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
 ```
 
@@ -29,7 +29,7 @@ row 1  [#S]#[range=user|sessionstate] State #[norange]  #{pane_current_path}  �
   clicks on tmux 3.4+, so a `run-shell` handler can't recover the
   target after the fact — the Go dispatcher's
   `isWindowListRangeToken` fallback is now defense-in-depth only.
-  The session, Session State, pwd, kube, and git segments on this row are wrapped
+  The session, pwd, kube, and git segments on this row are wrapped
   in `#[range=user|<id>]` ranges and dispatched through the projmux
   handler. The standalone config also wraps the right-side `projmux`
   badge as the `settings` range; the app config renders a compact
@@ -38,8 +38,9 @@ row 1  [#S]#[range=user|sessionstate] State #[norange]  #{pane_current_path}  �
   then compact state indicators when available: `*` for local changes,
   `+N` for staged entries, and `↑N`/`↓N` for ahead/behind counts. Each
   state token gets its own compact foreground color while preserving the
-  existing branch block background. Window tab titles use a fixed-width
-  padded trim so long active pane names do not resize the status row.
+  existing branch block background. Window tab indexes stay left of each tab,
+  and tab titles are centered in a fixed-width trim so long active pane names
+  do not resize the status row.
 - Both HUD segments degrade gracefully when the cell budget is tight; see
   [notify-queue.md](notify-queue.md) and [usage-tracking.md](usage-tracking.md)
   for the per-segment tier ladder.
@@ -64,7 +65,6 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
-| `sessionstate` | 1 | show a secondary Session State snapshot status and restore preview popup; primary inspection lives under Projects > Sessions > State | `prefix s r` |
 | `usage`   | 1 | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click [--client <tty>]`, then ack on focus success | `prefix s n`  |
 
@@ -80,11 +80,9 @@ the cached usage state in-process, keeps the existing `projmux usage` CLI
 output shape unchanged for external consumers, aligns model/window rows with
 right-aligned numeric values, dims unavailable values, and colors rows at the
 same alert thresholds as the popup: amber at 80% and red at 95%.
-`sessionstate` opens a secondary Session State popup for the current tmux
-session. Its action label is `Save snapshot`, which captures the current tmux
-session as the latest snapshot and bypasses the autosave debounce. Primary
-state inspection lives under `Projects > Sessions > State`; global Settings >
-Session State is settings-only.
+Session State inspection lives under `Projects > Sessions > State`; global
+Settings > Session State is settings-only and the statusbar no longer exposes a
+duplicate State button.
 
 The path popup uses the native picker frame chrome, a one-line title,
 the full wrapped current path, cheap project/git metadata when available, and
@@ -95,12 +93,10 @@ does not leave terminal key state behind. The usage popup uses the same
 single-payload print and plain Enter-close pattern. It shows the authoritative
 last collect timestamp when present, falls back to the cache file mtime when
 needed, and colors that sync line amber once it is more than 60 seconds old.
-The notification HUD detail surface
-(`Alt-2` / `User2`) opens the
-right-side notification popup with newest-first rows. The popup itself is
-untitled; when decoration mode is `symbol` or `emoji`, the bell appears before
-the fzf header text instead. Selecting a row still focuses and acknowledges
-that notification.
+The notification HUD detail surface (`Alt-2` / `User2`) opens the right-side
+notification popup with newest-first rows and an amber title. When notification
+icon decoration is `symbol` or `emoji`, the bell appears before the title text.
+Selecting a row still focuses and acknowledges that notification.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,
@@ -116,7 +112,6 @@ bind-key -T projmux-status n run-shell '#{q:projmux} statusbar click notify'
 bind-key -T projmux-status g run-shell '#{q:projmux} statusbar click git'
 bind-key -T projmux-status k run-shell '#{q:projmux} statusbar click kube'
 bind-key -T projmux-status p run-shell '#{q:projmux} statusbar click pwd'
-bind-key -T projmux-status r run-shell '#{q:projmux} statusbar click sessionstate'
 bind-key -T projmux-status s run-shell '#{q:projmux} statusbar click session'
 ```
 
@@ -141,8 +136,6 @@ them as `display-message` toasts:
 - `settings` popup launch failure: toast `statusbar settings: popup failed`.
 - `pwd` path popup failure: fall back to a short `display-message`
   containing the current path.
-- `sessionstate` popup failure: fall back to a compact snapshot status
-  `display-message`.
 - `usage` popup failure: fall back to a compact usage summary
   `display-message`.
 
@@ -160,15 +153,16 @@ emits a deterministic block per segment), regenerate, and re-apply:
 projmux tmux apply
 ```
 
-Settings > Appearance controls the optional decoration mode used by
-the path, git branch, and notification sidebar header. The persisted enum lives at
-`~/.config/projmux/statusbar-decoration`; valid values are `off` (default,
-font-safe), `symbol` (Nerd Font-style folder/git-provider/bell icons), and
-`emoji`. Git branch decoration follows `remote.origin.url`: GitHub remotes use a
-cat-style mark, GitLab remotes use a fox-style mark, and other remotes use a
-generic git branch mark.
-Settings also updates tmux `@projmux_statusbar_decoration` for the live
-server when run inside tmux.
+Settings > Appearance controls optional icon decoration separately for the
+path/cwd marker, git branch marker, and notification sidebar header. Each row
+can be `off` (default, font-safe), `symbol` (Nerd Font-style folder,
+git-provider, or bell icon), or `emoji`. Git branch decoration follows
+`remote.origin.url`: GitHub remotes use a cat-style mark, GitLab remotes use a
+fox-style mark, and other remotes use a generic git branch mark. Settings also
+updates the matching live tmux option
+(`@projmux_statusbar_decoration_cwd`, `_git`, or `_notify`) when run inside
+tmux. The legacy `~/.config/projmux/statusbar-decoration` and
+`@projmux_statusbar_decoration` remain fallback defaults for older configs.
 
 To add a new clickable segment:
 

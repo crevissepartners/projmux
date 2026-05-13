@@ -946,19 +946,24 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' status kube",
 		"'/tmp/proj mux/bin/projmux' status git",
 		"set -g @projmux_statusbar_decoration off",
+		"set -g @projmux_statusbar_decoration_cwd off",
+		"set -g @projmux_statusbar_decoration_git off",
+		"set -g @projmux_statusbar_decoration_notify off",
 		"set -g status 2",
-		"set -g status-left-length 42",
-		"#[range=user|session][#S] #[norange]#[bold,fg=colour16,bg=colour149]#[range=user|sessionstate] State #[norange]#[default] ",
-		"#{p-18:#{=/15/...:window_name}}",
-		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour33] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
+		"set -g status-left-length 20",
+		"#[range=user|session][#S] #[norange] ",
+		"#{n:window_name}",
+		"#{=/7/...:window_name}",
+		"@projmux_statusbar_decoration_cwd",
+		"#[fg=colour220] ",
+		"#[fg=colour220]📁 ",
+		"#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		" %Y-%m-%d %H:%M",
 		"range=user|notify",
-		"range=user|sessionstate",
 		"range=user|usage",
 		"set -g status-format[0]",
 		"set -g status-format[1]",
 		"#[align=left range=user|notify]#('/tmp/proj mux/bin/projmux' status notify --max-width 80)#[norange]#[align=right range=user|usage]#('/tmp/proj mux/bin/projmux' status usage --max-width 120)#[norange]",
-		"bind-key -T projmux-status r run-shell \"'/tmp/proj mux/bin/projmux' statusbar click sessionstate\"",
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
@@ -972,6 +977,8 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set -g status-format[2] \"",
 		"tmux autosave-session-state --quiet",
 		"bind-key R command-prompt",
+		"range=user|sessionstate",
+		"statusbar click sessionstate",
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)
@@ -1157,6 +1164,15 @@ func TestTmuxPrintConfigUsesSavedStatusbarDecoration(t *testing.T) {
 	if got, want := stdout.String(), "set -g @projmux_statusbar_decoration symbol"; !strings.Contains(got, want) {
 		t.Fatalf("print-config output = %q, want substring %q", got, want)
 	}
+	for _, want := range []string{
+		"set -g @projmux_statusbar_decoration_cwd symbol",
+		"set -g @projmux_statusbar_decoration_git symbol",
+		"set -g @projmux_statusbar_decoration_notify symbol",
+	} {
+		if got := stdout.String(); !strings.Contains(got, want) {
+			t.Fatalf("print-config output = %q, want substring %q", got, want)
+		}
+	}
 }
 
 func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *testing.T) {
@@ -1325,23 +1341,28 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"bind-key -n User10 command-prompt",
 		"unbind-key -q R",
 		"unbind-key -q M",
-		"set -g status-left-length 42",
-		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]#[bold,fg=colour16,bg=colour149]#[range=user|sessionstate] State #[norange]#[default] \"",
+		"set -g status-left-length 20",
+		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] \"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
-		"#{p-18:#{=/15/...:window_name}}",
+		"#{n:window_name}",
+		"#{=/7/...:window_name}",
 		"set -g @projmux_statusbar_decoration off",
-		"#[range=user|pwd]#{?#{==:#{@projmux_statusbar_decoration},symbol},#[fg=colour33] ,#{?#{==:#{@projmux_statusbar_decoration},emoji},#[fg=colour244]📁 ,}}#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
+		"set -g @projmux_statusbar_decoration_cwd off",
+		"set -g @projmux_statusbar_decoration_git off",
+		"set -g @projmux_statusbar_decoration_notify off",
+		"@projmux_statusbar_decoration_cwd",
+		"#[fg=colour220] ",
+		"#[fg=colour220]📁 ",
+		"#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		" %Y-%m-%d %H:%M #[bold,fg=colour230,bg=colour31]#[range=user|settings]  #[norange]#[default]",
 		"set -g status 2",
 		"range=user|notify",
-		"range=user|sessionstate",
 		"range=user|usage",
 		"set -g status-format[0]",
 		"set -g status-format[1]",
 		"#[align=left range=user|notify]#('/tmp/projmux' status notify --max-width 80)#[norange]#[align=right range=user|usage]#('/tmp/projmux' status usage --max-width 120)#[norange]",
 		"#('/tmp/projmux' tmux autosave-session-state --quiet)",
-		"bind-key -T projmux-status r run-shell \"'/tmp/projmux' statusbar click sessionstate\"",
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
@@ -1367,65 +1388,11 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"\\033[9010u",
 		"bind-key -n User8",
 		"bind-key -n User9",
+		"range=user|sessionstate",
+		"statusbar click sessionstate",
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)
-		}
-	}
-}
-
-func TestTmuxSessionStateStatusDisplaysPreviewPopup(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC)
-	store := sessionstate.NewStore(t.TempDir())
-	if err := store.Save(sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    "workspace",
-		DefaultCWD: "/tmp/workspace",
-		SavedAt:    now.Add(-time.Minute),
-		Windows: []sessionstate.Window{{
-			Index:           0,
-			Name:            "editor",
-			ActivePaneIndex: 0,
-			Panes: []sessionstate.Pane{
-				{Index: 0, CWD: "/tmp/workspace", Recipe: sessionstate.StartupRecipe("make watch")},
-			},
-		}},
-	}); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	runner := &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"): "workspace\n",
-		},
-	}
-	cmd := &tmuxCommand{
-		runner:       runner,
-		executable:   func() (string, error) { return "/tmp/projmux", nil },
-		now:          func() time.Time { return now },
-		homeDir:      func() (string, error) { return t.TempDir(), nil },
-		lookupEnv:    func(string) string { return "" },
-		sessionStore: func() (sessionstate.Store, error) { return store, nil },
-	}
-
-	if err := cmd.Run([]string{"sessionstate-status"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	var popup *recordedTmuxCall
-	for i := range runner.calls {
-		if runner.calls[i].name == "tmux" && len(runner.calls[i].args) > 0 && runner.calls[i].args[0] == "display-popup" {
-			popup = &runner.calls[i]
-			break
-		}
-	}
-	if popup == nil {
-		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
-	}
-	command := popup.args[len(popup.args)-1]
-	for _, want := range []string{"/tmp/projmux", "session-state popup"} {
-		if !strings.Contains(command, want) {
-			t.Fatalf("popup command missing %q: %q", want, command)
 		}
 	}
 }

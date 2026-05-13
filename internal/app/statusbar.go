@@ -27,7 +27,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -42,7 +41,6 @@ const (
 	statusbarRangeUsage    statusbarRangeID = "usage"
 	statusbarRangeNotify   statusbarRangeID = "notify"
 	statusbarRangeSettings statusbarRangeID = "settings"
-	statusbarRangeState    statusbarRangeID = "sessionstate"
 )
 
 // statusbarRunner abstracts the tmux/projmux invocations the click handlers
@@ -56,14 +54,13 @@ type statusbarRunner interface {
 // clicks and keyboard shortcuts. The intentionally tiny surface keeps the
 // dispatcher cheap to call from a tmux status interval.
 type statusbarCommand struct {
-	runner         statusbarRunner
-	executable     func() (string, error)
-	notifyStoreFn  func() (notifyStore, error)
-	usageStateFn   func(context.Context) (statusbarUsageState, error)
-	sessionStoreFn func() (sessionstate.Store, error)
-	lookupEnv      func(string) string
-	homeDir        func() (string, error)
-	now            func() time.Time
+	runner        statusbarRunner
+	executable    func() (string, error)
+	notifyStoreFn func() (notifyStore, error)
+	usageStateFn  func(context.Context) (statusbarUsageState, error)
+	lookupEnv     func(string) string
+	homeDir       func() (string, error)
+	now           func() time.Time
 }
 
 // newStatusbarCommand builds the production wiring: real tmux + projmux exec
@@ -355,7 +352,6 @@ func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarCl
 		statusbarRangeUsage:    c.handleUsage,
 		statusbarRangeNotify:   c.handleNotify,
 		statusbarRangeSettings: c.handleSettings,
-		statusbarRangeState:    c.handleSessionState,
 	}
 }
 
@@ -1228,7 +1224,7 @@ func printStatusbarUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-window <id>] [--mouse-x N] [--mouse-y N]")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Range ids: session pwd kube git usage notify settings sessionstate")
+	fmt.Fprintln(w, "Range ids: session pwd kube git usage notify settings")
 }
 
 type statusbarExecRunner struct{}

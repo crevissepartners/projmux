@@ -282,7 +282,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Prompt, "Notify > "; got != want {
 		t.Fatalf("picker prompt = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Title, "Pending Notifications"; got != want {
+	if got, want := picker.options.Title, "\x1b[1;38;5;220mPending Notifications\x1b[0m"; got != want {
 		t.Fatalf("picker title = %q, want %q", got, want)
 	}
 	if got, want := picker.options.Header, "Newest first"; got != want {
@@ -335,9 +335,9 @@ func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 		decoration string
 		wantTitle  string
 	}{
-		{name: "off", decoration: "off", wantTitle: "Pending Notifications"},
-		{name: "symbol", decoration: "symbol", wantTitle: " Pending Notifications"},
-		{name: "emoji", decoration: "emoji", wantTitle: "🔔 Pending Notifications"},
+		{name: "off", decoration: "off", wantTitle: "\x1b[1;38;5;220mPending Notifications\x1b[0m"},
+		{name: "symbol", decoration: "symbol", wantTitle: "\x1b[1;38;5;220m Pending Notifications\x1b[0m"},
+		{name: "emoji", decoration: "emoji", wantTitle: "\x1b[1;38;5;220m🔔 Pending Notifications\x1b[0m"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -345,7 +345,7 @@ func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 			store := &stubNotifyStore{}
 			picker := &stubNotifyPicker{}
 			runner := &focusFakeRunner{respond: func(args []string) ([]byte, error) {
-				if reflect.DeepEqual(args, []string{"show-option", "-gqv", statusbarDecorationTmuxOption}) {
+				if reflect.DeepEqual(args, []string{"show-option", "-gqv", statusbarDecorationNotifyTmuxOption}) {
 					return []byte(tt.decoration + "\n"), nil
 				}
 				return nil, errors.New("unexpected runner call")

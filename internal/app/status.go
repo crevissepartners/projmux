@@ -177,11 +177,14 @@ func parseGitAheadBehind(line string) (int, int) {
 
 func (c *statusCommand) statusbarDecoration() config.StatusbarDecoration {
 	if c.env("TMUX") != "" {
+		if raw := c.readTrimmed("tmux", "show-option", "-gqv", statusbarDecorationGitTmuxOption); strings.TrimSpace(raw) != "" {
+			return config.NormalizeStatusbarDecoration(raw)
+		}
 		if raw := c.readTrimmed("tmux", "show-option", "-gqv", statusbarDecorationTmuxOption); strings.TrimSpace(raw) != "" {
 			return config.NormalizeStatusbarDecoration(raw)
 		}
 	}
-	return loadStatusbarDecoration(c.homeDir, c.lookupEnv)
+	return loadStatusbarDecorationForTarget(c.homeDir, c.lookupEnv, statusbarDecorationTargetGit, loadStatusbarDecoration(c.homeDir, c.lookupEnv))
 }
 
 func (c *statusCommand) runKube(args []string, stdout, stderr io.Writer) error {
