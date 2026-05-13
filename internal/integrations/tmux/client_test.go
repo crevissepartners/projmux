@@ -1006,7 +1006,7 @@ func TestClientOpenSessionSwitchesInsideTmux(t *testing.T) {
 		t:     t,
 		steps: []scriptedStep{{}},
 	}
-	client := newClientWithEnv(runner, func(string) string { return "/tmp/tmux-sock" })
+	client := newClientWithEnv(runner, tmuxEnvOnly)
 
 	if err := client.OpenSession(context.Background(), "workspace"); err != nil {
 		t.Fatalf("OpenSession returned error: %v", err)
@@ -1014,6 +1014,36 @@ func TestClientOpenSessionSwitchesInsideTmux(t *testing.T) {
 
 	want := []commandCall{
 		{name: "tmux", args: []string{"switch-client", "-t", "workspace"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("unexpected calls %#v", runner.calls)
+	}
+}
+
+func TestClientOpenSessionTargetsClientInsideTmux(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{}},
+	}
+	client := newClientWithEnv(runner, func(name string) string {
+		switch name {
+		case "TMUX":
+			return "/tmp/tmux-sock"
+		case SwitchTargetClientEnv:
+			return "/dev/pts/7"
+		default:
+			return ""
+		}
+	})
+
+	if err := client.OpenSession(context.Background(), "workspace"); err != nil {
+		t.Fatalf("OpenSession returned error: %v", err)
+	}
+
+	want := []commandCall{
+		{name: "tmux", args: []string{"switch-client", "-c", "/dev/pts/7", "-t", "workspace"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1343,7 +1373,7 @@ func TestClientOpenSessionTargetSwitchesToPaneInsideTmux(t *testing.T) {
 		t:     t,
 		steps: []scriptedStep{{}},
 	}
-	client := newClientWithEnv(runner, func(string) string { return "/tmp/tmux-sock" })
+	client := newClientWithEnv(runner, tmuxEnvOnly)
 
 	if err := client.OpenSessionTarget(context.Background(), "workspace", "3", "8"); err != nil {
 		t.Fatalf("OpenSessionTarget returned error: %v", err)
@@ -1351,6 +1381,36 @@ func TestClientOpenSessionTargetSwitchesToPaneInsideTmux(t *testing.T) {
 
 	want := []commandCall{
 		{name: "tmux", args: []string{"switch-client", "-t", "workspace:3.8"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("unexpected calls %#v", runner.calls)
+	}
+}
+
+func TestClientOpenSessionTargetTargetsClientInsideTmux(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{}},
+	}
+	client := newClientWithEnv(runner, func(name string) string {
+		switch name {
+		case "TMUX":
+			return "/tmp/tmux-sock"
+		case SwitchTargetClientEnv:
+			return "/dev/pts/7"
+		default:
+			return ""
+		}
+	})
+
+	if err := client.OpenSessionTarget(context.Background(), "workspace", "3", "8"); err != nil {
+		t.Fatalf("OpenSessionTarget returned error: %v", err)
+	}
+
+	want := []commandCall{
+		{name: "tmux", args: []string{"switch-client", "-c", "/dev/pts/7", "-t", "workspace:3.8"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1368,7 +1428,7 @@ func TestClientOpenSessionTargetRunsPostAttachAfterInsideTmuxSwitch(t *testing.T
 		},
 	}
 	hook := &fakeLifecycleRunner{}
-	client := newClientWithEnv(runner, func(string) string { return "/tmp/tmux-sock" }, withLifecycleHookRunnerInterface(hook))
+	client := newClientWithEnv(runner, tmuxEnvOnly, withLifecycleHookRunnerInterface(hook))
 
 	if err := client.OpenSessionTarget(context.Background(), "workspace", "3", "8"); err != nil {
 		t.Fatalf("OpenSessionTarget returned error: %v", err)
@@ -2066,7 +2126,7 @@ func TestClientOpenSessionRunsPostAttachAfterInsideTmuxSwitch(t *testing.T) {
 		},
 	}
 	hook := &fakeLifecycleRunner{}
-	client := newClientWithEnv(runner, func(string) string { return "/tmp/tmux-sock" }, withLifecycleHookRunnerInterface(hook), WithSocketName("projmux"))
+	client := newClientWithEnv(runner, tmuxEnvOnly, withLifecycleHookRunnerInterface(hook), WithSocketName("projmux"))
 
 	if err := client.OpenSession(context.Background(), "workspace"); err != nil {
 		t.Fatalf("OpenSession returned error: %v", err)
@@ -2237,6 +2297,13 @@ func withLifecycleHookRunnerInterface(r lifecycleHookRunner) ClientOption {
 	return func(c *Client) {
 		c.lifecycle = r
 	}
+}
+
+func tmuxEnvOnly(name string) string {
+	if name == "TMUX" {
+		return "/tmp/tmux-sock"
+	}
+	return ""
 }
 
 func exitError(t *testing.T, code int) error {

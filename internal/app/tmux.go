@@ -869,6 +869,12 @@ func addHookTrustPopupTargetEnv(env map[string]string, ctx tmuxPopupContext) {
 	}
 }
 
+func addSwitchTargetClientEnv(env map[string]string, ctx tmuxPopupContext) {
+	if strings.TrimSpace(ctx.TargetClient) != "" {
+		env[inttmux.SwitchTargetClientEnv] = ctx.TargetClient
+	}
+}
+
 func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, backend intpicker.Backend, lookupEnv func(string) string) (string, inttmux.PopupOptions, error) {
 	options := inttmux.PopupOptions{
 		Target:        ctx.OriginPane,
@@ -888,6 +894,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		options.Height = popupSize(ctx.ClientHeight, 70, 28)
 		cwd = ctx.ContextDir
 		addHookTrustPopupTargetEnv(env, ctx)
+		addSwitchTargetClientEnv(env, ctx)
 		env["TMUX_SESSIONIZER_CONTEXT_DIR"] = ctx.ContextDir
 		env["TMUX_SESSIONIZER_CONTEXT_SESSION"] = ctx.OriginSession
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane
@@ -899,6 +906,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		options.Y = "0"
 		cwd = ctx.ContextDir
 		addHookTrustPopupTargetEnv(env, ctx)
+		addSwitchTargetClientEnv(env, ctx)
 		env["TMUX_SESSIONIZER_CONTEXT_DIR"] = ctx.ContextDir
 		env["TMUX_SESSIONIZER_CONTEXT_SESSION"] = ctx.OriginSession
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane

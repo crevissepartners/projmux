@@ -15,6 +15,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
 
+const SwitchTargetClientEnv = "PROJMUX_SWITCH_TARGET_CLIENT"
+
 var (
 	errCurrentPanePathUnavailable = errors.New("tmux current pane path is unavailable")
 	errCurrentSessionUnavailable  = errors.New("tmux current session is unavailable")
@@ -659,7 +661,7 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 	action := "attach"
 	inside := c.InsideSession()
 	if inside {
-		command = []string{"switch-client", "-t", sessionName}
+		command = c.switchClientCommand(sessionName)
 		action = "switch"
 	}
 
@@ -695,7 +697,7 @@ func (c *Client) OpenSessionTarget(ctx context.Context, sessionName, windowIndex
 	if inside {
 		target = sessionPaneTarget(sessionName, windowIndex, paneIndex)
 		action = "switch"
-		command = []string{"switch-client", "-t", target}
+		command = c.switchClientCommand(target)
 	} else if windowIndex != "" {
 		target = sessionWindowTarget(sessionName, windowIndex)
 		command = []string{"attach-session", "-t", target}
@@ -709,6 +711,16 @@ func (c *Client) OpenSessionTarget(ctx context.Context, sessionName, windowIndex
 		c.runPostAttach(ctx, sessionName, target)
 	}
 	return nil
+}
+
+func (c *Client) switchClientCommand(target string) []string {
+	command := []string{"switch-client"}
+	if c.lookupEnv != nil {
+		if client := strings.TrimSpace(c.lookupEnv(SwitchTargetClientEnv)); client != "" {
+			command = append(command, "-c", client)
+		}
+	}
+	return append(command, "-t", target)
 }
 
 func (c *Client) runPostAttach(ctx context.Context, sessionName, target string) {
