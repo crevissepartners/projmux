@@ -144,6 +144,9 @@ func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeCodex}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneSessionIDOption, "codex-session"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneThreadIDOption, "codex-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeIDOption, "codex-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeSourceOption, "hook"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeUpdatedAtOption, "1970-01-01T00:00:00Z"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
@@ -224,6 +227,28 @@ func TestIngestCodexHookUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 	}
 }
 
+func TestIngestCodexHookBlankSessionIDDoesNotRewriteResumeMetadata(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "UserPromptSubmit",
+		"cwd": "/repo/projmux",
+		"model": "gpt-5.1-codex"
+	}`)
+	cmd.readCommand = codexHookIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest codex-hook blank session id error = %v", err)
+	}
+	for _, option := range []string{aiPaneResumeIDOption, aiPaneResumeSourceOption, aiPaneTranscriptPathOption, aiPaneResumeUpdatedAtOption} {
+		if hasRecordedAISetOption(cmdRecorder(cmd).commands, option) {
+			t.Fatalf("commands = %#v, did not want %s write for blank session id", cmdRecorder(cmd).commands, option)
+		}
+	}
+}
+
 func TestIngestCodexNotifyPushesWaitingStatusAndMetadata(t *testing.T) {
 	home := t.TempDir()
 	store := &stubNotifyStore{}
@@ -253,6 +278,7 @@ func TestIngestCodexNotifyPushesWaitingStatusAndMetadata(t *testing.T) {
 	err := cmd.Run([]string{"ingest", "codex-notify", `{
 		"type": "agent-turn-complete",
 		"thread-id": "thread-123",
+		"session-id": "codex-session",
 		"turn-id": "turn-456",
 		"cwd": "/repo/projmux",
 		"model": "gpt-5.1-codex",
@@ -265,6 +291,9 @@ func TestIngestCodexNotifyPushesWaitingStatusAndMetadata(t *testing.T) {
 
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeIDOption, "codex-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeSourceOption, "hook"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeUpdatedAtOption, "1970-01-01T00:00:00Z"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", attentionStateOption, attentionStateReply}},
 	} {
@@ -571,6 +600,7 @@ func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.
 		"hook_event_name": "PermissionRequest",
 		"session_id": "claude-session",
 		"cwd": "/repo/projmux",
+		"transcript_path": "/tmp/claude-transcript.jsonl",
 		"tool_name": "Bash",
 		"tool_use_id": "tool-123",
 		"tool_input": {"command": "go test ./internal/app"}
@@ -584,6 +614,10 @@ func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneSessionIDOption, "claude-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeIDOption, "claude-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeSourceOption, "hook"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneTranscriptPathOption, "/tmp/claude-transcript.jsonl"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeUpdatedAtOption, "1970-01-01T00:00:00Z"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
@@ -849,6 +883,15 @@ func codexHookIngestReadCommand(paneID string) func(context.Context, string, ...
 func hasRecordedAICommand(commands []recordedAICommand, want recordedAICommand) bool {
 	for _, got := range commands {
 		if got.name == want.name && reflect.DeepEqual(got.args, want.args) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRecordedAISetOption(commands []recordedAICommand, option string) bool {
+	for _, got := range commands {
+		if got.name == "tmux" && len(got.args) >= 6 && got.args[0] == "set-option" && got.args[4] == option {
 			return true
 		}
 	}
