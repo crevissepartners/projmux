@@ -1581,7 +1581,7 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 		"source session-id",
 		"status available",
 		"confidence high",
-		"Save now",
+		"Save snapshot",
 		"capture live project session",
 		"Preview restore",
 		"dry-run only",
@@ -1647,7 +1647,7 @@ func TestSettingsProjectSessionStateShowsUnavailableMissingAndInvalidStates(t *t
 	if err != nil {
 		t.Fatalf("sectionOptions(missing) error = %v", err)
 	}
-	for _, want := range []string{"Snapshot", "missing", "Save now", "unavailable - live project session not found", "Preview restore", "unavailable without a valid snapshot", "Delete snapshot"} {
+	for _, want := range []string{"Snapshot", "missing", "Save snapshot", "unavailable - live project session not found", "Preview restore", "unavailable without a valid snapshot", "Delete snapshot"} {
 		if !hasEntryLabelContaining(missingOptions.Entries, want) {
 			t.Fatalf("missing snapshot entries = %#v, want %q", missingOptions.Entries, want)
 		}

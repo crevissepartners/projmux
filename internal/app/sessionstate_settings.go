@@ -234,7 +234,7 @@ func (c *settingsCommand) projectSessionStateActionEntries(identity projectSessi
 
 	return []intpickercompat.Entry{
 		{
-			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save now", saveDesc),
+			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save snapshot", saveDesc),
 			Value: saveValue,
 		},
 		{
@@ -667,7 +667,7 @@ func (c *settingsCommand) confirmSessionStateDeleteForSession(sessionName, ui, p
 				Value: settingsSessionStateConfirmNo,
 			},
 			{
-				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Yes, delete", "remove saved snapshot"),
+				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Yes, delete", "remove latest snapshot"),
 				Value: settingsSessionStateConfirmYes,
 			},
 		},

@@ -86,7 +86,7 @@ recipe = "shell"
 	if !strings.Contains(stdout.String(), `"name": "dev"`) {
 		t.Fatalf("stdout = %s, want dev JSON entry", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "warning: skip layout preset") || !strings.Contains(stderr.String(), "bad.toml") {
+	if !strings.Contains(stderr.String(), "warning: skip named snapshot") || !strings.Contains(stderr.String(), "bad.toml") {
 		t.Fatalf("stderr = %q, want malformed warning", stderr.String())
 	}
 }
@@ -140,7 +140,7 @@ func TestLayoutSaveCapturesPortablePresetWithDescription(t *testing.T) {
 	if err := cmd.Run([]string{"save", "--description", "Daily dev", "dev"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "saved layout preset: dev (1 window, 2 panes)") {
+	if got := stdout.String(); !strings.Contains(got, "saved named snapshot: dev (1 window, 2 panes)") {
 		t.Fatalf("stdout = %q, want saved summary", got)
 	}
 	preset, err := corelayout.NewStore(project).Load("dev")
@@ -241,7 +241,7 @@ schema_version = 1
 	if err := cmd.Run([]string{"remove", "--force", "dev"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "removed layout preset: dev") {
+	if got := stdout.String(); !strings.Contains(got, "removed named snapshot: dev") {
 		t.Fatalf("stdout = %q, want removed message", got)
 	}
 	if _, err := os.Stat(filepath.Join(project, ".projmux", "layouts", "dev.toml")); !os.IsNotExist(err) {
@@ -447,7 +447,7 @@ command = "make watch"
 	if err := cmd.Run([]string{"apply", "dev", "--force"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "applied layout preset: dev (1 window, 2 panes) -> workspace") {
+	if got := stdout.String(); !strings.Contains(got, "applied named snapshot: dev (1 window, 2 panes) -> workspace") {
 		t.Fatalf("stdout = %q, want applied summary", got)
 	}
 	for _, want := range [][]string{

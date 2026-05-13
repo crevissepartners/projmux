@@ -1,0 +1,69 @@
+package tmux
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+)
+
+type projectConfigAuthorizer interface {
+	AuthorizeProjectConfig(repoPath string) (bool, error)
+}
+
+// AuthorizeProjectHooks prompts for project-local config trust before any
+// session creation or snapshot replay work starts.
+func (c *Client) AuthorizeProjectHooks(ctx context.Context, cwd string) (bool, error) {
+	_ = ctx
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return false, errSessionCWDRequired
+	}
+	if c.lifecycle == nil {
+		return true, nil
+	}
+	authorizer, ok := c.lifecycle.(projectConfigAuthorizer)
+	if !ok {
+		return true, nil
+	}
+	ok, err := authorizer.AuthorizeProjectConfig(cwd)
+	if err != nil {
+		return false, fmt.Errorf("authorize project hooks for %q: %w", cwd, err)
+	}
+	return ok, nil
+}
+
+// RestoreSessionSnapshot creates a missing project session from a saved
+// snapshot while preserving the same lifecycle wrapper used by empty session
+// creation: pre-create first, then replay, project env, post-create, and no
+// default pane-startup hook for restored panes.
+func (c *Client) RestoreSessionSnapshot(ctx context.Context, snap sessionstate.Snapshot, cwd, source string) error {
+	if strings.TrimSpace(snap.Session) == "" {
+		return errSessionNameRequired
+	}
+	if strings.TrimSpace(cwd) == "" {
+		return errSessionCWDRequired
+	}
+	exists, err := c.sessionExists(ctx, snap.Session)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if err := c.runPreCreate(ctx, snap.Session, cwd, "persistent"); err != nil {
+		return err
+	}
+
+	if _, err := sessionstate.Replay(ctx, c.runner, snap, sessionstate.ReplayOptions{FallbackCWD: cwd}); err != nil {
+		return fmt.Errorf("restore tmux session %q from snapshot: %w", snap.Session, err)
+	}
+	sessionEnv := c.projectSessionEnv(cwd)
+	c.applyProjectSessionEnv(ctx, snap.Session, sessionEnv)
+	c.runPostCreate(ctx, snap.Session, cwd, "persistent")
+	if err := c.MarkSessionStateSource(ctx, snap.Session, source); err != nil {
+		return err
+	}
+	return nil
+}

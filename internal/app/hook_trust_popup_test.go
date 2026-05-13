@@ -78,9 +78,9 @@ func TestHookTrustPromptWritesDecision(t *testing.T) {
 		t.Fatalf("decision = %q, want %q", got, want)
 	}
 	for _, want := range []string{
-		"Project hook trust",
+		"Trust project hooks",
 		projmuxpicker.MutedStart,
-		"[a] always",
+		"[a] Allow always",
 		".projmux/config.toml",
 	} {
 		if !strings.Contains(stdout.String(), want) {
