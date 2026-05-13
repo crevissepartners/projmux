@@ -405,7 +405,7 @@ func TestDoctorAINotifyDiagnosticsReuseReadOnlyPlans(t *testing.T) {
 	cmd.readFile = os.ReadFile
 	writeCodexTestFile(t, filepath.Join(home, codexConfigRelativePath), codexNotifyBlock()+`
 [features]
-codex_hooks = true
+hooks = true
 
 [[hooks.Stop]]
 matcher = "*"
@@ -430,7 +430,7 @@ command = "projmux ai ingest codex-hook"
 `)
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
-			return []byte("pane-bell-event[1] " + tmuxBellHookCommand + "\n"), nil
+			return []byte("alert-bell[1] " + tmuxBellHookCommand + "\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}

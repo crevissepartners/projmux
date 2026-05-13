@@ -141,7 +141,7 @@ func TestAIIntegrateCodexHooksDryRunDoesNotWrite(t *testing.T) {
 		t.Fatalf("config stat err = %v, want missing file", err)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "dry-run") || !strings.Contains(out, codexHooksMarkerBegin) || !strings.Contains(out, codexHookCommand) || !strings.Contains(out, "codex_hooks = true") {
+	if !strings.Contains(out, "dry-run") || !strings.Contains(out, codexHooksMarkerBegin) || !strings.Contains(out, codexHookCommand) || !strings.Contains(out, "hooks = true") {
 		t.Fatalf("stdout = %q, want hooks dry-run preview", out)
 	}
 }
@@ -170,11 +170,18 @@ command = "echo keep"
 	}
 
 	got := readCodexTestFile(t, path)
-	if !strings.Contains(got, codexHooksMarkerBegin) || !strings.Contains(got, "[features]") || !strings.Contains(got, "codex_hooks = true") {
+	if !strings.Contains(got, codexHooksMarkerBegin) || !strings.Contains(got, "[features]") || !strings.Contains(got, "hooks = true") {
 		t.Fatalf("config missing hooks feature block:\n%s", got)
+	}
+	if strings.Contains(got, "codex_hooks = true") {
+		t.Fatalf("config kept deprecated codex_hooks feature:\n%s", got)
 	}
 	if strings.Count(got, "[features]") != 1 {
 		t.Fatalf("config duplicated [features]:\n%s", got)
+	}
+	codexHookEvents := defaultAIHookInstallEvents(aiHookProviderCodex)
+	if len(codexHookEvents) != 8 {
+		t.Fatalf("default Codex hook catalog has %d events, want 8", len(codexHookEvents))
 	}
 	for _, event := range codexHookEvents {
 		assertCodexHookNestedHandler(t, got, event)
@@ -190,6 +197,33 @@ command = "echo keep"
 	}
 	if !strings.Contains(stdout.String(), "configured Codex hooks") {
 		t.Fatalf("stdout = %q, want configured hooks message", stdout.String())
+	}
+}
+
+func TestAIIntegrateCodexHooksMigratesDeprecatedManagedFeature(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, codexConfigRelativePath)
+	writeCodexTestFile(t, path, `[features]
+experimental_resume = true
+# projmux-managed:codex-hooks-feature:v1
+codex_hooks = true
+`)
+
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "hooks"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode hooks error = %v", err)
+	}
+
+	got := readCodexTestFile(t, path)
+	if strings.Contains(got, "codex_hooks = true") {
+		t.Fatalf("config kept deprecated codex_hooks feature:\n%s", got)
+	}
+	if strings.Count(got, codexHooksFeatureMarker) != 1 || !strings.Contains(got, "hooks = true") {
+		t.Fatalf("config did not migrate managed feature cleanly:\n%s", got)
+	}
+	if !strings.Contains(got, "experimental_resume = true") {
+		t.Fatalf("config did not preserve existing feature:\n%s", got)
 	}
 }
 
@@ -209,8 +243,12 @@ func TestAIIntegrateCodexHooksReplacesOldManagedBlock(t *testing.T) {
 	if strings.Contains(got, `command = "projmux ai ingest codex-hook`) && !strings.Contains(got, "[[hooks.PermissionRequest.hooks]]") {
 		t.Fatalf("config still appears to use flat hook command schema:\n%s", got)
 	}
+	codexHookEvents := defaultAIHookInstallEvents(aiHookProviderCodex)
 	for _, event := range codexHookEvents {
 		assertCodexHookNestedHandler(t, got, event)
+	}
+	if strings.Contains(got, "codex_hooks = true") {
+		t.Fatalf("config kept deprecated codex_hooks feature:\n%s", got)
 	}
 }
 
@@ -298,7 +336,7 @@ experimental_resume = true
 	}
 
 	got := readCodexTestFile(t, path)
-	if strings.Contains(got, codexHooksMarkerBegin) || strings.Contains(got, codexHooksFeatureMarker) || strings.Contains(got, "codex_hooks = true") {
+	if strings.Contains(got, codexHooksMarkerBegin) || strings.Contains(got, codexHooksFeatureMarker) || strings.Contains(got, "hooks = true") || strings.Contains(got, "codex_hooks = true") {
 		t.Fatalf("config after hooks remove kept managed entries:\n%s", got)
 	}
 	if !strings.Contains(got, "experimental_resume = true") {
@@ -356,6 +394,10 @@ func TestAIIntegrateClaudeInstallsManagedHooks(t *testing.T) {
 	settings := readClaudeSettingsTestFile(t, path)
 	if got := settings["theme"]; got != "dark" {
 		t.Fatalf("theme = %#v, want preserved dark", got)
+	}
+	claudeHookEvents := defaultAIHookInstallEvents(aiHookProviderClaude)
+	if len(claudeHookEvents) != 29 {
+		t.Fatalf("default Claude hook catalog has %d events, want 29", len(claudeHookEvents))
 	}
 	for _, event := range claudeHookEvents {
 		if !claudeSettingsHasManagedCommand(t, settings, event) {
@@ -488,13 +530,168 @@ func TestAIIntegrateClaudeRemoveOnlyManagedHooks(t *testing.T) {
 	if strings.Contains(got, claudeHookManagedMarker) || !strings.Contains(got, "echo user-notify") {
 		t.Fatalf("settings after remove =\n%s", got)
 	}
-	for _, event := range []string{"Stop", "UserPromptSubmit", "PermissionRequest", "StopFailure", "SubagentStop", "TeammateIdle"} {
+	claudeHookEvents := defaultAIHookInstallEvents(aiHookProviderClaude)
+	for _, event := range claudeHookEvents {
+		if event == "Notification" {
+			continue
+		}
 		if strings.Contains(got, `"`+event+`"`) {
 			t.Fatalf("settings retained empty managed-only event %s:\n%s", event, got)
 		}
 	}
 	if !strings.Contains(stdout.String(), "removed projmux-managed") {
 		t.Fatalf("stdout = %q, want removed message", stdout.String())
+	}
+}
+
+func TestAIIntegrateCodexHooksUsesCatalogOverride(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".xdg-config")
+	writeCodexTestFile(t, filepath.Join(configHome, "projmux", "ai-hooks.d", "codex.json"), `{
+  "provider": "codex",
+  "observed_version": "codex-test",
+  "events": [
+    { "name": "Stop", "install": false, "action": "notify" },
+    { "name": "ExperimentalEvent", "install": true, "action": "quiet" }
+  ]
+}
+`)
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "XDG_CONFIG_HOME":
+			return configHome
+		default:
+			return ""
+		}
+	}
+	cmd.readFile = os.ReadFile
+
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "hooks"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode hooks error = %v", err)
+	}
+
+	got := readCodexTestFile(t, filepath.Join(home, codexConfigRelativePath))
+	if strings.Contains(got, "[[hooks.Stop]]") {
+		t.Fatalf("config installed catalog-disabled Stop event:\n%s", got)
+	}
+	assertCodexHookNestedHandler(t, got, "ExperimentalEvent")
+}
+
+func TestAIIntegrateClaudeUsesCatalogOverride(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".xdg-config")
+	writeCodexTestFile(t, filepath.Join(configHome, "projmux", "ai-hooks.d", "claude.json"), `{
+  "provider": "claude",
+  "events": [
+    { "name": "Stop", "install": false, "action": "notify" },
+    { "name": "ExperimentalEvent", "install": true, "action": "quiet" }
+  ]
+}
+`)
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "XDG_CONFIG_HOME":
+			return configHome
+		default:
+			return ""
+		}
+	}
+	cmd.readFile = os.ReadFile
+
+	if err := cmd.Run([]string{"integrate", "claude"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate claude error = %v", err)
+	}
+
+	settings := readClaudeSettingsTestFile(t, filepath.Join(home, claudeSettingsRelativePath))
+	if claudeSettingsHasManagedCommand(t, settings, "Stop") {
+		t.Fatalf("settings installed catalog-disabled Stop event:\n%s", readCodexTestFile(t, filepath.Join(home, claudeSettingsRelativePath)))
+	}
+	if !claudeSettingsHasManagedCommand(t, settings, "ExperimentalEvent") {
+		t.Fatalf("settings missing override event:\n%s", readCodexTestFile(t, filepath.Join(home, claudeSettingsRelativePath)))
+	}
+}
+
+func TestAIIntegrateClaudeRemoveScansManagedMarkersOutsideCatalog(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, claudeSettingsRelativePath)
+	writeCodexTestFile(t, path, `{
+  "hooks": {
+    "OldRemovedEvent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo keep"
+          }
+        ]
+      }
+    ]
+  }
+}
+`)
+
+	if err := cmd.Run([]string{"integrate", "claude", "--remove"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate claude --remove error = %v", err)
+	}
+
+	got := readCodexTestFile(t, path)
+	if strings.Contains(got, "OldRemovedEvent") || strings.Contains(got, claudeHookManagedMarker) {
+		t.Fatalf("settings retained stale managed marker outside catalog:\n%s", got)
+	}
+	if !strings.Contains(got, "echo keep") {
+		t.Fatalf("settings removed user hook:\n%s", got)
+	}
+}
+
+func TestAIIntegrateClaudeConflictScansUnmanagedCommandsOutsideCatalog(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, claudeSettingsRelativePath)
+	writeCodexTestFile(t, path, `{
+  "hooks": {
+    "OldRemovedEvent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+`)
+
+	err := cmd.Run([]string{"integrate", "claude"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run integrate claude expected conflict error, got nil")
+	}
+	if !strings.Contains(err.Error(), "OldRemovedEvent") || !strings.Contains(err.Error(), "unmanaged projmux ingest command") {
+		t.Fatalf("error = %v, want stale event unmanaged command conflict", err)
+	}
+	got := readCodexTestFile(t, path)
+	if strings.Contains(got, claudeHookManagedMarker) {
+		t.Fatalf("settings was modified unexpectedly:\n%s", got)
 	}
 }
 
@@ -519,7 +716,8 @@ func TestAIIntegrateTmuxBellDryRunPlansInstallCommands(t *testing.T) {
 		"set-option -g allow-passthrough on",
 		"set-option -g monitor-bell on",
 		"set-option -g bell-action other",
-		"set-hook -ag pane-bell-event",
+		"set-hook -ag alert-bell",
+		"#{hook_pane}",
 		tmuxBellManagedMarker,
 	} {
 		if !strings.Contains(out, want) {
@@ -532,7 +730,7 @@ func TestAIIntegrateTmuxBellInstallAppendsManagedHookAndPreservesExisting(t *tes
 	cmd := testAICommand(t.TempDir())
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
-			return []byte("pane-bell-event[0] run-shell -b 'echo user-hook'\n"), nil
+			return []byte("alert-bell[0] run-shell -b 'echo user-hook'\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -560,7 +758,7 @@ func TestAIIntegrateTmuxBellInstallSkipsDuplicateManagedHook(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
-			return []byte("pane-bell-event[1] " + tmuxBellHookCommand + "\n"), nil
+			return []byte("alert-bell[1] " + tmuxBellHookCommand + "\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -580,8 +778,8 @@ func TestAIIntegrateTmuxBellRemoveOnlyManagedHook(t *testing.T) {
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
 			return []byte(strings.Join([]string{
-				"pane-bell-event[0] run-shell -b 'echo user-hook'",
-				"pane-bell-event[2] " + tmuxBellHookCommand,
+				"alert-bell[0] run-shell -b 'echo user-hook'",
+				"alert-bell[2] " + tmuxBellHookCommand,
 			}, "\n") + "\n"), nil
 		}
 		return nil, os.ErrNotExist
@@ -592,7 +790,7 @@ func TestAIIntegrateTmuxBellRemoveOnlyManagedHook(t *testing.T) {
 		t.Fatalf("Run integrate tmux-bell --remove error = %v", err)
 	}
 	want := []recordedAICommand{
-		{name: "tmux", args: []string{"set-hook", "-gu", "pane-bell-event[2]"}},
+		{name: "tmux", args: []string{"set-hook", "-gu", "alert-bell[2]"}},
 	}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
@@ -681,7 +879,7 @@ func oldCodexHooksBlock() string {
 		"codex_hooks = true",
 		"",
 	}
-	for _, event := range codexHookEvents {
+	for _, event := range defaultAIHookInstallEvents(aiHookProviderCodex) {
 		lines = append(lines,
 			"[[hooks."+event+"]]",
 			`command = "`+codexHookCommand+`"`,
