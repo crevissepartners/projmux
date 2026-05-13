@@ -3,6 +3,8 @@ package tmux
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -130,8 +132,8 @@ func TestClientSaveSessionSnapshotRefreshesAIResumeIDFromSessionIDBeforeCapture(
 		t: t,
 		steps: []scriptedStep{
 			{output: []byte(
-				"%1\x1f1\x1fcodex\x1fcodex-session\x1f\x1f\n" +
-					"%2\x1f1\x1fclaude\x1fclaude-session\x1fold-claude-session\x1f\n",
+				"%1\x1f/tmp\x1f1\x1fcodex\x1fcodex-session\x1f\x1f\n" +
+					"%2\x1f/tmp\x1f1\x1fclaude\x1fclaude-session\x1fold-claude-session\x1f\n",
 			)},
 			{output: []byte{}},
 			{output: []byte{}},
@@ -165,6 +167,7 @@ func TestClientSaveSessionSnapshotRefreshesAIResumeIDFromSessionIDBeforeCapture(
 	wantPrefix := []commandCall{
 		{name: "tmux", args: []string{"list-panes", "-s", "-t", "workspace", "-F", tmuxFormat(
 			"#{pane_id}",
+			"#{pane_current_path}",
 			"#{@projmux_ai_managed}",
 			"#{@projmux_ai_agent}",
 			"#{@projmux_ai_session_id}",
@@ -191,7 +194,7 @@ func TestClientSaveSessionSnapshotRefreshesClaudeResumeIDFromTranscriptBeforeCap
 	runner := &scriptedRunner{
 		t: t,
 		steps: []scriptedStep{
-			{output: []byte("%2\x1f1\x1fclaude\x1f\x1f\x1f" + transcriptPath + "\n")},
+			{output: []byte("%2\x1f/tmp\x1f1\x1fclaude\x1f\x1f\x1f" + transcriptPath + "\n")},
 			{output: []byte{}},
 			{output: []byte{}},
 			{output: []byte{}},
@@ -219,6 +222,7 @@ func TestClientSaveSessionSnapshotRefreshesClaudeResumeIDFromTranscriptBeforeCap
 	wantPrefix := []commandCall{
 		{name: "tmux", args: []string{"list-panes", "-s", "-t", "workspace", "-F", tmuxFormat(
 			"#{pane_id}",
+			"#{pane_current_path}",
 			"#{@projmux_ai_managed}",
 			"#{@projmux_ai_agent}",
 			"#{@projmux_ai_session_id}",
@@ -234,6 +238,138 @@ func TestClientSaveSessionSnapshotRefreshesClaudeResumeIDFromTranscriptBeforeCap
 	}
 }
 
+func TestClientSaveSessionSnapshotRefreshesCodexResumeIDFromMatchingRolloutLog(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
+	home := t.TempDir()
+	writeCodexRolloutLog(t, home, filepath.Join("2026", "05", "12", "rollout-matching.jsonl"), `{"type":"session_meta","payload":{"id":"codex-log-session","cwd":"/home/tester/app"}}`+"\n", now)
+	writeCodexRolloutLog(t, home, filepath.Join("2026", "05", "12", "rollout-other.jsonl"), `{"type":"session_meta","payload":{"id":"codex-other-session","cwd":"/home/tester/other"}}`+"\n", now.Add(time.Minute))
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{output: []byte("%1\x1f/home/tester/app\x1f1\x1fcodex\x1f\x1f\x1f\n")},
+			{output: []byte{}},
+			{output: []byte{}},
+			{output: []byte{}},
+			{output: []byte("0\x1fwork\x1flayout\n")},
+			{output: []byte("0\x1f0\x1fcodex task\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1ftopic\x1fcodex-log-session\n")},
+			{output: []byte("\n")},
+		},
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	client := newClientWithEnv(runner, func(name string) string {
+		if name == "HOME" {
+			return home
+		}
+		return ""
+	})
+
+	snap, err := client.SaveSessionSnapshot(context.Background(), store, "workspace", now)
+	if err != nil {
+		t.Fatalf("SaveSessionSnapshot() error = %v", err)
+	}
+	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.AgentRecipe("codex", "codex-log-session", "topic")) {
+		t.Fatalf("recipe = %#v, want codex log-backed agent recipe", got)
+	}
+
+	wantPrefix := []commandCall{
+		{name: "tmux", args: []string{"list-panes", "-s", "-t", "workspace", "-F", tmuxFormat(
+			"#{pane_id}",
+			"#{pane_current_path}",
+			"#{@projmux_ai_managed}",
+			"#{@projmux_ai_agent}",
+			"#{@projmux_ai_session_id}",
+			"#{@projmux_ai_resume_id}",
+			"#{@projmux_ai_transcript_path}",
+		)}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_resume_id", "codex-log-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_resume_source", "codex-log"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_resume_updated_at", "2026-05-12T03:04:05Z"}},
+	}
+	if len(runner.calls) < len(wantPrefix) || !reflect.DeepEqual(runner.calls[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("tmux call prefix = %#v, want %#v", runner.calls, wantPrefix)
+	}
+}
+
+func TestClientSaveSessionSnapshotAmbiguousCodexRolloutLogsWithoutCWDDoNotRefresh(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
+	home := t.TempDir()
+	writeCodexRolloutLog(t, home, filepath.Join("2026", "05", "12", "rollout-one.jsonl"), `{"type":"session_meta","payload":{"id":"codex-log-one"}}`+"\n", now)
+	writeCodexRolloutLog(t, home, filepath.Join("2026", "05", "12", "rollout-two.jsonl"), `{"type":"session_meta","payload":{"id":"codex-log-two"}}`+"\n", now.Add(time.Minute))
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{output: []byte("%1\x1f/home/tester/app\x1f1\x1fcodex\x1f\x1f\x1f\n")},
+			{output: []byte("0\x1fwork\x1flayout\n")},
+			{output: []byte("0\x1f0\x1fcodex task\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1ftopic\x1f\n")},
+			{output: []byte("\n")},
+		},
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	client := newClientWithEnv(runner, func(name string) string {
+		if name == "HOME" {
+			return home
+		}
+		return ""
+	})
+
+	snap, err := client.SaveSessionSnapshot(context.Background(), store, "workspace", now)
+	if err != nil {
+		t.Fatalf("SaveSessionSnapshot() error = %v", err)
+	}
+	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.ShellRecipe()) {
+		t.Fatalf("recipe = %#v, want ambiguous codex logs to remain shell", got)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && call.args[0] == "set-option" {
+			t.Fatalf("unexpected set-option call for ambiguous codex logs: %#v", call)
+		}
+	}
+}
+
+func TestClientSaveSessionSnapshotClaudePaneDoesNotUseCodexRolloutLog(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
+	home := t.TempDir()
+	writeCodexRolloutLog(t, home, filepath.Join("2026", "05", "12", "rollout-matching.jsonl"), `{"type":"session_meta","payload":{"id":"codex-log-session","cwd":"/home/tester/app"}}`+"\n", now)
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{output: []byte("%2\x1f/home/tester/app\x1f1\x1fclaude\x1f\x1f\x1f\n")},
+			{output: []byte("0\x1fwork\x1flayout\n")},
+			{output: []byte("0\x1f0\x1fclaude task\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fclaude\x1ftopic\x1f\n")},
+			{output: []byte("\n")},
+		},
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	client := newClientWithEnv(runner, func(name string) string {
+		if name == "HOME" {
+			return home
+		}
+		return ""
+	})
+
+	snap, err := client.SaveSessionSnapshot(context.Background(), store, "workspace", now)
+	if err != nil {
+		t.Fatalf("SaveSessionSnapshot() error = %v", err)
+	}
+	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.ShellRecipe()) {
+		t.Fatalf("recipe = %#v, want claude pane to ignore codex log fallback", got)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && call.args[0] == "set-option" {
+			t.Fatalf("unexpected set-option call for claude codex-log fallback: %#v", call)
+		}
+	}
+}
+
 func TestClientSaveSessionSnapshotTranscriptFallbackDoesNotApplyToCodex(t *testing.T) {
 	t.Parallel()
 
@@ -241,14 +377,15 @@ func TestClientSaveSessionSnapshotTranscriptFallbackDoesNotApplyToCodex(t *testi
 	runner := &scriptedRunner{
 		t: t,
 		steps: []scriptedStep{
-			{output: []byte("%1\x1f1\x1fcodex\x1f\x1f\x1f/tmp/codex-transcript.jsonl\n")},
+			{output: []byte("%1\x1f/tmp\x1f1\x1fcodex\x1f\x1f\x1f/tmp/codex-transcript.jsonl\n")},
 			{output: []byte("0\x1fwork\x1flayout\n")},
 			{output: []byte("0\x1f0\x1fcodex task\x1f1\x1f/tmp\x1f\x1f\x1f1\x1fcodex\x1ftopic\x1f\n")},
 			{output: []byte("\n")},
 		},
 	}
 	store := sessionstate.NewStore(t.TempDir())
-	client := NewClient(runner, WithFileReader(func(path string) ([]byte, error) {
+	home := t.TempDir()
+	client := newClientWithEnv(runner, func(string) string { return home }, WithFileReader(func(path string) ([]byte, error) {
 		t.Fatalf("unexpected transcript read for codex pane: %q", path)
 		return nil, nil
 	}))
@@ -274,7 +411,7 @@ func TestClientSaveSessionSnapshotUnreadableClaudeTranscriptDoesNotClearExisting
 	runner := &scriptedRunner{
 		t: t,
 		steps: []scriptedStep{
-			{output: []byte("%2\x1f1\x1fclaude\x1f\x1fexisting-resume\x1f/tmp/missing-transcript.jsonl\n")},
+			{output: []byte("%2\x1f/tmp\x1f1\x1fclaude\x1f\x1fexisting-resume\x1f/tmp/missing-transcript.jsonl\n")},
 			{output: []byte("0\x1fwork\x1flayout\n")},
 			{output: []byte("0\x1f0\x1fclaude task\x1f1\x1f/tmp\x1f\x1f\x1f1\x1fclaude\x1ftopic\x1fexisting-resume\n")},
 			{output: []byte("\n")},
@@ -306,7 +443,7 @@ func TestClientSaveSessionSnapshotBlankSessionIDDoesNotClearExistingResumeMetada
 	runner := &scriptedRunner{
 		t: t,
 		steps: []scriptedStep{
-			{output: []byte("%1\x1f1\x1fcodex\x1f\x1fexisting-resume\x1f\n")},
+			{output: []byte("%1\x1f/tmp\x1f1\x1fcodex\x1f\x1fexisting-resume\x1f\n")},
 			{output: []byte("0\x1fwork\x1flayout\n")},
 			{output: []byte("0\x1f0\x1fcodex task\x1f1\x1f/tmp\x1f\x1f\x1f1\x1fcodex\x1ftopic\x1fexisting-resume\n")},
 			{output: []byte("\n")},
@@ -336,7 +473,7 @@ func TestClientSaveSessionSnapshotRefreshSetOptionFailureIsBestEffort(t *testing
 	runner := &scriptedRunner{
 		t: t,
 		steps: []scriptedStep{
-			{output: []byte("%1\x1f1\x1fcodex\x1fcodex-session\x1fold-resume\x1f\n")},
+			{output: []byte("%1\x1f/tmp\x1f1\x1fcodex\x1fcodex-session\x1fold-resume\x1f\n")},
 			{err: errors.New("set-option failed")},
 			{output: []byte("0\x1fwork\x1flayout\n")},
 			{output: []byte("0\x1f0\x1fcodex task\x1f1\x1f/tmp\x1f\x1f\x1f1\x1fcodex\x1ftopic\x1fcodex-session\n")},
@@ -371,5 +508,19 @@ func TestClientCaptureSessionSnapshotWrapsPartialQueryFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "capture tmux session \"workspace\" panes") {
 		t.Fatalf("error = %v, want pane capture context", err)
+	}
+}
+
+func writeCodexRolloutLog(t *testing.T, home, relPath, content string, modTime time.Time) {
+	t.Helper()
+	path := filepath.Join(home, ".codex", "sessions", relPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", path, err)
+	}
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("Chtimes(%q) error = %v", path, err)
 	}
 }

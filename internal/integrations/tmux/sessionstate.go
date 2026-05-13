@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,6 +30,7 @@ const (
 )
 
 const sessionStateMaxClaudeTranscriptBytes = 1024 * 1024
+const sessionStateMaxCodexRolloutPrefixBytes = 256 * 1024
 
 type sessionStateWindowRow struct {
 	index  int
@@ -52,11 +54,20 @@ type sessionStatePaneRow struct {
 
 type sessionStateResumeRefreshPaneRow struct {
 	paneID           string
+	cwd              string
 	aiManaged        string
 	aiAgent          string
 	aiSessionID      string
 	aiResumeID       string
 	aiTranscriptPath string
+}
+
+type sessionStateCodexRolloutCandidate struct {
+	path   string
+	mtime  time.Time
+	id     string
+	cwd    string
+	hasCWD bool
 }
 
 // CaptureSessionSnapshot captures tmux window/pane metadata for a sessionstate
@@ -203,6 +214,10 @@ func (c *Client) refreshSessionStateAIResumeMetadata(ctx context.Context, sessio
 			candidate = c.claudeResumeIDFromTranscript(pane.aiTranscriptPath)
 			source = "claude-transcript"
 		}
+		if candidate == "" && isCodexSessionStateRefreshPane(pane) && strings.TrimSpace(pane.aiResumeID) == "" {
+			candidate = c.codexResumeIDFromRolloutLogs(pane.cwd)
+			source = "codex-log"
+		}
 		if candidate == "" || candidate == strings.TrimSpace(pane.aiResumeID) {
 			continue
 		}
@@ -235,6 +250,10 @@ func isSessionStateRefreshAgent(pane sessionStateResumeRefreshPaneRow) bool {
 
 func isClaudeSessionStateRefreshPane(pane sessionStateResumeRefreshPaneRow) bool {
 	return strings.EqualFold(strings.TrimSpace(pane.aiAgent), "claude")
+}
+
+func isCodexSessionStateRefreshPane(pane sessionStateResumeRefreshPaneRow) bool {
+	return strings.EqualFold(strings.TrimSpace(pane.aiAgent), "codex")
 }
 
 func (c *Client) claudeResumeIDFromTranscript(path string) string {
@@ -274,6 +293,174 @@ func claudeResumeIDFromTranscriptJSONL(content []byte) string {
 		}
 	}
 	return fallback
+}
+
+func (c *Client) codexResumeIDFromRolloutLogs(paneCWD string) string {
+	paneCWD = filepath.Clean(strings.TrimSpace(paneCWD))
+	if paneCWD == "." {
+		return ""
+	}
+	root := c.codexSessionsRoot()
+	if root == "" {
+		return ""
+	}
+	candidates := c.codexRolloutCandidates(root)
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	matchingCWD := make([]sessionStateCodexRolloutCandidate, 0, len(candidates))
+	withoutCWD := make([]sessionStateCodexRolloutCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.hasCWD {
+			if filepath.Clean(candidate.cwd) == paneCWD {
+				matchingCWD = append(matchingCWD, candidate)
+			}
+			continue
+		}
+		withoutCWD = append(withoutCWD, candidate)
+	}
+	if id, ok := newestUniqueCodexRolloutID(matchingCWD); ok {
+		return id
+	}
+	if len(matchingCWD) > 0 {
+		return ""
+	}
+	if len(withoutCWD) != 1 {
+		return ""
+	}
+	return withoutCWD[0].id
+}
+
+func (c *Client) codexSessionsRoot() string {
+	if c.lookupEnv != nil {
+		if home := strings.TrimSpace(c.lookupEnv("HOME")); home != "" {
+			return filepath.Join(home, ".codex", "sessions")
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return filepath.Join(home, ".codex", "sessions")
+}
+
+func (c *Client) codexRolloutCandidates(root string) []sessionStateCodexRolloutCandidate {
+	var candidates []sessionStateCodexRolloutCandidate
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry == nil || entry.IsDir() {
+			return nil
+		}
+		if matched, matchErr := filepath.Match("rollout-*.jsonl", entry.Name()); matchErr != nil || !matched {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		id, cwd, hasCWD, ok := scanCodexRolloutSessionMeta(path)
+		if !ok {
+			return nil
+		}
+		candidates = append(candidates, sessionStateCodexRolloutCandidate{
+			path:   path,
+			mtime:  info.ModTime(),
+			id:     id,
+			cwd:    cwd,
+			hasCWD: hasCWD,
+		})
+		return nil
+	})
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].mtime.Equal(candidates[j].mtime) {
+			return candidates[i].path < candidates[j].path
+		}
+		return candidates[i].mtime.After(candidates[j].mtime)
+	})
+	return candidates
+}
+
+func newestUniqueCodexRolloutID(candidates []sessionStateCodexRolloutCandidate) (string, bool) {
+	if len(candidates) == 0 {
+		return "", false
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].mtime.Equal(candidates[j].mtime) {
+			return candidates[i].path < candidates[j].path
+		}
+		return candidates[i].mtime.After(candidates[j].mtime)
+	})
+	if len(candidates) > 1 && candidates[0].mtime.Equal(candidates[1].mtime) {
+		return "", false
+	}
+	return candidates[0].id, true
+}
+
+func scanCodexRolloutSessionMeta(path string) (id, cwd string, hasCWD, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", false, false
+	}
+	defer f.Close()
+
+	limited, err := io.ReadAll(io.LimitReader(f, sessionStateMaxCodexRolloutPrefixBytes))
+	if err != nil {
+		return "", "", false, false
+	}
+	return codexRolloutSessionMetaFromPrefix(limited)
+}
+
+func codexRolloutSessionMetaFromPrefix(content []byte) (id, cwd string, hasCWD, ok bool) {
+	for rawLine := range strings.SplitSeq(string(content), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		var fields map[string]any
+		if err := json.Unmarshal([]byte(line), &fields); err != nil {
+			continue
+		}
+		if !isCodexSessionMetaRecord(fields) {
+			continue
+		}
+		payload, _ := fields["payload"].(map[string]any)
+		if payload == nil {
+			payload = fields
+		}
+		id = firstNestedString(payload, "id", "session_id", "sessionId")
+		if id == "" {
+			continue
+		}
+		cwd = firstNestedString(payload, "cwd", "current_dir", "currentDir", "project_dir", "projectDir", "project_path", "projectPath", "working_directory", "workingDirectory")
+		return id, cwd, cwd != "", true
+	}
+	return "", "", false, false
+}
+
+func isCodexSessionMetaRecord(fields map[string]any) bool {
+	if strings.EqualFold(stringJSONField(fields, "type"), "session_meta") {
+		return true
+	}
+	payload, _ := fields["payload"].(map[string]any)
+	return payload != nil && strings.EqualFold(stringJSONField(payload, "type"), "session_meta")
+}
+
+func firstNestedString(fields map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := stringJSONField(fields, key); value != "" {
+			return value
+		}
+	}
+	for _, raw := range fields {
+		nested, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if value := firstNestedString(nested, keys...); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func stringJSONField(fields map[string]any, key string) string {
@@ -350,6 +537,7 @@ func (c *Client) listSessionStatePanes(ctx context.Context, sessionName string) 
 func (c *Client) listSessionStateResumeRefreshPanes(ctx context.Context, sessionName string) ([]sessionStateResumeRefreshPaneRow, error) {
 	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-s", "-t", sessionName, "-F", tmuxFormat(
 		"#{pane_id}",
+		"#{pane_current_path}",
 		"#{"+sessionStateAIManagedOption+"}",
 		"#{"+sessionStateAIAgentOption+"}",
 		"#{"+sessionStateAISessionIDOption+"}",
@@ -459,17 +647,18 @@ func parseSessionStateResumeRefreshPanes(output []byte) ([]sessionStateResumeRef
 		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
-		fields := splitTmuxFields(rawLine, 6)
-		if len(fields) != 6 {
+		fields := splitTmuxFields(rawLine, 7)
+		if len(fields) != 7 {
 			return nil, fmt.Errorf("parse tmux sessionstate AI resume metadata panes: malformed row %q", rawLine)
 		}
 		panes = append(panes, sessionStateResumeRefreshPaneRow{
 			paneID:           strings.TrimSpace(fields[0]),
-			aiManaged:        strings.TrimSpace(fields[1]),
-			aiAgent:          strings.TrimSpace(fields[2]),
-			aiSessionID:      strings.TrimSpace(fields[3]),
-			aiResumeID:       strings.TrimSpace(fields[4]),
-			aiTranscriptPath: strings.TrimSpace(fields[5]),
+			cwd:              strings.TrimSpace(fields[1]),
+			aiManaged:        strings.TrimSpace(fields[2]),
+			aiAgent:          strings.TrimSpace(fields[3]),
+			aiSessionID:      strings.TrimSpace(fields[4]),
+			aiResumeID:       strings.TrimSpace(fields[5]),
+			aiTranscriptPath: strings.TrimSpace(fields[6]),
 		})
 	}
 	return panes, nil
