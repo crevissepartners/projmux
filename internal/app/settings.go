@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -1636,14 +1637,13 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 
 func (c *settingsCommand) runNotificationsDeliverySourcesSection(stdout, stderr io.Writer) error {
 	_ = stdout
-	_ = stderr
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-notifications-delivery",
 			Entries:    c.aiNotifyDiagnosticEntries(),
 			Title:      "Notifications - Delivery sources",
 			Prompt:     "Settings > Notifications > Delivery sources > ",
-			Footer:     projmuxFooter("Enter: view details  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: copy install command + view details  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1661,6 +1661,11 @@ func (c *settingsCommand) runNotificationsDeliverySourcesSection(stdout, stderr 
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixAINotifyDiagnostic):
 			id := strings.TrimPrefix(action, settingsActionPrefixAINotifyDiagnostic)
+			diag, ok := c.aiNotifyDiagnosticByID(id)
+			if !ok {
+				return fmt.Errorf("unknown AI notify integration: %s", id)
+			}
+			c.copySettingsInstallCommand(diag, stderr)
 			if err := c.runAINotifyDiagnosticDetail(id); err != nil {
 				return err
 			}
@@ -1711,6 +1716,24 @@ func (c *settingsCommand) currentAINotifyDiagnostics() []doctorAINotifyIntegrati
 		return c.aiNotifyDiagnostics()
 	}
 	return doctorAINotifyDiagnostics(c.ai)
+}
+
+func (c *settingsCommand) copySettingsInstallCommand(diag doctorAINotifyIntegration, stderr io.Writer) {
+	command := strings.TrimSpace(diag.InstallCommand)
+	if command == "" {
+		return
+	}
+	runner := c.tmuxRunner
+	if runner == nil {
+		runner = inttmux.ExecRunner{}
+	}
+	if _, err := runner.Run(context.Background(), "tmux", "set-buffer", "-w", "--", command); err != nil {
+		if stderr != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: copy %s install command to clipboard: %v\n", diag.Name, err)
+		}
+		return
+	}
+	_, _ = runner.Run(context.Background(), "tmux", "display-message", diag.Name+" install command copied to clipboard")
 }
 
 func (c *settingsCommand) aiNotifyDiagnosticsSummary() string {
