@@ -125,10 +125,11 @@ dependencies. `--dry-run` prints those commands without executing them.
 with `--json`. Doctor does not diagnose terminal key delivery; use `projmux
 setup` for that.
 
-`Settings > Notifications > Delivery sources` shows the same read-only
-statuses, conflicts, config paths, and AI integration install/remove/dry-run
-commands. Settings does not install or remove external Codex, Claude, or tmux
-notify wiring.
+`Settings > Notifications > Delivery sources` shows active Codex hooks, Claude,
+and tmux statuses, conflicts, config paths, and copyable AI integration
+install/remove/dry-run commands. Settings does not install or remove external
+Codex, Claude, or tmux notify wiring. Codex legacy notify remains available
+through CLI/doctor compatibility paths but is hidden from Settings.
 
 ## focus
 
