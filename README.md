@@ -4,24 +4,37 @@
   <img src="docs/assets/projmux-icon.png" alt="projmux icon" width="112">
 </p>
 
-Project-aware tmux workspaces with fast switching, previews, status context,
-and AI-pane attention built in.
+<p align="center">
+  <strong>A tmux-native workspace for multi-agent AI development.</strong>
+  <br>
+  <em>First-class Claude Code and Codex integration with hook-driven attention and agent-aware session resume.</em>
+</p>
 
-[![npm version](https://img.shields.io/npm/v/projmux?logo=npm)](https://www.npmjs.com/package/projmux)
-[![CI](https://github.com/crevissepartners/projmux/actions/workflows/ci.yml/badge.svg)](https://github.com/crevissepartners/projmux/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://www.npmjs.com/package/projmux"><img src="https://img.shields.io/npm/v/projmux?logo=npm" alt="npm version"></a>
+  <a href="https://github.com/crevissepartners/projmux/actions/workflows/ci.yml"><img src="https://github.com/crevissepartners/projmux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/crevissepartners/projmux" alt="MIT license"></a>
+  <a href="README-ko.md"><img src="https://img.shields.io/badge/lang-한국어-blue" alt="Korean README"></a>
+</p>
 
-[Korean README](README-ko.md)
+```sh
+npm install -g projmux
+projmux shell
+```
 
 ![projmux shell project sidebar demo](docs/assets/projmux-shell-sidebar.gif)
 
-## What It Is
+## Why
 
-`projmux` turns project directories into durable tmux sessions. It gives you a
-keyboard-first workspace app for switching projects, previewing sessions,
-opening AI splits, and keeping useful context visible in tmux.
+Six tmux windows. Each one is running Claude Code or Codex on a different
+repo. Three are idle. One is waiting on a permission prompt. One crashed an
+hour ago and you have no idea which.
 
-Use it when you want one command to open your terminal workspace and one set of
-keys to move between projects, windows, panes, notifications, and settings.
+projmux ingests Claude Code and Codex hook events directly, shows live
+per-pane state in the tmux status bar, and lets one keystroke take you to
+the pane that actually needs you. It also remembers each agent's resume id,
+so after a reboot every pane comes back as the *same* conversation — not a
+fresh one.
 
 ## Requirements
 
@@ -32,14 +45,12 @@ Run `projmux doctor` after installing to check the local runtime.
 
 ## Install
 
-```sh
-npm install -g projmux
-projmux version
-```
+The npm package shown above installs a small Node.js shim plus the matching
+projmux binary for Linux and macOS on x64 or arm64. npm is the primary
+distribution path for normal users.
 
-The npm package installs a small Node.js shim plus the matching projmux binary
-for Linux and macOS on x64 or arm64. npm is the primary distribution path for
-normal users.
+Verify with `projmux version`. Then `projmux doctor` checks the local runtime
+(tmux 3.4+ and hook integration health).
 
 Manual Go, source checkout, GitHub Release, and packaging details live in
 [Install](docs/install.md).
