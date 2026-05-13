@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.1](https://github.com/crevissepartners/projmux/compare/v0.6.0...v0.6.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **badge:** decouple pane border badge from ai_state lifecycle ([#259](https://github.com/crevissepartners/projmux/issues/259)) ([1a85e87](https://github.com/crevissepartners/projmux/commit/1a85e8728f2821cb1b2515db63c03c173a680fce))
+* correct statusbar row order ([#260](https://github.com/crevissepartners/projmux/issues/260)) ([bc61fd2](https://github.com/crevissepartners/projmux/commit/bc61fd23e4c7074c4311725e8cd2579f0d38deaf))
+* polish statusbar controls ([#257](https://github.com/crevissepartners/projmux/issues/257)) ([8e57090](https://github.com/crevissepartners/projmux/commit/8e57090a943055e6b998c8377f08dcbead3bbd61))
+* polish statusbar tabs and appearance icons ([#262](https://github.com/crevissepartners/projmux/issues/262)) ([e542317](https://github.com/crevissepartners/projmux/commit/e5423173b481d83d48168a355ec915b3aafcfe17))
+* refine statusbar state button label ([#261](https://github.com/crevissepartners/projmux/issues/261)) ([b7b80a0](https://github.com/crevissepartners/projmux/commit/b7b80a0a4311388937898b37b165d03c27a392e9))
+
 ## [0.6.0](https://github.com/crevissepartners/projmux/compare/v0.5.3...v0.6.0) (2026-05-13)
 
 
