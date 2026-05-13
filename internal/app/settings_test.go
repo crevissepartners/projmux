@@ -1219,13 +1219,13 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 
 	diagnostics := []doctorAINotifyIntegration{
 		{
-			ID:             "codex-legacy",
+			ID:             "codex-legacy-notify",
 			Name:           "Codex legacy notify",
 			Status:         doctorAINotifyStatusInstalled,
 			ConfigPath:     "/home/tester/.codex/config.toml",
-			InstallCommand: "projmux ai integrate codex --mode legacy",
-			RemoveCommand:  "projmux ai integrate codex --mode legacy --remove",
-			DryRunCommand:  "projmux ai integrate codex --mode legacy --dry-run",
+			InstallCommand: "projmux ai integrate codex --mode legacy-notify",
+			RemoveCommand:  "projmux ai integrate codex --mode legacy-notify --remove",
+			DryRunCommand:  "projmux ai integrate codex --mode legacy-notify --dry-run",
 		},
 		{
 			ID:             "codex-hooks",
@@ -1260,6 +1260,7 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	var notificationsOptions intpickercompat.Options
 	var listOptions intpickercompat.Options
 	var detailOptions intpickercompat.Options
+	visibleDiagnostics := diagnostics[1:]
 	tmuxRunner := &recordingTmuxRunner{}
 	cmd := &settingsCommand{
 		ai:                  testAICommand(t.TempDir()),
@@ -1312,10 +1313,14 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	if got, want := listOptions.UI, "settings-notifications-delivery"; got != want {
 		t.Fatalf("delivery sources UI = %q, want %q", got, want)
 	}
-	if got, want := listOptions.Footer, "Enter: copy install command + view details"; !strings.Contains(got, want) {
+	if got, want := listOptions.Footer, "Enter: view details"; !strings.Contains(got, want) {
 		t.Fatalf("delivery sources footer = %q, want %q", got, want)
 	}
-	for _, diag := range diagnostics {
+	if hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+"codex-legacy-notify") ||
+		hasEntryLabelContaining(listOptions.Entries, "Codex legacy notify") {
+		t.Fatalf("AI notify diagnostics entries = %#v, want no Codex legacy notify row", listOptions.Entries)
+	}
+	for _, diag := range visibleDiagnostics {
 		if !hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+diag.ID) {
 			t.Fatalf("AI notify diagnostics entries = %#v, want %q", listOptions.Entries, diag.ID)
 		}
@@ -1332,6 +1337,9 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	if got, want := detailOptions.UI, "settings-notifications-delivery-detail"; got != want {
 		t.Fatalf("delivery source detail UI = %q, want %q", got, want)
 	}
+	if got, want := detailOptions.Footer, "Enter: copy command"; !strings.Contains(got, want) {
+		t.Fatalf("delivery source detail footer = %q, want %q", got, want)
+	}
 	for _, want := range []string{
 		"conflict",
 		"/home/tester/.codex/config.toml",
@@ -1339,28 +1347,99 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 		"projmux ai integrate codex --mode hooks",
 		"projmux ai integrate codex --mode hooks --remove",
 		"projmux ai integrate codex --mode hooks --dry-run",
-		"Read-only",
+		"Copy only",
 	} {
 		if !hasEntryLabelContaining(detailOptions.Entries, want) {
 			t.Fatalf("AI notify detail entries = %#v, want %q", detailOptions.Entries, want)
 		}
 	}
-	for _, entry := range detailOptions.Entries {
-		if entry.Value != settingsBackValue && entry.Value != settingsNoopValue {
-			t.Fatalf("AI notify detail entry = %#v, want read-only/noop value", entry)
+	for _, want := range []string{
+		settingsActionPrefixAINotifyCommand + "codex-hooks:install",
+		settingsActionPrefixAINotifyCommand + "codex-hooks:remove",
+		settingsActionPrefixAINotifyCommand + "codex-hooks:dry-run",
+	} {
+		if !hasEntryValue(detailOptions.Entries, want) {
+			t.Fatalf("AI notify detail entries = %#v, want command action %q", detailOptions.Entries, want)
 		}
 	}
-	wantCopy := recordedTmuxCall{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate codex --mode hooks"}}
-	if !hasRecordedTmuxCall(tmuxRunner.calls, wantCopy) {
-		t.Fatalf("tmux calls = %#v, want install command copied via %#v", tmuxRunner.calls, wantCopy)
+	for _, entry := range detailOptions.Entries {
+		if entry.Value != settingsBackValue && entry.Value != settingsNoopValue && !strings.HasPrefix(entry.Value, settingsActionPrefixAINotifyCommand) {
+			t.Fatalf("AI notify detail entry = %#v, want back/noop/command value", entry)
+		}
 	}
-	wantMessage := recordedTmuxCall{name: "tmux", args: []string{"display-message", "Codex hooks install command copied to clipboard"}}
-	if !hasRecordedTmuxCall(tmuxRunner.calls, wantMessage) {
-		t.Fatalf("tmux calls = %#v, want copied display message %#v", tmuxRunner.calls, wantMessage)
+	if len(tmuxRunner.calls) != 0 {
+		t.Fatalf("tmux calls = %#v, want no clipboard copy while opening detail", tmuxRunner.calls)
 	}
 }
 
-func TestSettingsAINotifyDiagnosticsCopyFailureStillOpensDetail(t *testing.T) {
+func TestSettingsAINotifyDiagnosticsDetailCommandRowsCopyCommands(t *testing.T) {
+	t.Parallel()
+
+	diagnostics := []doctorAINotifyIntegration{{
+		ID:             "claude-hooks",
+		Name:           "Claude Code hooks",
+		Status:         doctorAINotifyStatusMissing,
+		ConfigPath:     "/home/tester/.claude/settings.json",
+		InstallCommand: "projmux ai integrate claude",
+		RemoveCommand:  "projmux ai integrate claude --remove",
+		DryRunCommand:  "projmux ai integrate claude --dry-run",
+	}}
+
+	var calls int
+	tmuxRunner := &recordingTmuxRunner{}
+	cmd := &settingsCommand{
+		ai:                  testAICommand(t.TempDir()),
+		aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return diagnostics },
+		tmuxRunner:          tmuxRunner,
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
+			case 2:
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
+			case 3:
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "claude-hooks"}, nil
+			case 4:
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyCommand + "claude-hooks:install"}, nil
+			case 5:
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyCommand + "claude-hooks:remove"}, nil
+			case 6:
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyCommand + "claude-hooks:dry-run"}, nil
+			case 7:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 8:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 9:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 10:
+				return intpickercompat.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intpickercompat.Result{}, nil
+			}
+		}),
+	}
+	cmd.nativePicker = nativePickerFromCompatRunner(cmd.runner)
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []recordedTmuxCall{
+		{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate claude"}},
+		{name: "tmux", args: []string{"display-message", "Claude Code hooks install command copied to clipboard"}},
+		{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate claude --remove"}},
+		{name: "tmux", args: []string{"display-message", "Claude Code hooks remove command copied to clipboard"}},
+		{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate claude --dry-run"}},
+		{name: "tmux", args: []string{"display-message", "Claude Code hooks dry-run command copied to clipboard"}},
+	} {
+		if !hasRecordedTmuxCall(tmuxRunner.calls, want) {
+			t.Fatalf("tmux calls = %#v, want %#v", tmuxRunner.calls, want)
+		}
+	}
+}
+
+func TestSettingsAINotifyDiagnosticsCommandCopyFailureStaysInDetail(t *testing.T) {
 	t.Parallel()
 
 	diagnostics := []doctorAINotifyIntegration{{
@@ -1391,12 +1470,15 @@ func TestSettingsAINotifyDiagnosticsCopyFailureStillOpensDetail(t *testing.T) {
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "claude-hooks"}, nil
 			case 4:
 				detailOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyCommand + "claude-hooks:install"}, nil
 			case 5:
+				detailOptions = options
 				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 			case 6:
 				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 			case 7:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 8:
 				return intpickercompat.Result{}, nil
 			default:
 				t.Fatalf("unexpected settings picker call %d", calls)

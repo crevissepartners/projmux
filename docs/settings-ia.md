@@ -15,9 +15,11 @@ view-first layout:
   boundaries.
 - `Settings > Notifications > Desktop notifications` owns the desktop
   notification mode. The detail choices are `none`, `notify`, and `raise`.
-- `Settings > Notifications > Delivery sources` shows read-only Codex/Claude/tmux
-  producer diagnostics and CLI/dry-run guidance. Settings does not install or
-  remove external notify wiring.
+- `Settings > Notifications > Delivery sources` shows Codex hooks, Claude, and
+  tmux producer diagnostics plus copyable install/remove/dry-run commands.
+  Settings copies command text only; it does not install or remove external
+  notify wiring. The legacy Codex notify source is intentionally omitted from
+  Settings.
 - `Settings > Labs` keeps experimental toggles, but keybindings no longer have a
   visible Labs row. The hidden compatibility action still redirects to the
   unified Keybindings page.

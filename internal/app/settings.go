@@ -171,6 +171,7 @@ const (
 	settingsSectionAbout                   = "section:about"
 	settingsActionPrefixAI                 = "ai:"
 	settingsActionPrefixAINotifyDiagnostic = "ai-notify:"
+	settingsActionPrefixAINotifyCommand    = "ai-notify-command:"
 	settingsActionPrefixDesktopNotifyMode  = "desktop-notify-mode:"
 	settingsActionPrefixHooks              = "project-hooks:"
 	settingsActionPrefixKeymap             = "keymap:"
@@ -1643,7 +1644,7 @@ func (c *settingsCommand) runNotificationsDeliverySourcesSection(stdout, stderr 
 			Entries:    c.aiNotifyDiagnosticEntries(),
 			Title:      "Notifications - Delivery sources",
 			Prompt:     "Settings > Notifications > Delivery sources > ",
-			Footer:     projmuxFooter("Enter: copy install command + view details  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: view details  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1661,12 +1662,7 @@ func (c *settingsCommand) runNotificationsDeliverySourcesSection(stdout, stderr 
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixAINotifyDiagnostic):
 			id := strings.TrimPrefix(action, settingsActionPrefixAINotifyDiagnostic)
-			diag, ok := c.aiNotifyDiagnosticByID(id)
-			if !ok {
-				return fmt.Errorf("unknown AI notify integration: %s", id)
-			}
-			c.copySettingsInstallCommand(diag, stderr)
-			if err := c.runAINotifyDiagnosticDetail(id); err != nil {
+			if err := c.runAINotifyDiagnosticDetail(id, stderr); err != nil {
 				return err
 			}
 		default:
@@ -1679,7 +1675,7 @@ func (c *settingsCommand) runAINotifyDiagnosticsSection(stdout, stderr io.Writer
 	return c.runNotificationsDeliverySourcesSection(stdout, stderr)
 }
 
-func (c *settingsCommand) runAINotifyDiagnosticDetail(id string) error {
+func (c *settingsCommand) runAINotifyDiagnosticDetail(id string, stderr io.Writer) error {
 	for {
 		diag, ok := c.aiNotifyDiagnosticByID(id)
 		if !ok {
@@ -1690,7 +1686,7 @@ func (c *settingsCommand) runAINotifyDiagnosticDetail(id string) error {
 			Entries:    aiNotifyDiagnosticDetailEntries(diag),
 			Title:      "AI Notify - " + diag.Name,
 			Prompt:     "Settings > Notifications > Delivery sources > " + diag.Name + " > ",
-			Footer:     projmuxFooter("Read-only  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: copy command  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1707,19 +1703,43 @@ func (c *settingsCommand) runAINotifyDiagnosticDetail(id string) error {
 		if action == settingsNoopValue {
 			continue
 		}
+		if strings.HasPrefix(action, settingsActionPrefixAINotifyCommand) {
+			command, label, ok := aiNotifyDiagnosticCommandAction(diag, action)
+			if !ok {
+				return fmt.Errorf("unknown AI notify diagnostic command action: %s", action)
+			}
+			c.copySettingsCommand(diag.Name+" "+label, command, stderr)
+			continue
+		}
 		return fmt.Errorf("unknown AI notify diagnostic detail action: %s", action)
 	}
 }
 
 func (c *settingsCommand) currentAINotifyDiagnostics() []doctorAINotifyIntegration {
+	var diagnostics []doctorAINotifyIntegration
 	if c.aiNotifyDiagnostics != nil {
-		return c.aiNotifyDiagnostics()
+		diagnostics = c.aiNotifyDiagnostics()
+	} else {
+		diagnostics = doctorAINotifyDiagnostics(c.ai)
 	}
-	return doctorAINotifyDiagnostics(c.ai)
+	out := make([]doctorAINotifyIntegration, 0, len(diagnostics))
+	for _, diag := range diagnostics {
+		if settingsAINotifyDiagnosticHidden(diag) {
+			continue
+		}
+		out = append(out, diag)
+	}
+	return out
 }
 
-func (c *settingsCommand) copySettingsInstallCommand(diag doctorAINotifyIntegration, stderr io.Writer) {
-	command := strings.TrimSpace(diag.InstallCommand)
+func settingsAINotifyDiagnosticHidden(diag doctorAINotifyIntegration) bool {
+	id := strings.TrimSpace(diag.ID)
+	name := strings.ToLower(strings.TrimSpace(diag.Name))
+	return id == "codex-legacy-notify" || strings.HasPrefix(id, "codex-legacy") || strings.Contains(name, "codex legacy")
+}
+
+func (c *settingsCommand) copySettingsCommand(label, command string, stderr io.Writer) {
+	command = strings.TrimSpace(command)
 	if command == "" {
 		return
 	}
@@ -1729,11 +1749,11 @@ func (c *settingsCommand) copySettingsInstallCommand(diag doctorAINotifyIntegrat
 	}
 	if _, err := runner.Run(context.Background(), "tmux", "set-buffer", "-w", "--", command); err != nil {
 		if stderr != nil {
-			_, _ = fmt.Fprintf(stderr, "warning: copy %s install command to clipboard: %v\n", diag.Name, err)
+			_, _ = fmt.Fprintf(stderr, "warning: copy %s to clipboard: %v\n", label, err)
 		}
 		return
 	}
-	_, _ = runner.Run(context.Background(), "tmux", "display-message", diag.Name+" install command copied to clipboard")
+	_, _ = runner.Run(context.Background(), "tmux", "display-message", label+" copied to clipboard")
 }
 
 func (c *settingsCommand) aiNotifyDiagnosticsSummary() string {
@@ -1815,12 +1835,41 @@ func aiNotifyDiagnosticDetailEntries(diag doctorAINotifyIntegration) []intpicker
 		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Conflict", diag.ConflictReason, ""), Value: settingsNoopValue})
 	}
 	entries = append(entries,
-		intpickercompat.Entry{Label: settingsLabelInfo("Install command", diag.InstallCommand, "CLI only"), Value: settingsNoopValue},
-		intpickercompat.Entry{Label: settingsLabelInfo("Remove command", diag.RemoveCommand, "CLI only"), Value: settingsNoopValue},
-		intpickercompat.Entry{Label: settingsLabelInfo("Dry-run command", diag.DryRunCommand, "CLI only"), Value: settingsNoopValue},
-		intpickercompat.Entry{Label: settingsLabelDim("Read-only", "Settings shows guidance only and does not execute these commands"), Value: settingsNoopValue},
+		aiNotifyDiagnosticCommandEntry(diag, "install", "Install command", diag.InstallCommand),
+		aiNotifyDiagnosticCommandEntry(diag, "remove", "Remove command", diag.RemoveCommand),
+		aiNotifyDiagnosticCommandEntry(diag, "dry-run", "Dry-run command", diag.DryRunCommand),
+		intpickercompat.Entry{Label: settingsLabelDim("Copy only", "Settings copies command text and does not execute these commands"), Value: settingsNoopValue},
 	)
 	return entries
+}
+
+func aiNotifyDiagnosticCommandEntry(diag doctorAINotifyIntegration, kind, label, command string) intpickercompat.Entry {
+	if strings.TrimSpace(command) == "" {
+		return intpickercompat.Entry{Label: settingsLabelInfo(label, "", "unavailable"), Value: settingsNoopValue}
+	}
+	return intpickercompat.Entry{
+		Label:     settingsLabelInfo(label, command, "Enter copies"),
+		Value:     settingsActionPrefixAINotifyCommand + diag.ID + ":" + kind,
+		SearchKey: strings.Join([]string{label, command, "copy clipboard"}, " "),
+	}
+}
+
+func aiNotifyDiagnosticCommandAction(diag doctorAINotifyIntegration, action string) (command, label string, ok bool) {
+	rest := strings.TrimPrefix(action, settingsActionPrefixAINotifyCommand)
+	id, kind, found := strings.Cut(rest, ":")
+	if !found || id != diag.ID {
+		return "", "", false
+	}
+	switch kind {
+	case "install":
+		return diag.InstallCommand, "install command", strings.TrimSpace(diag.InstallCommand) != ""
+	case "remove":
+		return diag.RemoveCommand, "remove command", strings.TrimSpace(diag.RemoveCommand) != ""
+	case "dry-run":
+		return diag.DryRunCommand, "dry-run command", strings.TrimSpace(diag.DryRunCommand) != ""
+	default:
+		return "", "", false
+	}
 }
 
 func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
