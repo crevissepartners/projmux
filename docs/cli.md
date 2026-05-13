@@ -683,19 +683,13 @@ flags with the top-level `switch` UX:
   by the shell jump binding).
 - `shell` — boot the isolated `-L projmux` tmux server with the
   generated config. The generated app config uses absolute `$SHELL` as the
-  tmux default shell when set, otherwise `/bin/sh`. On a new target app
-  session, default `shell` can still open the `Start app session`
-  compatibility picker when the global startup picker is enabled. Alt-1 sidebar
-  project open defaults to `Empty session`; the Labs `Sidebar startup picker`
-  opt-in shows `Latest snapshot`, `Named snapshot`, and `Empty session` before
-  creating a closed project session. `Latest snapshot` is auto-saved; named
-  snapshots are fixed until the user saves or replaces them. Closing the shell
-  compatibility picker falls back to an empty session and continues startup.
-  `--saved` forces replay from the latest snapshot, `--layout <name>` forces
-  replay from a named snapshot backed by the legacy project snapshot store, and
-  `--empty` skips snapshot replay. These flags bypass the picker and startup
-  picker toggle, are mutually exclusive, and never overwrite an existing app
-  session; if the target already exists, `shell` follows the normal attach path.
+  tmux default shell when set, otherwise `/bin/sh`. `shell` starts or attaches
+  the app session directly after resolving the target app session name and
+  startup directory. Alt-1 sidebar project open defaults to `Empty session`; the
+  Labs `Sidebar startup picker` opt-in shows `Latest snapshot`, `Named
+  snapshot`, and `Empty session` before creating a closed project session.
+  `Latest snapshot` is auto-saved; named snapshots are fixed until the user
+  saves or replaces them.
 - `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI

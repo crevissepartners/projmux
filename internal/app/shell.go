@@ -13,10 +13,8 @@ import (
 	"strings"
 	"time"
 
-	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -78,9 +76,6 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	configPath := fs.String("config", "", "tmux config path for the projmux app")
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the app config")
 	noInstall := fs.Bool("no-install", false, "run without writing the app tmux config")
-	layoutName := fs.String("layout", "", "start a new app session from a named snapshot")
-	saved := fs.Bool("saved", false, "start a new app session from the latest snapshot")
-	empty := fs.Bool("empty", false, "start a new empty app session")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -92,11 +87,6 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return errors.New("shell does not accept positional arguments")
 	}
 	sessionExplicit := flagSetExplicitly(fs, "session")
-	startMode, err := parseShellStartMode(*layoutName, *saved, *empty)
-	if err != nil {
-		printShellUsage(stderr)
-		return err
-	}
 
 	socketName := nonEmpty(strings.TrimSpace(*socket), defaultAppSocket)
 	if c.insideAppSocket(socketName) {
@@ -134,7 +124,6 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if target.CWD != "" {
 		runArgs = append(runArgs, "-c", target.CWD)
 	}
-	c.prepareShellSession(context.Background(), socketName, config, target.SessionName, target.CWD, target.ProjectDefault, startMode, stderr)
 	return c.run(context.Background(), "tmux", runArgs...)
 }
 
@@ -181,208 +170,6 @@ func flagSetExplicitly(fs *flag.FlagSet, name string) bool {
 	return explicit
 }
 
-type shellStartMode struct {
-	kind   string
-	layout string
-}
-
-const (
-	shellStartAuto   = "auto"
-	shellStartSaved  = "saved"
-	shellStartLayout = "layout"
-	shellStartEmpty  = "empty"
-
-	shellStartupPickerValueSaved  = "saved"
-	shellStartupPickerValueEmpty  = "empty"
-	shellStartupPickerValueLayout = "layout:"
-)
-
-func parseShellStartMode(layoutName string, saved, empty bool) (shellStartMode, error) {
-	layoutName = strings.TrimSpace(layoutName)
-	count := 0
-	if layoutName != "" {
-		count++
-	}
-	if saved {
-		count++
-	}
-	if empty {
-		count++
-	}
-	if count > 1 {
-		return shellStartMode{}, errors.New("shell accepts only one of --layout, --saved, or --empty")
-	}
-	switch {
-	case layoutName != "":
-		if err := corelayout.ValidateName(layoutName); err != nil {
-			return shellStartMode{}, err
-		}
-		return shellStartMode{kind: shellStartLayout, layout: layoutName}, nil
-	case saved:
-		return shellStartMode{kind: shellStartSaved}, nil
-	case empty:
-		return shellStartMode{kind: shellStartEmpty}, nil
-	default:
-		return shellStartMode{kind: shellStartAuto}, nil
-	}
-}
-
-func (c *shellCommand) prepareShellSession(ctx context.Context, socketName, configPath, sessionName, cwd string, projectDefault bool, mode shellStartMode, stderr io.Writer) {
-	switch mode.kind {
-	case shellStartEmpty:
-		return
-	case shellStartLayout:
-		c.restoreLayoutPreset(ctx, socketName, configPath, sessionName, cwd, mode.layout, stderr)
-	case shellStartSaved:
-		c.restoreSavedSessionState(ctx, socketName, configPath, sessionName, cwd, stderr)
-	default:
-		c.prepareAutoShellSession(ctx, socketName, configPath, sessionName, cwd, projectDefault, stderr)
-	}
-}
-
-func (c *shellCommand) prepareAutoShellSession(ctx context.Context, socketName, configPath, sessionName, cwd string, projectDefault bool, stderr io.Writer) {
-	if !sessionStateAutorestoreEnabled(c.homeDir, c.lookupEnv) {
-		return
-	}
-	candidates := c.shellSessionCandidates(sessionName, projectDefault)
-	if len(candidates) == 0 {
-		if !c.shouldOfferEmptyStartupPicker(cwd) {
-			return
-		}
-		candidates = []shellSessionCandidate{emptyShellSessionCandidate()}
-	}
-
-	runner := shellAppTmuxRunner{runner: c.tmuxRunner, socketName: socketName, configPath: configPath}
-	exists, err := tmuxSessionExists(ctx, runner, sessionName)
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("check existing session: %v", err))
-		return
-	}
-	if exists {
-		return
-	}
-
-	mode := c.pickShellStartupMode(candidates, stderr)
-	c.prepareShellSession(ctx, socketName, configPath, sessionName, cwd, projectDefault, mode, stderr)
-}
-
-func (c *shellCommand) restoreSavedSessionState(ctx context.Context, socketName, configPath, sessionName, cwd string, stderr io.Writer) {
-	if c.tmuxRunner == nil {
-		c.reportSessionStateAutorestore(stderr, "tmux runner is not configured")
-		return
-	}
-	store, err := c.shellSessionStateStore()
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("resolve store: %v", err))
-		return
-	}
-	snap, err := store.Load(sessionName)
-	if err != nil {
-		if errors.Is(err, sessionstate.ErrNotFound) {
-			return
-		}
-		c.reportSessionStateAutorestore(stderr, err.Error())
-		return
-	}
-
-	runner := shellAppTmuxRunner{runner: c.tmuxRunner, socketName: socketName, configPath: configPath}
-	exists, err := tmuxSessionExists(ctx, runner, sessionName)
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("check existing session: %v", err))
-		return
-	}
-	if exists {
-		return
-	}
-	if _, err := sessionstate.Replay(ctx, runner, snap, sessionstate.ReplayOptions{FallbackCWD: cwd}); err != nil {
-		c.reportSessionStateAutorestore(stderr, err.Error())
-		return
-	}
-	c.markShellSessionStateSource(ctx, runner, sessionName, sessionstate.SourceAutosave, stderr)
-}
-
-func (c *shellCommand) restoreLayoutPreset(ctx context.Context, socketName, configPath, sessionName, cwd, name string, stderr io.Writer) {
-	if c.tmuxRunner == nil {
-		c.reportSessionStateAutorestore(stderr, "tmux runner is not configured")
-		return
-	}
-	store, err := c.shellLayoutStore()
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("resolve layout store: %v", err))
-		return
-	}
-	preset, err := store.Load(name)
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, err.Error())
-		return
-	}
-	snap, err := corelayout.ToSnapshot(preset, sessionName, store.ProjectRoot, c.nowTime())
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("convert named snapshot %q: %v", name, err))
-		return
-	}
-
-	runner := shellAppTmuxRunner{runner: c.tmuxRunner, socketName: socketName, configPath: configPath}
-	exists, err := tmuxSessionExists(ctx, runner, sessionName)
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("check existing session: %v", err))
-		return
-	}
-	if exists {
-		return
-	}
-	result, err := sessionstate.Replay(ctx, runner, snap, sessionstate.ReplayOptions{FallbackCWD: nonEmpty(store.ProjectRoot, cwd)})
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, err.Error())
-		return
-	}
-	printSessionStateReplayWarnings(stderr, result.Warnings)
-	source := layoutPresetSource(name, preset)
-	c.markShellSessionStateSource(ctx, runner, sessionName, source, stderr)
-	if source == sessionstate.SourceFresh {
-		c.deleteShellSessionSnapshot(sessionName, stderr)
-	}
-}
-
-func (c *shellCommand) shellSessionStateStore() (sessionstate.Store, error) {
-	if c.sessionStore != nil {
-		return c.sessionStore()
-	}
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return sessionstate.Store{}, err
-	}
-	return sessionstate.NewStore(paths.SessionStateDir()), nil
-}
-
-func (c *shellCommand) shellLayoutStore() (corelayout.Store, error) {
-	projectRoot, err := c.resolveShellProjectContext()
-	if err != nil {
-		return corelayout.Store{}, err
-	}
-	if projectRoot == "" {
-		return corelayout.Store{}, errors.New("layout requires a project context; run inside a project tree or set PROJMUX_CWD")
-	}
-	return corelayout.NewStore(projectRoot), nil
-}
-
-func (c *shellCommand) markShellSessionStateSource(ctx context.Context, runner tmuxRunner, sessionName, source string, stderr io.Writer) {
-	if err := inttmux.NewClient(runner).MarkSessionStateSource(ctx, sessionName, source); err != nil {
-		c.reportSessionStateAutorestore(stderr, err.Error())
-	}
-}
-
-func (c *shellCommand) deleteShellSessionSnapshot(sessionName string, stderr io.Writer) {
-	store, err := c.shellSessionStateStore()
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("resolve store for fresh snapshot cleanup: %v", err))
-		return
-	}
-	if err := store.Delete(sessionName); err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("delete fresh session snapshot: %v", err))
-	}
-}
-
 func (c *shellCommand) resolveShellProjectContext() (string, error) {
 	if c.lookupEnv != nil {
 		if raw := strings.TrimSpace(c.lookupEnv("PROJMUX_CWD")); raw != "" {
@@ -401,156 +188,6 @@ func (c *shellCommand) resolveShellProjectContext() (string, error) {
 		return root, nil
 	}
 	return "", nil
-}
-
-type shellSessionCandidate struct {
-	Kind        string
-	Name        string
-	Label       string
-	Description string
-}
-
-func (c *shellCommand) shellSessionCandidates(sessionName string, includeProjectLayouts bool) []shellSessionCandidate {
-	var candidates []shellSessionCandidate
-	if store, err := c.shellSessionStateStore(); err == nil {
-		if summary, err := store.Summary(sessionName); err == nil {
-			if summary.Source != sessionstate.SourceFresh {
-				candidates = append(candidates, shellSessionCandidate{
-					Kind:        shellStartSaved,
-					Name:        summary.Session,
-					Label:       "Latest snapshot",
-					Description: fmt.Sprintf("auto-saved, %s, %s", sessionStateCount(summary.WindowCount, "window"), sessionStateCount(summary.PaneCount, "pane")),
-				})
-			}
-		}
-	}
-	if includeProjectLayouts {
-		if store, err := c.shellLayoutStore(); err == nil {
-			entries, _, err := store.List()
-			if err == nil {
-				for _, entry := range entries {
-					candidates = append(candidates, shellSessionCandidate{
-						Kind:        shellStartLayout,
-						Name:        entry.Name,
-						Label:       "Named snapshot",
-						Description: namedSnapshotDescription(entry),
-					})
-				}
-			}
-		}
-	}
-	if len(candidates) == 0 {
-		return nil
-	}
-	candidates = append(candidates, emptyShellSessionCandidate())
-	return candidates
-}
-
-func emptyShellSessionCandidate() shellSessionCandidate {
-	return shellSessionCandidate{
-		Kind:        shellStartEmpty,
-		Label:       "Empty session",
-		Description: "start without restoring windows",
-	}
-}
-
-func (c *shellCommand) shouldOfferEmptyStartupPicker(cwd string) bool {
-	cwd = strings.TrimSpace(cwd)
-	if cwd == "" {
-		return false
-	}
-	home, err := c.home()
-	if err != nil {
-		return false
-	}
-	return filepath.Clean(cwd) != filepath.Clean(home)
-}
-
-func (c *shellCommand) pickShellStartupMode(candidates []shellSessionCandidate, stderr io.Writer) shellStartMode {
-	if len(candidates) == 0 {
-		return shellStartMode{kind: shellStartEmpty}
-	}
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, nil, shellStartupPickerOptions(candidates))
-	if err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("startup picker skipped: %v", err))
-		return shellStartMode{kind: shellStartEmpty}
-	}
-	mode, ok := shellStartModeFromPickerValue(result.Value)
-	if !ok {
-		return shellStartMode{kind: shellStartEmpty}
-	}
-	return mode
-}
-
-func shellStartupPickerOptions(candidates []shellSessionCandidate) intpickercompat.Options {
-	entries := make([]intpickercompat.Entry, 0, len(candidates))
-	for _, candidate := range candidates {
-		entries = append(entries, intpickercompat.Entry{
-			Label:     shellStartupPickerLabel(candidate),
-			Value:     shellStartupPickerValue(candidate),
-			SearchKey: strings.TrimSpace(candidate.Label + " " + candidate.Name + " " + candidate.Description),
-		})
-	}
-	return intpickercompat.Options{
-		UI:            "shell-startup",
-		Prompt:        "Start > ",
-		Header:        "Start app session",
-		Footer:        "Enter: start  |  Esc: empty session",
-		Entries:       entries,
-		Bindings:      settingsCloseBindings(),
-		DisableSearch: true,
-	}
-}
-
-func shellStartupPickerLabel(candidate shellSessionCandidate) string {
-	switch candidate.Kind {
-	case shellStartSaved:
-		return settingsLabel(settingsGlyphOpen, settingsColorType, "Latest snapshot", candidate.Description)
-	case shellStartLayout:
-		return settingsLabel(settingsGlyphOpen, settingsColorType, "Named snapshot", candidate.Description)
-	case shellStartEmpty:
-		return settingsLabel(settingsGlyphBack, settingsColorBack, "Empty session", candidate.Description)
-	default:
-		return settingsLabel(settingsGlyphInfo, settingsColorInfo, candidate.Label, candidate.Description)
-	}
-}
-
-func shellStartupPickerValue(candidate shellSessionCandidate) string {
-	switch candidate.Kind {
-	case shellStartSaved:
-		return shellStartupPickerValueSaved
-	case shellStartLayout:
-		return shellStartupPickerValueLayout + candidate.Name
-	case shellStartEmpty:
-		return shellStartupPickerValueEmpty
-	default:
-		return ""
-	}
-}
-
-func shellStartModeFromPickerValue(value string) (shellStartMode, bool) {
-	value = strings.TrimSpace(value)
-	switch {
-	case value == shellStartupPickerValueSaved:
-		return shellStartMode{kind: shellStartSaved}, true
-	case value == shellStartupPickerValueEmpty:
-		return shellStartMode{kind: shellStartEmpty}, true
-	case strings.HasPrefix(value, shellStartupPickerValueLayout):
-		name := strings.TrimSpace(strings.TrimPrefix(value, shellStartupPickerValueLayout))
-		if name == "" {
-			return shellStartMode{}, false
-		}
-		return shellStartMode{kind: shellStartLayout, layout: name}, true
-	default:
-		return shellStartMode{}, false
-	}
-}
-
-func (c *shellCommand) reportSessionStateAutorestore(stderr io.Writer, message string) {
-	if stderr == nil || strings.TrimSpace(message) == "" {
-		return
-	}
-	_, _ = fmt.Fprintf(stderr, "projmux sessionstate startup picker: %s\n", message)
 }
 
 func (c *shellCommand) nowTime() time.Time {
@@ -912,5 +549,5 @@ func loginShellCommand(shell string) []string {
 
 func printShellUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux shell [--socket <name>] [--session <name>] [--config <path>] [--bin <path>] [--no-install] [--saved|--layout <name>|--empty]")
+	fmt.Fprintln(w, "  projmux shell [--socket <name>] [--session <name>] [--config <path>] [--bin <path>] [--no-install]")
 }

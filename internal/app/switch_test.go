@@ -881,17 +881,10 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 	var pickerCalled bool
 	executor := &capturingSwitchSessionExecutor{}
 	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case sessionStateAutorestoreEnv:
-				return "off"
-			default:
-				return ""
-			}
-		},
+		sessions:  executor,
+		identity:  stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
 		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			pickerCalled = true
 			return intpickercompat.Result{}, nil
@@ -997,15 +990,10 @@ func TestSwitchProjectOpenStartupPickerOffStillChecksTrustBeforeCreate(t *testin
 
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
 	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(name string) string {
-			if name == sessionStateAutorestoreEnv {
-				return "off"
-			}
-			return ""
-		},
+		sessions:  executor,
+		identity:  stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:   func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(string) string { return "" },
 	}
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
@@ -1092,10 +1080,6 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if err := os.WriteFile(paths.PinFile(), []byte(fixture.path("pins/app")+"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := config.SaveSessionStateToggleFile(paths.SessionStateAutorestoreFile(), config.SessionStateToggleOff); err != nil {
-		t.Fatalf("SaveSessionStateToggleFile() error = %v", err)
-	}
-
 	t.Chdir(fixture.path("managed/work-a/nested"))
 
 	cmd := newSwitchCommand()

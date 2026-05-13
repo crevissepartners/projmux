@@ -6,13 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
-	SessionStateAutosaveFileName    = "sessionstate-autosave"
-	SessionStateAutorestoreFileName = "sessionstate-autorestore"
-	SessionStateProjectsDirName     = "sessionstate-projects"
-	SidebarStartupPickerFileName    = "sidebar-startup-picker"
+	SessionStateAutosaveFileName         = "sessionstate-autosave"
+	SessionStateAutosaveIntervalFileName = "sessionstate-autosave-interval"
+	SessionStateProjectsDirName          = "sessionstate-projects"
+	SidebarStartupPickerFileName         = "sidebar-startup-picker"
 
 	SessionStateToggleOn  SessionStateToggle = "on"
 	SessionStateToggleOff SessionStateToggle = "off"
@@ -53,8 +54,8 @@ func (p Paths) SessionStateAutosaveFile() string {
 	return filepath.Join(p.ConfigDir, SessionStateAutosaveFileName)
 }
 
-func (p Paths) SessionStateAutorestoreFile() string {
-	return filepath.Join(p.ConfigDir, SessionStateAutorestoreFileName)
+func (p Paths) SessionStateAutosaveIntervalFile() string {
+	return filepath.Join(p.ConfigDir, SessionStateAutosaveIntervalFileName)
 }
 
 func (p Paths) SidebarStartupPickerFile() string {
@@ -120,6 +121,65 @@ func SaveSessionStateToggleFile(path string, value SessionStateToggle) error {
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename sessionstate toggle temp file: %w", err)
+	}
+	return nil
+}
+
+func LoadSessionStateDurationFileDefault(path string, fallback time.Duration) (time.Duration, error) {
+	if fallback <= 0 {
+		fallback = time.Minute
+	}
+	if strings.TrimSpace(path) == "" {
+		return fallback, nil
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fallback, nil
+		}
+		return fallback, fmt.Errorf("read sessionstate duration file: %w", err)
+	}
+	value, err := time.ParseDuration(strings.TrimSpace(string(content)))
+	if err != nil || value <= 0 {
+		return fallback, nil
+	}
+	return value, nil
+}
+
+func SaveSessionStateDurationFile(path string, value time.Duration) error {
+	if strings.TrimSpace(path) == "" {
+		return ErrHomeDirRequired
+	}
+	if value <= 0 {
+		return fmt.Errorf("sessionstate duration must be positive")
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create sessionstate duration directory: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create sessionstate duration temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+
+	if _, err := tmp.WriteString(value.String() + "\n"); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write sessionstate duration temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close sessionstate duration temp file: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return fmt.Errorf("chmod sessionstate duration temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename sessionstate duration temp file: %w", err)
 	}
 	return nil
 }

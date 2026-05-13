@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -20,10 +19,6 @@ func TestSessionStateStatusShowsToggleAndSnapshotReadModel(t *testing.T) {
 	store := sessionstate.NewStore(t.TempDir())
 	saveSessionStateTestSnapshot(t, store, now.Add(-2*time.Minute))
 	configHome := t.TempDir()
-	paths := config.DefaultPaths(configHome, t.TempDir())
-	if err := config.SaveSessionStateToggleFile(paths.SessionStateAutorestoreFile(), config.SessionStateToggleOff); err != nil {
-		t.Fatalf("SaveSessionStateToggleFile() error = %v", err)
-	}
 	cmd := &sessionStateCommand{
 		lookupEnv: func(name string) string {
 			switch name {
@@ -50,7 +45,6 @@ func TestSessionStateStatusShowsToggleAndSnapshotReadModel(t *testing.T) {
 		"session:      workspace",
 		"source:       autosave",
 		"auto-save:    off (PROJMUX_SESSIONSTATE_AUTOSAVE env)",
-		"startup picker: off (saved)",
 		"snapshot:     saved",
 		"2m ago",
 		"window 0 editor (2 panes)",

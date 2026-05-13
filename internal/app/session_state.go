@@ -272,8 +272,7 @@ func (c *sessionStateCommand) printRestorePreview(ctx context.Context, explicitS
 
 func (c *sessionStateCommand) loadView(ctx context.Context, explicitSession string) statusbarSessionStateView {
 	state := statusbarSessionStateView{
-		Autosave:    sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
-		Autorestore: sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutorestoreEnv, config.SessionStateToggleOn, func(paths config.Paths) string { return paths.SessionStateAutorestoreFile() }),
+		Autosave: sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
 	}
 	sessionName, err := c.resolveSessionName(ctx, explicitSession)
 	if err != nil {
@@ -367,7 +366,6 @@ func sessionStateStatusLines(state statusbarSessionStateView, now time.Time, col
 	lines = append(lines, sessionStateField("session", session))
 	lines = append(lines, sessionStateField("source", statusbarSessionStateSourceText(state)))
 	lines = append(lines, sessionStateField("auto-save", statusbarSessionStateToggleText(state.Autosave)))
-	lines = append(lines, sessionStateField("startup picker", statusbarSessionStateToggleText(state.Autorestore)))
 
 	switch {
 	case state.SessionErr != nil:
@@ -421,10 +419,6 @@ func sessionStatePopupEntries(state statusbarSessionStateView) []intpickercompat
 		},
 		{
 			Label: settingsLabelInfo("Auto-save", statusbarSessionStateToggleText(state.Autosave), ""),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Startup picker", statusbarSessionStateToggleText(state.Autorestore), ""),
 			Value: settingsNoopValue,
 		},
 	}
