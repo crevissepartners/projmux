@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestBuildHookTrustPopupArgsTargetsWidePopup(t *testing.T) {
 		"/tmp/proj mux/bin/projmux",
 		"/tmp/request file.json",
 		"/tmp/decision file.txt",
-		hookTrustPopupTarget{client: "/dev/pts/7", pane: "%3"},
+		hookTrustPopupTarget{client: "/dev/pts/7"},
 	)
 	if err != nil {
 		t.Fatalf("buildHookTrustPopupArgs() error = %v", err)
@@ -27,7 +28,6 @@ func TestBuildHookTrustPopupArgsTargetsWidePopup(t *testing.T) {
 	wantPrefix := []string{
 		"display-popup",
 		"-c", "/dev/pts/7",
-		"-t", "%3",
 		"-E",
 		"-w", hookTrustPopupWidth,
 		"-h", hookTrustPopupHeight,
@@ -99,8 +99,8 @@ func TestTmuxProjectHookPromptUsesDisplayPopupDecision(t *testing.T) {
 				return "/tmp/tmux/default,1,0"
 			case hookTrustPopupTargetClientEnv:
 				return "/dev/pts/9"
-			case hookTrustPopupTargetPaneEnv:
-				return "%9"
+			case "TMUX_SESSIONIZER_CONTEXT_PANE":
+				return "%hidden-behind-parent-popup"
 			default:
 				return ""
 			}
@@ -129,8 +129,14 @@ func TestTmuxProjectHookPromptUsesDisplayPopupDecision(t *testing.T) {
 	if !strings.Contains(command, "tmux hook-trust-prompt") {
 		t.Fatalf("popup command = %q, want hook trust prompt", command)
 	}
-	if !containsTmuxArgPair(call.args, "-c", "/dev/pts/9") || !containsTmuxArgPair(call.args, "-t", "%9") {
-		t.Fatalf("tmux call args = %#v, want target client and pane", call.args)
+	if !containsTmuxArgPair(call.args, "-c", "/dev/pts/9") {
+		t.Fatalf("tmux call args = %#v, want target client", call.args)
+	}
+	if containsTmuxArgPair(call.args, "-t", "%hidden-behind-parent-popup") {
+		t.Fatalf("tmux call args = %#v, want no fallback target pane from sessionizer context", call.args)
+	}
+	if containsTmuxArg(call.args, "-t") {
+		t.Fatalf("tmux call args = %#v, want client-scoped popup without target pane", call.args)
 	}
 }
 
@@ -161,4 +167,8 @@ func singleQuotedFlagValue(command, flag string) string {
 		return ""
 	}
 	return value
+}
+
+func containsTmuxArg(args []string, key string) bool {
+	return slices.Contains(args, key)
 }

@@ -290,9 +290,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-E",
 		"-B",
 		"-d", "/tmp/work tree",
-		"-e", "PROJMUX_HOOK_TRUST_INLINE=1",
 		"-e", "PROJMUX_HOOK_TRUST_TARGET_CLIENT=/dev/pts/projmux-test-sidebar",
-		"-e", "PROJMUX_HOOK_TRUST_TARGET_PANE=%1",
 		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-1",
 		"-e", "PROJMUX_PICKER_BACKEND=native",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_DIR=/tmp/work tree",
@@ -309,13 +307,21 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	command := got.args[len(got.args)-1]
 	for _, want := range []string{
 		"cd -- '/tmp/work tree'",
-		"PROJMUX_HOOK_TRUST_INLINE='1'",
+		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/projmux-test-sidebar'",
 		"TMUX_SESSIONIZER_CONTEXT_SESSION='work'",
 		"TMUX_SESSIONIZER_CONTEXT_PANE='%1'",
 		"'/tmp/proj mux/bin/projmux' 'switch' '--ui=sidebar'",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("popup command = %q, want substring %q", command, want)
+		}
+	}
+	for _, unwanted := range []string{
+		"PROJMUX_HOOK_TRUST_INLINE",
+		"PROJMUX_HOOK_TRUST_TARGET_PANE",
+	} {
+		if strings.Contains(command, unwanted) {
+			t.Fatalf("popup command = %q, unwanted substring %q", command, unwanted)
 		}
 	}
 	content, err := os.ReadFile(marker)
@@ -763,6 +769,7 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"/tmp/marker",
 		tmuxPopupContext{
 			OriginPane:    "%1",
+			TargetClient:  "/dev/pts/7",
 			OriginSession: "main",
 			ContextDir:    "/workspace/projects/alpha-api",
 			ClientWidth:   200,
@@ -778,10 +785,15 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_NATIVE_TTY_FALLBACK='0'",
 		"PROJMUX_PROJDIR='/workspace/projects'",
 		"PROJMUX_MANAGED_ROOTS='/workspace/projects'",
-		hookTrustPopupTargetPaneEnv + "='%1'",
+		hookTrustPopupTargetClientEnv + "='/dev/pts/7'",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("popup command = %q, want substring %q", command, want)
+		}
+	}
+	for _, unwanted := range []string{hookTrustInlineEnv, hookTrustPopupTargetPaneEnv} {
+		if strings.Contains(command, unwanted) {
+			t.Fatalf("popup command = %q, unwanted substring %q", command, unwanted)
 		}
 	}
 	for key, want := range map[string]string{
@@ -790,11 +802,51 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_NATIVE_TTY_FALLBACK": "0",
 		"PROJMUX_PROJDIR":             "/workspace/projects",
 		"PROJMUX_MANAGED_ROOTS":       "/workspace/projects",
-		hookTrustPopupTargetPaneEnv:   "%1",
+		hookTrustPopupTargetClientEnv: "/dev/pts/7",
 	} {
 		if got := options.Env[key]; got != want {
 			t.Fatalf("options.Env[%q] = %q, want %q", key, got, want)
 		}
+	}
+	for _, key := range []string{hookTrustInlineEnv, hookTrustPopupTargetPaneEnv} {
+		if value, ok := options.Env[key]; ok {
+			t.Fatalf("options.Env[%q] = %q, want absent", key, value)
+		}
+	}
+}
+
+func TestBuildPopupToggleSessionizerTrustEnvUsesClientOnly(t *testing.T) {
+	command, options, err := buildPopupToggleWithPickerBackend(
+		tmuxPopupToggleMode{Raw: "sessionizer", Canonical: "sessionizer"},
+		"/tmp/projmux",
+		"/tmp/marker",
+		tmuxPopupContext{
+			TargetClient:  "/dev/pts/8",
+			OriginPane:    "%2",
+			OriginSession: "main",
+			ContextDir:    "/workspace/projects/alpha-api",
+			ClientWidth:   200,
+			ClientHeight:  50,
+		},
+		intpicker.Backend("legacy"),
+		func(string) string { return "" },
+	)
+	if err != nil {
+		t.Fatalf("buildPopupToggleWithPickerBackend() error = %v", err)
+	}
+	if !strings.Contains(command, hookTrustPopupTargetClientEnv+"='/dev/pts/8'") {
+		t.Fatalf("popup command = %q, want target client env", command)
+	}
+	for _, unwanted := range []string{hookTrustInlineEnv, hookTrustPopupTargetPaneEnv} {
+		if strings.Contains(command, unwanted) {
+			t.Fatalf("popup command = %q, unwanted substring %q", command, unwanted)
+		}
+		if value, ok := options.Env[unwanted]; ok {
+			t.Fatalf("options.Env[%q] = %q, want absent", unwanted, value)
+		}
+	}
+	if got := options.Env[hookTrustPopupTargetClientEnv]; got != "/dev/pts/8" {
+		t.Fatalf("options.Env[%q] = %q, want target client", hookTrustPopupTargetClientEnv, got)
 	}
 }
 
