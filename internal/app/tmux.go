@@ -1097,14 +1097,29 @@ func statusbarSessionStateButton() string {
 	return "#[bold,fg=colour16,bg=colour149]#[range=user|sessionstate] state #[norange]#[default]"
 }
 
-func statusbarSecondLineFormat(bin string, autosave bool) string {
-	line := "#[align=left range=user|usage]#(" + bin + " status usage --max-width 120)#[norange] " +
-		statusbarSessionStateButton() +
-		"#[align=right range=user|notify]#(" + bin + " status notify --max-width 80)#[norange]"
+func statusbarStandaloneSessionLeftFormat() string {
+	return "#[range=user|session][#S] #[norange] " + statusbarSessionStateButton()
+}
+
+func statusbarAppSessionLeftFormat() string {
+	return "#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] " + statusbarSessionStateButton()
+}
+
+func statusbarAuxLineFormat(bin string, autosave bool) string {
+	line := "#[align=left range=user|notify]#(" + bin + " status notify --max-width 80)#[norange]" +
+		"#[align=right range=user|usage]#(" + bin + " status usage --max-width 120)#[norange]"
 	if autosave {
 		line += "#(" + bin + " tmux autosave-session-state --quiet)"
 	}
 	return line
+}
+
+func statusbarWindowLineFormat() string {
+	return "#[align=left range=left #{E:status-left-style}]#[push-default]#{T;=/#{status-left-length}:status-left}#[pop-default]#[norange default]" +
+		"#[list=on align=#{status-justify}]#[list=left-marker]<#[list=right-marker]>#[list=on]" +
+		"#{W:#[range=window|#{window_index} #{E:window-status-style}#{?#{&&:#{window_last_flag},#{!=:#{E:window-status-last-style},default}}, #{E:window-status-last-style},}#{?#{&&:#{window_bell_flag},#{!=:#{E:window-status-bell-style},default}}, #{E:window-status-bell-style},#{?#{&&:#{||:#{window_activity_flag},#{window_silence_flag}},#{!=:#{E:window-status-activity-style},default}}, #{E:window-status-activity-style},}}]#[push-default]#{T:window-status-format}#[pop-default]#[norange default]#{?window_end_flag,,#{window-status-separator}}," +
+		"#[range=window|#{window_index} list=focus #{?#{!=:#{E:window-status-current-style},default},#{E:window-status-current-style},#{E:window-status-style}}#{?#{&&:#{window_last_flag},#{!=:#{E:window-status-last-style},default}}, #{E:window-status-last-style},}#{?#{&&:#{window_bell_flag},#{!=:#{E:window-status-bell-style},default}}, #{E:window-status-bell-style},#{?#{&&:#{||:#{window_activity_flag},#{window_silence_flag}},#{!=:#{E:window-status-activity-style},default}}, #{E:window-status-activity-style},}}]#[push-default]#{T:window-status-current-format}#[pop-default]#[norange list=on default]#{?window_end_flag,,#{window-status-separator}}}" +
+		"#[nolist align=right range=right #{E:status-right-style}]#[push-default]#{T;=/#{status-right-length}:status-right}#[pop-default]#[norange default]"
 }
 
 func tmuxStandaloneConfigWithKeymap(binaryPath string, decoration config.StatusbarDecoration, catalog []keyBindingAction, keymapPresent bool) string {
@@ -1125,15 +1140,15 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decoration config.Statusb
 		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tmuxWindowInactiveFg+",bg="+tmuxWindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowInactiveFg+"] #I #W #[default]"),
 		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tmuxWindowActiveFg+",bg="+tmuxWindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowActiveFg+"] #I #W #[default]"),
 		"set -g status 2",
+		"set -g status-left-length 42",
 		"set -g status-right-length 140",
-		"set -g status-left "+tmuxConfigQuote("#[range=user|session][#S] #[norange]"),
+		"set -g status-left "+tmuxConfigQuote(statusbarStandaloneSessionLeftFormat()),
 		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
-		// Two-line status bar: line 0 is the existing session/window/path row;
-		// line 1 keeps the AI usage HUD plus the Session State button on the
-		// left and moves the notification HUD to the right. Caps assume a 200+
-		// col terminal — the HUD's full form is ~100 cells, so 120 leaves
-		// headroom while still fitting alongside an 80-cell notify segment.
-		"set -g status-format[1] "+tmuxConfigQuote(statusbarSecondLineFormat(bin, false)),
+		// Two-line status bar: line 0 is the notify/HUD control row; line 1 is
+		// tmux's native session/window/path row. Setting both rows explicitly is
+		// required because tmux's built-in row otherwise stays at index 0.
+		"set -g status-format[0] "+tmuxConfigQuote(statusbarAuxLineFormat(bin, false)),
+		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),
 		// Clear any stale index-2 row a previous projmux build may have left on
 		// the running tmux server (older config used three lines).
 		"set -gu status-format[2]",
@@ -1186,7 +1201,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 		"set -g status-position bottom",
 		"set -g status-interval 5",
 		"set -g status-keys vi",
-		"set -g status-left-length 20",
+		"set -g status-left-length 42",
 		"set -g status-right-length 140",
 		"set -g window-status-separator \" \"",
 		"set -g automatic-rename on",
@@ -1207,8 +1222,8 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 	)
 	lines = append(lines, tmuxAppKeyBindings(catalog, keymapPresent)...)
 	// Two-line status bar:
-	//   [0] existing session/window/path/git/kube/clock row
-	//   [1] AI usage HUD + session state (left) + notify HUD (right)
+	//   [0] notify HUD (left) + usage HUD (right)
+	//   [1] existing session/window/path/git/kube/clock row
 	// We re-assert `status 2` here because `tmuxStandaloneConfig` already
 	// sets it, but a tmux server that previously ran an older projmux build
 	// may have stuck a leftover `status-format[1]` showing pane debug info —
@@ -1219,9 +1234,10 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 	// small buffer while still fitting alongside notify.
 	lines = append(lines,
 		"set -g status 2",
-		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]\"",
+		"set -g status-left "+tmuxConfigQuote(statusbarAppSessionLeftFormat()),
 		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
-		"set -g status-format[1] "+tmuxConfigQuote(statusbarSecondLineFormat(bin, true)),
+		"set -g status-format[0] "+tmuxConfigQuote(statusbarAuxLineFormat(bin, true)),
+		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[2]",
 	)
 	return strings.Join(lines, "\n") + "\n"
