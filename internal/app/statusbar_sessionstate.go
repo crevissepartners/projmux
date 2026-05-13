@@ -312,6 +312,13 @@ func statusbarSessionStatePanePreview(windowIndex int, pane sessionstate.Pane) s
 		detail = strings.TrimSpace(pane.CWD)
 	}
 	detail = statusbarSessionStateClean(detail)
+	if title := statusbarSessionStateClean(pane.Title); title != "" {
+		fallback := kind
+		if detail != "" {
+			fallback += " " + detail
+		}
+		return fmt.Sprintf("pane %d.%d  %s  %s", windowIndex, pane.Index, title, fallback)
+	}
 	if detail == "" {
 		return fmt.Sprintf("pane %d.%d  %s", windowIndex, pane.Index, kind)
 	}

@@ -55,6 +55,7 @@ type Window struct {
 // Pane describes one tmux pane and the recipe metadata needed by future replay.
 type Pane struct {
 	Index  int    `json:"index"`
+	Title  string `json:"title,omitempty"`
 	CWD    string `json:"cwd"`
 	Recipe Recipe `json:"recipe"`
 }

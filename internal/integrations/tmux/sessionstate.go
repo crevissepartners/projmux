@@ -30,6 +30,7 @@ type sessionStateWindowRow struct {
 type sessionStatePaneRow struct {
 	windowIndex    int
 	paneIndex      int
+	title          string
 	active         bool
 	cwd            string
 	recipeKind     string
@@ -96,6 +97,7 @@ func (c *Client) CaptureSessionSnapshot(ctx context.Context, sessionName string,
 			}
 			panesOut = append(panesOut, sessionstate.Pane{
 				Index:  pane.paneIndex,
+				Title:  pane.title,
 				CWD:    pane.cwd,
 				Recipe: classifySessionStatePane(pane),
 			})
@@ -173,6 +175,7 @@ func (c *Client) listSessionStatePanes(ctx context.Context, sessionName string) 
 	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-s", "-t", sessionName, "-F", tmuxFormat(
 		"#{window_index}",
 		"#{pane_index}",
+		"#{pane_title}",
 		"#{?pane_active,1,0}",
 		"#{pane_current_path}",
 		"#{"+sessionStateStartupKindOption+"}",
@@ -241,8 +244,8 @@ func parseSessionStatePanes(output []byte) ([]sessionStatePaneRow, error) {
 		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
-		fields := splitTmuxFields(rawLine, 10)
-		if len(fields) != 10 {
+		fields := splitTmuxFields(rawLine, 11)
+		if len(fields) != 11 {
 			return nil, fmt.Errorf("parse tmux sessionstate panes: malformed row %q", rawLine)
 		}
 		windowIndex, err := strconv.Atoi(strings.TrimSpace(fields[0]))
@@ -253,21 +256,22 @@ func parseSessionStatePanes(output []byte) ([]sessionStatePaneRow, error) {
 		if err != nil {
 			return nil, errPaneIndexInvalid
 		}
-		active, err := parseActiveFlag(fields[2])
+		active, err := parseActiveFlag(fields[3])
 		if err != nil {
 			return nil, err
 		}
 		panes = append(panes, sessionStatePaneRow{
 			windowIndex:    windowIndex,
 			paneIndex:      paneIndex,
+			title:          strings.TrimSpace(fields[2]),
 			active:         active,
-			cwd:            strings.TrimSpace(fields[3]),
-			recipeKind:     strings.TrimSpace(fields[4]),
-			startupCommand: strings.TrimSpace(fields[5]),
-			aiManaged:      strings.TrimSpace(fields[6]),
-			aiAgent:        strings.TrimSpace(fields[7]),
-			aiTopic:        strings.TrimSpace(fields[8]),
-			aiResumeID:     strings.TrimSpace(fields[9]),
+			cwd:            strings.TrimSpace(fields[4]),
+			recipeKind:     strings.TrimSpace(fields[5]),
+			startupCommand: strings.TrimSpace(fields[6]),
+			aiManaged:      strings.TrimSpace(fields[7]),
+			aiAgent:        strings.TrimSpace(fields[8]),
+			aiTopic:        strings.TrimSpace(fields[9]),
+			aiResumeID:     strings.TrimSpace(fields[10]),
 		})
 	}
 	return panes, nil

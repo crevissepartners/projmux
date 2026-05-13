@@ -23,10 +23,10 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 					"2\x1fwork\x1flayout-b\n",
 			)},
 			{output: []byte(
-				"0\x1f0\x1f0\x1f/home/tester\x1f\x1f\x1f\x1f\x1f\x1f\n" +
-					"0\x1f1\x1f1\x1f/home/tester/app\x1fstartup\x1fmake watch\x1f\x1f\x1f\x1f\n" +
-					"2\x1f0\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1fsession state\x1f01973f21-abc\n" +
-					"2\x1f1\x1f0\x1f/home/tester/app\x1f\x1f\x1f1\x1fclaude\x1fmissing resume\x1f\n",
+				"0\x1f0\x1fshell\x1f0\x1f/home/tester\x1f\x1f\x1f\x1f\x1f\x1f\n" +
+					"0\x1f1\x1fwatcher\x1f1\x1f/home/tester/app\x1fstartup\x1fmake watch\x1f\x1f\x1f\x1f\n" +
+					"2\x1f0\x1fcodex task\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1fsession state\x1f01973f21-abc\n" +
+					"2\x1f1\x1fclaude task\x1f0\x1f/home/tester/app\x1f\x1f\x1f1\x1fclaude\x1fmissing resume\x1f\n",
 			)},
 			{output: []byte("layout(team)\n")},
 		},
@@ -51,8 +51,8 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 				Layout:          "layout-a",
 				ActivePaneIndex: 1,
 				Panes: []sessionstate.Pane{
-					{Index: 0, CWD: "/home/tester", Recipe: sessionstate.ShellRecipe()},
-					{Index: 1, CWD: "/home/tester/app", Recipe: sessionstate.StartupRecipe("make watch")},
+					{Index: 0, Title: "shell", CWD: "/home/tester", Recipe: sessionstate.ShellRecipe()},
+					{Index: 1, Title: "watcher", CWD: "/home/tester/app", Recipe: sessionstate.StartupRecipe("make watch")},
 				},
 			},
 			{
@@ -61,8 +61,8 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 				Layout:          "layout-b",
 				ActivePaneIndex: 0,
 				Panes: []sessionstate.Pane{
-					{Index: 0, CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipe("codex", "01973f21-abc", "session state")},
-					{Index: 1, CWD: "/home/tester/app", Recipe: sessionstate.ShellRecipe()},
+					{Index: 0, Title: "codex task", CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipe("codex", "01973f21-abc", "session state")},
+					{Index: 1, Title: "claude task", CWD: "/home/tester/app", Recipe: sessionstate.ShellRecipe()},
 				},
 			},
 		},
@@ -76,6 +76,7 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 		{name: "tmux", args: []string{"list-panes", "-s", "-t", "workspace", "-F", tmuxFormat(
 			"#{window_index}",
 			"#{pane_index}",
+			"#{pane_title}",
 			"#{?pane_active,1,0}",
 			"#{pane_current_path}",
 			"#{@projmux_recipe_kind}",
@@ -100,7 +101,7 @@ func TestClientSaveSessionSnapshotWritesStore(t *testing.T) {
 		t: t,
 		steps: []scriptedStep{
 			{output: []byte("0\x1fshell\x1flayout\n")},
-			{output: []byte("0\x1f0\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n")},
+			{output: []byte("0\x1f0\x1fshell\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n")},
 			{output: []byte("\n")},
 		},
 	}
