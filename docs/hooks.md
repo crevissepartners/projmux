@@ -249,8 +249,37 @@ without writing. If a user-owned `notify = ...` line already exists outside the
 managed block, projmux refuses to replace it automatically because Codex legacy
 notify has a single command slot.
 
-Codex hooks-engine mode and tmux bell fallback integration remain future
-slices.
+Codex hooks-engine mode remains a future slice.
+
+## Tmux Bell Fallback
+
+`projmux ai integrate tmux-bell` is the opt-in fallback for AI CLIs that do
+not expose structured hooks but do emit BEL or OSC 9. It mutates the current
+tmux server only; it does not edit tmux config files. Install applies these
+server settings and appends a marked pane-bell hook:
+
+```text
+tmux set-option -g allow-passthrough on
+tmux set-option -g monitor-bell on
+tmux set-option -g bell-action other
+tmux set-hook -ag pane-bell-event run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # projmux-managed:tmux-bell:v1'
+```
+
+The hook calls `projmux ai ingest bell --pane <pane_id>`. Bell ingest resolves
+the target pane through tmux and pushes an info notify queue row such as
+`bell · Claude CLI`, with metadata including `agent=bell`, `event=bell`,
+session/window/pane, pane title, command, and socket path when available. The
+pane does not need `@projmux_ai_agent` or any other AI-managed option because
+this path is for unknown tools.
+
+Repeated bells from the same pane are suppressed for 5 seconds using a
+pane-local tmux timestamp option. The notify row also uses a stable
+`ai:bell:<session>:<pane>` id, so later non-suppressed bells refresh the same
+queue entry rather than creating unbounded duplicates.
+
+`--dry-run` prints the tmux commands without applying them. `--remove` reads
+the current `pane-bell-event` hooks and unsets only entries carrying
+`projmux-managed:tmux-bell:v1`, preserving unmanaged user hooks.
 
 ## Claude Code Hook Ingest
 

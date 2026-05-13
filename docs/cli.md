@@ -351,8 +351,10 @@ projmux ai notify   <reset|notify> [--pane <id>]
 projmux ai watch-title [--pane <id>]
 projmux ai ingest   codex-notify '<json>'
 projmux ai ingest   claude-hook < payload.json
+projmux ai ingest   bell --pane <pane_id>
 projmux ai integrate codex [--dry-run] [--remove]
 projmux ai integrate claude [--dry-run] [--remove]
+projmux ai integrate tmux-bell [--dry-run] [--remove]
 projmux ai topic     ...
 ```
 
@@ -378,6 +380,12 @@ session id), marks matched panes hook-active, and writes metadata-bearing
 notify queue entries for reply-ready, input-ready, approval-required, error,
 subagent-stop, and teammate-idle events. `UserPromptSubmit` only moves the
 pane to thinking/busy and does not push a queue entry.
+
+`ingest bell --pane <pane_id>` is the narrow tmux-bell fallback ingest path.
+It does not require the pane to be AI-managed. Projmux resolves session,
+window, pane, title, command, and socket metadata from tmux, pushes an info
+queue row such as `bell · <pane title>`, and suppresses repeat bell rows from
+the same pane for 5 seconds.
 
 For `Stop`, projmux reads `transcript_path` when present and extracts the last
 assistant text from the transcript tail; if that is unavailable, it falls back
@@ -445,8 +453,14 @@ and hooks are preserved. If a supported event already contains an unmanaged
 `projmux ai ingest claude-hook` command, projmux refuses to install over it and
 leaves the settings file untouched.
 
-Codex hooks-engine mode and tmux bell integration are not part of this command
-yet.
+`integrate tmux-bell` is opt-in server-level tmux wiring for arbitrary tools
+that emit BEL or OSC 9. It applies `allow-passthrough on`, `monitor-bell on`,
+`bell-action other`, and appends a marked `pane-bell-event` hook that invokes
+`projmux ai ingest bell --pane "#{pane_id}"`. `--dry-run` prints the tmux
+commands. `--remove` unsets only hook entries carrying the projmux marker and
+leaves user-owned `pane-bell-event` hooks alone.
+
+Codex hooks-engine mode is not part of this command yet.
 
 ## tmux
 

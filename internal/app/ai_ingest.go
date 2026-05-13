@@ -3,16 +3,26 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
 const aiIngestListPanesFormat = "#{pane_id}\x1f#{pane_current_path}\x1f#{" + aiPaneThreadIDOption + "}\x1f#{" + aiPaneSessionIDOption + "}"
 const claudeTranscriptTailLimit = 256 * 1024
+const (
+	aiBellDedupeOption = "@projmux_ai_bell_notified_at"
+	aiBellDedupeWindow = 5 * time.Second
+	aiBellPaneFormat   = "#{session_name}\x1f#{window_id}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_title}\x1f#{pane_current_command}\x1f#{socket_path}"
+)
 
 type codexNotifyPayload struct {
 	Type                 string
@@ -88,6 +98,8 @@ func (c *aiCommand) runIngest(args []string, stderr io.Writer) error {
 			return errors.New("claude hook payload exceeds 1 MiB")
 		}
 		return c.ingestClaudeHook(data)
+	case "bell":
+		return c.runIngestBell(args[1:], stderr)
 	case "help", "--help", "-h":
 		printAIUsage(stderr)
 		return nil
@@ -95,6 +107,156 @@ func (c *aiCommand) runIngest(args []string, stderr io.Writer) error {
 		printAIUsage(stderr)
 		return fmt.Errorf("unknown ai ingest agent-kind: %s", args[0])
 	}
+}
+
+func (c *aiCommand) runIngestBell(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("ai ingest bell", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	paneID := fs.String("pane", "", "target tmux pane id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printAIUsage(stderr)
+		return errors.New("ai ingest bell does not accept positional arguments")
+	}
+	if strings.TrimSpace(*paneID) == "" {
+		printAIUsage(stderr)
+		return errors.New("ai ingest bell requires --pane <pane_id>")
+	}
+	return c.ingestBell(*paneID)
+}
+
+type bellPaneInfo struct {
+	Session string
+	Window  string
+	WinName string
+	Pane    string
+	Title   string
+	Command string
+	Socket  string
+}
+
+func (c *aiCommand) ingestBell(paneID string) error {
+	paneID = strings.TrimSpace(paneID)
+	if paneID == "" {
+		return nil
+	}
+	info, ok := c.readBellPaneInfo(paneID)
+	if !ok {
+		return nil
+	}
+	if c.duplicateBellRecent(info.Pane) {
+		return nil
+	}
+	store, err := c.aiNotifyStore()
+	if err != nil {
+		return err
+	}
+	text := composeBellNotifyText(info)
+	metadata := map[string]string{
+		"agent": "bell",
+		"event": "bell",
+		"pane":  info.Pane,
+	}
+	if info.Session != "" {
+		metadata["session"] = info.Session
+	}
+	if info.Window != "" {
+		metadata["window"] = info.Window
+	}
+	if info.WinName != "" {
+		metadata["window_name"] = info.WinName
+	}
+	if info.Title != "" {
+		metadata["pane_title"] = info.Title
+	}
+	if info.Command != "" {
+		metadata["pane_command"] = info.Command
+	}
+	if info.Socket != "" {
+		metadata["socket"] = info.Socket
+	}
+
+	if _, _, err := store.Push(notify.PushInput{
+		ID:       "ai:bell:" + info.Session + ":" + info.Pane,
+		Text:     text,
+		Severity: notify.SeverityInfo,
+		Source:   notify.SourceAI,
+		Metadata: metadata,
+		TTL:      attentionNotifyTTL,
+		Target: notify.Target{
+			Socket:  info.Socket,
+			Session: info.Session,
+			Window:  info.Window,
+			Pane:    info.Pane,
+		},
+	}); err != nil {
+		return err
+	}
+	c.recordBellNotification(info.Pane)
+	return nil
+}
+
+func (c *aiCommand) aiNotifyStore() (notifyStore, error) {
+	if c.notifyStore != nil {
+		return c.notifyStore, nil
+	}
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("resolve notify store paths: %w", err)
+	}
+	return notify.NewDefaultStore(paths), nil
+}
+
+func (c *aiCommand) readBellPaneInfo(paneID string) (bellPaneInfo, bool) {
+	out := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, aiBellPaneFormat)
+	if out == "" {
+		return bellPaneInfo{}, false
+	}
+	fields := strings.Split(out, "\x1f")
+	if len(fields) < 7 {
+		return bellPaneInfo{}, false
+	}
+	info := bellPaneInfo{
+		Session: strings.TrimSpace(fields[0]),
+		Window:  strings.TrimSpace(fields[1]),
+		WinName: strings.TrimSpace(fields[2]),
+		Pane:    strings.TrimSpace(fields[3]),
+		Title:   strings.TrimSpace(fields[4]),
+		Command: strings.TrimSpace(fields[5]),
+		Socket:  strings.TrimSpace(fields[6]),
+	}
+	if info.Pane == "" {
+		info.Pane = paneID
+	}
+	return info, info.Session != ""
+}
+
+func (c *aiCommand) duplicateBellRecent(paneID string) bool {
+	lastAt := parsePositiveInt(c.readTmuxPaneOption(paneID, aiBellDedupeOption))
+	if lastAt <= 0 {
+		return false
+	}
+	return c.now().Unix()-int64(lastAt) < int64(aiBellDedupeWindow/time.Second)
+}
+
+func (c *aiCommand) recordBellNotification(paneID string) {
+	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiBellDedupeOption, fmt.Sprintf("%d", c.now().Unix()))
+}
+
+func composeBellNotifyText(info bellPaneInfo) string {
+	context := strings.TrimSpace(info.Title)
+	if context == "" {
+		context = strings.TrimSpace(info.Command)
+	}
+	if context == "" {
+		context = strings.TrimSpace(info.WinName)
+	}
+	if context == "" {
+		return "bell"
+	}
+	return "bell · " + context
 }
 
 func (c *aiCommand) ingestCodexNotify(data []byte) error {

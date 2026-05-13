@@ -141,6 +141,77 @@ func TestIngestCodexNotifyPushesWaitingStatusAndMetadata(t *testing.T) {
 	}
 }
 
+func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.notifyStore = store
+	cmd.now = func() time.Time { return time.Unix(100, 0) }
+
+	lastBellAt := ""
+	recorder := cmdRecorder(cmd)
+	cmd.runCommand = func(_ context.Context, name string, args ...string) error {
+		recorder.commands = append(recorder.commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "tmux" && reflect.DeepEqual(args, []string{"set-option", "-p", "-t", "%7", aiBellDedupeOption, "100"}) {
+			lastBellAt = "100"
+		}
+		return nil
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", aiBellPaneFormat}):
+			return []byte("workspace\x1f@1\x1feditor\x1f%7\x1fClaude CLI\x1fnode\x1f/tmp/tmux-1000/projmux\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{" + aiBellDedupeOption + "}"}):
+			return []byte(lastBellAt + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"ingest", "bell", "--pane", "%7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest bell error = %v", err)
+	}
+	if err := cmd.Run([]string{"ingest", "bell", "--pane", "%7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest bell duplicate error = %v", err)
+	}
+
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:bell:workspace:%7" {
+		t.Fatalf("ID = %q", got.ID)
+	}
+	if got.Text != "bell · Claude CLI" {
+		t.Fatalf("Text = %q", got.Text)
+	}
+	if got.Source != notify.SourceAI || got.Severity != notify.SeverityInfo {
+		t.Fatalf("source/severity = %q/%q", got.Source, got.Severity)
+	}
+	if got.Target.Session != "workspace" || got.Target.Window != "@1" || got.Target.Pane != "%7" || got.Target.Socket != "/tmp/tmux-1000/projmux" {
+		t.Fatalf("Target = %+v", got.Target)
+	}
+	if got.Metadata["agent"] != "bell" || got.Metadata["event"] != "bell" || got.Metadata["pane"] != "%7" || got.Metadata["pane_title"] != "Claude CLI" || got.Metadata["window_name"] != "editor" {
+		t.Fatalf("Metadata = %#v", got.Metadata)
+	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiBellDedupeOption, "100"}}) {
+		t.Fatalf("commands = %#v, want bell dedupe timestamp", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestIngestBellRequiresPaneFlag(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	err := cmd.Run([]string{"ingest", "bell"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run ingest bell expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "requires --pane") {
+		t.Fatalf("error = %v, want pane flag guidance", err)
+	}
+}
+
 func TestParseClaudeHookPayload(t *testing.T) {
 	t.Parallel()
 

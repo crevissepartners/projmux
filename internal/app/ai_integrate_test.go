@@ -2,9 +2,11 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -293,6 +295,110 @@ func TestAIIntegrateClaudeRemoveOnlyManagedHooks(t *testing.T) {
 		}
 	}
 	if !strings.Contains(stdout.String(), "removed projmux-managed") {
+		t.Fatalf("stdout = %q, want removed message", stdout.String())
+	}
+}
+
+func TestAIIntegrateTmuxBellDryRunPlansInstallCommands(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
+			return nil, os.ErrNotExist
+		}
+		return nil, os.ErrNotExist
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "tmux-bell", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate tmux-bell --dry-run error = %v", err)
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("commands = %#v, want no writes on dry-run", cmdRecorder(cmd).commands)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"set-option -g allow-passthrough on",
+		"set-option -g monitor-bell on",
+		"set-option -g bell-action other",
+		"set-hook -ag pane-bell-event",
+		tmuxBellManagedMarker,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestAIIntegrateTmuxBellInstallAppendsManagedHookAndPreservesExisting(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
+			return []byte("pane-bell-event[0] run-shell -b 'echo user-hook'\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "tmux-bell"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate tmux-bell error = %v", err)
+	}
+
+	wantCommands := []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-g", "allow-passthrough", "on"}},
+		{name: "tmux", args: []string{"set-option", "-g", "monitor-bell", "on"}},
+		{name: "tmux", args: []string{"set-option", "-g", "bell-action", "other"}},
+		{name: "tmux", args: []string{"set-hook", "-ag", tmuxBellHookName, tmuxBellHookCommand}},
+	}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, wantCommands)
+	}
+	if !strings.Contains(stdout.String(), "configured tmux bell fallback") {
+		t.Fatalf("stdout = %q, want configured message", stdout.String())
+	}
+}
+
+func TestAIIntegrateTmuxBellInstallSkipsDuplicateManagedHook(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
+			return []byte("pane-bell-event[1] " + tmuxBellHookCommand + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"integrate", "tmux-bell"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate tmux-bell error = %v", err)
+	}
+	for _, command := range cmdRecorder(cmd).commands {
+		if command.name == "tmux" && len(command.args) >= 2 && command.args[0] == "set-hook" && command.args[1] == "-ag" {
+			t.Fatalf("commands = %#v, did not want duplicate managed hook append", cmdRecorder(cmd).commands)
+		}
+	}
+}
+
+func TestAIIntegrateTmuxBellRemoveOnlyManagedHook(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
+			return []byte(strings.Join([]string{
+				"pane-bell-event[0] run-shell -b 'echo user-hook'",
+				"pane-bell-event[2] " + tmuxBellHookCommand,
+			}, "\n") + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "tmux-bell", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate tmux-bell --remove error = %v", err)
+	}
+	want := []recordedAICommand{
+		{name: "tmux", args: []string{"set-hook", "-gu", "pane-bell-event[2]"}},
+	}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+	if !strings.Contains(stdout.String(), "removed projmux-managed tmux bell hook") {
 		t.Fatalf("stdout = %q, want removed message", stdout.String())
 	}
 }
