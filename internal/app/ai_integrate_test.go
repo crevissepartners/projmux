@@ -720,7 +720,7 @@ func TestAIIntegrateTmuxBellDryRunPlansInstallCommands(t *testing.T) {
 		"set-option -g monitor-bell on",
 		"set-option -g bell-action other",
 		"set-hook -ag alert-bell",
-		"#{hook_pane}",
+		"#{pane_id}",
 		tmuxBellManagedMarker,
 	} {
 		if !strings.Contains(out, want) {

@@ -27,7 +27,7 @@ const (
 
 	tmuxBellManagedMarker = "projmux-managed:tmux-bell:v1"
 	tmuxBellHookName      = "alert-bell"
-	tmuxBellHookCommand   = `run-shell -b 'projmux ai ingest bell --pane "#{hook_pane}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
+	tmuxBellHookCommand   = `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
 )
 
 type codexNotifyPlan struct {

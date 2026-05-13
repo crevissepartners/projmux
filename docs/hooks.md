@@ -408,7 +408,7 @@ server settings and appends a marked `alert-bell` hook:
 tmux set-option -g allow-passthrough on
 tmux set-option -g monitor-bell on
 tmux set-option -g bell-action other
-tmux set-hook -ag alert-bell run-shell -b 'projmux ai ingest bell --pane "#{hook_pane}" >/dev/null 2>&1 || true # projmux-managed:tmux-bell:v1'
+tmux set-hook -ag alert-bell run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # projmux-managed:tmux-bell:v1'
 ```
 
 The hook calls `projmux ai ingest bell --pane <pane_id>`. Bell ingest resolves
@@ -416,7 +416,9 @@ the target pane through tmux and pushes an info notify queue row such as
 `bell · Claude CLI`, with metadata including `agent=bell`, `event=bell`,
 session/window/pane, pane title, command, and socket path when available. The
 pane does not need `@projmux_ai_agent` or any other AI-managed option because
-this path is for unknown tools.
+this path is for unknown tools. tmux `alert-bell` is a window alert; tmux 3.4
+does not expose `#{hook_pane}` there, so projmux uses `#{pane_id}` as the best
+available pane context.
 
 Repeated bells from the same pane are suppressed for 5 seconds using a
 pane-local tmux timestamp option. The notify row also uses a stable
