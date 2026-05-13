@@ -56,7 +56,11 @@ exit code 2.
 
 `Metadata` is optional and is omitted when empty. Hook producers use it for
 routing/debug context such as `agent`, `thread_id`, `turn_id`, `cwd`,
-`model`, and `client`; existing entries without metadata remain valid.
+`model`, and `client`; Claude hook rows also carry event-specific keys such as
+`tool_name`, `tool_input.command`, `error_type`, `subagent_type`, and
+`teammate_name`. `notify list --json` includes this metadata as the structured
+data channel while human table/sidebar output keeps the compact text body.
+Existing entries without metadata remain valid.
 
 ## CLI surface
 
@@ -92,7 +96,7 @@ acks the row after focus succeeds. `x` acks the selected row. `Ctrl-X` clears
 all rows via `notify ack --all`. Rows are intentionally compact: the visible
 label keeps notification text first, then age, project, window, and pane
 metadata; hidden queue ids remain action values but the sidebar has no search
-input.
+input and intentionally does not expose a separate metadata detail view.
 
 `--live` adds a non-mutating explanation view that reads
 `tmux list-panes -a` and compares the queue with live reply-state panes. It

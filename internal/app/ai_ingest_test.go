@@ -211,25 +211,84 @@ func TestClaudeTranscriptReaderReturnsLastAssistantText(t *testing.T) {
 	}
 }
 
-func TestClaudePermissionTextFormatting(t *testing.T) {
+func TestAIHookNotifyBodyCatalog(t *testing.T) {
 	t.Parallel()
 
-	got := claudePermissionNotifyText(claudeHookPayload{
-		ToolName:  "Bash",
-		ToolUseID: "tool-123",
-		ToolInput: map[string]any{"command": "rm -rf /tmp/old-cache"},
-	})
-	if got != "Claude · 승인 필요 · Bash: rm -rf /tmp/old-cache" {
-		t.Fatalf("Bash text = %q", got)
+	tests := []struct {
+		name string
+		body aiNotifyBody
+		want aiNotifyBody
+	}{
+		{
+			name: "codex turn complete assistant summary",
+			body: formatCodexTurnCompleteNotifyBody(codexNotifyPayload{
+				LastAssistantMessage: "Implemented hook notify ingest.",
+			}),
+			want: aiNotifyBody{Text: "Codex · 응답 완료 · Implemented hook notify ingest."},
+		},
+		{
+			name: "claude notification permission prompt",
+			body: formatClaudeNotificationNotifyBody(claudeHookPayload{
+				NotificationType: "permission_prompt",
+				Message:          "Approve Bash?",
+			}),
+			want: aiNotifyBody{Text: "Claude · 승인 필요 · Approve Bash?", Severity: notify.SeverityCritical},
+		},
+		{
+			name: "claude notification idle",
+			body: formatClaudeNotificationNotifyBody(claudeHookPayload{
+				NotificationType: "idle_prompt",
+				Message:          "Waiting for your next request",
+			}),
+			want: aiNotifyBody{Text: "Claude · 응답 완료 · Waiting for your next request", Severity: notify.SeverityInfo},
+		},
+		{
+			name: "claude permission request bash command",
+			body: formatClaudePermissionNotifyBody(claudeHookPayload{
+				ToolName:  "Bash",
+				ToolUseID: "tool-123",
+				ToolInput: map[string]any{"command": "rm -rf /tmp/old-cache"},
+			}),
+			want: aiNotifyBody{Text: "Claude · 승인 필요 · Bash: rm -rf /tmp/old-cache", Severity: notify.SeverityCritical},
+		},
+		{
+			name: "claude stop transcript summary",
+			body: formatClaudeStopNotifyBody("implemented and verified"),
+			want: aiNotifyBody{Text: "Claude · 응답 완료 · implemented and verified", Severity: notify.SeverityInfo},
+		},
+		{
+			name: "claude stop failure error labels",
+			body: formatClaudeStopFailureNotifyBody(claudeHookPayload{
+				ErrorType:    "timeout",
+				ErrorMessage: "tool call exceeded deadline",
+			}),
+			want: aiNotifyBody{Text: "Claude · 오류 · timeout · tool call exceeded deadline", Severity: notify.SeverityCritical},
+		},
+		{
+			name: "claude subagent stop labels",
+			body: formatClaudeSubagentStopNotifyBody(claudeHookPayload{
+				SubagentType: "reviewer",
+				SubagentID:   "sub-7",
+			}),
+			want: aiNotifyBody{Text: "Claude · 서브에이전트 종료 · reviewer · sub-7", Severity: notify.SeverityInfo},
+		},
+		{
+			name: "claude teammate idle labels",
+			body: formatClaudeTeammateIdleNotifyBody(claudeHookPayload{
+				TeammateName:    "sam",
+				TeammateID:      "team-3",
+				TeammateContext: "waiting for review",
+			}),
+			want: aiNotifyBody{Text: "Claude · 팀메이트 대기 · sam · team-3 · waiting for review", Severity: notify.SeverityInfo},
+		},
 	}
 
-	got = claudePermissionNotifyText(claudeHookPayload{
-		ToolName:  "WebFetch",
-		ToolUseID: "tool-456",
-		ToolInput: map[string]any{"url": "https://example.com/docs"},
-	})
-	if got != "Claude · 승인 필요 · WebFetch: https://example.com/docs" {
-		t.Fatalf("WebFetch text = %q", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.body != tc.want {
+				t.Fatalf("body = %#v, want %#v", tc.body, tc.want)
+			}
+		})
 	}
 }
 
