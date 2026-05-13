@@ -26,7 +26,10 @@ const (
 	ansiTabInactive       = "\x1b[38;5;245;48;5;235m"
 )
 
-const switchBranchBadgeMax = 16
+const (
+	switchBranchBadgeMax     = 16
+	switchWindowTabNameWidth = 8
+)
 
 type SwitchRow struct {
 	Label string
@@ -234,7 +237,18 @@ func formatSwitchWindowTab(name string, attentionRank int, active bool) string {
 	if badge != "" {
 		badge += style
 	}
-	return style + " " + badge + name + " " + ansiReset
+	return style + " " + badge + centerSwitchTabName(name, switchWindowTabNameWidth) + " " + ansiReset
+}
+
+func centerSwitchTabName(name string, width int) string {
+	name = truncateSwitchBadge(name, width)
+	runes := []rune(name)
+	if width <= 0 || len(runes) >= width {
+		return name
+	}
+	left := (width - len(runes)) / 2
+	right := width - len(runes) - left
+	return strings.Repeat(" ", left) + name + strings.Repeat(" ", right)
 }
 
 func formatSwitchCardTitle(item picker.Item) string {

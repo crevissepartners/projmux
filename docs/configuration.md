@@ -432,19 +432,23 @@ create sessions or send tmux commands.
 
 ## Decoration Mode
 
-Settings > Appearance controls optional status and picker decoration:
+Settings > Appearance controls optional icon decoration per surface:
 
 - `off` is the default and avoids icon-font assumptions.
-- `symbol` restores the Nerd Font-style folder, git-provider, and bell icons.
-- `emoji` uses emoji decorators, including provider-aware git branch marks and
-  the notify sidebar header bell. GitHub remotes use a cat-style mark, GitLab
+- `symbol` restores Nerd Font-style folder, git-provider, and bell icons.
+- `emoji` uses emoji decorators. GitHub remotes use a cat-style mark, GitLab
   remotes use a fox-style mark, and other remotes use a generic git branch mark.
 
-The saved value lives at:
+The per-surface saved values live at:
 
 ```text
-~/.config/projmux/statusbar-decoration
+~/.config/projmux/statusbar-decoration-cwd
+~/.config/projmux/statusbar-decoration-git
+~/.config/projmux/statusbar-decoration-notify
 ```
+
+The legacy `~/.config/projmux/statusbar-decoration` value is still read as the
+fallback default when a per-surface file is absent.
 
 ## Rare Tunables
 

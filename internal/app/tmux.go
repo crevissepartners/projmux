@@ -29,8 +29,7 @@ const (
 	tmuxWindowInactiveFg = projmuxpicker.TmuxWindowInactiveFg
 	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
 	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
-	tmuxWindowTitleWidth = "18"
-	tmuxWindowTrimWidth  = "15"
+	tmuxWindowTitleWidth = 10
 )
 
 type tmuxPopupClient interface {
@@ -99,8 +98,6 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runPopupSessions(fs.Args()[1:], stderr)
 	case "popup-toggle":
 		return c.runPopupToggle(fs.Args()[1:], stderr)
-	case "sessionstate-status":
-		return c.runSessionStateStatus(fs.Args()[1:], stderr)
 	case "rebalance-panes":
 		return c.runRebalancePanes(fs.Args()[1:], stderr)
 	case "rename-pane":
@@ -547,7 +544,7 @@ func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, tmuxStandaloneConfigWithKeymap(binaryPath, loadStatusbarDecoration(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, tmuxStandaloneConfigWithKeymap(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -560,7 +557,7 @@ func (c *tmuxCommand) runPrintAppConfig(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecoration(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -601,7 +598,7 @@ func (c *tmuxCommand) runInstall(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	if err := c.writeFile(include, []byte(tmuxStandaloneConfigWithKeymap(binaryPath, loadStatusbarDecoration(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(include, []byte(tmuxStandaloneConfigWithKeymap(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return fmt.Errorf("write tmux standalone config: %w", err)
 	}
 
@@ -657,7 +654,7 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 	if err != nil {
 		return "", err
 	}
-	if err := c.writeFile(config, []byte(tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecoration(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(config, []byte(tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return "", fmt.Errorf("write tmux app config: %w", err)
 	}
 	return config, nil
@@ -757,7 +754,6 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux popup-switch")
 	fmt.Fprintln(w, "  projmux tmux popup-sessions")
 	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
-	fmt.Fprintln(w, "  projmux tmux sessionstate-status")
 	fmt.Fprintln(w, "  projmux tmux rebalance-panes")
 	fmt.Fprintln(w, "  projmux tmux rename-pane <pane> <title>")
 	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
@@ -1086,7 +1082,7 @@ func (c *tmuxCommand) defaultShell() string {
 }
 
 func tmuxStandaloneConfig(binaryPath string, decoration config.StatusbarDecoration) string {
-	return tmuxStandaloneConfigWithKeymap(binaryPath, decoration, defaultKeyBindingCatalog(), false)
+	return tmuxStandaloneConfigWithKeymap(binaryPath, statusbarDecorationSetFromGlobal(decoration), defaultKeyBindingCatalog(), false)
 }
 
 const statusbarSettingsIcon = ""
@@ -1095,16 +1091,12 @@ func statusbarSettingsButton(label string) string {
 	return "#[bold,fg=colour230,bg=colour31]#[range=user|settings] " + label + " #[norange]#[default]"
 }
 
-func statusbarSessionStateButton() string {
-	return "#[bold,fg=colour16,bg=colour149]#[range=user|sessionstate] State #[norange]#[default]"
-}
-
 func statusbarStandaloneSessionLeftFormat() string {
-	return "#[range=user|session][#S] #[norange]" + statusbarSessionStateButton() + " "
+	return "#[range=user|session][#S] #[norange] "
 }
 
 func statusbarAppSessionLeftFormat() string {
-	return "#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]" + statusbarSessionStateButton() + " "
+	return "#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] "
 }
 
 func statusbarAuxLineFormat(bin string, autosave bool) string {
@@ -1125,16 +1117,34 @@ func statusbarWindowLineFormat() string {
 }
 
 func statusbarWindowTitleFormat() string {
-	return "#{p-" + tmuxWindowTitleWidth + ":#{=/" + tmuxWindowTrimWidth + "/...:window_name}}"
+	return tmuxCenteredWindowNameFormat(tmuxWindowTitleWidth)
 }
 
-func tmuxStandaloneConfigWithKeymap(binaryPath string, decoration config.StatusbarDecoration, catalog []keyBindingAction, keymapPresent bool) string {
+func tmuxCenteredWindowNameFormat(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	trimWidth := max(width-3, 1)
+	fallback := "#{=/" + strconv.Itoa(trimWidth) + "/...:window_name}"
+	for n := width; n >= 0; n-- {
+		left := (width - n) / 2
+		right := width - n - left
+		body := strings.Repeat(" ", left) + "#{=/" + strconv.Itoa(width) + "/...:window_name}" + strings.Repeat(" ", right)
+		fallback = "#{?#{==:#{n:window_name}," + strconv.Itoa(n) + "}," + body + "," + fallback + "}"
+	}
+	return fallback
+}
+
+func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
 	bin := tmuxShellQuote(binaryPath)
 	defaultStandaloneKeyBindings := keyBindingCatalogForScope(keyBindingScopeStandalone)
 	standaloneKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeStandalone)
 	lines := []string{
 		"# Generated by projmux. Safe to source from ~/.tmux.conf.",
-		"set -g " + statusbarDecorationTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decoration))),
+		"set -g " + statusbarDecorationTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Cwd))),
+		"set -g " + statusbarDecorationCwdTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Cwd))),
+		"set -g " + statusbarDecorationGitTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Git))),
+		"set -g " + statusbarDecorationNotifyTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Notify))),
 	}
 	lines = append(lines, tmuxUserKeyLines(standaloneKeyBindings)...)
 	lines = append(lines,
@@ -1146,7 +1156,7 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decoration config.Statusb
 		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tmuxWindowInactiveFg+",bg="+tmuxWindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowInactiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
 		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tmuxWindowActiveFg+",bg="+tmuxWindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowActiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
 		"set -g status 2",
-		"set -g status-left-length 42",
+		"set -g status-left-length 20",
 		"set -g status-right-length 140",
 		"set -g status-left "+tmuxConfigQuote(statusbarStandaloneSessionLeftFormat()),
 		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
@@ -1170,10 +1180,10 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decoration config.Statusb
 }
 
 func tmuxAppConfig(binaryPath, defaultShell string, decoration config.StatusbarDecoration) string {
-	return tmuxAppConfigWithKeymap(binaryPath, defaultShell, decoration, defaultKeyBindingCatalog(), false)
+	return tmuxAppConfigWithKeymap(binaryPath, defaultShell, statusbarDecorationSetFromGlobal(decoration), defaultKeyBindingCatalog(), false)
 }
 
-func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.StatusbarDecoration, catalog []keyBindingAction, keymapPresent bool) string {
+func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
 	bin := tmuxShellQuote(binaryPath)
 	shell := tmuxConfigQuote(nonEmpty(strings.TrimSpace(defaultShell), fallbackInteractiveShell))
 	shellPaneLabelFormat := "#{?#{||:#{||:#{||:#{==:#{pane_current_command},zsh},#{==:#{pane_current_command},bash}},#{||:#{==:#{pane_current_command},fish},#{==:#{pane_current_command},sh}}},#{||:#{==:#{pane_current_command},nu},#{==:#{pane_current_command},xonsh}}},#{pane_current_command},#{pane_title}}"
@@ -1207,7 +1217,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 		"set -g status-position bottom",
 		"set -g status-interval 5",
 		"set -g status-keys vi",
-		"set -g status-left-length 42",
+		"set -g status-left-length 20",
 		"set -g status-right-length 140",
 		"set -g window-status-separator \" \"",
 		"set -g automatic-rename on",
@@ -1222,7 +1232,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 		"set -g pane-border-status top",
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}
-	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymap(binaryPath, decoration, catalog, keymapPresent)), "\n")[1:]...)
+	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymap(binaryPath, decorations, catalog, keymapPresent)), "\n")[1:]...)
 	lines = append(lines,
 		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
 	)
@@ -1310,7 +1320,6 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 		"bind-key -T projmux-status g run-shell " + tmuxConfigQuote(bin+" statusbar click git"),
 		"bind-key -T projmux-status k run-shell " + tmuxConfigQuote(bin+" statusbar click kube"),
 		"bind-key -T projmux-status p run-shell " + tmuxConfigQuote(bin+" statusbar click pwd"),
-		"bind-key -T projmux-status r run-shell " + tmuxConfigQuote(bin+" statusbar click sessionstate"),
 		"bind-key -T projmux-status s run-shell " + tmuxConfigQuote(bin+" statusbar click session"),
 	}
 }

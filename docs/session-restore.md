@@ -27,22 +27,16 @@ restore` prints the read-only dry-run restore plan for the project snapshot, and
 `Delete snapshot` requires a confirmation picker before removing the project
 snapshot. Destructive restore execution remains outside Settings in this slice.
 
-Agent panes in Settings, the statusbar popup, and restore dry-run previews show
-resume metadata health next to the pane recipe. `available` means a resume id is
-present and recent enough for replay, `stale` means the stored id exists but the
-metadata is missing or older than the snapshot policy, and `unavailable`
-means projmux cannot safely resume that agent pane from the snapshot. Confidence
-is derived from the metadata source: direct session ids and hook ingest are high
+Agent panes in Settings and restore dry-run previews show resume metadata
+health next to the pane recipe. `available` means a resume id is present and
+recent enough for replay, `stale` means the stored id exists but the metadata is
+missing or older than the snapshot policy, and `unavailable` means projmux
+cannot safely resume that agent pane from the snapshot. Confidence is derived
+from the metadata source: direct session ids and hook ingest are high
 confidence, transcript/log fallbacks are medium confidence, and missing or
-unknown sources are low or none.
-
-The statusbar Session State popup remains a secondary shortcut backed by the
-same read model and CLI behavior:
-
-- `Save snapshot` captures the current tmux session, bypassing the autosave debounce
-  just like `projmux session-state save`.
-- `Preview restore` prints the dry-run restore plan and does not execute tmux
-  replay commands.
+unknown sources are low or none. The old statusbar Session State shortcut has
+been removed; use `Projects > Sessions > State` or the `projmux session-state`
+CLI for inspection/actions.
 
 Settings > Session State is global settings only: global auto-save, auto-save
 interval, and storage/retention policy. It does not show the current

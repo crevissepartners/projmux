@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -68,7 +66,6 @@ func TestStatusbarDispatchTableCoversAllKnownRanges(t *testing.T) {
 		statusbarRangeUsage,
 		statusbarRangeNotify,
 		statusbarRangeSettings,
-		statusbarRangeState,
 	}
 	if got := len(table); got != len(want) {
 		t.Fatalf("dispatch table size = %d, want %d", got, len(want))
@@ -77,109 +74,6 @@ func TestStatusbarDispatchTableCoversAllKnownRanges(t *testing.T) {
 		if _, ok := table[id]; !ok {
 			t.Fatalf("dispatch table missing range %q", id)
 		}
-	}
-}
-
-func TestStatusbarSessionStateClickOpensActionPopup(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC)
-	store := sessionstate.NewStore(t.TempDir())
-	snap := sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    "workspace",
-		DefaultCWD: "/tmp/workspace",
-		SavedAt:    now.Add(-2 * time.Minute),
-		Windows: []sessionstate.Window{
-			{
-				Index:           0,
-				Name:            "editor",
-				ActivePaneIndex: 0,
-				Panes: []sessionstate.Pane{
-					{Index: 0, CWD: "/tmp/workspace", Recipe: sessionstate.ShellRecipe()},
-					{Index: 1, CWD: "/tmp/workspace", Recipe: sessionstate.StartupRecipe("make watch")},
-				},
-			},
-			{
-				Index:           1,
-				Name:            "agents",
-				ActivePaneIndex: 0,
-				Panes: []sessionstate.Pane{
-					{Index: 0, CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipe("codex", "01973f21-abc", "session state")},
-				},
-			},
-		},
-	}
-	if err := store.Save(snap); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	runner := &statusbarFakeRunner{
-		respond: func(name string, args []string) ([]byte, error) {
-			if name == "tmux" && equalStringSlices(args, []string{"display-message", "-p", "#{session_name}"}) {
-				return []byte("workspace\n"), nil
-			}
-			return nil, nil
-		},
-	}
-	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
-	cmd.now = func() time.Time { return now }
-	cmd.sessionStoreFn = func() (sessionstate.Store, error) { return store, nil }
-	cmd.homeDir = func() (string, error) { return filepath.Dir(store.Dir), nil }
-	cmd.lookupEnv = func(string) string { return "" }
-
-	if err := cmd.Run([]string{"click", "sessionstate"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	popupArgs, ok := firstTmuxPopupArgs(runner.calls)
-	if !ok {
-		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
-	}
-	if slices.Contains(popupArgs, "-T") {
-		t.Fatalf("session state popup must not pass tmux `-T`; args = %#v", popupArgs)
-	}
-	if !slices.Contains(popupArgs, "-B") {
-		t.Fatalf("session state popup must suppress tmux border; args = %#v", popupArgs)
-	}
-	command, ok := firstTmuxPopupCommand(runner.calls)
-	if !ok {
-		t.Fatalf("missing popup command; calls = %#v", runner.calls)
-	}
-	for _, want := range []string{
-		"/usr/local/bin/projmux",
-		"session-state popup",
-	} {
-		if !strings.Contains(command, want) {
-			t.Fatalf("session state popup command missing %q: %q", want, command)
-		}
-	}
-	if strings.Contains(command, "popup-wait-key") {
-		t.Fatalf("session state action popup must not use display-only wait helper: %q", command)
-	}
-	if strings.Contains(command, `"windows"`) || strings.Contains(command, `"version"`) {
-		t.Fatalf("session state popup must not dump raw JSON: %q", command)
-	}
-}
-
-func TestStatusbarSessionStatePopupShowsMissingSnapshot(t *testing.T) {
-	t.Parallel()
-
-	state := statusbarSessionStateView{
-		Session:  "workspace",
-		Autosave: sessionStateEffectiveToggle{Mode: "on", Source: "default"},
-		LoadErr:  sessionstate.ErrNotFound,
-	}
-	popup := statusbarSessionStatePopup(state, time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC), "/usr/local/bin/projmux")
-	if !strings.Contains(popup.Command, "snapshot") || !strings.Contains(popup.Command, "missing") {
-		t.Fatalf("popup missing snapshot status: %q", popup.Command)
-	}
-	if strings.Contains(popup.Command, "startup picker") {
-		t.Fatalf("popup should not include removed startup picker state: %q", popup.Command)
-	}
-	if strings.Contains(popup.Command, projmuxpicker.CurrentStart) {
-		t.Fatalf("session state popup command must not contain picker active-row ANSI: %q", popup.Command)
-	}
-	if !strings.Contains(popup.Command, projmuxpicker.TitlebarStart) || !strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
-		t.Fatalf("session state popup missing frame chrome: %q", popup.Command)
 	}
 }
 

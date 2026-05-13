@@ -70,16 +70,16 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"bind-key -n M-S-Right next-window",
 		"bind-key -n User10 command-prompt",
 		"bind-key -n User11 command-prompt",
-		"set -g status-left-length 42",
-		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]#[bold,fg=colour16,bg=colour149]#[range=user|sessionstate] State #[norange]#[default] \"",
+		"set -g status-left-length 20",
+		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] \"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
-		"#{p-18:#{=/15/...:window_name}}",
+		"#{n:window_name}",
+		"#{=/7/...:window_name}",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"set -g status 2",
 		"range=user|settings",
 		"range=user|notify",
 		"range=user|usage",
-		"range=user|sessionstate",
 		"set -g status-format[0]",
 		"set -g status-format[1]",
 		"align=left",
@@ -96,6 +96,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 	for _, banned := range []string{
 		"set -g status 3",
 		"set -g status-format[2] \"",
+		"range=user|sessionstate",
 		// Phase 2.8 regression guard: alt-shift-arrow chords now bind to the
 		// xterm-standard `M-S-Left/Right` form. Their `User8`/`User9` detour
 		// is gone; if the generator regresses, popup-inside chords break in

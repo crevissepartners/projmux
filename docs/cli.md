@@ -680,9 +680,9 @@ flags with the top-level `switch` UX:
   no configured source. When no source is configured, the direct-set prompt
   starts with `$HOME` as an editable fallback, but `$HOME` is not used as the
   effective root unless saved. `Workdirs` remains separate: those entries are
-  additional search roots, not the primary root. Appearance stores
-  `~/.config/projmux/statusbar-decoration` as `off` (default), `symbol`, or
-  `emoji` and updates the live tmux option when available. Labs remains
+  additional search roots, not the primary root. Appearance stores per-surface
+  path/git/notify icon decoration as `off` (default), `symbol`, or `emoji` and
+  updates the matching live tmux option when available. Labs remains
   available for experimental settings. The About section reads the cached
   update status without network access;
   selecting Check Updates runs `projmux update check`, and Update Now runs

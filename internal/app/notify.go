@@ -294,7 +294,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 	compatOptions := intpickercompat.Options{
 		UI:            "notify-sidebar",
 		Read0:         true,
-		Title:         notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications",
+		Title:         "\x1b[1;38;5;220m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
 		Prompt:        "Notify > ",
 		Header:        "Newest first",
 		Footer:        "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
@@ -586,12 +586,16 @@ func (c *notifyCommand) focusNotification(entry notify.Notification, source, kin
 
 func (c *notifyCommand) statusbarDecoration() config.StatusbarDecoration {
 	if envValue(c.lookupEnv, "TMUX") != "" && c.runner != nil {
-		out, err := c.runner.Run(context.Background(), "tmux", "show-option", "-gqv", statusbarDecorationTmuxOption)
+		out, err := c.runner.Run(context.Background(), "tmux", "show-option", "-gqv", statusbarDecorationNotifyTmuxOption)
+		if err == nil && strings.TrimSpace(string(out)) != "" {
+			return config.NormalizeStatusbarDecoration(string(out))
+		}
+		out, err = c.runner.Run(context.Background(), "tmux", "show-option", "-gqv", statusbarDecorationTmuxOption)
 		if err == nil && strings.TrimSpace(string(out)) != "" {
 			return config.NormalizeStatusbarDecoration(string(out))
 		}
 	}
-	return loadStatusbarDecoration(c.homeDir, c.lookupEnv)
+	return loadStatusbarDecorationForTarget(c.homeDir, c.lookupEnv, statusbarDecorationTargetNotify, loadStatusbarDecoration(c.homeDir, c.lookupEnv))
 }
 
 // --- ack ---------------------------------------------------------------------
