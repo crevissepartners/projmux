@@ -12,11 +12,13 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 type statusbarSessionStateView struct {
 	Session     string
+	Source      string
 	Autosave    sessionStateEffectiveToggle
 	Autorestore sessionStateEffectiveToggle
 	Snapshot    sessionstate.Snapshot
@@ -72,6 +74,7 @@ func (c *statusbarCommand) loadSessionStateView(ctx context.Context) statusbarSe
 		return state
 	}
 	state.Session = sessionName
+	state.Source = c.liveSessionStateSource(ctx, sessionName)
 	store, err := c.statusbarSessionStateStore()
 	if err != nil {
 		state.StoreErr = err
@@ -83,7 +86,17 @@ func (c *statusbarCommand) loadSessionStateView(ctx context.Context) statusbarSe
 		return state
 	}
 	state.Snapshot = snap
+	if strings.TrimSpace(state.Source) == "" {
+		state.Source = snap.SourceLabel()
+	}
 	return state
+}
+
+func (c *statusbarCommand) liveSessionStateSource(ctx context.Context, sessionName string) string {
+	if c.runner == nil || strings.TrimSpace(sessionName) == "" {
+		return ""
+	}
+	return inttmux.NewClient(c.runner).SessionStateSource(ctx, sessionName)
 }
 
 func (c *statusbarCommand) currentStatusbarSessionName(ctx context.Context) (string, error) {
@@ -155,6 +168,7 @@ func statusbarSessionStatePopupLines(state statusbarSessionStateView, now time.T
 		session = "-"
 	}
 	lines = append(lines, statusbarFieldLines("session", session, cols)...)
+	lines = append(lines, statusbarFieldLines("source", statusbarSessionStateSourceText(state), cols)...)
 	lines = append(lines, statusbarFieldLines("auto-save", statusbarSessionStateToggleText(state.Autosave), cols)...)
 	lines = append(lines, statusbarFieldLines("auto-restore", statusbarSessionStateToggleText(state.Autorestore), cols)...)
 
@@ -198,6 +212,16 @@ func statusbarSessionStateToggleText(toggle sessionStateEffectiveToggle) string 
 		return mode
 	}
 	return mode + " (" + source + ")"
+}
+
+func statusbarSessionStateSourceText(state statusbarSessionStateView) string {
+	if source := strings.TrimSpace(state.Source); source != "" {
+		return source
+	}
+	if state.LoadErr == nil {
+		return state.Snapshot.SourceLabel()
+	}
+	return sessionstate.SourceAutosave
 }
 
 func statusbarSessionStateSavedText(savedAt, now time.Time) string {
@@ -306,7 +330,7 @@ func statusbarSessionStateToast(state statusbarSessionStateView) string {
 		}
 		return "session state snapshot invalid"
 	default:
-		return fmt.Sprintf("session state: %d windows, %d panes", len(state.Snapshot.Windows), statusbarSessionStatePaneCount(state.Snapshot))
+		return fmt.Sprintf("session state: %s, %d windows, %d panes", statusbarSessionStateSourceText(state), len(state.Snapshot.Windows), statusbarSessionStatePaneCount(state.Snapshot))
 	}
 }
 

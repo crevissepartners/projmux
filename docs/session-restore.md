@@ -35,6 +35,8 @@ a current tmux session, converts the preset to a session-state snapshot for that
 session, and prints the same restore preview/read model as
 `projmux session-state restore --dry-run`. It does not execute replay commands,
 does not autosave the live session, and does not update the saved snapshot.
+The preview includes a source label: `layout(<name>)` for normal presets or
+`fresh` for `mode = "fresh-each-time"` presets.
 
 `projmux layout apply <name> --force` is the conservative destructive live
 apply path for project presets. It requires a current tmux session, uses that
@@ -42,7 +44,10 @@ current session name as the only target, stages the converted snapshot through
 the session-state replay path, moves the staged windows into the live session,
 and removes extra live windows. General `session-state restore` execution
 remains dry-run-only; the live overwrite policy is currently scoped to layout
-presets.
+presets. Applying a fresh preset marks the live tmux session as `fresh`, which
+the autosave tick honors by skipping autosave for that session. A successful
+fresh apply also removes the current saved snapshot for that session, preventing
+an older saved row from reappearing in the next startup picker.
 
 `projmux shell` opens an interactive startup picker before creating a new app
 session when auto-restore is enabled and there is at least one saved or preset

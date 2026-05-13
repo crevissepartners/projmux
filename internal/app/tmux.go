@@ -157,6 +157,10 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 	if err != nil {
 		return c.finishAutosaveSessionState(err, *quiet, stderr)
 	}
+	client := inttmux.NewClient(c.runner)
+	if sessionstate.SourceLabel(client.SessionStateSource(ctx, sessionName)) == sessionstate.SourceFresh {
+		return nil
+	}
 	if !*force {
 		ok, err := c.sessionStateAutosaveDue(ctx, sessionName, now)
 		if err != nil || !ok {
@@ -168,7 +172,6 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 	if err != nil {
 		return c.finishAutosaveSessionState(fmt.Errorf("resolve sessionstate store: %w", err), *quiet, stderr)
 	}
-	client := inttmux.NewClient(c.runner)
 	if _, err := client.SaveSessionSnapshot(ctx, store, sessionName, now); err != nil {
 		return c.finishAutosaveSessionState(err, *quiet, stderr)
 	}

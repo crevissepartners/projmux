@@ -18,18 +18,20 @@ import (
 )
 
 type layoutCommand struct {
-	runner    tmuxRunner
-	lookupEnv func(string) string
-	getwd     func() (string, error)
-	now       func() time.Time
+	runner       tmuxRunner
+	lookupEnv    func(string) string
+	getwd        func() (string, error)
+	now          func() time.Time
+	sessionStore func() (sessionstate.Store, error)
 }
 
 func newLayoutCommand() *layoutCommand {
 	return &layoutCommand{
-		runner:    inttmux.ExecRunner{},
-		lookupEnv: os.Getenv,
-		getwd:     os.Getwd,
-		now:       time.Now,
+		runner:       inttmux.ExecRunner{},
+		lookupEnv:    os.Getenv,
+		getwd:        os.Getwd,
+		now:          time.Now,
+		sessionStore: sessionstate.NewDefaultStoreFromEnv,
 	}
 }
 
@@ -244,6 +246,7 @@ func (c *layoutCommand) runApply(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return fmt.Errorf("convert layout preset %q for session %q: %w", opts.name, sessionName, err)
 	}
+	snap.Source = layoutPresetSource(opts.name, preset)
 	if opts.dryRun {
 		for _, line := range sessionStateRestorePreviewLines(snap, c.nowTime(), 100) {
 			if _, err := fmt.Fprintln(stdout, line); err != nil {
@@ -260,6 +263,15 @@ func (c *layoutCommand) runApply(args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("apply layout preset %q to session %q: %w", opts.name, sessionName, err)
 	}
 	printSessionStateReplayWarnings(stderr, result.Warnings)
+	source := layoutPresetSource(opts.name, preset)
+	if err := client.MarkSessionStateSource(ctx, sessionName, source); err != nil {
+		return fmt.Errorf("mark layout source for session %q: %w", sessionName, err)
+	}
+	if source == sessionstate.SourceFresh {
+		if err := c.deleteSessionSnapshot(sessionName); err != nil {
+			return err
+		}
+	}
 	_, err = fmt.Fprintf(stdout, "applied layout preset: %s (%s, %s) -> %s\n", opts.name, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"), sessionName)
 	return err
 }
@@ -299,6 +311,20 @@ func (c *layoutCommand) store() (corelayout.Store, error) {
 		return corelayout.Store{}, errors.New("layout requires a project context; run inside a project tree or set PROJMUX_CWD")
 	}
 	return corelayout.NewStore(projectRoot), nil
+}
+
+func (c *layoutCommand) deleteSessionSnapshot(sessionName string) error {
+	if c.sessionStore == nil {
+		return errors.New("configure sessionstate store: sessionstate store is not configured")
+	}
+	store, err := c.sessionStore()
+	if err != nil {
+		return fmt.Errorf("resolve sessionstate store: %w", err)
+	}
+	if err := store.Delete(sessionName); err != nil {
+		return fmt.Errorf("delete fresh session snapshot %q: %w", sessionName, err)
+	}
+	return nil
 }
 
 func (c *layoutCommand) resolveProjectContext() (string, error) {
@@ -341,6 +367,13 @@ func layoutPresetPaneCount(preset corelayout.Preset) int {
 		count += len(window.Panes)
 	}
 	return count
+}
+
+func layoutPresetSource(name string, preset corelayout.Preset) string {
+	if preset.Normalize().Mode == corelayout.ModeFreshEachTime {
+		return sessionstate.SourceFresh
+	}
+	return sessionstate.LayoutSource(name)
 }
 
 func printLayoutWarnings(w io.Writer, warnings []corelayout.Warning) {

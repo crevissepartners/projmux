@@ -15,6 +15,7 @@ import (
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -248,7 +249,9 @@ func (c *shellCommand) restoreSavedSessionState(ctx context.Context, socketName,
 	}
 	if _, err := sessionstate.Replay(ctx, runner, snap, sessionstate.ReplayOptions{FallbackCWD: cwd}); err != nil {
 		c.reportSessionStateAutorestore(stderr, err.Error())
+		return
 	}
+	c.markShellSessionStateSource(ctx, runner, sessionName, sessionstate.SourceAutosave, stderr)
 }
 
 func (c *shellCommand) restoreLayoutPreset(ctx context.Context, socketName, configPath, sessionName, cwd, name string, stderr io.Writer) {
@@ -287,6 +290,11 @@ func (c *shellCommand) restoreLayoutPreset(ctx context.Context, socketName, conf
 		return
 	}
 	printSessionStateReplayWarnings(stderr, result.Warnings)
+	source := layoutPresetSource(name, preset)
+	c.markShellSessionStateSource(ctx, runner, sessionName, source, stderr)
+	if source == sessionstate.SourceFresh {
+		c.deleteShellSessionSnapshot(sessionName, stderr)
+	}
 }
 
 func (c *shellCommand) shellSessionStateStore() (sessionstate.Store, error) {
@@ -309,6 +317,23 @@ func (c *shellCommand) shellLayoutStore() (corelayout.Store, error) {
 		return corelayout.Store{}, errors.New("layout requires a project context; run inside a project tree or set PROJMUX_CWD")
 	}
 	return corelayout.NewStore(projectRoot), nil
+}
+
+func (c *shellCommand) markShellSessionStateSource(ctx context.Context, runner tmuxRunner, sessionName, source string, stderr io.Writer) {
+	if err := inttmux.NewClient(runner).MarkSessionStateSource(ctx, sessionName, source); err != nil {
+		c.reportSessionStateAutorestore(stderr, err.Error())
+	}
+}
+
+func (c *shellCommand) deleteShellSessionSnapshot(sessionName string, stderr io.Writer) {
+	store, err := c.shellSessionStateStore()
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("resolve store for fresh snapshot cleanup: %v", err))
+		return
+	}
+	if err := store.Delete(sessionName); err != nil {
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("delete fresh session snapshot: %v", err))
+	}
 }
 
 func (c *shellCommand) resolveShellProjectContext() (string, error) {
@@ -342,12 +367,14 @@ func (c *shellCommand) shellSessionCandidates(sessionName string) []shellSession
 	var candidates []shellSessionCandidate
 	if store, err := c.shellSessionStateStore(); err == nil {
 		if summary, err := store.Summary(sessionName); err == nil {
-			candidates = append(candidates, shellSessionCandidate{
-				Kind:        shellStartSaved,
-				Name:        summary.Session,
-				Label:       "Saved session",
-				Description: fmt.Sprintf("%s, %s", sessionStateCount(summary.WindowCount, "window"), sessionStateCount(summary.PaneCount, "pane")),
-			})
+			if summary.Source != sessionstate.SourceFresh {
+				candidates = append(candidates, shellSessionCandidate{
+					Kind:        shellStartSaved,
+					Name:        summary.Session,
+					Label:       "Saved session",
+					Description: fmt.Sprintf("%s, %s", sessionStateCount(summary.WindowCount, "window"), sessionStateCount(summary.PaneCount, "pane")),
+				})
+			}
 		}
 	}
 	if store, err := c.shellLayoutStore(); err == nil {

@@ -1414,6 +1414,7 @@ func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{
 			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):                                         "workspace\n",
+			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}, "\x00"):      "\n",
 			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_autosave_at}"}, "\x00"): "1778555030\n",
 		},
 	}
@@ -1428,8 +1429,37 @@ func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
 	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if len(runner.calls) != 2 {
-		t.Fatalf("tmux calls = %#v, want session resolution and debounce gate read only", runner.calls)
+	if len(runner.calls) != 3 {
+		t.Fatalf("tmux calls = %#v, want session resolution, source marker, and debounce gate read only", runner.calls)
+	}
+}
+
+func TestTmuxAutosaveSessionStateSkipsFreshSource(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):                                    "workspace\n",
+			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}, "\x00"): "fresh\n",
+		},
+	}
+	cmd := &tmuxCommand{
+		runner:       runner,
+		now:          func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:    func(string) string { return "" },
+		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
+	}
+
+	if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []recordedTmuxCall{
+		{name: "tmux", args: []string{"display-message", "-p", "#{session_name}"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("tmux calls = %#v, want fresh source gate only", runner.calls)
 	}
 }
 

@@ -97,8 +97,9 @@ block on interactive input.
 `layout apply <name> --dry-run` requires a current tmux session, loads the
 project preset, converts it to the session-state snapshot shape for that
 session, and prints the same restore preview used by `session-state restore
---dry-run`. It does not execute tmux replay commands and accepts `--dry-run`
-before or after `<name>`.
+--dry-run`, including the source label (`layout(<name>)` or `fresh`). It does
+not execute tmux replay commands and accepts `--dry-run` before or after
+`<name>`.
 
 `layout apply <name> --force` requires a current tmux session and destructively
 replaces that current session's windows with the preset. It stages the preset
@@ -108,8 +109,10 @@ is no `--session` target override. `layout apply <name>` without `--force`
 still rejects and points at `--dry-run`.
 
 `mode = "fresh-each-time"` is recorded by `layout save --fresh`; explicit
-`layout apply --force` already applies the preset itself, so the mode does not
-change live apply behavior yet.
+`layout apply --force` marks the live session `fresh` so the autosave tick skips
+that session and removes any saved snapshot for the same session. Normal
+`inherit-autosave` presets mark the live source as `layout(<name>)` and continue
+autosaving.
 
 ## setup
 

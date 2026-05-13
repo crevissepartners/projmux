@@ -3,13 +3,16 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 )
 
 func TestLayoutListPrintsProjectPresets(t *testing.T) {
@@ -353,6 +356,7 @@ command = "make watch"
 	for _, want := range []string{
 		"Session State Restore Preview",
 		"session:      workspace",
+		"source:       layout(dev)",
 		"window 0 main (2 panes)",
 		"pane 0.1 startup make watch",
 		"Dry run only; no tmux commands were executed.",
@@ -450,6 +454,7 @@ command = "make watch"
 		{"move-window", "-d", "-k", "-s", "@20", "-t", "workspace:0"},
 		{"kill-window", "-t", "@old"},
 		{"select-window", "-t", "workspace:0"},
+		{"set-option", "-t", "workspace", "-q", "@projmux_sessionstate_source", "layout(dev)"},
 	} {
 		if !layoutTestHasCall(runner.calls, want) {
 			t.Fatalf("tmux calls = %#v, want call %#v", runner.calls, want)
@@ -457,6 +462,67 @@ command = "make watch"
 	}
 	if got := layoutTestDisplayMessageCalls(runner.calls); got != 1 {
 		t.Fatalf("display-message calls = %d in %#v, want one current-session resolution", got, runner.calls)
+	}
+}
+
+func TestLayoutApplyForceFreshPresetMarksFreshSource(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	writeLayoutTestFile(t, project, "scratch", `
+schema_version = 1
+mode = "fresh-each-time"
+default_cwd = "${PROJMUX_CWD}"
+
+[[windows]]
+index = 0
+name = "main"
+active_pane_index = 0
+
+[[windows.panes]]
+index = 0
+cwd = "${PROJMUX_CWD}"
+recipe = "shell"
+	`)
+	runner := &layoutApplyForceTestRunner{}
+	sessionStore := sessionstate.NewStore(t.TempDir())
+	if err := sessionStore.Save(sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    "workspace",
+		DefaultCWD: project,
+		SavedAt:    time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC),
+		Windows: []sessionstate.Window{{
+			Index:           0,
+			Name:            "old",
+			ActivePaneIndex: 0,
+			Panes:           []sessionstate.Pane{{Index: 0, CWD: project, Recipe: sessionstate.ShellRecipe()}},
+		}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	cmd := &layoutCommand{
+		runner: runner,
+		lookupEnv: func(name string) string {
+			switch name {
+			case "PROJMUX_CWD":
+				return project
+			case "TMUX":
+				return "/tmp/tmux,1,0"
+			default:
+				return ""
+			}
+		},
+		sessionStore: func() (sessionstate.Store, error) { return sessionStore, nil },
+	}
+
+	if err := cmd.Run([]string{"apply", "scratch", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !layoutTestHasCall(runner.calls, []string{"set-option", "-t", "workspace", "-q", "@projmux_sessionstate_source", "fresh"}) {
+		t.Fatalf("tmux calls = %#v, want fresh source marker", runner.calls)
+	}
+	if _, err := sessionStore.Load("workspace"); !errors.Is(err, sessionstate.ErrNotFound) {
+		t.Fatalf("fresh layout snapshot load error = %v, want %v", err, sessionstate.ErrNotFound)
 	}
 }
 

@@ -416,6 +416,16 @@ layout replay. These flags bypass the startup picker and auto-restore toggle,
 are mutually exclusive, and still honor the existing session guard: if the
 target app session already exists, no replay is attempted.
 
+Layout startup records a session-state source marker on the live tmux session.
+Normal presets use `layout(<name>)` and continue autosaving. Fresh presets use
+`fresh`; the autosave tick skips sessions with that source marker, so a fresh
+startup does not create a saved snapshot for the next startup picker. After a
+successful fresh startup or `layout apply --force`, projmux also removes the
+saved snapshot for that session so an older autosave is not offered as the
+"Saved session" row next time. If a user explicitly runs `projmux session-state
+save` while a session is marked `fresh`, that fresh-source snapshot is still
+hidden from the startup picker.
+
 Settings > Session State shows the effective auto-save / auto-restore state,
 the current session snapshot summary, and a delete action. The saved toggles
 live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave`
@@ -431,13 +441,14 @@ projmux session-state delete [--session <name>]
 projmux session-state restore --dry-run [--session <name>]
 ```
 
-`status` prints the effective auto-save / auto-restore state and a compact
-snapshot preview for the target session. `save` captures the current tmux
-session immediately and intentionally bypasses the autosave debounce and
-disabled-autosave gate; it still requires a current tmux session. `delete`
-removes the target snapshot without an interactive confirmation. `restore
---dry-run` is preview-only in this release and does not create sessions or send
-tmux commands.
+`status` prints the source label (`autosave`, `layout(<name>)`, or `fresh`), the
+effective auto-save / auto-restore state, and a compact snapshot preview for the
+target session. Older snapshots without a source field display as `autosave`.
+`save` captures the current tmux session immediately and intentionally bypasses
+the autosave debounce and disabled-autosave gate; it still requires a current
+tmux session. `delete` removes the target snapshot without an interactive
+confirmation. `restore --dry-run` is preview-only in this release and does not
+create sessions or send tmux commands.
 
 ## Decoration Mode
 
