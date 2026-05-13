@@ -362,8 +362,8 @@ func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarCl
 // handleSession opens the project sidebar. It uses the same
 // popup-toggle surface as the keyboard bindings so a second click/chord closes
 // the scoped popup instead of stacking another one.
-func (c *statusbarCommand) handleSession(_ statusbarClickOptions, _, stderr io.Writer) error {
-	return c.handlePopupToggle(stderr, "session", "sessionizer-sidebar")
+func (c *statusbarCommand) handleSession(opts statusbarClickOptions, _, stderr io.Writer) error {
+	return c.handlePopupToggleWithClient(stderr, "session", "sessionizer-sidebar", opts.ClientTTY)
 }
 
 // handlePwd shows the current pane's path in a small popup. A plain
@@ -416,23 +416,19 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 // handleKube opens the project switcher. There is no kube-specific filter
 // surface yet; the switch picker is the existing navigation surface that
 // already renders kube metadata for candidates.
-func (c *statusbarCommand) handleKube(_ statusbarClickOptions, _, stderr io.Writer) error {
-	return c.handlePopupToggle(stderr, "kube", "sessionizer")
+func (c *statusbarCommand) handleKube(opts statusbarClickOptions, _, stderr io.Writer) error {
+	return c.handlePopupToggleWithClient(stderr, "kube", "sessionizer", opts.ClientTTY)
 }
 
 // handleGit opens the project switcher. There is no git-specific filter
 // surface yet; the switch picker is the existing navigation surface that
 // already renders git metadata for candidates.
-func (c *statusbarCommand) handleGit(_ statusbarClickOptions, _, stderr io.Writer) error {
-	return c.handlePopupToggle(stderr, "git", "sessionizer")
+func (c *statusbarCommand) handleGit(opts statusbarClickOptions, _, stderr io.Writer) error {
+	return c.handlePopupToggleWithClient(stderr, "git", "sessionizer", opts.ClientTTY)
 }
 
 func (c *statusbarCommand) handleSettings(opts statusbarClickOptions, _, stderr io.Writer) error {
 	return c.handlePopupToggleWithClient(stderr, "settings", "ai-split-settings", opts.ClientTTY)
-}
-
-func (c *statusbarCommand) handlePopupToggle(stderr io.Writer, label, mode string) error {
-	return c.handlePopupToggleWithClient(stderr, label, mode, "")
 }
 
 func (c *statusbarCommand) handlePopupToggleWithClient(stderr io.Writer, label, mode, clientTTY string) error {
