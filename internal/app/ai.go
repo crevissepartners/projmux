@@ -200,18 +200,23 @@ func (c *aiCommand) applyAIStatusWithNotify(state, paneID string, notifyIn atten
 	case "waiting":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "waiting")
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
-		if !notifyIn.Force && c.paneVisibleToClient(paneID) {
+		visible := c.paneVisibleToClient(paneID)
+		if visible {
+			// Badge follows visibility only: pane is already in front of the
+			// user, so auto-ack the reply badge regardless of Force.
 			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionAckOption, "1")
 			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
-			// The pane is already active so no reply badge survives — clear
-			// any stale queue entry instead of pushing a new one.
-			c.notifyProducer().AckReplyReady(notifyIn)
 		} else {
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateReply)
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionFocusArmedOption, "1")
+		}
+		// Force controls notification delivery (queue + OS), not the badge.
+		if notifyIn.Force || !visible {
 			_ = c.notifyAI(paneID)
 			c.notifyProducer().PushReplyReady(notifyIn)
+		} else {
+			c.notifyProducer().AckReplyReady(notifyIn)
 		}
 	case "idle", "":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
