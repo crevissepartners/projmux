@@ -56,10 +56,17 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 	if mode.Kind == projectStartupKindBack {
 		return errProjectStartupBack
 	}
-	if trusted, err := c.authorizeProjectOpen(ctx, target); err != nil {
+	trusted, err := c.authorizeProjectOpen(ctx, target)
+	if err != nil {
 		return err
-	} else if !trusted {
-		return nil
+	}
+	if !trusted {
+		// Trust was denied: skip snapshot replay (which would re-run
+		// previously-recorded startup recipes) and open a bare session at
+		// the project cwd instead of silently doing nothing. The internal
+		// trust gate inside runStartupCommand prevents the startup command
+		// from firing for an untrusted project.
+		return c.ensureAndOpenProjectSession(ctx, sessionName, target)
 	}
 	switch mode.Kind {
 	case projectStartupKindLatest:
