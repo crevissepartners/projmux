@@ -968,14 +968,14 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 	if got := statusbarOptions.TitleChips; len(got) < 2 || !got[0].Active || strings.TrimSpace(got[0].ClickValue) != "" {
 		t.Fatalf("statusbar settings chips = %#v, want passive Global/Project tabs", got)
 	}
-	for _, want := range []string{
-		settingsActionPrefixStatusbar + string(statusbarDecorationTargetCwd),
-		settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit),
-		settingsActionPrefixStatusbar + string(statusbarDecorationTargetNotify),
-	} {
-		if !hasEntryValue(statusbarOptions.Entries, want) {
-			t.Fatalf("statusbar settings entries = %#v, want %q", statusbarOptions.Entries, want)
-		}
+	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetCwd)) {
+		t.Fatalf("statusbar settings entries = %#v, want cwd detail row", statusbarOptions.Entries)
+	}
+	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetGit)) {
+		t.Fatalf("statusbar settings entries = %#v, want git detail row", statusbarOptions.Entries)
+	}
+	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetNotify)) {
+		t.Fatalf("statusbar settings entries = %#v, want notify detail row", statusbarOptions.Entries)
 	}
 	if hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetGit)+":"+string(config.StatusbarDecorationEmoji)) {
 		t.Fatalf("statusbar settings entries = %#v, want no direct mutation row at root", statusbarOptions.Entries)
@@ -2879,10 +2879,14 @@ func TestSettingsLabsUnknownProbeSaveOverrideUsesSuggestedPlainChord(t *testing.
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:probe"}, nil
 		case 5:
-			for _, want := range []string{"Unexpected sequence", "Save as plain override", "plain = M-a"} {
-				if !hasEntryLabelContaining(options.Entries, want) {
-					t.Fatalf("detail entries = %#v, want label containing %q", options.Entries, want)
-				}
+			if !hasEntryLabelContaining(options.Entries, "Unexpected sequence") {
+				t.Fatalf("detail entries = %#v, want unexpected sequence row", options.Entries)
+			}
+			if !hasEntryLabelContaining(options.Entries, "Save as plain override") {
+				t.Fatalf("detail entries = %#v, want save override row", options.Entries)
+			}
+			if !hasEntryLabelContaining(options.Entries, "plain = M-a") {
+				t.Fatalf("detail entries = %#v, want suggested M-a description", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:save-plain-override:M-a"}, nil
 		case 6:
@@ -3221,10 +3225,14 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	if got, want := aboutOptions.Footer, "Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
 		t.Fatalf("settings about footer = %q, want %q", got, want)
 	}
-	for _, want := range []string{settingsBackValue, settingsUpdateCheck, settingsUpdateApply} {
-		if !hasEntryValue(aboutOptions.Entries, want) {
-			t.Fatalf("settings about entries = %#v, want %q", aboutOptions.Entries, want)
-		}
+	if !hasEntryValue(aboutOptions.Entries, settingsBackValue) {
+		t.Fatalf("settings about entries = %#v, want back entry", aboutOptions.Entries)
+	}
+	if !hasEntryValue(aboutOptions.Entries, settingsUpdateCheck) {
+		t.Fatalf("settings about entries = %#v, want update check action", aboutOptions.Entries)
+	}
+	if !hasEntryValue(aboutOptions.Entries, settingsUpdateApply) {
+		t.Fatalf("settings about entries = %#v, want update apply action", aboutOptions.Entries)
 	}
 	for _, want := range []string{
 		"projmux " + version.String(),
@@ -3623,10 +3631,14 @@ func TestWorkdirListEntriesSurfacesEnvSources(t *testing.T) {
 	// and the colon-separated value in the value column, with a "(env, ...)"
 	// source annotation. Verify the parts appear; the exact spacing comes
 	// from settingsLabelInfo padding.
-	for _, want := range []string{managedRootsEnvVar, "/env/one:/env/two", "(env, read-only)"} {
-		if !hasEntryLabelContaining(entries, want) {
-			t.Fatalf("workdir list entries = %#v, want label containing %q", entries, want)
-		}
+	if !hasEntryLabelContaining(entries, managedRootsEnvVar) {
+		t.Fatalf("workdir list entries = %#v, want env variable name", entries)
+	}
+	if !hasEntryLabelContaining(entries, "/env/one:/env/two") {
+		t.Fatalf("workdir list entries = %#v, want env value", entries)
+	}
+	if !hasEntryLabelContaining(entries, "(env, read-only)") {
+		t.Fatalf("workdir list entries = %#v, want env source annotation", entries)
 	}
 }
 
@@ -4012,10 +4024,14 @@ func TestProjectPickerEntriesIncludesProjdirRow(t *testing.T) {
 	}
 
 	entries := cmd.projectPickerEntries()
-	for _, want := range []string{"Project Root", "/from/projdir", "(" + projdirSourcePROJDIRenv + ")"} {
-		if !hasEntryLabelContaining(entries, want) {
-			t.Fatalf("project picker entries = %#v, want label containing %q", entries, want)
-		}
+	if !hasEntryLabelContaining(entries, "Project Root") {
+		t.Fatalf("project picker entries = %#v, want Project Root row", entries)
+	}
+	if !hasEntryLabelContaining(entries, "/from/projdir") {
+		t.Fatalf("project picker entries = %#v, want resolved value in label", entries)
+	}
+	if !hasEntryLabelContaining(entries, "("+projdirSourcePROJDIRenv+")") {
+		t.Fatalf("project picker entries = %#v, want source label", entries)
 	}
 	if hasEntryLabelContaining(entries, "Set PROJMUX_PROJDIR") {
 		t.Fatalf("project picker entries = %#v, want project-root hint moved into submenu", entries)
@@ -4068,17 +4084,23 @@ func TestProjectRootEntriesShowShadowedSavedProjdir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("projectRootEntries() error = %v", err)
 	}
-	for _, want := range []string{
-		"Effective Project Root",
-		"/from/env",
-		"(" + projdirSourcePROJDIRenv + ")",
-		"Saved Project Root",
-		"/from/saved",
-		"shadowed by " + projdirSourcePROJDIRenv,
-	} {
-		if !hasEntryLabelContaining(entries, want) {
-			t.Fatalf("project root entries = %#v, want label containing %q", entries, want)
-		}
+	if !hasEntryLabelContaining(entries, "Effective Project Root") {
+		t.Fatalf("project root entries = %#v, want effective row", entries)
+	}
+	if !hasEntryLabelContaining(entries, "/from/env") {
+		t.Fatalf("project root entries = %#v, want effective env value", entries)
+	}
+	if !hasEntryLabelContaining(entries, "("+projdirSourcePROJDIRenv+")") {
+		t.Fatalf("project root entries = %#v, want env source label", entries)
+	}
+	if !hasEntryLabelContaining(entries, "Saved Project Root") {
+		t.Fatalf("project root entries = %#v, want saved row", entries)
+	}
+	if !hasEntryLabelContaining(entries, "/from/saved") {
+		t.Fatalf("project root entries = %#v, want saved value", entries)
+	}
+	if !hasEntryLabelContaining(entries, "shadowed by "+projdirSourcePROJDIRenv) {
+		t.Fatalf("project root entries = %#v, want shadowed relationship", entries)
 	}
 	if !hasEntryValue(entries, settingsProjdirSetTyped) {
 		t.Fatalf("project root entries = %#v, want typed set action", entries)
