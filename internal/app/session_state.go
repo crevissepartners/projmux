@@ -367,7 +367,7 @@ func sessionStateStatusLines(state statusbarSessionStateView, now time.Time, col
 	lines = append(lines, sessionStateField("session", session))
 	lines = append(lines, sessionStateField("source", statusbarSessionStateSourceText(state)))
 	lines = append(lines, sessionStateField("auto-save", statusbarSessionStateToggleText(state.Autosave)))
-	lines = append(lines, sessionStateField("auto-restore", statusbarSessionStateToggleText(state.Autorestore)))
+	lines = append(lines, sessionStateField("startup picker", statusbarSessionStateToggleText(state.Autorestore)))
 
 	switch {
 	case state.SessionErr != nil:
@@ -424,7 +424,7 @@ func sessionStatePopupEntries(state statusbarSessionStateView) []intpickercompat
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Auto-restore", statusbarSessionStateToggleText(state.Autorestore), ""),
+			Label: settingsLabelInfo("Startup picker", statusbarSessionStateToggleText(state.Autorestore), ""),
 			Value: settingsNoopValue,
 		},
 	}

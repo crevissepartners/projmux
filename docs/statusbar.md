@@ -81,7 +81,7 @@ output shape unchanged for external consumers, aligns model/window rows with
 right-aligned numeric values, dims unavailable values, and colors rows at the
 same alert thresholds as the popup: amber at 80% and red at 95%.
 `sessionstate` opens a read-only snapshot status popup for the current tmux
-session. It shows the effective auto-save and auto-restore toggles, saved
+session. It shows the effective auto-save and startup picker toggles, saved
 timestamp and age, window/pane counts, default cwd, and a bounded preview of
 windows, panes, recipe kinds, agent resume ids, and startup commands without
 dumping the raw JSON snapshot. Mutating actions remain in Settings, including

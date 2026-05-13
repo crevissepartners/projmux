@@ -170,7 +170,7 @@ func statusbarSessionStatePopupLines(state statusbarSessionStateView, now time.T
 	lines = append(lines, statusbarFieldLines("session", session, cols)...)
 	lines = append(lines, statusbarFieldLines("source", statusbarSessionStateSourceText(state), cols)...)
 	lines = append(lines, statusbarFieldLines("auto-save", statusbarSessionStateToggleText(state.Autosave), cols)...)
-	lines = append(lines, statusbarFieldLines("auto-restore", statusbarSessionStateToggleText(state.Autorestore), cols)...)
+	lines = append(lines, statusbarFieldLines("startup picker", statusbarSessionStateToggleText(state.Autorestore), cols)...)
 
 	switch {
 	case state.SessionErr != nil:

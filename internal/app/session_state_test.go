@@ -50,7 +50,7 @@ func TestSessionStateStatusShowsToggleAndSnapshotReadModel(t *testing.T) {
 		"session:      workspace",
 		"source:       autosave",
 		"auto-save:    off (PROJMUX_SESSIONSTATE_AUTOSAVE env)",
-		"auto-restore: off (saved)",
+		"startup picker: off (saved)",
 		"snapshot:     saved",
 		"2m ago",
 		"window 0 editor (2 panes)",

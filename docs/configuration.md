@@ -179,7 +179,7 @@ configured key opens and closes the popup.
 | `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from `projmux status usage` to stderr. |
 | `PROJMUX_USAGE_LIMITS_PATH` | Deprecated. Read but ignored; limits now come from upstream APIs and local Codex rollout state. |
 | `PROJMUX_SESSIONSTATE_AUTOSAVE` | Session snapshot autosave override. Values such as `off`, `false`, or `0` disable autosave regardless of the saved Settings value. |
-| `PROJMUX_SESSIONSTATE_AUTORESTORE` | Session snapshot auto-restore override. Values such as `off`, `false`, or `0` disable auto-restore regardless of the saved Settings value. |
+| `PROJMUX_SESSIONSTATE_AUTORESTORE` | Legacy compatibility name for the startup picker override. Values such as `off`, `false`, or `0` disable the startup picker regardless of the saved Settings value. |
 | `PROJMUX_SESSIONSTATE_DEBUG` | When non-empty, quiet autosave surfaces suppressed session-state errors to stderr. |
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
 | `PROJMUX_PICKER_BACKEND` | Legacy picker backend override. Any value, including old `fzf` settings, now resolves to the native picker. |
@@ -391,7 +391,7 @@ autosave command is quiet and debounced per session, and stores snapshots under
 `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`.
 
 On default `projmux shell`, startup candidates are checked before creating a
-new app session only when auto-restore is enabled. In project context, projmux
+new app session only when the startup picker is enabled. In project context, projmux
 opens a native startup picker even when the only choice is empty startup. When
 saved snapshots or project layout presets are available, rows appear with saved
 first, presets in alphabetical order, and empty last.
@@ -404,7 +404,7 @@ Selecting saved or a preset replays through the same session-state paths as
 explicit startup flags. Closing the picker, an empty selection, or a picker
 error falls back to an empty session and continues to the normal
 `tmux new-session -A` attach behavior. Missing snapshots and missing presets are
-quiet. When auto-restore is disabled, default `projmux shell` skips candidate
+quiet. When the startup picker is disabled, default `projmux shell` skips candidate
 lookup and the startup picker.
 
 Restore only runs when the target app session is absent; an existing live
@@ -412,13 +412,13 @@ session is left untouched and the normal attach path continues without opening
 the startup picker. Invalid snapshots or replay failures are reported to
 stderr, then `projmux shell` falls back to the normal attach behavior.
 
-`projmux shell --saved` bypasses the saved auto-restore toggle and attempts the
+`projmux shell --saved` bypasses the saved startup picker toggle and attempts the
 same saved-snapshot replay on the new-session path. `projmux shell --layout
 <name>` converts a project layout preset from `<project>/.projmux/layouts` into
 a session snapshot and replays it before attaching. The project context comes
 from `PROJMUX_CWD` when set, otherwise the nearest `.projmux` or `.git` marker
 from the current working directory. `projmux shell --empty` skips saved and
-layout replay. These flags bypass the startup picker and auto-restore toggle,
+layout replay. These flags bypass the startup picker toggle,
 are mutually exclusive, and still honor the existing session guard: if the
 target app session already exists, no replay is attempted.
 
@@ -432,11 +432,11 @@ saved snapshot for that session so an older autosave is not offered as the
 save` while a session is marked `fresh`, that fresh-source snapshot is still
 hidden from the startup picker.
 
-Settings > Session State shows the effective auto-save / auto-restore state,
+Settings > Session State shows the effective auto-save / startup picker state,
 the current session snapshot summary, and a delete action. The saved toggles
 live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave`
-and `sessionstate-autorestore`; the environment variables above override those
-files.
+and the legacy compatibility file name `sessionstate-autorestore`; the
+environment variables above override those files.
 
 Manual snapshot actions are available from the CLI:
 
@@ -448,7 +448,7 @@ projmux session-state restore --dry-run [--session <name>]
 ```
 
 `status` prints the source label (`autosave`, `layout(<name>)`, or `fresh`), the
-effective auto-save / auto-restore state, and a compact snapshot preview for the
+effective auto-save / startup picker state, and a compact snapshot preview for the
 target session. Older snapshots without a source field display as `autosave`.
 `save` captures the current tmux session immediately and intentionally bypasses
 the autosave debounce and disabled-autosave gate; it still requires a current
