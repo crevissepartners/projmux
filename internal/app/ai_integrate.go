@@ -299,7 +299,7 @@ func (c *aiCommand) planCodexHooksIntegration(remove, removeAllManaged bool) (co
 	if !includeFeatureInBlock {
 		nextConfig = ensureCodexHooksFeatureEnabled(nextConfig)
 	}
-	next := codexHooksBlockForEvents(includeFeatureInBlock, hookEvents) + nextConfig
+	next := appendCodexHooksBlock(nextConfig, codexHooksBlockForEvents(includeFeatureInBlock, hookEvents))
 	plan.next = next
 	plan.changed = next != current
 	if plan.changed {
@@ -632,6 +632,14 @@ func codexNotifyBlock() string {
 
 func codexHooksBlock(includeFeature bool) string {
 	return codexHooksBlockForEvents(includeFeature, defaultAIHookInstallEvents(aiHookProviderCodex))
+}
+
+func appendCodexHooksBlock(content, block string) string {
+	if strings.TrimSpace(content) == "" {
+		return block
+	}
+	content = strings.TrimRight(content, "\r\n")
+	return content + "\n\n" + block
 }
 
 func codexHooksBlockForEvents(includeFeature bool, events []string) string {
