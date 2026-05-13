@@ -157,19 +157,23 @@ Runs a dependency check: `tmux ≥ 3.4`, `git`, `stty` (POSIX only), and
 for Codex legacy notify, Codex hooks, Claude Code hooks, and the tmux bell
 fallback. AI notify integration statuses are `installed`, `missing`, or
 `conflict`; missing or conflicting integrations are informational and do not
-make doctor fail.
+make doctor fail. It also reports read-only Session State resume metadata
+diagnostics for saved agent panes, including `available`, `stale`, or
+`unavailable` status plus confidence, source, updated-at, and the affected
+snapshot/window/pane.
 
 Exit code `0` even when optional deps or AI notify integrations are missing;
 non-zero only when a required dep is missing or stale. `--json` emits a
-machine-readable object with `dependencies` and `ai_notify_integrations`; the
-default is the human report with suggested install commands per platform and
-AI integration install/remove/dry-run commands. `--install-missing` is explicit
-opt-in and runs generated install commands only for missing or stale required
+machine-readable object with `dependencies`, `ai_notify_integrations`, and
+`session_state_resume`; the default is the human report with suggested install
+commands per platform, AI integration install/remove/dry-run commands, and
+Session State resume metadata health. `--install-missing` is explicit opt-in
+and runs generated install commands only for missing or stale required
 dependencies. `--dry-run` prints those commands without executing them.
 `--include-optional` also includes optional missing dependencies such as
-`kubectl` when an install command is available. Install flags cannot be
-combined with `--json`. Doctor does not diagnose terminal key delivery; use
-`projmux setup` for that.
+`kubectl` when an install command is available. Install flags cannot be combined
+with `--json`. Doctor does not diagnose terminal key delivery; use `projmux
+setup` for that.
 
 `Settings > AI Settings > Notify integrations` shows the same read-only
 statuses, conflicts, config paths, and AI integration install/remove/dry-run

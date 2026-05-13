@@ -537,7 +537,7 @@ func sessionStatePlainPreviewLines(snap sessionstate.Snapshot, cols int) []strin
 				return lines
 			}
 			panesSeen++
-			lines = append(lines, statusbarSessionStateClip("  "+statusbarSessionStatePanePreview(window.Index, pane), cols))
+			lines = append(lines, statusbarSessionStateClip("  "+statusbarSessionStatePanePreview(snap.SavedAt, window.Index, pane), cols))
 		}
 	}
 	if len(lines) == 0 {

@@ -556,6 +556,8 @@ func newLayoutSaveTestRunner(project string) *recordingTmuxRunner {
 		"#{@projmux_ai_agent}",
 		"#{@projmux_ai_topic}",
 		"#{@projmux_ai_resume_id}",
+		"#{@projmux_ai_resume_source}",
+		"#{@projmux_ai_resume_updated_at}",
 	}, "\x1f")
 	service := filepath.Join(project, "service")
 	return &recordingTmuxRunner{

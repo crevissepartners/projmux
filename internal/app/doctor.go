@@ -17,12 +17,13 @@ import (
 )
 
 type doctorCommand struct {
-	lookPath       func(string) (string, error)
-	goos           func() string
-	getenv         func(string) string
-	commandVersion func(name string) string
-	runExternal    func(name string, args []string, stdout, stderr io.Writer) error
-	aiDiagnostics  func() []doctorAINotifyIntegration
+	lookPath          func(string) (string, error)
+	goos              func() string
+	getenv            func(string) string
+	commandVersion    func(name string) string
+	runExternal       func(name string, args []string, stdout, stderr io.Writer) error
+	aiDiagnostics     func() []doctorAINotifyIntegration
+	resumeDiagnostics func() []doctorSessionStateResumeDiagnostic
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -38,6 +39,7 @@ func newDoctorCommand() *doctorCommand {
 	c.aiDiagnostics = func() []doctorAINotifyIntegration {
 		return doctorAINotifyDiagnostics(newAICommand())
 	}
+	c.resumeDiagnostics = doctorSessionStateResumeDiagnostics
 	return c
 }
 
@@ -94,8 +96,9 @@ type doctorResult struct {
 }
 
 type doctorReport struct {
-	Dependencies         []doctorResult              `json:"dependencies"`
-	AINotifyIntegrations []doctorAINotifyIntegration `json:"ai_notify_integrations"`
+	Dependencies         []doctorResult                       `json:"dependencies"`
+	AINotifyIntegrations []doctorAINotifyIntegration          `json:"ai_notify_integrations"`
+	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 }
 
 func doctorDeps() []doctorDep {
@@ -137,6 +140,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	report := doctorReport{
 		Dependencies:         results,
 		AINotifyIntegrations: c.evaluateAINotifyIntegrations(),
+		SessionStateResume:   c.evaluateSessionStateResume(),
 	}
 
 	if *jsonOut {
@@ -166,6 +170,13 @@ func (c *doctorCommand) evaluateAINotifyIntegrations() []doctorAINotifyIntegrati
 		return nil
 	}
 	return c.aiDiagnostics()
+}
+
+func (c *doctorCommand) evaluateSessionStateResume() []doctorSessionStateResumeDiagnostic {
+	if c.resumeDiagnostics == nil {
+		return nil
+	}
+	return c.resumeDiagnostics()
 }
 
 type doctorInstallOptions struct {
@@ -482,6 +493,29 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 				}
 				buf.WriteString("remove: ")
 				buf.WriteString(r.RemoveCommand)
+			}
+			buf.WriteString("\n")
+		}
+	}
+	if len(report.SessionStateResume) > 0 {
+		buf.WriteString("\nSession State resume metadata\n")
+		for _, r := range report.SessionStateResume {
+			tag := fmt.Sprintf("[%s]", r.Status)
+			fmt.Fprintf(&buf, "  %-15s%-8s %s:%d.%d", tag, r.Agent, r.Session, r.WindowIndex, r.PaneIndex)
+			if r.Confidence != "" {
+				fmt.Fprintf(&buf, "; confidence: %s", r.Confidence)
+			}
+			if r.ResumeSource != "" {
+				fmt.Fprintf(&buf, "; source: %s", r.ResumeSource)
+			}
+			if r.ResumeUpdatedAt != "" {
+				fmt.Fprintf(&buf, "; updated: %s", r.ResumeUpdatedAt)
+			}
+			if r.Reason != "" {
+				fmt.Fprintf(&buf, "; %s", r.Reason)
+			}
+			if r.SnapshotPath != "" {
+				fmt.Fprintf(&buf, "; snapshot: %s", r.SnapshotPath)
 			}
 			buf.WriteString("\n")
 		}

@@ -1478,7 +1478,7 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 				Index:  0,
 				Title:  "editor",
 				CWD:    project,
-				Recipe: sessionstate.ShellRecipe(),
+				Recipe: sessionstate.AgentRecipeWithResumeMetadata("codex", "codex-session", "topic", "session-id", "2026-05-12T03:04:05Z"),
 			}},
 		}},
 	}
@@ -1532,6 +1532,8 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 		"dev",
 		"pane 1.0",
 		"editor",
+		"status available",
+		"confidence high",
 		"Windows",
 		"1",
 		"Panes",

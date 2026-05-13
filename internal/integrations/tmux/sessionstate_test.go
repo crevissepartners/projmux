@@ -27,7 +27,7 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 			{output: []byte(
 				"0\x1f0\x1fshell\x1f0\x1f/home/tester\x1f\x1f\x1f\x1f\x1f\x1f\n" +
 					"0\x1f1\x1fwatcher\x1f1\x1f/home/tester/app\x1fstartup\x1fmake watch\x1f\x1f\x1f\x1f\n" +
-					"2\x1f0\x1fcodex task\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1fsession state\x1f01973f21-abc\n" +
+					"2\x1f0\x1fcodex task\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1fsession state\x1f01973f21-abc\x1fsession-id\x1f2026-05-12T03:04:05Z\n" +
 					"2\x1f1\x1fclaude task\x1f0\x1f/home/tester/app\x1f\x1f\x1f1\x1fclaude\x1fmissing resume\x1f\n",
 			)},
 			{output: []byte("layout(team)\n")},
@@ -63,8 +63,8 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 				Layout:          "layout-b",
 				ActivePaneIndex: 0,
 				Panes: []sessionstate.Pane{
-					{Index: 0, Title: "codex task", CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipe("codex", "01973f21-abc", "session state")},
-					{Index: 1, Title: "claude task", CWD: "/home/tester/app", Recipe: sessionstate.ShellRecipe()},
+					{Index: 0, Title: "codex task", CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipeWithResumeMetadata("codex", "01973f21-abc", "session state", "session-id", "2026-05-12T03:04:05Z")},
+					{Index: 1, Title: "claude task", CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipe("claude", "", "missing resume")},
 				},
 			},
 		},
@@ -87,6 +87,8 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 			"#{@projmux_ai_agent}",
 			"#{@projmux_ai_topic}",
 			"#{@projmux_ai_resume_id}",
+			"#{@projmux_ai_resume_source}",
+			"#{@projmux_ai_resume_updated_at}",
 		)}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}},
 	}
@@ -322,8 +324,8 @@ func TestClientSaveSessionSnapshotAmbiguousCodexRolloutLogsWithoutCWDDoNotRefres
 	if err != nil {
 		t.Fatalf("SaveSessionSnapshot() error = %v", err)
 	}
-	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.ShellRecipe()) {
-		t.Fatalf("recipe = %#v, want ambiguous codex logs to remain shell", got)
+	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.AgentRecipe("codex", "", "topic")) {
+		t.Fatalf("recipe = %#v, want unavailable codex agent recipe", got)
 	}
 	for _, call := range runner.calls {
 		if len(call.args) > 0 && call.args[0] == "set-option" {
@@ -360,8 +362,8 @@ func TestClientSaveSessionSnapshotClaudePaneDoesNotUseCodexRolloutLog(t *testing
 	if err != nil {
 		t.Fatalf("SaveSessionSnapshot() error = %v", err)
 	}
-	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.ShellRecipe()) {
-		t.Fatalf("recipe = %#v, want claude pane to ignore codex log fallback", got)
+	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.AgentRecipe("claude", "", "topic")) {
+		t.Fatalf("recipe = %#v, want unavailable claude agent recipe", got)
 	}
 	for _, call := range runner.calls {
 		if len(call.args) > 0 && call.args[0] == "set-option" {
@@ -394,8 +396,8 @@ func TestClientSaveSessionSnapshotTranscriptFallbackDoesNotApplyToCodex(t *testi
 	if err != nil {
 		t.Fatalf("SaveSessionSnapshot() error = %v", err)
 	}
-	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.ShellRecipe()) {
-		t.Fatalf("recipe = %#v, want no transcript fallback for codex", got)
+	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.AgentRecipe("codex", "", "topic")) {
+		t.Fatalf("recipe = %#v, want unavailable codex agent recipe", got)
 	}
 	for _, call := range runner.calls {
 		if len(call.args) > 0 && call.args[0] == "set-option" {

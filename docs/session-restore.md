@@ -17,6 +17,15 @@ then shows project context, snapshot source/age, and a window-title -> pane-titl
 preview before count metadata. The legacy Settings > Session State path remains
 available for the current live tmux session.
 
+Agent panes in Settings, the statusbar popup, and restore dry-run previews show
+resume metadata health next to the pane recipe. `available` means a resume id is
+present and recent enough for replay, `stale` means the stored id exists but the
+metadata is missing or older than the saved snapshot policy, and `unavailable`
+means projmux cannot safely resume that agent pane from the snapshot. Confidence
+is derived from the metadata source: direct session ids and hook ingest are high
+confidence, transcript/log fallbacks are medium confidence, and missing or
+unknown sources are low or none.
+
 The statusbar Session State popup remains a secondary shortcut backed by the
 same read model and CLI behavior:
 

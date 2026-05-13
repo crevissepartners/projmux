@@ -101,6 +101,8 @@ func TestSessionStateSaveCapturesCurrentSessionEvenWhenAutosaveDisabled(t *testi
 		"#{@projmux_ai_agent}",
 		"#{@projmux_ai_topic}",
 		"#{@projmux_ai_resume_id}",
+		"#{@projmux_ai_resume_source}",
+		"#{@projmux_ai_resume_updated_at}",
 	}, "\x1f")
 	runner := &recordingTmuxRunner{
 		formats: map[string]string{
@@ -229,6 +231,52 @@ func TestSessionStateRestoreDryRunPrintsPreviewWithoutTmux(t *testing.T) {
 	}
 }
 
+func TestSessionStateRestoreDryRunShowsResumeHealth(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC)
+	store := sessionstate.NewStore(t.TempDir())
+	snap := sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    "workspace",
+		DefaultCWD: "/tmp/workspace",
+		SavedAt:    now,
+		Windows: []sessionstate.Window{{
+			Index:           0,
+			Name:            "agents",
+			ActivePaneIndex: 0,
+			Panes: []sessionstate.Pane{
+				{Index: 0, Title: "codex", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipeWithResumeMetadata("codex", "codex-session", "topic", "session-id", now.Format(time.RFC3339))},
+				{Index: 1, Title: "stale claude", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipeWithResumeMetadata("claude", "claude-session", "topic", "claude-transcript", now.Add(-48*time.Hour).Format(time.RFC3339))},
+				{Index: 2, Title: "missing codex", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipe("codex", "", "topic")},
+			},
+		}},
+	}
+	if err := store.Save(snap); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	cmd := &sessionStateCommand{
+		lookupEnv:    func(string) string { return "" },
+		now:          func() time.Time { return now },
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"restore", "--dry-run", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"status available confidence high",
+		"status stale confidence medium",
+		"status unavailable confidence none source unknown",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, output)
+		}
+	}
+}
+
 func TestSessionStateRestoreRejectsExecutionWithoutDryRun(t *testing.T) {
 	t.Parallel()
 
@@ -312,6 +360,8 @@ func TestSessionStatePopupSaveNowCapturesCurrentSession(t *testing.T) {
 		"#{@projmux_ai_agent}",
 		"#{@projmux_ai_topic}",
 		"#{@projmux_ai_resume_id}",
+		"#{@projmux_ai_resume_source}",
+		"#{@projmux_ai_resume_updated_at}",
 	}, "\x1f")
 	runner := &recordingTmuxRunner{
 		formats: map[string]string{

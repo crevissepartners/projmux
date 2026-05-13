@@ -1374,6 +1374,8 @@ func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing
 		"#{@projmux_ai_agent}",
 		"#{@projmux_ai_topic}",
 		"#{@projmux_ai_resume_id}",
+		"#{@projmux_ai_resume_source}",
+		"#{@projmux_ai_resume_updated_at}",
 	}, "\x1f")
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{
