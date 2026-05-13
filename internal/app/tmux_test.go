@@ -1365,6 +1365,7 @@ func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing
 	paneFormat := strings.Join([]string{
 		"#{window_index}",
 		"#{pane_index}",
+		"#{pane_title}",
 		"#{?pane_active,1,0}",
 		"#{pane_current_path}",
 		"#{@projmux_recipe_kind}",
@@ -1378,7 +1379,7 @@ func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing
 		outputs: map[string]string{
 			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):              "workspace\n",
 			strings.Join([]string{"tmux", "list-windows", "-t", "workspace", "-F", windowFormat}, "\x00"):   "0\x1fshell\x1flayout\n",
-			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1fshell\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
 		},
 	}
 	cmd := &tmuxCommand{

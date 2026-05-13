@@ -547,6 +547,7 @@ func newLayoutSaveTestRunner(project string) *recordingTmuxRunner {
 	paneFormat := strings.Join([]string{
 		"#{window_index}",
 		"#{pane_index}",
+		"#{pane_title}",
 		"#{?pane_active,1,0}",
 		"#{pane_current_path}",
 		"#{@projmux_recipe_kind}",
@@ -564,8 +565,8 @@ func newLayoutSaveTestRunner(project string) *recordingTmuxRunner {
 		outputs: map[string]string{
 			strings.Join([]string{"tmux", "list-windows", "-t", "workspace", "-F", windowFormat}, "\x00"): "0\x1fmain\x1flayout\n",
 			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): strings.Join([]string{
-				"0\x1f0\x1f1\x1f" + project + "\x1f\x1f\x1f\x1f\x1f\x1f",
-				"0\x1f1\x1f0\x1f" + service + "\x1fstartup\x1fmake watch\x1f\x1f\x1f\x1f",
+				"0\x1f0\x1fshell\x1f1\x1f" + project + "\x1f\x1f\x1f\x1f\x1f\x1f",
+				"0\x1f1\x1fwatcher\x1f0\x1f" + service + "\x1fstartup\x1fmake watch\x1f\x1f\x1f\x1f",
 				"",
 			}, "\n"),
 		},

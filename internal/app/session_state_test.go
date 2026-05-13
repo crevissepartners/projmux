@@ -54,7 +54,7 @@ func TestSessionStateStatusShowsToggleAndSnapshotReadModel(t *testing.T) {
 		"snapshot:     saved",
 		"2m ago",
 		"window 0 editor (2 panes)",
-		"pane 0.1 startup make watch",
+		"pane 0.1 watcher startup make watch",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("status output missing %q:\n%s", want, output)
@@ -92,6 +92,7 @@ func TestSessionStateSaveCapturesCurrentSessionEvenWhenAutosaveDisabled(t *testi
 	paneFormat := strings.Join([]string{
 		"#{window_index}",
 		"#{pane_index}",
+		"#{pane_title}",
 		"#{?pane_active,1,0}",
 		"#{pane_current_path}",
 		"#{@projmux_recipe_kind}",
@@ -107,7 +108,7 @@ func TestSessionStateSaveCapturesCurrentSessionEvenWhenAutosaveDisabled(t *testi
 		},
 		outputs: map[string]string{
 			strings.Join([]string{"tmux", "list-windows", "-t", "workspace", "-F", windowFormat}, "\x00"):   "0\x1fshell\x1flayout\n",
-			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1fshell\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
 		},
 	}
 	cmd := &sessionStateCommand{
@@ -142,6 +143,9 @@ func TestSessionStateSaveCapturesCurrentSessionEvenWhenAutosaveDisabled(t *testi
 	}
 	if loaded.Session != "workspace" || loaded.SavedAt != now.UTC() {
 		t.Fatalf("loaded snapshot = %#v, want saved current session", loaded)
+	}
+	if got := loaded.Windows[0].Panes[0].Title; got != "shell" {
+		t.Fatalf("loaded pane title = %q, want captured tmux pane title", got)
 	}
 	for _, call := range runner.calls {
 		if reflect.DeepEqual(call.args, []string{"display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_autosave_at}"}) {
@@ -214,7 +218,7 @@ func TestSessionStateRestoreDryRunPrintsPreviewWithoutTmux(t *testing.T) {
 		"source:       autosave",
 		"Dry run only; no tmux commands were executed.",
 		"window 0 editor (2 panes)",
-		"pane 0.1 startup make watch",
+		"pane 0.1 watcher startup make watch",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("dry-run output missing %q:\n%s", want, output)
@@ -282,7 +286,7 @@ func TestSessionStatePopupPreviewUsesDryRunReadModel(t *testing.T) {
 		"Session State Restore Preview",
 		"source:       autosave",
 		"Dry run only; no tmux commands were executed.",
-		"pane 0.1 startup make watch",
+		"pane 0.1 watcher startup make watch",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("popup preview output missing %q:\n%s", want, output)
@@ -299,6 +303,7 @@ func TestSessionStatePopupSaveNowCapturesCurrentSession(t *testing.T) {
 	paneFormat := strings.Join([]string{
 		"#{window_index}",
 		"#{pane_index}",
+		"#{pane_title}",
 		"#{?pane_active,1,0}",
 		"#{pane_current_path}",
 		"#{@projmux_recipe_kind}",
@@ -314,7 +319,7 @@ func TestSessionStatePopupSaveNowCapturesCurrentSession(t *testing.T) {
 		},
 		outputs: map[string]string{
 			strings.Join([]string{"tmux", "list-windows", "-t", "workspace", "-F", windowFormat}, "\x00"):   "0\x1fshell\x1flayout\n",
-			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1fshell\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
 		},
 	}
 	var calls int
@@ -362,6 +367,9 @@ func TestSessionStatePopupSaveNowCapturesCurrentSession(t *testing.T) {
 	if loaded.Session != "workspace" || loaded.SavedAt != now.UTC() {
 		t.Fatalf("loaded snapshot = %#v, want saved current session", loaded)
 	}
+	if got := loaded.Windows[0].Panes[0].Title; got != "shell" {
+		t.Fatalf("loaded pane title = %q, want captured tmux pane title", got)
+	}
 }
 
 func saveSessionStateTestSnapshot(t *testing.T, store sessionstate.Store, savedAt time.Time) {
@@ -383,7 +391,7 @@ func saveSessionStateTestSnapshotSource(t *testing.T, store sessionstate.Store, 
 			ActivePaneIndex: 0,
 			Panes: []sessionstate.Pane{
 				{Index: 0, CWD: "/tmp/workspace", Recipe: sessionstate.ShellRecipe()},
-				{Index: 1, CWD: "/tmp/workspace", Recipe: sessionstate.StartupRecipe("make watch")},
+				{Index: 1, Title: "watcher", CWD: "/tmp/workspace", Recipe: sessionstate.StartupRecipe("make watch")},
 			},
 		}},
 	}); err != nil {

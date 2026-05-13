@@ -127,6 +127,44 @@ func TestLoadLegacySnapshotWithoutSourceDefaultsToAutosaveLabel(t *testing.T) {
 	}
 }
 
+func TestLoadLegacySnapshotWithoutPaneTitle(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(t.TempDir())
+	snap := sampleSnapshot()
+	writeSnapshotJSON(t, store, snap.Session, map[string]any{
+		"version":     snap.Version,
+		"session":     snap.Session,
+		"default_cwd": snap.DefaultCWD,
+		"saved_at":    snap.SavedAt,
+		"windows": []any{
+			map[string]any{
+				"index":             0,
+				"name":              "projmux",
+				"active_pane_index": 0,
+				"panes": []any{
+					map[string]any{
+						"index":  0,
+						"cwd":    "/home/tester/source/repos/projmux",
+						"recipe": map[string]any{"kind": "shell"},
+					},
+				},
+			},
+		},
+	})
+
+	got, err := store.Load(snap.Session)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(got.Windows) != 1 || len(got.Windows[0].Panes) != 1 {
+		t.Fatalf("Load() = %#v, want one pane", got)
+	}
+	if got.Windows[0].Panes[0].Title != "" {
+		t.Fatalf("legacy pane title = %q, want empty", got.Windows[0].Panes[0].Title)
+	}
+}
+
 func TestStoreSummaryCountsWindowsAndPanes(t *testing.T) {
 	t.Parallel()
 
@@ -425,6 +463,7 @@ func sampleSnapshot() Snapshot {
 					},
 					{
 						Index:  1,
+						Title:  "agent task",
 						CWD:    "/home/tester/source/repos/projmux",
 						Recipe: AgentRecipe("claude", "abcdef-1234", "keybinding in-app"),
 					},
