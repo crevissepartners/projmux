@@ -190,6 +190,75 @@ func TestShellSupportsRuntimeOverrides(t *testing.T) {
 	}
 }
 
+func TestShellDefaultSessionUsesProjectContextIdentity(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	nested := filepath.Join(project, "internal", "app")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+		getwd:      func() (string, error) { return nested, nil },
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "repos-projmux", "-c", project}
+	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
+		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
+	}
+}
+
+func TestShellDefaultSessionUsesPROJMUXCWDProjectContext(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	envProject := filepath.Join(home, "source", "repos", "projmux")
+	wdProject := filepath.Join(home, "elsewhere", "other")
+	if err := os.MkdirAll(envProject, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(wdProject, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return envProject
+			}
+			return ""
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+		getwd:      func() (string, error) { return wdProject, nil },
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "repos-projmux", "-c", envProject}
+	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
+		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
+	}
+}
+
 func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -210,6 +279,102 @@ func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
 	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "home", "-c", home}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
+	}
+}
+
+func TestShellExplicitHomeSessionKeepsHomeTargetInsideProject(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	saveShellSnapshot(t, store, "repos-projmux", project)
+	foreground := &recordingShellRunner{}
+	tmux := &scriptedShellTmuxRunner{}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   foreground.run,
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+		getwd:        func() (string, error) { return project, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("startup picker should not use project snapshot for explicit home session: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
+	}
+
+	if err := cmd.Run([]string{"--no-install", "--session", "home"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(tmux.calls) != 0 {
+		t.Fatalf("tmux restore calls = %#v, want none for explicit home target", tmux.calls)
+	}
+	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "home", "-c", home}
+	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantArgs) {
+		t.Fatalf("command = %s %#v, want tmux %#v", foreground.name, foreground.args, wantArgs)
+	}
+}
+
+func TestShellDefaultProjectTargetUsesProjectSnapshotCandidates(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	saveShellSnapshot(t, store, "repos-projmux", project)
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"): errors.New("can't find session: repos-projmux"),
+		},
+	}
+	var pickerCalls int
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   foreground.run,
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+		getwd:        func() (string, error) { return project, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			pickerCalls++
+			if options.UI != "shell-startup" {
+				t.Fatalf("startup picker UI = %q, want shell-startup", options.UI)
+			}
+			if len(options.Entries) != 2 || options.Entries[0].Value != shellStartupPickerValueSaved {
+				t.Fatalf("startup picker entries = %#v, want saved snapshot plus empty", options.Entries)
+			}
+			return intpickercompat.Result{}, nil
+		})),
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if pickerCalls != 1 {
+		t.Fatalf("startup picker calls = %d, want 1", pickerCalls)
+	}
+	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"}}}
+	if !reflect.DeepEqual(tmux.calls, wantCalls) {
+		t.Fatalf("tmux calls = %#v, want project-target lookup", tmux.calls)
+	}
+	wantAttach := []string{"-L", "pmx", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", project}
+	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
+		t.Fatalf("attach command = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
 	}
 }
 
