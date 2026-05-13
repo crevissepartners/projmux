@@ -648,17 +648,17 @@ flags with the top-level `switch` UX:
 - `shell` — boot the isolated `-L projmux` tmux server with the
   generated config. The generated app config uses absolute `$SHELL` as the
   tmux default shell when set, otherwise `/bin/sh`. On a new target app
-  session, default `shell` can still open the compatibility startup picker when
-  the startup picker is enabled. The primary Project open picker lives on the
-  Alt-1 sidebar path and uses `Latest snapshot`, `Named snapshot`, and
-  `Empty session`. `Latest snapshot` is auto-saved; named snapshots are fixed
-  until the user saves or replaces them. Closing the picker falls back to an
-  empty session and continues startup. `--saved` forces replay from the latest
-  snapshot, `--layout <name>` forces replay from a named snapshot backed by the
-  legacy project layout store, and `--empty` skips snapshot replay. These flags
-  bypass the picker and startup picker toggle, are mutually exclusive, and never
-  overwrite an existing app session; if the target already exists, `shell`
-  follows the normal attach path.
+  session, default `shell` can still open the `Start app session`
+  compatibility picker when the startup picker is enabled. The primary Project
+  open picker lives on the Alt-1 sidebar path and uses `Latest snapshot`,
+  `Named snapshot`, and `Empty session`. `Latest snapshot` is auto-saved; named
+  snapshots are fixed until the user saves or replaces them. Closing the shell
+  compatibility picker falls back to an empty session and continues startup.
+  `--saved` forces replay from the latest snapshot, `--layout <name>` forces
+  replay from a named snapshot backed by the legacy project layout store, and
+  `--empty` skips snapshot replay. These flags bypass the picker and startup
+  picker toggle, are mutually exclusive, and never overwrite an existing app
+  session; if the target already exists, `shell` follows the normal attach path.
 - `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI

@@ -84,11 +84,12 @@ new session without restoring a snapshot. Existing sessions switch directly
 without a startup picker.
 
 `projmux shell` still accepts the legacy startup selectors in this release, but
-it is no longer the primary project restore model. Its startup picker uses the
-same labels: `Latest snapshot`, `Named snapshot`, and `Empty session`. Closing
-the picker or making no selection falls back to empty startup. When the startup
-picker is disabled, default `projmux shell` skips candidate lookup and the
-picker, then follows the normal empty attach path.
+it is no longer the primary project restore model. Its compatibility picker is
+titled `Start app session` and uses the same row labels: `Latest snapshot`,
+`Named snapshot`, and `Empty session`. Closing the picker or making no selection
+falls back to empty startup. When the startup picker is disabled, default
+`projmux shell` skips candidate lookup and the picker, then follows the normal
+empty attach path.
 
 The explicit startup selectors `--saved`, `--layout <name>`, and `--empty`
 bypass the picker and startup picker toggle, then route directly to the same

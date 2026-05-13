@@ -401,9 +401,9 @@ replaces them.
 
 On default `projmux shell`, compatibility startup candidates are checked before
 creating a new app session only when the startup picker is enabled. In project
-context, projmux opens a native startup picker even when the only choice is
-empty startup. When snapshots are available, rows use the same `Latest
-snapshot`, `Named snapshot`, and `Empty session` labels.
+context, projmux opens a native `Start app session` picker even when the only
+choice is empty startup. When snapshots are available, rows use the same
+`Latest snapshot`, `Named snapshot`, and `Empty session` labels.
 When a project context is available, default `projmux shell` targets that
 project's session identity and starts in the project root, so latest snapshot
 lookup uses the same key as project sessions. Without project context, or with

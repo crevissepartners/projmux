@@ -494,7 +494,7 @@ func shellStartupPickerOptions(candidates []shellSessionCandidate) intpickercomp
 	return intpickercompat.Options{
 		UI:            "shell-startup",
 		Prompt:        "Start > ",
-		Header:        "Start project",
+		Header:        "Start app session",
 		Footer:        "Enter: start  |  Esc: empty session",
 		Entries:       entries,
 		Bindings:      settingsCloseBindings(),
