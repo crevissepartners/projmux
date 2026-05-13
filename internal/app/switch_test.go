@@ -29,6 +29,10 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 		exists: map[string]bool{"workspace": true},
 	}
 
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) { gotRunnerOptions = o },
+			reply: intpickercompat.Result{Value: "/home/tester/workspace"}},
+	})
 	app := &App{
 		switcher: &switchCommand{
 			discover: func(inputs candidates.Inputs) ([]string, error) {
@@ -38,16 +42,10 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 			pinStore: func() (switchPinStore, error) {
 				return &stubSwitchPinStore{list: []string{"/pins/app"}}, nil
 			},
-			runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-				gotRunnerOptions = options
-				return intpickercompat.Result{Value: "/home/tester/workspace"}, nil
-			}),
-			nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-				gotRunnerOptions = options
-				return intpickercompat.Result{Value: "/home/tester/workspace"}, nil
-			})),
-			sessions:   executor,
-			executable: func() (string, error) { return "/tmp/projmux", nil },
+			runner:       runner,
+			nativePicker: native,
+			sessions:     executor,
+			executable:   func() (string, error) { return "/tmp/projmux", nil },
 			identity: switchIdentityResolverFunc(func(path string) (string, error) {
 				switch path {
 				case "/home/tester/workspace":
@@ -301,25 +299,23 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	t.Parallel()
 
 	var gotRunnerOptions intpickercompat.Options
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) { gotRunnerOptions = o },
+			reply: intpickercompat.Result{Value: "/tmp/app"}},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = options
-			return intpickercompat.Result{Value: "/tmp/app"}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = options
-			return intpickercompat.Result{Value: "/tmp/app"}, nil
-		})),
-		sessions:   &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
-		validate:   func(string) error { return nil },
-		homeDir:    func() (string, error) { return "/home/tester", nil },
-		workingDir: func() (string, error) { return "/tmp", nil },
+		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:     func(string) error { return nil },
+		homeDir:      func() (string, error) { return "/home/tester", nil },
+		workingDir:   func() (string, error) { return "/tmp", nil },
 	}
 
 	var stdout bytes.Buffer
@@ -407,20 +403,17 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 	t.Parallel()
 
 	var gotRunnerOptions intpickercompat.Options
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) { gotRunnerOptions = o }},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = options
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = options
-			return intpickercompat.Result{}, nil
-		})),
-		sessions: &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
 		inventory: &stubPreviewInventory{panes: []corepreview.Pane{{
 			SessionName:    "tmp-app",
 			Title:          "server",
@@ -446,19 +439,16 @@ func TestSwitchCommandSidebarUsesContextSessionForInitialPosition(t *testing.T) 
 	t.Parallel()
 
 	var gotRunnerOptions intpickercompat.Options
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) { gotRunnerOptions = o }},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/a", "/tmp/b"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = options
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = options
-			return intpickercompat.Result{}, nil
-		})),
+		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:       runner,
+		nativePicker: native,
 		sessions: &capturingSwitchSessionExecutor{
 			exists: map[string]bool{"session-b": true},
 		},
@@ -555,6 +545,10 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 
 	var startupOptions intpickercompat.Options
 	executor := &capturingSwitchSessionExecutor{}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) { startupOptions = o },
+			reply: intpickercompat.Result{Value: projectStartupValueEmpty}},
+	})
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
@@ -569,14 +563,8 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 				return ""
 			}
 		},
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			startupOptions = options
-			return intpickercompat.Result{Value: projectStartupValueEmpty}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			startupOptions = options
-			return intpickercompat.Result{Value: projectStartupValueEmpty}, nil
-		})),
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
@@ -706,6 +694,13 @@ func TestSwitchProjectOpenLatestSnapshotSelectionRestoresAndOpens(t *testing.T) 
 	}
 
 	executor := &capturingSwitchSessionExecutor{}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(intpickercompat.Options) {
+			if executor.authorizeCalled {
+				t.Fatal("trust gate ran before latest snapshot startup selection")
+			}
+		}, reply: intpickercompat.Result{Value: projectStartupValueLatest}},
+	})
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
@@ -720,18 +715,8 @@ func TestSwitchProjectOpenLatestSnapshotSelectionRestoresAndOpens(t *testing.T) 
 				return ""
 			}
 		},
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before latest snapshot startup selection")
-			}
-			return intpickercompat.Result{Value: projectStartupValueLatest}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before latest snapshot startup selection")
-			}
-			return intpickercompat.Result{Value: projectStartupValueLatest}, nil
-		})),
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
@@ -794,6 +779,13 @@ func TestSwitchProjectOpenNamedSnapshotSelectionRestoresAndOpens(t *testing.T) {
 	wantSource := layoutPresetSource("team", preset)
 
 	executor := &capturingSwitchSessionExecutor{}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(intpickercompat.Options) {
+			if executor.authorizeCalled {
+				t.Fatal("trust gate ran before named snapshot startup selection")
+			}
+		}, reply: intpickercompat.Result{Value: projectStartupValueNamed + "team"}},
+	})
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
@@ -804,18 +796,8 @@ func TestSwitchProjectOpenNamedSnapshotSelectionRestoresAndOpens(t *testing.T) {
 			}
 			return ""
 		},
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before named snapshot startup selection")
-			}
-			return intpickercompat.Result{Value: projectStartupValueNamed + "team"}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before named snapshot startup selection")
-			}
-			return intpickercompat.Result{Value: projectStartupValueNamed + "team"}, nil
-		})),
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
@@ -850,17 +832,14 @@ func TestSwitchProjectOpenExistingSessionSkipsStartupPicker(t *testing.T) {
 
 	var pickerCalled bool
 	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"workspace": true}}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(intpickercompat.Options) { pickerCalled = true }},
+	})
 	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			pickerCalled = true
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			pickerCalled = true
-			return intpickercompat.Result{}, nil
-		})),
+		sessions:     executor,
+		identity:     stubSwitchIdentityResolver{name: "workspace"},
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
@@ -880,19 +859,16 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 	home := t.TempDir()
 	var pickerCalled bool
 	executor := &capturingSwitchSessionExecutor{}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(intpickercompat.Options) { pickerCalled = true }},
+	})
 	cmd := &switchCommand{
-		sessions:  executor,
-		identity:  stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			pickerCalled = true
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			pickerCalled = true
-			return intpickercompat.Result{}, nil
-		})),
+		sessions:     executor,
+		identity:     stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:      func() (string, error) { return home, nil },
+		lookupEnv:    func(string) string { return "" },
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
@@ -913,6 +889,9 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionFallsBackToEmptySession(
 	enableSidebarStartupPickerForTest(t, home)
 	var pickerCalled bool
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(intpickercompat.Options) { pickerCalled = true }},
+	})
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
@@ -923,14 +902,8 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionFallsBackToEmptySession(
 			}
 			return ""
 		},
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			pickerCalled = true
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			pickerCalled = true
-			return intpickercompat.Result{}, nil
-		})),
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
@@ -973,6 +946,9 @@ func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndOpensEmpty(t
 	saveSwitchProjectStartupSnapshot(t, store, "workspace")
 
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Value: projectStartupValueLatest}},
+	})
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
@@ -987,12 +963,8 @@ func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndOpensEmpty(t
 				return ""
 			}
 		},
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			return intpickercompat.Result{Value: projectStartupValueLatest}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			return intpickercompat.Result{Value: projectStartupValueLatest}, nil
-		})),
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
@@ -1012,6 +984,13 @@ func TestSwitchProjectOpenEmptySelectionChecksTrustAfterStartupSelection(t *test
 	home := t.TempDir()
 	enableSidebarStartupPickerForTest(t, home)
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(intpickercompat.Options) {
+			if executor.authorizeCalled {
+				t.Fatal("trust gate ran before empty startup selection")
+			}
+		}, reply: intpickercompat.Result{Value: projectStartupValueEmpty}},
+	})
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
@@ -1022,18 +1001,8 @@ func TestSwitchProjectOpenEmptySelectionChecksTrustAfterStartupSelection(t *test
 			}
 			return ""
 		},
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before empty startup selection")
-			}
-			return intpickercompat.Result{Value: projectStartupValueEmpty}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before empty startup selection")
-			}
-			return intpickercompat.Result{Value: projectStartupValueEmpty}, nil
-		})),
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
@@ -1067,19 +1036,16 @@ func TestSwitchCommandMarksExistingSessionsInRows(t *testing.T) {
 	t.Parallel()
 
 	var gotRunnerOptions intpickercompat.Options
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) { gotRunnerOptions = o }},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/new-app", "/tmp/live-app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = options
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = options
-			return intpickercompat.Result{}, nil
-		})),
+		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:       runner,
+		nativePicker: native,
 		sessions: &capturingSwitchSessionExecutor{
 			exists: map[string]bool{"tmp-live-app": true},
 		},
@@ -1263,12 +1229,13 @@ func TestSwitchCommandRejectsInvalidUsage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			runner, native := scriptedPicker(t, nil)
 			var stderr bytes.Buffer
 			err := (&switchCommand{
 				discover:     func(candidates.Inputs) ([]string, error) { return nil, nil },
 				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-				runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-				nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+				runner:       runner,
+				nativePicker: native,
 				sessions:     &capturingSwitchSessionExecutor{},
 				identity:     stubSwitchIdentityResolver{name: "tmp"},
 				validate:     func(string) error { return nil },
@@ -1290,6 +1257,17 @@ func TestSwitchCommandRejectsInvalidUsage(t *testing.T) {
 
 func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 	t.Parallel()
+
+	emptyRunner, emptyNative := scriptedPicker(t, nil)
+	errRunner, errNative := scriptedPicker(t, []pickerStep{
+		{err: errors.New("picker exploded")},
+	})
+	appRunner, appNative := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Value: "/tmp/app"}},
+	})
+	appRunner2, appNative2 := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Value: "/tmp/app"}},
+	})
 
 	tests := []struct {
 		name string
@@ -1316,8 +1294,8 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &switchCommand{
 				homeDir:      func() (string, error) { return "/home/tester", nil },
 				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-				runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-				nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+				runner:       emptyRunner,
+				nativePicker: emptyNative,
 				workingDir: func() (string, error) {
 					return "", errors.New("no cwd")
 				},
@@ -1327,53 +1305,41 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 		{
 			name: "runner",
 			cmd: &switchCommand{
-				discover:   func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
-				homeDir:    func() (string, error) { return "/home/tester", nil },
-				pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-				workingDir: func() (string, error) { return "/tmp", nil },
-				identity:   stubSwitchIdentityResolver{name: "tmp-app"},
-				runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{}, errors.New("picker exploded")
-				}),
-				nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{}, errors.New("picker exploded")
-				})),
+				discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
+				homeDir:      func() (string, error) { return "/home/tester", nil },
+				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				workingDir:   func() (string, error) { return "/tmp", nil },
+				identity:     stubSwitchIdentityResolver{name: "tmp-app"},
+				runner:       errRunner,
+				nativePicker: errNative,
 			},
 			want: "run native switch picker",
 		},
 		{
 			name: "identity setup",
 			cmd: &switchCommand{
-				discover:   func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
-				homeDir:    func() (string, error) { return "/home/tester", nil },
-				pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-				workingDir: func() (string, error) { return "/tmp", nil },
-				runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{Value: "/tmp/app"}, nil
-				}),
-				nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{Value: "/tmp/app"}, nil
-				})),
-				validate:    func(string) error { return nil },
-				identityErr: errors.New("missing home"),
+				discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
+				homeDir:      func() (string, error) { return "/home/tester", nil },
+				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				workingDir:   func() (string, error) { return "/tmp", nil },
+				runner:       appRunner,
+				nativePicker: appNative,
+				validate:     func(string) error { return nil },
+				identityErr:  errors.New("missing home"),
 			},
 			want: "configure session identity resolver",
 		},
 		{
 			name: "open session",
 			cmd: &switchCommand{
-				discover:   func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
-				homeDir:    func() (string, error) { return "/home/tester", nil },
-				pinStore:   func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-				workingDir: func() (string, error) { return "/tmp", nil },
-				runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{Value: "/tmp/app"}, nil
-				}),
-				nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{Value: "/tmp/app"}, nil
-				})),
-				identity: stubSwitchIdentityResolver{name: "tmp-app"},
-				validate: func(string) error { return nil },
+				discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
+				homeDir:      func() (string, error) { return "/home/tester", nil },
+				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				workingDir:   func() (string, error) { return "/tmp", nil },
+				runner:       appRunner2,
+				nativePicker: appNative2,
+				identity:     stubSwitchIdentityResolver{name: "tmp-app"},
+				validate:     func(string) error { return nil },
 				sessions: &capturingSwitchSessionExecutor{
 					openErr: errors.New("attach exploded"),
 				},
@@ -1400,11 +1366,12 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 func TestSwitchCommandAllowsEmptySelection(t *testing.T) {
 	t.Parallel()
 
+	runner, native := scriptedPicker(t, nil)
 	cmd := &switchCommand{
 		discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/a"}, nil },
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+		runner:       runner,
+		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-a"},
 		validate:     func(string) error { return nil },
@@ -1467,14 +1434,15 @@ func TestSwitchCommandUsesWeakManagedRootHeuristicsWhenEnvUnset(t *testing.T) {
 	t.Parallel()
 
 	var gotInputs candidates.Inputs
+	runner, native := scriptedPicker(t, nil)
 	cmd := &switchCommand{
 		discover: func(inputs candidates.Inputs) ([]string, error) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+		runner:       runner,
+		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -1503,14 +1471,15 @@ func TestSwitchCommandUsesSavedWorkdirsWhenEnvUnset(t *testing.T) {
 	t.Setenv(projdirEnvVar, "")
 
 	var gotInputs candidates.Inputs
+	runner, native := scriptedPicker(t, nil)
 	cmd := &switchCommand{
 		discover: func(inputs candidates.Inputs) ([]string, error) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+		runner:       runner,
+		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -1542,14 +1511,15 @@ func TestSwitchCommandManagedRootsEnvBeatsSavedWorkdirs(t *testing.T) {
 	t.Setenv(projdirEnvVar, "")
 
 	var gotInputs candidates.Inputs
+	runner, native := scriptedPicker(t, nil)
 	cmd := &switchCommand{
 		discover: func(inputs candidates.Inputs) ([]string, error) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+		runner:       runner,
+		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -1586,14 +1556,15 @@ func TestSwitchCommandMultiPathProjdirSplitsPrimaryAndExtras(t *testing.T) {
 	t.Setenv(projdirEnvVar, multi)
 
 	var gotInputs candidates.Inputs
+	runner, native := scriptedPicker(t, nil)
 	cmd := &switchCommand{
 		discover: func(inputs candidates.Inputs) ([]string, error) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+		runner:       runner,
+		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -1629,14 +1600,15 @@ func TestSwitchCommandMultiPathProjdirCombinesWithManagedRootsEnv(t *testing.T) 
 	t.Setenv(managedRootsEnvVar, strings.Join([]string{"/extra/one", "/managed/two"}, string(os.PathListSeparator)))
 
 	var gotInputs candidates.Inputs
+	runner, native := scriptedPicker(t, nil)
 	cmd := &switchCommand{
 		discover: func(inputs candidates.Inputs) ([]string, error) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+		runner:       runner,
+		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -1664,14 +1636,15 @@ func TestSwitchCommandSinglePathProjdirRetainsSavedWorkdirs(t *testing.T) {
 	t.Setenv(projdirEnvVar, "/main/repo")
 
 	var gotInputs candidates.Inputs
+	runner, native := scriptedPicker(t, nil)
 	cmd := &switchCommand{
 		discover: func(inputs candidates.Inputs) ([]string, error) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
+		runner:       runner,
+		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
@@ -2038,31 +2011,21 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		},
 		recentSessions: []string{"tmp-app", "tmp-previous"},
 	}
-	call := 0
 
+	observe := func(o intpickercompat.Options) { gotRunnerOptions = append(gotRunnerOptions, o) }
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: observe, reply: intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}},
+		{observe: observe},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app", "/tmp/previous"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = append(gotRunnerOptions, options)
-			call++
-			if call == 1 {
-				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = append(gotRunnerOptions, options)
-			call++
-			if call == 1 {
-				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		})),
-		sessions:   executor,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
+		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     executor,
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		identity: switchIdentityResolverFunc(func(path string) (string, error) {
 			switch path {
 			case "/tmp/app":
@@ -2117,31 +2080,22 @@ func TestSwitchCommandPickerCtrlXBlocksKillWithoutPreviousLiveSession(t *testing
 		exists:         map[string]bool{"tmp-app": true},
 		recentSessions: []string{"tmp-app"},
 	}
-	call := 0
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}},
+		{},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			call++
-			if call == 1 {
-				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			call++
-			if call == 1 {
-				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/tmp/app"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		})),
-		sessions:   executor,
-		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
-		validate:   func(string) error { return nil },
-		homeDir:    func() (string, error) { return "/home/tester", nil },
-		workingDir: func() (string, error) { return "/tmp", nil },
+		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     executor,
+		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:     func(string) error { return nil },
+		homeDir:      func() (string, error) { return "/home/tester", nil },
+		workingDir:   func() (string, error) { return "/tmp", nil },
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -2159,31 +2113,22 @@ func TestSwitchCommandPickerCtrlXDoesNotKillHome(t *testing.T) {
 	t.Parallel()
 
 	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"home": true}}
-	call := 0
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: switchKillExpectKey, Value: "/home/tester"}},
+		{},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/home/tester"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			call++
-			if call == 1 {
-				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/home/tester"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			call++
-			if call == 1 {
-				return intpickercompat.Result{Key: switchKillExpectKey, Value: "/home/tester"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		})),
-		sessions:   executor,
-		identity:   stubSwitchIdentityResolver{name: "home"},
-		validate:   func(string) error { return nil },
-		homeDir:    func() (string, error) { return "/home/tester", nil },
-		workingDir: func() (string, error) { return "/home/tester", nil },
+		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     executor,
+		identity:     stubSwitchIdentityResolver{name: "home"},
+		validate:     func(string) error { return nil },
+		homeDir:      func() (string, error) { return "/home/tester", nil },
+		workingDir:   func() (string, error) { return "/home/tester", nil },
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -2200,34 +2145,24 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 	var gotRunnerOptions []intpickercompat.Options
 	store := &stubSwitchPinStore{toggled: true}
 	executor := &capturingSwitchSessionExecutor{}
-	call := 0
 
+	observe := func(o intpickercompat.Options) { gotRunnerOptions = append(gotRunnerOptions, o) }
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: observe, reply: intpickercompat.Result{Key: switchPinExpectKey, Value: "/tmp/app"}},
+		{observe: observe, reply: intpickercompat.Result{Value: "/tmp/app"}},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return store, nil },
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = append(gotRunnerOptions, options)
-			call++
-			if call == 1 {
-				return intpickercompat.Result{Key: switchPinExpectKey, Value: "/tmp/app"}, nil
-			}
-			return intpickercompat.Result{Value: "/tmp/app"}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotRunnerOptions = append(gotRunnerOptions, options)
-			call++
-			if call == 1 {
-				return intpickercompat.Result{Key: switchPinExpectKey, Value: "/tmp/app"}, nil
-			}
-			return intpickercompat.Result{Value: "/tmp/app"}, nil
-		})),
-		sessions:   executor,
-		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
-		validate:   func(string) error { return nil },
-		homeDir:    func() (string, error) { return "/home/tester", nil },
-		workingDir: func() (string, error) { return "/tmp", nil },
+		pinStore:     func() (switchPinStore, error) { return store, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     executor,
+		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:     func(string) error { return nil },
+		homeDir:      func() (string, error) { return "/home/tester", nil },
+		workingDir:   func() (string, error) { return "/tmp", nil },
 	}
 
 	var stdout bytes.Buffer
@@ -2261,30 +2196,23 @@ func TestSwitchCommandSettingsSubcommandRunsSettingsMenu(t *testing.T) {
 
 	var runnerCalls int
 	store := &stubSwitchPinStore{list: []string{"/tmp/app"}, toggled: false}
+	tick := func(intpickercompat.Options) { runnerCalls++ }
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: tick, reply: intpickercompat.Result{Value: "clear"}},
+		{observe: tick},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return store, nil },
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			runnerCalls++
-			if runnerCalls == 1 {
-				return intpickercompat.Result{Value: "clear"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			runnerCalls++
-			if runnerCalls == 1 {
-				return intpickercompat.Result{Value: "clear"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		})),
-		sessions:   &capturingSwitchSessionExecutor{},
-		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
-		validate:   func(string) error { return nil },
-		homeDir:    func() (string, error) { return "/home/tester", nil },
-		workingDir: func() (string, error) { return "/tmp", nil },
+		pinStore:     func() (switchPinStore, error) { return store, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     &capturingSwitchSessionExecutor{},
+		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:     func(string) error { return nil },
+		homeDir:      func() (string, error) { return "/home/tester", nil },
+		workingDir:   func() (string, error) { return "/tmp", nil },
 	}
 
 	var stdout bytes.Buffer
@@ -2304,30 +2232,23 @@ func TestSwitchCommandSettingsMenuAddCurrentPin(t *testing.T) {
 
 	var runnerCalls int
 	store := &stubSwitchPinStore{}
+	tick := func(intpickercompat.Options) { runnerCalls++ }
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: tick, reply: intpickercompat.Result{Value: "add:/home/tester/source/repos/new-app"}},
+		{observe: tick},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/home/tester/source/repos/new-app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return store, nil },
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			runnerCalls++
-			if runnerCalls == 1 {
-				return intpickercompat.Result{Value: "add:/home/tester/source/repos/new-app"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			runnerCalls++
-			if runnerCalls == 1 {
-				return intpickercompat.Result{Value: "add:/home/tester/source/repos/new-app"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		})),
-		sessions:   &capturingSwitchSessionExecutor{},
-		identity:   stubSwitchIdentityResolver{name: "new-app"},
-		validate:   func(string) error { return nil },
-		homeDir:    func() (string, error) { return "/home/tester", nil },
-		workingDir: func() (string, error) { return "/home/tester/source/repos/new-app/subdir", nil },
+		pinStore:     func() (switchPinStore, error) { return store, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     &capturingSwitchSessionExecutor{},
+		identity:     stubSwitchIdentityResolver{name: "new-app"},
+		validate:     func(string) error { return nil },
+		homeDir:      func() (string, error) { return "/home/tester", nil },
+		workingDir:   func() (string, error) { return "/home/tester/source/repos/new-app/subdir", nil },
 		lookupEnv: func(name string) string {
 			if name == projdirEnvVar {
 				return "/home/tester/source/repos"
@@ -2356,6 +2277,28 @@ func TestSwitchCommandSettingsMenuInteractiveAddPin(t *testing.T) {
 
 	var runnerCalls int
 	store := &stubSwitchPinStore{list: []string{"/home/tester/source/repos/app"}}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) {
+			runnerCalls++
+			if got, want := o.UI, "settings"; got != want {
+				t.Fatalf("settings picker UI = %q, want %q", got, want)
+			}
+		}, reply: intpickercompat.Result{Value: "add-interactive"}},
+		{observe: func(o intpickercompat.Options) {
+			runnerCalls++
+			if got, want := o.UI, "pin"; got != want {
+				t.Fatalf("add-pin picker UI = %q, want %q", got, want)
+			}
+			wantEntries := []intpickercompat.Entry{
+				{Label: "~rp/new-app", Value: "/home/tester/source/repos/new-app"},
+				{Label: "~rp/lib", Value: "/home/tester/source/repos/lib"},
+			}
+			if !equalEntries(o.Entries, wantEntries) {
+				t.Fatalf("add-pin entries = %#v, want %#v", o.Entries, wantEntries)
+			}
+		}, reply: intpickercompat.Result{Value: "/home/tester/source/repos/lib"}},
+		{observe: func(intpickercompat.Options) { runnerCalls++ }},
+	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{
@@ -2364,58 +2307,14 @@ func TestSwitchCommandSettingsMenuInteractiveAddPin(t *testing.T) {
 				"/home/tester/source/repos/lib",
 			}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return store, nil },
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			runnerCalls++
-			if runnerCalls == 1 {
-				if got, want := options.UI, "settings"; got != want {
-					t.Fatalf("settings picker UI = %q, want %q", got, want)
-				}
-				return intpickercompat.Result{Value: "add-interactive"}, nil
-			}
-			if runnerCalls == 2 {
-				if got, want := options.UI, "pin"; got != want {
-					t.Fatalf("add-pin picker UI = %q, want %q", got, want)
-				}
-				wantEntries := []intpickercompat.Entry{
-					{Label: "~rp/new-app", Value: "/home/tester/source/repos/new-app"},
-					{Label: "~rp/lib", Value: "/home/tester/source/repos/lib"},
-				}
-				if !equalEntries(options.Entries, wantEntries) {
-					t.Fatalf("add-pin entries = %#v, want %#v", options.Entries, wantEntries)
-				}
-				return intpickercompat.Result{Value: "/home/tester/source/repos/lib"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			runnerCalls++
-			if runnerCalls == 1 {
-				if got, want := options.UI, "settings"; got != want {
-					t.Fatalf("settings picker UI = %q, want %q", got, want)
-				}
-				return intpickercompat.Result{Value: "add-interactive"}, nil
-			}
-			if runnerCalls == 2 {
-				if got, want := options.UI, "pin"; got != want {
-					t.Fatalf("add-pin picker UI = %q, want %q", got, want)
-				}
-				wantEntries := []intpickercompat.Entry{
-					{Label: "~rp/new-app", Value: "/home/tester/source/repos/new-app"},
-					{Label: "~rp/lib", Value: "/home/tester/source/repos/lib"},
-				}
-				if !equalEntries(options.Entries, wantEntries) {
-					t.Fatalf("add-pin entries = %#v, want %#v", options.Entries, wantEntries)
-				}
-				return intpickercompat.Result{Value: "/home/tester/source/repos/lib"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		})),
-		sessions:   &capturingSwitchSessionExecutor{},
-		identity:   stubSwitchIdentityResolver{name: "new-app"},
-		validate:   func(string) error { return nil },
-		homeDir:    func() (string, error) { return "/home/tester", nil },
-		workingDir: func() (string, error) { return "/home/tester/source/repos/new-app/subdir", nil },
+		pinStore:     func() (switchPinStore, error) { return store, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     &capturingSwitchSessionExecutor{},
+		identity:     stubSwitchIdentityResolver{name: "new-app"},
+		validate:     func(string) error { return nil },
+		homeDir:      func() (string, error) { return "/home/tester", nil },
+		workingDir:   func() (string, error) { return "/home/tester/source/repos/new-app/subdir", nil },
 		lookupEnv: func(name string) string {
 			if name == projdirEnvVar {
 				return "/home/tester/source/repos"
