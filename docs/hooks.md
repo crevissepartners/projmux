@@ -235,6 +235,11 @@ If a `send-noti` hook itself calls `projmux notify push`, projmux sees
 
 ## Codex Legacy Notify
 
+`projmux doctor` reports whether the Codex legacy notify integration is
+installed, missing, or blocked by an unmanaged `notify = ...` conflict. The
+text and JSON reports include the config path plus install, remove, and
+dry-run commands.
+
 `projmux ai integrate codex` is the opt-in wiring command for Codex legacy
 `notify` mode. It manages only `~/.codex/config.toml` and installs this notify
 command in a projmux-marked block:
@@ -252,6 +257,10 @@ block, projmux refuses to replace it automatically because Codex legacy notify
 has a single command slot.
 
 ## Codex Hooks Engine
+
+`projmux doctor` reports Codex hooks-engine wiring separately from legacy
+notify, including unmanaged hooks/conflict details and the relevant
+`projmux ai integrate codex --mode hooks` commands.
 
 `projmux ai ingest codex-hook` is the conservative core ingest path for Codex
 hooks-engine events. It reads a single JSON payload from stdin and currently
@@ -299,6 +308,11 @@ to auto-trust hooks.
 
 ## Tmux Bell Fallback
 
+`projmux doctor` reports whether the current tmux server has a
+projmux-managed bell hook installed. The diagnostic is read-only; it only
+inspects current `pane-bell-event` hooks and prints the matching integrate
+commands.
+
 `projmux ai integrate tmux-bell` is the opt-in fallback for AI CLIs that do
 not expose structured hooks but do emit BEL or OSC 9. It mutates the current
 tmux server only; it does not edit tmux config files. Install applies these
@@ -328,6 +342,10 @@ the current `pane-bell-event` hooks and unsets only entries carrying
 `projmux-managed:tmux-bell:v1`, preserving unmanaged user hooks.
 
 ## Claude Code Hook Ingest
+
+`projmux doctor` reports Claude Code hook wiring in `~/.claude/settings.json`,
+including unmanaged projmux ingest command conflicts and the relevant
+`projmux ai integrate claude` commands.
 
 `projmux ai ingest claude-hook` is the conservative core ingest path for
 Claude Code hooks. It reads a single JSON payload from stdin and currently
