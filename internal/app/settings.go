@@ -65,42 +65,43 @@ type settingsEntryMeta struct {
 }
 
 var settingsEntryCatalog = map[string]settingsEntryMeta{
-	settingsBackValue:             {Name: "Back", Axis: settingsAxisBoth},
-	settingsNoopValue:             {Name: "Info", Axis: settingsAxisBoth},
-	settingsRootTabGlobalValue:    {Name: "Global Settings", Axis: settingsAxisBoth},
-	settingsRootTabProjectValue:   {Name: "Project Settings", Axis: settingsAxisBoth},
-	settingsSectionProject:        {Name: "Project Picker", Axis: settingsAxisGlobal},
-	settingsSectionGlobalHooks:    {Name: "Hooks", Axis: settingsAxisGlobal},
-	settingsSectionProjectHooks:   {Name: "Hooks", Axis: settingsAxisProject},
-	settingsSectionProjectConfig:  {Name: "Project recipe", Axis: settingsAxisProject},
-	settingsSectionProjectTrust:   {Name: "Trust", Axis: settingsAxisProject},
-	settingsSectionEffectiveMerge: {Name: "Effective merge view", Axis: settingsAxisProject},
-	settingsSectionAI:             {Name: "AI Settings", Axis: settingsAxisGlobal},
-	settingsSectionStatusbar:      {Name: "Appearance", Axis: settingsAxisGlobal},
-	settingsSectionSessionState:   {Name: "Session State", Axis: settingsAxisGlobal},
-	settingsSectionKeybindings:    {Name: "Keybindings", Axis: settingsAxisGlobal},
-	settingsSectionLabs:           {Name: "Labs", Axis: settingsAxisGlobal},
-	settingsSectionAbout:          {Name: "About", Axis: settingsAxisGlobal},
-	settingsProjectAdd:            {Name: "Add Project", Axis: settingsAxisGlobal},
-	settingsProjectPins:           {Name: "Pinned Projects", Axis: settingsAxisGlobal},
-	settingsProjectRootManage:     {Name: "Project Root", Axis: settingsAxisGlobal},
-	settingsProjdirClear:          {Name: "Clear Project Root", Axis: settingsAxisGlobal},
-	settingsProjdirSetCurrent:     {Name: "Use Current Project as Root", Axis: settingsAxisGlobal},
-	settingsProjdirSetTyped:       {Name: "Set Project Root", Axis: settingsAxisGlobal},
-	settingsWorkdirAdd:            {Name: "Add Workdir", Axis: settingsAxisGlobal},
-	settingsWorkdirList:           {Name: "Workdirs", Axis: settingsAxisGlobal},
-	settingsWorkdirTyped:          {Name: "Type Workdir", Axis: settingsAxisGlobal},
-	settingsKeybindingsDiagnostic: {Name: "Keybinding Diagnostic", Axis: settingsAxisGlobal},
-	settingsKeybindingsProbe:      {Name: "Keybinding Probe", Axis: settingsAxisGlobal},
-	settingsKeybindingsInit:       {Name: "Keybinding Init", Axis: settingsAxisGlobal},
-	settingsAIDefaultMode:         {Name: "Default split mode", Axis: settingsAxisGlobal},
-	settingsAINotifyDiagnostics:   {Name: "AI notify diagnostics", Axis: settingsAxisGlobal},
-	settingsLabsDesktopNotify:     {Name: "Desktop notifications", Axis: settingsAxisGlobal},
-	settingsSessionStateDelete:    {Name: "Delete session snapshot", Axis: settingsAxisGlobal},
-	settingsLabKeybindings:        {Name: "Keybindings", Axis: settingsAxisGlobal},
-	settingsUpdateApply:           {Name: "Update Now", Axis: settingsAxisGlobal},
-	settingsUpdateCheck:           {Name: "Check Updates", Axis: settingsAxisGlobal},
-	settingsWelcomeShow:           {Name: "Welcome", Axis: settingsAxisGlobal},
+	settingsBackValue:                  {Name: "Back", Axis: settingsAxisBoth},
+	settingsNoopValue:                  {Name: "Info", Axis: settingsAxisBoth},
+	settingsRootTabGlobalValue:         {Name: "Global Settings", Axis: settingsAxisBoth},
+	settingsRootTabProjectValue:        {Name: "Project Settings", Axis: settingsAxisBoth},
+	settingsSectionProject:             {Name: "Project Picker", Axis: settingsAxisGlobal},
+	settingsSectionGlobalHooks:         {Name: "Hooks", Axis: settingsAxisGlobal},
+	settingsSectionProjectHooks:        {Name: "Hooks", Axis: settingsAxisProject},
+	settingsSectionProjectConfig:       {Name: "Project recipe", Axis: settingsAxisProject},
+	settingsSectionProjectTrust:        {Name: "Trust", Axis: settingsAxisProject},
+	settingsSectionEffectiveMerge:      {Name: "Effective merge view", Axis: settingsAxisProject},
+	settingsSectionProjectSessionState: {Name: "Session State", Axis: settingsAxisProject},
+	settingsSectionAI:                  {Name: "AI Settings", Axis: settingsAxisGlobal},
+	settingsSectionStatusbar:           {Name: "Appearance", Axis: settingsAxisGlobal},
+	settingsSectionSessionState:        {Name: "Session State", Axis: settingsAxisGlobal},
+	settingsSectionKeybindings:         {Name: "Keybindings", Axis: settingsAxisGlobal},
+	settingsSectionLabs:                {Name: "Labs", Axis: settingsAxisGlobal},
+	settingsSectionAbout:               {Name: "About", Axis: settingsAxisGlobal},
+	settingsProjectAdd:                 {Name: "Add Project", Axis: settingsAxisGlobal},
+	settingsProjectPins:                {Name: "Pinned Projects", Axis: settingsAxisGlobal},
+	settingsProjectRootManage:          {Name: "Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirClear:               {Name: "Clear Project Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetCurrent:          {Name: "Use Current Project as Root", Axis: settingsAxisGlobal},
+	settingsProjdirSetTyped:            {Name: "Set Project Root", Axis: settingsAxisGlobal},
+	settingsWorkdirAdd:                 {Name: "Add Workdir", Axis: settingsAxisGlobal},
+	settingsWorkdirList:                {Name: "Workdirs", Axis: settingsAxisGlobal},
+	settingsWorkdirTyped:               {Name: "Type Workdir", Axis: settingsAxisGlobal},
+	settingsKeybindingsDiagnostic:      {Name: "Keybinding Diagnostic", Axis: settingsAxisGlobal},
+	settingsKeybindingsProbe:           {Name: "Keybinding Probe", Axis: settingsAxisGlobal},
+	settingsKeybindingsInit:            {Name: "Keybinding Init", Axis: settingsAxisGlobal},
+	settingsAIDefaultMode:              {Name: "Default split mode", Axis: settingsAxisGlobal},
+	settingsAINotifyDiagnostics:        {Name: "AI notify diagnostics", Axis: settingsAxisGlobal},
+	settingsLabsDesktopNotify:          {Name: "Desktop notifications", Axis: settingsAxisGlobal},
+	settingsSessionStateDelete:         {Name: "Delete session snapshot", Axis: settingsAxisGlobal},
+	settingsLabKeybindings:             {Name: "Keybindings", Axis: settingsAxisGlobal},
+	settingsUpdateApply:                {Name: "Update Now", Axis: settingsAxisGlobal},
+	settingsUpdateCheck:                {Name: "Check Updates", Axis: settingsAxisGlobal},
+	settingsWelcomeShow:                {Name: "Welcome", Axis: settingsAxisGlobal},
 }
 
 var settingsEntryPrefixCatalog = []struct {
@@ -152,6 +153,7 @@ const (
 	settingsSectionProjectConfig           = "section:project-config"
 	settingsSectionProjectTrust            = "section:project-trust"
 	settingsSectionEffectiveMerge          = "section:effective-merge"
+	settingsSectionProjectSessionState     = "section:project-sessionstate"
 	settingsSectionKeybindings             = "section:keybindings"
 	settingsSectionProject                 = "section:project-picker"
 	settingsSectionStatusbar               = "section:statusbar"
@@ -282,6 +284,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionEffectiveMerge {
 		return c.runEffectiveMergeSection(stdout, stderr)
+	}
+	if section == settingsSectionProjectSessionState {
+		return c.runProjectSessionStateSection(stdout, stderr)
 	}
 	if section == settingsSectionAI {
 		return c.runAISection(stdout, stderr)
@@ -545,6 +550,10 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Effective merge view", "global + project merge with source labels"),
 			Value: settingsSectionEffectiveMerge,
 		},
+		{
+			Label: c.projectSessionStateRootLabel(ctx),
+			Value: settingsSectionProjectSessionState,
+		},
 	}
 }
 
@@ -699,6 +708,16 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.sessionStateEntries(),
 			Title:      "Session State - Restore and autosave controls",
 			Prompt:     "Settings > Session State > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		}, nil
+	case settingsSectionProjectSessionState:
+		return intpickercompat.Options{
+			UI:         "settings-project-sessionstate",
+			Entries:    c.projectSessionStateEntries(),
+			Title:      c.projectSessionStateTitle(),
+			Prompt:     "Settings > Project > Session State > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),

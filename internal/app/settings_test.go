@@ -547,6 +547,7 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsSectionProjectHooks, settingsAxisProject},
 		{settingsSectionProjectConfig, settingsAxisProject},
 		{settingsSectionEffectiveMerge, settingsAxisProject},
+		{settingsSectionProjectSessionState, settingsAxisProject},
 		{settingsProjectRootManage, settingsAxisGlobal},
 		{settingsWorkdirList, settingsAxisGlobal},
 		{settingsProjectPins, settingsAxisGlobal},
@@ -1423,8 +1424,15 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 		"default",
 		"Snapshot session",
 		"workspace",
-		"Saved at",
+		"Snapshot source",
+		"autosave",
+		"Saved snapshot",
 		"2026-05-12 03:04:05 UTC",
+		"Preview",
+		"window 0",
+		"main",
+		"pane 0.0",
+		"shell",
 		"Windows",
 		"1",
 		"Panes",
@@ -1446,6 +1454,98 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 		if !hasEntryValue(entries, want) {
 			t.Fatalf("session state entries = %#v, want %q", entries, want)
 		}
+	}
+}
+
+func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	xdgState := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
+	snap := sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    "repos-projmux",
+		Source:     sessionstate.SourceFresh,
+		DefaultCWD: project,
+		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
+		Windows: []sessionstate.Window{{
+			Index:           1,
+			Name:            "dev",
+			ActivePaneIndex: 0,
+			Panes: []sessionstate.Pane{{
+				Index:  0,
+				Title:  "editor",
+				CWD:    project,
+				Recipe: sessionstate.ShellRecipe(),
+			}},
+		}},
+	}
+	if err := store.Save(snap); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_STATE_HOME":
+				return xdgState
+			case "PROJMUX_CWD":
+				return project
+			case "PROJMUX_SESSION":
+				return "live-session"
+			default:
+				return ""
+			}
+		},
+	}
+
+	options, err := cmd.sectionOptions(settingsSectionProjectSessionState)
+	if err != nil {
+		t.Fatalf("sectionOptions() error = %v", err)
+	}
+	if got, want := options.UI, "settings-project-sessionstate"; got != want {
+		t.Fatalf("project session state UI = %q, want %q", got, want)
+	}
+	if got, want := options.Prompt, "Settings > Project > Session State > "; got != want {
+		t.Fatalf("project session state prompt = %q, want %q", got, want)
+	}
+	if !strings.Contains(options.Title, "restore state saved") {
+		t.Fatalf("project session state title = %q, want saved restore state", options.Title)
+	}
+	for _, want := range []string{
+		"Project",
+		"projmux",
+		"Project path",
+		project,
+		"PROJMUX_CWD env",
+		"Session identity",
+		"repos-projmux",
+		"Snapshot session",
+		"repos-projmux",
+		"Snapshot source",
+		sessionstate.SourceFresh,
+		"Preview",
+		"window 1",
+		"dev",
+		"pane 1.0",
+		"editor",
+		"Windows",
+		"1",
+		"Panes",
+		"1",
+	} {
+		if !hasEntryLabelContaining(options.Entries, want) {
+			t.Fatalf("project session state entries = %#v, want label containing %q", options.Entries, want)
+		}
+	}
+	if hasEntryLabelContaining(options.Entries, "live-session") {
+		t.Fatalf("project session state entries = %#v, want derived identity instead of live tmux session", options.Entries)
+	}
+	if hasEntryValue(options.Entries, settingsSessionStateDelete) {
+		t.Fatalf("project session state entries = %#v, want delete unavailable in project-scoped slice", options.Entries)
 	}
 }
 

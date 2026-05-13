@@ -432,11 +432,16 @@ saved snapshot for that session so an older autosave is not offered as the
 save` while a session is marked `fresh`, that fresh-source snapshot is still
 hidden from the startup picker.
 
-Settings > Session State shows the effective auto-save / startup picker state,
-the current session snapshot summary, and a delete action. The saved toggles
-live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave`
-and the legacy compatibility file name `sessionstate-autorestore`; the
-environment variables above override those files.
+Settings > Project > Session State is the primary inspection surface when
+project context exists. It derives the target session identity from the current
+project path, shows the project path/source, reports the saved snapshot
+source/age, and previews the saved structure as window title -> pane title
+before count metadata. The global Settings > Session State path remains
+available for the current live tmux session and still exposes current-session
+snapshot delete. The saved toggles live under
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave` and the legacy
+compatibility file name `sessionstate-autorestore`; the environment variables
+above override those files.
 
 Manual snapshot actions are available from the CLI:
 
