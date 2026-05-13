@@ -435,8 +435,10 @@ create sessions or send tmux commands.
 Settings > Appearance controls optional status and picker decoration:
 
 - `off` is the default and avoids icon-font assumptions.
-- `symbol` restores the Nerd Font-style folder, GitHub, and bell icons.
-- `emoji` uses emoji decorators, including the notify sidebar header bell.
+- `symbol` restores the Nerd Font-style folder, git-provider, and bell icons.
+- `emoji` uses emoji decorators, including provider-aware git branch marks and
+  the notify sidebar header bell. GitHub remotes use a cat-style mark, GitLab
+  remotes use a fox-style mark, and other remotes use a generic git branch mark.
 
 The saved value lives at:
 

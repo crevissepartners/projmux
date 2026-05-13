@@ -10,8 +10,8 @@ segment only requires one wiring point.
 ```
 row 0  [#S] #{pane_current_path}  ⎈ <ctx>/<ns>  <git>               %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
-row 1  #[range=user|notify] <notify HUD pill> #[norange] #[range=user|sessionstate]state#[norange]
-                                           #[range=user|usage] <usage HUD bar> #[norange]
+row 1  #[range=user|usage] <usage HUD bar> #[norange] #[range=user|sessionstate] state #[norange]
+                                      #[range=user|notify] <notify HUD pill> #[norange]
 ```
 
 - Row 0 keeps tmux's native `window-status-format` so clicking a tab
@@ -29,15 +29,15 @@ row 1  #[range=user|notify] <notify HUD pill> #[norange] #[range=user|sessionsta
   in `#[range=user|<id>]` ranges and dispatched through the projmux
   handler. The standalone config also wraps the right-side `projmux`
   badge as the `settings` range; the app config renders a compact
-  `⚙` settings chip after the clock. The git segment shows the current
+  `` settings chip after the clock. The git segment shows the current
   branch or detached commit,
   then compact state indicators when available: `*` for local changes,
   `+N` for staged entries, and `↑N`/`↓N` for ahead/behind counts. Each
   state token gets its own compact foreground color while preserving the
   existing branch block background.
-- Row 1 splits the line with `#[align=left]` (the pending AI notify
-  queue, capped at 80
-  cells, plus the compact `state` entrypoint) and `#[align=right]` (usage, capped at 120 cells). `notify` is the
+- Row 1 splits the line with `#[align=left]` (usage, capped at 120
+  cells, plus a padded Session State button) and `#[align=right]`
+  (the pending AI notify queue, capped at 80 cells). `notify` is the
   explicit-ack pending queue; live pane attention badges are a separate
   state surface. Both
   segments degrade gracefully when the cell budget is tight; see
@@ -163,7 +163,10 @@ projmux tmux apply
 Settings > Appearance controls the optional decoration mode used by
 the path, git branch, and notification sidebar header. The persisted enum lives at
 `~/.config/projmux/statusbar-decoration`; valid values are `off` (default,
-font-safe), `symbol` (Nerd Font-style folder/GitHub/bell icons), and `emoji`.
+font-safe), `symbol` (Nerd Font-style folder/git-provider/bell icons), and
+`emoji`. Git branch decoration follows `remote.origin.url`: GitHub remotes use a
+cat-style mark, GitLab remotes use a fox-style mark, and other remotes use a
+generic git branch mark.
 Settings also updates tmux `@projmux_statusbar_decoration` for the live
 server when run inside tmux.
 

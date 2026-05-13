@@ -107,7 +107,8 @@ func (c *statusCommand) runGit(args []string, stdout, stderr io.Writer) error {
 	if state := parseGitPorcelainStatus(c.readTrimmed("git", "-C", path, "status", "--porcelain=v1", "--branch")); state != "" {
 		segment += " " + state
 	}
-	_, err := fmt.Fprintf(stdout, " #[bold,fg=colour16,bg=colour45] %s%s #[default]", statusbarGitDecorator(c.statusbarDecoration()), segment)
+	remoteURL := c.readTrimmed("git", "-C", path, "config", "--get", "remote.origin.url")
+	_, err := fmt.Fprintf(stdout, " #[bold,fg=colour16,bg=colour45] %s%s #[default]", statusbarGitDecorator(c.statusbarDecoration(), remoteURL), segment)
 	return err
 }
 
