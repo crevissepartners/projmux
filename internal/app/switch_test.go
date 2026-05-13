@@ -906,7 +906,7 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 	}
 }
 
-func TestSwitchProjectOpenTrustDenyAfterStartupSelectionCreatesNoSession(t *testing.T) {
+func TestSwitchProjectOpenTrustDenyAfterStartupSelectionFallsBackToEmptySession(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -942,8 +942,67 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionCreatesNoSession(t *test
 	if !pickerCalled {
 		t.Fatal("startup picker was not called before trust gate")
 	}
-	if executor.ensureSessionName != "" || executor.restoreSessionName != "" || executor.openSessionName != "" {
-		t.Fatalf("startup ran after deny: picker=%v ensure=%q restore=%q open=%q", pickerCalled, executor.ensureSessionName, executor.restoreSessionName, executor.openSessionName)
+	if executor.restoreSessionName != "" {
+		t.Fatalf("snapshot restore ran after deny: restore=%q", executor.restoreSessionName)
+	}
+	if got, want := executor.ensureSessionName, "workspace"; got != want {
+		t.Fatalf("ensure session = %q, want %q", got, want)
+	}
+	if got, want := executor.ensureCWD, "/tmp/workspace"; got != want {
+		t.Fatalf("ensure cwd = %q, want %q", got, want)
+	}
+	if got, want := executor.openSessionName, "workspace"; got != want {
+		t.Fatalf("open session = %q, want %q", got, want)
+	}
+	if got, want := executor.calls, []string{"authorize:/tmp/workspace", "ensure:workspace", "open:workspace"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndOpensEmpty(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	enableSidebarStartupPickerForTest(t, home)
+	project := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(home, "state", "projmux", "sessions")
+	store := sessionstate.NewStore(stateDir)
+	saveSwitchProjectStartupSnapshot(t, store, "workspace")
+
+	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
+	cmd := &switchCommand{
+		sessions: executor,
+		identity: stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_STATE_HOME":
+				return filepath.Join(home, "state")
+			case "XDG_CONFIG_HOME":
+				return filepath.Join(home, "config")
+			default:
+				return ""
+			}
+		},
+		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{Value: projectStartupValueLatest}, nil
+		}),
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{Value: projectStartupValueLatest}, nil
+		})),
+	}
+
+	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
+		t.Fatalf("openProjectTarget() error = %v", err)
+	}
+	if executor.restoreSessionName != "" {
+		t.Fatalf("snapshot restore ran after trust deny: restore=%q", executor.restoreSessionName)
+	}
+	if got, want := executor.calls, []string{"authorize:" + project, "ensure:workspace", "open:workspace"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
 	}
 }
 
