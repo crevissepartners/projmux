@@ -456,8 +456,20 @@ command = "projmux ai ingest codex-hook"
 	if byID["codex-legacy-notify"].ConfigPath != filepath.Join(home, codexConfigRelativePath) {
 		t.Fatalf("codex ConfigPath = %q", byID["codex-legacy-notify"].ConfigPath)
 	}
-	if byID["codex-hooks"].DryRunCommand != "projmux ai integrate codex --mode hooks --dry-run" {
+	if byID["codex-hooks"].InstallCommand != "projmux ai integrate codex" {
+		t.Fatalf("codex hooks InstallCommand = %q", byID["codex-hooks"].InstallCommand)
+	}
+	if byID["codex-hooks"].DryRunCommand != "projmux ai integrate codex --dry-run" {
 		t.Fatalf("codex hooks DryRunCommand = %q", byID["codex-hooks"].DryRunCommand)
+	}
+	if !strings.Contains(byID["codex-hooks"].Guidance, "/hooks") {
+		t.Fatalf("codex hooks Guidance = %q, want /hooks review notice", byID["codex-hooks"].Guidance)
+	}
+	if byID["codex-hooks"].TestedVersion != "codex-cli 0.130.0" {
+		t.Fatalf("codex hooks TestedVersion = %q", byID["codex-hooks"].TestedVersion)
+	}
+	if byID["claude-hooks"].TestedVersion != "Claude Code 2.1.140" {
+		t.Fatalf("claude hooks TestedVersion = %q", byID["claude-hooks"].TestedVersion)
 	}
 	if len(cmdRecorder(cmd).commands) != 0 {
 		t.Fatalf("commands = %#v, want read-only diagnostics", cmdRecorder(cmd).commands)

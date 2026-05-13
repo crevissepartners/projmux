@@ -2232,7 +2232,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai ingest claude-hook < payload.json")
 	fmt.Fprintln(w, "  projmux ai ingest bell --pane <pane_id>")
 	fmt.Fprintln(w, "  projmux ai ingest log [--tail N] [--json] [--path]")
-	fmt.Fprintln(w, "  projmux ai integrate codex [--mode legacy-notify|hooks] [--dry-run] [--remove]")
+	fmt.Fprintln(w, "  projmux ai integrate codex [--mode legacy-notify] [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai integrate claude [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai integrate tmux-bell [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai topic set <text> [--pane <id>]")

@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestAIIntegrateCodexInstallsManagedNotify(t *testing.T) {
+func TestAIIntegrateCodexDefaultsToManagedHooks(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.readFile = os.ReadFile
@@ -23,15 +23,46 @@ func TestAIIntegrateCodexInstallsManagedNotify(t *testing.T) {
 
 	path := filepath.Join(home, codexConfigRelativePath)
 	got := readCodexTestFile(t, path)
-	if !strings.Contains(got, codexNotifyMarkerBegin) || !strings.Contains(got, codexNotifyLine) || !strings.Contains(got, codexNotifyMarkerEnd) {
-		t.Fatalf("config missing managed block:\n%s", got)
+	if !strings.Contains(got, codexHooksMarkerBegin) || !strings.Contains(got, codexHookCommand) || strings.Contains(got, codexNotifyMarkerBegin) {
+		t.Fatalf("config missing managed hooks block or unexpectedly installed legacy notify:\n%s", got)
 	}
-	if !strings.Contains(stdout.String(), "configured Codex legacy notify") {
+	if !strings.Contains(stdout.String(), "configured Codex hooks") {
 		t.Fatalf("stdout = %q, want configured message", stdout.String())
 	}
 }
 
-func TestAIIntegrateCodexInstallIsIdempotent(t *testing.T) {
+func TestAIIntegrateCodexLegacyNotifyModeInstallsManagedNotify(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "legacy-notify"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode legacy-notify error = %v", err)
+	}
+
+	path := filepath.Join(home, codexConfigRelativePath)
+	first := readCodexTestFile(t, path)
+	if !strings.Contains(first, codexNotifyMarkerBegin) || !strings.Contains(first, codexNotifyLine) || strings.Contains(first, codexHooksMarkerBegin) {
+		t.Fatalf("config missing managed legacy notify block or unexpectedly installed hooks:\n%s", first)
+	}
+	if !strings.Contains(stdout.String(), "configured Codex legacy notify") {
+		t.Fatalf("stdout = %q, want configured legacy notify message", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "legacy-notify"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("second Run integrate codex --mode legacy-notify error = %v", err)
+	}
+	if second := readCodexTestFile(t, path); second != first {
+		t.Fatalf("second legacy notify install changed config:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+	if !strings.Contains(stdout.String(), "no changes") {
+		t.Fatalf("stdout = %q, want no changes", stdout.String())
+	}
+}
+
+func TestAIIntegrateCodexDefaultHooksInstallIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.readFile = os.ReadFile
@@ -70,8 +101,8 @@ func TestAIIntegrateCodexDryRunDoesNotWrite(t *testing.T) {
 		t.Fatalf("config stat err = %v, want missing file", err)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "dry-run") || !strings.Contains(out, codexNotifyLine) {
-		t.Fatalf("stdout = %q, want dry-run managed block preview", out)
+	if !strings.Contains(out, "dry-run") || !strings.Contains(out, codexHookCommand) || strings.Contains(out, codexNotifyLine) {
+		t.Fatalf("stdout = %q, want dry-run managed hooks preview", out)
 	}
 }
 
@@ -84,7 +115,7 @@ func TestAIIntegrateCodexRefusesUnmanagedNotify(t *testing.T) {
 notify = ["custom", "notify"]
 `)
 
-	err := cmd.Run([]string{"integrate", "codex"}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := cmd.Run([]string{"integrate", "codex", "--mode", "legacy-notify"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatalf("Run integrate codex expected conflict error, got nil")
 	}
@@ -96,7 +127,7 @@ notify = ["custom", "notify"]
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"integrate", "codex", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "legacy-notify", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run integrate codex --dry-run with conflict error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "would refuse") || !strings.Contains(stdout.String(), `notify = ["custom", "notify"]`) {
@@ -114,7 +145,7 @@ func TestAIIntegrateCodexRemoveOnlyManagedBlock(t *testing.T) {
 `)
 
 	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"integrate", "codex", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "legacy-notify", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run integrate codex --remove error = %v", err)
 	}
 	got := readCodexTestFile(t, path)

@@ -152,7 +152,7 @@ func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) e
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "print planned Codex config changes without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed Codex wiring")
-	modeFlag := fs.String("mode", string(codexIntegrationLegacyNotify), "Codex integration mode: legacy-notify or hooks")
+	modeFlag := fs.String("mode", string(codexIntegrationHooks), "Codex integration mode: hooks or legacy-notify")
 	modeExplicit := flagWasProvided(args, "mode")
 	if err := fs.Parse(args); err != nil {
 		return err

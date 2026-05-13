@@ -70,6 +70,14 @@ func (c *aiCommand) aiHookCatalogAction(provider, name string) (string, bool, er
 	return "", false, nil
 }
 
+func (c *aiCommand) aiHookObservedVersion(provider string) string {
+	catalog, err := c.loadAIHookCatalog(provider)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(catalog.ObservedVersion)
+}
+
 func aiHookCatalogInstallEvents(catalog aiHookCatalog) []string {
 	events := make([]string, 0, len(catalog.Events))
 	for _, event := range catalog.Events {

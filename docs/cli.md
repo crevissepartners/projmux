@@ -330,7 +330,7 @@ projmux ai ingest   codex-hook < payload.json
 projmux ai ingest   claude-hook < payload.json
 projmux ai ingest   bell --pane <pane_id>
 projmux ai ingest   log [--tail N] [--json] [--path]
-projmux ai integrate codex [--mode legacy-notify|hooks] [--dry-run] [--remove]
+projmux ai integrate codex [--mode legacy-notify] [--dry-run] [--remove]
 projmux ai integrate claude [--dry-run] [--remove]
 projmux ai integrate tmux-bell [--dry-run] [--remove]
 projmux ai topic     ...
@@ -477,7 +477,7 @@ Existing unrelated Claude settings and hooks are preserved. If any event already
 contains an unmanaged `projmux ai ingest claude-hook` command, projmux refuses
 to install over it and leaves the settings file untouched.
 
-`projmux ai integrate codex --mode hooks` manages a separate hooks-engine
+`projmux ai integrate codex` manages a hooks-engine
 block in `~/.codex/config.toml`. It enables `[features] hooks = true`,
 merging into an existing `[features]` table when present, and installs broad
 command hooks for every event whose effective Codex hook catalog entry has
@@ -552,13 +552,13 @@ type = "command"
 command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 ```
 
-The default Codex mode remains `legacy-notify` for compatibility. Hooks mode is
-idempotent, preserves unrelated Codex config and unmanaged hook entries, and
-refuses to install over unmanaged projmux Codex hook commands it cannot safely
-own. `--remove`
-without an explicit `--mode` removes both projmux-managed Codex blocks; with
-`--mode hooks`, it removes only the hooks block. Codex may still require
-reviewing or trusting the hook through its `/hooks` flow before commands run.
+Codex hooks are the default integration mode. The hooks install is idempotent,
+preserves unrelated Codex config and unmanaged hook entries, and refuses to
+install over unmanaged projmux Codex hook commands it cannot safely own.
+`--remove` without an explicit `--mode` removes both projmux-managed Codex
+blocks. The legacy `notify` integration remains available with
+`--mode legacy-notify` for compatibility. Codex may still require reviewing or
+trusting the hook through its `/hooks` flow before commands run.
 
 `integrate tmux-bell` is opt-in server-level tmux wiring for arbitrary tools
 that emit BEL or OSC 9. It applies `allow-passthrough on`, `monitor-bell on`,
