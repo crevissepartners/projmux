@@ -8,13 +8,17 @@ segment only requires one wiring point.
 ## Layout
 
 ```
-row 0  [#S] #{pane_current_path}  ⎈ <ctx>/<ns>  <git>               %H:%M
+row 0  #[range=user|notify] <notify HUD pill> #[norange]
+                                      #[range=user|usage] <usage HUD bar> #[norange]
+row 1  [#S] #[range=user|sessionstate] state #[norange]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
-row 1  #[range=user|usage] <usage HUD bar> #[norange] #[range=user|sessionstate] state #[norange]
-                                      #[range=user|notify] <notify HUD pill> #[norange]
 ```
 
-- Row 0 keeps tmux's native `window-status-format` so clicking a tab
+- Row 0 splits the line with `#[align=left]` (the pending AI notify
+  queue, capped at 80 cells) and `#[align=right]` (usage, capped at 120
+  cells). `notify` is the explicit-ack pending queue; live pane attention
+  badges are a separate state surface.
+- Row 1 keeps tmux's native `window-status-format` so clicking a tab
   selects the window. The bind uses `if-shell -F
   "#{==:#{mouse_status_range},window}"` to run `select-window -t =`
   natively when the click lands on the window list, so the
@@ -25,7 +29,7 @@ row 1  #[range=user|usage] <usage HUD bar> #[norange] #[range=user|sessionstate]
   clicks on tmux 3.4+, so a `run-shell` handler can't recover the
   target after the fact — the Go dispatcher's
   `isWindowListRangeToken` fallback is now defense-in-depth only.
-  The session, pwd, kube, and git segments on this row are wrapped
+  The session, Session State, pwd, kube, and git segments on this row are wrapped
   in `#[range=user|<id>]` ranges and dispatched through the projmux
   handler. The standalone config also wraps the right-side `projmux`
   badge as the `settings` range; the app config renders a compact
@@ -35,12 +39,7 @@ row 1  #[range=user|usage] <usage HUD bar> #[norange] #[range=user|sessionstate]
   `+N` for staged entries, and `↑N`/`↓N` for ahead/behind counts. Each
   state token gets its own compact foreground color while preserving the
   existing branch block background.
-- Row 1 splits the line with `#[align=left]` (usage, capped at 120
-  cells, plus a padded Session State button) and `#[align=right]`
-  (the pending AI notify queue, capped at 80 cells). `notify` is the
-  explicit-ack pending queue; live pane attention badges are a separate
-  state surface. Both
-  segments degrade gracefully when the cell budget is tight; see
+- Both HUD segments degrade gracefully when the cell budget is tight; see
   [notify-queue.md](notify-queue.md) and [usage-tracking.md](usage-tracking.md)
   for the per-segment tier ladder.
 
