@@ -48,40 +48,25 @@ existing or non-empty live sessions.
 
 Named snapshots may currently be backed by legacy project files in
 `<project>/.projmux/layouts/*.toml`. They reuse the same window, pane, cwd, and
-startup recipe concepts as session snapshots. They are discoverable with
-`projmux layout list`, inspectable with
-`projmux layout show <name>`, capturable from the current tmux session with
-`projmux layout save <name>`, and removable with
-`projmux layout remove --force <name>`.
-
-`projmux layout apply <name> --dry-run` is the safe apply precursor. It requires
-a current tmux session, converts the named snapshot to the session-state shape
-for that session, and prints the same restore preview/read model as
-`projmux session-state restore --dry-run`. It does not execute replay commands,
-does not autosave the live session, and does not update the latest snapshot.
-The preview includes a legacy source label: `layout(<name>)` for normal named snapshots or
-`fresh` for named snapshots stored with `mode = "fresh-each-time"`.
-
-`projmux layout apply <name> --force` is the conservative destructive live
-apply path for named snapshots. It requires a current tmux session, uses that
-current session name as the only target, stages the converted snapshot through
-the session-state replay path, moves the staged windows into the live session,
-and removes extra live windows. General `session-state restore` execution
-remains dry-run-only; the live overwrite policy is currently scoped to this
-legacy command. Applying a fresh named snapshot marks the live tmux session as
-`fresh`, which the autosave tick honors by skipping autosave for that session. A
-successful fresh apply also removes the current latest snapshot for that
-session, preventing an older auto-saved row from reappearing in the next startup
-picker.
+startup recipe concepts as session snapshots, but the user-facing restore model
+is still `Latest snapshot`, `Named snapshot`, or `Empty session`. The legacy
+files are imported read-only by Project open and shell compatibility startup
+when building `Named snapshot` candidates; new primary surfaces should describe
+the restore unit as a snapshot, not as a separate layout or preset feature.
 
 Project open is the canonical startup picker path. Opening a closed project
-session from the Alt-1 sidebar checks trust first, then shows `Start project`
-when the startup picker is enabled. Rows are ordered `Latest snapshot`, named
-snapshot rows, then `Empty session`. `Latest snapshot` is the auto-saved
-snapshot that keeps changing as auto-save runs. `Named snapshot` is a fixed,
-user-named snapshot and is not updated by auto-save. `Empty session` creates a
-new session without restoring a snapshot. Existing sessions switch directly
-without a startup picker.
+session from the Alt-1 sidebar advances inside the sidebar to the native
+`Start project` step when the startup picker is enabled. Rows are ordered
+`Latest snapshot`, named snapshot rows, `Empty session`, then `Back`. `Latest
+snapshot` is the auto-saved snapshot that keeps changing as auto-save runs.
+`Named snapshot` is a fixed, user-named snapshot and is not updated by
+auto-save. Rows include saved-at date/time metadata when available. `Empty
+session` creates a new session without restoring a snapshot. `Back` returns to
+the project list without creating, replaying, or opening a session. After the
+startup mode is selected, project hook/config trust is evaluated if needed;
+approval continues the selected path and deny/cancel aborts before session
+create, snapshot replay, startup recipe, or `pane-startup`. Existing sessions
+switch directly without a startup picker.
 
 `projmux shell` still accepts the legacy startup selectors in this release, but
 it is no longer the primary project restore model. Its compatibility picker is

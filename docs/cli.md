@@ -27,7 +27,6 @@ projmux <command> [args...]
 | `focus` | Switch the active client to a session/window/pane target. |
 | `init` | Apply supported terminal keybinding fallbacks. |
 | `kill` | Terminate tagged tmux sessions. |
-| `layout` | Compatibility commands for project named snapshots. |
 | `notify` | Manage the pending AI notify queue (push/list/ack/reconcile). |
 | `pin` | Manage pinned project directories. |
 | `preview` | Manage persisted tmux preview selection. |
@@ -64,56 +63,6 @@ the active session in sync).
 
 Settings > Labs remains available for experimental settings, but picker backend
 selection has been retired. The native picker is always used.
-
-## layout
-
-```
-projmux layout list [--json]
-projmux layout show <name>
-projmux layout save [--description <text>] [--fresh] <name>
-projmux layout remove --force <name>
-projmux layout apply <name> --dry-run
-projmux layout apply <name> --force
-```
-
-Project named snapshots are currently stored in the legacy
-`<project>/.projmux/layouts/*.toml` location, where the project context is
-`PROJMUX_CWD` when set, otherwise the nearest parent with `.projmux` or `.git`.
-
-`layout list` prints valid named snapshots and skips malformed files with a warning on
-stderr. `--json` emits an array of `{name,path,description,mode,windows,panes}`.
-`layout show <name>` prints the raw named snapshot file content.
-
-`layout save <name>` captures the current tmux session with the session-state
-capture path, converts paths under the project root to `${PROJMUX_CWD}` form,
-and writes `<project>/.projmux/layouts/<name>.toml`. `--description <text>`
-sets the named snapshot description. `--fresh` writes
-`mode = "fresh-each-time"`; without it, the named snapshot uses the default
-`inherit-autosave` mode.
-
-`layout remove --force <name>` deletes the named snapshot. Without `--force`,
-the command rejects deletion instead of prompting, so scripts cannot
-accidentally block on interactive input.
-
-`layout apply <name> --dry-run` requires a current tmux session, loads the
-named snapshot, converts it to the session-state snapshot shape for that
-session, and prints the same restore preview used by `session-state restore
---dry-run`, including the legacy source label (`layout(<name>)` or `fresh`). It
-does not execute tmux replay commands and accepts `--dry-run` before or after
-`<name>`.
-
-`layout apply <name> --force` requires a current tmux session and destructively
-replaces that current session's windows with the named snapshot. It stages the
-snapshot through the session-state replay path, moves the staged windows into
-the live session, removes extra live windows, and keeps the current session
-name. There is no `--session` target override. `layout apply <name>` without
-`--force` still rejects and points at `--dry-run`.
-
-`mode = "fresh-each-time"` is recorded by `layout save --fresh`; explicit
-`layout apply --force` marks the live session `fresh` so the autosave tick skips
-that session and removes any latest snapshot for the same session. Normal
-`inherit-autosave` named snapshots mark the live source as `layout(<name>)` and
-continue autosaving.
 
 ## setup
 
@@ -739,7 +688,7 @@ flags with the top-level `switch` UX:
   snapshots are fixed until the user saves or replaces them. Closing the shell
   compatibility picker falls back to an empty session and continues startup.
   `--saved` forces replay from the latest snapshot, `--layout <name>` forces
-  replay from a named snapshot backed by the legacy project layout store, and
+  replay from a named snapshot backed by the legacy project snapshot store, and
   `--empty` skips snapshot replay. These flags bypass the picker and startup
   picker toggle, are mutually exclusive, and never overwrite an existing app
   session; if the target already exists, `shell` follows the normal attach path.

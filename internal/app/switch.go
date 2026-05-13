@@ -28,7 +28,6 @@ const (
 	switchUIFlag             = "ui"
 	switchUIPopup            = "popup"
 	switchUISidebar          = "sidebar"
-	switchOpenTrustPopup     = "open"
 	switchKillExpectKey      = "ctrl-x"
 	switchPinExpectKey       = "alt-p"
 	switchSettingsSentinel   = "__projmux_settings__"
@@ -1423,22 +1422,11 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		return false, fmt.Errorf("switch session executor is not configured")
 	}
 
-	if plan.UI == switchUISidebar && c.projectMayNeedHookTrust(plan.Selection) {
-		exists, err := c.switchSessionExists(ctx, plan.SessionName)
-		if err != nil {
-			return false, err
-		}
-		if exists {
-			return false, c.openTarget(ctx, plan.Selection)
-		}
-		if err := c.launchSidebarOpenPopup(ctx, plan.Selection); err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-
 	if plan.UI == switchUISidebar {
 		if err := c.openProjectTargetPath(ctx, plan.Selection); err != nil {
+			if errors.Is(err, errProjectStartupBack) {
+				return true, nil
+			}
 			return false, err
 		}
 		return false, nil
@@ -1498,73 +1486,6 @@ func (c *switchCommand) openProjectTargetPath(ctx context.Context, target string
 		return err
 	}
 	return c.openProjectTarget(ctx, target, sessionName)
-}
-
-func (c *switchCommand) launchSidebarOpenPopup(ctx context.Context, target string) error {
-	if c.tmuxRunner == nil {
-		return fmt.Errorf("switch tmux runner is not configured")
-	}
-	if c.executable == nil {
-		return fmt.Errorf("switch executable resolver is not configured")
-	}
-	binaryPath, err := c.executable()
-	if err != nil {
-		return fmt.Errorf("resolve switch executable: %w", err)
-	}
-	command := strings.Join([]string{
-		tmuxShellQuote(binaryPath),
-		"switch",
-		switchOpenTrustPopup,
-		tmuxShellQuote(target),
-	}, " ")
-	args, err := inttmux.BuildDisplayPopupArgs(command, inttmux.PopupOptions{
-		Client:        strings.TrimSpace(c.env(hookTrustPopupTargetClientEnv)),
-		CloseBehavior: inttmux.PopupCloseOnExit,
-		Cwd:           target,
-		Env: map[string]string{
-			hookTrustInlineEnv: "1",
-		},
-		Width:  hookTrustPopupWidth,
-		Height: hookTrustPopupHeight,
-		Title:  "Trust project hooks",
-	})
-	if err != nil {
-		return fmt.Errorf("build switch open popup: %w", err)
-	}
-	displayCommand := tmuxShellCommand(append([]string{"tmux"}, args...)...)
-	if _, err := c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", "sleep 0.05; "+displayCommand); err != nil {
-		return fmt.Errorf("launch switch open popup: %w", err)
-	}
-	return nil
-}
-
-func (c *switchCommand) projectMayNeedHookTrust(target string) bool {
-	target = cleanOptionalPath(target)
-	if target == "" {
-		return false
-	}
-	paths := []string{
-		filepath.Join(target, ".projmux", "config.toml"),
-		filepath.Join(target, ".projmux", "post-create"),
-		filepath.Join(target, ".projmux", "hooks", "pre-create"),
-		filepath.Join(target, ".projmux", "hooks", "post-create"),
-		filepath.Join(target, ".projmux", "hooks", "pane-startup"),
-		filepath.Join(target, ".projmux", "hooks", "post-attach"),
-	}
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func tmuxShellCommand(parts ...string) string {
-	quoted := make([]string, 0, len(parts))
-	for _, part := range parts {
-		quoted = append(quoted, tmuxShellQuote(part))
-	}
-	return strings.Join(quoted, " ")
 }
 
 func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Writer) error {
