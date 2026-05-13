@@ -394,6 +394,11 @@ On default `projmux shell`, startup candidates are checked before creating a
 new app session only when auto-restore is enabled. When at least one saved
 snapshot or project layout preset is available, projmux opens a native startup
 picker with saved first, presets in alphabetical order, and empty last.
+When a project context is available, default `projmux shell` targets that
+project's session identity and starts in the project root, so saved snapshot
+lookup uses the same key as project sessions. Without project context, or with
+an explicit `--session home`, it keeps the existing `home` target and home
+directory startup behavior.
 Selecting saved or a preset replays through the same session-state paths as
 explicit startup flags. Closing the picker, an empty selection, or a picker
 error falls back to an empty session and continues to the normal

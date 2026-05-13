@@ -14,6 +14,7 @@ import (
 	"time"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -90,6 +91,7 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printShellUsage(stderr)
 		return errors.New("shell does not accept positional arguments")
 	}
+	sessionExplicit := flagSetExplicitly(fs, "session")
 	startMode, err := parseShellStartMode(*layoutName, *saved, *empty)
 	if err != nil {
 		printShellUsage(stderr)
@@ -124,17 +126,57 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
-	cwd, err := c.home()
+	target, err := c.resolveShellTarget(*session, sessionExplicit)
 	if err != nil {
-		return fmt.Errorf("resolve shell home directory: %w", err)
+		return err
 	}
-	cwd = filepath.Clean(cwd)
-	runArgs := []string{"-L", socketName, "-f", config, "new-session", "-A", "-s", nonEmpty(strings.TrimSpace(*session), defaultAppSession)}
-	if cwd != "" {
-		runArgs = append(runArgs, "-c", cwd)
+	runArgs := []string{"-L", socketName, "-f", config, "new-session", "-A", "-s", target.SessionName}
+	if target.CWD != "" {
+		runArgs = append(runArgs, "-c", target.CWD)
 	}
-	c.prepareShellSession(context.Background(), socketName, config, nonEmpty(strings.TrimSpace(*session), defaultAppSession), cwd, startMode, stderr)
+	c.prepareShellSession(context.Background(), socketName, config, target.SessionName, target.CWD, startMode, stderr)
 	return c.run(context.Background(), "tmux", runArgs...)
+}
+
+type shellTarget struct {
+	SessionName string
+	CWD         string
+}
+
+func (c *shellCommand) resolveShellTarget(rawSession string, sessionExplicit bool) (shellTarget, error) {
+	home, err := c.home()
+	if err != nil {
+		return shellTarget{}, fmt.Errorf("resolve shell home directory: %w", err)
+	}
+	home = filepath.Clean(home)
+
+	sessionName := nonEmpty(strings.TrimSpace(rawSession), defaultAppSession)
+	if sessionExplicit {
+		return shellTarget{SessionName: sessionName, CWD: home}, nil
+	}
+
+	projectRoot, err := c.resolveShellProjectContext()
+	if err != nil {
+		return shellTarget{}, fmt.Errorf("resolve shell project context: %w", err)
+	}
+	if projectRoot == "" {
+		return shellTarget{SessionName: sessionName, CWD: home}, nil
+	}
+	projectRoot = filepath.Clean(projectRoot)
+	return shellTarget{
+		SessionName: coresessions.NewNamer(home).SessionName(projectRoot),
+		CWD:         projectRoot,
+	}, nil
+}
+
+func flagSetExplicitly(fs *flag.FlagSet, name string) bool {
+	explicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			explicit = true
+		}
+	})
+	return explicit
 }
 
 type shellStartMode struct {
