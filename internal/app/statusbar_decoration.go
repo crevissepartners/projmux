@@ -72,7 +72,7 @@ func statusbarGitDecorator(mode config.StatusbarDecoration, remoteURL string) st
 	case config.StatusbarDecorationEmoji:
 		switch provider {
 		case gitRemoteProviderGitHub:
-			return "#[fg=colour17]🐈 #[fg=colour16]"
+			return "#[fg=colour17]🐱 #[fg=colour16]"
 		case gitRemoteProviderGitLab:
 			return "#[fg=colour208]🦊 #[fg=colour16]"
 		default:
