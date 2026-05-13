@@ -348,6 +348,18 @@ func TestShellExplicitHomeSessionKeepsHomeTargetInsideProject(t *testing.T) {
 	}
 }
 
+func TestShellUsageKeepsExplicitStartupSelectors(t *testing.T) {
+	t.Parallel()
+
+	var usage bytes.Buffer
+	printShellUsage(&usage)
+	for _, want := range []string{"--saved", "--layout <name>", "--empty"} {
+		if !strings.Contains(usage.String(), want) {
+			t.Fatalf("usage = %q, want %q", usage.String(), want)
+		}
+	}
+}
+
 func TestShellDefaultProjectTargetUsesProjectSnapshotCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -401,6 +413,43 @@ func TestShellDefaultProjectTargetUsesProjectSnapshotCandidates(t *testing.T) {
 	wantAttach := []string{"-L", "pmx", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", project}
 	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
 		t.Fatalf("attach command = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
+	}
+}
+
+func TestShellStartupPickerOptionsUsesCompatibilityHeaderAndSnapshotRows(t *testing.T) {
+	t.Parallel()
+
+	options := shellStartupPickerOptions([]shellSessionCandidate{
+		{
+			Kind:        shellStartSaved,
+			Name:        "repos-projmux",
+			Label:       "Latest snapshot",
+			Description: "auto-saved, 1 window, 2 panes",
+		},
+		{
+			Kind:        shellStartLayout,
+			Name:        "team",
+			Label:       "Named snapshot",
+			Description: "team, 1 window, 1 pane",
+		},
+		emptyShellSessionCandidate(),
+	})
+	if got, want := options.Header, "Start app session"; got != want {
+		t.Fatalf("Header = %q, want %q", got, want)
+	}
+	if got, want := options.UI, "shell-startup"; got != want {
+		t.Fatalf("UI = %q, want %q", got, want)
+	}
+	wantValues := []string{shellStartupPickerValueSaved, shellStartupPickerValueLayout + "team", shellStartupPickerValueEmpty}
+	for i, want := range wantValues {
+		if options.Entries[i].Value != want {
+			t.Fatalf("entry %d value = %q, want %q", i, options.Entries[i].Value, want)
+		}
+	}
+	for _, want := range []string{"Latest snapshot", "Named snapshot", "Empty session"} {
+		if !hasEntryLabelContaining(options.Entries, want) {
+			t.Fatalf("entries = %#v, want label containing %q", options.Entries, want)
+		}
 	}
 }
 
@@ -843,6 +892,39 @@ func TestShellSavedFlagReplaysSnapshotWhenAutorestoreDisabled(t *testing.T) {
 	}
 	if got := tmux.calls[1].args; !reflect.DeepEqual(got, []string{"-L", "pmx", "-f", configPath, "new-session", "-d", "-s", "dev", "-c", workdir}) {
 		t.Fatalf("first replay call args = %#v", got)
+	}
+	if foreground.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
+	}
+}
+
+func TestShellSavedFlagExistingSessionSkipsReplay(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	workdir := t.TempDir()
+	store := sessionstate.NewStore(t.TempDir())
+	saveShellSnapshot(t, store, "dev", workdir)
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   foreground.run,
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install", "--saved"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}}}
+	if !reflect.DeepEqual(tmux.calls, wantCalls) {
+		t.Fatalf("tmux calls = %#v, want existing-session guard only", tmux.calls)
 	}
 	if foreground.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
