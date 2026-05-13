@@ -434,7 +434,7 @@ func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 		}
 		switch {
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", aiBellPaneFormat}):
-			return []byte("workspace\x1f@1\x1feditor\x1f%7\x1fClaude CLI\x1fnode\x1f/tmp/tmux-1000/projmux\n"), nil
+			return []byte("workspace\\037@1\\037editor\\037%7\\037Claude CLI\\037node\\037/tmp/tmux-1000/projmux\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{" + aiBellDedupeOption + "}"}):
 			return []byte(lastBellAt + "\n"), nil
 		}
@@ -469,6 +469,20 @@ func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 	}
 	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiBellDedupeOption, "100"}}) {
 		t.Fatalf("commands = %#v, want bell dedupe timestamp", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestSplitTmuxUnitFieldsAcceptsRawAndEscapedSeparators(t *testing.T) {
+	for name, raw := range map[string]string{
+		"raw":     "one\x1ftwo\x1fthree",
+		"escaped": "one\\037two\\037three",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := splitTmuxUnitFields(raw)
+			if !reflect.DeepEqual(got, []string{"one", "two", "three"}) {
+				t.Fatalf("splitTmuxUnitFields(%q) = %#v", raw, got)
+			}
+		})
 	}
 }
 

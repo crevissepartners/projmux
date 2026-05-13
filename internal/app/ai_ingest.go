@@ -321,7 +321,7 @@ func (c *aiCommand) readBellPaneInfo(paneID string) (bellPaneInfo, bool) {
 	if out == "" {
 		return bellPaneInfo{}, false
 	}
-	fields := strings.Split(out, "\x1f")
+	fields := splitTmuxUnitFields(out)
 	if len(fields) < 7 {
 		return bellPaneInfo{}, false
 	}
@@ -1032,7 +1032,7 @@ func (c *aiCommand) listAIPaneMatchRows() []aiPaneMatchRow {
 	rows := strings.Split(strings.TrimSpace(string(out)), "\n")
 	matches := make([]aiPaneMatchRow, 0, len(rows))
 	for _, raw := range rows {
-		fields := strings.Split(raw, "\x1f")
+		fields := splitTmuxUnitFields(raw)
 		if len(fields) != 4 {
 			continue
 		}
@@ -1048,6 +1048,13 @@ func (c *aiCommand) listAIPaneMatchRows() []aiPaneMatchRow {
 		})
 	}
 	return matches
+}
+
+func splitTmuxUnitFields(raw string) []string {
+	if strings.Contains(raw, "\x1f") {
+		return strings.Split(raw, "\x1f")
+	}
+	return strings.Split(raw, "\\037")
 }
 
 func cleanMatchPath(path string) string {
