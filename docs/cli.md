@@ -379,6 +379,7 @@ projmux ai ingest   codex-notify '<json>'
 projmux ai ingest   codex-hook < payload.json
 projmux ai ingest   claude-hook < payload.json
 projmux ai ingest   bell --pane <pane_id>
+projmux ai ingest   log [--tail N] [--json] [--path]
 projmux ai integrate codex [--mode legacy-notify|hooks] [--dry-run] [--remove]
 projmux ai integrate claude [--dry-run] [--remove]
 projmux ai integrate tmux-bell [--dry-run] [--remove]
@@ -399,30 +400,58 @@ queue entry. Panes marked `@projmux_ai_hook_active=1` are skipped by the
 title watcher.
 
 `ingest codex-hook` is the hook-facing entrypoint for Codex hooks-engine JSON.
-It reads one JSON payload from stdin and handles `UserPromptSubmit`,
-`Stop`, and `PermissionRequest`. It accepts the common Codex hook fields
-`hook_event_name`/`event_name`, `thread_id`, `session_id`, `turn_id`, `cwd`,
-`transcript_path`, `model`, `tool_name`, nested `tool.name`, `tool_input`,
-and `input`. `UserPromptSubmit` marks the matched pane hook-active and moves it
-to thinking/busy without pushing a queue entry. `Stop` pushes an info
-completion row. `PermissionRequest` pushes a critical approval row with the
-tool name and concise action summary.
+It reads one JSON payload from stdin and handles the default Codex hook catalog
+`PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`,
+`SessionStart`, `UserPromptSubmit`, and `Stop` as exposed by Codex CLI 0.130.0.
+It accepts the common Codex hook fields `hook_event_name`/`event_name`,
+`thread_id`, `session_id`, `turn_id`, `cwd`, `transcript_path`, `model`,
+`tool_name`, nested `tool.name`, `tool_input`, and `input`. `UserPromptSubmit`
+marks the matched pane hook-active and moves it to thinking/busy without
+pushing a queue entry. `Stop` pushes an info completion row. `PermissionRequest`
+pushes a critical approval row with the tool name and concise action summary.
+The other Codex events are quiet: they mark the pane hook-active and write
+ingest diagnostics, but do not push notify queue entries.
+For event names without a specialized notify/state handler, ingest falls back
+to quiet/log-only handling. A local catalog entry with `"action": "quiet"`
+therefore lets newly discovered events be installed and observed without
+creating notification noise; `"notify"` and `"state"` still require a built-in
+handler before they can change pane state or push queue rows.
 
 `ingest claude-hook` is the hook-facing entrypoint for Claude Code hooks. It
-reads one JSON payload from stdin and handles the core hook events:
-`Notification`, `Stop`, `UserPromptSubmit`, `PermissionRequest`,
-`StopFailure`, `SubagentStop`, and `TeammateIdle`. It uses the same pane
-matching order as Codex ingest (`$TMUX_PANE`, payload `cwd`, then cached
-session id), marks matched panes hook-active, and writes metadata-bearing
-notify queue entries for reply-ready, input-ready, approval-required, error,
-subagent-stop, and teammate-idle events. `UserPromptSubmit` only moves the
-pane to thinking/busy and does not push a queue entry.
+reads one JSON payload from stdin and handles the default Claude Code 2.1.140
+hook catalog: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`,
+`PostToolBatch`, `PermissionDenied`, `Notification`, `UserPromptSubmit`,
+`UserPromptExpansion`, `SessionStart`, `Stop`, `StopFailure`,
+`SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`, `SessionEnd`,
+`PermissionRequest`, `Setup`, `TeammateIdle`, `TaskCreated`,
+`TaskCompleted`, `Elicitation`, `ElicitationResult`, `ConfigChange`,
+`InstructionsLoaded`, `WorktreeCreate`, `WorktreeRemove`, `CwdChanged`, and
+`FileChanged`. It uses the same pane matching order as Codex ingest
+(`$TMUX_PANE`, payload `cwd`, then cached session id), marks matched panes
+hook-active, and writes metadata-bearing notify queue entries only for
+reply-ready, input-ready, approval-required, error, and teammate-idle events.
+`SubagentStop` and the other lifecycle/tool events are quiet: they mark the
+pane hook-active and write ingest diagnostics, but do not push notify queue
+entries. `UserPromptSubmit` only moves the pane to thinking/busy and does not
+push a queue entry.
+Unknown Claude events also fall back to quiet/log-only handling after pane
+matching. Catalog `action` is honored for quiet fallback events; notify/state
+actions need built-in handlers for event-specific body text and state changes.
 
 `ingest bell --pane <pane_id>` is the narrow tmux-bell fallback ingest path.
 It does not require the pane to be AI-managed. Projmux resolves session,
 window, pane, title, command, and socket metadata from tmux, pushes an info
 queue row such as `bell · <pane title>`, and suppresses repeat bell rows from
 the same pane for 5 seconds.
+
+`ingest log` prints recent ingest diagnostics from
+`$XDG_STATE_HOME/projmux/ai-ingest.log`, or `~/.local/state/projmux/ai-ingest.log`
+when `XDG_STATE_HOME` is unset. Ingest paths append compact JSONL records for
+parse errors, unsupported events, missing pane matches, deduped bells,
+state-only transitions, quiet high-volume events, and notify pushes. Raw hook
+payloads are not stored. The log is capped at 1 MiB and trimmed to the most
+recent roughly 512 KiB when it grows past the cap. Use `--json` for raw JSONL
+and `--path` to print the resolved file path.
 
 For `Stop`, projmux reads `transcript_path` when present and extracts the last
 assistant text from the transcript tail; if that is unavailable, it falls back
@@ -461,47 +490,102 @@ conflict and then edit the user-owned setting manually if needed.
 
 Claude Code hook ingest is available through `ingest claude-hook`, but
 `integrate claude` is the opt-in user-level wiring command for
-`~/.claude/settings.json`. It installs command hooks for `Notification`,
-`Stop`, `UserPromptSubmit`, `PermissionRequest`, `StopFailure`,
-`SubagentStop`, and `TeammateIdle`:
+`~/.claude/settings.json`. It installs command hooks for every event whose
+effective Claude hook catalog entry has `"install": true`. The embedded default
+catalog is based on Claude Code 2.1.140 and lives at
+`internal/app/ai_hook_catalogs/claude.json`; a local override may be placed at
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hooks.d/claude.json` to disable
+or add events before projmux itself is released:
 
 ```json
 {
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
-          }
-        ]
-      }
-    ]
-  }
+  "provider": "claude",
+  "events": [
+    { "name": "Stop", "install": false, "action": "notify" },
+    { "name": "FutureEvent", "install": true, "action": "quiet" }
+  ]
 }
 ```
+
+The embedded Claude catalog contains all 29 Claude Code 2.1.140 events:
+`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch`,
+`PermissionDenied`, `Notification`, `UserPromptSubmit`,
+`UserPromptExpansion`, `SessionStart`, `Stop`, `StopFailure`,
+`SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`, `SessionEnd`,
+`PermissionRequest`, `Setup`, `TeammateIdle`, `TaskCreated`,
+`TaskCompleted`, `Elicitation`, `ElicitationResult`, `ConfigChange`,
+`InstructionsLoaded`, `WorktreeCreate`, `WorktreeRemove`, `CwdChanged`, and
+`FileChanged`. `SubagentStop` remains quiet/log-only.
 
 The managed command receives Claude's hook JSON on stdin, keeps stdout/stderr
 quiet, and exits successfully even if ingest fails so it does not block Claude
 Code behavior. `--dry-run` previews the JSON update, and `--remove` deletes
-only commands carrying the projmux marker. Existing unrelated Claude settings
-and hooks are preserved. If a supported event already contains an unmanaged
-`projmux ai ingest claude-hook` command, projmux refuses to install over it and
-leaves the settings file untouched.
+only commands carrying the projmux marker. Removal and unmanaged conflict
+detection scan every `hooks` event in the settings file rather than trusting the
+current catalog, so stale managed events from older catalogs are still removed.
+Existing unrelated Claude settings and hooks are preserved. If any event already
+contains an unmanaged `projmux ai ingest claude-hook` command, projmux refuses
+to install over it and leaves the settings file untouched.
 
 `projmux ai integrate codex --mode hooks` manages a separate hooks-engine
-block in `~/.codex/config.toml`. It enables `[features] codex_hooks = true`,
+block in `~/.codex/config.toml`. It enables `[features] hooks = true`,
 merging into an existing `[features]` table when present, and installs broad
-command hooks for `PermissionRequest`, `UserPromptSubmit`, and `Stop`:
+command hooks for every event whose effective Codex hook catalog entry has
+`"install": true`. The embedded default catalog is based on Codex CLI 0.130.0
+and lives at `internal/app/ai_hook_catalogs/codex.json`; a local override may
+be placed at `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hooks.d/codex.json`:
+
+```json
+{
+  "provider": "codex",
+  "events": [
+    { "name": "Stop", "install": false, "action": "notify" },
+    { "name": "FutureEvent", "install": true, "action": "quiet" }
+  ]
+}
+```
+
+The embedded Codex catalog contains the 8 Codex CLI 0.130.0 events
+`PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`,
+`PostCompact`, `SessionStart`, `UserPromptSubmit`, and `Stop`.
 
 ```toml
 [features]
-codex_hooks = true
+hooks = true
+
+[[hooks.PreToolUse]]
+matcher = "*"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.PermissionRequest]]
 matcher = "*"
 [[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+
+[[hooks.PostToolUse]]
+matcher = "*"
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+
+[[hooks.PreCompact]]
+matcher = "*"
+[[hooks.PreCompact.hooks]]
+type = "command"
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+
+[[hooks.PostCompact]]
+matcher = "*"
+[[hooks.PostCompact.hooks]]
+type = "command"
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+
+[[hooks.SessionStart]]
+matcher = "*"
+[[hooks.SessionStart.hooks]]
 type = "command"
 command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 
@@ -528,10 +612,10 @@ reviewing or trusting the hook through its `/hooks` flow before commands run.
 
 `integrate tmux-bell` is opt-in server-level tmux wiring for arbitrary tools
 that emit BEL or OSC 9. It applies `allow-passthrough on`, `monitor-bell on`,
-`bell-action other`, and appends a marked `pane-bell-event` hook that invokes
-`projmux ai ingest bell --pane "#{pane_id}"`. `--dry-run` prints the tmux
+`bell-action other`, and appends a marked `alert-bell` hook that invokes
+`projmux ai ingest bell --pane "#{hook_pane}"`. `--dry-run` prints the tmux
 commands. `--remove` unsets only hook entries carrying the projmux marker and
-leaves user-owned `pane-bell-event` hooks alone.
+leaves user-owned `alert-bell` hooks alone.
 
 ## tmux
 

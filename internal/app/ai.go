@@ -137,7 +137,7 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "watch-title":
 		return c.runWatchTitle(args[1:], stderr)
 	case "ingest":
-		return c.runIngest(args[1:], stderr)
+		return c.runIngest(args[1:], stdout, stderr)
 	case "integrate":
 		return c.runIntegrate(args[1:], stdout, stderr)
 	case "topic":
@@ -2231,6 +2231,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai ingest codex-hook < payload.json")
 	fmt.Fprintln(w, "  projmux ai ingest claude-hook < payload.json")
 	fmt.Fprintln(w, "  projmux ai ingest bell --pane <pane_id>")
+	fmt.Fprintln(w, "  projmux ai ingest log [--tail N] [--json] [--path]")
 	fmt.Fprintln(w, "  projmux ai integrate codex [--mode legacy-notify|hooks] [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai integrate claude [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai integrate tmux-bell [--dry-run] [--remove]")

@@ -26,8 +26,8 @@ const (
 	claudeHookCommand          = "projmux ai ingest claude-hook >/dev/null 2>&1 || true # " + claudeHookManagedMarker
 
 	tmuxBellManagedMarker = "projmux-managed:tmux-bell:v1"
-	tmuxBellHookName      = "pane-bell-event"
-	tmuxBellHookCommand   = `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
+	tmuxBellHookName      = "alert-bell"
+	tmuxBellHookCommand   = `run-shell -b 'projmux ai ingest bell --pane "#{hook_pane}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
 )
 
 type codexNotifyPlan struct {
@@ -60,22 +60,6 @@ type tmuxBellPlan struct {
 	removeCommands  [][]string
 	action          string
 	changed         bool
-}
-
-var claudeHookEvents = []string{
-	"Notification",
-	"Stop",
-	"UserPromptSubmit",
-	"PermissionRequest",
-	"StopFailure",
-	"SubagentStop",
-	"TeammateIdle",
-}
-
-var codexHookEvents = []string{
-	"PermissionRequest",
-	"UserPromptSubmit",
-	"Stop",
 }
 
 func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error {
@@ -305,12 +289,17 @@ func (c *aiCommand) planCodexHooksIntegration(remove, removeAllManaged bool) (co
 		plan.action = "would refuse to install Codex hooks wiring"
 		return plan, nil
 	}
-	nextConfig := withoutManaged
-	includeFeatureInBlock := !codexConfigHasFeaturesTable(withoutManaged) && !codexConfigHasDottedCodexHooksFeature(withoutManaged)
-	if !includeFeatureInBlock {
-		nextConfig = ensureCodexHooksFeatureEnabled(withoutManaged)
+	hookEvents, err := c.aiHookInstallEvents(aiHookProviderCodex)
+	if err != nil {
+		return codexNotifyPlan{}, err
 	}
-	next := codexHooksBlock(includeFeatureInBlock) + nextConfig
+	nextConfig := withoutManaged
+	nextConfig, _ = removeManagedCodexHooksFeature(nextConfig)
+	includeFeatureInBlock := !codexConfigHasFeaturesTable(nextConfig) && !codexConfigHasDottedCodexHooksFeature(nextConfig)
+	if !includeFeatureInBlock {
+		nextConfig = ensureCodexHooksFeatureEnabled(nextConfig)
+	}
+	next := codexHooksBlockForEvents(includeFeatureInBlock, hookEvents) + nextConfig
 	plan.next = next
 	plan.changed = next != current
 	if plan.changed {
@@ -343,8 +332,8 @@ func (c *aiCommand) planClaudeHookIntegration(remove bool) (claudeHookPlan, erro
 	cleaned := false
 	conflict := ""
 	if hooks != nil {
-		for _, event := range claudeHookEvents {
-			nextEntries, removed, eventConflict, err := claudeHookEntriesWithoutManaged(hooks[event], event, path)
+		for event, value := range hooks {
+			nextEntries, removed, eventConflict, err := claudeHookEntriesWithoutManaged(value, event, path)
 			if err != nil {
 				return claudeHookPlan{}, err
 			}
@@ -380,12 +369,16 @@ func (c *aiCommand) planClaudeHookIntegration(remove bool) (claudeHookPlan, erro
 		plan.next = current
 		return plan, nil
 	}
+	hookEvents, err := c.aiHookInstallEvents(aiHookProviderClaude)
+	if err != nil {
+		return claudeHookPlan{}, err
+	}
 
 	hooks, err = claudeSettingsHooks(settings, true)
 	if err != nil {
 		return claudeHookPlan{}, err
 	}
-	for _, event := range claudeHookEvents {
+	for _, event := range hookEvents {
 		hooks[event] = append(claudeHookEntrySlice(hooks[event]), claudeHookManagedEntry())
 	}
 	next, err := encodeClaudeSettings(settings)
@@ -638,17 +631,21 @@ func codexNotifyBlock() string {
 }
 
 func codexHooksBlock(includeFeature bool) string {
+	return codexHooksBlockForEvents(includeFeature, defaultAIHookInstallEvents(aiHookProviderCodex))
+}
+
+func codexHooksBlockForEvents(includeFeature bool, events []string) string {
 	lines := []string{
 		codexHooksMarkerBegin,
 	}
 	if includeFeature {
 		lines = append(lines,
 			"[features]",
-			"codex_hooks = true",
+			"hooks = true",
 			"",
 		)
 	}
-	for _, event := range codexHookEvents {
+	for _, event := range events {
 		lines = append(lines,
 			"[[hooks."+event+"]]",
 			`matcher = "*"`,
@@ -732,7 +729,7 @@ func codexConfigHasDottedCodexHooksFeature(content string) bool {
 			continue
 		}
 		key, _, ok := strings.Cut(trimmed, "=")
-		if ok && strings.TrimSpace(key) == "features.codex_hooks" {
+		if ok && (strings.TrimSpace(key) == "features.hooks" || strings.TrimSpace(key) == "features.codex_hooks") {
 			return true
 		}
 	}
@@ -764,10 +761,15 @@ func ensureCodexHooksFeatureEnabled(content string) string {
 			continue
 		}
 		key = strings.TrimSpace(key)
-		if key == "features.codex_hooks" || (section == "features" && key == "codex_hooks") {
+		if key == "features.hooks" || (section == "features" && key == "hooks") {
 			if strings.TrimSpace(value) == "true" {
 				return content
 			}
+			indent := lineIndent(line)
+			lines[i] = indent + codexHooksFeatureMarker + "\n" + indent + keyNameForCodexHooksFeature(section) + " = true\n"
+			return strings.Join(lines, "")
+		}
+		if key == "features.codex_hooks" || (section == "features" && key == "codex_hooks") {
 			indent := lineIndent(line)
 			lines[i] = indent + codexHooksFeatureMarker + "\n" + indent + keyNameForCodexHooksFeature(section) + " = true\n"
 			return strings.Join(lines, "")
@@ -776,7 +778,7 @@ func ensureCodexHooksFeatureEnabled(content string) string {
 	if featuresStart < 0 {
 		return content
 	}
-	insert := lineIndent(lines[featuresStart]) + codexHooksFeatureMarker + "\n" + lineIndent(lines[featuresStart]) + "codex_hooks = true\n"
+	insert := lineIndent(lines[featuresStart]) + codexHooksFeatureMarker + "\n" + lineIndent(lines[featuresStart]) + "hooks = true\n"
 	next := append([]string{}, lines[:featuresEnd]...)
 	next = append(next, insert)
 	next = append(next, lines[featuresEnd:]...)
@@ -785,9 +787,9 @@ func ensureCodexHooksFeatureEnabled(content string) string {
 
 func keyNameForCodexHooksFeature(section string) string {
 	if section == "features" {
-		return "codex_hooks"
+		return "hooks"
 	}
-	return "features.codex_hooks"
+	return "features.hooks"
 }
 
 func removeManagedCodexHooksFeature(content string) (string, bool) {
@@ -805,7 +807,7 @@ func removeManagedCodexHooksFeature(content string) (string, bool) {
 		if skipCodexHooks {
 			withoutComment := strings.TrimSpace(stripCodexTomlComment(line))
 			key, _, ok := strings.Cut(withoutComment, "=")
-			if ok && (strings.TrimSpace(key) == "codex_hooks" || strings.TrimSpace(key) == "features.codex_hooks") {
+			if ok && (strings.TrimSpace(key) == "hooks" || strings.TrimSpace(key) == "features.hooks" || strings.TrimSpace(key) == "codex_hooks" || strings.TrimSpace(key) == "features.codex_hooks") {
 				skipCodexHooks = false
 				continue
 			}

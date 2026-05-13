@@ -1,0 +1,14 @@
+{
+  "provider": "codex",
+  "observed_version": "codex-cli 0.130.0",
+  "events": [
+    { "name": "PreToolUse", "install": true, "action": "quiet" },
+    { "name": "PermissionRequest", "install": true, "action": "notify" },
+    { "name": "PostToolUse", "install": true, "action": "quiet" },
+    { "name": "PreCompact", "install": true, "action": "quiet" },
+    { "name": "PostCompact", "install": true, "action": "quiet" },
+    { "name": "SessionStart", "install": true, "action": "quiet" },
+    { "name": "UserPromptSubmit", "install": true, "action": "state" },
+    { "name": "Stop", "install": true, "action": "notify" }
+  ]
+}
