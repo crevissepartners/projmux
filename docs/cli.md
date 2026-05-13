@@ -478,27 +478,37 @@ and hooks are preserved. If a supported event already contains an unmanaged
 leaves the settings file untouched.
 
 `projmux ai integrate codex --mode hooks` manages a separate hooks-engine
-block in `~/.codex/config.toml`. It enables `[features] codex_hooks = true`
-and installs broad command hooks for `PermissionRequest`, `UserPromptSubmit`,
-and `Stop`:
+block in `~/.codex/config.toml`. It enables `[features] codex_hooks = true`,
+merging into an existing `[features]` table when present, and installs broad
+command hooks for `PermissionRequest`, `UserPromptSubmit`, and `Stop`:
 
 ```toml
 [features]
 codex_hooks = true
 
 [[hooks.PermissionRequest]]
+matcher = "*"
+[[hooks.PermissionRequest.hooks]]
+type = "command"
 command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.UserPromptSubmit]]
+matcher = "*"
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
 command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.Stop]]
+matcher = "*"
+[[hooks.Stop.hooks]]
+type = "command"
 command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 ```
 
 The default Codex mode remains `legacy-notify` for compatibility. Hooks mode is
-idempotent, preserves unrelated Codex config, and refuses to install over
-unmanaged `codex_hooks`/Codex hook wiring it cannot safely own. `--remove`
+idempotent, preserves unrelated Codex config and unmanaged hook entries, and
+refuses to install over unmanaged projmux Codex hook commands it cannot safely
+own. `--remove`
 without an explicit `--mode` removes both projmux-managed Codex blocks; with
 `--mode hooks`, it removes only the hooks block. Codex may still require
 reviewing or trusting the hook through its `/hooks` flow before commands run.

@@ -152,6 +152,15 @@ func TestAIIntegrateCodexHooksInstallsManagedBlockAndPreservesConfig(t *testing.
 	cmd.readFile = os.ReadFile
 	path := filepath.Join(home, codexConfigRelativePath)
 	writeCodexTestFile(t, path, `model = "gpt-5.1-codex"
+[features]
+experimental_resume = true
+
+[[hooks.Stop]]
+matcher = "*"
+[[hooks.Stop.hooks]]
+type = "command"
+command = "echo keep"
+
 # keep this user setting
 `)
 
@@ -164,19 +173,44 @@ func TestAIIntegrateCodexHooksInstallsManagedBlockAndPreservesConfig(t *testing.
 	if !strings.Contains(got, codexHooksMarkerBegin) || !strings.Contains(got, "[features]") || !strings.Contains(got, "codex_hooks = true") {
 		t.Fatalf("config missing hooks feature block:\n%s", got)
 	}
+	if strings.Count(got, "[features]") != 1 {
+		t.Fatalf("config duplicated [features]:\n%s", got)
+	}
 	for _, event := range codexHookEvents {
-		if !strings.Contains(got, "[[hooks."+event+"]]") {
-			t.Fatalf("config missing hooks event %s:\n%s", event, got)
-		}
+		assertCodexHookNestedHandler(t, got, event)
 	}
 	if strings.Count(got, codexHookCommand) != len(codexHookEvents) {
 		t.Fatalf("config command count = %d, want %d:\n%s", strings.Count(got, codexHookCommand), len(codexHookEvents), got)
 	}
-	if !strings.Contains(got, `model = "gpt-5.1-codex"`) || !strings.Contains(got, "# keep this user setting") {
+	if !strings.Contains(got, `model = "gpt-5.1-codex"`) ||
+		!strings.Contains(got, "experimental_resume = true") ||
+		!strings.Contains(got, "echo keep") ||
+		!strings.Contains(got, "# keep this user setting") {
 		t.Fatalf("config did not preserve unmanaged content:\n%s", got)
 	}
 	if !strings.Contains(stdout.String(), "configured Codex hooks") {
 		t.Fatalf("stdout = %q, want configured hooks message", stdout.String())
+	}
+}
+
+func TestAIIntegrateCodexHooksReplacesOldManagedBlock(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, codexConfigRelativePath)
+	writeCodexTestFile(t, path, oldCodexHooksBlock()+`model = "gpt-5.1-codex"
+`)
+
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "hooks"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode hooks error = %v", err)
+	}
+
+	got := readCodexTestFile(t, path)
+	if strings.Contains(got, `command = "projmux ai ingest codex-hook`) && !strings.Contains(got, "[[hooks.PermissionRequest.hooks]]") {
+		t.Fatalf("config still appears to use flat hook command schema:\n%s", got)
+	}
+	for _, event := range codexHookEvents {
+		assertCodexHookNestedHandler(t, got, event)
 	}
 }
 
@@ -209,7 +243,7 @@ func TestAIIntegrateCodexHooksRemoveOnlySelectedManagedBlock(t *testing.T) {
 	cmd := testAICommand(home)
 	cmd.readFile = os.ReadFile
 	path := filepath.Join(home, codexConfigRelativePath)
-	writeCodexTestFile(t, path, codexHooksBlock()+codexNotifyBlock()+`model = "gpt-5.1-codex"
+	writeCodexTestFile(t, path, codexHooksBlock(true)+codexNotifyBlock()+`model = "gpt-5.1-codex"
 `)
 
 	var stdout bytes.Buffer
@@ -230,7 +264,7 @@ func TestAIIntegrateCodexRemoveWithoutModeRemovesManagedNotifyAndHooks(t *testin
 	cmd := testAICommand(home)
 	cmd.readFile = os.ReadFile
 	path := filepath.Join(home, codexConfigRelativePath)
-	writeCodexTestFile(t, path, codexHooksBlock()+codexNotifyBlock()+`model = "gpt-5.1-codex"
+	writeCodexTestFile(t, path, codexHooksBlock(true)+codexNotifyBlock()+`model = "gpt-5.1-codex"
 `)
 
 	var stdout bytes.Buffer
@@ -243,6 +277,35 @@ func TestAIIntegrateCodexRemoveWithoutModeRemovesManagedNotifyAndHooks(t *testin
 	}
 	if !strings.Contains(stdout.String(), "removed projmux-managed Codex legacy notify and hooks") {
 		t.Fatalf("stdout = %q, want removed both message", stdout.String())
+	}
+}
+
+func TestAIIntegrateCodexHooksRemoveCleansManagedFeatureEntry(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, codexConfigRelativePath)
+	writeCodexTestFile(t, path, `[features]
+experimental_resume = true
+`+"\n"+codexHooksBlock(false))
+
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "hooks"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode hooks error = %v", err)
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "hooks", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode hooks --remove error = %v", err)
+	}
+
+	got := readCodexTestFile(t, path)
+	if strings.Contains(got, codexHooksMarkerBegin) || strings.Contains(got, codexHooksFeatureMarker) || strings.Contains(got, "codex_hooks = true") {
+		t.Fatalf("config after hooks remove kept managed entries:\n%s", got)
+	}
+	if !strings.Contains(got, "experimental_resume = true") {
+		t.Fatalf("config after hooks remove did not preserve feature table:\n%s", got)
+	}
+	if !strings.Contains(stdout.String(), "removed projmux-managed Codex hooks") {
+		t.Fatalf("stdout = %q, want removed hooks message", stdout.String())
 	}
 }
 
@@ -594,4 +657,37 @@ func claudeSettingsHasManagedCommand(t *testing.T, settings map[string]any, even
 		}
 	}
 	return false
+}
+
+func assertCodexHookNestedHandler(t *testing.T, config, event string) {
+	t.Helper()
+	for _, want := range []string{
+		"[[hooks." + event + "]]",
+		`matcher = "*"`,
+		"[[hooks." + event + ".hooks]]",
+		`type = "command"`,
+		`command = "` + codexHookCommand + `"`,
+	} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("config missing %q for %s:\n%s", want, event, config)
+		}
+	}
+}
+
+func oldCodexHooksBlock() string {
+	lines := []string{
+		codexHooksMarkerBegin,
+		"[features]",
+		"codex_hooks = true",
+		"",
+	}
+	for _, event := range codexHookEvents {
+		lines = append(lines,
+			"[[hooks."+event+"]]",
+			`command = "`+codexHookCommand+`"`,
+			"",
+		)
+	}
+	lines = append(lines, codexHooksMarkerEnd)
+	return strings.Join(lines, "\n") + "\n"
 }

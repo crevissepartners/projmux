@@ -18,6 +18,7 @@ const (
 	codexNotifyLine         = `notify = ["projmux", "ai", "ingest", "codex-notify"]`
 	codexHooksMarkerBegin   = "# >>> projmux managed codex hooks"
 	codexHooksMarkerEnd     = "# <<< projmux managed codex hooks"
+	codexHooksFeatureMarker = "# projmux-managed:codex-hooks-feature:v1"
 	codexHookCommand        = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 
 	claudeSettingsRelativePath = ".claude/settings.json"
@@ -283,11 +284,13 @@ func (c *aiCommand) planCodexHooksIntegration(remove, removeAllManaged bool) (co
 	plan := codexNotifyPlan{path: path, current: current, next: withoutManaged}
 
 	if remove {
-		plan.changed = (hadHooks || hadNotify) && withoutManaged != current
+		withoutManaged, removedFeature := removeManagedCodexHooksFeature(withoutManaged)
+		plan.next = withoutManaged
+		plan.changed = (hadHooks || hadNotify || removedFeature) && withoutManaged != current
 		switch {
 		case hadHooks && hadNotify:
 			plan.action = "removed projmux-managed Codex legacy notify and hooks wiring from " + path
-		case hadHooks:
+		case hadHooks || removedFeature:
 			plan.action = "removed projmux-managed Codex hooks wiring from " + path
 		case hadNotify:
 			plan.action = "removed projmux-managed Codex legacy notify wiring from " + path
@@ -302,7 +305,12 @@ func (c *aiCommand) planCodexHooksIntegration(remove, removeAllManaged bool) (co
 		plan.action = "would refuse to install Codex hooks wiring"
 		return plan, nil
 	}
-	next := codexHooksBlock() + withoutManaged
+	nextConfig := withoutManaged
+	includeFeatureInBlock := !codexConfigHasFeaturesTable(withoutManaged) && !codexConfigHasDottedCodexHooksFeature(withoutManaged)
+	if !includeFeatureInBlock {
+		nextConfig = ensureCodexHooksFeatureEnabled(withoutManaged)
+	}
+	next := codexHooksBlock(includeFeatureInBlock) + nextConfig
 	plan.next = next
 	plan.changed = next != current
 	if plan.changed {
@@ -629,16 +637,23 @@ func codexNotifyBlock() string {
 	}, "\n") + "\n"
 }
 
-func codexHooksBlock() string {
+func codexHooksBlock(includeFeature bool) string {
 	lines := []string{
 		codexHooksMarkerBegin,
-		"[features]",
-		"codex_hooks = true",
-		"",
+	}
+	if includeFeature {
+		lines = append(lines,
+			"[features]",
+			"codex_hooks = true",
+			"",
+		)
 	}
 	for _, event := range codexHookEvents {
 		lines = append(lines,
 			"[[hooks."+event+"]]",
+			`matcher = "*"`,
+			"[[hooks."+event+".hooks]]",
+			`type = "command"`,
 			`command = "`+codexHookCommand+`"`,
 			"",
 		)
@@ -697,17 +712,141 @@ func findUnmanagedCodexHooksLine(content string) (string, bool) {
 		if strings.Contains(trimmed, "projmux ai ingest codex-hook") {
 			return trimmed, true
 		}
-		if trimmed == "[features]" {
-			return trimmed, true
-		}
-		if rest, ok := strings.CutPrefix(trimmed, "codex_hooks"); ok && strings.HasPrefix(strings.TrimSpace(rest), "=") {
-			return trimmed, true
-		}
-		if strings.HasPrefix(trimmed, "features.codex_hooks") {
-			return trimmed, true
-		}
 	}
 	return "", false
+}
+
+func codexConfigHasFeaturesTable(content string) bool {
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.TrimSpace(stripCodexTomlComment(line)) == "[features]" {
+			return true
+		}
+	}
+	return false
+}
+
+func codexConfigHasDottedCodexHooksFeature(content string) bool {
+	for line := range strings.SplitSeq(content, "\n") {
+		trimmed := strings.TrimSpace(stripCodexTomlComment(line))
+		if trimmed == "" || strings.HasPrefix(trimmed, "[") {
+			continue
+		}
+		key, _, ok := strings.Cut(trimmed, "=")
+		if ok && strings.TrimSpace(key) == "features.codex_hooks" {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureCodexHooksFeatureEnabled(content string) string {
+	lines := strings.SplitAfter(content, "\n")
+	section := ""
+	featuresEnd := len(lines)
+	featuresStart := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(stripCodexTomlComment(line))
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if section == "features" && featuresEnd == len(lines) {
+				featuresEnd = i
+			}
+			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]"))
+			if section == "features" {
+				featuresStart = i
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(trimmed, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "features.codex_hooks" || (section == "features" && key == "codex_hooks") {
+			if strings.TrimSpace(value) == "true" {
+				return content
+			}
+			indent := lineIndent(line)
+			lines[i] = indent + codexHooksFeatureMarker + "\n" + indent + keyNameForCodexHooksFeature(section) + " = true\n"
+			return strings.Join(lines, "")
+		}
+	}
+	if featuresStart < 0 {
+		return content
+	}
+	insert := lineIndent(lines[featuresStart]) + codexHooksFeatureMarker + "\n" + lineIndent(lines[featuresStart]) + "codex_hooks = true\n"
+	next := append([]string{}, lines[:featuresEnd]...)
+	next = append(next, insert)
+	next = append(next, lines[featuresEnd:]...)
+	return strings.Join(next, "")
+}
+
+func keyNameForCodexHooksFeature(section string) string {
+	if section == "features" {
+		return "codex_hooks"
+	}
+	return "features.codex_hooks"
+}
+
+func removeManagedCodexHooksFeature(content string) (string, bool) {
+	lines := strings.SplitAfter(content, "\n")
+	var out strings.Builder
+	removed := false
+	skipCodexHooks := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == codexHooksFeatureMarker {
+			removed = true
+			skipCodexHooks = true
+			continue
+		}
+		if skipCodexHooks {
+			withoutComment := strings.TrimSpace(stripCodexTomlComment(line))
+			key, _, ok := strings.Cut(withoutComment, "=")
+			if ok && (strings.TrimSpace(key) == "codex_hooks" || strings.TrimSpace(key) == "features.codex_hooks") {
+				skipCodexHooks = false
+				continue
+			}
+			skipCodexHooks = false
+		}
+		out.WriteString(line)
+	}
+	return out.String(), removed
+}
+
+func lineIndent(line string) string {
+	return line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+}
+
+func stripCodexTomlComment(line string) string {
+	inString := rune(0)
+	escaped := false
+	for i, r := range line {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inString == '"' && r == '\\' {
+			escaped = true
+			continue
+		}
+		if inString != 0 {
+			if r == inString {
+				inString = 0
+			}
+			continue
+		}
+		if r == '"' || r == '\'' {
+			inString = r
+			continue
+		}
+		if r == '#' {
+			return line[:i]
+		}
+	}
+	return line
 }
 
 func flagWasProvided(args []string, name string) bool {
