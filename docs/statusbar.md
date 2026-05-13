@@ -64,7 +64,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
-| `sessionstate` | 1 | show a secondary Session State snapshot status and restore preview popup; primary inspection lives under Settings > Project > Session State | `prefix s r` |
+| `sessionstate` | 1 | show a secondary Session State snapshot status and restore preview popup; primary inspection lives under Projects > Sessions > State | `prefix s r` |
 | `usage`   | 1 | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click [--client <tty>]`, then ack on focus success | `prefix s n`  |
 
@@ -80,12 +80,11 @@ the cached usage state in-process, keeps the existing `projmux usage` CLI
 output shape unchanged for external consumers, aligns model/window rows with
 right-aligned numeric values, dims unavailable values, and colors rows at the
 same alert thresholds as the popup: amber at 80% and red at 95%.
-`sessionstate` opens a read-only snapshot status popup for the current tmux
-session. It shows the effective auto-save and startup picker toggles, saved
-timestamp and age, window/pane counts, default cwd, and a bounded preview of
-windows, panes, recipe kinds, agent resume ids, and startup commands without
-dumping the raw JSON snapshot. Mutating actions remain in Settings, including
-delete confirmation.
+`sessionstate` opens a secondary Session State popup for the current tmux
+session. Its action label is `Save snapshot`, which captures the current tmux
+session as the latest snapshot and bypasses the autosave debounce. Primary
+state inspection lives under `Projects > Sessions > State`; global Settings >
+Session State is settings-only.
 
 The path popup uses the native picker frame chrome, a one-line title,
 the full wrapped current path, cheap project/git metadata when available, and

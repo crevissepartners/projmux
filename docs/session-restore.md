@@ -11,18 +11,21 @@ projmux session-state restore --dry-run [--session <name>]
 projmux session-state delete [--session <name>]
 ```
 
-The primary inspection surface is Settings > Project > Session State. It uses
-the current project path to derive the same session identity as `projmux shell`,
-then shows project context, snapshot source/age, and a window-title -> pane-title
-preview before count metadata. The legacy Settings > Session State path remains
-available for the current live tmux session.
+The primary inspection surface is `Projects > Sessions > State`. It shows a
+read-only overview first: latest snapshot status, named snapshots, window ->
+pane structure, cwd, recipe, and agent resume health. Mutation belongs one
+level deeper in explicit actions; the overview does not immediately save,
+delete, preview, or restore.
 
 Project Session State actions are scoped to the project-derived session
-identity, not the currently attached tmux session. `Save snapshot` captures the
-live project session when that session exists, `Preview restore` prints the
-read-only dry-run restore plan for the project snapshot, and `Delete snapshot`
-requires a confirmation picker before removing the project snapshot. Destructive
-restore execution remains outside Settings in this slice.
+identity, not the currently attached tmux session. `Save latest snapshot`
+captures the live project session when that session exists. `Save named
+snapshot` captures the same live project session into a project-local named
+snapshot and stores cwd values with portable project-root placeholders. Closed
+project sessions disable save actions with the live-session reason. `Preview
+restore` prints the read-only dry-run restore plan for the project snapshot, and
+`Delete snapshot` requires a confirmation picker before removing the project
+snapshot. Destructive restore execution remains outside Settings in this slice.
 
 Agent panes in Settings, the statusbar popup, and restore dry-run previews show
 resume metadata health next to the pane recipe. `available` means a resume id is
@@ -41,9 +44,10 @@ same read model and CLI behavior:
 - `Preview restore` prints the dry-run restore plan and does not execute tmux
   replay commands.
 
-Delete for current-session snapshots, auto-save/startup picker toggles, and
-restore execution remain in Settings or CLI for now. Destructive restore
-execution stays deferred until the popup has a dedicated safe policy for
+Settings > Session State is global settings only: global auto-save, global
+startup picker, and storage/retention policy. It does not show the current
+snapshot tree. Delete for current-session snapshots and destructive restore
+execution stay deferred until those actions have a dedicated safe policy for
 existing or non-empty live sessions.
 
 Named snapshots may currently be backed by legacy project files in
@@ -54,19 +58,18 @@ files are imported read-only by Project open and shell compatibility startup
 when building `Named snapshot` candidates; new primary surfaces should describe
 the restore unit as a snapshot, not as a separate layout or preset feature.
 
-Project open is the canonical startup picker path. Opening a closed project
-session from the Alt-1 sidebar advances inside the sidebar to the native
-`Start project` step when the startup picker is enabled. Rows are ordered
-`Latest snapshot`, named snapshot rows, `Empty session`, then `Back`. `Latest
-snapshot` is the auto-saved snapshot that keeps changing as auto-save runs.
-`Named snapshot` is a fixed, user-named snapshot and is not updated by
-auto-save. Rows include saved-at date/time metadata when available. `Empty
-session` creates a new session without restoring a snapshot. `Back` returns to
-the project list without creating, replaying, or opening a session. After the
-startup mode is selected, project hook/config trust is evaluated if needed;
-approval continues the selected path and deny/cancel aborts before session
-create, snapshot replay, startup recipe, or `pane-startup`. Existing sessions
-switch directly without a startup picker.
+Project open from the Alt-1 sidebar defaults to opening a closed project as an
+`Empty session`. `Settings > Labs > Sidebar startup picker` is an opt-in toggle;
+when it is on, closed project open advances inside the sidebar to the native
+`Start project` step. Rows are ordered `Latest snapshot`, named snapshot rows,
+`Empty session`, then `Back`. `Latest snapshot` is the auto-saved snapshot that
+keeps changing as auto-save runs. `Named snapshot` is a fixed, user-named
+snapshot and is not updated by auto-save. Rows include saved-at date/time
+metadata when available. `Back` returns to the project list without creating,
+replaying, or opening a session. After the startup mode is selected, project
+hook/config trust is evaluated if needed; approval continues the selected path
+and deny/cancel aborts before session create, snapshot replay, startup recipe,
+or `pane-startup`. Existing sessions switch directly without a startup picker.
 
 `projmux shell` still accepts the legacy startup selectors in this release, but
 it is no longer the primary project restore model. Its compatibility picker is

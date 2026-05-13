@@ -65,8 +65,8 @@ func (c *statusbarCommand) handleSessionState(opts statusbarClickOptions, _ io.W
 
 func (c *statusbarCommand) loadSessionStateView(ctx context.Context) statusbarSessionStateView {
 	state := statusbarSessionStateView{
-		Autosave:    sessionStateToggleState(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
-		Autorestore: sessionStateToggleState(c.homeDir, c.lookupEnv, sessionStateAutorestoreEnv, func(paths config.Paths) string { return paths.SessionStateAutorestoreFile() }),
+		Autosave:    sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
+		Autorestore: sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutorestoreEnv, config.SessionStateToggleOn, func(paths config.Paths) string { return paths.SessionStateAutorestoreFile() }),
 	}
 	sessionName, err := c.currentStatusbarSessionName(ctx)
 	if err != nil {

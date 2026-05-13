@@ -527,6 +527,7 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
+	enableSidebarStartupPickerForTest(t, home)
 	project := filepath.Join(home, "workspace")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -619,6 +620,7 @@ func TestSwitchSidebarProjectOpenShowsStartupStepWithoutDisplayPopupHandoff(t *t
 	t.Parallel()
 
 	home := t.TempDir()
+	enableSidebarStartupPickerForTest(t, home)
 	project := filepath.Join(home, "workspace")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -690,6 +692,7 @@ func TestSwitchProjectOpenLatestSnapshotSelectionRestoresAndOpens(t *testing.T) 
 	t.Parallel()
 
 	home := t.TempDir()
+	enableSidebarStartupPickerForTest(t, home)
 	project := filepath.Join(home, "workspace")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -762,6 +765,7 @@ func TestSwitchProjectOpenNamedSnapshotSelectionRestoresAndOpens(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
+	enableSidebarStartupPickerForTest(t, home)
 	project := filepath.Join(home, "workspace")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -912,12 +916,20 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 func TestSwitchProjectOpenTrustDenyAfterStartupSelectionCreatesNoSession(t *testing.T) {
 	t.Parallel()
 
+	home := t.TempDir()
+	enableSidebarStartupPickerForTest(t, home)
 	var pickerCalled bool
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return t.TempDir(), nil },
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
 		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			pickerCalled = true
 			return intpickercompat.Result{}, nil
@@ -945,11 +957,19 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionCreatesNoSession(t *test
 func TestSwitchProjectOpenEmptySelectionChecksTrustAfterStartupSelection(t *testing.T) {
 	t.Parallel()
 
+	home := t.TempDir()
+	enableSidebarStartupPickerForTest(t, home)
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return t.TempDir(), nil },
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
 		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			if executor.authorizeCalled {
 				t.Fatal("trust gate ran before empty startup selection")
@@ -2754,6 +2774,18 @@ func equalEntries(got, want []intpickercompat.Entry) bool {
 		}
 	}
 	return true
+}
+
+func enableSidebarStartupPickerForTest(t *testing.T, home string) {
+	t.Helper()
+
+	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
+	if err != nil {
+		t.Fatalf("Paths() error = %v", err)
+	}
+	if err := config.SaveSessionStateToggleFile(paths.SidebarStartupPickerFile(), config.SessionStateToggleOn); err != nil {
+		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
+	}
 }
 
 type switchFixtureFS struct {

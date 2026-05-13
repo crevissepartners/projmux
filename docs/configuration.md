@@ -162,7 +162,7 @@ configured key opens and closes the popup.
 | `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. |
 | `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from `projmux status usage` to stderr. |
 | `PROJMUX_USAGE_LIMITS_PATH` | Deprecated. Read but ignored; limits now come from upstream APIs and local Codex rollout state. |
-| `PROJMUX_SESSIONSTATE_AUTOSAVE` | Session snapshot autosave override. Values such as `off`, `false`, or `0` disable autosave regardless of the saved Settings value. |
+| `PROJMUX_SESSIONSTATE_AUTOSAVE` | Session snapshot autosave override for the global fallback. Values such as `off`, `false`, or `0` disable autosave for projects that inherit the global setting; explicit project auto-save `on`/`off` still takes precedence. |
 | `PROJMUX_SESSIONSTATE_AUTORESTORE` | Legacy compatibility name for the startup picker override. Values such as `off`, `false`, or `0` disable the startup picker regardless of the saved Settings value. |
 | `PROJMUX_SESSIONSTATE_DEBUG` | When non-empty, quiet autosave surfaces suppressed session-state errors to stderr. |
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
@@ -374,16 +374,22 @@ prints the guide.
 autosave command is quiet and debounced per session, and stores snapshots under
 `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`.
 
-Project open from the Alt-1 sidebar is the canonical startup picker path. For a
-closed project session, the sidebar first advances to the native `Start project`
-step when the startup picker is enabled. Rows appear as `Latest snapshot`, named
-snapshot rows, `Empty session`, and `Back`. `Latest snapshot` is the snapshot
-auto-save that changes as auto-save runs; named snapshots are fixed snapshots.
-Rows include saved-at date/time metadata when projmux can determine it. `Back`
-returns to the project list without creating, replaying, or opening a session.
-After the startup mode is selected, project hook/config trust is evaluated if
-needed; approval continues the selected path and deny/cancel aborts without
-session create, snapshot replay, startup recipe, or `pane-startup`.
+Global auto-save defaults to `off` on a fresh install. Project auto-save is an
+override with `inherit`, `on`, and `off`; `inherit` follows the global value,
+while `on` and `off` take precedence. Auto-save only updates the latest
+snapshot. Named snapshots are manual and are never updated by auto-save.
+
+Project open from the Alt-1 sidebar defaults to opening a closed project as an
+`Empty session`. The optional `Settings > Labs > Sidebar startup picker` toggle
+enables the native sidebar `Start project` step. Rows appear as `Latest
+snapshot`, named snapshot rows, `Empty session`, and `Back`. `Latest snapshot`
+is the snapshot auto-save that changes as auto-save runs; named snapshots are
+fixed snapshots. Rows include saved-at date/time metadata when projmux can
+determine it. `Back` returns to the project list without creating, replaying, or
+opening a session. After the startup mode is selected, project hook/config trust
+is evaluated if needed; approval continues the selected path and deny/cancel
+aborts without session create, snapshot replay, startup recipe, or
+`pane-startup`.
 
 On default `projmux shell`, compatibility startup candidates are checked before
 creating a new app session only when the startup picker is enabled. In project
@@ -427,16 +433,21 @@ is not offered as the `Latest snapshot` row next time. If a user explicitly runs
 `projmux session-state save` while a session is marked `fresh`, that
 fresh-source snapshot is still hidden from the startup picker.
 
-Settings > Project > Session State is the primary inspection surface when
-project context exists. It derives the target session identity from the current
-project path, shows the project path/source, reports the latest snapshot
-source/age, and previews the snapshot structure as window title -> pane title
-before count metadata. The global Settings > Session State path remains
-available for the current live tmux session and still exposes current-session
-snapshot delete. The saved toggles live under
-`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave` and the legacy
-compatibility file name `sessionstate-autorestore`; the environment variables
-above override those files.
+Settings > Session State is global settings only: global auto-save, global
+startup picker, and storage/retention policy. Settings > Project > Session State
+is override/effective-focused: project identity, project auto-save
+`inherit`/`on`/`off`, effective auto-save value/source, and snapshot save
+actions. Snapshot inspection lives under `Projects > Sessions > State`, whose
+overview shows latest/named snapshot status and the window -> pane read model
+without immediate mutation.
+
+The saved global toggles live under
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave`,
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autorestore`, and
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`. Project
+auto-save overrides live under
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-projects/<session>/autosave`.
+The environment variables above override the global files.
 
 Manual snapshot actions are available from the CLI:
 
