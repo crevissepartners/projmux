@@ -17,6 +17,28 @@ func formatCodexTurnCompleteNotifyBody(p codexNotifyPayload) aiNotifyBody {
 	}
 }
 
+func formatCodexHookPermissionNotifyBody(p codexHookPayload) aiNotifyBody {
+	toolName := strings.TrimSpace(p.ToolName)
+	if toolName == "" {
+		toolName = "Tool"
+	}
+	text := joinAINotifyText("Codex", "승인 필요", toolName)
+	if summary := formatCodexToolInputSummary(toolName, p.ToolInput); summary != "" {
+		text += ": " + summary
+	}
+	return aiNotifyBody{
+		Text:     text,
+		Severity: notify.SeverityCritical,
+	}
+}
+
+func formatCodexHookStopNotifyBody(codexHookPayload) aiNotifyBody {
+	return aiNotifyBody{
+		Text:     joinAINotifyText("Codex", "응답 완료"),
+		Severity: notify.SeverityInfo,
+	}
+}
+
 func formatClaudeNotificationNotifyBody(p claudeHookPayload) aiNotifyBody {
 	label, severity := claudeNotificationLabelSeverity(p.NotificationType)
 	return aiNotifyBody{
@@ -89,6 +111,24 @@ func claudeNotificationLabelSeverity(notificationType string) (string, string) {
 	default:
 		return "응답 완료", notify.SeverityInfo
 	}
+}
+
+func formatCodexToolInputSummary(toolName string, input map[string]any) string {
+	keys := []string{"command", "action", "file_path", "path", "url", "query"}
+	switch strings.TrimSpace(toolName) {
+	case "Bash", "Shell":
+		keys = []string{"command", "description", "action"}
+	case "Write", "Edit", "MultiEdit", "Read":
+		keys = []string{"file_path", "path"}
+	case "WebFetch", "WebSearch":
+		keys = []string{"url", "query"}
+	}
+	for _, key := range keys {
+		if value := stringFromAny(input[key]); value != "" {
+			return truncateRunes(value, 80)
+		}
+	}
+	return ""
 }
 
 func formatClaudeToolInputSummary(toolName string, input map[string]any, fallbackID string) string {

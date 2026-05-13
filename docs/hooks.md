@@ -243,13 +243,59 @@ command in a projmux-marked block:
 notify = ["projmux", "ai", "ingest", "codex-notify"]
 ```
 
-The managed block is idempotent and removable with
-`projmux ai integrate codex --remove`. `--dry-run` previews the file change
-without writing. If a user-owned `notify = ...` line already exists outside the
-managed block, projmux refuses to replace it automatically because Codex legacy
-notify has a single command slot.
+The default integration mode remains legacy notify for compatibility. The
+managed block is idempotent and removable with `projmux ai integrate codex
+--mode legacy-notify --remove`; `projmux ai integrate codex --remove` removes
+all projmux-managed Codex blocks. `--dry-run` previews the file change without
+writing. If a user-owned `notify = ...` line already exists outside the managed
+block, projmux refuses to replace it automatically because Codex legacy notify
+has a single command slot.
 
-Codex hooks-engine mode remains a future slice.
+## Codex Hooks Engine
+
+`projmux ai ingest codex-hook` is the conservative core ingest path for Codex
+hooks-engine events. It reads a single JSON payload from stdin and currently
+handles these events:
+
+| Event | Behavior |
+| --- | --- |
+| `UserPromptSubmit` | marks the matched pane hook-active and sets AI state to thinking/busy; no notify queue entry is pushed |
+| `PermissionRequest` | pushes a critical approval row with the tool name and a concise tool/action summary |
+| `Stop` | pushes an info Codex completion row |
+
+Codex hook payload parsing accepts the common fields
+`hook_event_name`/`event_name`, `thread_id`, `session_id`, `turn_id`, `cwd`,
+`transcript_path`, `model`, `tool_name`, nested `tool.name`, `tool_input`, and
+`input`. For pane matching, Codex hook ingest uses `thread_id` when available
+and falls back to treating `session_id` as the thread identity so existing
+`matchAIPane` matching can reuse cached pane metadata.
+
+`projmux ai integrate codex --mode hooks` manages a separate
+`~/.codex/config.toml` marker block for the hooks engine:
+
+```toml
+[features]
+codex_hooks = true
+
+[[hooks.PermissionRequest]]
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+
+[[hooks.UserPromptSubmit]]
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+
+[[hooks.Stop]]
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+```
+
+Repeated installs are idempotent and preserve unrelated Codex config. If
+projmux sees unmanaged `codex_hooks`/Codex hook wiring, it refuses to install
+over it rather than guessing ownership. `--dry-run` previews the TOML update.
+`--remove --mode hooks` removes only the hooks block; `--remove` with no mode
+removes both projmux-managed Codex hooks and legacy notify blocks.
+
+Codex may require reviewing or trusting hooks through its `/hooks` flow before
+commands run. Projmux only writes the managed config block; it does not attempt
+to auto-trust hooks.
 
 ## Tmux Bell Fallback
 
