@@ -267,14 +267,14 @@ func TestDoctorRunIncludesAINotifyDiagnostics(t *testing.T) {
 	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
 		return []doctorAINotifyIntegration{
 			{
-				ID:             "codex-legacy-notify",
-				Name:           "Codex legacy notify",
+				ID:             "codex-hooks",
+				Name:           "Codex hooks",
 				Status:         doctorAINotifyStatusConflict,
 				ConfigPath:     "/home/tester/.codex/config.toml",
-				ConflictReason: "Codex notify is already configured outside a projmux-managed block",
-				InstallCommand: "projmux ai integrate codex --mode legacy-notify",
-				RemoveCommand:  "projmux ai integrate codex --mode legacy-notify --remove",
-				DryRunCommand:  "projmux ai integrate codex --mode legacy-notify --dry-run",
+				ConflictReason: "Codex hooks are already configured outside a projmux-managed block",
+				InstallCommand: "projmux ai integrate codex",
+				RemoveCommand:  "projmux ai integrate codex --remove",
+				DryRunCommand:  "projmux ai integrate codex --dry-run",
 			},
 		}
 	}
@@ -287,11 +287,11 @@ func TestDoctorRunIncludesAINotifyDiagnostics(t *testing.T) {
 	for _, want := range []string{
 		"AI notify integrations",
 		"[conflict]",
-		"Codex legacy notify",
+		"Codex hooks",
 		"/home/tester/.codex/config.toml",
-		"install: projmux ai integrate codex --mode legacy-notify",
-		"remove: projmux ai integrate codex --mode legacy-notify --remove",
-		"dry-run: projmux ai integrate codex --mode legacy-notify --dry-run",
+		"install: projmux ai integrate codex",
+		"remove: projmux ai integrate codex --remove",
+		"dry-run: projmux ai integrate codex --dry-run",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
@@ -403,8 +403,7 @@ func TestDoctorAINotifyDiagnosticsReuseReadOnlyPlans(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.readFile = os.ReadFile
-	writeCodexTestFile(t, filepath.Join(home, codexConfigRelativePath), codexNotifyBlock()+`
-[features]
+	writeCodexTestFile(t, filepath.Join(home, codexConfigRelativePath), `[features]
 hooks = true
 
 [[hooks.Stop]]
@@ -441,9 +440,6 @@ command = "projmux ai ingest codex-hook"
 		byID[diagnostic.ID] = diagnostic
 	}
 
-	if byID["codex-legacy-notify"].Status != doctorAINotifyStatusInstalled {
-		t.Fatalf("codex legacy status = %#v, want installed", byID["codex-legacy-notify"])
-	}
 	if byID["codex-hooks"].Status != doctorAINotifyStatusConflict {
 		t.Fatalf("codex hooks status = %#v, want conflict", byID["codex-hooks"])
 	}
@@ -452,9 +448,6 @@ command = "projmux ai ingest codex-hook"
 	}
 	if byID["tmux-bell"].Status != doctorAINotifyStatusInstalled {
 		t.Fatalf("tmux bell status = %#v, want installed", byID["tmux-bell"])
-	}
-	if byID["codex-legacy-notify"].ConfigPath != filepath.Join(home, codexConfigRelativePath) {
-		t.Fatalf("codex ConfigPath = %q", byID["codex-legacy-notify"].ConfigPath)
 	}
 	if byID["codex-hooks"].InstallCommand != "projmux ai integrate codex" {
 		t.Fatalf("codex hooks InstallCommand = %q", byID["codex-hooks"].InstallCommand)

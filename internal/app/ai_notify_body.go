@@ -11,12 +11,6 @@ type aiNotifyBody struct {
 	Severity string
 }
 
-func formatCodexTurnCompleteNotifyBody(p codexNotifyPayload) aiNotifyBody {
-	return aiNotifyBody{
-		Text: joinAINotifyText("Codex", "응답 완료", p.LastAssistantMessage),
-	}
-}
-
 func formatCodexHookPermissionNotifyBody(p codexHookPayload) aiNotifyBody {
 	toolName := strings.TrimSpace(p.ToolName)
 	if toolName == "" {

@@ -28,18 +28,6 @@ const (
 	aiIngestLogRetain  = 512 * 1024
 )
 
-type codexNotifyPayload struct {
-	Type                 string
-	ThreadID             string
-	SessionID            string
-	TurnID               string
-	CWD                  string
-	Client               string
-	Model                string
-	InputMessages        []json.RawMessage
-	LastAssistantMessage string
-}
-
 type codexHookPayload struct {
 	EventName      string
 	ThreadID       string
@@ -104,12 +92,6 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		return errors.New("ai ingest requires <agent-kind>")
 	}
 	switch args[0] {
-	case "codex-notify":
-		if len(args) != 2 {
-			printAIUsage(stderr)
-			return errors.New("ai ingest codex-notify requires a JSON payload argument")
-		}
-		return c.ingestCodexNotify([]byte(args[1]))
 	case "codex-hook":
 		if len(args) != 1 {
 			printAIUsage(stderr)
@@ -364,61 +346,6 @@ func composeBellNotifyText(info bellPaneInfo) string {
 		return "bell"
 	}
 	return "bell · " + context
-}
-
-func (c *aiCommand) ingestCodexNotify(data []byte) error {
-	payload, err := parseCodexNotifyPayload(data)
-	if err != nil {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-notify", Result: "error", Reason: err.Error()})
-		return err
-	}
-	if payload.Type != "agent-turn-complete" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-notify", Event: payload.Type, Result: "ignored", Reason: "unsupported event", CWD: payload.CWD, ThreadID: payload.ThreadID, SessionID: payload.SessionID, TurnID: payload.TurnID})
-		return nil
-	}
-
-	paneID := c.matchAIPane(aiPaneMatchInput{
-		CWD:       payload.CWD,
-		ThreadID:  payload.ThreadID,
-		SessionID: payload.SessionID,
-	})
-	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-notify", Event: payload.Type, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, ThreadID: payload.ThreadID, SessionID: payload.SessionID, TurnID: payload.TurnID})
-		return nil
-	}
-
-	metadata := payload.codexMetadata()
-	topic := truncateRunes(payload.LastAssistantMessage, 80)
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneHookActiveOption, "1")
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneManagedOption, "1")
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneAgentOption, aiModeCodex)
-	if payload.CWD != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneContextOption, payload.CWD)
-	}
-	if payload.ThreadID != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneThreadIDOption, payload.ThreadID)
-	}
-	if payload.SessionID != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneSessionIDOption, payload.SessionID)
-		c.writeAIHookResumeMetadata(paneID, payload.SessionID)
-	}
-	if topic != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic)
-	}
-
-	body := formatCodexTurnCompleteNotifyBody(payload)
-	notifyInput := attentionNotifyInput{
-		ID:       codexNotifyID(payload),
-		Text:     body.Text,
-		Metadata: metadata,
-		Force:    true,
-	}
-	if err := c.applyAIStatusWithNotify("waiting", paneID, notifyInput); err != nil {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-notify", Event: payload.Type, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ThreadID, SessionID: payload.SessionID, TurnID: payload.TurnID})
-		return err
-	}
-	c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-notify", Event: payload.Type, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ThreadID, SessionID: payload.SessionID, TurnID: payload.TurnID})
-	return nil
 }
 
 func (c *aiCommand) ingestCodexHook(data []byte) error {
@@ -738,39 +665,6 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 	return strings.Join(parts, " ")
 }
 
-func parseCodexNotifyPayload(data []byte) (codexNotifyPayload, error) {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return codexNotifyPayload{}, fmt.Errorf("parse codex notify payload: %w", err)
-	}
-	payload := codexNotifyPayload{
-		Type:                 stringFromAny(raw["type"]),
-		ThreadID:             firstString(raw, "thread-id", "thread_id"),
-		SessionID:            firstString(raw, "session-id", "session_id"),
-		TurnID:               firstString(raw, "turn-id", "turn_id"),
-		CWD:                  stringFromAny(raw["cwd"]),
-		Model:                stringFromAny(raw["model"]),
-		LastAssistantMessage: stringFromAny(raw["last-assistant-message"]),
-	}
-	payload.Client = stringFromAny(raw["client"])
-	if payload.Client == "" {
-		payload.Client = firstNestedString(raw["client"], "name", "version")
-	}
-	if payload.Model == "" {
-		payload.Model = firstNestedString(raw["client"], "model")
-	}
-	if messages, ok := raw["input-messages"].([]any); ok {
-		payload.InputMessages = make([]json.RawMessage, 0, len(messages))
-		for _, message := range messages {
-			encoded, err := json.Marshal(message)
-			if err == nil {
-				payload.InputMessages = append(payload.InputMessages, encoded)
-			}
-		}
-	}
-	return payload, nil
-}
-
 func parseCodexHookPayload(data []byte) (codexHookPayload, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -875,25 +769,6 @@ func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
 		delete(payload.ToolInput, "tool_use_id")
 	}
 	return payload, nil
-}
-
-func (p codexNotifyPayload) codexMetadata() map[string]string {
-	metadata := map[string]string{
-		"agent":      aiModeCodex,
-		"thread_id":  p.ThreadID,
-		"session_id": p.SessionID,
-		"turn_id":    p.TurnID,
-		"cwd":        p.CWD,
-		"model":      p.Model,
-		"client":     p.Client,
-	}
-	out := make(map[string]string, len(metadata))
-	for k, v := range metadata {
-		if value := strings.TrimSpace(v); value != "" {
-			out[k] = value
-		}
-	}
-	return out
 }
 
 func (p codexHookPayload) codexHookMetadata() map[string]string {
@@ -1063,19 +938,6 @@ func cleanMatchPath(path string) string {
 		return ""
 	}
 	return filepath.Clean(path)
-}
-
-func codexNotifyID(p codexNotifyPayload) string {
-	threadID := strings.TrimSpace(p.ThreadID)
-	turnID := strings.TrimSpace(p.TurnID)
-	switch {
-	case threadID != "" && turnID != "":
-		return "ai:codex:" + threadID + ":" + turnID
-	case threadID != "":
-		return "ai:codex:" + threadID
-	default:
-		return ""
-	}
 }
 
 func codexHookNotifyID(p codexHookPayload, kind string) string {

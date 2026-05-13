@@ -1724,20 +1724,7 @@ func (c *settingsCommand) currentAINotifyDiagnostics() []doctorAINotifyIntegrati
 	} else {
 		diagnostics = doctorAINotifyDiagnostics(c.ai)
 	}
-	out := make([]doctorAINotifyIntegration, 0, len(diagnostics))
-	for _, diag := range diagnostics {
-		if settingsAINotifyDiagnosticHidden(diag) {
-			continue
-		}
-		out = append(out, diag)
-	}
-	return out
-}
-
-func settingsAINotifyDiagnosticHidden(diag doctorAINotifyIntegration) bool {
-	id := strings.TrimSpace(diag.ID)
-	name := strings.ToLower(strings.TrimSpace(diag.Name))
-	return id == "codex-legacy-notify" || strings.HasPrefix(id, "codex-legacy") || strings.Contains(name, "codex legacy")
+	return diagnostics
 }
 
 func (c *settingsCommand) copySettingsCommand(label, command string, stderr io.Writer) {

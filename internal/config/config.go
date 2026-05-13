@@ -10,19 +10,18 @@ import (
 )
 
 const (
-	AppName                 = "projmux"
-	PinsFileName            = "pins"
-	TagsFileName            = "tags"
-	PreviewStateFileName    = "preview-state"
-	ProjdirFileName         = "projdir"
-	KeymapFileName          = "keymap.toml"
-	HooksDirName            = "hooks"
-	ProjectHooksFileName    = "project-hooks"
-	GlobalConfigFileName    = "config.toml"
-	PostCreateHookFileName  = "post-create"
-	PaneStartupHookFileName = "pane-startup"
-	PostAttachHookFileName  = "post-attach"
-	PreCreateHookFileName   = "pre-create"
+	AppName                = "projmux"
+	PinsFileName           = "pins"
+	TagsFileName           = "tags"
+	PreviewStateFileName   = "preview-state"
+	ProjdirFileName        = "projdir"
+	KeymapFileName         = "keymap.toml"
+	HooksDirName           = "hooks"
+	ProjectHooksFileName   = "project-hooks"
+	GlobalConfigFileName   = "config.toml"
+	PostCreateHookFileName = "post-create"
+	PostAttachHookFileName = "post-attach"
+	PreCreateHookFileName  = "pre-create"
 )
 
 var ErrHomeDirRequired = errors.New("home directory is required when XDG homes are unset")

@@ -104,7 +104,7 @@ projmux doctor --install-missing [--dry-run] [--include-optional]
 
 Runs a dependency check: `tmux ≥ 3.4`, `git`, `stty` (POSIX only), and
 `kubectl` (optional), then reports read-only AI notify integration diagnostics
-for Codex legacy notify, Codex hooks, Claude Code hooks, and the tmux bell
+for Codex hooks, Claude Code hooks, and the tmux bell
 fallback. AI notify integration statuses are `installed`, `missing`, or
 `conflict`; missing or conflicting integrations are informational and do not
 make doctor fail. It also reports read-only Session State resume metadata
@@ -128,8 +128,7 @@ setup` for that.
 `Settings > Notifications > Delivery sources` shows active Codex hooks, Claude,
 and tmux statuses, conflicts, config paths, and copyable AI integration
 install/remove/dry-run commands. Settings does not install or remove external
-Codex, Claude, or tmux notify wiring. Codex legacy notify remains available
-through CLI/doctor compatibility paths but is hidden from Settings.
+Codex, Claude, or tmux notify wiring.
 
 ## focus
 
@@ -325,12 +324,11 @@ projmux ai settings
 projmux ai status   set <thinking|waiting|idle> [--pane <id>]
 projmux ai notify   <reset|notify> [--pane <id>]
 projmux ai watch-title [--pane <id>]
-projmux ai ingest   codex-notify '<json>'
 projmux ai ingest   codex-hook < payload.json
 projmux ai ingest   claude-hook < payload.json
 projmux ai ingest   bell --pane <pane_id>
 projmux ai ingest   log [--tail N] [--json] [--path]
-projmux ai integrate codex [--mode legacy-notify] [--dry-run] [--remove]
+projmux ai integrate codex [--dry-run] [--remove]
 projmux ai integrate claude [--dry-run] [--remove]
 projmux ai integrate tmux-bell [--dry-run] [--remove]
 projmux ai topic     ...
@@ -341,13 +339,6 @@ the `attention` badge, the `notify` queue producer, and the desktop
 notifier. `status set waiting` is the trigger that flips a pane to the
 reply-ready state — that transition pushes an `ai:<session>:<pane>`
 entry into the notify queue.
-
-`ingest codex-notify` is the hook-facing entrypoint for Codex legacy notify
-JSON. On `agent-turn-complete`, it matches a tmux pane by `$TMUX_PANE`,
-payload `cwd`, then cached thread/session pane options, marks the pane
-hook-active, sets AI state to waiting, and writes a metadata-bearing notify
-queue entry. Panes marked `@projmux_ai_hook_active=1` are skipped by the
-title watcher.
 
 `ingest codex-hook` is the hook-facing entrypoint for Codex hooks-engine JSON.
 It reads one JSON payload from stdin and handles the default Codex hook catalog
@@ -423,20 +414,6 @@ nested `subagent.type|name|kind|id`. `TeammateIdle` reads
 `teammate_name`/`teammateName`, `teammate_id`/`teammateId`,
 `teammate_context`/`teammateContext`/`context`/`reason`/`message`, and nested
 `teammate.name|id|context|status|reason|message`.
-
-`integrate codex` manages legacy Codex `notify` wiring in
-`~/.codex/config.toml`:
-
-```toml
-notify = ["projmux", "ai", "ingest", "codex-notify"]
-```
-
-The command writes that line inside a projmux-managed marker block so repeated
-runs are idempotent and `--remove` can delete only projmux-owned wiring.
-`--dry-run` prints the planned change without writing. If the Codex config
-already contains an unmanaged `notify = ...` setting, projmux refuses to
-install over it and leaves the file untouched; use `--dry-run` to inspect the
-conflict and then edit the user-owned setting manually if needed.
 
 Claude Code hook ingest is available through `ingest claude-hook`, but
 `integrate claude` is the opt-in user-level wiring command for
@@ -555,10 +532,9 @@ command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 Codex hooks are the default integration mode. The hooks install is idempotent,
 preserves unrelated Codex config and unmanaged hook entries, and refuses to
 install over unmanaged projmux Codex hook commands it cannot safely own.
-`--remove` without an explicit `--mode` removes both projmux-managed Codex
-blocks. The legacy `notify` integration remains available with
-`--mode legacy-notify` for compatibility. Codex may still require reviewing or
-trusting the hook through its `/hooks` flow before commands run.
+`--remove` removes projmux-managed Codex hooks wiring. `--dry-run` prints the
+planned change without writing. Codex may still require reviewing or trusting
+the hook through its `/hooks` flow before commands run.
 
 `integrate tmux-bell` is opt-in server-level tmux wiring for arbitrary tools
 that emit BEL or OSC 9. It applies `allow-passthrough on`, `monitor-bell on`,
@@ -721,4 +697,4 @@ flags with the top-level `switch` UX:
 - [notify-queue.md](notify-queue.md) — queue file format and lifecycle.
 - [usage-tracking.md](usage-tracking.md) — adapter HTTP/file behaviour.
 - [keybindings.md](keybindings.md) — terminal key delivery and CSI-u.
-- [hooks.md](hooks.md) — lifecycle hooks, `send-noti` payload contract, and `pane-startup` deprecation path.
+- [hooks.md](hooks.md) — lifecycle hooks, startup commands, and `send-noti` payload contract.

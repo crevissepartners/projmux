@@ -52,10 +52,7 @@ func (c ProjectConfig) hookRun(event Event) string {
 }
 
 func (c ProjectConfig) hasEventSurface(event Event) bool {
-	if c.hookRun(event) != "" {
-		return true
-	}
-	return event == EventPaneStartup && strings.TrimSpace(c.StartupRun) != ""
+	return c.hookRun(event) != ""
 }
 
 func (c ProjectConfig) hasSessionEnv() bool {
