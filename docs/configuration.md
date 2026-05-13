@@ -390,12 +390,21 @@ prints the guide.
 autosave command is quiet and debounced per session, and stores snapshots under
 `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`.
 
-When auto-restore is enabled, `projmux shell` checks for a saved snapshot before
-attaching. Restore only runs when the target app session is absent; an existing
-live session is left untouched and the normal attach path continues. Missing
-snapshots are quiet. Invalid snapshots or replay failures are reported to
-stderr, then `projmux shell` falls back to the normal `tmux new-session -A`
-attach behavior.
+On default `projmux shell`, startup candidates are checked before creating a
+new app session only when auto-restore is enabled. When at least one saved
+snapshot or project layout preset is available, projmux opens a native startup
+picker with saved first, presets in alphabetical order, and empty last.
+Selecting saved or a preset replays through the same session-state paths as
+explicit startup flags. Closing the picker, an empty selection, or a picker
+error falls back to an empty session and continues to the normal
+`tmux new-session -A` attach behavior. Missing snapshots and missing presets are
+quiet. When auto-restore is disabled, default `projmux shell` skips candidate
+lookup and the startup picker.
+
+Restore only runs when the target app session is absent; an existing live
+session is left untouched and the normal attach path continues without opening
+the startup picker. Invalid snapshots or replay failures are reported to
+stderr, then `projmux shell` falls back to the normal attach behavior.
 
 `projmux shell --saved` bypasses the saved auto-restore toggle and attempts the
 same saved-snapshot replay on the new-session path. `projmux shell --layout
@@ -403,8 +412,9 @@ same saved-snapshot replay on the new-session path. `projmux shell --layout
 a session snapshot and replays it before attaching. The project context comes
 from `PROJMUX_CWD` when set, otherwise the nearest `.projmux` or `.git` marker
 from the current working directory. `projmux shell --empty` skips saved and
-layout replay. These flags are mutually exclusive and still honor the existing
-session guard: if the target app session already exists, no replay is attempted.
+layout replay. These flags bypass the startup picker and auto-restore toggle,
+are mutually exclusive, and still honor the existing session guard: if the
+target app session already exists, no replay is attempted.
 
 Settings > Session State shows the effective auto-save / auto-restore state,
 the current session snapshot summary, and a delete action. The saved toggles

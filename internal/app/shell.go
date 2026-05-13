@@ -146,6 +146,10 @@ const (
 	shellStartSaved  = "saved"
 	shellStartLayout = "layout"
 	shellStartEmpty  = "empty"
+
+	shellStartupPickerValueSaved  = "saved"
+	shellStartupPickerValueEmpty  = "empty"
+	shellStartupPickerValueLayout = "layout:"
 )
 
 func parseShellStartMode(layoutName string, saved, empty bool) (shellStartMode, error) {
@@ -187,15 +191,31 @@ func (c *shellCommand) prepareShellSession(ctx context.Context, socketName, conf
 	case shellStartSaved:
 		c.restoreSavedSessionState(ctx, socketName, configPath, sessionName, cwd, stderr)
 	default:
-		c.autorestoreSessionState(ctx, socketName, configPath, sessionName, cwd, stderr)
+		c.prepareAutoShellSession(ctx, socketName, configPath, sessionName, cwd, stderr)
 	}
 }
 
-func (c *shellCommand) autorestoreSessionState(ctx context.Context, socketName, configPath, sessionName, cwd string, stderr io.Writer) {
+func (c *shellCommand) prepareAutoShellSession(ctx context.Context, socketName, configPath, sessionName, cwd string, stderr io.Writer) {
 	if !sessionStateAutorestoreEnabled(c.homeDir, c.lookupEnv) {
 		return
 	}
-	c.restoreSavedSessionState(ctx, socketName, configPath, sessionName, cwd, stderr)
+	candidates := c.shellSessionCandidates(sessionName)
+	if len(candidates) == 0 {
+		return
+	}
+
+	runner := shellAppTmuxRunner{runner: c.tmuxRunner, socketName: socketName, configPath: configPath}
+	exists, err := tmuxSessionExists(ctx, runner, sessionName)
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("check existing session: %v", err))
+		return
+	}
+	if exists {
+		return
+	}
+
+	mode := c.pickShellStartupMode(candidates, stderr)
+	c.prepareShellSession(ctx, socketName, configPath, sessionName, cwd, mode, stderr)
 }
 
 func (c *shellCommand) restoreSavedSessionState(ctx context.Context, socketName, configPath, sessionName, cwd string, stderr io.Writer) {
@@ -352,6 +372,86 @@ func (c *shellCommand) shellSessionCandidates(sessionName string) []shellSession
 		Description: "start without restoring windows",
 	})
 	return candidates
+}
+
+func (c *shellCommand) pickShellStartupMode(candidates []shellSessionCandidate, stderr io.Writer) shellStartMode {
+	if len(candidates) == 0 {
+		return shellStartMode{kind: shellStartEmpty}
+	}
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, nil, shellStartupPickerOptions(candidates))
+	if err != nil {
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("startup picker skipped: %v", err))
+		return shellStartMode{kind: shellStartEmpty}
+	}
+	mode, ok := shellStartModeFromPickerValue(result.Value)
+	if !ok {
+		return shellStartMode{kind: shellStartEmpty}
+	}
+	return mode
+}
+
+func shellStartupPickerOptions(candidates []shellSessionCandidate) intpickercompat.Options {
+	entries := make([]intpickercompat.Entry, 0, len(candidates))
+	for _, candidate := range candidates {
+		entries = append(entries, intpickercompat.Entry{
+			Label:     shellStartupPickerLabel(candidate),
+			Value:     shellStartupPickerValue(candidate),
+			SearchKey: strings.TrimSpace(candidate.Label + " " + candidate.Name + " " + candidate.Description),
+		})
+	}
+	return intpickercompat.Options{
+		UI:            "shell-startup",
+		Prompt:        "Start > ",
+		Header:        "Choose startup layout",
+		Footer:        "Enter: start  |  Esc: empty session",
+		Entries:       entries,
+		Bindings:      settingsCloseBindings(),
+		DisableSearch: true,
+	}
+}
+
+func shellStartupPickerLabel(candidate shellSessionCandidate) string {
+	switch candidate.Kind {
+	case shellStartSaved:
+		return settingsLabel(settingsGlyphOpen, settingsColorType, "Saved session", candidate.Description)
+	case shellStartLayout:
+		return settingsLabel(settingsGlyphOpen, settingsColorType, candidate.Label, candidate.Description)
+	case shellStartEmpty:
+		return settingsLabel(settingsGlyphBack, settingsColorBack, "Empty session", candidate.Description)
+	default:
+		return settingsLabel(settingsGlyphInfo, settingsColorInfo, candidate.Label, candidate.Description)
+	}
+}
+
+func shellStartupPickerValue(candidate shellSessionCandidate) string {
+	switch candidate.Kind {
+	case shellStartSaved:
+		return shellStartupPickerValueSaved
+	case shellStartLayout:
+		return shellStartupPickerValueLayout + candidate.Name
+	case shellStartEmpty:
+		return shellStartupPickerValueEmpty
+	default:
+		return ""
+	}
+}
+
+func shellStartModeFromPickerValue(value string) (shellStartMode, bool) {
+	value = strings.TrimSpace(value)
+	switch {
+	case value == shellStartupPickerValueSaved:
+		return shellStartMode{kind: shellStartSaved}, true
+	case value == shellStartupPickerValueEmpty:
+		return shellStartMode{kind: shellStartEmpty}, true
+	case strings.HasPrefix(value, shellStartupPickerValueLayout):
+		name := strings.TrimSpace(strings.TrimPrefix(value, shellStartupPickerValueLayout))
+		if name == "" {
+			return shellStartMode{}, false
+		}
+		return shellStartMode{kind: shellStartLayout, layout: name}, true
+	default:
+		return shellStartMode{}, false
+	}
 }
 
 func (c *shellCommand) reportSessionStateAutorestore(stderr io.Writer, message string) {

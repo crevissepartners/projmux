@@ -234,6 +234,12 @@ func TestShellAutorestoreReplaysSnapshotBeforeAttachWhenSessionAbsent(t *testing
 		runCommand:   foreground.run,
 		tmuxRunner:   tmux,
 		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			if options.UI != "shell-startup" {
+				t.Fatalf("startup picker UI = %q, want shell-startup", options.UI)
+			}
+			return intpickercompat.Result{Key: "enter", Value: shellStartupPickerValueSaved}, nil
+		})),
 	}
 
 	configPath := filepath.Join(home, "tmux.conf")
@@ -242,6 +248,7 @@ func TestShellAutorestoreReplaysSnapshotBeforeAttachWhenSessionAbsent(t *testing
 	}
 
 	wantReplayCalls := []recordedTmuxCall{
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}},
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}},
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "new-session", "-d", "-s", "dev", "-c", workdir}},
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "rename-window", "-t", "dev:0", "main"}},
@@ -257,7 +264,7 @@ func TestShellAutorestoreReplaysSnapshotBeforeAttachWhenSessionAbsent(t *testing
 	}
 }
 
-func TestShellAutorestoreDisabledSkipsSnapshotLookupAndReplay(t *testing.T) {
+func TestShellAutorestoreDisabledSkipsCandidateLookupAndPicker(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -279,6 +286,10 @@ func TestShellAutorestoreDisabledSkipsSnapshotLookupAndReplay(t *testing.T) {
 			t.Fatal("session store should not be resolved when autorestore is disabled")
 			return sessionstate.Store{}, nil
 		},
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("startup picker should not run when autorestore is disabled: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
 	}
 
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -292,7 +303,7 @@ func TestShellAutorestoreDisabledSkipsSnapshotLookupAndReplay(t *testing.T) {
 	}
 }
 
-func TestShellAutorestoreSavedToggleOffSkipsSnapshotLookupAndReplay(t *testing.T) {
+func TestShellAutorestoreSavedToggleOffSkipsCandidateLookupAndPicker(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -322,6 +333,10 @@ func TestShellAutorestoreSavedToggleOffSkipsSnapshotLookupAndReplay(t *testing.T
 			t.Fatal("session store should not be resolved when saved autorestore toggle is off")
 			return sessionstate.Store{}, nil
 		},
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("startup picker should not run when saved autorestore toggle is off: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
 	}
 
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -383,6 +398,12 @@ func TestShellAutorestoreExistingSessionSkipsReplay(t *testing.T) {
 		runCommand:   foreground.run,
 		tmuxRunner:   tmux,
 		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			if options.UI != "shell-startup" {
+				t.Fatalf("startup picker UI = %q, want shell-startup", options.UI)
+			}
+			return intpickercompat.Result{Key: "enter", Value: shellStartupPickerValueSaved}, nil
+		})),
 	}
 
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -439,6 +460,12 @@ func TestShellAutorestoreReplayFailureFallsBackToAttachWithDiagnostic(t *testing
 		runCommand:   foreground.run,
 		tmuxRunner:   tmux,
 		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			if options.UI != "shell-startup" {
+				t.Fatalf("startup picker UI = %q, want shell-startup", options.UI)
+			}
+			return intpickercompat.Result{Key: "enter", Value: shellStartupPickerValueSaved}, nil
+		})),
 	}
 
 	var stderr bytes.Buffer
@@ -548,6 +575,9 @@ func TestShellLayoutFlagReplaysPresetWhenSessionAbsent(t *testing.T) {
 			if name == "PROJMUX_CWD" {
 				return project
 			}
+			if name == sessionStateAutorestoreEnv {
+				return "off"
+			}
 			return ""
 		},
 		homeDir:    func() (string, error) { return home, nil },
@@ -606,6 +636,184 @@ func TestShellLayoutFlagExistingSessionSkipsReplay(t *testing.T) {
 	}
 	if foreground.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
+	}
+}
+
+func TestShellAutoPickerSelectsLayoutPresetWhenSessionAbsent(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := t.TempDir()
+	saveShellLayoutPreset(t, project, "team", "Team layout")
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "dev"): errors.New("can't find session: dev"),
+		},
+	}
+	var pickerCalls int
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: foreground.run,
+		tmuxRunner: tmux,
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			pickerCalls++
+			if options.UI != "shell-startup" {
+				t.Fatalf("startup picker UI = %q, want shell-startup", options.UI)
+			}
+			if options.Prompt != "Start > " || !options.DisableSearch {
+				t.Fatalf("startup picker options = %#v, want concise nav picker", options)
+			}
+			if len(options.Entries) != 2 {
+				t.Fatalf("startup picker entries = %#v, want layout plus empty", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: shellStartupPickerValueLayout + "team"}, nil
+		})),
+		now: func() time.Time { return time.Date(2026, 5, 13, 1, 2, 3, 0, time.UTC) },
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if pickerCalls != 1 {
+		t.Fatalf("startup picker calls = %d, want 1", pickerCalls)
+	}
+	wantReplayCalls := []recordedTmuxCall{
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "new-session", "-d", "-s", "dev", "-c", project}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "rename-window", "-t", "dev:0", "main"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-layout", "-t", "dev:0", "layout"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-pane", "-t", "dev:0.0"}},
+	}
+	if !reflect.DeepEqual(tmux.calls, wantReplayCalls) {
+		t.Fatalf("tmux calls = %#v, want %#v", tmux.calls, wantReplayCalls)
+	}
+}
+
+func TestShellAutoPickerCancelFallsBackToEmptySession(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := t.TempDir()
+	saveShellLayoutPreset(t, project, "team", "Team layout")
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "dev"): errors.New("can't find session: dev"),
+		},
+	}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: foreground.run,
+		tmuxRunner: tmux,
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{}, nil
+		})),
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}}}
+	if !reflect.DeepEqual(tmux.calls, wantCalls) {
+		t.Fatalf("tmux calls = %#v, want empty fallback guard only", tmux.calls)
+	}
+	if foreground.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
+	}
+}
+
+func TestShellAutoPickerExistingSessionSkipsPicker(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := t.TempDir()
+	saveShellLayoutPreset(t, project, "team", "Team layout")
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: foreground.run,
+		tmuxRunner: tmux,
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("startup picker should not run for existing app session: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}}}
+	if !reflect.DeepEqual(tmux.calls, wantCalls) {
+		t.Fatalf("tmux calls = %#v, want existing-session guard only", tmux.calls)
+	}
+}
+
+func TestShellExplicitFlagsBypassStartupPicker(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := t.TempDir()
+	saveShellLayoutPreset(t, project, "team", "Team layout")
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "dev"): errors.New("can't find session: dev"),
+		},
+	}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: foreground.run,
+		tmuxRunner: tmux,
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("startup picker should not run for explicit --layout: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install", "--layout", "team"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(tmux.calls) < 2 {
+		t.Fatalf("tmux calls = %#v, want explicit layout replay", tmux.calls)
 	}
 }
 
