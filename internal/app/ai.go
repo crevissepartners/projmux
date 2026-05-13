@@ -57,6 +57,7 @@ type aiCommand struct {
 	now          func() time.Time
 	sleep        func(time.Duration)
 	producer     attentionNotifyProducer
+	notifyStore  notifyStore
 }
 
 func newAICommand() *aiCommand {
@@ -2224,8 +2225,10 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai watch-title [pane]")
 	fmt.Fprintln(w, "  projmux ai ingest codex-notify <json>")
 	fmt.Fprintln(w, "  projmux ai ingest claude-hook < payload.json")
+	fmt.Fprintln(w, "  projmux ai ingest bell --pane <pane_id>")
 	fmt.Fprintln(w, "  projmux ai integrate codex [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai integrate claude [--dry-run] [--remove]")
+	fmt.Fprintln(w, "  projmux ai integrate tmux-bell [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai topic set <text> [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic clear [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic get [--pane <id>]")

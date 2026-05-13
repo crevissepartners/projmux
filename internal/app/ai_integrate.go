@@ -20,6 +20,10 @@ const (
 	claudeSettingsRelativePath = ".claude/settings.json"
 	claudeHookManagedMarker    = "projmux-managed:claude-hook:v1"
 	claudeHookCommand          = "projmux ai ingest claude-hook >/dev/null 2>&1 || true # " + claudeHookManagedMarker
+
+	tmuxBellManagedMarker = "projmux-managed:tmux-bell:v1"
+	tmuxBellHookName      = "pane-bell-event"
+	tmuxBellHookCommand   = `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
 )
 
 type codexNotifyPlan struct {
@@ -38,6 +42,13 @@ type claudeHookPlan struct {
 	action   string
 	changed  bool
 	conflict string
+}
+
+type tmuxBellPlan struct {
+	installCommands [][]string
+	removeCommands  [][]string
+	action          string
+	changed         bool
 }
 
 var claudeHookEvents = []string{
@@ -60,6 +71,8 @@ func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error 
 		return c.runIntegrateCodex(args[1:], stdout, stderr)
 	case "claude":
 		return c.runIntegrateClaude(args[1:], stdout, stderr)
+	case "tmux-bell":
+		return c.runIntegrateTmuxBell(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printAIUsage(stdout)
 		return nil
@@ -67,6 +80,36 @@ func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error 
 		printAIUsage(stderr)
 		return fmt.Errorf("unknown ai integrate agent-kind: %s", args[0])
 	}
+}
+
+func (c *aiCommand) runIntegrateTmuxBell(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("ai integrate tmux-bell", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dryRun := fs.Bool("dry-run", false, "print planned tmux bell integration commands without writing")
+	remove := fs.Bool("remove", false, "remove projmux-managed tmux bell hook wiring")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		printAIUsage(stderr)
+		return errors.New("ai integrate tmux-bell does not accept positional arguments")
+	}
+
+	plan := c.planTmuxBellIntegration(*remove)
+	if *dryRun {
+		return printTmuxBellDryRun(stdout, plan)
+	}
+	commands := plan.installCommands
+	if *remove {
+		commands = plan.removeCommands
+	}
+	for _, args := range commands {
+		if err := c.run("tmux", args...); err != nil {
+			return fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
+		}
+	}
+	_, err := fmt.Fprintf(stdout, "%s\n", plan.action)
+	return err
 }
 
 func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) error {
@@ -262,6 +305,72 @@ func (c *aiCommand) planClaudeHookIntegration(remove bool) (claudeHookPlan, erro
 	return plan, nil
 }
 
+func (c *aiCommand) planTmuxBellIntegration(remove bool) tmuxBellPlan {
+	hooks := c.readTmuxBellHooks()
+	managed := tmuxBellManagedHookTargets(hooks)
+	install := [][]string{
+		{"set-option", "-g", "allow-passthrough", "on"},
+		{"set-option", "-g", "monitor-bell", "on"},
+		{"set-option", "-g", "bell-action", "other"},
+	}
+	if len(managed) == 0 {
+		install = append(install, []string{"set-hook", "-ag", tmuxBellHookName, tmuxBellHookCommand})
+	}
+
+	removeCommands := make([][]string, 0, len(managed))
+	for _, target := range managed {
+		removeCommands = append(removeCommands, []string{"set-hook", "-gu", target})
+	}
+
+	if remove {
+		action := "no changes: projmux-managed tmux bell hook is not present"
+		if len(removeCommands) > 0 {
+			action = "removed projmux-managed tmux bell hook"
+		}
+		return tmuxBellPlan{removeCommands: removeCommands, action: action, changed: len(removeCommands) > 0}
+	}
+	action := "configured tmux bell fallback"
+	if len(managed) > 0 {
+		action = "refreshed tmux bell fallback options"
+	}
+	return tmuxBellPlan{installCommands: install, action: action, changed: true}
+}
+
+func (c *aiCommand) readTmuxBellHooks() []string {
+	out, err := c.read("tmux", "show-hooks", "-g", tmuxBellHookName)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\r\n"), "\n")
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			result = append(result, line)
+		}
+	}
+	return result
+}
+
+func tmuxBellManagedHookTargets(lines []string) []string {
+	targets := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !strings.Contains(line, tmuxBellManagedMarker) {
+			continue
+		}
+		name := strings.Fields(line)
+		if len(name) == 0 {
+			continue
+		}
+		target := strings.TrimSpace(name[0])
+		if target == tmuxBellHookName {
+			target = tmuxBellHookName
+		}
+		targets = append(targets, target)
+	}
+	return targets
+}
+
 func (c *aiCommand) readCodexConfig(path string) (string, error) {
 	readFile := c.readFile
 	if readFile == nil {
@@ -373,6 +482,29 @@ func printClaudeHookDryRun(stdout io.Writer, plan claudeHookPlan) error {
 		_, err := fmt.Fprintf(stdout, "would update settings to:\n%s", plan.next)
 		return err
 	}
+}
+
+func printTmuxBellDryRun(stdout io.Writer, plan tmuxBellPlan) error {
+	if _, err := fmt.Fprintln(stdout, "projmux ai integrate tmux-bell (dry-run)"); err != nil {
+		return err
+	}
+	commands := plan.installCommands
+	if len(plan.removeCommands) > 0 && len(plan.installCommands) == 0 {
+		commands = plan.removeCommands
+	}
+	if !plan.changed {
+		_, err := fmt.Fprintf(stdout, "%s\n", plan.action)
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "would %s:\n", plan.action); err != nil {
+		return err
+	}
+	for _, args := range commands {
+		if _, err := fmt.Fprintf(stdout, "tmux %s\n", strings.Join(args, " ")); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func codexNotifyBlock() string {

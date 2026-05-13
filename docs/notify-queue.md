@@ -58,9 +58,11 @@ exit code 2.
 routing/debug context such as `agent`, `thread_id`, `turn_id`, `cwd`,
 `model`, and `client`; Claude hook rows also carry event-specific keys such as
 `tool_name`, `tool_input.command`, `error_type`, `subagent_type`, and
-`teammate_name`. `notify list --json` includes this metadata as the structured
-data channel while human table/sidebar output keeps the compact text body.
-Existing entries without metadata remain valid.
+`teammate_name`. Tmux bell fallback rows carry `agent=bell`, `event=bell`,
+and tmux target context such as pane title, command, session, window, pane, and
+socket. `notify list --json` includes this metadata as the structured data
+channel while human table/sidebar output keeps the compact text body. Existing
+entries without metadata remain valid.
 
 ## CLI surface
 
@@ -178,6 +180,22 @@ swallowed so the live tmux UI never blocks on disk IO.
 Manual `projmux attention toggle` on a pane without an agent option
 does NOT push — the queue is intentionally AI-driven; reconcile honours
 the same contract.
+
+## Producer (tmux bell fallback)
+
+`projmux ai ingest bell --pane <pane_id>` is the opt-in fallback producer
+installed by `projmux ai integrate tmux-bell`. It reads the target pane from
+tmux and writes an info/source-ai row with:
+
+- id: `ai:bell:<session>:<pane>`
+- text: `bell · <pane title>` with command/window fallback context
+- metadata: `agent=bell`, `event=bell`, pane/session/window/socket fields
+- freshness TTL: 10 minutes
+
+Unlike reply-ready reconcile, bell ingest does not require AI pane metadata.
+It is intentionally available for arbitrary CLIs that only signal attention
+through BEL or OSC 9. Repeated bells from the same pane are suppressed for 5
+seconds before a later bell refreshes the stable queue id.
 
 ## Consumer (status-bar click)
 
