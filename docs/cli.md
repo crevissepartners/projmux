@@ -382,6 +382,11 @@ to a generic Claude completion row. `PermissionRequest` rows expose the tool
 name plus a concise input summary, preferring Bash commands, file paths, and
 URLs when those fields exist.
 
+Hook row text is intentionally compact: agent label, event category, then the
+best available summary. Structured details remain in queue metadata and are
+available from `notify list --json`; the sidebar does not add a separate
+metadata detail view.
+
 The extra Claude events accept conservative field aliases while Claude's event
 schemas settle. `StopFailure` reads `error_type`/`errorType`/`failure_type` and
 `error_message`/`errorMessage`/`message`/`reason`, plus nested

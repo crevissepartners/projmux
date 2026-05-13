@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
 const aiIngestListPanesFormat = "#{pane_id}\x1f#{pane_current_path}\x1f#{" + aiPaneThreadIDOption + "}\x1f#{" + aiPaneSessionIDOption + "}"
@@ -135,9 +133,10 @@ func (c *aiCommand) ingestCodexNotify(data []byte) error {
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic)
 	}
 
+	body := formatCodexTurnCompleteNotifyBody(payload)
 	notifyInput := attentionNotifyInput{
 		ID:       codexNotifyID(payload),
-		Text:     codexNotifyText(payload.LastAssistantMessage),
+		Text:     body.Text,
 		Metadata: metadata,
 		Force:    true,
 	}
@@ -170,52 +169,57 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			Metadata: metadata,
 		})
 	case "Notification":
-		label, severity := claudeNotificationLabelSeverity(payload.NotificationType)
+		body := formatClaudeNotificationNotifyBody(payload)
 		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
 			ID:       claudeNotifyID(payload),
-			Text:     claudeNotifyText(label, payload.Message),
-			Severity: severity,
+			Text:     body.Text,
+			Severity: body.Severity,
 			Metadata: metadata,
 			Force:    true,
 		})
 	case "PermissionRequest":
+		body := formatClaudePermissionNotifyBody(payload)
 		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
 			ID:       claudePermissionNotifyID(payload),
-			Text:     claudePermissionNotifyText(payload),
-			Severity: notify.SeverityCritical,
+			Text:     body.Text,
+			Severity: body.Severity,
 			Metadata: metadata,
 			Force:    true,
 		})
 	case "Stop":
 		message := readClaudeTranscriptLastAssistantText(payload.TranscriptPath)
+		body := formatClaudeStopNotifyBody(message)
 		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
 			ID:       claudeStopNotifyID(payload),
-			Text:     claudeStopNotifyText(message),
-			Severity: notify.SeverityInfo,
+			Text:     body.Text,
+			Severity: body.Severity,
 			Metadata: metadata,
 			Force:    true,
 		})
 	case "StopFailure":
+		body := formatClaudeStopFailureNotifyBody(payload)
 		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
 			ID:       claudeExtraNotifyID(payload, "stop-failure", payload.ErrorType, payload.ErrorMessage),
-			Text:     claudeStopFailureNotifyText(payload),
-			Severity: notify.SeverityCritical,
+			Text:     body.Text,
+			Severity: body.Severity,
 			Metadata: metadata,
 			Force:    true,
 		})
 	case "SubagentStop":
+		body := formatClaudeSubagentStopNotifyBody(payload)
 		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
 			ID:       claudeExtraNotifyID(payload, "subagent-stop", payload.SubagentType, payload.SubagentID),
-			Text:     claudeSubagentStopNotifyText(payload),
-			Severity: notify.SeverityInfo,
+			Text:     body.Text,
+			Severity: body.Severity,
 			Metadata: metadata,
 			Force:    true,
 		})
 	case "TeammateIdle":
+		body := formatClaudeTeammateIdleNotifyBody(payload)
 		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
 			ID:       claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
-			Text:     claudeTeammateIdleNotifyText(payload),
-			Severity: notify.SeverityInfo,
+			Text:     body.Text,
+			Severity: body.Severity,
 			Metadata: metadata,
 			Force:    true,
 		})
@@ -477,27 +481,6 @@ func codexNotifyID(p codexNotifyPayload) string {
 	}
 }
 
-func codexNotifyText(message string) string {
-	text := "Codex · 응답 완료"
-	if msg := truncateRunes(message, 80); msg != "" {
-		text += " · " + msg
-	}
-	return text
-}
-
-func claudeNotificationLabelSeverity(notificationType string) (string, string) {
-	switch strings.TrimSpace(notificationType) {
-	case "permission_prompt":
-		return "승인 필요", notify.SeverityCritical
-	case "elicitation_dialog":
-		return "입력 필요", notify.SeverityCritical
-	case "idle_prompt":
-		return "응답 완료", notify.SeverityInfo
-	default:
-		return "응답 완료", notify.SeverityInfo
-	}
-}
-
 func claudeNotifyID(p claudeHookPayload) string {
 	parts := []string{"ai", "claude", "notification"}
 	if value := strings.TrimSpace(p.SessionID); value != "" {
@@ -510,14 +493,6 @@ func claudeNotifyID(p claudeHookPayload) string {
 		parts = append(parts, truncateRunes(value, 40))
 	}
 	return strings.Join(parts, ":")
-}
-
-func claudeNotifyText(label, message string) string {
-	text := "Claude · " + strings.TrimSpace(label)
-	if msg := truncateRunes(message, 80); msg != "" {
-		text += " · " + msg
-	}
-	return text
 }
 
 func claudePermissionNotifyID(p claudeHookPayload) string {
@@ -533,52 +508,11 @@ func claudePermissionNotifyID(p claudeHookPayload) string {
 	}
 }
 
-func claudePermissionNotifyText(p claudeHookPayload) string {
-	toolName := strings.TrimSpace(p.ToolName)
-	if toolName == "" {
-		toolName = "Tool"
-	}
-	text := "Claude · 승인 필요 · " + toolName
-	if summary := formatClaudeToolInputSummary(toolName, p.ToolInput, p.ToolUseID); summary != "" {
-		text += ": " + summary
-	}
-	return text
-}
-
-func formatClaudeToolInputSummary(toolName string, input map[string]any, fallbackID string) string {
-	keys := []string{"command", "file_path", "path", "url"}
-	switch strings.TrimSpace(toolName) {
-	case "Bash":
-		keys = []string{"command", "description"}
-	case "Write", "Edit", "MultiEdit", "Read":
-		keys = []string{"file_path", "path"}
-	case "WebFetch", "WebSearch":
-		keys = []string{"url", "query"}
-	}
-	for _, key := range keys {
-		if value := stringFromAny(input[key]); value != "" {
-			return truncateRunes(value, 80)
-		}
-	}
-	if fallback := strings.TrimSpace(fallbackID); fallback != "" {
-		return fallback
-	}
-	return ""
-}
-
 func claudeStopNotifyID(p claudeHookPayload) string {
 	if sessionID := strings.TrimSpace(p.SessionID); sessionID != "" {
 		return "ai:claude:stop:" + sessionID
 	}
 	return ""
-}
-
-func claudeStopNotifyText(message string) string {
-	text := "Claude · 응답 완료"
-	if msg := truncateRunes(message, 80); msg != "" {
-		text += " · " + msg
-	}
-	return text
 }
 
 func claudeExtraNotifyID(p claudeHookPayload, kind string, values ...string) string {
@@ -592,39 +526,6 @@ func claudeExtraNotifyID(p claudeHookPayload, kind string, values ...string) str
 		}
 	}
 	return strings.Join(parts, ":")
-}
-
-func claudeStopFailureNotifyText(p claudeHookPayload) string {
-	text := "Claude · 오류"
-	if errorType := strings.TrimSpace(p.ErrorType); errorType != "" {
-		text += " · " + errorType
-	}
-	if message := truncateRunes(p.ErrorMessage, 80); message != "" {
-		text += " · " + message
-	}
-	return text
-}
-
-func claudeSubagentStopNotifyText(p claudeHookPayload) string {
-	var text strings.Builder
-	text.WriteString("Claude · 서브에이전트 종료")
-	for _, value := range []string{p.SubagentType, p.SubagentID} {
-		if trimmed := truncateRunes(value, 80); trimmed != "" {
-			text.WriteString(" · " + trimmed)
-		}
-	}
-	return text.String()
-}
-
-func claudeTeammateIdleNotifyText(p claudeHookPayload) string {
-	var text strings.Builder
-	text.WriteString("Claude · 팀메이트 대기")
-	for _, value := range []string{p.TeammateName, p.TeammateID, p.TeammateContext} {
-		if trimmed := truncateRunes(value, 80); trimmed != "" {
-			text.WriteString(" · " + trimmed)
-		}
-	}
-	return text.String()
 }
 
 func readClaudeTranscriptLastAssistantText(path string) string {

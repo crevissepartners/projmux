@@ -268,6 +268,13 @@ handles these events:
 | `SubagentStop` | pushes an info Claude subagent stop row with subagent type/id metadata when present |
 | `TeammateIdle` | pushes an info Claude teammate waiting row with teammate context metadata when present |
 
+Hook-generated queue rows use the same compact body catalog: agent label,
+event category, then the best available summary (Codex assistant text, Claude
+tool/action summary, transcript summary, error, subagent, or teammate labels).
+Structured payload details remain in `metadata`, which is passed through the
+`send-noti` JSON payload and `notify list --json`; the sidebar stays compact and
+does not expand a separate metadata detail view.
+
 Pane matching follows the shared AI ingest order: inherited `$TMUX_PANE`, then
 payload `cwd`, then cached session id pane options. A matched pane is marked
 with `@projmux_ai_hook_active=1`, so `projmux ai watch-title` skips the pane
