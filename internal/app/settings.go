@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -36,6 +37,7 @@ type settingsCommand struct {
 	lookupEnv           func(string) string
 	runCommand          func(name string, args ...string) error
 	runOutput           func(name string, args ...string) ([]byte, error)
+	tmuxRunner          tmuxRunner
 	probeKeybinding     func(probeKey, time.Duration) (probeResult, error)
 	runInitKeybindings  func(args []string, stdout, stderr io.Writer) error
 	aiNotifyDiagnostics func() []doctorAINotifyIntegration
@@ -215,6 +217,7 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 		runOutput: func(name string, args ...string) ([]byte, error) {
 			return exec.Command(name, args...).Output()
 		},
+		tmuxRunner: inttmux.ExecRunner{},
 	}
 }
 

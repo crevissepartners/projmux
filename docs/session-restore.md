@@ -17,6 +17,13 @@ then shows project context, snapshot source/age, and a window-title -> pane-titl
 preview before count metadata. The legacy Settings > Session State path remains
 available for the current live tmux session.
 
+Project Session State actions are scoped to the project-derived session
+identity, not the currently attached tmux session. `Save now` captures the live
+project session when that session exists, `Preview restore` prints the read-only
+dry-run restore plan for the project snapshot, and `Delete snapshot` requires a
+confirmation picker before removing the project snapshot. Destructive restore
+execution remains outside Settings in this slice.
+
 Agent panes in Settings, the statusbar popup, and restore dry-run previews show
 resume metadata health next to the pane recipe. `available` means a resume id is
 present and recent enough for replay, `stale` means the stored id exists but the

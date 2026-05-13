@@ -883,7 +883,10 @@ func TestShellLayoutFlagReplaysPresetWhenSessionAbsent(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	project := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	saveShellLayoutPreset(t, project, "team", "Team layout")
 	foreground := &recordingShellRunner{}
 	configPath := filepath.Join(home, "tmux.conf")
@@ -976,7 +979,10 @@ func TestShellLayoutFlagExistingSessionSkipsReplay(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	project := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	saveShellLayoutPreset(t, project, "team", "Team layout")
 	foreground := &recordingShellRunner{}
 	configPath := filepath.Join(home, "tmux.conf")
@@ -1012,13 +1018,16 @@ func TestShellAutoPickerSelectsLayoutPresetWhenSessionAbsent(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	project := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	saveShellLayoutPreset(t, project, "team", "Team layout")
 	foreground := &recordingShellRunner{}
 	configPath := filepath.Join(home, "tmux.conf")
 	tmux := &scriptedShellTmuxRunner{
 		errors: map[string]error{
-			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "dev"): errors.New("can't find session: dev"),
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"): errors.New("can't find session: repos-projmux"),
 		},
 	}
 	var pickerCalls int
@@ -1050,23 +1059,119 @@ func TestShellAutoPickerSelectsLayoutPresetWhenSessionAbsent(t *testing.T) {
 		now: func() time.Time { return time.Date(2026, 5, 13, 1, 2, 3, 0, time.UTC) },
 	}
 
-	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--socket", "pmx", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if pickerCalls != 1 {
 		t.Fatalf("startup picker calls = %d, want 1", pickerCalls)
 	}
 	wantReplayCalls := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}},
-		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}},
-		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "new-session", "-d", "-s", "dev", "-c", project}},
-		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "rename-window", "-t", "dev:0", "main"}},
-		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-layout", "-t", "dev:0", "layout"}},
-		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-pane", "-t", "dev:0.0"}},
-		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "set-option", "-t", "dev", "-q", "@projmux_sessionstate_source", "layout(team)"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "new-session", "-d", "-s", "repos-projmux", "-c", project}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "rename-window", "-t", "repos-projmux:0", "main"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-layout", "-t", "repos-projmux:0", "layout"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-pane", "-t", "repos-projmux:0.0"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "set-option", "-t", "repos-projmux", "-q", "@projmux_sessionstate_source", "layout(team)"}},
 	}
 	if !reflect.DeepEqual(tmux.calls, wantReplayCalls) {
 		t.Fatalf("tmux calls = %#v, want %#v", tmux.calls, wantReplayCalls)
+	}
+}
+
+func TestShellDefaultFreshProjectPickerLayoutReplaysBeforeAttach(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saveShellLayoutPreset(t, project, "team", "Team layout")
+	configPath := filepath.Join(home, "tmux.conf")
+	var order []string
+	foreground := &recordingShellRunner{}
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"): errors.New("can't find session: repos-projmux"),
+		},
+		onRun: func(call recordedTmuxCall) {
+			if len(call.args) >= 5 && call.args[0] == "-L" && call.args[4] == "new-session" {
+				order = append(order, "replay")
+			}
+		},
+	}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: func(ctx context.Context, env []string, name string, args ...string) error {
+			order = append(order, "attach")
+			return foreground.run(ctx, env, name, args...)
+		},
+		tmuxRunner: tmux,
+		getwd:      func() (string, error) { return filepath.Join(project, "internal", "app"), nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			order = append(order, "picker")
+			if len(options.Entries) != 2 {
+				t.Fatalf("startup picker entries = %#v, want layout plus empty", options.Entries)
+			}
+			if options.Entries[0].Value != shellStartupPickerValueLayout+"team" || options.Entries[1].Value != shellStartupPickerValueEmpty {
+				t.Fatalf("startup picker entries = %#v, want layout:team then empty", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: shellStartupPickerValueLayout + "team"}, nil
+		})),
+		now: func() time.Time { return time.Date(2026, 5, 13, 1, 2, 3, 0, time.UTC) },
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !reflect.DeepEqual(order, []string{"picker", "replay", "attach"}) {
+		t.Fatalf("order = %#v, want picker -> replay -> attach", order)
+	}
+	wantAttach := []string{"-L", "pmx", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", project}
+	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
+		t.Fatalf("attach command = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
+	}
+}
+
+func TestShellExplicitSessionDoesNotUseDefaultProjectLayoutPicker(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saveShellLayoutPreset(t, project, "team", "Team layout")
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: foreground.run,
+		tmuxRunner: &scriptedShellTmuxRunner{
+			errors: map[string]error{
+				shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "has-session", "-t", "home"): errors.New("can't find session: home"),
+			},
+		},
+		getwd: func() (string, error) { return project, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("startup picker should not run for explicit --session home: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
+	}
+
+	if err := cmd.Run([]string{"--session", "home", "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	wantAttach := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "home", "-c", home}
+	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
+		t.Fatalf("attach command = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
 	}
 }
 
@@ -1074,13 +1179,16 @@ func TestShellAutoPickerCancelFallsBackToEmptySession(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	project := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	saveShellLayoutPreset(t, project, "team", "Team layout")
 	foreground := &recordingShellRunner{}
 	configPath := filepath.Join(home, "tmux.conf")
 	tmux := &scriptedShellTmuxRunner{
 		errors: map[string]error{
-			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "dev"): errors.New("can't find session: dev"),
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"): errors.New("can't find session: repos-projmux"),
 		},
 	}
 	cmd := &shellCommand{
@@ -1100,10 +1208,10 @@ func TestShellAutoPickerCancelFallsBackToEmptySession(t *testing.T) {
 		})),
 	}
 
-	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--socket", "pmx", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}}}
+	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"}}}
 	if !reflect.DeepEqual(tmux.calls, wantCalls) {
 		t.Fatalf("tmux calls = %#v, want empty fallback guard only", tmux.calls)
 	}
@@ -1116,7 +1224,10 @@ func TestShellAutoPickerExistingSessionSkipsPicker(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	project := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	saveShellLayoutPreset(t, project, "team", "Team layout")
 	foreground := &recordingShellRunner{}
 	configPath := filepath.Join(home, "tmux.conf")
@@ -1139,10 +1250,10 @@ func TestShellAutoPickerExistingSessionSkipsPicker(t *testing.T) {
 		})),
 	}
 
-	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--socket", "pmx", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "dev"}}}
+	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"}}}
 	if !reflect.DeepEqual(tmux.calls, wantCalls) {
 		t.Fatalf("tmux calls = %#v, want existing-session guard only", tmux.calls)
 	}
@@ -1206,7 +1317,7 @@ func TestShellSessionCandidatesOrderSavedPresetsThenEmpty(t *testing.T) {
 		sessionStore: func() (sessionstate.Store, error) { return store, nil },
 	}
 
-	got := cmd.shellSessionCandidates("home")
+	got := cmd.shellSessionCandidates("home", true)
 	var order []string
 	for _, candidate := range got {
 		if candidate.Name != "" {
@@ -1238,7 +1349,7 @@ func TestShellSessionCandidatesSkipFreshSourceSavedSnapshot(t *testing.T) {
 		sessionStore: func() (sessionstate.Store, error) { return store, nil },
 	}
 
-	got := cmd.shellSessionCandidates("home")
+	got := cmd.shellSessionCandidates("home", true)
 	var order []string
 	for _, candidate := range got {
 		if candidate.Name != "" {
@@ -1260,7 +1371,7 @@ func TestShellSessionCandidatesEmptyWhenNoSavedOrPreset(t *testing.T) {
 		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
 	}
 
-	if got := cmd.shellSessionCandidates("home"); len(got) != 0 {
+	if got := cmd.shellSessionCandidates("home", true); len(got) != 0 {
 		t.Fatalf("candidates = %#v, want none", got)
 	}
 }
@@ -1895,10 +2006,15 @@ type scriptedShellTmuxRunner struct {
 	outputs map[string][]byte
 	errors  map[string]error
 	calls   []recordedTmuxCall
+	onRun   func(recordedTmuxCall)
 }
 
 func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
-	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
+	call := recordedTmuxCall{name: name, args: append([]string(nil), args...)}
+	r.calls = append(r.calls, call)
+	if r.onRun != nil {
+		r.onRun(call)
+	}
 	key := shellTmuxCallKey(name, args...)
 	if err, ok := r.errors[key]; ok {
 		return nil, err

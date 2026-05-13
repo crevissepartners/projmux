@@ -1488,6 +1488,11 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 
 	cmd := &settingsCommand{
 		homeDir: func() (string, error) { return home, nil },
+		tmuxRunner: &recordingTmuxRunner{
+			outputs: map[string]string{
+				strings.Join([]string{"tmux", "has-session", "-t", "repos-projmux"}, "\x00"): "",
+			},
+		},
 		lookupEnv: func(name string) string {
 			switch name {
 			case "XDG_STATE_HOME":
@@ -1530,10 +1535,23 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 		"Preview",
 		"window 1",
 		"dev",
+		"Window",
 		"pane 1.0",
 		"editor",
+		"Pane cwd",
+		project,
+		"Pane recipe",
+		"agent codex",
+		"topic topic",
+		"resume available",
+		"source session-id",
 		"status available",
 		"confidence high",
+		"Save now",
+		"capture live project session",
+		"Preview restore",
+		"dry-run only",
+		"Delete snapshot",
 		"Windows",
 		"1",
 		"Panes",
@@ -1546,8 +1564,81 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 	if hasEntryLabelContaining(options.Entries, "live-session") {
 		t.Fatalf("project session state entries = %#v, want derived identity instead of live tmux session", options.Entries)
 	}
-	if hasEntryValue(options.Entries, settingsSessionStateDelete) {
-		t.Fatalf("project session state entries = %#v, want delete unavailable in project-scoped slice", options.Entries)
+	for _, want := range []string{settingsProjectSessionStateSave, settingsProjectSessionStatePreview, settingsProjectSessionStateDelete} {
+		if !hasEntryValue(options.Entries, want) {
+			t.Fatalf("project session state entries = %#v, want project action %q", options.Entries, want)
+		}
+	}
+}
+
+func TestSettingsProjectSessionStateShowsUnavailableMissingAndInvalidStates(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	xdgState := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	baseCmd := func() *settingsCommand {
+		return &settingsCommand{
+			homeDir:    func() (string, error) { return home, nil },
+			tmuxRunner: &recordingTmuxRunner{err: errors.New("can't find session: repos-projmux")},
+			lookupEnv: func(name string) string {
+				switch name {
+				case "XDG_STATE_HOME":
+					return xdgState
+				case "PROJMUX_CWD":
+					return project
+				default:
+					return ""
+				}
+			},
+		}
+	}
+
+	noProject := baseCmd()
+	noProject.lookupEnv = func(name string) string {
+		if name == "XDG_STATE_HOME" {
+			return xdgState
+		}
+		return ""
+	}
+	noProjectOptions, err := noProject.sectionOptions(settingsSectionProjectSessionState)
+	if err != nil {
+		t.Fatalf("sectionOptions(no project) error = %v", err)
+	}
+	if !hasEntryLabelContaining(noProjectOptions.Entries, "Project") || !hasEntryLabelContaining(noProjectOptions.Entries, "no project context") {
+		t.Fatalf("no project entries = %#v, want unavailable project context", noProjectOptions.Entries)
+	}
+
+	missingOptions, err := baseCmd().sectionOptions(settingsSectionProjectSessionState)
+	if err != nil {
+		t.Fatalf("sectionOptions(missing) error = %v", err)
+	}
+	for _, want := range []string{"Snapshot", "missing", "Save now", "unavailable - live project session not found", "Preview restore", "unavailable without a valid snapshot", "Delete snapshot"} {
+		if !hasEntryLabelContaining(missingOptions.Entries, want) {
+			t.Fatalf("missing snapshot entries = %#v, want %q", missingOptions.Entries, want)
+		}
+	}
+	if hasEntryValue(missingOptions.Entries, settingsProjectSessionStatePreview) || hasEntryValue(missingOptions.Entries, settingsProjectSessionStateDelete) {
+		t.Fatalf("missing snapshot entries = %#v, want preview/delete disabled", missingOptions.Entries)
+	}
+
+	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
+	path, err := store.Path("repos-projmux")
+	if err != nil {
+		t.Fatalf("Path() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"version":1,"session":""}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	invalidOptions, err := baseCmd().sectionOptions(settingsSectionProjectSessionState)
+	if err != nil {
+		t.Fatalf("sectionOptions(invalid) error = %v", err)
+	}
+	if !hasEntryLabelContaining(invalidOptions.Entries, "Snapshot") || !hasEntryLabelContaining(invalidOptions.Entries, "invalid") {
+		t.Fatalf("invalid snapshot entries = %#v, want invalid snapshot state", invalidOptions.Entries)
 	}
 }
 
@@ -1737,6 +1828,182 @@ func TestSettingsSessionStateDeleteConfirmedRemovesSnapshot(t *testing.T) {
 	}
 	if _, err := store.Load("workspace"); !errors.Is(err, sessionstate.ErrNotFound) {
 		t.Fatalf("Load() after confirmed delete error = %v, want %v", err, sessionstate.ErrNotFound)
+	}
+}
+
+func TestSettingsProjectSessionStateSaveNowCapturesProjectSession(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	xdgState := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	storeDir := filepath.Join(xdgState, "projmux", "sessions")
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	paneFormat := strings.Join([]string{
+		"#{window_index}",
+		"#{pane_index}",
+		"#{pane_title}",
+		"#{?pane_active,1,0}",
+		"#{pane_current_path}",
+		"#{@projmux_recipe_kind}",
+		"#{@projmux_startup_command}",
+		"#{@projmux_ai_managed}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_ai_resume_id}",
+		"#{@projmux_ai_resume_source}",
+		"#{@projmux_ai_resume_updated_at}",
+	}, "\x1f")
+	refreshFormat := strings.Join([]string{
+		"#{pane_id}",
+		"#{pane_current_path}",
+		"#{@projmux_ai_managed}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_session_id}",
+		"#{@projmux_ai_resume_id}",
+		"#{@projmux_ai_transcript_path}",
+	}, "\x1f")
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "has-session", "-t", "repos-projmux"}, "\x00"):                           "",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "repos-projmux", "-F", refreshFormat}, "\x00"): "",
+			strings.Join([]string{"tmux", "list-windows", "-t", "repos-projmux", "-F", windowFormat}, "\x00"):      "0\x1fmain\x1flayout\n",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "repos-projmux", "-F", paneFormat}, "\x00"):    "0\x1f0\x1feditor\x1f1\x1f" + project + "\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\n",
+		},
+	}
+	cmd := &settingsCommand{
+		homeDir:    func() (string, error) { return home, nil },
+		tmuxRunner: runner,
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_STATE_HOME":
+				return xdgState
+			case "PROJMUX_CWD":
+				return project
+			default:
+				return ""
+			}
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.executeSessionStateAction("project-save", &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("project-save error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "saved project session snapshot: repos-projmux") {
+		t.Fatalf("stdout = %q, want project save message", stdout.String())
+	}
+	snap, err := sessionstate.NewStore(storeDir).Load("repos-projmux")
+	if err != nil {
+		t.Fatalf("Load(project snapshot) error = %v", err)
+	}
+	if snap.Session != "repos-projmux" || len(snap.Windows) != 1 || snap.Windows[0].Panes[0].Title != "editor" {
+		t.Fatalf("snapshot = %#v, want captured project session", snap)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) >= 3 && call.args[0] == "display-message" && call.args[2] == "#{session_name}" {
+			t.Fatalf("project save resolved current session unexpectedly: %#v", runner.calls)
+		}
+	}
+}
+
+func TestSettingsProjectSessionStatePreviewAndDeleteAreProjectScopedAndConfirmed(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	xdgState := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
+	snap := sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    "repos-projmux",
+		DefaultCWD: project,
+		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
+		Windows: []sessionstate.Window{{
+			Index:           0,
+			Name:            "main",
+			Layout:          "layout",
+			ActivePaneIndex: 0,
+			Panes:           []sessionstate.Pane{{Index: 0, Title: "editor", CWD: project, Recipe: sessionstate.ShellRecipe()}},
+		}},
+	}
+	if err := store.Save(snap); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	cmd := &settingsCommand{
+		homeDir:    func() (string, error) { return home, nil },
+		tmuxRunner: &recordingTmuxRunner{},
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_STATE_HOME":
+				return xdgState
+			case "PROJMUX_CWD":
+				return project
+			case "PROJMUX_SESSION":
+				return "live-session"
+			default:
+				return ""
+			}
+		},
+	}
+
+	var preview bytes.Buffer
+	if err := cmd.executeSessionStateAction("project-preview", &preview, &bytes.Buffer{}); err != nil {
+		t.Fatalf("project-preview error = %v", err)
+	}
+	if output := preview.String(); !strings.Contains(output, "repos-projmux") || !strings.Contains(output, "Restore Preview") || strings.Contains(output, "live-session") {
+		t.Fatalf("preview output = %q, want project-scoped read-only preview", output)
+	}
+
+	var calls int
+	cmd.nativePicker = nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			if got, want := options.UI, "settings-project-sessionstate"; got != want {
+				t.Fatalf("project session state UI = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateDelete}, nil
+		case 2:
+			if got, want := options.UI, "settings-project-sessionstate-delete-confirm"; got != want {
+				t.Fatalf("confirm UI = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateConfirmNo}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		default:
+			t.Fatalf("unexpected picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	}))
+	if err := cmd.runProjectSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectSessionStateSection(cancel delete) error = %v", err)
+	}
+	if _, err := store.Load("repos-projmux"); err != nil {
+		t.Fatalf("Load() after cancelled project delete error = %v, want snapshot preserved", err)
+	}
+
+	calls = 0
+	cmd.nativePicker = nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateDelete}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateConfirmYes}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		default:
+			t.Fatalf("unexpected picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	}))
+	if err := cmd.runProjectSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectSessionStateSection(confirm delete) error = %v", err)
+	}
+	if _, err := store.Load("repos-projmux"); !errors.Is(err, sessionstate.ErrNotFound) {
+		t.Fatalf("Load() after confirmed project delete error = %v, want %v", err, sessionstate.ErrNotFound)
 	}
 }
 

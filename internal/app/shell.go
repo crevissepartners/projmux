@@ -134,13 +134,14 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if target.CWD != "" {
 		runArgs = append(runArgs, "-c", target.CWD)
 	}
-	c.prepareShellSession(context.Background(), socketName, config, target.SessionName, target.CWD, startMode, stderr)
+	c.prepareShellSession(context.Background(), socketName, config, target.SessionName, target.CWD, target.ProjectDefault, startMode, stderr)
 	return c.run(context.Background(), "tmux", runArgs...)
 }
 
 type shellTarget struct {
-	SessionName string
-	CWD         string
+	SessionName    string
+	CWD            string
+	ProjectDefault bool
 }
 
 func (c *shellCommand) resolveShellTarget(rawSession string, sessionExplicit bool) (shellTarget, error) {
@@ -164,8 +165,9 @@ func (c *shellCommand) resolveShellTarget(rawSession string, sessionExplicit boo
 	}
 	projectRoot = filepath.Clean(projectRoot)
 	return shellTarget{
-		SessionName: coresessions.NewNamer(home).SessionName(projectRoot),
-		CWD:         projectRoot,
+		SessionName:    coresessions.NewNamer(home).SessionName(projectRoot),
+		CWD:            projectRoot,
+		ProjectDefault: true,
 	}, nil
 }
 
@@ -225,7 +227,7 @@ func parseShellStartMode(layoutName string, saved, empty bool) (shellStartMode, 
 	}
 }
 
-func (c *shellCommand) prepareShellSession(ctx context.Context, socketName, configPath, sessionName, cwd string, mode shellStartMode, stderr io.Writer) {
+func (c *shellCommand) prepareShellSession(ctx context.Context, socketName, configPath, sessionName, cwd string, projectDefault bool, mode shellStartMode, stderr io.Writer) {
 	switch mode.kind {
 	case shellStartEmpty:
 		return
@@ -234,15 +236,15 @@ func (c *shellCommand) prepareShellSession(ctx context.Context, socketName, conf
 	case shellStartSaved:
 		c.restoreSavedSessionState(ctx, socketName, configPath, sessionName, cwd, stderr)
 	default:
-		c.prepareAutoShellSession(ctx, socketName, configPath, sessionName, cwd, stderr)
+		c.prepareAutoShellSession(ctx, socketName, configPath, sessionName, cwd, projectDefault, stderr)
 	}
 }
 
-func (c *shellCommand) prepareAutoShellSession(ctx context.Context, socketName, configPath, sessionName, cwd string, stderr io.Writer) {
+func (c *shellCommand) prepareAutoShellSession(ctx context.Context, socketName, configPath, sessionName, cwd string, projectDefault bool, stderr io.Writer) {
 	if !sessionStateAutorestoreEnabled(c.homeDir, c.lookupEnv) {
 		return
 	}
-	candidates := c.shellSessionCandidates(sessionName)
+	candidates := c.shellSessionCandidates(sessionName, projectDefault)
 	if len(candidates) == 0 {
 		if !c.shouldOfferEmptyStartupPicker(cwd) {
 			return
@@ -261,7 +263,7 @@ func (c *shellCommand) prepareAutoShellSession(ctx context.Context, socketName, 
 	}
 
 	mode := c.pickShellStartupMode(candidates, stderr)
-	c.prepareShellSession(ctx, socketName, configPath, sessionName, cwd, mode, stderr)
+	c.prepareShellSession(ctx, socketName, configPath, sessionName, cwd, projectDefault, mode, stderr)
 }
 
 func (c *shellCommand) restoreSavedSessionState(ctx context.Context, socketName, configPath, sessionName, cwd string, stderr io.Writer) {
@@ -408,7 +410,7 @@ type shellSessionCandidate struct {
 	Description string
 }
 
-func (c *shellCommand) shellSessionCandidates(sessionName string) []shellSessionCandidate {
+func (c *shellCommand) shellSessionCandidates(sessionName string, includeProjectLayouts bool) []shellSessionCandidate {
 	var candidates []shellSessionCandidate
 	if store, err := c.shellSessionStateStore(); err == nil {
 		if summary, err := store.Summary(sessionName); err == nil {
@@ -422,16 +424,18 @@ func (c *shellCommand) shellSessionCandidates(sessionName string) []shellSession
 			}
 		}
 	}
-	if store, err := c.shellLayoutStore(); err == nil {
-		entries, _, err := store.List()
-		if err == nil {
-			for _, entry := range entries {
-				candidates = append(candidates, shellSessionCandidate{
-					Kind:        shellStartLayout,
-					Name:        entry.Name,
-					Label:       entry.Name,
-					Description: strings.TrimSpace(entry.Description),
-				})
+	if includeProjectLayouts {
+		if store, err := c.shellLayoutStore(); err == nil {
+			entries, _, err := store.List()
+			if err == nil {
+				for _, entry := range entries {
+					candidates = append(candidates, shellSessionCandidate{
+						Kind:        shellStartLayout,
+						Name:        entry.Name,
+						Label:       entry.Name,
+						Description: strings.TrimSpace(entry.Description),
+					})
+				}
 			}
 		}
 	}
