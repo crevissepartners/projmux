@@ -96,6 +96,102 @@ func TestFocus_SwitchesAttachedSession(t *testing.T) {
 	}
 }
 
+func TestFocus_PrefersOriginClientEvenWhenTargetSessionElsewhere(t *testing.T) {
+	t.Parallel()
+
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tworkspace\t1\n50\tother\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tworkspace\n/dev/pts/9\tother\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"--target", "workspace:1.0", "--client", "/dev/pts/9", "--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run returned error: %v (stderr=%s)", err, stderr.String())
+	}
+
+	var res focusResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode JSON: %v (raw=%q)", err, stdout.String())
+	}
+	if res.Client != "/dev/pts/9" || res.OriginClient != "/dev/pts/9" {
+		t.Fatalf("result = %#v, want origin client selected", res)
+	}
+	if !sawTmuxArgPair(runner.calls, "-c", "/dev/pts/9") {
+		t.Fatalf("calls = %#v, want switch-client -c /dev/pts/9", runner.calls)
+	}
+}
+
+func TestFocus_MissingOriginClientFallsBackToTargetSessionClient(t *testing.T) {
+	t.Parallel()
+
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tworkspace\t1\n50\tother\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tother\n/dev/pts/7\tworkspace\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"--target", "workspace:1.0", "--client", "/dev/pts/missing", "--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run returned error: %v (stderr=%s)", err, stderr.String())
+	}
+
+	var res focusResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode JSON: %v (raw=%q)", err, stdout.String())
+	}
+	if res.Client != "/dev/pts/7" || res.OriginClient != "/dev/pts/missing" {
+		t.Fatalf("result = %#v, want target-session fallback while preserving origin", res)
+	}
+}
+
+func TestFocus_NoOriginOrTargetClientFallsBackToStableFirstClient(t *testing.T) {
+	t.Parallel()
+
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tworkspace\t1\n50\tother\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/9\tother\n/dev/pts/3\tother\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := cmd.Run([]string{"--target", "workspace:1.0", "--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run returned error: %v (stderr=%s)", err, stderr.String())
+	}
+
+	var res focusResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode JSON: %v (raw=%q)", err, stdout.String())
+	}
+	if res.Client != "/dev/pts/3" || res.OriginClient != "" {
+		t.Fatalf("result = %#v, want stable first fallback without origin", res)
+	}
+}
+
 func TestFocus_FallbackPrefixMatch(t *testing.T) {
 	t.Parallel()
 
@@ -636,6 +732,17 @@ func sawSubcommand(calls []focusFakeCall, sub string) bool {
 	for _, c := range calls {
 		if slices.Contains(c.args, sub) {
 			return true
+		}
+	}
+	return false
+}
+
+func sawTmuxArgPair(calls []focusFakeCall, key, value string) bool {
+	for _, c := range calls {
+		for i := 0; i+1 < len(c.args); i++ {
+			if c.args[i] == key && c.args[i+1] == value {
+				return true
+			}
 		}
 	}
 	return false

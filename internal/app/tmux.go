@@ -870,6 +870,9 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		options.X = popupRightX(ctx.ClientWidth, options.Width)
 		options.Y = "0"
 		commandArgs = []string{"notify", "list", "--ui=sidebar"}
+		if client := strings.TrimSpace(ctx.TargetClient); client != "" {
+			commandArgs = append(commandArgs, "--client", client)
+		}
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 96)
 		options.Height = popupSize(ctx.ClientHeight, 45, 20)

@@ -83,7 +83,7 @@ number of seconds. `--json` prints `{id, queued}` for scripting.
 ### list
 
 ```
-projmux notify list [--live] [--json] [--limit N] [--ui table|sidebar]
+projmux notify list [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>]
                     [--severity ...] [--source ...]
 ```
 
@@ -203,8 +203,13 @@ seconds before a later bell refreshes the stable queue id.
 or the `prefix s n` chord reads the newest queue entry and dispatches:
 
 ```
-projmux focus --target <target> --source status-bar --kind segment-click [--socket <s>]
+projmux focus --target <target> --source status-bar --kind segment-click [--socket <s>] [--client <tty>]
 ```
+
+The status bar passes the clicked tmux client as `--client` when tmux provides
+it. The notify sidebar does the same for row selection. If that origin client
+is no longer attached, `projmux focus` falls back to the existing target-session
+client selection policy.
 
 Outcomes:
 

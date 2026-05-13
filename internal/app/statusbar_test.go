@@ -841,7 +841,7 @@ func TestStatusbarClickNotifyExecsFocusForNewestEntry(t *testing.T) {
 	}}
 	cmd := newStatusbarTestCommand(runner, store)
 
-	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"click", "notify", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -857,7 +857,7 @@ func TestStatusbarClickNotifyExecsFocusForNewestEntry(t *testing.T) {
 	}
 	wantArgs := []string{
 		"focus", "--target", "main:1.0", "--source", "status-bar", "--kind", "segment-click",
-		"--socket", "projmux",
+		"--socket", "projmux", "--client", "/dev/pts/7",
 	}
 	if !equalStringSlices(focusCall.args, wantArgs) {
 		t.Fatalf("focus args = %#v, want %#v", focusCall.args, wantArgs)

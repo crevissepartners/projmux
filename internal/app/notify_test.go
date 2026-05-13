@@ -267,7 +267,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	cmd.runner = runner
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
-	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"list", "--ui=sidebar", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
 	if picker.options.UI != "notify-sidebar" {
@@ -321,7 +321,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(focusCalls) != 1 || focusCalls[0].name != "/usr/local/bin/projmux" {
 		t.Fatalf("focus calls = %#v", focusCalls)
 	}
-	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux"}
+	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux", "--client", "/dev/pts/7"}
 	if !equalStringSlices(focusCalls[0].args, wantArgs) {
 		t.Fatalf("focus args = %#v, want %#v", focusCalls[0].args, wantArgs)
 	}
@@ -445,6 +445,12 @@ func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 	})
 	cmd.runner = runner
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+	cmd.lookupEnv = func(name string) string {
+		if name == "PROJMUX_NOTIFY_ORIGIN_CLIENT" {
+			return "/dev/pts/9"
+		}
+		return ""
+	}
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -463,7 +469,7 @@ func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 	if len(focusCalls) != 1 || focusCalls[0].name != "/usr/local/bin/projmux" {
 		t.Fatalf("focus calls = %#v, want one focus call", focusCalls)
 	}
-	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux"}
+	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux", "--client", "/dev/pts/9"}
 	if !equalStringSlices(focusCalls[0].args, wantArgs) {
 		t.Fatalf("focus args = %#v, want %#v", focusCalls[0].args, wantArgs)
 	}

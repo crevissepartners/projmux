@@ -50,6 +50,7 @@ type focusCommand struct {
 type focusOptions struct {
 	Target string
 	Socket string
+	Client string
 	Source string
 	Kind   string
 	URI    string
@@ -61,6 +62,7 @@ type focusResult struct {
 	Fallback        string `json:"fallback,omitempty"`
 	Target          string `json:"target,omitempty"`
 	Socket          string `json:"socket,omitempty"`
+	OriginClient    string `json:"origin_client,omitempty"`
 	ResolvedSession string `json:"resolved_session,omitempty"`
 	Client          string `json:"client,omitempty"`
 	Dispatch        string `json:"dispatch,omitempty"`
@@ -105,9 +107,10 @@ func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	socket := c.resolveSocket(opts.Socket)
 	c.logTelemetry(opts, target, socket)
 
-	res, err := c.execute(context.Background(), target, socket)
+	res, err := c.execute(context.Background(), target, socket, opts.Client)
 	res.Target = target.Raw
 	res.Socket = socket
+	res.OriginClient = strings.TrimSpace(opts.Client)
 	if err != nil {
 		res.OK = false
 		if res.Reason == "" {
@@ -155,6 +158,7 @@ func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {
 	opts := focusOptions{}
 	fs.StringVar(&opts.Target, "target", "", "Focus target SESSION[:WINDOW[.PANE]] (mutually exclusive with --uri)")
 	fs.StringVar(&opts.Socket, "socket", "", "tmux socket path (overrides $TMUX)")
+	fs.StringVar(&opts.Client, "client", "", "preferred origin tmux client tty")
 	fs.StringVar(&opts.Source, "source", "", "Telemetry label: ai|status-bar|external|os-notification|toast")
 	fs.StringVar(&opts.Kind, "kind", "", "Telemetry label: reply-ready|busy-cleared|segment-click|toast-click|custom")
 	fs.StringVar(&opts.URI, "uri", "", "projmux:// URI from a Toast click (resolves to --target via tmux)")
@@ -179,7 +183,8 @@ func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {
 	return opts, nil
 }
 
-func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, socket string) (focusResult, error) {
+func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, socket, preferredClient string) (focusResult, error) {
+	preferredClient = strings.TrimSpace(preferredClient)
 	inventory, err := c.listSessionInventory(ctx, socket)
 	if err != nil {
 		return focusResult{}, err
@@ -188,6 +193,7 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 	resolution, ok := corefocus.Resolve(target.Session, inventory)
 	if !ok {
 		return focusResult{
+				OriginClient: preferredClient,
 				SessionState: "unresolved",
 				Reason:       "session-unresolved",
 			},
@@ -197,6 +203,7 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 	clients, err := c.listClients(ctx, socket)
 	if err != nil {
 		return focusResult{
+			OriginClient:    preferredClient,
 			ResolvedSession: resolution.Name,
 			SessionState:    focusSessionState(resolution),
 			Reason:          "list-clients-failed",
@@ -204,6 +211,7 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 	}
 
 	base := focusResult{
+		OriginClient:    preferredClient,
 		ResolvedSession: resolution.Name,
 		SessionState:    focusSessionState(resolution),
 	}
@@ -224,7 +232,7 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 		return base, nil
 	}
 
-	clientName := pickFocusClient(clients, resolution.Name)
+	clientName := pickFocusClient(clients, resolution.Name, preferredClient)
 	base.Client = clientName
 	base.Dispatch = "switch-client"
 	if err := c.switchClient(ctx, socket, clientName, resolution.Name); err != nil {
@@ -480,9 +488,9 @@ func (c *focusCommand) logTelemetry(opts focusOptions, target corefocus.Target, 
 		return
 	}
 	fmt.Fprintf(c.stderr,
-		"focus: target=%s session=%s window=%s pane=%s socket=%s source=%s kind=%s\n",
+		"focus: target=%s session=%s window=%s pane=%s socket=%s client=%s source=%s kind=%s\n",
 		target.Raw, target.Session, target.WindowSelector(), target.PaneSelector(),
-		socket, opts.Source, opts.Kind,
+		socket, opts.Client, opts.Source, opts.Kind,
 	)
 }
 
@@ -516,16 +524,23 @@ type focusClient struct {
 	Session string
 }
 
-// pickFocusClient prefers a client already viewing the resolved session so
-// the focus is immediate and visible; otherwise it picks the lexicographically
-// first client to give a stable choice across runs.
-func pickFocusClient(clients []focusClient, sessionName string) string {
+// pickFocusClient prefers the explicit origin client, then a client already
+// viewing the resolved session, then the lexicographically first client.
+func pickFocusClient(clients []focusClient, sessionName, preferredClient string) string {
 	if len(clients) == 0 {
 		return ""
 	}
+	preferredClient = strings.TrimSpace(preferredClient)
 	names := make([]focusClient, 0, len(clients))
 	names = append(names, clients...)
 	sort.Slice(names, func(i, j int) bool { return names[i].Name < names[j].Name })
+	if preferredClient != "" {
+		for _, c := range names {
+			if c.Name == preferredClient {
+				return c.Name
+			}
+		}
+	}
 	for _, c := range names {
 		if c.Session == sessionName {
 			return c.Name

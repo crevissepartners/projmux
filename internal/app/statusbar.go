@@ -611,6 +611,9 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 	if socket != "" {
 		args = append(args, "--socket", socket)
 	}
+	if client := strings.TrimSpace(opts.ClientTTY); client != "" {
+		args = append(args, "--client", client)
+	}
 	if _, runErr := c.runner.Run(context.Background(), binaryPath, args...); runErr != nil {
 		// The focus subprocess exits with a deterministic code 2 when the
 		// target session/window/pane cannot be resolved (see focus.go's
