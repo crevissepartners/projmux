@@ -137,7 +137,7 @@ func TestStatusGitPrintsConfiguredEmojiDecoratorFromConfig(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour17]🐈 #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour17]🐱 #[fg=colour16]main #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}

@@ -29,6 +29,8 @@ const (
 	tmuxWindowInactiveFg = projmuxpicker.TmuxWindowInactiveFg
 	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
 	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
+	tmuxWindowTitleWidth = "18"
+	tmuxWindowTrimWidth  = "15"
 )
 
 type tmuxPopupClient interface {
@@ -1094,15 +1096,15 @@ func statusbarSettingsButton(label string) string {
 }
 
 func statusbarSessionStateButton() string {
-	return "#[bold,fg=colour16,bg=colour149]#[range=user|sessionstate] state #[norange]#[default]"
+	return "#[bold,fg=colour16,bg=colour149]#[range=user|sessionstate] State #[norange]#[default]"
 }
 
 func statusbarStandaloneSessionLeftFormat() string {
-	return "#[range=user|session][#S] #[norange] " + statusbarSessionStateButton()
+	return "#[range=user|session][#S] #[norange]" + statusbarSessionStateButton() + " "
 }
 
 func statusbarAppSessionLeftFormat() string {
-	return "#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] " + statusbarSessionStateButton()
+	return "#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange]" + statusbarSessionStateButton() + " "
 }
 
 func statusbarAuxLineFormat(bin string, autosave bool) string {
@@ -1122,6 +1124,10 @@ func statusbarWindowLineFormat() string {
 		"#[nolist align=right range=right #{E:status-right-style}]#[push-default]#{T;=/#{status-right-length}:status-right}#[pop-default]#[norange default]"
 }
 
+func statusbarWindowTitleFormat() string {
+	return "#{p-" + tmuxWindowTitleWidth + ":#{=/" + tmuxWindowTrimWidth + "/...:window_name}}"
+}
+
 func tmuxStandaloneConfigWithKeymap(binaryPath string, decoration config.StatusbarDecoration, catalog []keyBindingAction, keymapPresent bool) string {
 	bin := tmuxShellQuote(binaryPath)
 	defaultStandaloneKeyBindings := keyBindingCatalogForScope(keyBindingScopeStandalone)
@@ -1137,8 +1143,8 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decoration config.Statusb
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
 		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
 		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
-		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tmuxWindowInactiveFg+",bg="+tmuxWindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowInactiveFg+"] #I #W #[default]"),
-		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tmuxWindowActiveFg+",bg="+tmuxWindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowActiveFg+"] #I #W #[default]"),
+		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tmuxWindowInactiveFg+",bg="+tmuxWindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowInactiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
+		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tmuxWindowActiveFg+",bg="+tmuxWindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowActiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
 		"set -g status 2",
 		"set -g status-left-length 42",
 		"set -g status-right-length 140",

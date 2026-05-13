@@ -10,7 +10,7 @@ segment only requires one wiring point.
 ```
 row 0  #[range=user|notify] <notify HUD pill> #[norange]
                                       #[range=user|usage] <usage HUD bar> #[norange]
-row 1  [#S] #[range=user|sessionstate] state #[norange]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
+row 1  [#S]#[range=user|sessionstate] State #[norange]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
 ```
 
@@ -38,7 +38,8 @@ row 1  [#S] #[range=user|sessionstate] state #[norange]  #{pane_current_path}  �
   then compact state indicators when available: `*` for local changes,
   `+N` for staged entries, and `↑N`/`↓N` for ahead/behind counts. Each
   state token gets its own compact foreground color while preserving the
-  existing branch block background.
+  existing branch block background. Window tab titles use a fixed-width
+  padded trim so long active pane names do not resize the status row.
 - Both HUD segments degrade gracefully when the cell budget is tight; see
   [notify-queue.md](notify-queue.md) and [usage-tracking.md](usage-tracking.md)
   for the per-segment tier ladder.
