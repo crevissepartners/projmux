@@ -64,7 +64,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
-| `sessionstate` | 1 | show a native-framed Session State snapshot status and restore preview popup | `prefix s r` |
+| `sessionstate` | 1 | show a secondary Session State snapshot status and restore preview popup; primary inspection lives under Settings > Project > Session State | `prefix s r` |
 | `usage`   | 1 | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on focus success | `prefix s n`  |
 

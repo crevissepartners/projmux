@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -20,6 +22,12 @@ const (
 type sessionStateEffectiveToggle struct {
 	Mode   config.SessionStateToggle
 	Source string
+}
+
+type projectSessionStateIdentity struct {
+	Project settingsProjectContext
+	Session string
+	Err     error
 }
 
 func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error {
@@ -57,11 +65,64 @@ func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error
 	}
 }
 
+func (c *settingsCommand) runProjectSessionStateSection(stdout, stderr io.Writer) error {
+	for {
+		options, err := c.sectionOptions(settingsSectionProjectSessionState)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		if err := c.execute(action, stdout, stderr); err != nil {
+			return err
+		}
+	}
+}
+
 func (c *settingsCommand) sessionStateRootLabel() string {
 	autosave := c.currentSessionStateAutosave()
 	autorestore := c.currentSessionStateAutorestore()
 	desc := fmt.Sprintf("autosave %s, startup picker %s", autosave.Mode, autorestore.Mode)
 	return settingsLabel(settingsGlyphOpen, settingsColorType, "Session State", desc)
+}
+
+func (c *settingsCommand) projectSessionStateRootLabel(ctx settingsProjectContext) string {
+	identity := c.projectSessionStateIdentity(ctx)
+	desc := "disabled - no project context"
+	if identity.Err == nil {
+		desc = identity.Session
+	}
+	return settingsLabel(settingsGlyphOpen, settingsColorType, "Session State", desc)
+}
+
+func (c *settingsCommand) projectSessionStateTitle() string {
+	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
+	if identity.Err != nil {
+		return "Session State - Project restore state unavailable"
+	}
+	store, err := c.settingsSessionStateStore()
+	if err != nil {
+		return "Session State - " + identity.Project.Name + " restore state unavailable"
+	}
+	if _, err := store.Summary(identity.Session); err != nil {
+		if errors.Is(err, sessionstate.ErrNotFound) {
+			return "Session State - " + identity.Project.Name + " restore state missing"
+		}
+		return "Session State - " + identity.Project.Name + " restore state invalid"
+	}
+	return "Session State - " + identity.Project.Name + " restore state saved"
 }
 
 func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
@@ -82,6 +143,49 @@ func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
 	entries = append(entries, c.sessionStateToggleEntries("Auto-save", "autosave", autosave.Mode)...)
 	entries = append(entries, c.sessionStateToggleEntries("Startup picker", "autorestore", autorestore.Mode)...)
 	entries = append(entries, c.sessionStateDeleteEntry())
+	return entries
+}
+
+func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
+	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
+	if identity.Err != nil {
+		return []intpickercompat.Entry{
+			settingsBackEntry(),
+			{
+				Label: settingsLabelInfo("Project", "unavailable", identity.Err.Error()),
+				Value: settingsNoopValue,
+			},
+		}
+	}
+
+	autosave := c.currentSessionStateAutosave()
+	autorestore := c.currentSessionStateAutorestore()
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Project", identity.Project.Name, ""),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Project path", identity.Project.Path, identity.Project.Source),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Session identity", identity.Session, "derived from project path"),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Auto-save", string(autosave.Mode), autosave.Source),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Startup picker", string(autorestore.Mode), autorestore.Source),
+			Value: settingsNoopValue,
+		},
+	}
+	entries = append(entries, c.sessionStateSnapshotEntriesForSession(identity.Session)...)
+	entries = append(entries, c.sessionStateToggleEntries("Auto-save", "autosave", autosave.Mode)...)
+	entries = append(entries, c.sessionStateToggleEntries("Startup picker", "autorestore", autorestore.Mode)...)
 	return entries
 }
 
@@ -117,6 +221,10 @@ func (c *settingsCommand) sessionStateSnapshotEntries() []intpickercompat.Entry 
 			Value: settingsNoopValue,
 		}}
 	}
+	return c.sessionStateSnapshotEntriesForSession(sessionName)
+}
+
+func (c *settingsCommand) sessionStateSnapshotEntriesForSession(sessionName string) []intpickercompat.Entry {
 	store, err := c.settingsSessionStateStore()
 	if err != nil {
 		return []intpickercompat.Entry{{
@@ -124,7 +232,7 @@ func (c *settingsCommand) sessionStateSnapshotEntries() []intpickercompat.Entry 
 			Value: settingsNoopValue,
 		}}
 	}
-	summary, err := store.Summary(sessionName)
+	snap, err := store.Load(sessionName)
 	if err != nil {
 		status := "invalid"
 		if errors.Is(err, sessionstate.ErrNotFound) {
@@ -135,24 +243,37 @@ func (c *settingsCommand) sessionStateSnapshotEntries() []intpickercompat.Entry 
 			Value: settingsNoopValue,
 		}}
 	}
-	return []intpickercompat.Entry{
+	entries := []intpickercompat.Entry{
 		{
-			Label: settingsLabelInfo("Snapshot session", summary.Session, ""),
+			Label: settingsLabelInfo("Snapshot session", snap.Session, ""),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Saved at", summary.SavedAt.Format("2006-01-02 15:04:05 MST"), ""),
+			Label: settingsLabelInfo("Snapshot source", snap.SourceLabel(), ""),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Windows", fmt.Sprintf("%d", summary.WindowCount), ""),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Panes", fmt.Sprintf("%d", summary.PaneCount), ""),
+			Label: settingsLabelInfo("Saved snapshot", statusbarSessionStateSavedText(snap.SavedAt, time.Now()), snap.SavedAt.Format("2006-01-02 15:04:05 MST")),
 			Value: settingsNoopValue,
 		},
 	}
+	for _, line := range sessionStatePlainPreviewLines(snap, 100) {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Preview", line, ""),
+			Value: settingsNoopValue,
+		})
+	}
+	entries = append(entries,
+		intpickercompat.Entry{
+			Label: settingsLabelInfo("Windows", fmt.Sprintf("%d", len(snap.Windows)), "snapshot metadata"),
+			Value: settingsNoopValue,
+		},
+		intpickercompat.Entry{
+			Label: settingsLabelInfo("Panes", fmt.Sprintf("%d", statusbarSessionStatePaneCount(snap)), "snapshot metadata"),
+			Value: settingsNoopValue,
+		},
+	)
+	return entries
 }
 
 func (c *settingsCommand) sessionStateDeleteEntry() intpickercompat.Entry {
@@ -354,6 +475,25 @@ func (c *settingsCommand) currentSettingsSessionName() (string, error) {
 		return "", errors.New("current tmux session unavailable")
 	}
 	return sessionName, nil
+}
+
+func (c *settingsCommand) projectSessionStateIdentity(ctx settingsProjectContext) projectSessionStateIdentity {
+	if !ctx.hasProject() {
+		return projectSessionStateIdentity{Project: ctx, Err: errors.New("no project context")}
+	}
+	homeDir := c.homeDir
+	if homeDir == nil {
+		homeDir = os.UserHomeDir
+	}
+	home, err := homeDir()
+	if err != nil {
+		return projectSessionStateIdentity{Project: ctx, Err: fmt.Errorf("resolve home directory: %w", err)}
+	}
+	sessionName := sessions.NewNamer(home).SessionName(ctx.Path)
+	if strings.TrimSpace(sessionName) == "" {
+		return projectSessionStateIdentity{Project: ctx, Err: errors.New("project session identity unavailable")}
+	}
+	return projectSessionStateIdentity{Project: ctx, Session: sessionName}
 }
 
 func sessionStateAutosaveEnabled(homeDir func() (string, error), lookupEnv func(string) string) bool {

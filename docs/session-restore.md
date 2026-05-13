@@ -11,17 +11,24 @@ projmux session-state restore --dry-run [--session <name>]
 projmux session-state delete [--session <name>]
 ```
 
-The statusbar Session State popup now exposes a minimal action picker backed by
-the same read model and CLI behavior:
+The primary inspection surface is Settings > Project > Session State. It uses
+the current project path to derive the same session identity as `projmux shell`,
+then shows project context, snapshot source/age, and a window-title -> pane-title
+preview before count metadata. The legacy Settings > Session State path remains
+available for the current live tmux session.
+
+The statusbar Session State popup remains a secondary shortcut backed by the
+same read model and CLI behavior:
 
 - `Save now` captures the current tmux session, bypassing the autosave debounce
   just like `projmux session-state save`.
 - `Preview restore` prints the dry-run restore plan and does not execute tmux
   replay commands.
 
-Delete, auto-save/startup picker toggles, and restore execution remain in Settings
-or CLI for now. Destructive restore execution stays deferred until the popup has
-a dedicated safe policy for existing or non-empty live sessions.
+Delete for current-session snapshots, auto-save/startup picker toggles, and
+restore execution remain in Settings or CLI for now. Destructive restore
+execution stays deferred until the popup has a dedicated safe policy for
+existing or non-empty live sessions.
 
 Project layout presets in `<project>/.projmux/layouts/*.toml` reuse the same
 window, pane, cwd, and startup recipe concepts as session snapshots. They are
