@@ -3039,8 +3039,8 @@ func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 		desc string
 	}{
 		{desktopNotifyModeNone, "silence OS notifications; in-app notify queue is unaffected"},
-		{desktopNotifyModeNotify, "fire toast / notify-send for AI reply-ready (click -> focus via projmux://)"},
-		{desktopNotifyModeRaise, "fire toast and auto-raise host terminal via osfocus chain"},
+		{desktopNotifyModeNotify, "fire toast / notify-send for AI reply-ready without click-to-focus"},
+		{desktopNotifyModeRaise, "fire toast with click-to-focus and auto-raise host terminal via osfocus chain"},
 	} {
 		glyph := settingsGlyphInactive
 		color := settingsColorDim

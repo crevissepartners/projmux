@@ -66,20 +66,21 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	// surfaces.
 	//
 	// `mode=none` skips dispatch entirely. `mode=notify` dispatches the
-	// toast / notify-send but does not auto-raise; click-to-focus is
-	// still wired via the projmux:// URI handler regardless of mode (the
-	// handler registration is gated on its own marker, not the mode).
-	// `mode=raise` dispatches and follows up with an osfocus chain call
-	// to bring the host terminal to the foreground.
+	// toast / notify-send without auto-raise or click-to-focus.
+	// `mode=raise` dispatches with the projmux:// click target and follows
+	// up with an osfocus chain call to bring the host terminal to the
+	// foreground.
 	mode := n.command.desktopNotifyMode()
 	if mode == desktopNotifyModeNone {
 		return nil
 	}
 	if n.command.isWSL() {
 		n.command.ensureWSLLegacyAppIDCleaned(notification)
-		n.command.ensureWSLURIProtocol()
+		if mode == desktopNotifyModeRaise {
+			n.command.ensureWSLURIProtocol()
+		}
 		_ = n.ensureWSLToastAppID(notification)
-		if err := n.dispatchWSLToast(notification); err == nil {
+		if err := n.dispatchWSLToast(notification, mode == desktopNotifyModeRaise); err == nil {
 			n.maybeRaiseHostTerminal(mode, notification)
 			return nil
 		}
@@ -140,7 +141,7 @@ func (n aiDesktopNotifier) maybeRaiseHostTerminal(mode desktopNotifyMode, notifi
 	_ = chain.Focus(osfocus.Target{Pane: strings.TrimSpace(notification.Tag)})
 }
 
-func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification) error {
+func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification, clickToFocus bool) error {
 	powerShell := n.command.resolvePowerShell()
 	if powerShell == "" {
 		return errors.New("powershell.exe is unavailable")
@@ -155,7 +156,10 @@ func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification) error {
 	if strings.TrimSpace(notification.Tag) != "" {
 		socket = n.command.readTrimmed("tmux", "display-message", "-p", "#{socket_path}")
 	}
-	launchURI := buildFocusURI(notification.Tag, socket)
+	launchURI := ""
+	if clickToFocus {
+		launchURI = buildFocusURI(notification.Tag, socket)
+	}
 	script := buildToastPowerShell(
 		notification.Summary,
 		notification.Body,

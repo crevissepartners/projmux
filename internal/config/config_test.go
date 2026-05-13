@@ -140,8 +140,8 @@ func TestPathsSessionStateFiles(t *testing.T) {
 	if got, want := paths.SessionStateAutosaveFile(), filepath.Join(paths.ConfigDir, SessionStateAutosaveFileName); got != want {
 		t.Fatalf("SessionStateAutosaveFile() = %q, want %q", got, want)
 	}
-	if got, want := paths.SessionStateAutorestoreFile(), filepath.Join(paths.ConfigDir, SessionStateAutorestoreFileName); got != want {
-		t.Fatalf("SessionStateAutorestoreFile() = %q, want %q", got, want)
+	if got, want := paths.SessionStateAutosaveIntervalFile(), filepath.Join(paths.ConfigDir, SessionStateAutosaveIntervalFileName); got != want {
+		t.Fatalf("SessionStateAutosaveIntervalFile() = %q, want %q", got, want)
 	}
 	if got, want := paths.SessionStateDir(), filepath.Join(paths.StateDir, "sessions"); got != want {
 		t.Fatalf("SessionStateDir() = %q, want %q", got, want)

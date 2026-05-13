@@ -732,15 +732,12 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 			powershellCommands = append(powershellCommands, command)
 		}
 	}
-	// Notify wiring (notification.go) runs PowerShell in this order on the
-	// first WSL toast of a fresh tmux server:
+	// Default WSL without WT_SESSION resolves to mode=notify. Notify mode
+	// shows a toast but deliberately omits the projmux:// click target:
 	//   [0] legacy AppID cleanup    (ensureWSLLegacyAppIDCleaned)
-	//   [1] projmux:// URI register (ensureWSLURIProtocol)
-	//   [2] new AppID register      (ensureWSLToastAppID)
-	//   [3] toast XML show          (dispatchWSLToast)
-	// The legacy + URI registration markers are then written to tmux so
-	// subsequent notifications skip the one-shots.
-	if got, want := len(powershellCommands), 4; got != want {
+	//   [1] new AppID register      (ensureWSLToastAppID)
+	//   [2] toast XML show          (dispatchWSLToast)
+	if got, want := len(powershellCommands), 3; got != want {
 		t.Fatalf("powershell commands len = %d, want %d, commands = %#v", got, want, cmdRecorder(cmd).commands)
 	}
 	cleanupScript := decodePowerShellEncodedCommand(t, powershellCommands[0])
@@ -756,25 +753,10 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", legacyAppIDCleanedTmuxOption, "1"}) {
 		t.Fatalf("commands = %#v, want legacy cleanup marker write", cmdRecorder(cmd).commands)
 	}
-	uriScript := decodePowerShellEncodedCommand(t, powershellCommands[1])
-	for _, want := range []string{
-		`HKCU:\SOFTWARE\Classes\` + desktopURIScheme,
-		`URL:` + desktopURIScheme,
-		"URL Protocol",
-		"shell\\open\\command",
-		// `--exec <abs-path>` (no shell, no PATH dependency) — see the
-		// hot-fix note on buildRegisterURIProtocolPowerShell. The binary
-		// path comes from testAICommand's fake executable resolver.
-		`wsl.exe -d Ubuntu-24.04 --exec /tmp/projmux focus --uri "%1"`,
-	} {
-		if !strings.Contains(uriScript, want) {
-			t.Fatalf("uri register script = %q, want substring %q", uriScript, want)
-		}
+	if containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", uriProtocolRegisteredTmuxOption, "1"}) {
+		t.Fatalf("commands = %#v, did not expect uri protocol marker write in notify mode", cmdRecorder(cmd).commands)
 	}
-	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", uriProtocolRegisteredTmuxOption, "1"}) {
-		t.Fatalf("commands = %#v, want uri protocol marker write", cmdRecorder(cmd).commands)
-	}
-	registerScript := decodePowerShellEncodedCommand(t, powershellCommands[2])
+	registerScript := decodePowerShellEncodedCommand(t, powershellCommands[1])
 	if !strings.Contains(registerScript, `HKCU:\SOFTWARE\Classes\AppUserModelId\`+desktopAppID) {
 		t.Fatalf("register script = %q, want AppUserModelId registration for new id", registerScript)
 	}
@@ -793,7 +775,7 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 			t.Fatalf("register script = %q, want substring %q", registerScript, want)
 		}
 	}
-	toastScript := decodePowerShellEncodedCommand(t, powershellCommands[3])
+	toastScript := decodePowerShellEncodedCommand(t, powershellCommands[2])
 	for _, want := range []string{
 		"CreateToastNotifier('" + desktopAppID + "').Show($toast)",
 		"$toast.Tag = '%2'",
@@ -802,14 +784,14 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		"검토 대기: approval needed · projmux/main",
 		iconWin,
 		"appLogoOverride",
-		// The toast now carries the projmux:// click target so a desktop
-		// click round-trips back into `projmux focus --uri`.
-		`activationType="protocol"`,
-		"projmux://focus?",
-		"pane_id=%252",
 	} {
 		if !strings.Contains(toastScript, want) {
 			t.Fatalf("toast script = %q, want substring %q", toastScript, want)
+		}
+	}
+	for _, absent := range []string{`activationType="protocol"`, "projmux://focus?", "pane_id=%252"} {
+		if strings.Contains(toastScript, absent) {
+			t.Fatalf("toast script = %q, did not want click target substring %q in notify mode", toastScript, absent)
 		}
 	}
 	if _, err := os.Stat(iconWSL); err != nil {

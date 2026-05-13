@@ -44,8 +44,8 @@ same read model and CLI behavior:
 - `Preview restore` prints the dry-run restore plan and does not execute tmux
   replay commands.
 
-Settings > Session State is global settings only: global auto-save, global
-startup picker, and storage/retention policy. It does not show the current
+Settings > Session State is global settings only: global auto-save, auto-save
+interval, and storage/retention policy. It does not show the current
 snapshot tree. Delete for current-session snapshots and destructive restore
 execution stay deferred until those actions have a dedicated safe policy for
 existing or non-empty live sessions.
@@ -54,7 +54,7 @@ Named snapshots may currently be backed by legacy project files in
 `<project>/.projmux/layouts/*.toml`. They reuse the same window, pane, cwd, and
 startup recipe concepts as session snapshots, but the user-facing restore model
 is still `Latest snapshot`, `Named snapshot`, or `Empty session`. The legacy
-files are imported read-only by Project open and shell compatibility startup
+files are imported read-only by Project open
 when building `Named snapshot` candidates; new primary surfaces should describe
 the restore unit as a snapshot, not as a separate layout or preset feature.
 
@@ -71,17 +71,8 @@ hook/config trust is evaluated if needed; approval continues the selected path
 and deny/cancel aborts before session create, snapshot replay, startup recipe,
 or `pane-startup`. Existing sessions switch directly without a startup picker.
 
-`projmux shell` still accepts the legacy startup selectors in this release, but
-it is no longer the primary project restore model. Its compatibility picker is
-titled `Start app session` and uses the same row labels: `Latest snapshot`,
-`Named snapshot`, and `Empty session`. Closing the picker or making no selection
-falls back to empty startup. When the startup picker is disabled, default
-`projmux shell` skips candidate lookup and the picker, then follows the normal
-empty attach path.
-
-The explicit startup selectors `--saved`, `--layout <name>`, and `--empty`
-bypass the picker and startup picker toggle, then route directly to the same
-latest snapshot, named snapshot, or empty startup paths. The flag names are kept
-for compatibility in this phase. All startup selectors are only applied before a
-new target app session exists; existing sessions are attached without picker
-display or replay.
+Default `projmux shell` no longer opens a compatibility startup picker and no
+longer accepts startup selector flags for session-state restore. It always
+follows the normal empty attach path after resolving the target app session name
+and startup directory. Use `Settings > Labs > Sidebar startup picker` for
+interactive Latest snapshot / Named snapshot / Empty session selection.

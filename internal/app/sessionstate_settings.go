@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,14 +19,16 @@ import (
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
-const (
-	sessionStateAutosaveEnv    = "PROJMUX_SESSIONSTATE_AUTOSAVE"
-	sessionStateAutorestoreEnv = "PROJMUX_SESSIONSTATE_AUTORESTORE"
-)
+const sessionStateAutosaveEnv = "PROJMUX_SESSIONSTATE_AUTOSAVE"
 
 type sessionStateEffectiveToggle struct {
 	Mode   config.SessionStateToggle
 	Source string
+}
+
+type sessionStateEffectiveInterval struct {
+	Duration time.Duration
+	Source   string
 }
 
 type projectSessionStateEffectiveToggle struct {
@@ -66,14 +69,8 @@ func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error
 		case settingsSessionStateAutosaveDetail:
 			if err := c.runSessionStateToggleDetail("Session State - Auto-save", "Settings > Session State > Auto-save > ", func() []intpickercompat.Entry {
 				autosave := c.currentSessionStateAutosave()
-				return c.sessionStateToggleDetailEntries("Auto-save", "autosave", autosave.Mode, autosave.Source)
-			}, stdout, stderr); err != nil {
-				return err
-			}
-		case settingsSessionStateStartupPickerDetail:
-			if err := c.runSessionStateToggleDetail("Session State - Startup picker", "Settings > Session State > Startup picker > ", func() []intpickercompat.Entry {
-				autorestore := c.currentSessionStateAutorestore()
-				return c.sessionStateToggleDetailEntries("Startup picker", "autorestore", autorestore.Mode, autorestore.Source)
+				interval := c.currentSessionStateAutosaveInterval()
+				return c.sessionStateAutosaveDetailEntries(autosave, interval)
 			}, stdout, stderr); err != nil {
 				return err
 			}
@@ -141,6 +138,10 @@ func (c *settingsCommand) runSessionStateToggleDetail(title, prompt string, entr
 			return nil
 		case action == settingsNoopValue:
 			continue
+		case action == settingsSessionStateAutosaveIntervalSet:
+			if err := c.runSessionStateAutosaveIntervalTyped(stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, settingsActionPrefixSessionState):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err
@@ -230,8 +231,8 @@ func (c *settingsCommand) runProjectSessionStateActionsDetail(stdout, stderr io.
 
 func (c *settingsCommand) sessionStateRootLabel() string {
 	autosave := c.currentSessionStateAutosave()
-	autorestore := c.currentSessionStateAutorestore()
-	desc := fmt.Sprintf("autosave %s, startup picker %s", autosave.Mode, autorestore.Mode)
+	interval := c.currentSessionStateAutosaveInterval()
+	desc := fmt.Sprintf("autosave %s, interval %s", autosave.Mode, formatSessionStateAutosaveInterval(interval.Duration))
 	return settingsLabel(settingsGlyphOpen, settingsColorType, "Session State", desc)
 }
 
@@ -254,16 +255,12 @@ func (c *settingsCommand) projectSessionStateTitle() string {
 
 func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
 	autosave := c.currentSessionStateAutosave()
-	autorestore := c.currentSessionStateAutorestore()
+	interval := c.currentSessionStateAutosaveInterval()
 	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Auto-save", string(autosave.Mode)+" - "+autosave.Source),
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Auto-save", string(autosave.Mode)+" - interval "+formatSessionStateAutosaveInterval(interval.Duration)+" - "+autosave.Source),
 			Value: settingsSessionStateAutosaveDetail,
-		},
-		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Startup picker", string(autorestore.Mode)+" - "+autorestore.Source),
-			Value: settingsSessionStateStartupPickerDetail,
 		},
 		{
 			Label: settingsLabelInfo("Storage", "latest snapshot store", "per-session JSON under XDG state"),
@@ -290,7 +287,7 @@ func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
 	}
 
 	autosave := c.currentProjectSessionStateAutosave(identity)
-	autorestore := c.currentSessionStateAutorestore()
+	interval := c.currentSessionStateAutosaveInterval()
 	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
@@ -318,7 +315,7 @@ func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Global startup picker", string(autorestore.Mode), autorestore.Source),
+			Label: settingsLabelInfo("Auto-save interval", formatSessionStateAutosaveInterval(interval.Duration), interval.Source),
 			Value: settingsNoopValue,
 		},
 		{
@@ -326,6 +323,22 @@ func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
 			Value: settingsProjectSessionStateActionsDetail,
 		},
 	}
+	return entries
+}
+
+func (c *settingsCommand) sessionStateAutosaveDetailEntries(autosave sessionStateEffectiveToggle, interval sessionStateEffectiveInterval) []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Auto-save", string(autosave.Mode), autosave.Source),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Interval", formatSessionStateAutosaveInterval(interval.Duration)+" - "+interval.Source),
+			Value: settingsSessionStateAutosaveIntervalSet,
+		},
+	}
+	entries = append(entries, c.sessionStateToggleEntries("Auto-save", "autosave", autosave.Mode)...)
 	return entries
 }
 
@@ -339,6 +352,33 @@ func (c *settingsCommand) sessionStateToggleDetailEntries(label, key string, cur
 	}
 	entries = append(entries, c.sessionStateToggleEntries(label, key, current)...)
 	return entries
+}
+
+func (c *settingsCommand) runSessionStateAutosaveIntervalTyped(stdout, stderr io.Writer) error {
+	interval := c.currentSessionStateAutosaveInterval()
+	result, err := c.runPicker(intpickercompat.Options{
+		UI:           "settings-sessionstate-autosave-interval",
+		Entries:      nil,
+		AcceptQuery:  true,
+		InitialQuery: formatSessionStateAutosaveInterval(interval.Duration),
+		Title:        "Session State - Auto-save interval",
+		Prompt:       "Auto-save interval > ",
+		Footer:       projmuxFooter("Enter: save  |  Examples: 30s, 2m, 90  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys:   []string{"enter"},
+		Bindings:     settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+	if result.Key != "enter" {
+		return nil
+	}
+	value, err := parseSessionStateAutosaveInterval(result.Query)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return nil
+	}
+	return c.setSessionStateAutosaveInterval(value, stdout)
 }
 
 func (c *settingsCommand) projectSessionStateAutosaveDetailEntries() []intpickercompat.Entry {
@@ -727,10 +767,12 @@ func (c *settingsCommand) executeSessionStateAction(action string, stdout io.Wri
 		return c.setSessionStateAutosave(config.SessionStateToggleOn)
 	case action == "autosave:off":
 		return c.setSessionStateAutosave(config.SessionStateToggleOff)
-	case action == "autorestore:on":
-		return c.setSessionStateAutorestore(config.SessionStateToggleOn)
-	case action == "autorestore:off":
-		return c.setSessionStateAutorestore(config.SessionStateToggleOff)
+	case strings.HasPrefix(action, "autosave-interval:"):
+		value, err := parseSessionStateAutosaveInterval(strings.TrimPrefix(action, "autosave-interval:"))
+		if err != nil {
+			return err
+		}
+		return c.setSessionStateAutosaveInterval(value, stdout)
 	case action == "sidebar-startup:on":
 		return c.setSidebarStartupPicker(config.SessionStateToggleOn)
 	case action == "sidebar-startup:off":
@@ -874,14 +916,23 @@ func (c *settingsCommand) currentSessionStateAutosave() sessionStateEffectiveTog
 	})
 }
 
-func (c *settingsCommand) currentSessionStateAutorestore() sessionStateEffectiveToggle {
-	return c.currentSessionStateToggleDefault(sessionStateAutorestoreEnv, config.SessionStateToggleOn, func(paths config.Paths) string {
-		return paths.SessionStateAutorestoreFile()
-	})
-}
-
 func (c *settingsCommand) currentSessionStateToggle(envName string, file func(config.Paths) string) sessionStateEffectiveToggle {
 	return c.currentSessionStateToggleDefault(envName, config.SessionStateToggleOn, file)
+}
+
+func (c *settingsCommand) currentSessionStateAutosaveInterval() sessionStateEffectiveInterval {
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return sessionStateEffectiveInterval{Duration: defaultSessionStateAutosaveInterval, Source: "default"}
+	}
+	duration, err := config.LoadSessionStateDurationFileDefault(paths.SessionStateAutosaveIntervalFile(), defaultSessionStateAutosaveInterval)
+	if err != nil {
+		return sessionStateEffectiveInterval{Duration: defaultSessionStateAutosaveInterval, Source: "default"}
+	}
+	if _, err := osStat(paths.SessionStateAutosaveIntervalFile()); err == nil {
+		return sessionStateEffectiveInterval{Duration: duration, Source: "saved"}
+	}
+	return sessionStateEffectiveInterval{Duration: duration, Source: "default"}
 }
 
 func (c *settingsCommand) currentSessionStateToggleDefault(envName string, fallback config.SessionStateToggle, file func(config.Paths) string) sessionStateEffectiveToggle {
@@ -970,16 +1021,27 @@ func (c *settingsCommand) setSessionStateAutosave(value config.SessionStateToggl
 	}, "sessionstate autosave")
 }
 
-func (c *settingsCommand) setSessionStateAutorestore(value config.SessionStateToggle) error {
-	return c.setSessionStateToggle(value, func(paths config.Paths) string {
-		return paths.SessionStateAutorestoreFile()
-	}, "sessionstate startup picker")
-}
-
 func (c *settingsCommand) currentSidebarStartupPicker() sessionStateEffectiveToggle {
 	return sessionStateToggleFileStateDefault(c.homeDir, c.lookupEnv, config.SessionStateToggleOff, func(paths config.Paths) string {
 		return paths.SidebarStartupPickerFile()
 	})
+}
+
+func (c *settingsCommand) setSessionStateAutosaveInterval(value time.Duration, stdout io.Writer) error {
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+	if err := config.SaveSessionStateDurationFile(paths.SessionStateAutosaveIntervalFile(), value); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "sessionstate autosave interval: %s\n", formatSessionStateAutosaveInterval(value)); err != nil {
+		return err
+	}
+	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
+		_ = c.runCommand("tmux", "display-message", "sessionstate autosave interval: "+formatSessionStateAutosaveInterval(value))
+	}
+	return nil
 }
 
 func (c *settingsCommand) setSidebarStartupPicker(value config.SessionStateToggle) error {
@@ -1005,6 +1067,37 @@ func (c *settingsCommand) setProjectSessionStateAutosave(value string) error {
 		_ = c.runCommand("tmux", "display-message", "project sessionstate autosave: "+string(mode))
 	}
 	return nil
+}
+
+func parseSessionStateAutosaveInterval(raw string) (time.Duration, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return 0, errors.New("auto-save interval must not be empty")
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds <= 0 {
+			return 0, errors.New("auto-save interval must be positive")
+		}
+		return time.Duration(seconds) * time.Second, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("auto-save interval %q must be a positive duration like 30s or 2m", raw)
+	}
+	return duration, nil
+}
+
+func formatSessionStateAutosaveInterval(value time.Duration) string {
+	if value <= 0 {
+		value = defaultSessionStateAutosaveInterval
+	}
+	if value%time.Minute == 0 {
+		return fmt.Sprintf("%dm", int(value/time.Minute))
+	}
+	if value%time.Second == 0 {
+		return fmt.Sprintf("%ds", int(value/time.Second))
+	}
+	return value.String()
 }
 
 func (c *settingsCommand) setSessionStateToggle(value config.SessionStateToggle, file func(config.Paths) string, messageLabel string) error {
@@ -1149,12 +1242,6 @@ func sessionStateAutosaveEnabled(homeDir func() (string, error), lookupEnv func(
 	})
 }
 
-func sessionStateAutorestoreEnabled(homeDir func() (string, error), lookupEnv func(string) string) bool {
-	return sessionStateToggleEnabledDefault(homeDir, lookupEnv, sessionStateAutorestoreEnv, config.SessionStateToggleOn, func(paths config.Paths) string {
-		return paths.SessionStateAutorestoreFile()
-	})
-}
-
 func sidebarStartupPickerEnabled(homeDir func() (string, error), lookupEnv func(string) string) bool {
 	return sessionStateToggleFileStateDefault(homeDir, lookupEnv, config.SessionStateToggleOff, func(paths config.Paths) string {
 		return paths.SidebarStartupPickerFile()
@@ -1185,7 +1272,7 @@ func sessionStateToggleEnabledDefault(homeDir func() (string, error), lookupEnv 
 
 const (
 	settingsSessionStateAutosaveDetail        = settingsActionPrefixSessionState + "view-autosave"
-	settingsSessionStateStartupPickerDetail   = settingsActionPrefixSessionState + "view-startup-picker"
+	settingsSessionStateAutosaveIntervalSet   = settingsActionPrefixSessionState + "autosave-interval-set"
 	settingsProjectSessionStateAutosaveDetail = settingsActionPrefixSessionState + "project-view-autosave"
 	settingsProjectSessionStateActionsDetail  = settingsActionPrefixSessionState + "project-view-actions"
 	settingsProjectSessionStateSaveLatest     = settingsActionPrefixSessionState + "project-save-latest"

@@ -1639,9 +1639,8 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 		"Auto-save",
 		"off",
 		sessionStateAutosaveEnv + " env",
-		"Startup picker",
-		"on",
-		"default",
+		"interval",
+		"1m",
 		"Storage",
 		"latest snapshot store",
 		"Retention",
@@ -1658,7 +1657,6 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 	}
 	for _, want := range []string{
 		settingsSessionStateAutosaveDetail,
-		settingsSessionStateStartupPickerDetail,
 	} {
 		if !hasEntryValue(entries, want) {
 			t.Fatalf("session state entries = %#v, want %q", entries, want)
@@ -1944,8 +1942,8 @@ func TestSettingsSessionStateActionsPersistTogglesAndDeleteSnapshot(t *testing.T
 	if err := cmd.executeSessionStateAction("autosave:off", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("autosave off error = %v", err)
 	}
-	if err := cmd.executeSessionStateAction("autorestore:off", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("autorestore off error = %v", err)
+	if err := cmd.executeSessionStateAction("autosave-interval:90s", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("autosave interval error = %v", err)
 	}
 	paths, err := config.Homes{HomeDir: home, StateHome: xdgState}.Paths()
 	if err != nil {
@@ -1954,8 +1952,8 @@ func TestSettingsSessionStateActionsPersistTogglesAndDeleteSnapshot(t *testing.T
 	if got, err := config.LoadSessionStateToggleFile(paths.SessionStateAutosaveFile()); err != nil || got != config.SessionStateToggleOff {
 		t.Fatalf("autosave file = %q, %v; want off, nil", got, err)
 	}
-	if got, err := config.LoadSessionStateToggleFile(paths.SessionStateAutorestoreFile()); err != nil || got != config.SessionStateToggleOff {
-		t.Fatalf("autorestore file = %q, %v; want off, nil", got, err)
+	if got, err := config.LoadSessionStateDurationFileDefault(paths.SessionStateAutosaveIntervalFile(), time.Minute); err != nil || got != 90*time.Second {
+		t.Fatalf("autosave interval file = %s, %v; want 90s, nil", got, err)
 	}
 
 	if err := cmd.executeSessionStateAction("delete", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -2069,24 +2067,32 @@ func TestSettingsSessionStateDeleteConfirmedRemovesSnapshot(t *testing.T) {
 			if hasEntryValue(options.Entries, settingsSessionStateDelete) {
 				t.Fatalf("session state entries = %#v, want no direct delete action", options.Entries)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateStartupPickerDetail}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateAutosaveDetail}, nil
 		case 2:
 			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
 				t.Fatalf("detail UI = %q, want %q", got, want)
 			}
-			if !hasEntryValue(options.Entries, settingsActionPrefixSessionState+"autorestore:off") {
-				t.Fatalf("session state detail entries = %#v, want startup picker mutation row", options.Entries)
+			if !hasEntryValue(options.Entries, settingsSessionStateAutosaveIntervalSet) {
+				t.Fatalf("session state detail entries = %#v, want autosave interval row", options.Entries)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSessionState + "autorestore:off"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateAutosaveIntervalSet}, nil
 		case 3:
+			if got, want := options.UI, "settings-sessionstate-autosave-interval"; got != want {
+				t.Fatalf("interval UI = %q, want %q", got, want)
+			}
+			if !options.AcceptQuery {
+				t.Fatalf("interval picker AcceptQuery = false, want true")
+			}
+			return intpickercompat.Result{Key: "enter", Query: "2m"}, nil
+		case 4:
 			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
 				t.Fatalf("detail UI after apply = %q, want %q", got, want)
 			}
-			if !hasEntryLabelContaining(options.Entries, "off") {
-				t.Fatalf("session state detail entries = %#v, want applied off state", options.Entries)
+			if !hasEntryLabelContaining(options.Entries, "2m") {
+				t.Fatalf("session state detail entries = %#v, want applied 2m interval", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 4:
+		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		default:
 			t.Fatalf("unexpected picker call %d", calls)
@@ -2115,11 +2121,11 @@ func TestSettingsSessionStateDeleteConfirmedRemovesSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Paths() error = %v", err)
 	}
-	if got, err := config.LoadSessionStateToggleFile(paths.SessionStateAutorestoreFile()); err != nil || got != config.SessionStateToggleOff {
-		t.Fatalf("autorestore file = %q, %v; want off, nil", got, err)
+	if got, err := config.LoadSessionStateDurationFileDefault(paths.SessionStateAutosaveIntervalFile(), time.Minute); err != nil || got != 2*time.Minute {
+		t.Fatalf("autosave interval file = %s, %v; want 2m, nil", got, err)
 	}
 	if _, err := store.Load("workspace"); err != nil {
-		t.Fatalf("Load() after startup picker detail change error = %v, want snapshot preserved", err)
+		t.Fatalf("Load() after autosave interval detail change error = %v, want snapshot preserved", err)
 	}
 }
 

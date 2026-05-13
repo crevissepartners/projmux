@@ -165,7 +165,8 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 		return nil
 	}
 	if !*force {
-		ok, err := c.sessionStateAutosaveDue(ctx, sessionName, now)
+		interval := (&settingsCommand{homeDir: c.homeDir, lookupEnv: c.lookupEnv}).currentSessionStateAutosaveInterval().Duration
+		ok, err := c.sessionStateAutosaveDue(ctx, sessionName, now, interval)
 		if err != nil || !ok {
 			return c.finishAutosaveSessionState(err, *quiet, stderr)
 		}
@@ -232,7 +233,7 @@ func (c *tmuxCommand) finishAutosaveSessionState(err error, quiet bool, stderr i
 	return err
 }
 
-func (c *tmuxCommand) sessionStateAutosaveDue(ctx context.Context, sessionName string, now time.Time) (bool, error) {
+func (c *tmuxCommand) sessionStateAutosaveDue(ctx context.Context, sessionName string, now time.Time, interval time.Duration) (bool, error) {
 	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "#{"+sessionStateAutosaveOption+"}")
 	if err != nil {
 		return false, fmt.Errorf("read sessionstate autosave gate: %w", err)
@@ -241,7 +242,10 @@ func (c *tmuxCommand) sessionStateAutosaveDue(ctx context.Context, sessionName s
 	if last <= 0 {
 		return true, nil
 	}
-	return now.Sub(time.Unix(int64(last), 0)) >= defaultSessionStateAutosaveInterval, nil
+	if interval <= 0 {
+		interval = defaultSessionStateAutosaveInterval
+	}
+	return now.Sub(time.Unix(int64(last), 0)) >= interval, nil
 }
 
 func (c *tmuxCommand) currentTmuxSessionName(ctx context.Context) (string, error) {

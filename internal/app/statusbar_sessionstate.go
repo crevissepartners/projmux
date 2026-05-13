@@ -17,14 +17,13 @@ import (
 )
 
 type statusbarSessionStateView struct {
-	Session     string
-	Source      string
-	Autosave    sessionStateEffectiveToggle
-	Autorestore sessionStateEffectiveToggle
-	Snapshot    sessionstate.Snapshot
-	SessionErr  error
-	StoreErr    error
-	LoadErr     error
+	Session    string
+	Source     string
+	Autosave   sessionStateEffectiveToggle
+	Snapshot   sessionstate.Snapshot
+	SessionErr error
+	StoreErr   error
+	LoadErr    error
 }
 
 type statusbarSessionStatePopupView struct {
@@ -65,8 +64,7 @@ func (c *statusbarCommand) handleSessionState(opts statusbarClickOptions, _ io.W
 
 func (c *statusbarCommand) loadSessionStateView(ctx context.Context) statusbarSessionStateView {
 	state := statusbarSessionStateView{
-		Autosave:    sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
-		Autorestore: sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutorestoreEnv, config.SessionStateToggleOn, func(paths config.Paths) string { return paths.SessionStateAutorestoreFile() }),
+		Autosave: sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
 	}
 	sessionName, err := c.currentStatusbarSessionName(ctx)
 	if err != nil {
@@ -170,7 +168,6 @@ func statusbarSessionStatePopupLines(state statusbarSessionStateView, now time.T
 	lines = append(lines, statusbarFieldLines("session", session, cols)...)
 	lines = append(lines, statusbarFieldLines("source", statusbarSessionStateSourceText(state), cols)...)
 	lines = append(lines, statusbarFieldLines("auto-save", statusbarSessionStateToggleText(state.Autosave), cols)...)
-	lines = append(lines, statusbarFieldLines("startup picker", statusbarSessionStateToggleText(state.Autorestore), cols)...)
 
 	switch {
 	case state.SessionErr != nil:

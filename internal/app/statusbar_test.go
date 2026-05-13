@@ -164,17 +164,16 @@ func TestStatusbarSessionStatePopupShowsMissingSnapshot(t *testing.T) {
 	t.Parallel()
 
 	state := statusbarSessionStateView{
-		Session:     "workspace",
-		Autosave:    sessionStateEffectiveToggle{Mode: "on", Source: "default"},
-		Autorestore: sessionStateEffectiveToggle{Mode: "off", Source: "saved"},
-		LoadErr:     sessionstate.ErrNotFound,
+		Session:  "workspace",
+		Autosave: sessionStateEffectiveToggle{Mode: "on", Source: "default"},
+		LoadErr:  sessionstate.ErrNotFound,
 	}
 	popup := statusbarSessionStatePopup(state, time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC), "/usr/local/bin/projmux")
 	if !strings.Contains(popup.Command, "snapshot") || !strings.Contains(popup.Command, "missing") {
 		t.Fatalf("popup missing snapshot status: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, "off (saved)") {
-		t.Fatalf("popup missing effective startup picker state: %q", popup.Command)
+	if strings.Contains(popup.Command, "startup picker") {
+		t.Fatalf("popup should not include removed startup picker state: %q", popup.Command)
 	}
 	if strings.Contains(popup.Command, projmuxpicker.CurrentStart) {
 		t.Fatalf("session state popup command must not contain picker active-row ANSI: %q", popup.Command)
