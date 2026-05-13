@@ -842,10 +842,14 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	if !hasEntryValue(labsOptions.Entries, settingsLabsProjectHooks) {
 		t.Fatalf("labs settings entries = %#v, want project hooks overview row", labsOptions.Entries)
 	}
-	if !hasEntryLabelContaining(labsOptions.Entries, "Sidebar startup picker off") ||
-		!hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:off") ||
-		!hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:on") {
-		t.Fatalf("labs settings entries = %#v, want sidebar startup picker default off toggle", labsOptions.Entries)
+	if !hasEntryLabelContaining(labsOptions.Entries, "Sidebar startup picker") ||
+		!hasEntryLabelContaining(labsOptions.Entries, "off") ||
+		!hasEntryValue(labsOptions.Entries, settingsLabsSidebarStartupPicker) {
+		t.Fatalf("labs settings entries = %#v, want sidebar startup picker overview row", labsOptions.Entries)
+	}
+	if hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:off") ||
+		hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:on") {
+		t.Fatalf("labs settings entries = %#v, want no direct sidebar startup picker mutation rows", labsOptions.Entries)
 	}
 	if hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOn)) ||
 		hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
@@ -1653,13 +1657,21 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		settingsSessionStateAutosaveDetail,
+		settingsSessionStateStartupPickerDetail,
+	} {
+		if !hasEntryValue(entries, want) {
+			t.Fatalf("session state entries = %#v, want %q", entries, want)
+		}
+	}
+	for _, absent := range []string{
 		settingsActionPrefixSessionState + "autosave:on",
 		settingsActionPrefixSessionState + "autosave:off",
 		settingsActionPrefixSessionState + "autorestore:on",
 		settingsActionPrefixSessionState + "autorestore:off",
 	} {
-		if !hasEntryValue(entries, want) {
-			t.Fatalf("session state entries = %#v, want %q", entries, want)
+		if hasEntryValue(entries, absent) {
+			t.Fatalf("session state entries = %#v, want no direct mutation row %q", entries, absent)
 		}
 	}
 }
@@ -1741,12 +1753,8 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 		"off",
 		"global default",
 		"Global auto-save",
-		"Save latest snapshot",
-		"capture live project session as latest",
-		"Save named snapshot",
-		"Preview restore",
-		"dry-run only",
-		"Delete snapshot",
+		"Snapshot actions",
+		"preview/delete available",
 	} {
 		if !hasEntryLabelContaining(options.Entries, want) {
 			t.Fatalf("project session state entries = %#v, want label containing %q", options.Entries, want)
@@ -1760,9 +1768,14 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 	if hasEntryLabelContaining(options.Entries, "live-session") {
 		t.Fatalf("project session state entries = %#v, want derived identity instead of live tmux session", options.Entries)
 	}
-	for _, want := range []string{settingsProjectSessionStateSaveLatest, settingsProjectSessionStateSaveNamed, settingsProjectSessionStatePreview, settingsProjectSessionStateDelete} {
+	for _, want := range []string{settingsProjectSessionStateAutosaveDetail, settingsProjectSessionStateActionsDetail} {
 		if !hasEntryValue(options.Entries, want) {
 			t.Fatalf("project session state entries = %#v, want project action %q", options.Entries, want)
+		}
+	}
+	for _, absent := range []string{settingsProjectSessionStateSaveLatest, settingsProjectSessionStateSaveNamed, settingsProjectSessionStatePreview, settingsProjectSessionStateDelete} {
+		if hasEntryValue(options.Entries, absent) {
+			t.Fatalf("project session state entries = %#v, want no direct mutation action %q", options.Entries, absent)
 		}
 	}
 }
@@ -1863,7 +1876,7 @@ func TestSettingsProjectSessionStateShowsUnavailableMissingAndInvalidStates(t *t
 	if err != nil {
 		t.Fatalf("sectionOptions(missing) error = %v", err)
 	}
-	for _, want := range []string{"Project auto-save", "inherit", "Effective auto-save", "off", "Save latest snapshot", "Save named snapshot", "unavailable - live project session not found", "Preview restore", "unavailable without a valid snapshot", "Delete snapshot"} {
+	for _, want := range []string{"Project auto-save", "inherit", "Effective auto-save", "off", "Snapshot actions", "save unavailable: live project session not found", "snapshot missing"} {
 		if !hasEntryLabelContaining(missingOptions.Entries, want) {
 			t.Fatalf("missing snapshot entries = %#v, want %q", missingOptions.Entries, want)
 		}
@@ -1887,8 +1900,10 @@ func TestSettingsProjectSessionStateShowsUnavailableMissingAndInvalidStates(t *t
 	if err != nil {
 		t.Fatalf("sectionOptions(invalid) error = %v", err)
 	}
-	if hasEntryLabelContaining(invalidOptions.Entries, "Snapshot") || hasEntryLabelContaining(invalidOptions.Entries, "invalid") {
-		t.Fatalf("invalid snapshot entries = %#v, want no primary snapshot state in project settings", invalidOptions.Entries)
+	for _, absent := range []string{"Window", "Pane", "Save latest snapshot", "Delete snapshot"} {
+		if hasEntryLabelContaining(invalidOptions.Entries, absent) {
+			t.Fatalf("invalid snapshot entries = %#v, want no primary snapshot/action label %q", invalidOptions.Entries, absent)
+		}
 	}
 }
 
@@ -1980,12 +1995,18 @@ func TestSettingsSessionStateDeleteRequiresConfirmation(t *testing.T) {
 			if got, want := options.UI, "settings-sessionstate"; got != want {
 				t.Fatalf("session state UI = %q, want %q", got, want)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateDelete}, nil
-		case 2:
-			if got, want := options.UI, "settings-sessionstate-delete-confirm"; got != want {
-				t.Fatalf("confirm UI = %q, want %q", got, want)
+			if hasEntryValue(options.Entries, settingsSessionStateDelete) {
+				t.Fatalf("session state entries = %#v, want no direct delete action", options.Entries)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateConfirmNo}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateAutosaveDetail}, nil
+		case 2:
+			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
+				t.Fatalf("detail UI = %q, want %q", got, want)
+			}
+			if !hasEntryValue(options.Entries, settingsActionPrefixSessionState+"autosave:off") {
+				t.Fatalf("session state detail entries = %#v, want autosave mutation row", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		default:
@@ -2012,7 +2033,7 @@ func TestSettingsSessionStateDeleteRequiresConfirmation(t *testing.T) {
 		t.Fatalf("runSessionStateSection() error = %v", err)
 	}
 	if _, err := store.Load("workspace"); err != nil {
-		t.Fatalf("Load() after cancelled delete error = %v, want snapshot preserved", err)
+		t.Fatalf("Load() after view-first navigation error = %v, want snapshot preserved", err)
 	}
 }
 
@@ -2042,16 +2063,30 @@ func TestSettingsSessionStateDeleteConfirmedRemovesSnapshot(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateDelete}, nil
-		case 2:
-			if got, want := options.UI, "settings-sessionstate-delete-confirm"; got != want {
-				t.Fatalf("confirm UI = %q, want %q", got, want)
+			if got, want := options.UI, "settings-sessionstate"; got != want {
+				t.Fatalf("session state UI = %q, want %q", got, want)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateConfirmYes}, nil
-		case 3:
 			if hasEntryValue(options.Entries, settingsSessionStateDelete) {
-				t.Fatalf("session state entries = %#v, want delete disabled after confirmed delete", options.Entries)
+				t.Fatalf("session state entries = %#v, want no direct delete action", options.Entries)
 			}
+			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateStartupPickerDetail}, nil
+		case 2:
+			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
+				t.Fatalf("detail UI = %q, want %q", got, want)
+			}
+			if !hasEntryValue(options.Entries, settingsActionPrefixSessionState+"autorestore:off") {
+				t.Fatalf("session state detail entries = %#v, want startup picker mutation row", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSessionState + "autorestore:off"}, nil
+		case 3:
+			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
+				t.Fatalf("detail UI after apply = %q, want %q", got, want)
+			}
+			if !hasEntryLabelContaining(options.Entries, "off") {
+				t.Fatalf("session state detail entries = %#v, want applied off state", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		default:
 			t.Fatalf("unexpected picker call %d", calls)
@@ -2076,8 +2111,15 @@ func TestSettingsSessionStateDeleteConfirmedRemovesSnapshot(t *testing.T) {
 	if err := cmd.runSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runSessionStateSection() error = %v", err)
 	}
-	if _, err := store.Load("workspace"); !errors.Is(err, sessionstate.ErrNotFound) {
-		t.Fatalf("Load() after confirmed delete error = %v, want %v", err, sessionstate.ErrNotFound)
+	paths, err := config.Homes{HomeDir: home, StateHome: xdgState}.Paths()
+	if err != nil {
+		t.Fatalf("Paths() error = %v", err)
+	}
+	if got, err := config.LoadSessionStateToggleFile(paths.SessionStateAutorestoreFile()); err != nil || got != config.SessionStateToggleOff {
+		t.Fatalf("autorestore file = %q, %v; want off, nil", got, err)
+	}
+	if _, err := store.Load("workspace"); err != nil {
+		t.Fatalf("Load() after startup picker detail change error = %v, want snapshot preserved", err)
 	}
 }
 
@@ -2275,13 +2317,23 @@ func TestSettingsProjectSessionStatePreviewAndDeleteAreProjectScopedAndConfirmed
 			if got, want := options.UI, "settings-project-sessionstate"; got != want {
 				t.Fatalf("project session state UI = %q, want %q", got, want)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateDelete}, nil
+			if hasEntryValue(options.Entries, settingsProjectSessionStateDelete) {
+				t.Fatalf("project session state entries = %#v, want no direct delete action", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateActionsDetail}, nil
 		case 2:
+			if got, want := options.UI, "settings-project-sessionstate-actions"; got != want {
+				t.Fatalf("project actions UI = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateDelete}, nil
+		case 3:
 			if got, want := options.UI, "settings-project-sessionstate-delete-confirm"; got != want {
 				t.Fatalf("confirm UI = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateConfirmNo}, nil
-		case 3:
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		default:
 			t.Fatalf("unexpected picker call %d", calls)
@@ -2300,10 +2352,14 @@ func TestSettingsProjectSessionStatePreviewAndDeleteAreProjectScopedAndConfirmed
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateDelete}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateActionsDetail}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateConfirmYes}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateDelete}, nil
 		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateConfirmYes}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		default:
 			t.Fatalf("unexpected picker call %d", calls)

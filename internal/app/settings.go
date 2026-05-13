@@ -2441,8 +2441,8 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 			}
 		case action == settingsLabsProjectHooks:
 			return c.runLabsProjectHooksSection(stdout, stderr)
-		case strings.HasPrefix(action, settingsActionPrefixSessionState):
-			if err := c.execute(action, stdout, stderr); err != nil {
+		case action == settingsLabsSidebarStartupPicker:
+			if err := c.runLabsSidebarStartupPickerSection(stdout, stderr); err != nil {
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixHooks):
@@ -2451,6 +2451,39 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 			}
 		default:
 			return fmt.Errorf("unknown labs settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runLabsSidebarStartupPickerSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-labs-sidebar-startup-picker",
+			Entries:    c.labsSidebarStartupPickerEntries(),
+			Title:      "Labs - Sidebar startup picker",
+			Prompt:     "Settings > Labs > Sidebar startup picker > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixSessionState):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown sidebar startup picker action: %s", action)
 		}
 	}
 }
@@ -2911,13 +2944,36 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	current, source := c.currentPickerBackend()
 	hookMode, hookSource := c.currentProjectHooksMode()
 	sidebarStartup := c.currentSidebarStartupPicker()
-	entries := make([]intpickercompat.Entry, 0, 6)
+	entries := make([]intpickercompat.Entry, 0, 4)
 	entries = append(entries, settingsBackEntry())
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Project Hooks", string(hookMode)+" - "+hookSource),
 		Value:     settingsLabsProjectHooks,
 		SearchKey: "Project Hooks trusted local hooks on off",
 	})
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Sidebar startup picker", string(sidebarStartup.Mode)+" - "+sidebarStartup.Source),
+		Value:     settingsLabsSidebarStartupPicker,
+		SearchKey: "Sidebar startup picker Start project empty session on off",
+	})
+	if source != "" {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Picker source", string(current), source),
+			Value: settingsNoopValue,
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) labsSidebarStartupPickerEntries() []intpickercompat.Entry {
+	sidebarStartup := c.currentSidebarStartupPicker()
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Sidebar startup picker", string(sidebarStartup.Mode), sidebarStartup.Source),
+			Value: settingsNoopValue,
+		},
+	}
 	for _, item := range []struct {
 		mode config.SessionStateToggle
 		desc string
@@ -2935,12 +2991,6 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 			Label:     settingsLabel(glyph, color, "Sidebar startup picker "+string(item.mode), item.desc+" - "+sidebarStartup.Source),
 			Value:     settingsActionPrefixSessionState + "sidebar-startup:" + string(item.mode),
 			SearchKey: "Sidebar startup picker Start project empty session on off",
-		})
-	}
-	if source != "" {
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Picker source", string(current), source),
-			Value: settingsNoopValue,
 		})
 	}
 	return entries
