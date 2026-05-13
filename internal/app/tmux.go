@@ -1137,8 +1137,8 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decoration config.
 	shell := tmuxConfigQuote(nonEmpty(strings.TrimSpace(defaultShell), fallbackInteractiveShell))
 	shellPaneLabelFormat := "#{?#{||:#{||:#{||:#{==:#{pane_current_command},zsh},#{==:#{pane_current_command},bash}},#{||:#{==:#{pane_current_command},fish},#{==:#{pane_current_command},sh}}},#{||:#{==:#{pane_current_command},nu},#{==:#{pane_current_command},xonsh}}},#{pane_current_command},#{pane_title}}"
 	paneLabelFormat := "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + shellPaneLabelFormat + "}"
-	paneBusyFormat := "#{||:#{==:#{@projmux_attention_state},busy},#{==:#{@projmux_ai_state},thinking}}"
-	paneReplyFormat := "#{||:#{==:#{@projmux_attention_state},reply},#{==:#{@projmux_ai_state},waiting}}"
+	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
+	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
 	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=colour220] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=colour46] ● " + paneLabelFormat + " #[default],#[fg=colour244] " + paneLabelFormat + " #[default]}}"
 	paneBorderFormat := "#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > " + paneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
 	lines := []string{

@@ -858,6 +858,76 @@ func TestAIStatusSetWaitingDoesNotAckWhenNoClientViewingPane(t *testing.T) {
 	}
 }
 
+// Regression for the "stuck green badge" bug: when an AI hook (Claude Code /
+// Codex native hook) fires with Force=true and the pane is already visible to
+// some client, Force should only force the notify queue push — it must NOT
+// set @projmux_attention_state=reply, otherwise focus can no longer clear the
+// badge (focus clears attention_state, but used to leave ai_state=waiting and
+// the badge formula ORed both).
+func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: 10 * time.Minute}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		if reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}) {
+			return []byte("%21\n"), nil
+		}
+		if len(args) >= 5 && args[0] == "display-message" && args[1] == "-p" && args[2] == "-t" && args[3] == "%21" {
+			switch args[4] {
+			case "#{@projmux_ai_agent}":
+				return []byte("claude\n"), nil
+			case "#S":
+				return []byte("main\n"), nil
+			case "#{window_id}":
+				return []byte("@4\n"), nil
+			case "#{pane_id}":
+				return []byte("%21\n"), nil
+			case "#{socket_path}":
+				return []byte("/tmp/tmux/default\n"), nil
+			}
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.applyAIStatusWithNotify("waiting", "%21", attentionNotifyInput{
+		ID:    "ai:test:%21",
+		Text:  "claude: reply ready · forced hook",
+		Force: true,
+	}); err != nil {
+		t.Fatalf("applyAIStatusWithNotify error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	// Badge writes must look like the visible/auto-ack path: ai_state=waiting,
+	// then clear attention_state, set attention_ack=1, clear focus_armed.
+	wantPrefix := []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%21", "@projmux_attention_ack"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%21", "@projmux_attention_state"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", "@projmux_attention_ack", "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%21", "@projmux_attention_focus_armed"}},
+	}
+	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
+	}
+	// attention_state must never be set to "reply" on the visible path,
+	// regardless of Force.
+	for _, got := range commands {
+		if got.name == "tmux" && reflect.DeepEqual(got.args, []string{"set-option", "-p", "-t", "%21", "@projmux_attention_state", "reply"}) {
+			t.Fatalf("commands = %#v, did not expect attention_state=reply when pane visible (Force=true must not touch the badge)", commands)
+		}
+	}
+	// Force still ensures the notify queue gets a push entry even though the
+	// pane is visible.
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1 (Force=true forces notify even when visible)", len(store.pushed))
+	}
+}
+
 func TestAINotifySkipsRecentDuplicateButRefreshesRecord(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
