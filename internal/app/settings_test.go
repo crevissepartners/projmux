@@ -3834,22 +3834,19 @@ func testSettingsSwitchCommand(t *testing.T, store *stubSwitchPinStore) *switchC
 func testSettingsSwitchCommandWithHome(t *testing.T, home string, store *stubSwitchPinStore) *switchCommand {
 	t.Helper()
 
+	runner, native := scriptedPicker(t, nil)
 	return &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{filepath.Join(home, "source", "repos", "app")}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return store, nil },
-		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			return intpickercompat.Result{}, nil
-		})),
-		sessions:   &capturingSwitchSessionExecutor{},
-		identity:   stubSwitchIdentityResolver{name: "app"},
-		validate:   func(string) error { return nil },
-		homeDir:    func() (string, error) { return home, nil },
-		workingDir: func() (string, error) { return filepath.Join(home, "source", "repos", "app"), nil },
+		pinStore:     func() (switchPinStore, error) { return store, nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     &capturingSwitchSessionExecutor{},
+		identity:     stubSwitchIdentityResolver{name: "app"},
+		validate:     func(string) error { return nil },
+		homeDir:      func() (string, error) { return home, nil },
+		workingDir:   func() (string, error) { return filepath.Join(home, "source", "repos", "app"), nil },
 		lookupEnv: func(name string) string {
 			if name == projdirEnvVar {
 				return filepath.Join(home, "source", "repos")
