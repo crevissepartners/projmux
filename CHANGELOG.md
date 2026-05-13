@@ -1,5 +1,89 @@
 # Changelog
 
+## [0.6.0](https://github.com/crevissepartners/projmux/compare/v0.5.3...v0.6.0) (2026-05-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* Remove Codex legacy notify ingest/integration paths and the pane-startup lifecycle hook shim. Use Codex hooks and [startup] run instead.
+
+### Features
+
+* add manual session-state actions ([cc45d83](https://github.com/crevissepartners/projmux/commit/cc45d831734ff099dab4f7c543367d9ab2bcef1e))
+* **ai:** add tmux bell fallback ([#219](https://github.com/crevissepartners/projmux/issues/219)) ([86e96aa](https://github.com/crevissepartners/projmux/commit/86e96aae952540aceeff2b7893b64f4b981546ca))
+* **ai:** catalog hook notification bodies ([#217](https://github.com/crevissepartners/projmux/issues/217)) ([fa9fedb](https://github.com/crevissepartners/projmux/commit/fa9fedb06241629b66a1787414fe15109016bfe1))
+* **ai:** handle Claude extra hook events ([#214](https://github.com/crevissepartners/projmux/issues/214)) ([4e9e047](https://github.com/crevissepartners/projmux/commit/4e9e047f7b4f1e8dde50def9cb66e07f9b162f6a))
+* **ai:** ingest Claude hook events ([#211](https://github.com/crevissepartners/projmux/issues/211)) ([ba26ca0](https://github.com/crevissepartners/projmux/commit/ba26ca0252385c2405dd5350b0e1aefc1d7c4f85))
+* **ai:** ingest Codex notify events ([bc9d94a](https://github.com/crevissepartners/projmux/commit/bc9d94af30cdfab89ad48e197753ce98a19bdb48))
+* **ai:** integrate Claude hooks ([#212](https://github.com/crevissepartners/projmux/issues/212)) ([277b9d0](https://github.com/crevissepartners/projmux/commit/277b9d041c6a17c0d6c0f1a64483e5e82023c7d0))
+* **ai:** integrate Codex hooks mode ([#220](https://github.com/crevissepartners/projmux/issues/220)) ([b6c9dcc](https://github.com/crevissepartners/projmux/commit/b6c9dcccb6591af5be2ed3f007b4ae252f60f807))
+* **ai:** integrate Codex notify ([d55ec66](https://github.com/crevissepartners/projmux/commit/d55ec66f53db7df012500da8c91023e32c47ff0c))
+* copy notification source install commands ([#241](https://github.com/crevissepartners/projmux/issues/241)) ([28d30bc](https://github.com/crevissepartners/projmux/commit/28d30bc2631fbb033a1753c820c59b8bd0b32a04))
+* **doctor:** add AI notify integration diagnostics ([#222](https://github.com/crevissepartners/projmux/issues/222)) ([a5c7041](https://github.com/crevissepartners/projmux/commit/a5c70417e7a2369419d1aa79d4917ecf1fe796ae))
+* **hooks:** add send-noti notification hook ([#190](https://github.com/crevissepartners/projmux/issues/190)) ([fbf1034](https://github.com/crevissepartners/projmux/commit/fbf1034e138a05085bed9e649401f688b6fe0498))
+* **layout:** apply presets to live sessions ([#213](https://github.com/crevissepartners/projmux/issues/213)) ([75fbdc9](https://github.com/crevissepartners/projmux/commit/75fbdc92246f907b5a527454dcd000dd8e8fb32d))
+* **layout:** honor fresh startup presets ([#218](https://github.com/crevissepartners/projmux/issues/218)) ([e454111](https://github.com/crevissepartners/projmux/commit/e454111e4acb4a8fb42b392869363c70f825d7ff))
+* **layout:** list project presets ([6b854db](https://github.com/crevissepartners/projmux/commit/6b854db0de25b83d168fc2242d021d60c6dda666))
+* **layout:** preview preset apply ([#210](https://github.com/crevissepartners/projmux/issues/210)) ([684099b](https://github.com/crevissepartners/projmux/commit/684099b606f4eb1c42301349b4f40e879524a5a7))
+* **layout:** save project presets ([7a0a653](https://github.com/crevissepartners/projmux/commit/7a0a653669c4f8cab7d297fcbe4c0574087e760a))
+* remove compatibility shims for 0.6.0 ([#253](https://github.com/crevissepartners/projmux/issues/253)) ([ca6691c](https://github.com/crevissepartners/projmux/commit/ca6691cf3d484443a701ee609312ee5fa76f70f4))
+* **session-state:** capture hook resume metadata ([#228](https://github.com/crevissepartners/projmux/issues/228)) ([f94abe2](https://github.com/crevissepartners/projmux/commit/f94abe26dc0e7fa4a088166b1553f87256c08b1f))
+* **session-state:** capture pane titles in snapshots ([#226](https://github.com/crevissepartners/projmux/issues/226)) ([66d9824](https://github.com/crevissepartners/projmux/commit/66d9824bbe51e0fe88c8616e38dfde6486a58930))
+* **session-state:** derive Claude resume ids from transcripts ([#230](https://github.com/crevissepartners/projmux/issues/230)) ([2786313](https://github.com/crevissepartners/projmux/commit/2786313f169fdd52ce80e8598b54c7d62dbe3815))
+* **session-state:** derive Codex resume ids from logs ([#231](https://github.com/crevissepartners/projmux/issues/231)) ([741577b](https://github.com/crevissepartners/projmux/commit/741577b4eaa8af464b8776a9167ecb55b6069478))
+* **session-state:** refresh resume metadata before save ([#229](https://github.com/crevissepartners/projmux/issues/229)) ([4dd2101](https://github.com/crevissepartners/projmux/commit/4dd2101a2aa53e1d01061eacf86b000b0e1f3f17))
+* **session-state:** surface resume metadata health ([#233](https://github.com/crevissepartners/projmux/issues/233)) ([0de4f06](https://github.com/crevissepartners/projmux/commit/0de4f06d75ed44e69ae1d37c57894a213ead0245))
+* **sessionstate:** add manual actions ([#202](https://github.com/crevissepartners/projmux/issues/202)) ([cc45d83](https://github.com/crevissepartners/projmux/commit/cc45d831734ff099dab4f7c543367d9ab2bcef1e))
+* **sessionstate:** add status popup actions ([efa3d9a](https://github.com/crevissepartners/projmux/commit/efa3d9af0038b59396c7e65520faaf249b216642))
+* **sessionstate:** auto restore shell sessions ([#201](https://github.com/crevissepartners/projmux/issues/201)) ([857d9e7](https://github.com/crevissepartners/projmux/commit/857d9e7e15aa24c00ae31408db1994bd626ac0a7))
+* **sessionstate:** autosave shell snapshots ([#196](https://github.com/crevissepartners/projmux/issues/196)) ([f444dd5](https://github.com/crevissepartners/projmux/commit/f444dd56769b51451ac3d1813f67ec6fc4cd5e88))
+* **sessionstate:** replay startup recipes ([#195](https://github.com/crevissepartners/projmux/issues/195)) ([835c5ae](https://github.com/crevissepartners/projmux/commit/835c5ae97975fd167a2cb1ad2608e5200365534a))
+* **sessionstate:** resume Codex sessions ([#194](https://github.com/crevissepartners/projmux/issues/194)) ([c157b28](https://github.com/crevissepartners/projmux/commit/c157b2824c5c8c5b79624d7e1904564968269b07))
+* **sessionstate:** show status popup ([#200](https://github.com/crevissepartners/projmux/issues/200)) ([70c239c](https://github.com/crevissepartners/projmux/commit/70c239c5b89123d99af6300f9c0b70b953e73155))
+* **settings:** add project session state view ([#227](https://github.com/crevissepartners/projmux/issues/227)) ([e16190f](https://github.com/crevissepartners/projmux/commit/e16190f9faab5f90d5be354c6b4493a79f3a051d))
+* **settings:** complete roadmap settings UX ([#191](https://github.com/crevissepartners/projmux/issues/191)) ([bc12454](https://github.com/crevissepartners/projmux/commit/bc12454bd22452583efc37c973a5afced24de543))
+* **settings:** expose session state controls ([#198](https://github.com/crevissepartners/projmux/issues/198)) ([7611bce](https://github.com/crevissepartners/projmux/commit/7611bce63c700094b175bed1b898746d5e3b278a))
+* **settings:** show AI notify integration diagnostics ([#223](https://github.com/crevissepartners/projmux/issues/223)) ([736e2ad](https://github.com/crevissepartners/projmux/commit/736e2adf8f3847f07874c80f4e001be04d1817ea))
+* **settings:** simplify keybinding capture ([bc0cd2c](https://github.com/crevissepartners/projmux/commit/bc0cd2c99034b2c079f5d6b231c9edc23665ce3e))
+* **shell:** add startup picker ([#216](https://github.com/crevissepartners/projmux/issues/216)) ([a88d46b](https://github.com/crevissepartners/projmux/commit/a88d46b53b8ce1590f55e9fe6cadea3ac6059f79))
+* **shell:** add startup session selectors ([#215](https://github.com/crevissepartners/projmux/issues/215)) ([0068194](https://github.com/crevissepartners/projmux/commit/006819428d410b5cbf87230d013f7f1047163d74))
+* **shell:** show welcome popup on attach ([#192](https://github.com/crevissepartners/projmux/issues/192)) ([dd81cf4](https://github.com/crevissepartners/projmux/commit/dd81cf4c005692b3e0eee62171ddf09733723eea))
+* **statusbar:** polish display-only popups (any-key close, drop inline title) ([#185](https://github.com/crevissepartners/projmux/issues/185)) ([95f48ec](https://github.com/crevissepartners/projmux/commit/95f48ecca2321b6409d384ba9a24fd29661a3b5e))
+
+
+### Bug Fixes
+
+* ack notify clicks for missing targets ([#197](https://github.com/crevissepartners/projmux/issues/197)) ([c2130ae](https://github.com/crevissepartners/projmux/commit/c2130ae4869b0b6b38aefb45afe7ed153b4a183c))
+* add project session-state policy controls ([#247](https://github.com/crevissepartners/projmux/issues/247)) ([3dab118](https://github.com/crevissepartners/projmux/commit/3dab118d30481a8135cf5e70ac16446e87e2efd3))
+* **ai:** append Codex hooks after config ([a855c03](https://github.com/crevissepartners/projmux/commit/a855c03265647c7599814ab1e0e4f210db75acfb))
+* **ai:** catalog agent hook events ([#238](https://github.com/crevissepartners/projmux/issues/238)) ([4ee7bde](https://github.com/crevissepartners/projmux/commit/4ee7bde4ac008d1e0ca363c0022275d791c691f0))
+* **ai:** make Codex hooks the default integration ([#246](https://github.com/crevissepartners/projmux/issues/246)) ([64dc1cd](https://github.com/crevissepartners/projmux/commit/64dc1cd718b9bd4fc514fe1e0a351453ffb2679b))
+* **ai:** parse tmux escaped bell fields ([#243](https://github.com/crevissepartners/projmux/issues/243)) ([eef4c04](https://github.com/crevissepartners/projmux/commit/eef4c044b653c4737b645c1664b6e130fbd4bfde))
+* **ai:** use Codex inline hook schema ([#232](https://github.com/crevissepartners/projmux/issues/232)) ([3d7d301](https://github.com/crevissepartners/projmux/commit/3d7d301b8264c05974b3357e2dc32d2a620fcb4a))
+* **ai:** use pane id for tmux bell hook ([#245](https://github.com/crevissepartners/projmux/issues/245)) ([83cb426](https://github.com/crevissepartners/projmux/commit/83cb4269ae6cf7511f8ab130fb796bce1260df78))
+* clarify shell startup picker surface ([#239](https://github.com/crevissepartners/projmux/issues/239)) ([305eead](https://github.com/crevissepartners/projmux/commit/305eead29125b164b86795f151e253356939ab43))
+* classify unresolved focus ids as target gone ([#199](https://github.com/crevissepartners/projmux/issues/199)) ([6d4b2f1](https://github.com/crevissepartners/projmux/commit/6d4b2f13aee0ba4194a458598d77c343c37dcd5d))
+* copy notification commands from details ([#244](https://github.com/crevissepartners/projmux/issues/244)) ([ae2ddd8](https://github.com/crevissepartners/projmux/commit/ae2ddd884e6d64c61c0640660146b1f360e62afa))
+* **hooks:** ignore temp root project markers ([#203](https://github.com/crevissepartners/projmux/issues/203)) ([92fa2b1](https://github.com/crevissepartners/projmux/commit/92fa2b1ddee743b89fd5e890d48fe8805a9f5482))
+* move project startup selection into sidebar ([9f8ee19](https://github.com/crevissepartners/projmux/commit/9f8ee19202bb2807b6d220184dfcff2c6e876767))
+* **notify:** route focus to origin client ([#235](https://github.com/crevissepartners/projmux/issues/235)) ([022b058](https://github.com/crevissepartners/projmux/commit/022b05897b530e553be81e7bfaa7f3c60c3be02e))
+* **picker:** reset titlebar frame border styling ([#189](https://github.com/crevissepartners/projmux/issues/189)) ([abe330f](https://github.com/crevissepartners/projmux/commit/abe330f0f45c700ebf8207ca00f9a575b998b6f1))
+* preserve ai topic during hook ingest ([#255](https://github.com/crevissepartners/projmux/issues/255)) ([692592a](https://github.com/crevissepartners/projmux/commit/692592ac5002e5ae77f51239bb3774244723a3df))
+* preserve statusbar popup client ([#252](https://github.com/crevissepartners/projmux/issues/252)) ([71aa6c6](https://github.com/crevissepartners/projmux/commit/71aa6c6e5ddd8396f6fd5662b0799c68983510d1))
+* route project open through startup picker ([#237](https://github.com/crevissepartners/projmux/issues/237)) ([4b194f4](https://github.com/crevissepartners/projmux/commit/4b194f454161523362a52bda426d0197b927fda3))
+* separate settings views from actions ([#248](https://github.com/crevissepartners/projmux/issues/248)) ([946fed9](https://github.com/crevissepartners/projmux/commit/946fed9f7ac6064a66949ff07ee9dcd75b90006c))
+* **session-state:** complete project restore slice ([#234](https://github.com/crevissepartners/projmux/issues/234)) ([031ac30](https://github.com/crevissepartners/projmux/commit/031ac309e29920e0f86687061669fbad5712fc7d))
+* **session-state:** label restore gate as startup picker ([#225](https://github.com/crevissepartners/projmux/issues/225)) ([d214d4d](https://github.com/crevissepartners/projmux/commit/d214d4d01cdc60a450fe69137ae453eb8db69867))
+* **settings:** restore view-first IA ([#193](https://github.com/crevissepartners/projmux/issues/193)) ([01be152](https://github.com/crevissepartners/projmux/commit/01be152e9d99e8886aea78b2b8760895ac07b6c7))
+* **shell:** gate fresh project startup on picker ([#224](https://github.com/crevissepartners/projmux/issues/224)) ([9319508](https://github.com/crevissepartners/projmux/commit/9319508fd7b2f8318ace72160e20354cf6e51034))
+* **shell:** target project session by default ([#221](https://github.com/crevissepartners/projmux/issues/221)) ([abbe86c](https://github.com/crevissepartners/projmux/commit/abbe86c760edb9014b031ac7a54cf5890d4506c5))
+* show sidebar trust as popup ([#251](https://github.com/crevissepartners/projmux/issues/251)) ([91cc8cb](https://github.com/crevissepartners/projmux/commit/91cc8cb6a53ad190c4b3cd926f73092bbdd5baad))
+* show sidebar trust prompt inline ([#250](https://github.com/crevissepartners/projmux/issues/250)) ([0473d15](https://github.com/crevissepartners/projmux/commit/0473d155644658bd9cee2022cc28dab4f35944f0))
+* simplify notification and session state controls ([#249](https://github.com/crevissepartners/projmux/issues/249)) ([d061a2d](https://github.com/crevissepartners/projmux/commit/d061a2d4b13bb1464122249f6205922fd347707f))
+* **statusbar:** wrap display-only popups in native picker frame chrome ([#187](https://github.com/crevissepartners/projmux/issues/187)) ([f1ff4ae](https://github.com/crevissepartners/projmux/commit/f1ff4aef08f7b5bb76766af8986a4868e66c5e1c))
+* **switch:** open empty session when project trust is denied ([#256](https://github.com/crevissepartners/projmux/issues/256)) ([eac8271](https://github.com/crevissepartners/projmux/commit/eac82716b4a8cc8929bd6d72642b92df4a2e58fe))
+* target client when opening sidebar project ([#254](https://github.com/crevissepartners/projmux/issues/254)) ([61e369a](https://github.com/crevissepartners/projmux/commit/61e369a4220795b596b7aa4b40a78c9d496df23b))
+
 ## [0.5.3](https://github.com/crevissepartners/projmux/compare/v0.5.2...v0.5.3) (2026-05-11)
 
 
