@@ -246,27 +246,27 @@ installed, missing, or blocked by an unmanaged `notify = ...` conflict. The
 text and JSON reports include the config path plus install, remove, and
 dry-run commands.
 
-`projmux ai integrate codex` is the opt-in wiring command for Codex legacy
-`notify` mode. It manages only `~/.codex/config.toml` and installs this notify
-command in a projmux-marked block:
+`projmux ai integrate codex --mode legacy-notify` is the compatibility wiring
+command for Codex legacy `notify` mode. It manages only
+`~/.codex/config.toml` and installs this notify command in a projmux-marked
+block:
 
 ```toml
 notify = ["projmux", "ai", "ingest", "codex-notify"]
 ```
 
-The default integration mode remains legacy notify for compatibility. The
-managed block is idempotent and removable with `projmux ai integrate codex
+The managed block is idempotent and removable with `projmux ai integrate codex
 --mode legacy-notify --remove`; `projmux ai integrate codex --remove` removes
-all projmux-managed Codex blocks. `--dry-run` previews the file change without
-writing. If a user-owned `notify = ...` line already exists outside the managed
-block, projmux refuses to replace it automatically because Codex legacy notify
-has a single command slot.
+all projmux-managed Codex blocks. `--mode legacy-notify --dry-run` previews the
+file change without writing. If a user-owned `notify = ...` line already exists
+outside the managed block, projmux refuses to replace it automatically because
+Codex legacy notify has a single command slot.
 
 ## Codex Hooks Engine
 
 `projmux doctor` reports Codex hooks-engine wiring separately from legacy
 notify, including unmanaged hooks/conflict details and the relevant
-`projmux ai integrate codex --mode hooks` commands.
+`projmux ai integrate codex` commands.
 
 `projmux ai ingest codex-hook` is the conservative core ingest path for Codex
 hooks-engine events. It reads a single JSON payload from stdin. The embedded
@@ -290,7 +290,7 @@ Codex hook payload parsing accepts the common fields
 and falls back to treating `session_id` as the thread identity so existing
 `matchAIPane` matching can reuse cached pane metadata.
 
-`projmux ai integrate codex --mode hooks` manages a separate
+`projmux ai integrate codex` manages a separate
 `~/.codex/config.toml` marker block for the hooks engine. If a `[features]`
 table already exists, projmux merges `hooks = true` into that table instead of
 creating a duplicate table. Older projmux-managed `codex_hooks = true` entries

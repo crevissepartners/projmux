@@ -14,6 +14,8 @@ type doctorAINotifyIntegration struct {
 	Status         doctorAINotifyStatus `json:"status"`
 	ConfigPath     string               `json:"config_path,omitempty"`
 	ConflictReason string               `json:"conflict_reason,omitempty"`
+	Guidance       string               `json:"guidance,omitempty"`
+	TestedVersion  string               `json:"tested_version,omitempty"`
 	InstallCommand string               `json:"install_command,omitempty"`
 	RemoveCommand  string               `json:"remove_command,omitempty"`
 	DryRunCommand  string               `json:"dry_run_command,omitempty"`
@@ -33,12 +35,19 @@ func doctorAINotifyDiagnostics(ai *aiCommand) []doctorAINotifyIntegration {
 
 func doctorCodexIntegrationDiagnostic(ai *aiCommand, mode codexIntegrationMode) doctorAINotifyIntegration {
 	base := "projmux ai integrate codex --mode " + string(mode)
+	if mode == codexIntegrationHooks {
+		base = "projmux ai integrate codex"
+	}
 	out := doctorAINotifyIntegration{
 		ID:             "codex-" + string(mode),
 		Name:           "Codex " + doctorCodexModeLabel(mode),
 		InstallCommand: base,
 		RemoveCommand:  base + " --remove",
 		DryRunCommand:  base + " --dry-run",
+	}
+	if mode == codexIntegrationHooks {
+		out.Guidance = "Codex requires reviewing/enabling installed hook commands from /hooks before they run."
+		out.TestedVersion = ai.aiHookObservedVersion(aiHookProviderCodex)
 	}
 
 	removePlan, err := ai.planCodexIntegration(mode, true, false)
@@ -82,6 +91,7 @@ func doctorClaudeIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration 
 	out := doctorAINotifyIntegration{
 		ID:             "claude-hooks",
 		Name:           "Claude Code hooks",
+		TestedVersion:  ai.aiHookObservedVersion(aiHookProviderClaude),
 		InstallCommand: base,
 		RemoveCommand:  base + " --remove",
 		DryRunCommand:  base + " --dry-run",

@@ -1233,15 +1233,18 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			Status:         doctorAINotifyStatusConflict,
 			ConfigPath:     "/home/tester/.codex/config.toml",
 			ConflictReason: "unmanaged notify command",
-			InstallCommand: "projmux ai integrate codex --mode hooks",
-			RemoveCommand:  "projmux ai integrate codex --mode hooks --remove",
-			DryRunCommand:  "projmux ai integrate codex --mode hooks --dry-run",
+			Guidance:       "Codex requires reviewing/enabling installed hook commands from /hooks before they run.",
+			TestedVersion:  "codex-cli 0.130.0",
+			InstallCommand: "projmux ai integrate codex",
+			RemoveCommand:  "projmux ai integrate codex --remove",
+			DryRunCommand:  "projmux ai integrate codex --dry-run",
 		},
 		{
 			ID:             "claude-hooks",
 			Name:           "Claude Code hooks",
 			Status:         doctorAINotifyStatusMissing,
 			ConfigPath:     "/home/tester/.claude/settings.json",
+			TestedVersion:  "Claude Code 2.1.140",
 			InstallCommand: "projmux ai integrate claude",
 			RemoveCommand:  "projmux ai integrate claude --remove",
 			DryRunCommand:  "projmux ai integrate claude --dry-run",
@@ -1334,6 +1337,11 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	if !hasEntryLabelContaining(listOptions.Entries, "unmanaged notify command") {
 		t.Fatalf("delivery sources entries = %#v, want conflict reason", listOptions.Entries)
 	}
+	for _, want := range []string{"tested with codex-cli 0.130.0", "tested with Claude Code 2.1.140"} {
+		if !hasEntryLabelContaining(listOptions.Entries, want) {
+			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
+		}
+	}
 	if got, want := detailOptions.UI, "settings-notifications-delivery-detail"; got != want {
 		t.Fatalf("delivery source detail UI = %q, want %q", got, want)
 	}
@@ -1344,9 +1352,11 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 		"conflict",
 		"/home/tester/.codex/config.toml",
 		"unmanaged notify command",
-		"projmux ai integrate codex --mode hooks",
-		"projmux ai integrate codex --mode hooks --remove",
-		"projmux ai integrate codex --mode hooks --dry-run",
+		"codex-cli 0.130.0",
+		"Codex requires reviewing/enabling installed hook commands from /hooks before they run.",
+		"projmux ai integrate codex",
+		"projmux ai integrate codex --remove",
+		"projmux ai integrate codex --dry-run",
 		"Copy only",
 	} {
 		if !hasEntryLabelContaining(detailOptions.Entries, want) {
@@ -1361,6 +1371,9 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 		if !hasEntryValue(detailOptions.Entries, want) {
 			t.Fatalf("AI notify detail entries = %#v, want command action %q", detailOptions.Entries, want)
 		}
+	}
+	if hasEntryLabelContaining(detailOptions.Entries, "--mode hooks") {
+		t.Fatalf("AI notify detail entries = %#v, want no --mode hooks command", detailOptions.Entries)
 	}
 	for _, entry := range detailOptions.Entries {
 		if entry.Value != settingsBackValue && entry.Value != settingsNoopValue && !strings.HasPrefix(entry.Value, settingsActionPrefixAINotifyCommand) {

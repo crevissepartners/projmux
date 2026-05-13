@@ -1799,6 +1799,9 @@ func (c *settingsCommand) aiNotifyDiagnosticByID(id string) (doctorAINotifyInteg
 func aiNotifyDiagnosticEntry(diag doctorAINotifyIntegration) intpickercompat.Entry {
 	glyph, color := aiNotifyDiagnosticTone(diag.Status)
 	desc := string(diag.Status)
+	if diag.TestedVersion != "" {
+		desc += " - tested with " + diag.TestedVersion
+	}
 	if diag.ConfigPath != "" {
 		desc += " - " + diag.ConfigPath
 	}
@@ -1808,7 +1811,7 @@ func aiNotifyDiagnosticEntry(diag doctorAINotifyIntegration) intpickercompat.Ent
 	return intpickercompat.Entry{
 		Label:     settingsLabel(glyph, color, diag.Name, desc),
 		Value:     settingsActionPrefixAINotifyDiagnostic + diag.ID,
-		SearchKey: strings.Join([]string{diag.Name, string(diag.Status), diag.ConfigPath, diag.ConflictReason, diag.InstallCommand, diag.RemoveCommand, diag.DryRunCommand}, " "),
+		SearchKey: strings.Join([]string{diag.Name, string(diag.Status), diag.TestedVersion, diag.Guidance, diag.ConfigPath, diag.ConflictReason, diag.InstallCommand, diag.RemoveCommand, diag.DryRunCommand}, " "),
 	}
 }
 
@@ -1833,6 +1836,12 @@ func aiNotifyDiagnosticDetailEntries(diag doctorAINotifyIntegration) []intpicker
 	}
 	if diag.ConflictReason != "" {
 		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Conflict", diag.ConflictReason, ""), Value: settingsNoopValue})
+	}
+	if diag.TestedVersion != "" {
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Tested version", diag.TestedVersion, "catalog"), Value: settingsNoopValue})
+	}
+	if diag.Guidance != "" {
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Notice", diag.Guidance, ""), Value: settingsNoopValue})
 	}
 	entries = append(entries,
 		aiNotifyDiagnosticCommandEntry(diag, "install", "Install command", diag.InstallCommand),

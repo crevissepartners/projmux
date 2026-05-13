@@ -473,22 +473,36 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 				}
 				buf.WriteString(r.ConflictReason)
 			}
-			if r.InstallCommand != "" {
+			if r.TestedVersion != "" {
 				if r.ConfigPath != "" || r.ConflictReason != "" {
+					buf.WriteString("; ")
+				}
+				buf.WriteString("tested: ")
+				buf.WriteString(r.TestedVersion)
+			}
+			if r.Guidance != "" {
+				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
+					buf.WriteString("; ")
+				}
+				buf.WriteString("notice: ")
+				buf.WriteString(r.Guidance)
+			}
+			if r.InstallCommand != "" {
+				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("install: ")
 				buf.WriteString(r.InstallCommand)
 			}
 			if r.DryRunCommand != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.InstallCommand != "" {
+				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("dry-run: ")
 				buf.WriteString(r.DryRunCommand)
 			}
 			if r.RemoveCommand != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.InstallCommand != "" || r.DryRunCommand != "" {
+				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" || r.DryRunCommand != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("remove: ")
