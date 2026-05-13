@@ -2,9 +2,13 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -29,6 +33,7 @@ func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
 			}
 			return ""
 		},
+		aiDiagnostics: func() []doctorAINotifyIntegration { return nil },
 	}
 }
 
@@ -228,15 +233,15 @@ func TestDoctorRunJSONOutputIsValid(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	var results []doctorResult
-	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+	var report doctorReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
 	}
-	if len(results) != 4 {
-		t.Fatalf("len(results) = %d, want 4", len(results))
+	if len(report.Dependencies) != 4 {
+		t.Fatalf("len(report.Dependencies) = %d, want 4", len(report.Dependencies))
 	}
 	byName := map[string]doctorResult{}
-	for _, r := range results {
+	for _, r := range report.Dependencies {
 		byName[r.Name] = r
 	}
 	if byName["tmux"].Status != doctorStatusOK {
@@ -250,6 +255,151 @@ func TestDoctorRunJSONOutputIsValid(t *testing.T) {
 	}
 	if byName["kubectl"].Required {
 		t.Fatalf("kubectl Required = true, want false")
+	}
+}
+
+func TestDoctorRunIncludesAINotifyDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "git": true, "stty": true,
+	})
+	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
+		return []doctorAINotifyIntegration{
+			{
+				ID:             "codex-legacy-notify",
+				Name:           "Codex legacy notify",
+				Status:         doctorAINotifyStatusConflict,
+				ConfigPath:     "/home/tester/.codex/config.toml",
+				ConflictReason: "Codex notify is already configured outside a projmux-managed block",
+				InstallCommand: "projmux ai integrate codex --mode legacy-notify",
+				RemoveCommand:  "projmux ai integrate codex --mode legacy-notify --remove",
+				DryRunCommand:  "projmux ai integrate codex --mode legacy-notify --dry-run",
+			},
+		}
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"AI notify integrations",
+		"[conflict]",
+		"Codex legacy notify",
+		"/home/tester/.codex/config.toml",
+		"install: projmux ai integrate codex --mode legacy-notify",
+		"remove: projmux ai integrate codex --mode legacy-notify --remove",
+		"dry-run: projmux ai integrate codex --mode legacy-notify --dry-run",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+}
+
+func TestDoctorJSONIncludesAINotifyDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "git": true, "stty": true,
+	})
+	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
+		return []doctorAINotifyIntegration{
+			{
+				ID:             "tmux-bell",
+				Name:           "tmux bell fallback",
+				Status:         doctorAINotifyStatusMissing,
+				InstallCommand: "projmux ai integrate tmux-bell",
+				RemoveCommand:  "projmux ai integrate tmux-bell --remove",
+				DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
+			},
+		}
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var report doctorReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
+	}
+	if len(report.Dependencies) != 4 {
+		t.Fatalf("len(report.Dependencies) = %d, want 4", len(report.Dependencies))
+	}
+	if len(report.AINotifyIntegrations) != 1 {
+		t.Fatalf("len(report.AINotifyIntegrations) = %d, want 1", len(report.AINotifyIntegrations))
+	}
+	got := report.AINotifyIntegrations[0]
+	if got.ID != "tmux-bell" || got.Status != doctorAINotifyStatusMissing {
+		t.Fatalf("AI diagnostic = %#v, want tmux-bell missing", got)
+	}
+	if got.DryRunCommand != "projmux ai integrate tmux-bell --dry-run" {
+		t.Fatalf("DryRunCommand = %q", got.DryRunCommand)
+	}
+}
+
+func TestDoctorAINotifyDiagnosticsReuseReadOnlyPlans(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	writeCodexTestFile(t, filepath.Join(home, codexConfigRelativePath), codexNotifyBlock()+`
+[features]
+codex_hooks = true
+`)
+	writeCodexTestFile(t, filepath.Join(home, claudeSettingsRelativePath), `{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "projmux ai ingest claude-hook"
+          }
+        ]
+      }
+    ]
+  }
+}
+`)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
+			return []byte("pane-bell-event[1] " + tmuxBellHookCommand + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	diagnostics := doctorAINotifyDiagnostics(cmd)
+	byID := map[string]doctorAINotifyIntegration{}
+	for _, diagnostic := range diagnostics {
+		byID[diagnostic.ID] = diagnostic
+	}
+
+	if byID["codex-legacy-notify"].Status != doctorAINotifyStatusInstalled {
+		t.Fatalf("codex legacy status = %#v, want installed", byID["codex-legacy-notify"])
+	}
+	if byID["codex-hooks"].Status != doctorAINotifyStatusConflict {
+		t.Fatalf("codex hooks status = %#v, want conflict", byID["codex-hooks"])
+	}
+	if byID["claude-hooks"].Status != doctorAINotifyStatusConflict {
+		t.Fatalf("claude hooks status = %#v, want conflict", byID["claude-hooks"])
+	}
+	if byID["tmux-bell"].Status != doctorAINotifyStatusInstalled {
+		t.Fatalf("tmux bell status = %#v, want installed", byID["tmux-bell"])
+	}
+	if byID["codex-legacy-notify"].ConfigPath != filepath.Join(home, codexConfigRelativePath) {
+		t.Fatalf("codex ConfigPath = %q", byID["codex-legacy-notify"].ConfigPath)
+	}
+	if byID["codex-hooks"].DryRunCommand != "projmux ai integrate codex --mode hooks --dry-run" {
+		t.Fatalf("codex hooks DryRunCommand = %q", byID["codex-hooks"].DryRunCommand)
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("commands = %#v, want read-only diagnostics", cmdRecorder(cmd).commands)
 	}
 }
 
@@ -428,6 +578,7 @@ func newStubDoctorCommandWithVersions(host string, present map[string]bool, vers
 			}
 			return name + " 1.2.3"
 		},
+		aiDiagnostics: func() []doctorAINotifyIntegration { return nil },
 	}
 }
 
@@ -587,12 +738,12 @@ func TestDoctorStaleTmuxSerializesToJSON(t *testing.T) {
 	// to stdout before the error return path checks status.
 	_ = cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{})
 
-	var results []doctorResult
-	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+	var report doctorReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
 	}
 	byName := map[string]doctorResult{}
-	for _, r := range results {
+	for _, r := range report.Dependencies {
 		byName[r.Name] = r
 	}
 	tmux, ok := byName["tmux"]

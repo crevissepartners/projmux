@@ -22,6 +22,7 @@ type doctorCommand struct {
 	getenv         func(string) string
 	commandVersion func(name string) string
 	runExternal    func(name string, args []string, stdout, stderr io.Writer) error
+	aiDiagnostics  func() []doctorAINotifyIntegration
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -34,6 +35,9 @@ func newDoctorCommand() *doctorCommand {
 		return defaultCommandVersion(name)
 	}
 	c.runExternal = runDoctorExternal
+	c.aiDiagnostics = func() []doctorAINotifyIntegration {
+		return doctorAINotifyDiagnostics(newAICommand())
+	}
 	return c
 }
 
@@ -89,6 +93,11 @@ type doctorResult struct {
 	Install  string       `json:"install,omitempty"`
 }
 
+type doctorReport struct {
+	Dependencies         []doctorResult              `json:"dependencies"`
+	AINotifyIntegrations []doctorAINotifyIntegration `json:"ai_notify_integrations"`
+}
+
 func doctorDeps() []doctorDep {
 	return []doctorDep{
 		{Name: "tmux", Required: true, Category: doctorCategoryCore, MinVersion: "3.4"},
@@ -125,12 +134,16 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	results := c.evaluate()
-
-	if *jsonOut {
-		return writeDoctorJSON(stdout, results)
+	report := doctorReport{
+		Dependencies:         results,
+		AINotifyIntegrations: c.evaluateAINotifyIntegrations(),
 	}
 
-	if err := writeDoctorText(stdout, results); err != nil {
+	if *jsonOut {
+		return writeDoctorJSON(stdout, report)
+	}
+
+	if err := writeDoctorText(stdout, report); err != nil {
 		return err
 	}
 	if *installMissing {
@@ -146,6 +159,13 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func (c *doctorCommand) evaluateAINotifyIntegrations() []doctorAINotifyIntegration {
+	if c.aiDiagnostics == nil {
+		return nil
+	}
+	return c.aiDiagnostics()
 }
 
 type doctorInstallOptions struct {
@@ -372,13 +392,13 @@ func (c *doctorCommand) evaluateDep(dep doctorDep, host string) doctorResult {
 	return res
 }
 
-func writeDoctorText(w io.Writer, results []doctorResult) error {
+func writeDoctorText(w io.Writer, report doctorReport) error {
 	var buf bytes.Buffer
 	buf.WriteString("projmux doctor\n")
-	buf.WriteString("dependency diagnostics only; use `projmux setup` for terminal key delivery\n")
+	buf.WriteString("dependency and AI notify integration diagnostics; use `projmux setup` for terminal key delivery\n")
 
 	var ok, missing, stale, skipped, hints int
-	for _, r := range results {
+	for _, r := range report.Dependencies {
 		tag := fmt.Sprintf("[%s]", r.Status)
 		// Why: pad tag column to fit "[missing]" so subsequent columns line up.
 		fmt.Fprintf(&buf, "  %-10s%-10s", tag, r.Name)
@@ -428,14 +448,52 @@ func writeDoctorText(w io.Writer, results []doctorResult) error {
 	}
 
 	fmt.Fprintf(&buf, "\n%d ok, %d missing, %d stale, %d skipped, %d hint.\n", ok, missing, stale, skipped, hints)
+	if len(report.AINotifyIntegrations) > 0 {
+		buf.WriteString("\nAI notify integrations\n")
+		for _, r := range report.AINotifyIntegrations {
+			tag := fmt.Sprintf("[%s]", r.Status)
+			fmt.Fprintf(&buf, "  %-11s%-22s", tag, r.Name)
+			if r.ConfigPath != "" {
+				fmt.Fprintf(&buf, "config: %s", r.ConfigPath)
+			}
+			if r.ConflictReason != "" {
+				if r.ConfigPath != "" {
+					buf.WriteString("; ")
+				}
+				buf.WriteString(r.ConflictReason)
+			}
+			if r.InstallCommand != "" {
+				if r.ConfigPath != "" || r.ConflictReason != "" {
+					buf.WriteString("; ")
+				}
+				buf.WriteString("install: ")
+				buf.WriteString(r.InstallCommand)
+			}
+			if r.DryRunCommand != "" {
+				if r.ConfigPath != "" || r.ConflictReason != "" || r.InstallCommand != "" {
+					buf.WriteString("; ")
+				}
+				buf.WriteString("dry-run: ")
+				buf.WriteString(r.DryRunCommand)
+			}
+			if r.RemoveCommand != "" {
+				if r.ConfigPath != "" || r.ConflictReason != "" || r.InstallCommand != "" || r.DryRunCommand != "" {
+					buf.WriteString("; ")
+				}
+				buf.WriteString("remove: ")
+				buf.WriteString(r.RemoveCommand)
+			}
+			buf.WriteString("\n")
+		}
+	}
 	_, err := w.Write(buf.Bytes())
 	return err
 }
 
-func writeDoctorJSON(w io.Writer, results []doctorResult) error {
+func writeDoctorJSON(w io.Writer, report doctorReport) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(results)
+	return enc.Encode(report)
 }
 
 func detectInstallHint(dep doctorDep, host string, lookPath func(string) (string, error)) string {
