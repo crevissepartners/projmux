@@ -92,6 +92,7 @@ type lifecycleSessionEnvProvider interface {
 type Client struct {
 	runner     commandRunner
 	lookupEnv  func(string) string
+	readFile   func(string) ([]byte, error)
 	postCreate postCreateRunner
 	lifecycle  lifecycleHookRunner
 	socket     string
@@ -129,6 +130,18 @@ func WithLifecycleHookRunner(r *hooks.Runner) ClientOption {
 func WithSocketName(socket string) ClientOption {
 	return func(c *Client) {
 		c.socket = strings.TrimSpace(socket)
+	}
+}
+
+// WithFileReader replaces file reads used by the client. It is primarily for
+// tests that need deterministic local file metadata without touching tmux.
+func WithFileReader(readFile func(string) ([]byte, error)) ClientOption {
+	return func(c *Client) {
+		if readFile == nil {
+			c.readFile = os.ReadFile
+			return
+		}
+		c.readFile = readFile
 	}
 }
 
@@ -203,6 +216,7 @@ func NewClient(runner commandRunner, opts ...ClientOption) *Client {
 	c := &Client{
 		runner:    runner,
 		lookupEnv: os.Getenv,
+		readFile:  os.ReadFile,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -214,6 +228,7 @@ func newClientWithEnv(runner commandRunner, lookupEnv func(string) string, opts 
 	c := &Client{
 		runner:    runner,
 		lookupEnv: lookupEnv,
+		readFile:  os.ReadFile,
 	}
 	for _, opt := range opts {
 		opt(c)
