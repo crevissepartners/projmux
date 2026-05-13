@@ -62,17 +62,23 @@ func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error
 		if action == settingsNoopValue {
 			continue
 		}
-		if action == settingsSessionStateDelete {
-			confirmed, err := c.confirmSessionStateDelete()
-			if err != nil {
+		switch action {
+		case settingsSessionStateAutosaveDetail:
+			if err := c.runSessionStateToggleDetail("Session State - Auto-save", "Settings > Session State > Auto-save > ", func() []intpickercompat.Entry {
+				autosave := c.currentSessionStateAutosave()
+				return c.sessionStateToggleDetailEntries("Auto-save", "autosave", autosave.Mode, autosave.Source)
+			}, stdout, stderr); err != nil {
 				return err
 			}
-			if !confirmed {
-				continue
+		case settingsSessionStateStartupPickerDetail:
+			if err := c.runSessionStateToggleDetail("Session State - Startup picker", "Settings > Session State > Startup picker > ", func() []intpickercompat.Entry {
+				autorestore := c.currentSessionStateAutorestore()
+				return c.sessionStateToggleDetailEntries("Startup picker", "autorestore", autorestore.Mode, autorestore.Source)
+			}, stdout, stderr); err != nil {
+				return err
 			}
-		}
-		if err := c.execute(action, stdout, stderr); err != nil {
-			return err
+		default:
+			return fmt.Errorf("unknown session state settings action: %s", action)
 		}
 	}
 }
@@ -97,7 +103,111 @@ func (c *settingsCommand) runProjectSessionStateSection(stdout, stderr io.Writer
 		if action == settingsNoopValue {
 			continue
 		}
-		if action == settingsProjectSessionStateDelete {
+		switch action {
+		case settingsProjectSessionStateAutosaveDetail:
+			if err := c.runProjectSessionStateAutosaveDetail(stdout, stderr); err != nil {
+				return err
+			}
+		case settingsProjectSessionStateActionsDetail:
+			if err := c.runProjectSessionStateActionsDetail(stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown project session state settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runSessionStateToggleDetail(title, prompt string, entries func() []intpickercompat.Entry, stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-sessionstate-detail",
+			Entries:    entries(),
+			Title:      title,
+			Prompt:     prompt,
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixSessionState):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown session state detail action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runProjectSessionStateAutosaveDetail(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-project-sessionstate-autosave",
+			Entries:    c.projectSessionStateAutosaveDetailEntries(),
+			Title:      "Session State - Project auto-save",
+			Prompt:     "Settings > Project > Session State > Auto-save > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixSessionState):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown project session state auto-save action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runProjectSessionStateActionsDetail(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-project-sessionstate-actions",
+			Entries:    c.projectSessionStateActionsDetailEntries(),
+			Title:      "Session State - Project snapshot actions",
+			Prompt:     "Settings > Project > Session State > Snapshot actions > ",
+			Footer:     projmuxFooter("Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsProjectSessionStateDelete:
 			confirmed, err := c.confirmProjectSessionStateDelete()
 			if err != nil {
 				return err
@@ -105,9 +215,15 @@ func (c *settingsCommand) runProjectSessionStateSection(stdout, stderr io.Writer
 			if !confirmed {
 				continue
 			}
-		}
-		if err := c.execute(action, stdout, stderr); err != nil {
-			return err
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixSessionState):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown project session state snapshot action: %s", action)
 		}
 	}
 }
@@ -142,12 +258,12 @@ func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
-			Label: settingsLabelInfo("Auto-save", string(autosave.Mode), autosave.Source),
-			Value: settingsNoopValue,
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Auto-save", string(autosave.Mode)+" - "+autosave.Source),
+			Value: settingsSessionStateAutosaveDetail,
 		},
 		{
-			Label: settingsLabelInfo("Startup picker", string(autorestore.Mode), autorestore.Source),
-			Value: settingsNoopValue,
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Startup picker", string(autorestore.Mode)+" - "+autorestore.Source),
+			Value: settingsSessionStateStartupPickerDetail,
 		},
 		{
 			Label: settingsLabelInfo("Storage", "latest snapshot store", "per-session JSON under XDG state"),
@@ -158,8 +274,6 @@ func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
 			Value: settingsNoopValue,
 		},
 	}
-	entries = append(entries, c.sessionStateToggleEntries("Auto-save", "autosave", autosave.Mode)...)
-	entries = append(entries, c.sessionStateToggleEntries("Startup picker", "autorestore", autorestore.Mode)...)
 	return entries
 }
 
@@ -192,8 +306,8 @@ func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Project auto-save", string(autosave.ProjectMode), autosave.ProjectSource),
-			Value: settingsNoopValue,
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Project auto-save", string(autosave.ProjectMode)+" - "+autosave.ProjectSource),
+			Value: settingsProjectSessionStateAutosaveDetail,
 		},
 		{
 			Label: settingsLabelInfo("Effective auto-save", string(autosave.Mode), autosave.Source),
@@ -207,10 +321,99 @@ func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
 			Label: settingsLabelInfo("Global startup picker", string(autorestore.Mode), autorestore.Source),
 			Value: settingsNoopValue,
 		},
+		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Snapshot actions", c.projectSessionStateActionsSummary(identity)),
+			Value: settingsProjectSessionStateActionsDetail,
+		},
 	}
-	entries = append(entries, c.projectSessionStateActionEntries(identity)...)
+	return entries
+}
+
+func (c *settingsCommand) sessionStateToggleDetailEntries(label, key string, current config.SessionStateToggle, source string) []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo(label, string(current), source),
+			Value: settingsNoopValue,
+		},
+	}
+	entries = append(entries, c.sessionStateToggleEntries(label, key, current)...)
+	return entries
+}
+
+func (c *settingsCommand) projectSessionStateAutosaveDetailEntries() []intpickercompat.Entry {
+	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
+	if identity.Err != nil {
+		return []intpickercompat.Entry{
+			settingsBackEntry(),
+			{
+				Label: settingsLabelInfo("Project", "unavailable", identity.Err.Error()),
+				Value: settingsNoopValue,
+			},
+		}
+	}
+	autosave := c.currentProjectSessionStateAutosave(identity)
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Project auto-save", string(autosave.ProjectMode), autosave.ProjectSource),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Effective auto-save", string(autosave.Mode), autosave.Source),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Global auto-save", string(autosave.Global.Mode), autosave.Global.Source),
+			Value: settingsNoopValue,
+		},
+	}
 	entries = append(entries, c.projectSessionStateAutosaveToggleEntries(autosave.ProjectMode)...)
 	return entries
+}
+
+func (c *settingsCommand) projectSessionStateActionsDetailEntries() []intpickercompat.Entry {
+	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
+	if identity.Err != nil {
+		return []intpickercompat.Entry{
+			settingsBackEntry(),
+			{
+				Label: settingsLabelInfo("Project", "unavailable", identity.Err.Error()),
+				Value: settingsNoopValue,
+			},
+		}
+	}
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Project", identity.Project.Name, identity.Project.Path),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Session identity", identity.Session, "derived from project path"),
+			Value: settingsNoopValue,
+		},
+	}
+	entries = append(entries, c.projectSessionStateActionEntries(identity)...)
+	return entries
+}
+
+func (c *settingsCommand) projectSessionStateActionsSummary(identity projectSessionStateIdentity) string {
+	parts := []string{"latest/named save"}
+	if ok, reason := c.projectSessionStateLiveSessionAvailable(identity.Session); !ok {
+		parts = append(parts, "save unavailable: "+reason)
+	}
+	store, err := c.settingsSessionStateStore()
+	if err != nil {
+		parts = append(parts, "snapshot unavailable")
+		return strings.Join(parts, " - ")
+	}
+	if _, err := store.Summary(identity.Session); err != nil {
+		parts = append(parts, "snapshot missing")
+	} else {
+		parts = append(parts, "preview/delete available")
+	}
+	return strings.Join(parts, " - ")
 }
 
 func (c *settingsCommand) projectSessionStateActionEntries(identity projectSessionStateIdentity) []intpickercompat.Entry {
@@ -981,11 +1184,15 @@ func sessionStateToggleEnabledDefault(homeDir func() (string, error), lookupEnv 
 }
 
 const (
-	settingsProjectSessionStateSaveLatest = settingsActionPrefixSessionState + "project-save-latest"
-	settingsProjectSessionStateSaveNamed  = settingsActionPrefixSessionState + "project-save-named"
-	settingsProjectSessionStateSave       = settingsActionPrefixSessionState + "project-save"
-	settingsProjectSessionStatePreview    = settingsActionPrefixSessionState + "project-preview"
-	settingsProjectSessionStateDelete     = settingsActionPrefixSessionState + "project-delete"
-	settingsSessionStateConfirmYes        = "sessionstate:confirm-yes"
-	settingsSessionStateConfirmNo         = "sessionstate:confirm-no"
+	settingsSessionStateAutosaveDetail        = settingsActionPrefixSessionState + "view-autosave"
+	settingsSessionStateStartupPickerDetail   = settingsActionPrefixSessionState + "view-startup-picker"
+	settingsProjectSessionStateAutosaveDetail = settingsActionPrefixSessionState + "project-view-autosave"
+	settingsProjectSessionStateActionsDetail  = settingsActionPrefixSessionState + "project-view-actions"
+	settingsProjectSessionStateSaveLatest     = settingsActionPrefixSessionState + "project-save-latest"
+	settingsProjectSessionStateSaveNamed      = settingsActionPrefixSessionState + "project-save-named"
+	settingsProjectSessionStateSave           = settingsActionPrefixSessionState + "project-save"
+	settingsProjectSessionStatePreview        = settingsActionPrefixSessionState + "project-preview"
+	settingsProjectSessionStateDelete         = settingsActionPrefixSessionState + "project-delete"
+	settingsSessionStateConfirmYes            = "sessionstate:confirm-yes"
+	settingsSessionStateConfirmNo             = "sessionstate:confirm-no"
 )
