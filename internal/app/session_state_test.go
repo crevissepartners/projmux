@@ -48,6 +48,7 @@ func TestSessionStateStatusShowsToggleAndSnapshotReadModel(t *testing.T) {
 	for _, want := range []string{
 		"Session State",
 		"session:      workspace",
+		"source:       autosave",
 		"auto-save:    off (PROJMUX_SESSIONSTATE_AUTOSAVE env)",
 		"auto-restore: off (saved)",
 		"snapshot:     saved",
@@ -58,6 +59,27 @@ func TestSessionStateStatusShowsToggleAndSnapshotReadModel(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("status output missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestSessionStateStatusShowsSnapshotSource(t *testing.T) {
+	t.Parallel()
+
+	store := sessionstate.NewStore(t.TempDir())
+	saveSessionStateTestSnapshotSource(t, store, time.Date(2026, time.May, 12, 12, 0, 0, 0, time.UTC), sessionstate.LayoutSource("team"))
+	cmd := &sessionStateCommand{
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
+		now:          func() time.Time { return time.Date(2026, time.May, 12, 12, 1, 0, 0, time.UTC) },
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"status", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if output := stdout.String(); !strings.Contains(output, "source:       layout(team)") {
+		t.Fatalf("status output = %q, want snapshot source", output)
 	}
 }
 
@@ -189,6 +211,7 @@ func TestSessionStateRestoreDryRunPrintsPreviewWithoutTmux(t *testing.T) {
 	output := stdout.String()
 	for _, want := range []string{
 		"Session State Restore Preview",
+		"source:       autosave",
 		"Dry run only; no tmux commands were executed.",
 		"window 0 editor (2 panes)",
 		"pane 0.1 startup make watch",
@@ -257,6 +280,7 @@ func TestSessionStatePopupPreviewUsesDryRunReadModel(t *testing.T) {
 	output := stdout.String()
 	for _, want := range []string{
 		"Session State Restore Preview",
+		"source:       autosave",
 		"Dry run only; no tmux commands were executed.",
 		"pane 0.1 startup make watch",
 	} {
@@ -342,9 +366,15 @@ func TestSessionStatePopupSaveNowCapturesCurrentSession(t *testing.T) {
 
 func saveSessionStateTestSnapshot(t *testing.T, store sessionstate.Store, savedAt time.Time) {
 	t.Helper()
+	saveSessionStateTestSnapshotSource(t, store, savedAt, "")
+}
+
+func saveSessionStateTestSnapshotSource(t *testing.T, store sessionstate.Store, savedAt time.Time, source string) {
+	t.Helper()
 	if err := store.Save(sessionstate.Snapshot{
 		Version:    sessionstate.Version,
 		Session:    "workspace",
+		Source:     source,
 		DefaultCWD: "/tmp/workspace",
 		SavedAt:    savedAt,
 		Windows: []sessionstate.Window{{

@@ -37,6 +37,7 @@ var (
 type Snapshot struct {
 	Version    int       `json:"version"`
 	Session    string    `json:"session"`
+	Source     string    `json:"source,omitempty"`
 	DefaultCWD string    `json:"default_cwd,omitempty"`
 	SavedAt    time.Time `json:"saved_at"`
 	Windows    []Window  `json:"windows"`
@@ -71,7 +72,34 @@ const (
 	RecipeKindShell   = "shell"
 	RecipeKindAgent   = "agent"
 	RecipeKindStartup = "startup"
+
+	SourceAutosave = "autosave"
+	SourceFresh    = "fresh"
 )
+
+// LayoutSource returns the display/source marker for a project layout preset.
+func LayoutSource(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	return "layout(" + name + ")"
+}
+
+// SourceLabel returns the user-facing source label for a snapshot. Missing
+// source means an older autosave snapshot.
+func (s Snapshot) SourceLabel() string {
+	return SourceLabel(s.Source)
+}
+
+// SourceLabel normalizes empty source markers to the legacy autosave source.
+func SourceLabel(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return SourceAutosave
+	}
+	return source
+}
 
 // ShellRecipe returns the plain-shell recipe form.
 func ShellRecipe() Recipe {
@@ -104,6 +132,7 @@ type Store struct {
 // Summary is the compact status view for one saved snapshot.
 type Summary struct {
 	Session     string
+	Source      string
 	SavedAt     time.Time
 	WindowCount int
 	PaneCount   int
@@ -186,6 +215,7 @@ func (s Store) Summary(session string) (Summary, error) {
 	}
 	return Summary{
 		Session:     snap.Session,
+		Source:      snap.SourceLabel(),
 		SavedAt:     snap.SavedAt,
 		WindowCount: len(snap.Windows),
 		PaneCount:   panes,
@@ -337,6 +367,7 @@ func (r Recipe) Validate() error {
 
 func (s Snapshot) normalize() Snapshot {
 	s.SavedAt = s.SavedAt.UTC()
+	s.Source = strings.TrimSpace(s.Source)
 	return s
 }
 

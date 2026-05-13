@@ -281,6 +281,7 @@ func (c *sessionStateCommand) loadView(ctx context.Context, explicitSession stri
 		return state
 	}
 	state.Session = sessionName
+	state.Source = c.liveSessionStateSource(ctx, sessionName)
 	store, err := c.store()
 	if err != nil {
 		state.StoreErr = err
@@ -292,7 +293,17 @@ func (c *sessionStateCommand) loadView(ctx context.Context, explicitSession stri
 		return state
 	}
 	state.Snapshot = snap
+	if strings.TrimSpace(state.Source) == "" {
+		state.Source = snap.SourceLabel()
+	}
 	return state
+}
+
+func (c *sessionStateCommand) liveSessionStateSource(ctx context.Context, sessionName string) string {
+	if c.runner == nil || strings.TrimSpace(sessionName) == "" {
+		return ""
+	}
+	return inttmux.NewClient(c.runner).SessionStateSource(ctx, sessionName)
 }
 
 func (c *sessionStateCommand) resolveSessionName(ctx context.Context, explicit string) (string, error) {
@@ -354,6 +365,7 @@ func sessionStateStatusLines(state statusbarSessionStateView, now time.Time, col
 		session = "-"
 	}
 	lines = append(lines, sessionStateField("session", session))
+	lines = append(lines, sessionStateField("source", statusbarSessionStateSourceText(state)))
 	lines = append(lines, sessionStateField("auto-save", statusbarSessionStateToggleText(state.Autosave)))
 	lines = append(lines, sessionStateField("auto-restore", statusbarSessionStateToggleText(state.Autorestore)))
 
@@ -401,6 +413,10 @@ func sessionStatePopupEntries(state statusbarSessionStateView) []intpickercompat
 	entries := []intpickercompat.Entry{
 		{
 			Label: settingsLabelInfo("Session", nonEmpty(state.Session, "-"), ""),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Source", statusbarSessionStateSourceText(state), ""),
 			Value: settingsNoopValue,
 		},
 		{
@@ -481,6 +497,7 @@ func sessionStateRestorePreviewLines(snap sessionstate.Snapshot, now time.Time, 
 	lines := []string{
 		"Session State Restore Preview",
 		sessionStateField("session", snap.Session),
+		sessionStateField("source", snap.SourceLabel()),
 		sessionStateField("saved", statusbarSessionStateSavedText(snap.SavedAt, now)),
 		sessionStateField("windows", fmt.Sprintf("%d", len(snap.Windows))),
 		sessionStateField("panes", fmt.Sprintf("%d", statusbarSessionStatePaneCount(snap))),

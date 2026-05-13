@@ -105,6 +105,28 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestLoadLegacySnapshotWithoutSourceDefaultsToAutosaveLabel(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(t.TempDir())
+	snap := sampleSnapshot()
+	writeSnapshotJSON(t, store, snap.Session, map[string]any{
+		"version":     snap.Version,
+		"session":     snap.Session,
+		"default_cwd": snap.DefaultCWD,
+		"saved_at":    snap.SavedAt,
+		"windows":     snap.Windows,
+	})
+
+	got, err := store.Load(snap.Session)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.Source != "" || got.SourceLabel() != SourceAutosave {
+		t.Fatalf("source = %q label %q, want legacy empty source with autosave label", got.Source, got.SourceLabel())
+	}
+}
+
 func TestStoreSummaryCountsWindowsAndPanes(t *testing.T) {
 	t.Parallel()
 

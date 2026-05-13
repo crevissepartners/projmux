@@ -254,6 +254,7 @@ func TestShellAutorestoreReplaysSnapshotBeforeAttachWhenSessionAbsent(t *testing
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "rename-window", "-t", "dev:0", "main"}},
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-layout", "-t", "dev:0", "layout"}},
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-pane", "-t", "dev:0.0"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "set-option", "-t", "dev", "-q", "@projmux_sessionstate_source", "autosave"}},
 	}
 	if !reflect.DeepEqual(tmux.calls, wantReplayCalls) {
 		t.Fatalf("tmux calls = %#v, want %#v", tmux.calls, wantReplayCalls)
@@ -597,9 +598,55 @@ func TestShellLayoutFlagReplaysPresetWhenSessionAbsent(t *testing.T) {
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "rename-window", "-t", "dev:0", "main"}},
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-layout", "-t", "dev:0", "layout"}},
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-pane", "-t", "dev:0.0"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "set-option", "-t", "dev", "-q", "@projmux_sessionstate_source", "layout(team)"}},
 	}
 	if !reflect.DeepEqual(tmux.calls, wantReplayCalls) {
 		t.Fatalf("tmux calls = %#v, want %#v", tmux.calls, wantReplayCalls)
+	}
+}
+
+func TestShellFreshLayoutFlagMarksFreshSourceWhenSessionAbsent(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := t.TempDir()
+	saveShellLayoutPresetMode(t, project, "scratch", "Scratch layout", corelayout.ModeFreshEachTime)
+	store := sessionstate.NewStore(t.TempDir())
+	saveShellSnapshot(t, store, "dev", project)
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "dev"): errors.New("can't find session: dev"),
+		},
+	}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: foreground.run,
+		tmuxRunner: tmux,
+		sessionStore: func() (sessionstate.Store, error) {
+			return store, nil
+		},
+		now: func() time.Time { return time.Date(2026, 5, 13, 1, 2, 3, 0, time.UTC) },
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--session", "dev", "--config", configPath, "--no-install", "--layout", "scratch"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	wantLast := recordedTmuxCall{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "set-option", "-t", "dev", "-q", "@projmux_sessionstate_source", "fresh"}}
+	if got := tmux.calls[len(tmux.calls)-1]; !reflect.DeepEqual(got, wantLast) {
+		t.Fatalf("last tmux call = %#v, want %#v; all calls = %#v", got, wantLast, tmux.calls)
+	}
+	if _, err := store.Load("dev"); !errors.Is(err, sessionstate.ErrNotFound) {
+		t.Fatalf("fresh layout snapshot load error = %v, want %v", err, sessionstate.ErrNotFound)
 	}
 }
 
@@ -694,6 +741,7 @@ func TestShellAutoPickerSelectsLayoutPresetWhenSessionAbsent(t *testing.T) {
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "rename-window", "-t", "dev:0", "main"}},
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-layout", "-t", "dev:0", "layout"}},
 		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "select-pane", "-t", "dev:0.0"}},
+		{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "set-option", "-t", "dev", "-q", "@projmux_sessionstate_source", "layout(team)"}},
 	}
 	if !reflect.DeepEqual(tmux.calls, wantReplayCalls) {
 		t.Fatalf("tmux calls = %#v, want %#v", tmux.calls, wantReplayCalls)
@@ -846,6 +894,38 @@ func TestShellSessionCandidatesOrderSavedPresetsThenEmpty(t *testing.T) {
 		}
 	}
 	want := []string{"saved:home", "layout:alpha", "layout:zeta", "empty"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("candidate order = %#v, want %#v", order, want)
+	}
+}
+
+func TestShellSessionCandidatesSkipFreshSourceSavedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	store := sessionstate.NewStore(t.TempDir())
+	saveShellSnapshotSource(t, store, "home", project, sessionstate.SourceFresh)
+	saveShellLayoutPreset(t, project, "alpha", "Alpha")
+	cmd := &shellCommand{
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	got := cmd.shellSessionCandidates("home")
+	var order []string
+	for _, candidate := range got {
+		if candidate.Name != "" {
+			order = append(order, candidate.Kind+":"+candidate.Name)
+		} else {
+			order = append(order, candidate.Kind)
+		}
+	}
+	want := []string{"layout:alpha", "empty"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("candidate order = %#v, want %#v", order, want)
 	}
@@ -1513,9 +1593,15 @@ func shellTmuxCallKey(name string, args ...string) string {
 
 func saveShellSnapshot(t *testing.T, store sessionstate.Store, sessionName, cwd string) {
 	t.Helper()
+	saveShellSnapshotSource(t, store, sessionName, cwd, "")
+}
+
+func saveShellSnapshotSource(t *testing.T, store sessionstate.Store, sessionName, cwd, source string) {
+	t.Helper()
 	if err := store.Save(sessionstate.Snapshot{
 		Version:    sessionstate.Version,
 		Session:    sessionName,
+		Source:     source,
 		DefaultCWD: cwd,
 		SavedAt:    time.Date(2026, 5, 12, 1, 2, 3, 0, time.UTC),
 		Windows: []sessionstate.Window{{
@@ -1532,11 +1618,16 @@ func saveShellSnapshot(t *testing.T, store sessionstate.Store, sessionName, cwd 
 
 func saveShellLayoutPreset(t *testing.T, project, name, description string) {
 	t.Helper()
+	saveShellLayoutPresetMode(t, project, name, description, corelayout.ModeInheritAutosave)
+}
+
+func saveShellLayoutPresetMode(t *testing.T, project, name, description, mode string) {
+	t.Helper()
 	store := corelayout.NewStore(project)
 	if err := store.Save(name, corelayout.Preset{
 		SchemaVersion: corelayout.SchemaVersion,
 		Description:   description,
-		Mode:          corelayout.ModeInheritAutosave,
+		Mode:          mode,
 		DefaultCWD:    "${PROJMUX_CWD}",
 		Windows: []corelayout.Window{{
 			Index:           0,

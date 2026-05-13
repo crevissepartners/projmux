@@ -18,6 +18,7 @@ const (
 	sessionStateAIAgentOption        = "@projmux_ai_agent"
 	sessionStateAITopicOption        = "@projmux_ai_topic"
 	sessionStateAIResumeIDOption     = "@projmux_ai_resume_id"
+	sessionStateSourceOption         = "@projmux_sessionstate_source"
 )
 
 type sessionStateWindowRow struct {
@@ -77,6 +78,7 @@ func (c *Client) CaptureSessionSnapshot(ctx context.Context, sessionName string,
 	snap := sessionstate.Snapshot{
 		Version:    sessionstate.Version,
 		Session:    sessionName,
+		Source:     sessionstate.SourceLabel(c.SessionStateSource(ctx, sessionName)),
 		DefaultCWD: defaultCWD,
 		SavedAt:    now,
 		Windows:    make([]sessionstate.Window, 0, len(windows)),
@@ -123,6 +125,36 @@ func (c *Client) SaveSessionSnapshot(ctx context.Context, store sessionstate.Sto
 		return sessionstate.Snapshot{}, err
 	}
 	return snap, nil
+}
+
+// SessionStateSource reads the live session-state source marker for a tmux
+// session. Empty or unreadable markers are returned as empty so callers can
+// fall back to snapshot metadata before defaulting to autosave.
+func (c *Client) SessionStateSource(ctx context.Context, sessionName string) string {
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		return ""
+	}
+	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "#{"+sessionStateSourceOption+"}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// MarkSessionStateSource writes the live source marker used by status surfaces
+// and autosave policy.
+func (c *Client) MarkSessionStateSource(ctx context.Context, sessionName, source string) error {
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		return errSessionNameRequired
+	}
+	source = sessionstate.SourceLabel(source)
+	_, err := c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", sessionStateSourceOption, source)
+	if err != nil {
+		return fmt.Errorf("mark tmux sessionstate source: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) listSessionStateWindows(ctx context.Context, sessionName string) ([]sessionStateWindowRow, error) {

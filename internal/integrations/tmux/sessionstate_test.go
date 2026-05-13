@@ -28,6 +28,7 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 					"2\x1f0\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1fsession state\x1f01973f21-abc\n" +
 					"2\x1f1\x1f0\x1f/home/tester/app\x1f\x1f\x1f1\x1fclaude\x1fmissing resume\x1f\n",
 			)},
+			{output: []byte("layout(team)\n")},
 		},
 	}
 	client := NewClient(runner)
@@ -40,6 +41,7 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 	want := sessionstate.Snapshot{
 		Version:    sessionstate.Version,
 		Session:    "workspace",
+		Source:     sessionstate.LayoutSource("team"),
 		DefaultCWD: "/home/tester",
 		SavedAt:    now,
 		Windows: []sessionstate.Window{
@@ -83,6 +85,7 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 			"#{@projmux_ai_topic}",
 			"#{@projmux_ai_resume_id}",
 		)}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("tmux calls = %#v, want %#v", runner.calls, wantCalls)
@@ -98,6 +101,7 @@ func TestClientSaveSessionSnapshotWritesStore(t *testing.T) {
 		steps: []scriptedStep{
 			{output: []byte("0\x1fshell\x1flayout\n")},
 			{output: []byte("0\x1f0\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n")},
+			{output: []byte("\n")},
 		},
 	}
 	store := sessionstate.NewStore(t.TempDir())
