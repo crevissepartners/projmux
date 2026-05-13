@@ -685,9 +685,10 @@ flags with the top-level `switch` UX:
   generated config. The generated app config uses absolute `$SHELL` as the
   tmux default shell when set, otherwise `/bin/sh`. On a new target app
   session, default `shell` can still open the `Start app session`
-  compatibility picker when the startup picker is enabled. The primary Project
-  open picker lives on the Alt-1 sidebar path and uses `Latest snapshot`,
-  `Named snapshot`, and `Empty session`. `Latest snapshot` is auto-saved; named
+  compatibility picker when the global startup picker is enabled. Alt-1 sidebar
+  project open defaults to `Empty session`; the Labs `Sidebar startup picker`
+  opt-in shows `Latest snapshot`, `Named snapshot`, and `Empty session` before
+  creating a closed project session. `Latest snapshot` is auto-saved; named
   snapshots are fixed until the user saves or replaces them. Closing the shell
   compatibility picker falls back to an empty session and continues startup.
   `--saved` forces replay from the latest snapshot, `--layout <name>` forces

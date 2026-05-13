@@ -50,7 +50,7 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 		return c.openProjectSession(ctx, sessionName)
 	}
 	mode := projectStartupCandidate{Kind: projectStartupKindEmpty}
-	if sessionStateAutorestoreEnabled(c.homeDir, c.lookupEnv) {
+	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
 		mode = c.pickProjectStartupMode(sessionName, target)
 	}
 	if mode.Kind == projectStartupKindBack {

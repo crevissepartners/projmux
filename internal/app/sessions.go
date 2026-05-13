@@ -2,13 +2,17 @@ package app
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
+	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -16,6 +20,7 @@ import (
 )
 
 const sessionsKillExpectKey = "ctrl-x"
+const sessionsStateExpectKey = "ctrl-s"
 
 type sessionsRecentResolver interface {
 	RecentSessionSummaries(ctx context.Context) ([]inttmux.RecentSessionSummary, error)
@@ -46,6 +51,8 @@ type sessionsCommand struct {
 	native     intpicker.Runner
 	executable func() (string, error)
 	lookupEnv  func(string) string
+	homeDir    func() (string, error)
+	stateStore func() (sessionstate.Store, error)
 }
 
 func newSessionsCommand() *sessionsCommand {
@@ -58,6 +65,8 @@ func newSessionsCommand() *sessionsCommand {
 		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		executable: os.Executable,
 		lookupEnv:  os.Getenv,
+		homeDir:    os.UserHomeDir,
+		stateStore: sessionstate.NewDefaultStoreFromEnv,
 	}
 }
 
@@ -137,7 +146,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			Entries:        rowsToEntries(rows),
 			Prompt:         "› ",
 			Footer:         sessionsPickerFooter(),
-			ExpectKeys:     []string{sessionsKillExpectKey},
+			ExpectKeys:     []string{sessionsKillExpectKey, sessionsStateExpectKey},
 			PreviewCommand: previewCommand,
 			PreviewWindow:  sessionsPreviewWindow(*ui),
 			Bindings: append(pickerCloseBindings("esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
@@ -152,6 +161,12 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 		if result.Value == "" {
 			return nil
+		}
+		if result.Key == sessionsStateExpectKey {
+			if err := c.runSessionStateOverview(result.Value, summaries); err != nil {
+				return err
+			}
+			continue
 		}
 		if result.Key == sessionsKillExpectKey {
 			nextSummaries, err := c.killFocusedSession(context.Background(), summaries, result.Value)
@@ -178,6 +193,153 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 		return nil
 	}
+}
+
+func (c *sessionsCommand) runSessionStateOverview(sessionName string, summaries []inttmux.RecentSessionSummary) error {
+	entries := c.sessionStateOverviewEntries(sessionName, summaries)
+	result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.runner, intpickercompat.Options{
+		UI:            "projects-sessions-state",
+		Entries:       entries,
+		Title:         "Projects > Sessions > State",
+		Prompt:        "Projects > Sessions > State > ",
+		Footer:        projmuxFooter("Enter: details  |  Back row: sessions  |  Esc/Alt+3: sessions"),
+		ExpectKeys:    []string{"enter"},
+		Bindings:      pickerCloseBindings("esc", "alt-3"),
+		DisableSearch: true,
+	})
+	if err != nil {
+		return fmt.Errorf("run sessions state overview: %w", err)
+	}
+	if strings.TrimSpace(result.Value) == settingsBackValue || strings.TrimSpace(result.Value) == "" {
+		return nil
+	}
+	return nil
+}
+
+func (c *sessionsCommand) sessionStateOverviewEntries(sessionName string, summaries []inttmux.RecentSessionSummary) []intpickercompat.Entry {
+	sessionName = strings.TrimSpace(sessionName)
+	entries := []intpickercompat.Entry{settingsBackEntry()}
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabelInfo("Session", nonEmpty(sessionName, "-"), "read-only overview"),
+		Value: settingsNoopValue,
+	})
+	summary := sessionsSummaryByName(summaries, sessionName)
+	if strings.TrimSpace(summary.Path) != "" {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Project path", summary.Path, ""),
+			Value: settingsNoopValue,
+		})
+	}
+	entries = append(entries, c.latestSessionStateOverviewEntries(sessionName)...)
+	entries = append(entries, namedSessionStateOverviewEntries(summary.Path)...)
+	return entries
+}
+
+func (c *sessionsCommand) latestSessionStateOverviewEntries(sessionName string) []intpickercompat.Entry {
+	if c.stateStore == nil {
+		return []intpickercompat.Entry{{
+			Label: settingsLabelInfo("Latest snapshot", "unavailable", "session state store unavailable"),
+			Value: settingsNoopValue,
+		}}
+	}
+	store, err := c.stateStore()
+	if err != nil {
+		return []intpickercompat.Entry{{
+			Label: settingsLabelInfo("Latest snapshot", "unavailable", err.Error()),
+			Value: settingsNoopValue,
+		}}
+	}
+	snap, err := store.Load(sessionName)
+	if err != nil {
+		status := "invalid"
+		if errors.Is(err, sessionstate.ErrNotFound) {
+			status = "missing"
+		}
+		return []intpickercompat.Entry{{
+			Label: settingsLabelInfo("Latest snapshot", status, statusbarSessionStateErrorSummary(err)),
+			Value: settingsNoopValue,
+		}}
+	}
+	entries := []intpickercompat.Entry{
+		{
+			Label: settingsLabelInfo("Latest snapshot", "saved", statusbarSessionStateSavedText(snap.SavedAt, time.Time{})),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Snapshot source", snap.SourceLabel(), ""),
+			Value: settingsNoopValue,
+		},
+	}
+	for _, window := range snap.Windows {
+		windowName := statusbarSessionStateClean(window.Name)
+		if windowName == "" {
+			windowName = "window"
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Window", fmt.Sprintf("%d %s", window.Index, windowName), sessionStateCount(len(window.Panes), "pane")),
+			Value: settingsNoopValue,
+		})
+		for _, pane := range window.Panes {
+			entries = append(entries,
+				intpickercompat.Entry{
+					Label: settingsLabelInfo("Pane", fmt.Sprintf("%d.%d %s", window.Index, pane.Index, projectSessionStatePaneTitle(pane)), ""),
+					Value: settingsNoopValue,
+				},
+				intpickercompat.Entry{
+					Label: settingsLabelInfo("Pane cwd", nonEmpty(strings.TrimSpace(pane.CWD), "-"), ""),
+					Value: settingsNoopValue,
+				},
+				intpickercompat.Entry{
+					Label: settingsLabelInfo("Pane recipe", projectSessionStateRecipeText(pane.Recipe, snap.SavedAt), ""),
+					Value: settingsNoopValue,
+				},
+			)
+		}
+	}
+	return entries
+}
+
+func namedSessionStateOverviewEntries(projectPath string) []intpickercompat.Entry {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return []intpickercompat.Entry{{
+			Label: settingsLabelInfo("Named snapshots", "unavailable", "project path unavailable"),
+			Value: settingsNoopValue,
+		}}
+	}
+	named, _, err := corelayout.NewStore(projectPath).List()
+	if err != nil {
+		return []intpickercompat.Entry{{
+			Label: settingsLabelInfo("Named snapshots", "unavailable", err.Error()),
+			Value: settingsNoopValue,
+		}}
+	}
+	if len(named) == 0 {
+		return []intpickercompat.Entry{{
+			Label: settingsLabelInfo("Named snapshots", "missing", projectPath),
+			Value: settingsNoopValue,
+		}}
+	}
+	entries := []intpickercompat.Entry{{
+		Label: settingsLabelInfo("Named snapshots", fmt.Sprintf("%d", len(named)), "manual snapshots"),
+		Value: settingsNoopValue,
+	}}
+	for _, entry := range named {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Named snapshot", entry.Name, sessionStateCount(entry.Windows, "window")+", "+sessionStateCount(entry.Panes, "pane")),
+			Value: settingsNoopValue,
+		})
+	}
+	return entries
+}
+
+func sessionsSummaryByName(summaries []inttmux.RecentSessionSummary, sessionName string) inttmux.RecentSessionSummary {
+	for _, summary := range summaries {
+		if strings.TrimSpace(summary.Name) == sessionName {
+			return summary
+		}
+	}
+	return inttmux.RecentSessionSummary{}
 }
 
 func (c *sessionsCommand) buildRows(summaries []inttmux.RecentSessionSummary) ([]intrender.SessionRow, error) {
@@ -294,6 +456,7 @@ func sessionsPreviewWindow(ui string) string {
 func sessionsPickerFooter() string {
 	return projmuxFooter(strings.Join([]string{
 		"Enter: switch to previewed target",
+		"Ctrl-S: state overview",
 		"Ctrl-X: kill focused session",
 		"Left/Right: preview window",
 		"Alt-Up/Alt-Down: preview pane",

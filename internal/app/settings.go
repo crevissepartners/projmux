@@ -105,6 +105,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsNotificationsQueue:         {Name: "In-app queue", Axis: settingsAxisGlobal},
 	settingsNotificationsHookOverride:  {Name: "Notification hook override", Axis: settingsAxisGlobal},
 	settingsLabsProjectHooks:           {Name: "Project Hooks", Axis: settingsAxisGlobal},
+	settingsLabsSidebarStartupPicker:   {Name: "Sidebar startup picker", Axis: settingsAxisGlobal},
 	settingsSessionStateDelete:         {Name: "Delete session snapshot", Axis: settingsAxisGlobal},
 	settingsLabKeybindings:             {Name: "Keybindings", Axis: settingsAxisGlobal},
 	settingsUpdateApply:                {Name: "Update Now", Axis: settingsAxisGlobal},
@@ -208,6 +209,7 @@ const (
 	settingsNotificationsQueue             = "notifications:queue"
 	settingsNotificationsHookOverride      = "notifications:hook-override"
 	settingsLabsProjectHooks               = "labs:project-hooks"
+	settingsLabsSidebarStartupPicker       = "labs:sidebar-startup-picker"
 	settingsLabKeybindings                 = "labs:keybindings"
 	settingsSessionStateDelete             = "sessionstate:delete"
 	settingsWelcomeShow                    = "welcome:show"
@@ -2439,6 +2441,10 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 			}
 		case action == settingsLabsProjectHooks:
 			return c.runLabsProjectHooksSection(stdout, stderr)
+		case strings.HasPrefix(action, settingsActionPrefixSessionState):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, settingsActionPrefixHooks):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err
@@ -2904,13 +2910,33 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	current, source := c.currentPickerBackend()
 	hookMode, hookSource := c.currentProjectHooksMode()
-	entries := make([]intpickercompat.Entry, 0, 4)
+	sidebarStartup := c.currentSidebarStartupPicker()
+	entries := make([]intpickercompat.Entry, 0, 6)
 	entries = append(entries, settingsBackEntry())
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Project Hooks", string(hookMode)+" - "+hookSource),
 		Value:     settingsLabsProjectHooks,
 		SearchKey: "Project Hooks trusted local hooks on off",
 	})
+	for _, item := range []struct {
+		mode config.SessionStateToggle
+		desc string
+	}{
+		{config.SessionStateToggleOn, "show Start project step in the sidebar"},
+		{config.SessionStateToggleOff, "open closed sidebar projects as empty sessions"},
+	} {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if item.mode == sidebarStartup.Mode {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabel(glyph, color, "Sidebar startup picker "+string(item.mode), item.desc+" - "+sidebarStartup.Source),
+			Value:     settingsActionPrefixSessionState + "sidebar-startup:" + string(item.mode),
+			SearchKey: "Sidebar startup picker Start project empty session on off",
+		})
+	}
 	if source != "" {
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Picker source", string(current), source),

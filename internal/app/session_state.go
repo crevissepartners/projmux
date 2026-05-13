@@ -272,8 +272,8 @@ func (c *sessionStateCommand) printRestorePreview(ctx context.Context, explicitS
 
 func (c *sessionStateCommand) loadView(ctx context.Context, explicitSession string) statusbarSessionStateView {
 	state := statusbarSessionStateView{
-		Autosave:    sessionStateToggleState(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
-		Autorestore: sessionStateToggleState(c.homeDir, c.lookupEnv, sessionStateAutorestoreEnv, func(paths config.Paths) string { return paths.SessionStateAutorestoreFile() }),
+		Autosave:    sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string { return paths.SessionStateAutosaveFile() }),
+		Autorestore: sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, sessionStateAutorestoreEnv, config.SessionStateToggleOn, func(paths config.Paths) string { return paths.SessionStateAutorestoreFile() }),
 	}
 	sessionName, err := c.resolveSessionName(ctx, explicitSession)
 	if err != nil {

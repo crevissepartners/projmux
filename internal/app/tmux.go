@@ -147,15 +147,18 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 	if c.sessionStore == nil {
 		return c.finishAutosaveSessionState(errors.New("configure sessionstate store: sessionstate store is not configured"), *quiet, stderr)
 	}
-	if !sessionStateAutosaveEnabled(c.homeDir, c.lookupEnv) {
-		return nil
-	}
-
 	ctx := context.Background()
 	now := c.nowTime()
 	sessionName, err := c.currentTmuxSessionName(ctx)
 	if err != nil {
 		return c.finishAutosaveSessionState(err, *quiet, stderr)
+	}
+	autosave, err := c.sessionStateAutosaveEnabledForSession(ctx, sessionName)
+	if err != nil {
+		return c.finishAutosaveSessionState(err, *quiet, stderr)
+	}
+	if !autosave {
+		return nil
 	}
 	client := inttmux.NewClient(c.runner)
 	if sessionstate.SourceLabel(client.SessionStateSource(ctx, sessionName)) == sessionstate.SourceFresh {
@@ -177,6 +180,43 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 	}
 	_, err = c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", sessionStateAutosaveOption, strconv.FormatInt(now.Unix(), 10))
 	return c.finishAutosaveSessionState(err, *quiet, stderr)
+}
+
+func (c *tmuxCommand) sessionStateAutosaveEnabledForSession(ctx context.Context, sessionName string) (bool, error) {
+	global := sessionStateAutosaveEnabled(c.homeDir, c.lookupEnv)
+	mode, found, err := c.projectSessionStateAutosaveModeForSession(ctx, sessionName)
+	if err != nil || !found {
+		return global, err
+	}
+	switch mode {
+	case config.SessionStateProjectOn:
+		return true, nil
+	case config.SessionStateProjectOff:
+		return false, nil
+	default:
+		return global, nil
+	}
+}
+
+func (c *tmuxCommand) projectSessionStateAutosaveModeForSession(ctx context.Context, sessionName string) (config.SessionStateProjectToggle, bool, error) {
+	_ = ctx
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		return config.SessionStateProjectInherit, false, nil
+	}
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return config.SessionStateProjectInherit, false, err
+	}
+	path := paths.ProjectSessionStateAutosaveFile(sessionName)
+	if _, err := osStat(path); err != nil {
+		return config.SessionStateProjectInherit, false, nil
+	}
+	mode, err := config.LoadSessionStateProjectToggleFile(path)
+	if err != nil {
+		return config.SessionStateProjectInherit, false, err
+	}
+	return mode, true, nil
 }
 
 func (c *tmuxCommand) finishAutosaveSessionState(err error, quiet bool, stderr io.Writer) error {

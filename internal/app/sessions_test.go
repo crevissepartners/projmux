@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -57,10 +62,10 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.Footer, "Enter: switch to previewed target\nCtrl-X: kill focused session\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+	if got, want := gotOptions.Footer, "Enter: switch to previewed target\nCtrl-S: state overview\nCtrl-X: kill focused session\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.ExpectKeys, []string{sessionsKillExpectKey}; !equalStrings(got, want) {
+	if got, want := gotOptions.ExpectKeys, []string{sessionsKillExpectKey, sessionsStateExpectKey}; !equalStrings(got, want) {
 		t.Fatalf("runner expect keys = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.Entries, []intpickercompat.Entry{
@@ -128,11 +133,67 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.Footer, "Enter: switch to previewed target\nCtrl-X: kill focused session\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+	if got, want := gotOptions.Footer, "Enter: switch to previewed target\nCtrl-S: state overview\nCtrl-X: kill focused session\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.PreviewWindow, "right,60%,border-left"; got != want {
 		t.Fatalf("runner preview window = %q, want %q", got, want)
+	}
+}
+
+func TestSessionsStateOverviewShowsReadModelWithoutImmediateMutation(t *testing.T) {
+	t.Parallel()
+
+	project := filepath.Join(t.TempDir(), "repo")
+	store := sessionstate.NewStore(t.TempDir())
+	snap := sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    "repo",
+		DefaultCWD: project,
+		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
+		Windows: []sessionstate.Window{{
+			Index:           0,
+			Name:            "dev",
+			ActivePaneIndex: 0,
+			Panes: []sessionstate.Pane{{
+				Index:  0,
+				Title:  "editor",
+				CWD:    project,
+				Recipe: sessionstate.AgentRecipeWithResumeMetadata("codex", "codex-session", "topic", "session-id", "2026-05-12T03:04:05Z"),
+			}},
+		}},
+	}
+	if err := store.Save(snap); err != nil {
+		t.Fatal(err)
+	}
+	if err := corelayout.NewStore(project).Save("team", corelayout.Preset{
+		SchemaVersion: corelayout.SchemaVersion,
+		Windows: []corelayout.Window{{
+			Index: 0,
+			Panes: []corelayout.Pane{{Index: 0, CWD: "${PROJMUX_CWD}", Recipe: sessionstate.ShellRecipe()}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &sessionsCommand{
+		stateStore: func() (sessionstate.Store, error) { return store, nil },
+	}
+
+	entries := cmd.sessionStateOverviewEntries("repo", []inttmux.RecentSessionSummary{{Name: "repo", Path: project}})
+	for _, want := range []string{"Latest snapshot", "saved", "Named snapshots", "Named snapshot", "team", "Window", "dev", "Pane", "editor", "Pane cwd", project, "Pane recipe", "agent codex", "resume available"} {
+		if !hasEntryLabelContaining(entries, want) {
+			t.Fatalf("state overview entries = %#v, want %q", entries, want)
+		}
+	}
+	for _, entry := range entries {
+		if entry.Value != settingsNoopValue && entry.Value != settingsBackValue {
+			t.Fatalf("state overview entry = %#v, want read-only/no immediate mutation", entry)
+		}
+		for _, forbidden := range []string{"Save", "Delete", "Restore", "Preview"} {
+			if strings.Contains(entry.Label, forbidden) {
+				t.Fatalf("state overview entry = %#v, want no immediate mutation label %q", entry, forbidden)
+			}
+		}
 	}
 }
 
@@ -226,7 +287,7 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
 	for i, options := range gotOptions {
-		if got, want := options.ExpectKeys, []string{sessionsKillExpectKey}; !equalStrings(got, want) {
+		if got, want := options.ExpectKeys, []string{sessionsKillExpectKey, sessionsStateExpectKey}; !equalStrings(got, want) {
 			t.Fatalf("runner expect keys call %d = %q, want %q", i, got, want)
 		}
 	}

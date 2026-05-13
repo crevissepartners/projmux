@@ -1385,10 +1385,15 @@ func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing
 		},
 	}
 	cmd := &tmuxCommand{
-		runner:    runner,
-		now:       func() time.Time { return now },
-		homeDir:   func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(string) string { return "" },
+		runner:  runner,
+		now:     func() time.Time { return now },
+		homeDir: func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(name string) string {
+			if name == sessionStateAutosaveEnv {
+				return "on"
+			}
+			return ""
+		},
 		sessionStore: func() (sessionstate.Store, error) {
 			return sessionstate.NewStore(dir), nil
 		},
@@ -1422,10 +1427,15 @@ func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
 		},
 	}
 	cmd := &tmuxCommand{
-		runner:       runner,
-		now:          func() time.Time { return now },
-		homeDir:      func() (string, error) { return t.TempDir(), nil },
-		lookupEnv:    func(string) string { return "" },
+		runner:  runner,
+		now:     func() time.Time { return now },
+		homeDir: func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(name string) string {
+			if name == sessionStateAutosaveEnv {
+				return "on"
+			}
+			return ""
+		},
 		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
 	}
 
@@ -1447,10 +1457,15 @@ func TestTmuxAutosaveSessionStateSkipsFreshSource(t *testing.T) {
 		},
 	}
 	cmd := &tmuxCommand{
-		runner:       runner,
-		now:          func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
-		homeDir:      func() (string, error) { return t.TempDir(), nil },
-		lookupEnv:    func(string) string { return "" },
+		runner:  runner,
+		now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
+		homeDir: func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(name string) string {
+			if name == sessionStateAutosaveEnv {
+				return "on"
+			}
+			return ""
+		},
 		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
 	}
 
@@ -1469,7 +1484,11 @@ func TestTmuxAutosaveSessionStateSkipsFreshSource(t *testing.T) {
 func TestTmuxAutosaveSessionStateSkipsWhenDisabled(t *testing.T) {
 	t.Parallel()
 
-	runner := &recordingTmuxRunner{}
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"): "workspace\n",
+		},
+	}
 	cmd := &tmuxCommand{
 		runner:  runner,
 		now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
@@ -1486,8 +1505,100 @@ func TestTmuxAutosaveSessionStateSkipsWhenDisabled(t *testing.T) {
 	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if len(runner.calls) != 0 {
-		t.Fatalf("tmux calls = %#v, want none when autosave disabled", runner.calls)
+	want := []recordedTmuxCall{{name: "tmux", args: []string{"display-message", "-p", "#{session_name}"}}}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("tmux calls = %#v, want session resolution only when autosave disabled", runner.calls)
+	}
+}
+
+func TestTmuxAutosaveSessionStateProjectOverridePrecedence(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name        string
+		global      config.SessionStateToggle
+		env         string
+		project     config.SessionStateProjectToggle
+		wantSaved   bool
+		wantTmuxMin int
+	}{
+		{name: "project off global on", global: config.SessionStateToggleOn, project: config.SessionStateProjectOff, wantSaved: false, wantTmuxMin: 1},
+		{name: "project on global off", global: config.SessionStateToggleOff, project: config.SessionStateProjectOn, wantSaved: true, wantTmuxMin: 5},
+		{name: "project inherit global off", global: config.SessionStateToggleOff, project: config.SessionStateProjectInherit, wantSaved: false, wantTmuxMin: 1},
+		{name: "project on env off", global: config.SessionStateToggleOn, env: "off", project: config.SessionStateProjectOn, wantSaved: true, wantTmuxMin: 5},
+		{name: "project off env on", global: config.SessionStateToggleOff, env: "on", project: config.SessionStateProjectOff, wantSaved: false, wantTmuxMin: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			dir := filepath.Join(home, "state")
+			saveGlobalAutosaveForTest(t, home, tc.global)
+			saveProjectAutosaveForTest(t, home, "workspace", tc.project)
+			runner := autosaveCaptureRunner("workspace", "/repo")
+			cmd := &tmuxCommand{
+				runner:  runner,
+				now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
+				homeDir: func() (string, error) { return home, nil },
+				lookupEnv: func(name string) string {
+					switch name {
+					case "XDG_CONFIG_HOME":
+						return filepath.Join(home, "config")
+					case sessionStateAutosaveEnv:
+						return tc.env
+					default:
+						return ""
+					}
+				},
+				sessionStore: func() (sessionstate.Store, error) {
+					return sessionstate.NewStore(dir), nil
+				},
+			}
+
+			if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			_, err := sessionstate.NewStore(dir).Load("workspace")
+			if tc.wantSaved && err != nil {
+				t.Fatalf("Load() error = %v, want saved snapshot", err)
+			}
+			if !tc.wantSaved && err == nil {
+				t.Fatalf("Load() succeeded, want no autosaved snapshot")
+			}
+			if len(runner.calls) < tc.wantTmuxMin {
+				t.Fatalf("tmux calls = %#v, want at least %d calls", runner.calls, tc.wantTmuxMin)
+			}
+		})
+	}
+}
+
+func TestTmuxAutosaveSessionStateNoProjectSettingUsesGlobalFallback(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	dir := filepath.Join(home, "state")
+	saveGlobalAutosaveForTest(t, home, config.SessionStateToggleOn)
+	runner := autosaveCaptureRunner("workspace", "/repo")
+	cmd := &tmuxCommand{
+		runner:  runner,
+		now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
+		sessionStore: func() (sessionstate.Store, error) {
+			return sessionstate.NewStore(dir), nil
+		},
+	}
+
+	if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := sessionstate.NewStore(dir).Load("workspace"); err != nil {
+		t.Fatalf("Load() error = %v, want global fallback autosave", err)
 	}
 }
 
@@ -1796,6 +1907,57 @@ func saveNativePickerBackend(t *testing.T, home string) {
 	}
 	if err := config.SavePickerBackendFile(paths.PickerBackendFile(), config.PickerBackendNative); err != nil {
 		t.Fatalf("SavePickerBackendFile() error = %v", err)
+	}
+}
+
+func saveGlobalAutosaveForTest(t *testing.T, home string, mode config.SessionStateToggle) {
+	t.Helper()
+
+	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveSessionStateToggleFile(paths.SessionStateAutosaveFile(), mode); err != nil {
+		t.Fatalf("SaveSessionStateToggleFile(autosave) error = %v", err)
+	}
+}
+
+func saveProjectAutosaveForTest(t *testing.T, home, sessionName string, mode config.SessionStateProjectToggle) {
+	t.Helper()
+
+	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveSessionStateProjectToggleFile(paths.ProjectSessionStateAutosaveFile(sessionName), mode); err != nil {
+		t.Fatalf("SaveSessionStateProjectToggleFile() error = %v", err)
+	}
+}
+
+func autosaveCaptureRunner(sessionName, cwd string) *recordingTmuxRunner {
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	paneFormat := strings.Join([]string{
+		"#{window_index}",
+		"#{pane_index}",
+		"#{pane_title}",
+		"#{?pane_active,1,0}",
+		"#{pane_current_path}",
+		"#{@projmux_recipe_kind}",
+		"#{@projmux_startup_command}",
+		"#{@projmux_ai_managed}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_ai_resume_id}",
+		"#{@projmux_ai_resume_source}",
+		"#{@projmux_ai_resume_updated_at}",
+	}, "\x1f")
+	return &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):                                    sessionName + "\n",
+			strings.Join([]string{"tmux", "display-message", "-p", "-t", sessionName, "#{@projmux_sessionstate_source}"}, "\x00"): "\n",
+			strings.Join([]string{"tmux", "list-windows", "-t", sessionName, "-F", windowFormat}, "\x00"):                         "0\x1fshell\x1flayout\n",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", sessionName, "-F", paneFormat}, "\x00"):                       "0\x1f0\x1fshell\x1f1\x1f" + cwd + "\x1f\x1f\x1f\x1f\x1f\x1f\n",
+		},
 	}
 }
 

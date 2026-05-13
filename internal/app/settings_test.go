@@ -15,6 +15,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
+	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -841,6 +842,11 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	if !hasEntryValue(labsOptions.Entries, settingsLabsProjectHooks) {
 		t.Fatalf("labs settings entries = %#v, want project hooks overview row", labsOptions.Entries)
 	}
+	if !hasEntryLabelContaining(labsOptions.Entries, "Sidebar startup picker off") ||
+		!hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:off") ||
+		!hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:on") {
+		t.Fatalf("labs settings entries = %#v, want sidebar startup picker default off toggle", labsOptions.Entries)
+	}
 	if hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOn)) ||
 		hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
 		t.Fatalf("labs settings entries = %#v, want no direct project hooks mutation rows", labsOptions.Entries)
@@ -1632,28 +1638,19 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 		"Startup picker",
 		"on",
 		"default",
-		"Snapshot session",
-		"workspace",
-		"Snapshot source",
-		"autosave",
-		"Saved snapshot",
-		"2026-05-12 03:04:05 UTC",
-		"Preview",
-		"window 0",
-		"main",
-		"pane 0.0",
-		"shell",
-		"Windows",
-		"1",
-		"Panes",
-		"2",
+		"Storage",
+		"latest snapshot store",
+		"Retention",
+		"latest snapshot only",
 	} {
 		if !hasEntryLabelContaining(entries, want) {
 			t.Fatalf("session state entries = %#v, want label containing %q", entries, want)
 		}
 	}
-	if !hasEntryValue(entries, settingsSessionStateDelete) {
-		t.Fatalf("session state entries = %#v, want delete action", entries)
+	for _, absent := range []string{"Snapshot session", "Preview", "window 0", "pane 0.0"} {
+		if hasEntryLabelContaining(entries, absent) {
+			t.Fatalf("session state entries = %#v, did not want current snapshot tree label %q", entries, absent)
+		}
 	}
 	for _, want := range []string{
 		settingsActionPrefixSessionState + "autosave:on",
@@ -1727,8 +1724,8 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 	if got, want := options.Prompt, "Settings > Project > Session State > "; got != want {
 		t.Fatalf("project session state prompt = %q, want %q", got, want)
 	}
-	if !strings.Contains(options.Title, "restore state saved") {
-		t.Fatalf("project session state title = %q, want saved restore state", options.Title)
+	if !strings.Contains(options.Title, "settings") {
+		t.Fatalf("project session state title = %q, want settings", options.Title)
 	}
 	for _, want := range []string{
 		"Project",
@@ -1738,45 +1735,88 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 		"PROJMUX_CWD env",
 		"Session identity",
 		"repos-projmux",
-		"Snapshot session",
-		"repos-projmux",
-		"Snapshot source",
-		sessionstate.SourceFresh,
-		"Preview",
-		"window 1",
-		"dev",
-		"Window",
-		"pane 1.0",
-		"editor",
-		"Pane cwd",
-		project,
-		"Pane recipe",
-		"agent codex",
-		"topic topic",
-		"resume available",
-		"source session-id",
-		"status available",
-		"confidence high",
-		"Save snapshot",
-		"capture live project session",
+		"Project auto-save",
+		"inherit",
+		"Effective auto-save",
+		"off",
+		"global default",
+		"Global auto-save",
+		"Save latest snapshot",
+		"capture live project session as latest",
+		"Save named snapshot",
 		"Preview restore",
 		"dry-run only",
 		"Delete snapshot",
-		"Windows",
-		"1",
-		"Panes",
-		"1",
 	} {
 		if !hasEntryLabelContaining(options.Entries, want) {
 			t.Fatalf("project session state entries = %#v, want label containing %q", options.Entries, want)
 		}
 	}
+	for _, absent := range []string{"Snapshot session", "window 1", "pane 1.0", "Pane cwd", "Pane recipe"} {
+		if hasEntryLabelContaining(options.Entries, absent) {
+			t.Fatalf("project session state entries = %#v, did not want primary snapshot tree label %q", options.Entries, absent)
+		}
+	}
 	if hasEntryLabelContaining(options.Entries, "live-session") {
 		t.Fatalf("project session state entries = %#v, want derived identity instead of live tmux session", options.Entries)
 	}
-	for _, want := range []string{settingsProjectSessionStateSave, settingsProjectSessionStatePreview, settingsProjectSessionStateDelete} {
+	for _, want := range []string{settingsProjectSessionStateSaveLatest, settingsProjectSessionStateSaveNamed, settingsProjectSessionStatePreview, settingsProjectSessionStateDelete} {
 		if !hasEntryValue(options.Entries, want) {
 			t.Fatalf("project session state entries = %#v, want project action %q", options.Entries, want)
+		}
+	}
+}
+
+func TestSettingsSessionStateGlobalDefaultAutosaveOffAndNoTree(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{homeDir: func() (string, error) { return t.TempDir(), nil }}
+	entries := cmd.sessionStateEntries()
+	for _, want := range []string{"Auto-save", "off", "default", "Storage", "Retention"} {
+		if !hasEntryLabelContaining(entries, want) {
+			t.Fatalf("session state entries = %#v, want %q", entries, want)
+		}
+	}
+	for _, absent := range []string{"Window", "Pane", "Snapshot session", "Preview restore", "Delete snapshot"} {
+		if hasEntryLabelContaining(entries, absent) {
+			t.Fatalf("session state entries = %#v, did not want %q", entries, absent)
+		}
+	}
+}
+
+func TestSettingsProjectSessionStateShowsEffectiveAutosaveSource(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveSessionStateToggleFile(paths.SessionStateAutosaveFile(), config.SessionStateToggleOn); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveSessionStateProjectToggleFile(paths.ProjectSessionStateAutosaveFile("repos-projmux"), config.SessionStateProjectOff); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(home, "source", "repos", "projmux")
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_CONFIG_HOME":
+				return filepath.Join(home, "config")
+			case "PROJMUX_CWD":
+				return project
+			default:
+				return ""
+			}
+		},
+	}
+
+	entries := cmd.projectSessionStateEntries()
+	for _, want := range []string{"Project auto-save", "off", "saved", "Effective auto-save", "project override", "Global auto-save", "on"} {
+		if !hasEntryLabelContaining(entries, want) {
+			t.Fatalf("project session state entries = %#v, want %q", entries, want)
 		}
 	}
 }
@@ -1823,7 +1863,7 @@ func TestSettingsProjectSessionStateShowsUnavailableMissingAndInvalidStates(t *t
 	if err != nil {
 		t.Fatalf("sectionOptions(missing) error = %v", err)
 	}
-	for _, want := range []string{"Snapshot", "missing", "Save snapshot", "unavailable - live project session not found", "Preview restore", "unavailable without a valid snapshot", "Delete snapshot"} {
+	for _, want := range []string{"Project auto-save", "inherit", "Effective auto-save", "off", "Save latest snapshot", "Save named snapshot", "unavailable - live project session not found", "Preview restore", "unavailable without a valid snapshot", "Delete snapshot"} {
 		if !hasEntryLabelContaining(missingOptions.Entries, want) {
 			t.Fatalf("missing snapshot entries = %#v, want %q", missingOptions.Entries, want)
 		}
@@ -1847,8 +1887,8 @@ func TestSettingsProjectSessionStateShowsUnavailableMissingAndInvalidStates(t *t
 	if err != nil {
 		t.Fatalf("sectionOptions(invalid) error = %v", err)
 	}
-	if !hasEntryLabelContaining(invalidOptions.Entries, "Snapshot") || !hasEntryLabelContaining(invalidOptions.Entries, "invalid") {
-		t.Fatalf("invalid snapshot entries = %#v, want invalid snapshot state", invalidOptions.Entries)
+	if hasEntryLabelContaining(invalidOptions.Entries, "Snapshot") || hasEntryLabelContaining(invalidOptions.Entries, "invalid") {
+		t.Fatalf("invalid snapshot entries = %#v, want no primary snapshot state in project settings", invalidOptions.Entries)
 	}
 }
 
@@ -2117,6 +2157,67 @@ func TestSettingsProjectSessionStateSaveNowCapturesProjectSession(t *testing.T) 
 	}
 }
 
+func TestSettingsProjectSessionStateSaveNamedSnapshotUsesPortablePaths(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	xdgState := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	service := filepath.Join(project, "service")
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	paneFormat := strings.Join([]string{
+		"#{window_index}",
+		"#{pane_index}",
+		"#{pane_title}",
+		"#{?pane_active,1,0}",
+		"#{pane_current_path}",
+		"#{@projmux_recipe_kind}",
+		"#{@projmux_startup_command}",
+		"#{@projmux_ai_managed}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{@projmux_ai_resume_id}",
+		"#{@projmux_ai_resume_source}",
+		"#{@projmux_ai_resume_updated_at}",
+	}, "\x1f")
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"tmux", "has-session", "-t", "repos-projmux"}, "\x00"):                        "",
+			strings.Join([]string{"tmux", "list-windows", "-t", "repos-projmux", "-F", windowFormat}, "\x00"):   "0\x1fmain\x1flayout\n",
+			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "repos-projmux", "-F", paneFormat}, "\x00"): "0\x1f0\x1feditor\x1f1\x1f" + service + "\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\n",
+		},
+	}
+	cmd := &settingsCommand{
+		homeDir:    func() (string, error) { return home, nil },
+		tmuxRunner: runner,
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_STATE_HOME":
+				return xdgState
+			case "PROJMUX_CWD":
+				return project
+			default:
+				return ""
+			}
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.executeSessionStateAction("project-save-named:team", &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("project-save-named error = %v", err)
+	}
+	preset, err := corelayout.NewStore(project).Load("team")
+	if err != nil {
+		t.Fatalf("Load(named snapshot) error = %v", err)
+	}
+	if got, want := preset.DefaultCWD, "${PROJMUX_CWD}/service"; got != want {
+		t.Fatalf("default cwd = %q, want portable %q", got, want)
+	}
+	if got, want := preset.Windows[0].Panes[0].CWD, "${PROJMUX_CWD}/service"; got != want {
+		t.Fatalf("pane cwd = %q, want portable %q", got, want)
+	}
+}
+
 func TestSettingsProjectSessionStatePreviewAndDeleteAreProjectScopedAndConfirmed(t *testing.T) {
 	t.Parallel()
 
@@ -2231,8 +2332,8 @@ func TestSettingsSessionStateMissingSnapshotDisablesDelete(t *testing.T) {
 	}
 
 	entries := cmd.sessionStateEntries()
-	if !hasEntryLabelContaining(entries, "Snapshot") || !hasEntryLabelContaining(entries, "missing") {
-		t.Fatalf("session state entries = %#v, want missing snapshot status", entries)
+	if hasEntryLabelContaining(entries, "Snapshot") || hasEntryLabelContaining(entries, "missing") {
+		t.Fatalf("session state entries = %#v, want global settings only", entries)
 	}
 	if hasEntryValue(entries, settingsSessionStateDelete) {
 		t.Fatalf("session state entries = %#v, want delete disabled when missing", entries)
