@@ -91,6 +91,8 @@ func TestStatusGitPrintsConfiguredSymbolDecorator(t *testing.T) {
 			return []byte("true\n"), nil
 		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "symbolic-ref", "--quiet", "--short", "HEAD"}):
 			return []byte("main\n"), nil
+		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "config", "--get", "remote.origin.url"}):
+			return []byte("git@gitlab.com:org/repo.git\n"), nil
 		default:
 			return nil, os.ErrNotExist
 		}
@@ -100,7 +102,7 @@ func TestStatusGitPrintsConfiguredSymbolDecorator(t *testing.T) {
 	if err := cmd.Run([]string{"git"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour17] #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour208] #[fg=colour16]main #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
@@ -125,6 +127,9 @@ func TestStatusGitPrintsConfiguredEmojiDecoratorFromConfig(t *testing.T) {
 		if name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "symbolic-ref", "--quiet", "--short", "HEAD"}) {
 			return []byte("main\n"), nil
 		}
+		if name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "config", "--get", "remote.origin.url"}) {
+			return []byte("git@github.com:org/repo.git\n"), nil
+		}
 		return nil, os.ErrNotExist
 	}
 
@@ -132,7 +137,42 @@ func TestStatusGitPrintsConfiguredEmojiDecoratorFromConfig(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour17]🐙 #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour17]🐈 #[fg=colour16]main #[default]"
+	if got := stdout.String(); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestStatusGitPrintsConfiguredEmojiDecoratorForGitLabRemote(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveStatusbarDecorationFile(paths.StatusbarDecorationFile(), config.StatusbarDecorationEmoji); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testStatusCommand(home)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "rev-parse", "--is-inside-work-tree"}):
+			return []byte("true\n"), nil
+		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "symbolic-ref", "--quiet", "--short", "HEAD"}):
+			return []byte("main\n"), nil
+		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "config", "--get", "remote.origin.url"}):
+			return []byte("https://gitlab.com/org/repo.git\n"), nil
+		default:
+			return nil, os.ErrNotExist
+		}
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour208]🦊 #[fg=colour16]main #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
