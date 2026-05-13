@@ -44,11 +44,18 @@ and removes extra live windows. General `session-state restore` execution
 remains dry-run-only; the live overwrite policy is currently scoped to layout
 presets.
 
-`projmux shell` also has explicit new-session startup selectors for the app
-session: `--saved`, `--layout <name>`, and `--empty`. `--saved` uses the same
-saved snapshot replay path as auto-restore, `--layout <name>` converts the
-project preset to a session-state snapshot and replays it, and `--empty` keeps
-the prior empty-session behavior. These selectors are only applied before a new
-target app session exists; existing sessions are attached without replay. The
-interactive startup picker that will choose among saved, preset, and empty rows
-is intentionally left for the next phase.
+`projmux shell` opens an interactive startup picker before creating a new app
+session when auto-restore is enabled and there is at least one saved or preset
+startup candidate. The picker lists the saved snapshot first, then project
+presets alphabetically, then an empty-session row. Choosing a saved snapshot
+uses the same saved replay path as auto-restore, choosing a preset converts it
+to a session-state snapshot and replays it, and choosing empty keeps the prior
+empty-session behavior. Closing the picker or making no selection falls back to
+empty startup. When auto-restore is disabled, default `projmux shell` skips
+candidate lookup and the picker, then follows the normal empty attach path.
+
+The explicit startup selectors `--saved`, `--layout <name>`, and `--empty`
+bypass the picker and auto-restore toggle, then route directly to the same
+saved, preset, or empty startup paths. All startup selectors are only applied
+before a new target app session exists; existing sessions are attached without
+picker display or replay.
