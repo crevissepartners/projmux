@@ -99,11 +99,33 @@ stage_platform() {
   patch_version "$dir/package.json"
 }
 
-stage_platform linux amd64 x64
-stage_platform linux arm64 arm64
-stage_platform darwin amd64 x64
-stage_platform darwin arm64 arm64
-stage_main
+stage_jobs=()
+stage_names=()
+
+run_stage() {
+  local name="$1"
+  shift
+  "$@" &
+  stage_jobs+=("$!")
+  stage_names+=("$name")
+}
+
+run_stage "@projmux/linux-x64" stage_platform linux amd64 x64
+run_stage "@projmux/linux-arm64" stage_platform linux arm64 arm64
+run_stage "@projmux/darwin-x64" stage_platform darwin amd64 x64
+run_stage "@projmux/darwin-arm64" stage_platform darwin arm64 arm64
+run_stage "projmux" stage_main
+
+stage_status=0
+for i in "${!stage_jobs[@]}"; do
+  if ! wait "${stage_jobs[$i]}"; then
+    echo "failed to stage ${stage_names[$i]}" >&2
+    stage_status=1
+  fi
+done
+if [[ "$stage_status" -ne 0 ]]; then
+  exit "$stage_status"
+fi
 
 if [[ "$pack" -eq 1 ]]; then
   for dir in \

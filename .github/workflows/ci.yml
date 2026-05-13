@@ -17,10 +17,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -34,10 +34,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -51,20 +51,63 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect package relevance
+        id: package-scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          needed=0
+          reason="no package-related files changed"
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            case "$PR_TITLE" in
+              "chore(main): release "*)
+                needed=1
+                reason="release PR"
+                ;;
+            esac
+            git diff --name-only "$PR_BASE_SHA" "$PR_HEAD_SHA" > changed-files.txt
+          elif [[ "$PUSH_BEFORE" =~ ^0+$ ]]; then
+            git diff-tree --no-commit-id --name-only -r "$PUSH_SHA" > changed-files.txt
+          else
+            git diff --name-only "$PUSH_BEFORE" "$PUSH_SHA" > changed-files.txt
+          fi
+
+          if [[ "$needed" != "1" ]] && grep -Eq '^(package(-lock)?\.json|npm/|scripts/package-npm\.sh|README(\.md|-ko\.md)?|LICENSE|docs/|\.github/workflows/release(-please)?\.yml)' changed-files.txt; then
+            needed=1
+            reason="package-related files changed"
+          fi
+
+          echo "needed=$needed" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "NPM package check: $reason"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        if: steps.package-scope.outputs.needed == '1'
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        if: steps.package-scope.outputs.needed == '1'
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
 
       - name: Validate npm package staging
+        if: steps.package-scope.outputs.needed == '1'
         run: make npm-pack
 
   integration:
@@ -73,7 +116,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run integration tests
         run: make test-integration
@@ -84,7 +127,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run e2e tests
         run: make test-e2e
