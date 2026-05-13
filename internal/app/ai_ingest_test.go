@@ -140,6 +140,7 @@ func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing
 	if got.Metadata["agent"] != "codex" || got.Metadata["event"] != "PermissionRequest" || got.Metadata["model"] != "gpt-5.1-codex" || got.Metadata["tool_input.command"] != "go test ./internal/app" {
 		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
+	assertNoAIPaneTopicWrite(t, cmdRecorder(cmd).commands)
 }
 
 func TestIngestCodexHookStopPushesInfoQueueEntry(t *testing.T) {
@@ -196,6 +197,7 @@ func TestIngestCodexHookUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
 		}
 	}
+	assertNoAIPaneTopicWrite(t, cmdRecorder(cmd).commands)
 }
 
 func TestIngestCodexHookQuietEventsMarkPaneAndLogWithoutNotify(t *testing.T) {
@@ -223,12 +225,12 @@ func TestIngestCodexHookQuietEventsMarkPaneAndLogWithoutNotify(t *testing.T) {
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeCodex}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneTopicOption, "go test ./internal/app"}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
 		}
 	}
+	assertNoAIPaneTopicWrite(t, cmdRecorder(cmd).commands)
 	var out bytes.Buffer
 	if err := cmd.Run([]string{"ingest", "log", "--json"}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest log --json error = %v", err)
@@ -661,6 +663,7 @@ func TestIngestClaudeUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
 		}
 	}
+	assertNoAIPaneTopicWrite(t, cmdRecorder(cmd).commands)
 }
 
 func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.T) {
@@ -712,6 +715,7 @@ func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.
 	if got.Metadata["agent"] != "claude" || got.Metadata["event"] != "PermissionRequest" || got.Metadata["tool_input.command"] != "go test ./internal/app" {
 		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
+	assertNoAIPaneTopicWrite(t, cmdRecorder(cmd).commands)
 }
 
 func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
@@ -932,12 +936,12 @@ func TestIngestClaudeQuietEventsMarkPaneAndLogWithoutNotify(t *testing.T) {
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeClaude}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneTopicOption, "go test ./internal/app"}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
 		}
 	}
+	assertNoAIPaneTopicWrite(t, cmdRecorder(cmd).commands)
 	var out bytes.Buffer
 	if err := cmd.Run([]string{"ingest", "log", "--json"}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest log --json error = %v", err)
@@ -1074,4 +1078,11 @@ func hasRecordedAISetOption(commands []recordedAICommand, option string) bool {
 		}
 	}
 	return false
+}
+
+func assertNoAIPaneTopicWrite(t *testing.T, commands []recordedAICommand) {
+	t.Helper()
+	if hasRecordedAISetOption(commands, aiPaneTopicOption) {
+		t.Fatalf("commands = %#v, did not want hook ingest to write topic", commands)
+	}
 }
