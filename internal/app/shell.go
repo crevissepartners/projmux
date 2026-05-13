@@ -78,8 +78,8 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	configPath := fs.String("config", "", "tmux config path for the projmux app")
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the app config")
 	noInstall := fs.Bool("no-install", false, "run without writing the app tmux config")
-	layoutName := fs.String("layout", "", "start a new app session from a project layout preset")
-	saved := fs.Bool("saved", false, "start a new app session from the saved session snapshot")
+	layoutName := fs.String("layout", "", "start a new app session from a named snapshot")
+	saved := fs.Bool("saved", false, "start a new app session from the latest snapshot")
 	empty := fs.Bool("empty", false, "start a new empty app session")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -318,7 +318,7 @@ func (c *shellCommand) restoreLayoutPreset(ctx context.Context, socketName, conf
 	}
 	snap, err := corelayout.ToSnapshot(preset, sessionName, store.ProjectRoot, c.nowTime())
 	if err != nil {
-		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("convert layout preset %q: %v", name, err))
+		c.reportSessionStateAutorestore(stderr, fmt.Sprintf("convert named snapshot %q: %v", name, err))
 		return
 	}
 
@@ -418,8 +418,8 @@ func (c *shellCommand) shellSessionCandidates(sessionName string, includeProject
 				candidates = append(candidates, shellSessionCandidate{
 					Kind:        shellStartSaved,
 					Name:        summary.Session,
-					Label:       "Saved session",
-					Description: fmt.Sprintf("%s, %s", sessionStateCount(summary.WindowCount, "window"), sessionStateCount(summary.PaneCount, "pane")),
+					Label:       "Latest snapshot",
+					Description: fmt.Sprintf("auto-saved, %s, %s", sessionStateCount(summary.WindowCount, "window"), sessionStateCount(summary.PaneCount, "pane")),
 				})
 			}
 		}
@@ -432,8 +432,8 @@ func (c *shellCommand) shellSessionCandidates(sessionName string, includeProject
 					candidates = append(candidates, shellSessionCandidate{
 						Kind:        shellStartLayout,
 						Name:        entry.Name,
-						Label:       entry.Name,
-						Description: strings.TrimSpace(entry.Description),
+						Label:       "Named snapshot",
+						Description: namedSnapshotDescription(entry),
 					})
 				}
 			}
@@ -494,7 +494,7 @@ func shellStartupPickerOptions(candidates []shellSessionCandidate) intpickercomp
 	return intpickercompat.Options{
 		UI:            "shell-startup",
 		Prompt:        "Start > ",
-		Header:        "Choose startup layout",
+		Header:        "Start project",
 		Footer:        "Enter: start  |  Esc: empty session",
 		Entries:       entries,
 		Bindings:      settingsCloseBindings(),
@@ -505,9 +505,9 @@ func shellStartupPickerOptions(candidates []shellSessionCandidate) intpickercomp
 func shellStartupPickerLabel(candidate shellSessionCandidate) string {
 	switch candidate.Kind {
 	case shellStartSaved:
-		return settingsLabel(settingsGlyphOpen, settingsColorType, "Saved session", candidate.Description)
+		return settingsLabel(settingsGlyphOpen, settingsColorType, "Latest snapshot", candidate.Description)
 	case shellStartLayout:
-		return settingsLabel(settingsGlyphOpen, settingsColorType, candidate.Label, candidate.Description)
+		return settingsLabel(settingsGlyphOpen, settingsColorType, "Named snapshot", candidate.Description)
 	case shellStartEmpty:
 		return settingsLabel(settingsGlyphBack, settingsColorBack, "Empty session", candidate.Description)
 	default:

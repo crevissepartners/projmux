@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	hookTrustPopupTitle           = "Trust project hook"
+	hookTrustPopupTitle           = "Trust project hooks"
 	hookTrustPopupWidth           = "90"
 	hookTrustPopupHeight          = "24"
 	hookTrustPopupContentWidth    = 86
@@ -178,7 +178,7 @@ func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Read
 }
 
 func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectHookPromptRequest) hooks.ProjectHookDecision {
-	fmt.Fprintln(writer, projmuxpicker.CurrentStart+" Project hook trust "+projmuxpicker.Reset)
+	fmt.Fprintln(writer, projmuxpicker.CurrentStart+" Trust project hooks "+projmuxpicker.Reset)
 	fmt.Fprintln(writer, hookTrustMuted("Project-local automation is disabled until this file hash is trusted."))
 	fmt.Fprintln(writer)
 	writeHookTrustField(writer, "repo", req.RepoPath)
@@ -198,9 +198,9 @@ func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectH
 
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
-	fmt.Fprintln(writer, hookTrustActionLine("[o] once", "run this time only"))
-	fmt.Fprintln(writer, hookTrustActionLine("[a] always", "trust this exact file hash"))
-	fmt.Fprintln(writer, hookTrustActionLine("[d] deny", "skip this hook"))
+	fmt.Fprintln(writer, hookTrustActionLine("[o] Allow once", "run this time only"))
+	fmt.Fprintln(writer, hookTrustActionLine("[a] Allow always", "trust this exact file hash"))
+	fmt.Fprintln(writer, hookTrustActionLine("[d] Deny", "skip this hook"))
 
 	input := bufio.NewReader(reader)
 	for range 3 {

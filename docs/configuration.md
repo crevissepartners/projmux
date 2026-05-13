@@ -38,9 +38,9 @@ The saved workdir file is:
 It stores one absolute path per line. Lines beginning with `#` are comments.
 The file is read only when no env root list is set.
 
-## Project Layout Presets
+## Project Named Snapshots
 
-Projects may keep reusable tmux layout seeds in:
+Projects may keep reusable named snapshots in the legacy storage directory:
 
 ```text
 <project>/.projmux/layouts/<name>.toml
@@ -54,21 +54,23 @@ Use `projmux layout save [--description <text>] [--fresh] <name>` from inside a
 tmux session to capture the current session into this directory. The save path
 uses the same tmux capture logic as `projmux session-state save`; paths inside
 the project root are rendered as `${PROJMUX_CWD}` or `${PROJMUX_CWD}/rel` so
-the preset stays portable across checkouts. Use `projmux layout remove --force <name>`
-to delete a preset non-interactively.
+the named snapshot stays portable across checkouts. Use
+`projmux layout remove --force <name>` to delete a named snapshot
+non-interactively.
 
 Use `projmux layout apply <name> --dry-run` from inside a tmux session to
-preview how a preset would convert into the current session's session-state
+preview how a named snapshot would convert into the current session's session-state
 restore plan. This preview does not run tmux replay commands.
 
 Use `projmux layout apply <name> --force` from inside a tmux session to
-destructively replace the current session's windows with the preset. The target
-is always the current session name; there is no alternate-session apply flag.
-The implementation stages the preset through the session-state replay path,
+destructively replace the current session's windows with the named snapshot. The
+target is always the current session name; there is no alternate-session apply
+flag. The implementation stages the named snapshot through the session-state replay path,
 moves the staged windows into the live session, and removes extra live windows.
-`mode = "fresh-each-time"` is stored in the schema for preset-vs-autosave
-selection, but explicit `layout apply --force` already applies the preset
-directly and does not add a separate mode-specific branch yet.
+`mode = "fresh-each-time"` is stored in the legacy schema to distinguish a fixed
+named snapshot from auto-saved latest snapshot state, but explicit
+`layout apply --force` already applies the named snapshot directly and does not
+add a separate mode-specific branch yet.
 
 The Phase 1 schema is intentionally close to the session-state snapshot shape:
 
@@ -390,20 +392,27 @@ prints the guide.
 autosave command is quiet and debounced per session, and stores snapshots under
 `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`.
 
-On default `projmux shell`, startup candidates are checked before creating a
-new app session only when the startup picker is enabled. In project context, projmux
-opens a native startup picker even when the only choice is empty startup. When
-saved snapshots or project layout presets are available, rows appear with saved
-first, presets in alphabetical order, and empty last.
+Project open from the Alt-1 sidebar is the canonical startup picker path. It
+checks hook trust first, then opens `Start project` for a closed project session
+when the startup picker is enabled. Rows appear as `Latest snapshot`, named
+snapshot rows, and `Empty session`. `Latest snapshot` is the snapshot auto-save
+that changes as auto-save runs; named snapshots are fixed until the user saves or
+replaces them.
+
+On default `projmux shell`, compatibility startup candidates are checked before
+creating a new app session only when the startup picker is enabled. In project
+context, projmux opens a native startup picker even when the only choice is
+empty startup. When snapshots are available, rows use the same `Latest
+snapshot`, `Named snapshot`, and `Empty session` labels.
 When a project context is available, default `projmux shell` targets that
-project's session identity and starts in the project root, so saved snapshot
+project's session identity and starts in the project root, so latest snapshot
 lookup uses the same key as project sessions. Without project context, or with
 an explicit `--session home`, it keeps the existing `home` target and home
 directory startup behavior.
-Selecting saved or a preset replays through the same session-state paths as
-explicit startup flags. Closing the picker, an empty selection, or a picker
+Selecting latest or named snapshot replays through the same session-state paths
+as explicit startup flags. Closing the picker, an empty selection, or a picker
 error falls back to an empty session and continues to the normal
-`tmux new-session -A` attach behavior. Missing snapshots and missing presets are
+`tmux new-session -A` attach behavior. Missing snapshots and missing named snapshots are
 quiet. When the startup picker is disabled, default `projmux shell` skips candidate
 lookup and the startup picker.
 
@@ -412,30 +421,31 @@ session is left untouched and the normal attach path continues without opening
 the startup picker. Invalid snapshots or replay failures are reported to
 stderr, then `projmux shell` falls back to the normal attach behavior.
 
-`projmux shell --saved` bypasses the saved startup picker toggle and attempts the
-same saved-snapshot replay on the new-session path. `projmux shell --layout
-<name>` converts a project layout preset from `<project>/.projmux/layouts` into
-a session snapshot and replays it before attaching. The project context comes
-from `PROJMUX_CWD` when set, otherwise the nearest `.projmux` or `.git` marker
-from the current working directory. `projmux shell --empty` skips saved and
-layout replay. These flags bypass the startup picker toggle,
+`projmux shell --saved` bypasses the startup picker toggle and attempts latest
+snapshot replay on the new-session path. `projmux shell --layout <name>` converts
+a named snapshot from the legacy `<project>/.projmux/layouts` store into a
+session snapshot and replays it before attaching. The project context comes from
+`PROJMUX_CWD` when set, otherwise the nearest `.projmux` or `.git` marker from
+the current working directory. `projmux shell --empty` skips snapshot replay.
+These flags bypass the startup picker toggle,
 are mutually exclusive, and still honor the existing session guard: if the
 target app session already exists, no replay is attempted.
 
-Layout startup records a session-state source marker on the live tmux session.
-Normal presets use `layout(<name>)` and continue autosaving. Fresh presets use
+Named snapshot startup records a session-state source marker on the live tmux
+session. Normal named snapshots use the legacy `layout(<name>)` source and
+continue autosaving. Fresh named snapshots use
 `fresh`; the autosave tick skips sessions with that source marker, so a fresh
-startup does not create a saved snapshot for the next startup picker. After a
+startup does not create a latest snapshot for the next startup picker. After a
 successful fresh startup or `layout apply --force`, projmux also removes the
-saved snapshot for that session so an older autosave is not offered as the
-"Saved session" row next time. If a user explicitly runs `projmux session-state
-save` while a session is marked `fresh`, that fresh-source snapshot is still
-hidden from the startup picker.
+latest snapshot for that session so an older autosave is not offered as the
+`Latest snapshot` row next time. If a user explicitly runs `projmux
+session-state save` while a session is marked `fresh`, that fresh-source snapshot
+is still hidden from the startup picker.
 
 Settings > Project > Session State is the primary inspection surface when
 project context exists. It derives the target session identity from the current
-project path, shows the project path/source, reports the saved snapshot
-source/age, and previews the saved structure as window title -> pane title
+project path, shows the project path/source, reports the latest snapshot
+source/age, and previews the snapshot structure as window title -> pane title
 before count metadata. The global Settings > Session State path remains
 available for the current live tmux session and still exposes current-session
 snapshot delete. The saved toggles live under

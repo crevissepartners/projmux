@@ -69,7 +69,7 @@ func (c *layoutCommand) Run(args []string, stdout, stderr io.Writer) error {
 func (c *layoutCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("layout list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	jsonOut := fs.Bool("json", false, "print layout presets as JSON")
+	jsonOut := fs.Bool("json", false, "print named snapshots as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (c *layoutCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if len(entries) == 0 {
-		_, err := fmt.Fprintln(stdout, "no layout presets found")
+		_, err := fmt.Fprintln(stdout, "no named snapshots found")
 		return err
 	}
 	_, _ = fmt.Fprintln(stdout, "NAME\tMODE\tWINDOWS\tPANES\tDESCRIPTION")
@@ -135,8 +135,8 @@ func (c *layoutCommand) runShow(args []string, stdout, stderr io.Writer) error {
 func (c *layoutCommand) runSave(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("layout save", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	description := fs.String("description", "", "layout preset description")
-	fresh := fs.Bool("fresh", false, "start from the preset each time instead of autosave state")
+	description := fs.String("description", "", "named snapshot description")
+	fresh := fs.Bool("fresh", false, "start from this named snapshot instead of auto-saved latest snapshot state")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (c *layoutCommand) runSave(args []string, stdout, stderr io.Writer) error {
 	}
 	snap, err := client.CaptureSessionSnapshot(ctx, sessionName, c.nowTime())
 	if err != nil {
-		return fmt.Errorf("capture layout preset %q from session %q: %w", fs.Arg(0), sessionName, err)
+		return fmt.Errorf("capture named snapshot %q from session %q: %w", fs.Arg(0), sessionName, err)
 	}
 	mode := corelayout.ModeInheritAutosave
 	if *fresh {
@@ -177,7 +177,7 @@ func (c *layoutCommand) runSave(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "saved layout preset: %s (%s, %s) -> %s\n", fs.Arg(0), sessionStateCount(len(preset.Windows), "window"), sessionStateCount(layoutPresetPaneCount(preset), "pane"), path)
+	_, err = fmt.Fprintf(stdout, "saved named snapshot: %s (%s, %s) -> %s\n", fs.Arg(0), sessionStateCount(len(preset.Windows), "window"), sessionStateCount(layoutPresetPaneCount(preset), "pane"), path)
 	return err
 }
 
@@ -202,7 +202,7 @@ func (c *layoutCommand) runRemove(args []string, stdout, stderr io.Writer) error
 	if err := store.Remove(fs.Arg(0)); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "removed layout preset: %s\n", fs.Arg(0))
+	_, err = fmt.Fprintf(stdout, "removed named snapshot: %s\n", fs.Arg(0))
 	return err
 }
 
@@ -244,7 +244,7 @@ func (c *layoutCommand) runApply(args []string, stdout, stderr io.Writer) error 
 	}
 	snap, err := corelayout.ToSnapshot(preset, sessionName, store.ProjectRoot, c.nowTime())
 	if err != nil {
-		return fmt.Errorf("convert layout preset %q for session %q: %w", opts.name, sessionName, err)
+		return fmt.Errorf("convert named snapshot %q for session %q: %w", opts.name, sessionName, err)
 	}
 	snap.Source = layoutPresetSource(opts.name, preset)
 	if opts.dryRun {
@@ -260,7 +260,7 @@ func (c *layoutCommand) runApply(args []string, stdout, stderr io.Writer) error 
 		ReplayOptions: sessionstate.ReplayOptions{FallbackCWD: store.ProjectRoot},
 	})
 	if err != nil {
-		return fmt.Errorf("apply layout preset %q to session %q: %w", opts.name, sessionName, err)
+		return fmt.Errorf("apply named snapshot %q to session %q: %w", opts.name, sessionName, err)
 	}
 	printSessionStateReplayWarnings(stderr, result.Warnings)
 	source := layoutPresetSource(opts.name, preset)
@@ -272,7 +272,7 @@ func (c *layoutCommand) runApply(args []string, stdout, stderr io.Writer) error 
 			return err
 		}
 	}
-	_, err = fmt.Fprintf(stdout, "applied layout preset: %s (%s, %s) -> %s\n", opts.name, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"), sessionName)
+	_, err = fmt.Fprintf(stdout, "applied named snapshot: %s (%s, %s) -> %s\n", opts.name, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"), sessionName)
 	return err
 }
 
@@ -378,7 +378,7 @@ func layoutPresetSource(name string, preset corelayout.Preset) string {
 
 func printLayoutWarnings(w io.Writer, warnings []corelayout.Warning) {
 	for _, warning := range warnings {
-		fmt.Fprintf(w, "warning: skip layout preset %s: %v\n", warning.Path, warning.Err)
+		fmt.Fprintf(w, "warning: skip named snapshot %s: %v\n", warning.Path, warning.Err)
 	}
 }
 

@@ -224,6 +224,42 @@ func TrustProjectConfig(repoPath, trustStorePath string) (string, error) {
 	return trustProjectFile(repoPath, projectConfigRelativePath, trustStorePath)
 }
 
+// AuthorizeProjectConfig prompts for trust on the project-local
+// .projmux/config.toml file without running any lifecycle hook. It shares the
+// same authorization cache and trust-store policy as Run, so an allow-once
+// decision made here is honored by the subsequent lifecycle hooks in this
+// Runner instance.
+func (r *Runner) AuthorizeProjectConfig(repoPath string) (bool, error) {
+	if r == nil {
+		return true, nil
+	}
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return false, errors.New("repo path is required")
+	}
+	if !r.DiscoverProjectHooks || projectHooksDisabled(EventPreCreate, r.ProjectHooksFilePath, r.Logger) {
+		return true, nil
+	}
+	repo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return false, err
+	}
+	rel := projectConfigRelativePath
+	path := filepath.Join(repo, filepath.FromSlash(rel))
+	info, statErr := os.Stat(path)
+	if errors.Is(statErr, os.ErrNotExist) || (statErr == nil && info.IsDir()) {
+		return true, nil
+	}
+	if statErr != nil {
+		return false, statErr
+	}
+	return r.authorizeProjectConfig(EventPreCreate, projectConfigFile{
+		repo: repo,
+		rel:  rel,
+		path: path,
+	}), nil
+}
+
 // ProjectConfigTrustState classifies the trust standing of a project's
 // .projmux/config.toml file relative to the trust store.
 type ProjectConfigTrustState string

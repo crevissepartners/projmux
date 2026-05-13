@@ -227,7 +227,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
 	fmt.Fprintln(w, "  init      Merge projmux keybindings into a terminal config")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
-	fmt.Fprintln(w, "  layout    List and inspect project layout presets")
+	fmt.Fprintln(w, "  layout    Compatibility commands for project named snapshots")
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")

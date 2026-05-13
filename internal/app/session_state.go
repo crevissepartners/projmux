@@ -430,7 +430,7 @@ func sessionStatePopupEntries(state statusbarSessionStateView) []intpickercompat
 	}
 	entries = append(entries, sessionStatePopupSnapshotEntries(state)...)
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save now", "capture current tmux session"),
+		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save snapshot", "capture current tmux session"),
 		Value: sessionStatePopupSave,
 	})
 	if state.LoadErr == nil && state.StoreErr == nil && state.SessionErr == nil {

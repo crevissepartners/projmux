@@ -374,7 +374,7 @@ func (c *switchCommand) runOpen(args []string, stderr io.Writer) error {
 		printSwitchUsage(stderr)
 		return fmt.Errorf("switch open requires exactly 1 argument: <path>")
 	}
-	return c.openTarget(context.Background(), cleanOptionalPath(fs.Arg(0)))
+	return c.openProjectTargetPath(context.Background(), cleanOptionalPath(fs.Arg(0)))
 }
 
 func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) error {
@@ -1437,41 +1437,67 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		return false, nil
 	}
 
+	if plan.UI == switchUISidebar {
+		if err := c.openProjectTargetPath(ctx, plan.Selection); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
 	if err := c.openTarget(ctx, plan.Selection); err != nil {
 		return false, err
 	}
 	return false, nil
 }
 
-func (c *switchCommand) openTarget(ctx context.Context, target string) error {
+func (c *switchCommand) resolveTargetSession(target string) (string, error) {
 	target = cleanOptionalPath(target)
 	if target == "" || target == switchSettingsSentinel {
-		return nil
+		return "", nil
 	}
 	if c.identityErr != nil {
-		return fmt.Errorf("configure session identity resolver: %w", c.identityErr)
+		return "", fmt.Errorf("configure session identity resolver: %w", c.identityErr)
 	}
 	if c.identity == nil {
-		return fmt.Errorf("switch session identity resolver is not configured")
+		return "", fmt.Errorf("switch session identity resolver is not configured")
 	}
 	if c.sessions == nil {
-		return fmt.Errorf("switch session executor is not configured")
+		return "", fmt.Errorf("switch session executor is not configured")
 	}
 
 	sessionName, err := c.identity.SessionIdentityForPath(target)
 	if err != nil {
-		return fmt.Errorf("resolve switch session identity: %w", err)
+		return "", fmt.Errorf("resolve switch session identity: %w", err)
 	}
 	if sessionName == "" {
-		return fmt.Errorf("switch command requires a target session")
+		return "", fmt.Errorf("switch command requires a target session")
 	}
-	if err := c.sessions.EnsureSession(ctx, sessionName, target); err != nil {
-		return fmt.Errorf("ensure tmux session %q: %w", sessionName, err)
+	return sessionName, nil
+}
+
+func (c *switchCommand) openTarget(ctx context.Context, target string) error {
+	target = cleanOptionalPath(target)
+	sessionName, err := c.resolveTargetSession(target)
+	if err != nil || sessionName == "" {
+		return err
 	}
-	if err := c.sessions.OpenSession(ctx, sessionName); err != nil {
-		return fmt.Errorf("open tmux session %q: %w", sessionName, err)
+	exists, err := c.switchSessionExists(ctx, sessionName)
+	if err != nil {
+		return err
 	}
-	return nil
+	if exists {
+		return c.openProjectSession(ctx, sessionName)
+	}
+	return c.ensureAndOpenProjectSession(ctx, sessionName, target)
+}
+
+func (c *switchCommand) openProjectTargetPath(ctx context.Context, target string) error {
+	target = cleanOptionalPath(target)
+	sessionName, err := c.resolveTargetSession(target)
+	if err != nil || sessionName == "" {
+		return err
+	}
+	return c.openProjectTarget(ctx, target, sessionName)
 }
 
 func (c *switchCommand) launchSidebarOpenPopup(ctx context.Context, target string) error {
@@ -1500,7 +1526,7 @@ func (c *switchCommand) launchSidebarOpenPopup(ctx context.Context, target strin
 		},
 		Width:  hookTrustPopupWidth,
 		Height: hookTrustPopupHeight,
-		Title:  "Open project",
+		Title:  "Trust project hooks",
 	})
 	if err != nil {
 		return fmt.Errorf("build switch open popup: %w", err)
