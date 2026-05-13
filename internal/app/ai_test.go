@@ -870,6 +870,9 @@ func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
 	cmd := testAICommand(home)
 	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: 10 * time.Minute}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && len(args) == 2 && args[0] == "-v" && args[1] == "notify-send" {
+			return []byte("/usr/bin/notify-send\n"), nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
@@ -882,10 +885,16 @@ func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
 				return []byte("claude\n"), nil
 			case "#S":
 				return []byte("main\n"), nil
+			case "#W":
+				return []byte("dev\n"), nil
 			case "#{window_id}":
 				return []byte("@4\n"), nil
 			case "#{pane_id}":
 				return []byte("%21\n"), nil
+			case "#{pane_title}":
+				return []byte("Claude: reply ready\n"), nil
+			case "#{pane_current_path}":
+				return []byte(home + "\n"), nil
 			case "#{socket_path}":
 				return []byte("/tmp/tmux/default\n"), nil
 			}
@@ -925,6 +934,12 @@ func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
 	// pane is visible.
 	if len(store.pushed) != 1 {
 		t.Fatalf("push count = %d, want 1 (Force=true forces notify even when visible)", len(store.pushed))
+	}
+	// Force=true on a visible pane must still fire the OS-level notification
+	// (notifyAI) — the badge stays visibility-driven but delivery channels
+	// (queue + OS) follow the Force-or-not-visible rule uniformly.
+	if !containsAICommand(commands, "notify-send") {
+		t.Fatalf("commands = %#v, want notify-send dispatch when Force=true even with visible pane", commands)
 	}
 }
 

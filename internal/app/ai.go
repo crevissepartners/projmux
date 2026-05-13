@@ -210,10 +210,10 @@ func (c *aiCommand) applyAIStatusWithNotify(state, paneID string, notifyIn atten
 		} else {
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateReply)
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionFocusArmedOption, "1")
-			_ = c.notifyAI(paneID)
 		}
-		// Force only controls notification delivery, not the badge.
+		// Force controls notification delivery (queue + OS), not the badge.
 		if notifyIn.Force || !visible {
+			_ = c.notifyAI(paneID)
 			c.notifyProducer().PushReplyReady(notifyIn)
 		} else {
 			c.notifyProducer().AckReplyReady(notifyIn)
