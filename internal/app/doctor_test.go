@@ -351,6 +351,12 @@ func TestDoctorAINotifyDiagnosticsReuseReadOnlyPlans(t *testing.T) {
 	writeCodexTestFile(t, filepath.Join(home, codexConfigRelativePath), codexNotifyBlock()+`
 [features]
 codex_hooks = true
+
+[[hooks.Stop]]
+matcher = "*"
+[[hooks.Stop.hooks]]
+type = "command"
+command = "projmux ai ingest codex-hook"
 `)
 	writeCodexTestFile(t, filepath.Join(home, claudeSettingsRelativePath), `{
   "hooks": {

@@ -285,26 +285,38 @@ and falls back to treating `session_id` as the thread identity so existing
 `matchAIPane` matching can reuse cached pane metadata.
 
 `projmux ai integrate codex --mode hooks` manages a separate
-`~/.codex/config.toml` marker block for the hooks engine:
+`~/.codex/config.toml` marker block for the hooks engine. If a `[features]`
+table already exists, projmux merges `codex_hooks = true` into that table
+instead of creating a duplicate table:
 
 ```toml
 [features]
 codex_hooks = true
 
 [[hooks.PermissionRequest]]
+matcher = "*"
+[[hooks.PermissionRequest.hooks]]
+type = "command"
 command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.UserPromptSubmit]]
+matcher = "*"
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
 command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.Stop]]
+matcher = "*"
+[[hooks.Stop.hooks]]
+type = "command"
 command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 ```
 
-Repeated installs are idempotent and preserve unrelated Codex config. If
-projmux sees unmanaged `codex_hooks`/Codex hook wiring, it refuses to install
-over it rather than guessing ownership. `--dry-run` previews the TOML update.
-`--remove --mode hooks` removes only the hooks block; `--remove` with no mode
+Repeated installs are idempotent and preserve unrelated Codex config, including
+unmanaged hook entries for the same events. If projmux sees an unmanaged
+`projmux ai ingest codex-hook` command, it refuses to install over it rather
+than guessing ownership. `--dry-run` previews the TOML update. `--remove --mode
+hooks` removes only projmux-managed hooks wiring; `--remove` with no mode
 removes both projmux-managed Codex hooks and legacy notify blocks.
 
 Codex may require reviewing or trusting hooks through its `/hooks` flow before
