@@ -15,7 +15,6 @@ projmux-owned internal tmux hooks such as `pane-focus-in`, `pane-focus-out`,
 | --- | --- | --- | --- |
 | `pre-create` | Before projmux creates a missing persistent or ephemeral session | Non-zero exit, exec error, or timeout aborts creation | Logged with `[pre-create] ` |
 | `post-create` | After projmux creates a brand-new persistent or ephemeral session | Logged and ignored; creation continues | Logged with `[post-create] ` |
-| `pane-startup` | After `post-create`, once the initial pane of a brand-new session reaches a shell prompt | Logged and ignored; empty output is no-op | Captured as the command to send into the pane |
 | `post-attach` | After projmux switches the current tmux client to an existing session/target from inside tmux | Logged and ignored | Logged with `[post-attach] ` |
 | `send-noti` | After `projmux notify push` (or the in-process AI notify producer) successfully writes a queue entry | Fired asynchronously and best-effort; queue write and desktop notifications continue even if the hook fails or times out | Receives JSON on stdin; stdout/stderr are logged with `[send-noti] ` |
 
@@ -25,47 +24,24 @@ window create/rename, and focus-change hook events.
 
 ## Where Hooks Live
 
-Global hooks live under the XDG config directory:
+Global hooks live in the XDG config file:
 
 ```text
-${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/<event>
-```
-
-For example:
-
-```text
-${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/post-create
-${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/pane-startup
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml
 ```
 
 Project-local hooks are discovered from the lifecycle context's `PROJMUX_CWD`:
 
 ```text
-<repo>/.projmux/<event>
-<repo>/.projmux/hooks/<event>
 <repo>/.projmux/config.toml
 ```
 
-For example, `pane-startup` discovery checks:
-
-```text
-<repo>/.projmux/pane-startup
-<repo>/.projmux/hooks/pane-startup
-```
-
-Each hook file must exist, be a regular file or symlink (not a directory), and
-have the owner-execute bit set. Anything else is silently skipped.
-
-For each event, projmux runs at most one project-local file: first
-`.projmux/<event>` if executable, otherwise `.projmux/hooks/<event>` if
-executable. Discovery does not walk parent directories and does not run hooks
-from status, preview, or picker hot paths.
+File-form hooks from the historical `.projmux/<event>` and
+`.projmux/hooks/<event>` layouts are no longer executed. Use declarative
+`[hooks.<event>] run` entries instead.
 
 If both a global hook and a project-local hook exist for an event, projmux runs
-the global hook first, then the project-local hook, then any matching
-declarative config command from `.projmux/config.toml`. For `pane-startup`, the
-last non-empty trimmed stdout wins. Config `pane-startup` commands therefore
-override file hooks deterministically.
+the global hook first, then the project-local hook.
 
 ## Project Config
 
@@ -81,9 +57,6 @@ run = "echo checking"
 
 [hooks.post-create]
 run = "echo created $PROJMUX_SESSION"
-
-[hooks.pane-startup]
-run = "echo make test"
 
 [hooks.post-attach]
 run = "echo attached"
@@ -101,14 +74,13 @@ namespace = "tools"
 
 Only quoted string values are supported. Unknown sections or keys make the
 config file invalid for this run. Supported hook events are the public lifecycle
-events listed above: `pre-create`, `post-create`, `pane-startup`,
-`post-attach`, and `send-noti`. Internal tmux hook names such as
+events listed above: `pre-create`, `post-create`, `post-attach`, and
+`send-noti`. Internal tmux hook names such as
 `after-select-pane` are rejected. Phase C secret interpolation is not
 implemented; values are used literally.
 
 `[hooks.<event>] run` executes through `sh -c` with the same timeout, logging,
-environment, and failure model as file hooks. For `pane-startup`, stdout is
-captured as the pane command.
+environment, and failure model for all hook events.
 
 `[hooks.send-noti] run` is the declarative forward path for queue-backed
 notifications. It does not replace desktop notifications or the in-app queue;
@@ -118,8 +90,6 @@ path.
 
 `[startup] run` is a direct shorthand for a startup pane command. It is not
 executed as shell by the hook runner; the string itself is sent to the new pane.
-When both `[hooks.pane-startup] run` and `[startup] run` are present,
-`[startup] run` wins because it is applied last.
 
 `[env]` values are added to hook process environments and to newly-created tmux
 session environments. For new sessions, projmux passes them to
@@ -139,17 +109,17 @@ values.
 
 Global hooks under `$XDG_CONFIG_HOME` are prompt-free.
 
-Project-local hooks and `.projmux/config.toml` are gated by trust-on-first-use
-for every user-facing hook event in this file. A repository hook file or config
-file must be approved before projmux runs or applies it. Approving "always"
+Project-local `.projmux/config.toml` files are gated by trust-on-first-use
+before projmux runs hooks or applies startup/session environment settings.
+Approving "always"
 records the file content hash in:
 
 ```text
 ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/trusted-projects.json
 ```
 
-The trust key is the absolute repository path and each executable hook or config
-path is stored relative to that repository. Each project entry has a
+The trust key is the absolute repository path and the config path is stored
+relative to that repository. Each project entry has a
 `trusted_at` timestamp and a `files` map of relative paths to SHA-256 hashes.
 When file content changes, projmux asks again and shows the old and new SHA-256
 hashes. In non-interactive contexts such as tmux run-shell or CI, untrusted or
@@ -159,33 +129,24 @@ Set `PROJMUX_PROJECT_HOOKS=off` to disable project-local hook discovery
 entirely. Project-local hooks can also be disabled from `projmux settings`
 under Labs. The global hook still runs either way.
 
-## Pane Startup
+## Startup Commands
 
-`pane-startup` runs only for the initial pane created with a new
+`[startup] run` applies only to the initial pane created with a new
 projmux-managed session. It runs after `post-create` so `post-create` can seed
 session-level tmux environment before the startup command is sent. It does not
 run when projmux attaches to an existing session or target.
 
-Before running `pane-startup`, projmux polls tmux `pane_current_command` for the
-new pane and waits until it reports a shell command. This avoids fixed sleeps as
-the primary readiness mechanism.
+Before sending the startup command, projmux polls tmux `pane_current_command`
+for the new pane and waits until it reports a shell command. This avoids fixed
+sleeps as the primary readiness mechanism.
 
-The hook's trimmed stdout is treated as the command to send into the new pane:
+The configured string is sent into the new pane:
 
 ```text
 tmux send-keys -t <pane-id> <command> Enter
 ```
 
-Empty stdout is a no-op. Hook stderr is still forwarded to projmux's stderr with
-the `[pane-startup] ` prefix. If both global and project-local hooks emit a
-command, the project-local command wins because project hooks run after global
-hooks.
-
-`pane-startup` is on the deprecation path. projmux still runs it today, but
-`projmux hook list --effective` and the Settings effective-merge view label it
-as `pane-startup (deprecated)`, and execution logs a warning that points users
-to `[startup] run`. Migrate new startup commands to `[startup]` now; the
-compatibility shim is planned to disappear in the next breaking release.
+An empty `[startup] run` is a no-op.
 
 ## Send Noti
 
@@ -236,31 +197,7 @@ If a `send-noti` hook itself calls `projmux notify push`, projmux sees
 `Settings > Notifications > Delivery sources` surfaces the active Codex hooks,
 Claude, and tmux AI notify diagnostics: status, conflicts, config paths, and
 copyable CLI install/remove/dry-run commands. It does not install or remove
-external Codex, Claude, or tmux settings. The legacy Codex notify source remains
-available through CLI/doctor compatibility paths but is hidden from Settings.
-
-## Codex Legacy Notify
-
-`projmux doctor` reports whether the Codex legacy notify integration is
-installed, missing, or blocked by an unmanaged `notify = ...` conflict. The
-text and JSON reports include the config path plus install, remove, and
-dry-run commands.
-
-`projmux ai integrate codex --mode legacy-notify` is the compatibility wiring
-command for Codex legacy `notify` mode. It manages only
-`~/.codex/config.toml` and installs this notify command in a projmux-marked
-block:
-
-```toml
-notify = ["projmux", "ai", "ingest", "codex-notify"]
-```
-
-The managed block is idempotent and removable with `projmux ai integrate codex
---mode legacy-notify --remove`; `projmux ai integrate codex --remove` removes
-all projmux-managed Codex blocks. `--mode legacy-notify --dry-run` previews the
-file change without writing. If a user-owned `notify = ...` line already exists
-outside the managed block, projmux refuses to replace it automatically because
-Codex legacy notify has a single command slot.
+external Codex, Claude, or tmux settings.
 
 ## Codex Hooks Engine
 
@@ -352,9 +289,8 @@ command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 Repeated installs are idempotent and preserve unrelated Codex config, including
 unmanaged hook entries for the same events. If projmux sees an unmanaged
 `projmux ai ingest codex-hook` command, it refuses to install over it rather
-than guessing ownership. `--dry-run` previews the TOML update. `--remove --mode
-hooks` removes only projmux-managed hooks wiring; `--remove` with no mode
-removes both projmux-managed Codex hooks and legacy notify blocks.
+than guessing ownership. `--dry-run` previews the TOML update. `--remove`
+removes projmux-managed Codex hooks wiring.
 
 The Codex hooks install list is catalog-driven. Projmux ships an embedded
 default catalog at `internal/app/ai_hook_catalogs/codex.json`, and merges an
@@ -687,15 +623,11 @@ Hooks inherit projmux's environment, plus:
 echo "session=$PROJMUX_SESSION cwd=$PROJMUX_CWD kind=$PROJMUX_SESSION_KIND"
 ```
 
-### Project Pane Startup Command
+### Project Startup Command
 
-```bash
-mkdir -p .projmux
-cat > .projmux/pane-startup <<'EOF'
-#!/usr/bin/env bash
-echo "git status --short"
-EOF
-chmod +x .projmux/pane-startup
+```toml
+[startup]
+run = "git status --short"
 ```
 
 ### Per Session GH_TOKEN By Repo
@@ -737,4 +669,4 @@ it does not retroactively change the current shell. Open new panes via tmux
   projmux logs once and moves on.
 - **Lines appear with `[post-create] `, `[pre-create] `, or `[post-attach] `
   prefixes.** Expected; hook stdout/stderr are multiplexed into projmux's
-  stderr stream. `pane-startup` stdout is captured as the pane command instead.
+  stderr stream.

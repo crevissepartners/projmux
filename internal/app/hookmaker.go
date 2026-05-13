@@ -21,7 +21,6 @@ type settingsHookEvent struct {
 var settingsHookEvents = []settingsHookEvent{
 	{Name: string(hooks.EventPreCreate)},
 	{Name: string(hooks.EventPostCreate)},
-	{Name: string(hooks.EventPaneStartup)},
 	{Name: string(hooks.EventPostAttach)},
 	{Name: string(hooks.EventSendNoti)},
 }

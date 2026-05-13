@@ -81,7 +81,7 @@ func TestSettingsProjectHooksListAllMissingRendersAddRows(t *testing.T) {
 		},
 	}
 	entries := cmd.projectHookEntries(cmd.resolveSettingsProjectContext())
-	for _, event := range []string{"pre-create", "post-create", "pane-startup", "post-attach", "send-noti"} {
+	for _, event := range []string{"pre-create", "post-create", "post-attach", "send-noti"} {
 		assertEntryLabelContainsAll(t, entries, event, "missing", "[+ Add]")
 	}
 }
@@ -758,7 +758,7 @@ func TestSettingsHookMakerConfigSectionHasNoHookCommandsRow(t *testing.T) {
 [hooks.post-create]
 run = "echo a"
 
-[hooks.pane-startup]
+[hooks.send-noti]
 run = "echo b"
 `)
 	cmd := &settingsCommand{

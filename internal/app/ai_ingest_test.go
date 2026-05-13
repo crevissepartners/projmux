@@ -13,35 +13,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
-func TestParseCodexNotifyPayload(t *testing.T) {
-	t.Parallel()
-
-	payload, err := parseCodexNotifyPayload([]byte(`{
-		"type": "agent-turn-complete",
-		"thread-id": "thread-123",
-		"turn-id": "turn-456",
-		"cwd": "/repo/projmux",
-		"client": {"name": "codex-cli", "model": "gpt-5.1-codex"},
-		"input-messages": [{"role": "user", "content": "run tests"}],
-		"last-assistant-message": "Tests passed."
-	}`))
-	if err != nil {
-		t.Fatalf("parseCodexNotifyPayload() error = %v", err)
-	}
-	if payload.Type != "agent-turn-complete" || payload.ThreadID != "thread-123" || payload.TurnID != "turn-456" || payload.CWD != "/repo/projmux" {
-		t.Fatalf("payload = %+v", payload)
-	}
-	if payload.Client != "codex-cli" || payload.Model != "gpt-5.1-codex" {
-		t.Fatalf("client/model = %q/%q", payload.Client, payload.Model)
-	}
-	if len(payload.InputMessages) != 1 {
-		t.Fatalf("InputMessages len = %d, want 1", len(payload.InputMessages))
-	}
-	if payload.LastAssistantMessage != "Tests passed." {
-		t.Fatalf("LastAssistantMessage = %q", payload.LastAssistantMessage)
-	}
-}
-
 func TestParseCodexHookPayload(t *testing.T) {
 	t.Parallel()
 
@@ -342,76 +313,6 @@ func TestIngestCodexHookBlankSessionIDDoesNotRewriteResumeMetadata(t *testing.T)
 	}
 }
 
-func TestIngestCodexNotifyPushesWaitingStatusAndMetadata(t *testing.T) {
-	home := t.TempDir()
-	store := &stubNotifyStore{}
-	cmd := testAICommand(home)
-	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name != "tmux" {
-			return nil, os.ErrNotExist
-		}
-		switch {
-		case reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}):
-			return []byte("%7\x1f/repo/projmux\x1f\x1f\n"), nil
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{@projmux_ai_agent}"}):
-			return []byte("codex\n"), nil
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#S"}):
-			return []byte("workspace\n"), nil
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{window_id}"}):
-			return []byte("@1\n"), nil
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{pane_id}"}):
-			return []byte("%7\n"), nil
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{socket_path}"}):
-			return []byte("/tmp/tmux-1000/projmux\n"), nil
-		}
-		return nil, os.ErrNotExist
-	}
-
-	err := cmd.Run([]string{"ingest", "codex-notify", `{
-		"type": "agent-turn-complete",
-		"thread-id": "thread-123",
-		"session-id": "codex-session",
-		"turn-id": "turn-456",
-		"cwd": "/repo/projmux",
-		"model": "gpt-5.1-codex",
-		"client": "codex-cli",
-		"last-assistant-message": "Implemented hook notify ingest."
-	}`}, &bytes.Buffer{}, &bytes.Buffer{})
-	if err != nil {
-		t.Fatalf("Run ingest codex-notify error = %v", err)
-	}
-
-	for _, want := range []recordedAICommand{
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeIDOption, "codex-session"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeSourceOption, "hook"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeUpdatedAtOption, "1970-01-01T00:00:00Z"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", attentionStateOption, attentionStateReply}},
-	} {
-		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
-			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
-		}
-	}
-	if len(store.pushed) != 1 {
-		t.Fatalf("push count = %d, want 1", len(store.pushed))
-	}
-	got := store.pushed[0]
-	if got.ID != "ai:codex:thread-123:turn-456" {
-		t.Fatalf("ID = %q", got.ID)
-	}
-	if got.Text != "Codex · 응답 완료 · Implemented hook notify ingest." {
-		t.Fatalf("Text = %q", got.Text)
-	}
-	if got.Metadata["agent"] != "codex" || got.Metadata["thread_id"] != "thread-123" || got.Metadata["turn_id"] != "turn-456" || got.Metadata["cwd"] != "/repo/projmux" || got.Metadata["model"] != "gpt-5.1-codex" || got.Metadata["client"] != "codex-cli" {
-		t.Fatalf("Metadata = %#v", got.Metadata)
-	}
-	if got.Target.Session != "workspace" || got.Target.Window != "@1" || got.Target.Pane != "%7" {
-		t.Fatalf("Target = %+v", got.Target)
-	}
-}
-
 func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 	home := t.TempDir()
 	store := &stubNotifyStore{}
@@ -646,13 +547,6 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 		body aiNotifyBody
 		want aiNotifyBody
 	}{
-		{
-			name: "codex turn complete assistant summary",
-			body: formatCodexTurnCompleteNotifyBody(codexNotifyPayload{
-				LastAssistantMessage: "Implemented hook notify ingest.",
-			}),
-			want: aiNotifyBody{Text: "Codex · 응답 완료 · Implemented hook notify ingest."},
-		},
 		{
 			name: "codex hook permission bash command",
 			body: formatCodexHookPermissionNotifyBody(codexHookPayload{

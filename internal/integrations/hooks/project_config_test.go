@@ -23,9 +23,6 @@ run = "echo pre"
 [hooks.post-create]
 run = "echo post"
 
-[hooks.pane-startup]
-run = "echo pane-command"
-
 [hooks.post-attach]
 run = "echo attached"
 
@@ -46,7 +43,7 @@ namespace = "tools"
 	if cfg.StartupRun != "git status --short" {
 		t.Fatalf("StartupRun = %q", cfg.StartupRun)
 	}
-	if cfg.Hooks[EventPreCreate] != "echo pre" || cfg.Hooks[EventPostCreate] != "echo post" || cfg.Hooks[EventPaneStartup] != "echo pane-command" || cfg.Hooks[EventPostAttach] != "echo attached" || cfg.Hooks[EventSendNoti] != "echo send-noti" {
+	if cfg.Hooks[EventPreCreate] != "echo pre" || cfg.Hooks[EventPostCreate] != "echo post" || cfg.Hooks[EventPostAttach] != "echo attached" || cfg.Hooks[EventSendNoti] != "echo send-noti" {
 		t.Fatalf("Hooks = %#v", cfg.Hooks)
 	}
 	if cfg.Env["FOO"] != "bar" || cfg.Env["QUOTED"] != `a "quoted" value` {
@@ -142,7 +139,7 @@ func TestUpdateProjectConfigRejectsInvalidEnvKey(t *testing.T) {
 	}
 }
 
-func TestRunnerPaneStartupUsesTrustedProjectConfigWithoutHookFile(t *testing.T) {
+func TestRunnerStartupCommandUsesTrustedProjectConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")
 	}
@@ -168,61 +165,47 @@ run = "git status --short"
 		},
 	}
 
-	result, err := runner.Run(context.Background(), EventPaneStartup, Context{CWD: cwd})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+	command, ok := runner.StartupCommand(cwd)
+	if !ok {
+		t.Fatal("StartupCommand() ok = false, want true")
 	}
-	if result.Stdout != "git status --short" {
-		t.Fatalf("pane-startup stdout = %q, want config startup command", result.Stdout)
+	if command != "git status --short" {
+		t.Fatalf("StartupCommand() = %q, want config startup command", command)
 	}
 	if promptCalls != 1 {
 		t.Fatalf("prompt calls = %d, want 1", promptCalls)
 	}
 }
 
-func TestRunnerPaneStartupConfigPrecedenceStartupOverHook(t *testing.T) {
+func TestRunnerStartupCommandIgnoresLegacyScriptFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")
 	}
 	t.Parallel()
 
-	dir := t.TempDir()
-	globalConfigPath := filepath.Join(dir, "global", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(globalConfigPath), 0o755); err != nil {
-		t.Fatalf("MkdirAll global: %v", err)
-	}
-	if err := os.WriteFile(globalConfigPath, []byte(`
-[hooks.pane-startup]
-run = "echo global-command"
-`), 0o644); err != nil {
-		t.Fatalf("WriteFile global: %v", err)
-	}
 	// Legacy script files in the historical layout must be silently ignored
-	// by the runner; only declarative entries execute.
+	// by startup command lookup; only [startup] run is used.
+	dir := t.TempDir()
 	cwd := filepath.Join(dir, "repo")
 	writeHook(t, filepath.Join(cwd, ".projmux", "pane-startup"), "echo legacy-script-should-not-run\n", 0o755)
 	writeProjectConfig(t, cwd, `
-[hooks.pane-startup]
-run = "echo config-hook-command"
-
 [startup]
 run = "startup-direct-command"
 `)
 
 	runner := &Runner{
-		GlobalConfigPath:     globalConfigPath,
 		DiscoverProjectHooks: true,
 		ProjectHooksFilePath: testProjectHooksFilePath(t),
 		TrustStorePath:       testTrustStorePath(t),
 		ProjectHookPrompt:    func(ProjectHookPromptRequest) ProjectHookDecision { return ProjectHookAllowOnce },
 	}
 
-	result, err := runner.Run(context.Background(), EventPaneStartup, Context{CWD: cwd})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+	command, ok := runner.StartupCommand(cwd)
+	if !ok {
+		t.Fatal("StartupCommand() ok = false, want true")
 	}
-	if result.Stdout != "startup-direct-command" {
-		t.Fatalf("pane-startup stdout = %q, want startup direct command to win", result.Stdout)
+	if command != "startup-direct-command" {
+		t.Fatalf("StartupCommand() = %q, want startup direct command", command)
 	}
 }
 
@@ -313,9 +296,8 @@ run = "echo ready"
 		TrustStorePath:       trustPath,
 		ProjectHookPrompt:    func(ProjectHookPromptRequest) ProjectHookDecision { return ProjectHookAllowAlways },
 	}
-	_, err := runner.Run(context.Background(), EventPaneStartup, Context{CWD: cwd})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if _, ok := runner.StartupCommand(cwd); !ok {
+		t.Fatal("StartupCommand() ok = false, want true")
 	}
 
 	sum, _, err := hashHookFile(configPath)
@@ -426,12 +408,8 @@ run = "should-not-run"
 		},
 	}
 
-	result, err := runner.Run(context.Background(), EventPaneStartup, Context{CWD: cwd})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if result.Stdout != "" {
-		t.Fatalf("pane-startup stdout = %q, want empty", result.Stdout)
+	if command, ok := runner.StartupCommand(cwd); ok || command != "" {
+		t.Fatalf("StartupCommand() = %q, %v; want empty false", command, ok)
 	}
 }
 

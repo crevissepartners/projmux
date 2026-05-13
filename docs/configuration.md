@@ -387,8 +387,8 @@ fixed snapshots. Rows include saved-at date/time metadata when projmux can
 determine it. `Back` returns to the project list without creating, replaying, or
 opening a session. After the startup mode is selected, project hook/config trust
 is evaluated if needed; approval continues the selected path and deny/cancel
-aborts without session create, snapshot replay, startup recipe, or
-`pane-startup`. Existing sessions switch directly without a startup picker.
+aborts without session create, snapshot replay, or startup command. Existing
+sessions switch directly without a startup picker.
 
 Default `projmux shell` no longer opens a startup picker or replays session-state
 snapshots before attach. It still derives the default app session identity and

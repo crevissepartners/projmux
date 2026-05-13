@@ -1229,15 +1229,6 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 
 	diagnostics := []doctorAINotifyIntegration{
 		{
-			ID:             "codex-legacy-notify",
-			Name:           "Codex legacy notify",
-			Status:         doctorAINotifyStatusInstalled,
-			ConfigPath:     "/home/tester/.codex/config.toml",
-			InstallCommand: "projmux ai integrate codex --mode legacy-notify",
-			RemoveCommand:  "projmux ai integrate codex --mode legacy-notify --remove",
-			DryRunCommand:  "projmux ai integrate codex --mode legacy-notify --dry-run",
-		},
-		{
 			ID:             "codex-hooks",
 			Name:           "Codex hooks",
 			Status:         doctorAINotifyStatusConflict,
@@ -1328,10 +1319,6 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	}
 	if got, want := listOptions.Footer, "Enter: view details"; !strings.Contains(got, want) {
 		t.Fatalf("delivery sources footer = %q, want %q", got, want)
-	}
-	if hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+"codex-legacy-notify") ||
-		hasEntryLabelContaining(listOptions.Entries, "Codex legacy notify") {
-		t.Fatalf("AI notify diagnostics entries = %#v, want no Codex legacy notify row", listOptions.Entries)
 	}
 	for _, diag := range visibleDiagnostics {
 		if !hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+diag.ID) {

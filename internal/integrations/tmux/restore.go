@@ -37,7 +37,7 @@ func (c *Client) AuthorizeProjectHooks(ctx context.Context, cwd string) (bool, e
 // RestoreSessionSnapshot creates a missing project session from a saved
 // snapshot while preserving the same lifecycle wrapper used by empty session
 // creation: pre-create first, then replay, project env, post-create, and no
-// default pane-startup hook for restored panes.
+// default startup command replay for restored panes.
 func (c *Client) RestoreSessionSnapshot(ctx context.Context, snap sessionstate.Snapshot, cwd, source string) error {
 	if strings.TrimSpace(snap.Session) == "" {
 		return errSessionNameRequired

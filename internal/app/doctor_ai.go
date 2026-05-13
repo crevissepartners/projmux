@@ -26,31 +26,25 @@ func doctorAINotifyDiagnostics(ai *aiCommand) []doctorAINotifyIntegration {
 		ai = newAICommand()
 	}
 	return []doctorAINotifyIntegration{
-		doctorCodexIntegrationDiagnostic(ai, codexIntegrationLegacyNotify),
-		doctorCodexIntegrationDiagnostic(ai, codexIntegrationHooks),
+		doctorCodexIntegrationDiagnostic(ai),
 		doctorClaudeIntegrationDiagnostic(ai),
 		doctorTmuxBellIntegrationDiagnostic(ai),
 	}
 }
 
-func doctorCodexIntegrationDiagnostic(ai *aiCommand, mode codexIntegrationMode) doctorAINotifyIntegration {
-	base := "projmux ai integrate codex --mode " + string(mode)
-	if mode == codexIntegrationHooks {
-		base = "projmux ai integrate codex"
-	}
+func doctorCodexIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {
+	base := "projmux ai integrate codex"
 	out := doctorAINotifyIntegration{
-		ID:             "codex-" + string(mode),
-		Name:           "Codex " + doctorCodexModeLabel(mode),
+		ID:             "codex-hooks",
+		Name:           "Codex hooks",
 		InstallCommand: base,
 		RemoveCommand:  base + " --remove",
 		DryRunCommand:  base + " --dry-run",
-	}
-	if mode == codexIntegrationHooks {
-		out.Guidance = "Codex requires reviewing/enabling installed hook commands from /hooks before they run."
-		out.TestedVersion = ai.aiHookObservedVersion(aiHookProviderCodex)
+		Guidance:       "Codex requires reviewing/enabling installed hook commands from /hooks before they run.",
+		TestedVersion:  ai.aiHookObservedVersion(aiHookProviderCodex),
 	}
 
-	removePlan, err := ai.planCodexIntegration(mode, true, false)
+	removePlan, err := ai.planCodexIntegration(true)
 	if err != nil {
 		out.Status = doctorAINotifyStatusConflict
 		out.ConflictReason = err.Error()
@@ -58,7 +52,7 @@ func doctorCodexIntegrationDiagnostic(ai *aiCommand, mode codexIntegrationMode) 
 	}
 	out.ConfigPath = removePlan.path
 
-	installPlan, err := ai.planCodexIntegration(mode, false, false)
+	installPlan, err := ai.planCodexIntegration(false)
 	if err != nil {
 		out.Status = doctorAINotifyStatusConflict
 		out.ConflictReason = err.Error()
@@ -75,15 +69,6 @@ func doctorCodexIntegrationDiagnostic(ai *aiCommand, mode codexIntegrationMode) 
 	}
 	out.Status = doctorAINotifyStatusMissing
 	return out
-}
-
-func doctorCodexModeLabel(mode codexIntegrationMode) string {
-	switch mode {
-	case codexIntegrationHooks:
-		return "hooks"
-	default:
-		return "legacy notify"
-	}
 }
 
 func doctorClaudeIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {

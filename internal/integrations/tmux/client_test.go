@@ -1713,9 +1713,8 @@ func TestClientEnsureSessionRunsLifecycleHooksForNewSession(t *testing.T) {
 		},
 	}
 	hook := &fakeLifecycleRunner{
-		results: map[hooks.Event]hooks.RunResult{
-			hooks.EventPaneStartup: {Stdout: "echo ready"},
-		},
+		startupCommand: "echo ready",
+		startupOK:      true,
 	}
 	client := NewClient(runner, withLifecycleHookRunnerInterface(hook), WithSocketName("projmux"))
 
@@ -1736,12 +1735,9 @@ func TestClientEnsureSessionRunsLifecycleHooksForNewSession(t *testing.T) {
 	}
 
 	gotEvents := hook.events()
-	wantEvents := []hooks.Event{hooks.EventPreCreate, hooks.EventPostCreate, hooks.EventPaneStartup}
+	wantEvents := []hooks.Event{hooks.EventPreCreate, hooks.EventPostCreate}
 	if !reflect.DeepEqual(gotEvents, wantEvents) {
-		t.Fatalf("hook events = %#v, want pre-create, post-create, then pane-startup", gotEvents)
-	}
-	if got := hook.calls[2].context.PaneID; got != "%7" {
-		t.Fatalf("pane-startup pane id = %q, want %%7", got)
+		t.Fatalf("hook events = %#v, want pre-create and post-create", gotEvents)
 	}
 }
 
@@ -1774,19 +1770,12 @@ func TestClientEnsureSessionSkipsStartupMarkersWhenNoStartupHook(t *testing.T) {
 	}
 }
 
-func TestClientEnsureSessionSkipsStartupMarkersWhenNoCommandOrHookError(t *testing.T) {
+func TestClientEnsureSessionSkipsStartupMarkersWhenNoCommand(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		result  hooks.RunResult
-		hookErr error
-	}{
-		{name: "empty command"},
-		{name: "hook error", hookErr: errors.New("startup failed")},
-	}
+	tests := []string{"empty command", "missing command"}
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(tc, func(t *testing.T) {
 			t.Parallel()
 
 			runner := &scriptedRunner{
@@ -1794,17 +1783,9 @@ func TestClientEnsureSessionSkipsStartupMarkersWhenNoCommandOrHookError(t *testi
 				steps: []scriptedStep{
 					{err: exitError(t, 1)},
 					{output: []byte("%7\n")},
-					{output: []byte("zsh\n")},
 				},
 			}
-			hook := &fakeLifecycleRunner{
-				results: map[hooks.Event]hooks.RunResult{
-					hooks.EventPaneStartup: tc.result,
-				},
-				errs: map[hooks.Event]error{
-					hooks.EventPaneStartup: tc.hookErr,
-				},
-			}
+			hook := &fakeLifecycleRunner{startupOK: tc == "empty command"}
 			client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
 
 			if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
@@ -1814,7 +1795,6 @@ func TestClientEnsureSessionSkipsStartupMarkersWhenNoCommandOrHookError(t *testi
 			wantCalls := []commandCall{
 				{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
 				{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
-				{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_current_command}"}},
 			}
 			if !reflect.DeepEqual(runner.calls, wantCalls) {
 				t.Fatalf("unexpected tmux calls %#v", runner.calls)
@@ -1836,9 +1816,8 @@ func TestClientEnsureSessionSkipsStartupMarkersWhenSendKeysFails(t *testing.T) {
 		},
 	}
 	hook := &fakeLifecycleRunner{
-		results: map[hooks.Event]hooks.RunResult{
-			hooks.EventPaneStartup: {Stdout: "echo ready"},
-		},
+		startupCommand: "echo ready",
+		startupOK:      true,
 	}
 	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
 
@@ -2197,11 +2176,13 @@ type lifecycleHookCall struct {
 }
 
 type fakeLifecycleRunner struct {
-	mu         sync.Mutex
-	calls      []lifecycleHookCall
-	results    map[hooks.Event]hooks.RunResult
-	errs       map[hooks.Event]error
-	sessionEnv map[string]string
+	mu             sync.Mutex
+	calls          []lifecycleHookCall
+	results        map[hooks.Event]hooks.RunResult
+	errs           map[hooks.Event]error
+	sessionEnv     map[string]string
+	startupCommand string
+	startupOK      bool
 }
 
 type fakeLifecycleInspectorRunner struct {
@@ -2238,6 +2219,10 @@ func (f *fakeLifecycleRunner) events() []hooks.Event {
 
 func (f *fakeLifecycleRunner) ProjectSessionEnv(string) map[string]string {
 	return f.sessionEnv
+}
+
+func (f *fakeLifecycleRunner) StartupCommand(string) (string, bool) {
+	return f.startupCommand, f.startupOK
 }
 
 // withPostCreateRunnerInterface wires a test stub through the same field that

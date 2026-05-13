@@ -88,6 +88,10 @@ type lifecycleSessionEnvProvider interface {
 	ProjectSessionEnv(cwd string) map[string]string
 }
 
+type startupCommandProvider interface {
+	StartupCommand(cwd string) (string, bool)
+}
+
 // Client exposes typed tmux queries used by CLI commands.
 type Client struct {
 	runner     commandRunner
@@ -462,7 +466,7 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 
 	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
 	c.runPostCreate(ctx, sessionName, cwd, "persistent")
-	c.runPaneStartup(ctx, sessionName, cwd, "persistent", paneID)
+	c.runStartupCommand(ctx, sessionName, cwd, "persistent", paneID)
 	return nil
 }
 
@@ -492,7 +496,7 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 		// lifecycle treatment as one whose marker stuck.
 	}
 	c.runPostCreate(ctx, sessionName, cwd, "ephemeral")
-	c.runPaneStartup(ctx, sessionName, cwd, "ephemeral", paneID)
+	c.runStartupCommand(ctx, sessionName, cwd, "ephemeral", paneID)
 
 	return nil
 }
@@ -569,28 +573,20 @@ func (c *Client) runPostCreate(ctx context.Context, sessionName, cwd, kind strin
 	})
 }
 
-func (c *Client) runPaneStartup(ctx context.Context, sessionName, cwd, kind, paneID string) {
+func (c *Client) runStartupCommand(ctx context.Context, sessionName, cwd, kind, paneID string) {
 	if c.lifecycle == nil || strings.TrimSpace(paneID) == "" {
 		return
 	}
-	if inspector, ok := c.lifecycle.(lifecycleHookInspector); ok && !inspector.HasHooks(hooks.EventPaneStartup, cwd) {
+	provider, ok := c.lifecycle.(startupCommandProvider)
+	if !ok {
+		return
+	}
+	command, ok := provider.StartupCommand(cwd)
+	command = strings.TrimSpace(command)
+	if !ok || command == "" {
 		return
 	}
 	if err := c.waitForPaneShellReady(ctx, paneID, 2*time.Second, 50*time.Millisecond); err != nil {
-		return
-	}
-	result, err := c.lifecycle.Run(ctx, hooks.EventPaneStartup, hooks.Context{
-		SessionName: sessionName,
-		CWD:         cwd,
-		Kind:        kind,
-		Socket:      c.socket,
-		PaneID:      paneID,
-	})
-	if err != nil {
-		return
-	}
-	command := strings.TrimSpace(result.Stdout)
-	if command == "" {
 		return
 	}
 	if _, err := c.runner.Run(ctx, "tmux", "send-keys", "-t", paneID, command, "Enter"); err != nil {

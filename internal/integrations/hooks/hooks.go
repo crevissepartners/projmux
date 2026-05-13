@@ -25,17 +25,15 @@ import (
 type Event string
 
 const (
-	EventPreCreate   Event = "pre-create"
-	EventPostCreate  Event = "post-create"
-	EventPaneStartup Event = "pane-startup"
-	EventPostAttach  Event = "post-attach"
-	EventSendNoti    Event = "send-noti"
+	EventPreCreate  Event = "pre-create"
+	EventPostCreate Event = "post-create"
+	EventPostAttach Event = "post-attach"
+	EventSendNoti   Event = "send-noti"
 )
 
 var SupportedEvents = []Event{
 	EventPreCreate,
 	EventPostCreate,
-	EventPaneStartup,
 	EventPostAttach,
 	EventSendNoti,
 }
@@ -63,8 +61,7 @@ type Context struct {
 // passed to the post-create hook command as PROJMUX_* environment variables.
 type PostCreateContext = Context
 
-// RunResult is the observable hook output returned for events that consume
-// stdout, such as pane-startup.
+// RunResult is the observable hook output returned by a hook run.
 type RunResult struct {
 	Stdout string
 }
@@ -140,10 +137,6 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 	if !hasGlobalCfg && !hasProjectCfg {
 		return RunResult{}, nil
 	}
-	if event == EventPaneStartup && ((hasGlobalCfg && globalCfg.hookRun(EventPaneStartup) != "") || (hasProjectCfg && projectCfg.hookRun(EventPaneStartup) != "")) {
-		r.warnf(event, "deprecated; move [hooks.pane-startup] run to [startup] run before the next breaking release")
-	}
-
 	timeout := r.Timeout
 	if timeout <= 0 {
 		timeout = DefaultPostCreateTimeout
@@ -170,9 +163,6 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 			r.warnf(event, "project config %q: %v", projectFile.rel, err)
 		} else {
 			result = mergeResult(event, result, hookResult)
-		}
-		if event == EventPaneStartup {
-			result = mergeResult(event, result, RunResult{Stdout: projectCfg.StartupRun})
 		}
 	}
 	return result, nil
@@ -216,6 +206,29 @@ func (r *Runner) ProjectSessionEnv(cwd string) map[string]string {
 		return nil
 	}
 	return cfg.SessionEnv()
+}
+
+// StartupCommand returns the trusted project-local [startup] run command for a
+// newly-created session. It is intentionally separate from lifecycle hooks:
+// startup commands are pane input, not hook events.
+func (r *Runner) StartupCommand(cwd string) (string, bool) {
+	if r == nil || !r.DiscoverProjectHooks || projectHooksDisabled(EventPostCreate, r.ProjectHooksFilePath, r.Logger) {
+		return "", false
+	}
+	configFile := discoverProjectConfig(cwd)
+	if configFile.path == "" {
+		return "", false
+	}
+	cfg, err := loadProjectConfig(configFile.path)
+	if err != nil {
+		r.warnf(EventPostCreate, "project config %q could not be parsed: %v", configFile.rel, err)
+		return "", false
+	}
+	command := strings.TrimSpace(cfg.StartupRun)
+	if command == "" || !r.authorizeProjectConfig(EventPostCreate, configFile) {
+		return "", false
+	}
+	return command, true
 }
 
 // HasHooks reports whether a declarative global or project-local hook exists
@@ -277,23 +290,13 @@ type outputMode int
 
 const (
 	outputLog outputMode = iota
-	outputCaptureStdout
 )
 
 func hookOutputMode(event Event) outputMode {
-	if event == EventPaneStartup {
-		return outputCaptureStdout
-	}
 	return outputLog
 }
 
 func mergeResult(event Event, current, next RunResult) RunResult {
-	if event == EventPaneStartup {
-		if trimmed := strings.TrimSpace(next.Stdout); trimmed != "" {
-			current.Stdout = trimmed
-		}
-		return current
-	}
 	return current
 }
 
@@ -363,14 +366,10 @@ func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name st
 	// "[event]" shape keep working. Pass label as a contextual hint via the
 	// warning text instead.
 	_ = label
+	_ = mode
 	prefix := "[" + string(event) + "] "
 	prefixed := newLinePrefixer(logger, prefix)
-	var stdout bytes.Buffer
-	if mode == outputCaptureStdout {
-		cmd.Stdout = &stdout
-	} else {
-		cmd.Stdout = prefixed
-	}
+	cmd.Stdout = prefixed
 	cmd.Stderr = prefixed
 
 	err := cmd.Run()
@@ -386,32 +385,22 @@ func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name st
 		}
 		return RunResult{}, err
 	}
-	return RunResult{Stdout: strings.TrimSpace(stdout.String())}, nil
+	return RunResult{}, nil
 }
 
 func normalizeEvent(event Event) Event {
 	switch event {
-	case EventPreCreate, EventPostCreate, EventPaneStartup, EventPostAttach, EventSendNoti:
+	case EventPreCreate, EventPostCreate, EventPostAttach, EventSendNoti:
 		return event
 	default:
 		return ""
 	}
 }
 
-// IsDeprecatedEvent reports events that still run for compatibility but are
-// on the documented removal path.
-func IsDeprecatedEvent(event Event) bool {
-	return normalizeEvent(event) == EventPaneStartup
-}
-
 // DisplayEventName returns the human-facing event label used by CLI and
 // Settings surfaces.
 func DisplayEventName(event Event) string {
-	name := string(event)
-	if IsDeprecatedEvent(event) {
-		return name + " (deprecated)"
-	}
-	return name
+	return string(event)
 }
 
 func buildHookEnv(c Context, fallbackVersion string) []string {

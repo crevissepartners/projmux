@@ -103,8 +103,8 @@ run = "echo project-attach"
 
 	cmd, globalPath, _ := newHookTestCommand(t, home, project, "")
 	writeHookFile(t, globalPath, `
-[hooks.pane-startup]
-run = "echo global-focus"
+[hooks.pre-create]
+run = "echo global-pre"
 `)
 
 	var stdout, stderr bytes.Buffer
@@ -121,11 +121,8 @@ run = "echo global-focus"
 	if !strings.Contains(out, "echo project-attach") {
 		t.Fatalf("stdout missing project hook value: %q", out)
 	}
-	if !strings.Contains(out, "echo global-focus") {
+	if !strings.Contains(out, "echo global-pre") {
 		t.Fatalf("stdout missing global hook value: %q", out)
-	}
-	if !strings.Contains(out, "pane-startup (deprecated)") {
-		t.Fatalf("stdout missing pane-startup deprecation badge: %q", out)
 	}
 	if !strings.Contains(out, "send-noti") {
 		t.Fatalf("stdout missing send-noti row: %q", out)
@@ -179,7 +176,7 @@ func TestHookList_EffectiveUsesMergeEngine(t *testing.T) {
 [env]
 DATABASE_URL = "postgres://project"
 
-[hooks.pane-startup]
+[hooks.post-create]
 run = "echo project-focus"
 `)
 	cmd, globalPath, _ := newHookTestCommand(t, home, project, "")
@@ -188,7 +185,7 @@ run = "echo project-focus"
 DATABASE_URL = "postgres://global"
 EDITOR = "vim"
 
-[hooks.pane-startup]
+[hooks.post-create]
 run = "echo global-focus"
 [hooks.post-attach]
 run = "echo global-attach"
@@ -203,12 +200,8 @@ run = "echo global-attach"
 	if !strings.Contains(out, "[hooks]") || !strings.Contains(out, "EVENT") {
 		t.Fatalf("stdout missing hooks effective table: %q", out)
 	}
-	// pane-startup is project-wins.
-	if !strings.Contains(out, "pane-startup (deprecated)") {
-		t.Fatalf("deprecated pane-startup badge missing: %q", out)
-	}
 	if !strings.Contains(out, "echo project-focus") {
-		t.Fatalf("project pane-startup value not surfaced: %q", out)
+		t.Fatalf("project post-create value not surfaced: %q", out)
 	}
 	// post-attach is global-only — surfaced with global source.
 	if !strings.Contains(out, "echo global-attach") {
@@ -219,7 +212,7 @@ run = "echo global-attach"
 	}
 	// Conflict resolution check: project value rendered, global shadowed.
 	if strings.Contains(out, "echo global-focus") {
-		t.Fatalf("global pane-startup leaked into effective view (project should win): %q", out)
+		t.Fatalf("global post-create leaked into effective view (project should win): %q", out)
 	}
 	// env section still present.
 	if !strings.Contains(out, "[env]") || !strings.Contains(out, "postgres://project") {
@@ -254,7 +247,7 @@ EDITOR = "vim"
 [startup]
 run = "echo MY_TOKEN literal"
 
-[hooks.pane-startup]
+[hooks.post-create]
 run = "kubectl get secret"
 `)
 	cmd, _, _ := newHookTestCommand(t, home, project, "")
@@ -291,7 +284,7 @@ run = "echo hi"
 `)
 	cmd, globalPath, _ := newHookTestCommand(t, home, project, "")
 	writeHookFile(t, globalPath, `
-[hooks.pane-startup]
+[hooks.post-create]
 run = "echo focus"
 `)
 	var stdout, stderr bytes.Buffer
@@ -368,7 +361,7 @@ func TestHookEdit_ProjectInlineTrustsAfterWrite(t *testing.T) {
 	mustMkdirAll(t, filepath.Join(project, ".projmux"))
 	cmd, _, trustPath := newHookTestCommand(t, home, project, "echo focus-cmd\n")
 	var stdout, stderr bytes.Buffer
-	if err := cmd.Run([]string{"edit", "pane-startup"}, &stdout, &stderr); err != nil {
+	if err := cmd.Run([]string{"edit", "post-create"}, &stdout, &stderr); err != nil {
 		t.Fatalf("edit err = %v (stderr=%q)", err, stderr.String())
 	}
 	projectPath := filepath.Join(project, ".projmux", "config.toml")
@@ -376,8 +369,8 @@ func TestHookEdit_ProjectInlineTrustsAfterWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProjectConfigFile() err = %v", err)
 	}
-	if got := cfg.Hooks[hooks.Event("pane-startup")]; got != "echo focus-cmd" {
-		t.Fatalf("pane-startup run = %q, want echo focus-cmd", got)
+	if got := cfg.Hooks[hooks.EventPostCreate]; got != "echo focus-cmd" {
+		t.Fatalf("post-create run = %q, want echo focus-cmd", got)
 	}
 	trusted, _, err := hooks.IsProjectConfigTrusted(project, trustPath)
 	if err != nil {
@@ -569,7 +562,7 @@ func TestHookTrust_AcceptsExplicitProjectArg(t *testing.T) {
 	project := filepath.Join(home, "repo")
 	mustMkdirAll(t, filepath.Join(project, ".projmux"))
 	writeHookFile(t, filepath.Join(project, ".projmux", "config.toml"), `
-[hooks.pane-startup]
+[hooks.post-create]
 run = "echo hi"
 `)
 

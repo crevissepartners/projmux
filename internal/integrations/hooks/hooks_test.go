@@ -316,35 +316,6 @@ run = "printf '%s|%s|%s\n' \"$PROJMUX_NOTIFY_ID\" \"$PROJMUX_NOTIFY_TYPE\" \"$PR
 	}
 }
 
-func TestRunnerPaneStartupWarnsDeprecated(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("bash fixtures require POSIX")
-	}
-	t.Parallel()
-
-	cwd := t.TempDir()
-	writeProjectConfig(t, cwd, `
-[hooks.pane-startup]
-run = "echo pane"
-`)
-
-	var logger bytes.Buffer
-	runner := &Runner{
-		DiscoverProjectHooks: true,
-		ProjectHooksFilePath: testProjectHooksFilePath(t),
-		TrustStorePath:       testTrustStorePath(t),
-		ProjectHookPrompt:    func(ProjectHookPromptRequest) ProjectHookDecision { return ProjectHookAllowOnce },
-		Logger:               &logger,
-	}
-	_, err := runner.Run(context.Background(), EventPaneStartup, Context{CWD: cwd})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !strings.Contains(logger.String(), "deprecated; move [hooks.pane-startup] run to [startup] run before the next breaking release") {
-		t.Fatalf("logger missing deprecation warning:\n%s", logger.String())
-	}
-}
-
 func TestRunnerHooksKillSwitchDisablesProjectConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")
@@ -493,12 +464,9 @@ func TestBuildHookEnvOmitsSocketWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestDisplayEventNameMarksDeprecatedEvents(t *testing.T) {
+func TestDisplayEventNameReturnsEventName(t *testing.T) {
 	t.Parallel()
 
-	if got := DisplayEventName(EventPaneStartup); got != "pane-startup (deprecated)" {
-		t.Fatalf("DisplayEventName(pane-startup) = %q", got)
-	}
 	if got := DisplayEventName(EventSendNoti); got != "send-noti" {
 		t.Fatalf("DisplayEventName(send-noti) = %q", got)
 	}
