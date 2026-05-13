@@ -275,7 +275,7 @@ toggle set keep their behavior — `@projmux_desktop_notify=0` resolves to
 Settings press through the new row writes the new key and the legacy key
 goes unused. No eager rewrite of tmux state.
 
-Toggle from Settings > AI Settings > `Desktop notifications`. The
+Toggle from Settings > Notifications > `Desktop notifications`. The
 Settings info row labels the effective source as `env`, `env (legacy)`,
 `setting`, `setting (legacy)`, or `default` so users see which rung of
 the cascade pinned the value.

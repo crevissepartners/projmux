@@ -9,11 +9,20 @@ view-first layout:
   first, then the edit actions, then the explanatory hints.
 - `Settings > Keybindings` is the single entry point for keybinding work. The
   page is split into four chips: `Bindings`, `Diagnostic`, `Probe`, and `Init`.
+- `Settings > Notifications` owns notification delivery IA. Desktop notification
+  mode, delivery source diagnostics, in-app queue status, and
+  `PROJMUX_NOTIFY_HOOK` visibility live together without mixing mutation
+  boundaries.
+- `Settings > Notifications > Desktop notifications` owns the desktop
+  notification mode. The detail choices are `none`, `notify`, and `raise`.
+- `Settings > Notifications > Delivery sources` shows read-only Codex/Claude/tmux
+  producer diagnostics and CLI/dry-run guidance. Settings does not install or
+  remove external notify wiring.
 - `Settings > Labs` keeps experimental toggles, but keybindings no longer have a
   visible Labs row. The hidden compatibility action still redirects to the
   unified Keybindings page.
-- `Settings > Labs > Desktop notifications` owns the experimental desktop
-  notification mode. The detail choices are `none`, `notify`, and `raise`.
+- `Settings > Labs > Project Hooks` is overview-first. The Labs root opens the
+  overview, and the on/off mutation rows live one level deeper.
 - `Settings > AI Settings` is view-first. The root contains `Default split
   mode`; the detail contains the `Claude`, `Codex`, and `Shell` choices.
 - `Settings > Project > Project recipe` is the functional label for

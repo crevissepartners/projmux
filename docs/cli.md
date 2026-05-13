@@ -175,7 +175,7 @@ dependencies. `--dry-run` prints those commands without executing them.
 with `--json`. Doctor does not diagnose terminal key delivery; use `projmux
 setup` for that.
 
-`Settings > AI Settings > Notify integrations` shows the same read-only
+`Settings > Notifications > Delivery sources` shows the same read-only
 statuses, conflicts, config paths, and AI integration install/remove/dry-run
 commands. Settings does not install or remove external Codex, Claude, or tmux
 notify wiring.
@@ -660,7 +660,7 @@ flags with the top-level `switch` UX:
 - `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI
-  splits, Appearance mode, Project Root management, the
+  splits, Notifications, Appearance mode, Project Root management, the
   switcher's saved workdirs list, Labs (experimental), Settings > Keybindings,
   and About/Update status. The keybinding flow now lives under
   `Settings > Keybindings` with `Bindings`, `Diagnostic`, `Probe`, and `Init`
