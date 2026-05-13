@@ -233,6 +233,11 @@ If a `send-noti` hook itself calls `projmux notify push`, projmux sees
 `PROJMUX_NOTIFY_HOOK_DEPTH=1` in the child environment and skips another
 `send-noti` hook fire. The queue write itself still succeeds.
 
+`Settings > AI Settings > Notify integrations` mirrors the `projmux doctor`
+AI notify diagnostics: status, conflicts, config paths, and CLI
+install/remove/dry-run commands. It is read-only and does not install or remove
+external Codex, Claude, or tmux settings.
+
 ## Codex Legacy Notify
 
 `projmux doctor` reports whether the Codex legacy notify integration is

@@ -749,6 +749,9 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if !hasEntryValue(aiOptions.Entries, settingsAIDefaultMode) {
 		t.Fatalf("AI settings entries = %#v, want Default split mode detail row", aiOptions.Entries)
 	}
+	if !hasEntryValue(aiOptions.Entries, settingsAINotifyDiagnostics) {
+		t.Fatalf("AI settings entries = %#v, want Notify integrations diagnostics row", aiOptions.Entries)
+	}
 	if hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeClaude) ||
 		hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeCodex) ||
 		hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeShell) {
@@ -1145,8 +1148,11 @@ func TestSettingsAIRootNestsDefaultModeAndExcludesDesktopNotifications(t *testin
 	if !hasEntryValue(root, settingsAIDefaultMode) {
 		t.Fatalf("AI root entries = %#v, want Default split mode row", root)
 	}
-	if got, want := len(root), 2; got != want {
-		t.Fatalf("AI root entries = %#v, want back row plus Default split mode only", root)
+	if !hasEntryValue(root, settingsAINotifyDiagnostics) {
+		t.Fatalf("AI root entries = %#v, want Notify integrations diagnostics row", root)
+	}
+	if got, want := len(root), 3; got != want {
+		t.Fatalf("AI root entries = %#v, want back row plus AI subsections only", root)
 	}
 	for _, want := range []string{
 		settingsActionPrefixAI + aiModeClaude,
@@ -1178,6 +1184,139 @@ func TestSettingsAIRootNestsDefaultModeAndExcludesDesktopNotifications(t *testin
 		if strings.Contains(entry.Label, "Desktop notifications") ||
 			strings.HasPrefix(entry.Value, settingsActionPrefixDesktopNotifyMode) {
 			t.Fatalf("AI default mode entries = %#v, want no Desktop notifications rows", detail)
+		}
+	}
+}
+
+func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testing.T) {
+	t.Parallel()
+
+	diagnostics := []doctorAINotifyIntegration{
+		{
+			ID:             "codex-legacy",
+			Name:           "Codex legacy notify",
+			Status:         doctorAINotifyStatusInstalled,
+			ConfigPath:     "/home/tester/.codex/config.toml",
+			InstallCommand: "projmux ai integrate codex --mode legacy",
+			RemoveCommand:  "projmux ai integrate codex --mode legacy --remove",
+			DryRunCommand:  "projmux ai integrate codex --mode legacy --dry-run",
+		},
+		{
+			ID:             "codex-hooks",
+			Name:           "Codex hooks",
+			Status:         doctorAINotifyStatusConflict,
+			ConfigPath:     "/home/tester/.codex/config.toml",
+			ConflictReason: "unmanaged notify command",
+			InstallCommand: "projmux ai integrate codex --mode hooks",
+			RemoveCommand:  "projmux ai integrate codex --mode hooks --remove",
+			DryRunCommand:  "projmux ai integrate codex --mode hooks --dry-run",
+		},
+		{
+			ID:             "claude-hooks",
+			Name:           "Claude Code hooks",
+			Status:         doctorAINotifyStatusMissing,
+			ConfigPath:     "/home/tester/.claude/settings.json",
+			InstallCommand: "projmux ai integrate claude",
+			RemoveCommand:  "projmux ai integrate claude --remove",
+			DryRunCommand:  "projmux ai integrate claude --dry-run",
+		},
+		{
+			ID:             "tmux-bell",
+			Name:           "tmux bell fallback",
+			Status:         doctorAINotifyStatusMissing,
+			InstallCommand: "projmux ai integrate tmux-bell",
+			RemoveCommand:  "projmux ai integrate tmux-bell --remove",
+			DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
+		},
+	}
+
+	var calls int
+	var aiOptions intpickercompat.Options
+	var listOptions intpickercompat.Options
+	var detailOptions intpickercompat.Options
+	cmd := &settingsCommand{
+		ai:                  testAICommand(t.TempDir()),
+		aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return diagnostics },
+		runCommand: func(string, ...string) error {
+			t.Fatal("settings AI notify diagnostics must not execute external commands")
+			return nil
+		},
+		runOutput: func(string, ...string) ([]byte, error) {
+			t.Fatal("settings AI notify diagnostics must not shell out for command output")
+			return nil, nil
+		},
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionAI}, nil
+			case 2:
+				aiOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsAINotifyDiagnostics}, nil
+			case 3:
+				listOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "codex-hooks"}, nil
+			case 4:
+				detailOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsNoopValue}, nil
+			case 5:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 6:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 7:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 8:
+				return intpickercompat.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intpickercompat.Result{}, nil
+			}
+		}),
+	}
+	cmd.nativePicker = nativePickerFromCompatRunner(cmd.runner)
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !hasEntryValue(aiOptions.Entries, settingsAINotifyDiagnostics) {
+		t.Fatalf("AI settings entries = %#v, want notify diagnostics row", aiOptions.Entries)
+	}
+	if got, want := listOptions.UI, "settings-ai-notify"; got != want {
+		t.Fatalf("AI notify diagnostics UI = %q, want %q", got, want)
+	}
+	for _, diag := range diagnostics {
+		if !hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+diag.ID) {
+			t.Fatalf("AI notify diagnostics entries = %#v, want %q", listOptions.Entries, diag.ID)
+		}
+		if !hasEntryLabelContaining(listOptions.Entries, diag.Name) {
+			t.Fatalf("AI notify diagnostics entries = %#v, want label %q", listOptions.Entries, diag.Name)
+		}
+		if !hasEntryLabelContaining(listOptions.Entries, string(diag.Status)) {
+			t.Fatalf("AI notify diagnostics entries = %#v, want status %q", listOptions.Entries, diag.Status)
+		}
+	}
+	if !hasEntryLabelContaining(listOptions.Entries, "unmanaged notify command") {
+		t.Fatalf("AI notify diagnostics entries = %#v, want conflict reason", listOptions.Entries)
+	}
+	if got, want := detailOptions.UI, "settings-ai-notify-detail"; got != want {
+		t.Fatalf("AI notify detail UI = %q, want %q", got, want)
+	}
+	for _, want := range []string{
+		"conflict",
+		"/home/tester/.codex/config.toml",
+		"unmanaged notify command",
+		"projmux ai integrate codex --mode hooks",
+		"projmux ai integrate codex --mode hooks --remove",
+		"projmux ai integrate codex --mode hooks --dry-run",
+		"Read-only",
+	} {
+		if !hasEntryLabelContaining(detailOptions.Entries, want) {
+			t.Fatalf("AI notify detail entries = %#v, want %q", detailOptions.Entries, want)
+		}
+	}
+	for _, entry := range detailOptions.Entries {
+		if entry.Value != settingsBackValue && entry.Value != settingsNoopValue {
+			t.Fatalf("AI notify detail entry = %#v, want read-only/noop value", entry)
 		}
 	}
 }
