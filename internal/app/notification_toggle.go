@@ -14,12 +14,12 @@ import (
 // The setting carries three values:
 //
 //	none    — no toast, no auto-raise
-//	notify  — toast only (click → projmux focus via URI handler)
-//	raise   — toast + auto-raise host terminal via osfocus chain
+//	notify  — toast only (no click-to-focus)
+//	raise   — toast + click-to-focus + auto-raise host terminal via osfocus chain
 //
-// Click handling is always enabled — the URI handler is registered on
-// first dispatch and does not depend on the mode. The mode only gates
-// whether to fire a toast at all and whether to auto-raise on push.
+// Click handling is only enabled in raise mode, where the URI handler is
+// registered on first dispatch. The mode gates whether to fire a toast,
+// whether the toast is clickable, and whether to auto-raise on push.
 //
 // Resolution priority (highest first):
 //  1. env `PROJMUX_DESKTOP_NOTIFY_MODE=none|notify|raise` (case-insensitive)
@@ -70,13 +70,13 @@ const (
 	desktopNotifyModeNone desktopNotifyMode = "none"
 
 	// desktopNotifyModeNotify dispatches the OS notification (toast on
-	// WSL, notify-send on Linux). Click is always enabled via the URI
-	// handler; on-push auto-raise is OFF.
+	// WSL, notify-send on Linux). Click-to-focus and on-push auto-raise
+	// are OFF.
 	desktopNotifyModeNotify desktopNotifyMode = "notify"
 
-	// desktopNotifyModeRaise dispatches the OS notification AND
-	// auto-raises the host terminal via the osfocus chain after a
-	// successful dispatch.
+	// desktopNotifyModeRaise dispatches the OS notification with
+	// click-to-focus and auto-raises the host terminal via the osfocus
+	// chain after a successful dispatch.
 	desktopNotifyModeRaise desktopNotifyMode = "raise"
 )
 

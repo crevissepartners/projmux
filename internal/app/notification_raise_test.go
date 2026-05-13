@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -16,6 +17,119 @@ type recordingOSFocusChain struct {
 	mu    sync.Mutex
 	calls []osfocus.Target
 	err   error
+}
+
+func TestNotifyMode_NotifyWSLToastOmitsClickTarget(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "WSL_DISTRO_NAME":
+			return "Ubuntu-24.04"
+		case desktopNotifyModeEnv:
+			return "notify"
+		}
+		return ""
+	}
+	psPath := "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && len(args) == 2 && args[0] == "-v" && args[1] == "powershell.exe" {
+			return []byte(psPath + "\n"), nil
+		}
+		if name == "command" && len(args) == 2 && args[0] == "-v" && args[1] == "wsl-notify-send.exe" {
+			return nil, os.ErrNotExist
+		}
+		return []byte("\n"), nil
+	}
+
+	chain := &recordingOSFocusChain{}
+	notifier := aiDesktopNotifier{command: cmd, osFocusChain: chain}
+	if err := notifier.Notify(aiNotification{
+		Summary: "Hello", Body: "World", Urgency: "normal",
+		AppName: desktopAppID, Tag: "%8", Group: "repo",
+	}); err != nil {
+		t.Fatalf("Notify(mode=notify WSL) error = %v", err)
+	}
+	var toastScript string
+	for _, command := range cmdRecorder(cmd).commands {
+		if command.name == psPath && len(command.args) >= 3 && command.args[0] == "-NoProfile" && command.args[2] == "-EncodedCommand" {
+			toastScript = decodePowerShellEncodedCommand(t, command)
+		}
+	}
+	if toastScript == "" || !strings.Contains(toastScript, "CreateToastNotifier('"+desktopAppID+"').Show($toast)") {
+		t.Fatalf("commands = %#v, want toast powershell command", cmdRecorder(cmd).commands)
+	}
+	for _, absent := range []string{`activationType="protocol"`, "projmux://focus?", "pane_id=%258"} {
+		if strings.Contains(toastScript, absent) {
+			t.Fatalf("toast script = %q, did not want click target substring %q in notify mode", toastScript, absent)
+		}
+	}
+	if containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", uriProtocolRegisteredTmuxOption, "1"}) {
+		t.Fatalf("commands = %#v, did not expect uri protocol marker write in notify mode", cmdRecorder(cmd).commands)
+	}
+	if got := chain.snapshot(); len(got) != 0 {
+		t.Fatalf("osfocus chain calls = %#v, did not expect raise in notify mode", got)
+	}
+}
+
+func TestNotifyMode_RaiseWSLToastKeepsClickTarget(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "WSL_DISTRO_NAME":
+			return "Ubuntu-24.04"
+		case desktopNotifyModeEnv:
+			return "raise"
+		}
+		return ""
+	}
+	psPath := "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && len(args) == 2 && args[0] == "-v" && args[1] == "powershell.exe" {
+			return []byte(psPath + "\n"), nil
+		}
+		if name == "command" && len(args) == 2 && args[0] == "-v" && args[1] == "wsl-notify-send.exe" {
+			return nil, os.ErrNotExist
+		}
+		if name == "tmux" && len(args) == 3 && args[0] == "display-message" && args[1] == "-p" && args[2] == "#{socket_path}" {
+			return []byte("/tmp/tmux-1000/projmux\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	chain := &recordingOSFocusChain{}
+	notifier := aiDesktopNotifier{command: cmd, osFocusChain: chain}
+	if err := notifier.Notify(aiNotification{
+		Summary: "Hello", Body: "World", Urgency: "normal",
+		AppName: desktopAppID, Tag: "%8", Group: "repo",
+	}); err != nil {
+		t.Fatalf("Notify(mode=raise WSL) error = %v", err)
+	}
+	var toastScript string
+	for _, command := range cmdRecorder(cmd).commands {
+		if command.name == psPath && len(command.args) >= 3 && command.args[0] == "-NoProfile" && command.args[2] == "-EncodedCommand" {
+			script := decodePowerShellEncodedCommand(t, command)
+			if strings.Contains(script, "CreateToastNotifier('"+desktopAppID+"').Show($toast)") {
+				toastScript = script
+			}
+		}
+	}
+	for _, want := range []string{`activationType="protocol"`, "projmux://focus?", "pane_id=%258"} {
+		if !strings.Contains(toastScript, want) {
+			t.Fatalf("toast script = %q, want click target substring %q in raise mode", toastScript, want)
+		}
+	}
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", uriProtocolRegisteredTmuxOption, "1"}) {
+		t.Fatalf("commands = %#v, want uri protocol marker write in raise mode", cmdRecorder(cmd).commands)
+	}
+	if got := chain.snapshot(); len(got) != 1 {
+		t.Fatalf("osfocus chain calls = %#v, want one raise call", got)
+	}
 }
 
 func (c *recordingOSFocusChain) Focus(target osfocus.Target) error {

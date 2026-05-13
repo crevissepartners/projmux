@@ -232,12 +232,12 @@ gated here.
 | Mode | On push | On click |
 | --- | --- | --- |
 | `none` | no toast | n/a |
-| `notify` | toast / notify-send fires | toast click invokes `projmux focus --uri` via the `projmux://` handler |
-| `raise` | toast / notify-send fires AND the host terminal is auto-raised via the osfocus chain | same as `notify` — click is always available |
+| `notify` | toast / notify-send fires | no click action |
+| `raise` | toast / notify-send fires AND the host terminal is auto-raised via the osfocus chain | toast click invokes `projmux focus --uri` via the `projmux://` handler |
 
-Click activation is always wired. The `projmux://` URI handler is
-registered on the first Notify of each tmux server (gated by the
-`@projmux_uri_protocol_registered_v2` marker) regardless of mode. The
+Click activation is wired only for `raise`. The `projmux://` URI handler is
+registered on the first `raise` Notify of each tmux server (gated by the
+`@projmux_uri_protocol_registered_v2` marker). The
 mode only controls whether a toast fires at all and whether to follow it
 up with an on-push auto-raise.
 
