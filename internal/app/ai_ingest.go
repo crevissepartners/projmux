@@ -368,7 +368,7 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 	metadata := payload.codexHookMetadata()
 	switch payload.EventName {
 	case "UserPromptSubmit":
-		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "", "")
+		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 		if err := c.applyAIStatusWithNotify("thinking", paneID, attentionNotifyInput{
 			Metadata: metadata,
 		}); err != nil {
@@ -378,7 +378,7 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "state", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	case "Stop":
-		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "", "")
+		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 		body := formatCodexHookStopNotifyBody(payload)
 		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
 			ID:       codexHookNotifyID(payload, "stop"),
@@ -393,8 +393,7 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	case "PermissionRequest":
-		topic := truncateRunes(formatCodexToolInputSummary(payload.ToolName, payload.ToolInput), 80)
-		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "", topic)
+		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 		body := formatCodexHookPermissionNotifyBody(payload)
 		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
 			ID:       codexHookNotifyID(payload, "permission"),
@@ -433,14 +432,11 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 		return nil
 	}
 
-	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath, "")
+	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
 	metadata := payload.claudeMetadata()
 
 	switch payload.EventName {
 	case "UserPromptSubmit":
-		if topic := truncateRunes(payload.Prompt, 80); topic != "" {
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic)
-		}
 		if err := c.applyAIStatusWithNotify("thinking", paneID, attentionNotifyInput{
 			Metadata: metadata,
 		}); err != nil {
@@ -533,14 +529,12 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 }
 
 func (c *aiCommand) quietCodexHook(paneID string, payload codexHookPayload, reason string) {
-	topic := truncateRunes(formatCodexToolInputSummary(payload.ToolName, payload.ToolInput), 80)
-	c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "", topic)
+	c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 }
 
 func (c *aiCommand) quietClaudeHook(paneID string, payload claudeHookPayload, reason string) {
-	topic := truncateRunes(formatCodexToolInputSummary(payload.ToolName, payload.ToolInput), 80)
-	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath, topic)
+	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 }
 
@@ -837,7 +831,7 @@ func (p claudeHookPayload) claudeMetadata() map[string]string {
 	return out
 }
 
-func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, transcriptPath, topic string) {
+func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, transcriptPath string) {
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneHookActiveOption, "1")
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneManagedOption, "1")
 	if agent != "" {
@@ -855,9 +849,6 @@ func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, tran
 	}
 	if transcriptPath = strings.TrimSpace(transcriptPath); transcriptPath != "" {
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTranscriptPathOption, transcriptPath)
-	}
-	if topic != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic)
 	}
 }
 
