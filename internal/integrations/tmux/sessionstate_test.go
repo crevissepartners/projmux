@@ -100,6 +100,7 @@ func TestClientSaveSessionSnapshotWritesStore(t *testing.T) {
 	runner := &scriptedRunner{
 		t: t,
 		steps: []scriptedStep{
+			{output: []byte("\n")},
 			{output: []byte("0\x1fshell\x1flayout\n")},
 			{output: []byte("0\x1f0\x1fshell\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n")},
 			{output: []byte("\n")},
@@ -118,6 +119,122 @@ func TestClientSaveSessionSnapshotWritesStore(t *testing.T) {
 	}
 	if !reflect.DeepEqual(loaded, snap) {
 		t.Fatalf("loaded snapshot = %#v, want %#v", loaded, snap)
+	}
+}
+
+func TestClientSaveSessionSnapshotRefreshesAIResumeIDFromSessionIDBeforeCapture(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{output: []byte(
+				"%1\x1f1\x1fcodex\x1fcodex-session\x1f\n" +
+					"%2\x1f1\x1fclaude\x1fclaude-session\x1fold-claude-session\n",
+			)},
+			{output: []byte{}},
+			{output: []byte{}},
+			{output: []byte{}},
+			{output: []byte{}},
+			{output: []byte{}},
+			{output: []byte{}},
+			{output: []byte("0\x1fwork\x1flayout\n")},
+			{output: []byte(
+				"0\x1f0\x1fcodex task\x1f1\x1f/tmp\x1f\x1f\x1f1\x1fcodex\x1ftopic\x1fcodex-session\n" +
+					"0\x1f1\x1fclaude task\x1f0\x1f/tmp\x1f\x1f\x1f1\x1fclaude\x1ftopic\x1fclaude-session\n",
+			)},
+			{output: []byte("\n")},
+		},
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	client := NewClient(runner)
+
+	snap, err := client.SaveSessionSnapshot(context.Background(), store, "workspace", now)
+	if err != nil {
+		t.Fatalf("SaveSessionSnapshot() error = %v", err)
+	}
+
+	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.AgentRecipe("codex", "codex-session", "topic")) {
+		t.Fatalf("codex recipe = %#v, want refreshed agent recipe", got)
+	}
+	if got := snap.Windows[0].Panes[1].Recipe; !reflect.DeepEqual(got, sessionstate.AgentRecipe("claude", "claude-session", "topic")) {
+		t.Fatalf("claude recipe = %#v, want refreshed agent recipe", got)
+	}
+
+	wantPrefix := []commandCall{
+		{name: "tmux", args: []string{"list-panes", "-s", "-t", "workspace", "-F", tmuxFormat(
+			"#{pane_id}",
+			"#{@projmux_ai_managed}",
+			"#{@projmux_ai_agent}",
+			"#{@projmux_ai_session_id}",
+			"#{@projmux_ai_resume_id}",
+		)}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_resume_id", "codex-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_resume_source", "session-id"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_resume_updated_at", "2026-05-12T03:04:05Z"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_ai_resume_id", "claude-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_ai_resume_source", "session-id"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_ai_resume_updated_at", "2026-05-12T03:04:05Z"}},
+	}
+	if len(runner.calls) < len(wantPrefix) || !reflect.DeepEqual(runner.calls[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("tmux call prefix = %#v, want %#v", runner.calls, wantPrefix)
+	}
+}
+
+func TestClientSaveSessionSnapshotBlankSessionIDDoesNotClearExistingResumeMetadata(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{output: []byte("%1\x1f1\x1fcodex\x1f\x1fexisting-resume\n")},
+			{output: []byte("0\x1fwork\x1flayout\n")},
+			{output: []byte("0\x1f0\x1fcodex task\x1f1\x1f/tmp\x1f\x1f\x1f1\x1fcodex\x1ftopic\x1fexisting-resume\n")},
+			{output: []byte("\n")},
+		},
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	client := NewClient(runner)
+
+	snap, err := client.SaveSessionSnapshot(context.Background(), store, "workspace", now)
+	if err != nil {
+		t.Fatalf("SaveSessionSnapshot() error = %v", err)
+	}
+	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.AgentRecipe("codex", "existing-resume", "topic")) {
+		t.Fatalf("recipe = %#v, want existing resume agent recipe", got)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && call.args[0] == "set-option" {
+			t.Fatalf("unexpected set-option call for blank session id: %#v", call)
+		}
+	}
+}
+
+func TestClientSaveSessionSnapshotRefreshSetOptionFailureIsBestEffort(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{output: []byte("%1\x1f1\x1fcodex\x1fcodex-session\x1fold-resume\n")},
+			{err: errors.New("set-option failed")},
+			{output: []byte("0\x1fwork\x1flayout\n")},
+			{output: []byte("0\x1f0\x1fcodex task\x1f1\x1f/tmp\x1f\x1f\x1f1\x1fcodex\x1ftopic\x1fcodex-session\n")},
+			{output: []byte("\n")},
+		},
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	client := NewClient(runner)
+
+	snap, err := client.SaveSessionSnapshot(context.Background(), store, "workspace", now)
+	if err != nil {
+		t.Fatalf("SaveSessionSnapshot() error = %v", err)
+	}
+	if got := snap.Windows[0].Panes[0].Recipe; !reflect.DeepEqual(got, sessionstate.AgentRecipe("codex", "codex-session", "topic")) {
+		t.Fatalf("recipe = %#v, want capture to proceed after refresh failure", got)
 	}
 }
 

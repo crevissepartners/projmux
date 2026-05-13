@@ -17,7 +17,10 @@ const (
 	sessionStateAIManagedOption      = "@projmux_ai_managed"
 	sessionStateAIAgentOption        = "@projmux_ai_agent"
 	sessionStateAITopicOption        = "@projmux_ai_topic"
+	sessionStateAISessionIDOption    = "@projmux_ai_session_id"
 	sessionStateAIResumeIDOption     = "@projmux_ai_resume_id"
+	sessionStateAIResumeSourceOption = "@projmux_ai_resume_source"
+	sessionStateAIResumeAtOption     = "@projmux_ai_resume_updated_at"
 	sessionStateSourceOption         = "@projmux_sessionstate_source"
 )
 
@@ -39,6 +42,14 @@ type sessionStatePaneRow struct {
 	aiAgent        string
 	aiTopic        string
 	aiResumeID     string
+}
+
+type sessionStateResumeRefreshPaneRow struct {
+	paneID      string
+	aiManaged   string
+	aiAgent     string
+	aiSessionID string
+	aiResumeID  string
 }
 
 // CaptureSessionSnapshot captures tmux window/pane metadata for a sessionstate
@@ -119,6 +130,16 @@ func (c *Client) CaptureSessionSnapshot(ctx context.Context, sessionName string,
 
 // SaveSessionSnapshot captures and atomically stores a tmux session snapshot.
 func (c *Client) SaveSessionSnapshot(ctx context.Context, store sessionstate.Store, sessionName string, now time.Time) (sessionstate.Snapshot, error) {
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		return sessionstate.Snapshot{}, errSessionNameRequired
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if err := c.refreshSessionStateAIResumeMetadata(ctx, sessionName, now); err != nil {
+		return sessionstate.Snapshot{}, err
+	}
 	snap, err := c.CaptureSessionSnapshot(ctx, sessionName, now)
 	if err != nil {
 		return sessionstate.Snapshot{}, err
@@ -159,6 +180,47 @@ func (c *Client) MarkSessionStateSource(ctx context.Context, sessionName, source
 	return nil
 }
 
+func (c *Client) refreshSessionStateAIResumeMetadata(ctx context.Context, sessionName string, now time.Time) error {
+	panes, err := c.listSessionStateResumeRefreshPanes(ctx, sessionName)
+	if err != nil {
+		return err
+	}
+	updatedAt := now.UTC().Format(time.RFC3339)
+	for _, pane := range panes {
+		if !isSessionStateRefreshAgent(pane) {
+			continue
+		}
+		candidate := strings.TrimSpace(pane.aiSessionID)
+		if candidate == "" || candidate == strings.TrimSpace(pane.aiResumeID) {
+			continue
+		}
+		c.setSessionStateAIResumeMetadata(ctx, pane.paneID, candidate, updatedAt)
+	}
+	return nil
+}
+
+func (c *Client) setSessionStateAIResumeMetadata(ctx context.Context, paneID, resumeID, updatedAt string) {
+	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, sessionStateAIResumeIDOption, resumeID); err != nil {
+		return
+	}
+	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, sessionStateAIResumeSourceOption, "session-id"); err != nil {
+		return
+	}
+	_, _ = c.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, sessionStateAIResumeAtOption, updatedAt)
+}
+
+func isSessionStateRefreshAgent(pane sessionStateResumeRefreshPaneRow) bool {
+	if strings.TrimSpace(pane.aiManaged) == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(pane.aiAgent)) {
+	case "codex", "claude":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Client) listSessionStateWindows(ctx context.Context, sessionName string) ([]sessionStateWindowRow, error) {
 	output, err := c.runner.Run(ctx, "tmux", "list-windows", "-t", sessionName, "-F", tmuxFormat("#{window_index}", "#{window_name}", "#{window_layout}"))
 	if err != nil {
@@ -191,6 +253,24 @@ func (c *Client) listSessionStatePanes(ctx context.Context, sessionName string) 
 	panes, err := parseSessionStatePanes(output)
 	if err != nil {
 		return nil, fmt.Errorf("capture tmux session %q panes: %w", sessionName, err)
+	}
+	return panes, nil
+}
+
+func (c *Client) listSessionStateResumeRefreshPanes(ctx context.Context, sessionName string) ([]sessionStateResumeRefreshPaneRow, error) {
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-s", "-t", sessionName, "-F", tmuxFormat(
+		"#{pane_id}",
+		"#{"+sessionStateAIManagedOption+"}",
+		"#{"+sessionStateAIAgentOption+"}",
+		"#{"+sessionStateAISessionIDOption+"}",
+		"#{"+sessionStateAIResumeIDOption+"}",
+	))
+	if err != nil {
+		return nil, fmt.Errorf("refresh tmux session %q AI resume metadata: %w", sessionName, err)
+	}
+	panes, err := parseSessionStateResumeRefreshPanes(output)
+	if err != nil {
+		return nil, fmt.Errorf("refresh tmux session %q AI resume metadata: %w", sessionName, err)
 	}
 	return panes, nil
 }
@@ -272,6 +352,32 @@ func parseSessionStatePanes(output []byte) ([]sessionStatePaneRow, error) {
 			aiAgent:        strings.TrimSpace(fields[8]),
 			aiTopic:        strings.TrimSpace(fields[9]),
 			aiResumeID:     strings.TrimSpace(fields[10]),
+		})
+	}
+	return panes, nil
+}
+
+func parseSessionStateResumeRefreshPanes(output []byte) ([]sessionStateResumeRefreshPaneRow, error) {
+	if strings.TrimSpace(string(output)) == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(string(output), "\n")
+	panes := make([]sessionStateResumeRefreshPaneRow, 0, len(lines))
+	for _, rawLine := range lines {
+		if strings.TrimSpace(rawLine) == "" {
+			continue
+		}
+		fields := splitTmuxFields(rawLine, 5)
+		if len(fields) != 5 {
+			return nil, fmt.Errorf("parse tmux sessionstate AI resume metadata panes: malformed row %q", rawLine)
+		}
+		panes = append(panes, sessionStateResumeRefreshPaneRow{
+			paneID:      strings.TrimSpace(fields[0]),
+			aiManaged:   strings.TrimSpace(fields[1]),
+			aiAgent:     strings.TrimSpace(fields[2]),
+			aiSessionID: strings.TrimSpace(fields[3]),
+			aiResumeID:  strings.TrimSpace(fields[4]),
 		})
 	}
 	return panes, nil
