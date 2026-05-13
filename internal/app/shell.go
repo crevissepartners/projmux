@@ -546,7 +546,7 @@ func (c *shellCommand) reportSessionStateAutorestore(stderr io.Writer, message s
 	if stderr == nil || strings.TrimSpace(message) == "" {
 		return
 	}
-	_, _ = fmt.Fprintf(stderr, "projmux sessionstate autorestore: %s\n", message)
+	_, _ = fmt.Fprintf(stderr, "projmux sessionstate startup picker: %s\n", message)
 }
 
 func (c *shellCommand) nowTime() time.Time {

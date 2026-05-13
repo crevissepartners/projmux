@@ -174,7 +174,7 @@ func TestStatusbarSessionStatePopupShowsMissingSnapshot(t *testing.T) {
 		t.Fatalf("popup missing snapshot status: %q", popup.Command)
 	}
 	if !strings.Contains(popup.Command, "off (saved)") {
-		t.Fatalf("popup missing effective autorestore state: %q", popup.Command)
+		t.Fatalf("popup missing effective startup picker state: %q", popup.Command)
 	}
 	if strings.Contains(popup.Command, projmuxpicker.CurrentStart) {
 		t.Fatalf("session state popup command must not contain picker active-row ANSI: %q", popup.Command)

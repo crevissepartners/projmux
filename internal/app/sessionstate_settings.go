@@ -60,7 +60,7 @@ func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error
 func (c *settingsCommand) sessionStateRootLabel() string {
 	autosave := c.currentSessionStateAutosave()
 	autorestore := c.currentSessionStateAutorestore()
-	desc := fmt.Sprintf("autosave %s, autorestore %s", autosave.Mode, autorestore.Mode)
+	desc := fmt.Sprintf("autosave %s, startup picker %s", autosave.Mode, autorestore.Mode)
 	return settingsLabel(settingsGlyphOpen, settingsColorType, "Session State", desc)
 }
 
@@ -74,13 +74,13 @@ func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Auto-restore", string(autorestore.Mode), autorestore.Source),
+			Label: settingsLabelInfo("Startup picker", string(autorestore.Mode), autorestore.Source),
 			Value: settingsNoopValue,
 		},
 	}
 	entries = append(entries, c.sessionStateSnapshotEntries()...)
 	entries = append(entries, c.sessionStateToggleEntries("Auto-save", "autosave", autosave.Mode)...)
-	entries = append(entries, c.sessionStateToggleEntries("Auto-restore", "autorestore", autorestore.Mode)...)
+	entries = append(entries, c.sessionStateToggleEntries("Startup picker", "autorestore", autorestore.Mode)...)
 	entries = append(entries, c.sessionStateDeleteEntry())
 	return entries
 }
@@ -248,7 +248,7 @@ func (c *settingsCommand) setSessionStateAutosave(value config.SessionStateToggl
 func (c *settingsCommand) setSessionStateAutorestore(value config.SessionStateToggle) error {
 	return c.setSessionStateToggle(value, func(paths config.Paths) string {
 		return paths.SessionStateAutorestoreFile()
-	}, "sessionstate autorestore")
+	}, "sessionstate startup picker")
 }
 
 func (c *settingsCommand) setSessionStateToggle(value config.SessionStateToggle, file func(config.Paths) string, messageLabel string) error {

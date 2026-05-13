@@ -1418,7 +1418,7 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 		"Auto-save",
 		"off",
 		sessionStateAutosaveEnv + " env",
-		"Auto-restore",
+		"Startup picker",
 		"on",
 		"default",
 		"Snapshot session",

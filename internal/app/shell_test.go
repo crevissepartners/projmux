@@ -795,7 +795,7 @@ func TestShellAutorestoreReplayFailureFallsBackToAttachWithDiagnostic(t *testing
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &stderr); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	for _, want := range []string{"projmux sessionstate autorestore:", "replay tmux window 0 pane 1"} {
+	for _, want := range []string{"projmux sessionstate startup picker:", "replay tmux window 0 pane 1"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 		}
