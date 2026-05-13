@@ -179,6 +179,9 @@ command = "echo keep"
 	if strings.Count(got, "[features]") != 1 {
 		t.Fatalf("config duplicated [features]:\n%s", got)
 	}
+	if strings.Index(got, `model = "gpt-5.1-codex"`) > strings.Index(got, codexHooksMarkerBegin) {
+		t.Fatalf("managed hooks block was inserted before root config, which would scope root keys into the last hook table:\n%s", got)
+	}
 	codexHookEvents := defaultAIHookInstallEvents(aiHookProviderCodex)
 	if len(codexHookEvents) != 8 {
 		t.Fatalf("default Codex hook catalog has %d events, want 8", len(codexHookEvents))
