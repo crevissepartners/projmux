@@ -46,7 +46,6 @@ func tmuxProjectHookPrompt(lookupEnv func(string) string, executable func() (str
 			pane: firstNonEmpty(
 				lookupEnv(hookTrustPopupTargetPaneEnv),
 				lookupEnv("PROJMUX_POPUP_TARGET_PANE"),
-				lookupEnv("TMUX_SESSIONIZER_CONTEXT_PANE"),
 			),
 		})
 		if err != nil {
