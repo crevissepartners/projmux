@@ -290,6 +290,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-E",
 		"-B",
 		"-d", "/tmp/work tree",
+		"-e", "PROJMUX_HOOK_TRUST_INLINE=1",
 		"-e", "PROJMUX_HOOK_TRUST_TARGET_CLIENT=/dev/pts/projmux-test-sidebar",
 		"-e", "PROJMUX_HOOK_TRUST_TARGET_PANE=%1",
 		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-1",
@@ -308,6 +309,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	command := got.args[len(got.args)-1]
 	for _, want := range []string{
 		"cd -- '/tmp/work tree'",
+		"PROJMUX_HOOK_TRUST_INLINE='1'",
 		"TMUX_SESSIONIZER_CONTEXT_SESSION='work'",
 		"TMUX_SESSIONIZER_CONTEXT_PANE='%1'",
 		"'/tmp/proj mux/bin/projmux' 'switch' '--ui=sidebar'",
