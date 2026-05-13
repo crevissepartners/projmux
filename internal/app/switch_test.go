@@ -156,7 +156,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}
 }
 
-func TestSwitchExecuteSidebarHookProjectLaunchesWideOpenPopup(t *testing.T) {
+func TestSwitchExecuteSidebarHookProjectUsesInlineStartupAndTrust(t *testing.T) {
 	t.Parallel()
 
 	target := t.TempDir()
@@ -192,28 +192,11 @@ func TestSwitchExecuteSidebarHookProjectLaunchesWideOpenPopup(t *testing.T) {
 	if reopen {
 		t.Fatal("execute() reopen = true, want false")
 	}
-	if sessions.ensureSessionName != "" || sessions.openSessionName != "" {
-		t.Fatalf("sessions = ensure %q open %q, want handoff only", sessions.ensureSessionName, sessions.openSessionName)
+	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want inline trust then open", got)
 	}
-	if len(tmuxRunner.calls) != 1 {
-		t.Fatalf("tmux calls = %#v, want one run-shell handoff", tmuxRunner.calls)
-	}
-	call := tmuxRunner.calls[0]
-	if call.name != "tmux" || len(call.args) != 3 || call.args[0] != "run-shell" || call.args[1] != "-b" {
-		t.Fatalf("tmux call = %#v, want run-shell -b", call)
-	}
-	for _, want := range []string{
-		"display-popup",
-		"'-c' '/dev/pts/9'",
-		"PROJMUX_HOOK_TRUST_INLINE=1",
-		"'-w' '90'",
-		"'-h' '24'",
-		"switch open",
-		tmuxShellQuote(target),
-	} {
-		if !strings.Contains(call.args[2], want) {
-			t.Fatalf("run-shell command = %q, want substring %q", call.args[2], want)
-		}
+	if len(tmuxRunner.calls) != 0 {
+		t.Fatalf("tmux calls = %#v, want no display-popup handoff", tmuxRunner.calls)
 	}
 }
 
@@ -563,6 +546,11 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	namedPath := filepath.Join(project, ".projmux", "layouts", "team.toml")
+	namedSavedAt := time.Date(2026, time.May, 13, 13, 14, 15, 0, time.UTC)
+	if err := os.Chtimes(namedPath, namedSavedAt, namedSavedAt); err != nil {
+		t.Fatalf("Chtimes() error = %v", err)
+	}
 
 	var startupOptions intpickercompat.Options
 	executor := &capturingSwitchSessionExecutor{}
@@ -599,8 +587,102 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Latest snapshot")
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Named snapshot")
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Empty session")
+	requireSwitchEntryLabel(t, startupOptions.Entries, "Back")
+	requireSwitchNoPrimaryLayoutPresetLabels(t, startupOptions.Entries)
+	requireSwitchEntryLabel(t, startupOptions.Entries, "2026-05-13 12:00:00")
+	requireSwitchEntryLabel(t, startupOptions.Entries, "2026-05-13 13:14:15")
+	requireSwitchEntryValueOrder(t, startupOptions.Entries, []string{
+		projectStartupValueLatest,
+		projectStartupValueNamed + "team",
+		projectStartupValueEmpty,
+		settingsBackValue,
+	})
 	if got, want := executor.ensureSessionName, "workspace"; got != want {
 		t.Fatalf("ensure session = %q, want %q", got, want)
+	}
+}
+
+func TestUsageOmitsLayoutPrimaryCommand(t *testing.T) {
+	t.Parallel()
+
+	var usage bytes.Buffer
+	printUsage(&usage)
+	if strings.Contains(usage.String(), "\n  layout") {
+		t.Fatalf("usage = %q, want no primary layout command", usage.String())
+	}
+	if !strings.Contains(usage.String(), "  session-state") {
+		t.Fatalf("usage = %q, want session-state snapshot surface", usage.String())
+	}
+}
+
+func TestSwitchSidebarProjectOpenShowsStartupStepWithoutDisplayPopupHandoff(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), "[startup]\nrun = \"make dev\"\n")
+	store := sessionstate.NewStore(filepath.Join(home, "state", "projmux", "sessions"))
+	saveSwitchProjectStartupSnapshot(t, store, "workspace")
+
+	var startupOptions intpickercompat.Options
+	executor := &capturingSwitchSessionExecutor{}
+	tmux := &recordingTmuxRunner{}
+	cmd := &switchCommand{
+		sessions:   executor,
+		identity:   stubSwitchIdentityResolver{name: "workspace"},
+		tmuxRunner: tmux,
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_STATE_HOME":
+				return filepath.Join(home, "state")
+			case "XDG_CONFIG_HOME":
+				return filepath.Join(home, "config")
+			default:
+				return ""
+			}
+		},
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			startupOptions = options
+			return intpickercompat.Result{Value: settingsBackValue}, nil
+		})),
+	}
+
+	reopen, err := cmd.execute(context.Background(), switchPlan{
+		UI:          switchUISidebar,
+		Selection:   project,
+		SessionName: "workspace",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if !reopen {
+		t.Fatal("execute() reopen = false, want project list after Back")
+	}
+	if got, want := startupOptions.Header, "Start project"; got != want {
+		t.Fatalf("startup header = %q, want %q", got, want)
+	}
+	if got, want := startupOptions.UI, "project-startup"; got != want {
+		t.Fatalf("startup UI = %q, want %q", got, want)
+	}
+	requireSwitchEntryLabel(t, startupOptions.Entries, "Latest snapshot")
+	if len(tmux.calls) != 0 {
+		t.Fatalf("tmux calls = %#v, want no display-popup handoff", tmux.calls)
+	}
+	if executor.ensureSessionName != "" || executor.restoreSessionName != "" || executor.openSessionName != "" || executor.authorizeCalled {
+		t.Fatalf("startup Back should not create/replay/open/authorize: %#v", executor)
+	}
+}
+
+func TestAppRunLayoutCommandRemovedFromPublicSurface(t *testing.T) {
+	t.Parallel()
+
+	err := New().Run([]string{"layout", "list"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "unknown command: layout") {
+		t.Fatalf("Run(layout list) error = %v, want unknown command", err)
 	}
 }
 
@@ -636,9 +718,15 @@ func TestSwitchProjectOpenLatestSnapshotSelectionRestoresAndOpens(t *testing.T) 
 			}
 		},
 		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			if executor.authorizeCalled {
+				t.Fatal("trust gate ran before latest snapshot startup selection")
+			}
 			return intpickercompat.Result{Value: projectStartupValueLatest}, nil
 		}),
 		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			if executor.authorizeCalled {
+				t.Fatal("trust gate ran before latest snapshot startup selection")
+			}
 			return intpickercompat.Result{Value: projectStartupValueLatest}, nil
 		})),
 	}
@@ -713,9 +801,15 @@ func TestSwitchProjectOpenNamedSnapshotSelectionRestoresAndOpens(t *testing.T) {
 			return ""
 		},
 		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			if executor.authorizeCalled {
+				t.Fatal("trust gate ran before named snapshot startup selection")
+			}
 			return intpickercompat.Result{Value: projectStartupValueNamed + "team"}, nil
 		}),
 		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			if executor.authorizeCalled {
+				t.Fatal("trust gate ran before named snapshot startup selection")
+			}
 			return intpickercompat.Result{Value: projectStartupValueNamed + "team"}, nil
 		})),
 	}
@@ -815,7 +909,7 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 	}
 }
 
-func TestSwitchProjectOpenTrustRunsBeforeStartupWorkAndDenyCreatesNoSession(t *testing.T) {
+func TestSwitchProjectOpenTrustDenyAfterStartupSelectionCreatesNoSession(t *testing.T) {
 	t.Parallel()
 
 	var pickerCalled bool
@@ -840,12 +934,45 @@ func TestSwitchProjectOpenTrustRunsBeforeStartupWorkAndDenyCreatesNoSession(t *t
 	if !executor.authorizeCalled {
 		t.Fatal("trust gate was not checked")
 	}
-	if pickerCalled || executor.ensureSessionName != "" || executor.restoreSessionName != "" || executor.openSessionName != "" {
+	if !pickerCalled {
+		t.Fatal("startup picker was not called before trust gate")
+	}
+	if executor.ensureSessionName != "" || executor.restoreSessionName != "" || executor.openSessionName != "" {
 		t.Fatalf("startup ran after deny: picker=%v ensure=%q restore=%q open=%q", pickerCalled, executor.ensureSessionName, executor.restoreSessionName, executor.openSessionName)
 	}
 }
 
-func TestSwitchProjectOpenStartupPickerOffStillChecksTrustFirst(t *testing.T) {
+func TestSwitchProjectOpenEmptySelectionChecksTrustAfterStartupSelection(t *testing.T) {
+	t.Parallel()
+
+	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+	cmd := &switchCommand{
+		sessions: executor,
+		identity: stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:  func() (string, error) { return t.TempDir(), nil },
+		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			if executor.authorizeCalled {
+				t.Fatal("trust gate ran before empty startup selection")
+			}
+			return intpickercompat.Result{Value: projectStartupValueEmpty}, nil
+		}),
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			if executor.authorizeCalled {
+				t.Fatal("trust gate ran before empty startup selection")
+			}
+			return intpickercompat.Result{Value: projectStartupValueEmpty}, nil
+		})),
+	}
+
+	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
+		t.Fatalf("openProjectTarget() error = %v", err)
+	}
+	if got, want := executor.calls, []string{"authorize:/tmp/workspace", "ensure:workspace", "open:workspace"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchProjectOpenStartupPickerOffStillChecksTrustBeforeCreate(t *testing.T) {
 	t.Parallel()
 
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
@@ -2512,6 +2639,28 @@ func requireSwitchEntryLabel(t *testing.T, entries []intpickercompat.Entry, want
 		}
 	}
 	t.Fatalf("entries = %#v, want label containing %q", entries, want)
+}
+
+func requireSwitchEntryValueOrder(t *testing.T, entries []intpickercompat.Entry, want []string) {
+	t.Helper()
+	if len(entries) != len(want) {
+		t.Fatalf("entries = %#v, want %d entries", entries, len(want))
+	}
+	for i, value := range want {
+		if entries[i].Value != value {
+			t.Fatalf("entry %d value = %q, want %q; entries = %#v", i, entries[i].Value, value, entries)
+		}
+	}
+}
+
+func requireSwitchNoPrimaryLayoutPresetLabels(t *testing.T, entries []intpickercompat.Entry) {
+	t.Helper()
+	for _, entry := range entries {
+		label := strings.ToLower(entry.Label)
+		if strings.Contains(label, "layout") || strings.Contains(label, "preset") {
+			t.Fatalf("entry label = %q, want snapshot-only project open labels", entry.Label)
+		}
+	}
 }
 
 type stubSwitchPinStore struct {

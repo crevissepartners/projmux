@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -16,11 +17,14 @@ const (
 	projectStartupKindLatest = "latest"
 	projectStartupKindNamed  = "named"
 	projectStartupKindEmpty  = "empty"
+	projectStartupKindBack   = "back"
 
 	projectStartupValueLatest = "latest"
 	projectStartupValueEmpty  = "empty"
 	projectStartupValueNamed  = "named:"
 )
+
+var errProjectStartupBack = errors.New("project startup back")
 
 type switchProjectTrustAuthorizer interface {
 	AuthorizeProjectHooks(ctx context.Context, cwd string) (bool, error)
@@ -45,15 +49,17 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 	if exists {
 		return c.openProjectSession(ctx, sessionName)
 	}
+	mode := projectStartupCandidate{Kind: projectStartupKindEmpty}
+	if sessionStateAutorestoreEnabled(c.homeDir, c.lookupEnv) {
+		mode = c.pickProjectStartupMode(sessionName, target)
+	}
+	if mode.Kind == projectStartupKindBack {
+		return errProjectStartupBack
+	}
 	if trusted, err := c.authorizeProjectOpen(ctx, target); err != nil {
 		return err
 	} else if !trusted {
 		return nil
-	}
-
-	mode := projectStartupCandidate{Kind: projectStartupKindEmpty}
-	if sessionStateAutorestoreEnabled(c.homeDir, c.lookupEnv) {
-		mode = c.pickProjectStartupMode(sessionName, target)
 	}
 	switch mode.Kind {
 	case projectStartupKindLatest:
@@ -99,7 +105,7 @@ func (c *switchCommand) projectStartupCandidates(sessionName, target string) []p
 			candidates = append(candidates, projectStartupCandidate{
 				Kind:        projectStartupKindLatest,
 				Label:       "Latest snapshot",
-				Description: fmt.Sprintf("auto-saved, %s, %s", sessionStateCount(summary.WindowCount, "window"), sessionStateCount(summary.PaneCount, "pane")),
+				Description: projectStartupDescription("auto-saved", summary.SavedAt, summary.WindowCount, summary.PaneCount),
 			})
 		}
 	}
@@ -116,9 +122,10 @@ func (c *switchCommand) projectStartupCandidates(sessionName, target string) []p
 		}
 	}
 	if len(candidates) == 0 {
-		return []projectStartupCandidate{emptyProjectStartupCandidate()}
+		return []projectStartupCandidate{emptyProjectStartupCandidate(), backProjectStartupCandidate()}
 	}
 	candidates = append(candidates, emptyProjectStartupCandidate())
+	candidates = append(candidates, backProjectStartupCandidate())
 	return candidates
 }
 
@@ -132,11 +139,52 @@ func emptyProjectStartupCandidate() projectStartupCandidate {
 
 func namedSnapshotDescription(entry corelayout.Entry) string {
 	parts := []string{entry.Name}
+	if savedAt := namedSnapshotSavedAt(entry); !savedAt.IsZero() {
+		parts = append(parts, projectStartupSavedAtText(savedAt))
+	}
 	if strings.TrimSpace(entry.Description) != "" {
 		parts = append(parts, strings.TrimSpace(entry.Description))
 	}
 	parts = append(parts, sessionStateCount(entry.Windows, "window"), sessionStateCount(entry.Panes, "pane"))
 	return strings.Join(parts, ", ")
+}
+
+func namedSnapshotSavedAt(entry corelayout.Entry) time.Time {
+	if strings.TrimSpace(entry.Path) == "" {
+		return time.Time{}
+	}
+	info, err := os.Stat(entry.Path)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
+}
+
+func projectStartupDescription(source string, savedAt time.Time, windows, panes int) string {
+	parts := []string{}
+	if savedText := projectStartupSavedAtText(savedAt); savedText != "" {
+		parts = append(parts, savedText)
+	}
+	if strings.TrimSpace(source) != "" {
+		parts = append(parts, strings.TrimSpace(source))
+	}
+	parts = append(parts, sessionStateCount(windows, "window"), sessionStateCount(panes, "pane"))
+	return strings.Join(parts, ", ")
+}
+
+func projectStartupSavedAtText(savedAt time.Time) string {
+	if savedAt.IsZero() {
+		return ""
+	}
+	return "saved " + savedAt.UTC().Format("2006-01-02 15:04:05 MST")
+}
+
+func backProjectStartupCandidate() projectStartupCandidate {
+	return projectStartupCandidate{
+		Kind:        projectStartupKindBack,
+		Label:       "Back",
+		Description: "return to projects",
+	}
 }
 
 func projectStartupPickerOptions(candidates []projectStartupCandidate) intpickercompat.Options {
@@ -152,7 +200,7 @@ func projectStartupPickerOptions(candidates []projectStartupCandidate) intpicker
 		UI:            "project-startup",
 		Prompt:        "Start project > ",
 		Header:        "Start project",
-		Footer:        "Enter: start  |  Esc: empty session",
+		Footer:        "Enter: start  |  Back row: projects  |  Esc: empty session",
 		Entries:       entries,
 		Bindings:      settingsCloseBindings(),
 		DisableSearch: true,
@@ -167,6 +215,8 @@ func projectStartupPickerLabel(candidate projectStartupCandidate) string {
 		return settingsLabel(settingsGlyphOpen, settingsColorType, "Named snapshot", candidate.Description)
 	case projectStartupKindEmpty:
 		return settingsLabel(settingsGlyphBack, settingsColorBack, "Empty session", candidate.Description)
+	case projectStartupKindBack:
+		return settingsLabel(settingsGlyphBack, settingsColorBack, "Back", candidate.Description)
 	default:
 		return settingsLabel(settingsGlyphInfo, settingsColorInfo, candidate.Label, candidate.Description)
 	}
@@ -180,6 +230,8 @@ func projectStartupPickerValue(candidate projectStartupCandidate) string {
 		return projectStartupValueNamed + candidate.Name
 	case projectStartupKindEmpty:
 		return projectStartupValueEmpty
+	case projectStartupKindBack:
+		return settingsBackValue
 	default:
 		return ""
 	}
@@ -192,6 +244,8 @@ func projectStartupCandidateFromValue(value string) (projectStartupCandidate, bo
 		return projectStartupCandidate{Kind: projectStartupKindLatest}, true
 	case value == projectStartupValueEmpty:
 		return projectStartupCandidate{Kind: projectStartupKindEmpty}, true
+	case value == settingsBackValue:
+		return projectStartupCandidate{Kind: projectStartupKindBack}, true
 	case strings.HasPrefix(value, projectStartupValueNamed):
 		name := strings.TrimSpace(strings.TrimPrefix(value, projectStartupValueNamed))
 		if name == "" {

@@ -40,7 +40,8 @@ The file is read only when no env root list is set.
 
 ## Project Named Snapshots
 
-Projects may keep reusable named snapshots in the legacy storage directory:
+Project open exposes reusable restore choices as named snapshots. Older
+checkouts may already have named snapshots in the legacy storage directory:
 
 ```text
 <project>/.projmux/layouts/<name>.toml
@@ -48,31 +49,12 @@ Projects may keep reusable named snapshots in the legacy storage directory:
 
 The project context comes from `PROJMUX_CWD` when set, otherwise projmux walks
 upward from the current directory to the nearest `.projmux` or `.git` marker.
-Files outside that project tree are not discovered.
+Files outside that project tree are not discovered. This storage is treated as
+legacy import data for the `Named snapshot` row in Project open and shell
+compatibility startup. New primary user-facing surfaces describe the restore
+unit as a snapshot, not as a separate layout or preset feature.
 
-Use `projmux layout save [--description <text>] [--fresh] <name>` from inside a
-tmux session to capture the current session into this directory. The save path
-uses the same tmux capture logic as `projmux session-state save`; paths inside
-the project root are rendered as `${PROJMUX_CWD}` or `${PROJMUX_CWD}/rel` so
-the named snapshot stays portable across checkouts. Use
-`projmux layout remove --force <name>` to delete a named snapshot
-non-interactively.
-
-Use `projmux layout apply <name> --dry-run` from inside a tmux session to
-preview how a named snapshot would convert into the current session's session-state
-restore plan. This preview does not run tmux replay commands.
-
-Use `projmux layout apply <name> --force` from inside a tmux session to
-destructively replace the current session's windows with the named snapshot. The
-target is always the current session name; there is no alternate-session apply
-flag. The implementation stages the named snapshot through the session-state replay path,
-moves the staged windows into the live session, and removes extra live windows.
-`mode = "fresh-each-time"` is stored in the legacy schema to distinguish a fixed
-named snapshot from auto-saved latest snapshot state, but explicit
-`layout apply --force` already applies the named snapshot directly and does not
-add a separate mode-specific branch yet.
-
-The Phase 1 schema is intentionally close to the session-state snapshot shape:
+The legacy schema is intentionally close to the session-state snapshot shape:
 
 ```toml
 schema_version = 1
@@ -98,9 +80,9 @@ interpolation placeholders are limited to `${PROJMUX_CWD}` and
 `${PROJMUX_SESSION}`; other `${...}` values are rejected during load.
 
 Unknown fields and unknown sections are ignored so future schema additions do
-not break older `layout list` and `layout show` flows. The built-in parser only
-accepts quoted strings and integer values for the known fields above; it does
-not implement the full TOML language.
+not break older files. The built-in parser only accepts quoted strings and
+integer values for the known fields above; it does not implement the full TOML
+language.
 
 ## Keymap File
 
@@ -392,12 +374,16 @@ prints the guide.
 autosave command is quiet and debounced per session, and stores snapshots under
 `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`.
 
-Project open from the Alt-1 sidebar is the canonical startup picker path. It
-checks hook trust first, then opens `Start project` for a closed project session
-when the startup picker is enabled. Rows appear as `Latest snapshot`, named
-snapshot rows, and `Empty session`. `Latest snapshot` is the snapshot auto-save
-that changes as auto-save runs; named snapshots are fixed until the user saves or
-replaces them.
+Project open from the Alt-1 sidebar is the canonical startup picker path. For a
+closed project session, the sidebar first advances to the native `Start project`
+step when the startup picker is enabled. Rows appear as `Latest snapshot`, named
+snapshot rows, `Empty session`, and `Back`. `Latest snapshot` is the snapshot
+auto-save that changes as auto-save runs; named snapshots are fixed snapshots.
+Rows include saved-at date/time metadata when projmux can determine it. `Back`
+returns to the project list without creating, replaying, or opening a session.
+After the startup mode is selected, project hook/config trust is evaluated if
+needed; approval continues the selected path and deny/cancel aborts without
+session create, snapshot replay, startup recipe, or `pane-startup`.
 
 On default `projmux shell`, compatibility startup candidates are checked before
 creating a new app session only when the startup picker is enabled. In project
@@ -432,15 +418,14 @@ are mutually exclusive, and still honor the existing session guard: if the
 target app session already exists, no replay is attempted.
 
 Named snapshot startup records a session-state source marker on the live tmux
-session. Normal named snapshots use the legacy `layout(<name>)` source and
-continue autosaving. Fresh named snapshots use
-`fresh`; the autosave tick skips sessions with that source marker, so a fresh
-startup does not create a latest snapshot for the next startup picker. After a
-successful fresh startup or `layout apply --force`, projmux also removes the
-latest snapshot for that session so an older autosave is not offered as the
-`Latest snapshot` row next time. If a user explicitly runs `projmux
-session-state save` while a session is marked `fresh`, that fresh-source snapshot
-is still hidden from the startup picker.
+session. Normal legacy-backed named snapshots use the internal `layout(<name>)`
+source and continue autosaving. Fresh named snapshots use `fresh`; the autosave
+tick skips sessions with that source marker, so a fresh startup does not create a
+latest snapshot for the next startup picker. After a successful fresh startup,
+projmux also removes the latest snapshot for that session so an older autosave
+is not offered as the `Latest snapshot` row next time. If a user explicitly runs
+`projmux session-state save` while a session is marked `fresh`, that
+fresh-source snapshot is still hidden from the startup picker.
 
 Settings > Project > Session State is the primary inspection surface when
 project context exists. It derives the target session identity from the current
