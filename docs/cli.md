@@ -563,9 +563,11 @@ reviewing or trusting the hook through its `/hooks` flow before commands run.
 `integrate tmux-bell` is opt-in server-level tmux wiring for arbitrary tools
 that emit BEL or OSC 9. It applies `allow-passthrough on`, `monitor-bell on`,
 `bell-action other`, and appends a marked `alert-bell` hook that invokes
-`projmux ai ingest bell --pane "#{hook_pane}"`. `--dry-run` prints the tmux
-commands. `--remove` unsets only hook entries carrying the projmux marker and
-leaves user-owned `alert-bell` hooks alone.
+`projmux ai ingest bell --pane "#{pane_id}"`. `--dry-run` prints the tmux
+commands. tmux `alert-bell` is a window alert and does not expose
+`#{hook_pane}` on tmux 3.4, so `#{pane_id}` is the best available pane context.
+`--remove` unsets only hook entries carrying the projmux marker and leaves
+user-owned `alert-bell` hooks alone.
 
 ## tmux
 
