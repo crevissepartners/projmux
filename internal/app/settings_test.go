@@ -697,29 +697,8 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings entry order = %#v, want %#v", got, want)
 	}
-	if !hasEntryValue(rootOptions.Entries, settingsSectionAI) {
-		t.Fatalf("root settings entries = %#v, want AI section", rootOptions.Entries)
-	}
-	if !hasEntryValue(rootOptions.Entries, settingsSectionNotifications) {
-		t.Fatalf("root settings entries = %#v, want Notifications section", rootOptions.Entries)
-	}
-	if !hasEntryValue(rootOptions.Entries, settingsSectionProject) {
-		t.Fatalf("root settings entries = %#v, want project picker section", rootOptions.Entries)
-	}
-	if !hasEntryValue(rootOptions.Entries, settingsSectionStatusbar) {
-		t.Fatalf("root settings entries = %#v, want statusbar section", rootOptions.Entries)
-	}
-	if !hasEntryValue(rootOptions.Entries, settingsSectionKeybindings) {
-		t.Fatalf("root settings entries = %#v, want keybindings section", rootOptions.Entries)
-	}
 	if !hasEntryLabelContaining(rootOptions.Entries, "Appearance") {
 		t.Fatalf("root settings entries = %#v, want generic appearance section label", rootOptions.Entries)
-	}
-	if !hasEntryValue(rootOptions.Entries, settingsSectionLabs) {
-		t.Fatalf("root settings entries = %#v, want labs section", rootOptions.Entries)
-	}
-	if !hasEntryValue(rootOptions.Entries, settingsSectionAbout) {
-		t.Fatalf("root settings entries = %#v, want about section", rootOptions.Entries)
 	}
 	if got, want := aiOptions.UI, "settings-ai"; got != want {
 		t.Fatalf("AI settings UI = %q, want %q", got, want)
