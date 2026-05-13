@@ -2,7 +2,10 @@ package tmux
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,8 +24,11 @@ const (
 	sessionStateAIResumeIDOption     = "@projmux_ai_resume_id"
 	sessionStateAIResumeSourceOption = "@projmux_ai_resume_source"
 	sessionStateAIResumeAtOption     = "@projmux_ai_resume_updated_at"
+	sessionStateAITranscriptOption   = "@projmux_ai_transcript_path"
 	sessionStateSourceOption         = "@projmux_sessionstate_source"
 )
+
+const sessionStateMaxClaudeTranscriptBytes = 1024 * 1024
 
 type sessionStateWindowRow struct {
 	index  int
@@ -45,11 +51,12 @@ type sessionStatePaneRow struct {
 }
 
 type sessionStateResumeRefreshPaneRow struct {
-	paneID      string
-	aiManaged   string
-	aiAgent     string
-	aiSessionID string
-	aiResumeID  string
+	paneID           string
+	aiManaged        string
+	aiAgent          string
+	aiSessionID      string
+	aiResumeID       string
+	aiTranscriptPath string
 }
 
 // CaptureSessionSnapshot captures tmux window/pane metadata for a sessionstate
@@ -191,19 +198,24 @@ func (c *Client) refreshSessionStateAIResumeMetadata(ctx context.Context, sessio
 			continue
 		}
 		candidate := strings.TrimSpace(pane.aiSessionID)
+		source := "session-id"
+		if candidate == "" && isClaudeSessionStateRefreshPane(pane) {
+			candidate = c.claudeResumeIDFromTranscript(pane.aiTranscriptPath)
+			source = "claude-transcript"
+		}
 		if candidate == "" || candidate == strings.TrimSpace(pane.aiResumeID) {
 			continue
 		}
-		c.setSessionStateAIResumeMetadata(ctx, pane.paneID, candidate, updatedAt)
+		c.setSessionStateAIResumeMetadata(ctx, pane.paneID, candidate, source, updatedAt)
 	}
 	return nil
 }
 
-func (c *Client) setSessionStateAIResumeMetadata(ctx context.Context, paneID, resumeID, updatedAt string) {
+func (c *Client) setSessionStateAIResumeMetadata(ctx context.Context, paneID, resumeID, source, updatedAt string) {
 	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, sessionStateAIResumeIDOption, resumeID); err != nil {
 		return
 	}
-	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, sessionStateAIResumeSourceOption, "session-id"); err != nil {
+	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, sessionStateAIResumeSourceOption, source); err != nil {
 		return
 	}
 	_, _ = c.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, sessionStateAIResumeAtOption, updatedAt)
@@ -219,6 +231,84 @@ func isSessionStateRefreshAgent(pane sessionStateResumeRefreshPaneRow) bool {
 	default:
 		return false
 	}
+}
+
+func isClaudeSessionStateRefreshPane(pane sessionStateResumeRefreshPaneRow) bool {
+	return strings.EqualFold(strings.TrimSpace(pane.aiAgent), "claude")
+}
+
+func (c *Client) claudeResumeIDFromTranscript(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || c.readFile == nil {
+		return ""
+	}
+	if info, err := os.Stat(path); err == nil && info.Size() > sessionStateMaxClaudeTranscriptBytes {
+		return ""
+	}
+	content, err := c.readFile(path)
+	if err != nil || len(content) > sessionStateMaxClaudeTranscriptBytes {
+		return ""
+	}
+	if id := claudeResumeIDFromTranscriptJSONL(content); id != "" {
+		return id
+	}
+	return claudeResumeIDFromTranscriptFilename(path)
+}
+
+func claudeResumeIDFromTranscriptJSONL(content []byte) string {
+	var fallback string
+	for rawLine := range strings.SplitSeq(string(content), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		var fields map[string]any
+		if err := json.Unmarshal([]byte(line), &fields); err != nil {
+			continue
+		}
+		if id := stringJSONField(fields, "sessionId"); id != "" {
+			return id
+		}
+		if fallback == "" {
+			fallback = stringJSONField(fields, "session_id")
+		}
+	}
+	return fallback
+}
+
+func stringJSONField(fields map[string]any, key string) string {
+	value, ok := fields[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func claudeResumeIDFromTranscriptFilename(path string) string {
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if isUUIDLikeSessionStateID(stem) {
+		return stem
+	}
+	return ""
+}
+
+func isUUIDLikeSessionStateID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for i, r := range id {
+		switch i {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (c *Client) listSessionStateWindows(ctx context.Context, sessionName string) ([]sessionStateWindowRow, error) {
@@ -264,6 +354,7 @@ func (c *Client) listSessionStateResumeRefreshPanes(ctx context.Context, session
 		"#{"+sessionStateAIAgentOption+"}",
 		"#{"+sessionStateAISessionIDOption+"}",
 		"#{"+sessionStateAIResumeIDOption+"}",
+		"#{"+sessionStateAITranscriptOption+"}",
 	))
 	if err != nil {
 		return nil, fmt.Errorf("refresh tmux session %q AI resume metadata: %w", sessionName, err)
@@ -368,16 +459,17 @@ func parseSessionStateResumeRefreshPanes(output []byte) ([]sessionStateResumeRef
 		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
-		fields := splitTmuxFields(rawLine, 5)
-		if len(fields) != 5 {
+		fields := splitTmuxFields(rawLine, 6)
+		if len(fields) != 6 {
 			return nil, fmt.Errorf("parse tmux sessionstate AI resume metadata panes: malformed row %q", rawLine)
 		}
 		panes = append(panes, sessionStateResumeRefreshPaneRow{
-			paneID:      strings.TrimSpace(fields[0]),
-			aiManaged:   strings.TrimSpace(fields[1]),
-			aiAgent:     strings.TrimSpace(fields[2]),
-			aiSessionID: strings.TrimSpace(fields[3]),
-			aiResumeID:  strings.TrimSpace(fields[4]),
+			paneID:           strings.TrimSpace(fields[0]),
+			aiManaged:        strings.TrimSpace(fields[1]),
+			aiAgent:          strings.TrimSpace(fields[2]),
+			aiSessionID:      strings.TrimSpace(fields[3]),
+			aiResumeID:       strings.TrimSpace(fields[4]),
+			aiTranscriptPath: strings.TrimSpace(fields[5]),
 		})
 	}
 	return panes, nil
