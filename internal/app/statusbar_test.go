@@ -318,11 +318,11 @@ func TestStatusbarClickSessionOpensProjectSidebar(t *testing.T) {
 	runner := &statusbarFakeRunner{}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	if err := cmd.Run([]string{"click", "session"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"click", "session", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "sessionizer-sidebar"}) {
-		t.Fatalf("missing sessionizer-sidebar popup-toggle; calls = %#v", runner.calls)
+	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "sessionizer-sidebar"}) {
+		t.Fatalf("missing client-scoped sessionizer-sidebar popup-toggle; calls = %#v", runner.calls)
 	}
 }
 
@@ -479,11 +479,11 @@ func TestStatusbarClickKubeOpensProjectSwitcher(t *testing.T) {
 	runner := &statusbarFakeRunner{}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	if err := cmd.Run([]string{"click", "kube"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"click", "kube", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "sessionizer"}) {
-		t.Fatalf("missing project switcher popup-toggle; calls = %#v", runner.calls)
+	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "sessionizer"}) {
+		t.Fatalf("missing client-scoped project switcher popup-toggle; calls = %#v", runner.calls)
 	}
 }
 
@@ -493,11 +493,11 @@ func TestStatusbarClickGitOpensProjectSwitcher(t *testing.T) {
 	runner := &statusbarFakeRunner{}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	if err := cmd.Run([]string{"click", "git"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"click", "git", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "sessionizer"}) {
-		t.Fatalf("missing project switcher popup-toggle; calls = %#v", runner.calls)
+	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "sessionizer"}) {
+		t.Fatalf("missing client-scoped project switcher popup-toggle; calls = %#v", runner.calls)
 	}
 }
 
