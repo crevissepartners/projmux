@@ -27,18 +27,19 @@ var osStat = os.Stat
 var osLstat = os.Lstat
 
 type settingsCommand struct {
-	ai                 *aiCommand
-	switcher           *switchCommand
-	update             *updateCommand
-	runner             intpickercompat.Runner
-	nativePicker       intpicker.Runner
-	homeDir            func() (string, error)
-	lookupEnv          func(string) string
-	runCommand         func(name string, args ...string) error
-	runOutput          func(name string, args ...string) ([]byte, error)
-	probeKeybinding    func(probeKey, time.Duration) (probeResult, error)
-	runInitKeybindings func(args []string, stdout, stderr io.Writer) error
-	lastLabProbe       map[string]probeResult
+	ai                  *aiCommand
+	switcher            *switchCommand
+	update              *updateCommand
+	runner              intpickercompat.Runner
+	nativePicker        intpicker.Runner
+	homeDir             func() (string, error)
+	lookupEnv           func(string) string
+	runCommand          func(name string, args ...string) error
+	runOutput           func(name string, args ...string) ([]byte, error)
+	probeKeybinding     func(probeKey, time.Duration) (probeResult, error)
+	runInitKeybindings  func(args []string, stdout, stderr io.Writer) error
+	aiNotifyDiagnostics func() []doctorAINotifyIntegration
+	lastLabProbe        map[string]probeResult
 }
 
 var errSettingsClosed = errors.New("settings closed")
@@ -93,6 +94,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsKeybindingsProbe:      {Name: "Keybinding Probe", Axis: settingsAxisGlobal},
 	settingsKeybindingsInit:       {Name: "Keybinding Init", Axis: settingsAxisGlobal},
 	settingsAIDefaultMode:         {Name: "Default split mode", Axis: settingsAxisGlobal},
+	settingsAINotifyDiagnostics:   {Name: "AI notify diagnostics", Axis: settingsAxisGlobal},
 	settingsLabsDesktopNotify:     {Name: "Desktop notifications", Axis: settingsAxisGlobal},
 	settingsSessionStateDelete:    {Name: "Delete session snapshot", Axis: settingsAxisGlobal},
 	settingsLabKeybindings:        {Name: "Keybindings", Axis: settingsAxisGlobal},
@@ -106,6 +108,7 @@ var settingsEntryPrefixCatalog = []struct {
 	meta   settingsEntryMeta
 }{
 	{settingsActionPrefixAI, settingsEntryMeta{Name: "AI Settings", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixAINotifyDiagnostic, settingsEntryMeta{Name: "AI notify diagnostics", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixDesktopNotifyMode, settingsEntryMeta{Name: "Desktop notifications", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHooks, settingsEntryMeta{Name: "Project hook policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHookAdd, settingsEntryMeta{Name: "Hook maker - add", Axis: settingsAxisBoth}},
@@ -139,59 +142,61 @@ func settingsEntryMetaForValue(value string) (settingsEntryMeta, bool) {
 }
 
 const (
-	settingsBackValue                     = "__settings_back__"
-	settingsNoopValue                     = "__settings_noop__"
-	settingsRootTabGlobalValue            = "__settings_tab_global__"
-	settingsRootTabProjectValue           = "__settings_tab_project__"
-	settingsSectionAI                     = "section:ai"
-	settingsSectionGlobalHooks            = "section:hooks-global"
-	settingsSectionProjectHooks           = "section:hooks-project"
-	settingsSectionProjectConfig          = "section:project-config"
-	settingsSectionProjectTrust           = "section:project-trust"
-	settingsSectionEffectiveMerge         = "section:effective-merge"
-	settingsSectionKeybindings            = "section:keybindings"
-	settingsSectionProject                = "section:project-picker"
-	settingsSectionStatusbar              = "section:statusbar"
-	settingsSectionSessionState           = "section:sessionstate"
-	settingsSectionLabs                   = "section:labs"
-	settingsSectionAbout                  = "section:about"
-	settingsActionPrefixAI                = "ai:"
-	settingsActionPrefixDesktopNotifyMode = "desktop-notify-mode:"
-	settingsActionPrefixHooks             = "project-hooks:"
-	settingsActionPrefixKeymap            = "keymap:"
-	settingsActionPrefixLabKeymap         = "lab-keymap:"
-	settingsActionPrefixPicker            = "picker-backend:"
-	settingsActionPrefixProjectConfig     = "project-config:"
-	settingsActionPrefixWelcome           = "welcome:"
-	settingsActionPrefixTrust             = "trust:"
-	settingsActionPrefixProjdir           = "projdir:"
-	settingsActionPrefixSessionState      = "sessionstate:"
-	settingsActionPrefixStatusbar         = "statusbar-decoration:"
-	settingsActionPrefixSwitch            = "switch:"
-	settingsActionPrefixUpdate            = "update:"
-	settingsActionPrefixWorkdir           = "workdir:"
-	settingsProjectAdd                    = "project:add"
-	settingsProjectPins                   = "project:pins"
-	settingsProjectRootManage             = "project-root:manage"
-	settingsProjdirClear                  = "projdir:clear"
-	settingsProjdirSetCurrent             = "projdir:set-current"
-	settingsProjdirSetTyped               = "projdir:set-typed"
-	settingsUpdateApply                   = "update:apply"
-	settingsUpdateCheck                   = "update:check"
-	settingsWorkdirAdd                    = "workdir:add"
-	settingsWorkdirList                   = "workdir:list"
-	settingsWorkdirTyped                  = "workdir:typed"
-	settingsKeybindingsBindings           = "keybindings:bindings"
-	settingsKeybindingsDiagnostic         = "keybindings:diagnostic"
-	settingsKeybindingsProbe              = "keybindings:probe"
-	settingsKeybindingsInit               = "keybindings:init"
-	settingsAIDefaultMode                 = "ai-default-mode"
-	settingsLabsDesktopNotify             = "labs:desktop-notify"
-	settingsLabKeybindings                = "labs:keybindings"
-	settingsSessionStateDelete            = "sessionstate:delete"
-	settingsWelcomeShow                   = "welcome:show"
-	settingsKeymapFieldPlain              = "plain"
-	settingsKeymapFieldPrefix             = "prefix"
+	settingsBackValue                      = "__settings_back__"
+	settingsNoopValue                      = "__settings_noop__"
+	settingsRootTabGlobalValue             = "__settings_tab_global__"
+	settingsRootTabProjectValue            = "__settings_tab_project__"
+	settingsSectionAI                      = "section:ai"
+	settingsSectionGlobalHooks             = "section:hooks-global"
+	settingsSectionProjectHooks            = "section:hooks-project"
+	settingsSectionProjectConfig           = "section:project-config"
+	settingsSectionProjectTrust            = "section:project-trust"
+	settingsSectionEffectiveMerge          = "section:effective-merge"
+	settingsSectionKeybindings             = "section:keybindings"
+	settingsSectionProject                 = "section:project-picker"
+	settingsSectionStatusbar               = "section:statusbar"
+	settingsSectionSessionState            = "section:sessionstate"
+	settingsSectionLabs                    = "section:labs"
+	settingsSectionAbout                   = "section:about"
+	settingsActionPrefixAI                 = "ai:"
+	settingsActionPrefixAINotifyDiagnostic = "ai-notify:"
+	settingsActionPrefixDesktopNotifyMode  = "desktop-notify-mode:"
+	settingsActionPrefixHooks              = "project-hooks:"
+	settingsActionPrefixKeymap             = "keymap:"
+	settingsActionPrefixLabKeymap          = "lab-keymap:"
+	settingsActionPrefixPicker             = "picker-backend:"
+	settingsActionPrefixProjectConfig      = "project-config:"
+	settingsActionPrefixWelcome            = "welcome:"
+	settingsActionPrefixTrust              = "trust:"
+	settingsActionPrefixProjdir            = "projdir:"
+	settingsActionPrefixSessionState       = "sessionstate:"
+	settingsActionPrefixStatusbar          = "statusbar-decoration:"
+	settingsActionPrefixSwitch             = "switch:"
+	settingsActionPrefixUpdate             = "update:"
+	settingsActionPrefixWorkdir            = "workdir:"
+	settingsProjectAdd                     = "project:add"
+	settingsProjectPins                    = "project:pins"
+	settingsProjectRootManage              = "project-root:manage"
+	settingsProjdirClear                   = "projdir:clear"
+	settingsProjdirSetCurrent              = "projdir:set-current"
+	settingsProjdirSetTyped                = "projdir:set-typed"
+	settingsUpdateApply                    = "update:apply"
+	settingsUpdateCheck                    = "update:check"
+	settingsWorkdirAdd                     = "workdir:add"
+	settingsWorkdirList                    = "workdir:list"
+	settingsWorkdirTyped                   = "workdir:typed"
+	settingsKeybindingsBindings            = "keybindings:bindings"
+	settingsKeybindingsDiagnostic          = "keybindings:diagnostic"
+	settingsKeybindingsProbe               = "keybindings:probe"
+	settingsKeybindingsInit                = "keybindings:init"
+	settingsAIDefaultMode                  = "ai-default-mode"
+	settingsAINotifyDiagnostics            = "ai-notify-diagnostics"
+	settingsLabsDesktopNotify              = "labs:desktop-notify"
+	settingsLabKeybindings                 = "labs:keybindings"
+	settingsSessionStateDelete             = "sessionstate:delete"
+	settingsWelcomeShow                    = "welcome:show"
+	settingsKeymapFieldPlain               = "plain"
+	settingsKeymapFieldPrefix              = "prefix"
 )
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand) *settingsCommand {
@@ -1421,6 +1426,10 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 			if err := c.runAIDefaultModeSection(stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsAINotifyDiagnostics:
+			if err := c.runAINotifyDiagnosticsSection(stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, settingsActionPrefixAI):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err
@@ -1474,7 +1483,173 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Default split mode", current),
 		Value:     settingsAIDefaultMode,
 		SearchKey: "default split mode claude codex shell selective",
+	}, intpickercompat.Entry{
+		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Notify integrations", c.aiNotifyDiagnosticsSummary()),
+		Value:     settingsAINotifyDiagnostics,
+		SearchKey: "ai notify integrations doctor codex claude tmux bell hooks diagnostics",
 	})
+}
+
+func (c *settingsCommand) runAINotifyDiagnosticsSection(stdout, stderr io.Writer) error {
+	_ = stdout
+	_ = stderr
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-ai-notify",
+			Entries:    c.aiNotifyDiagnosticEntries(),
+			Title:      "AI Settings - Notify integration diagnostics",
+			Prompt:     "Settings > AI Settings > Notify integrations > ",
+			Footer:     projmuxFooter("Enter: view details  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixAINotifyDiagnostic):
+			id := strings.TrimPrefix(action, settingsActionPrefixAINotifyDiagnostic)
+			if err := c.runAINotifyDiagnosticDetail(id); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI notify diagnostics action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAINotifyDiagnosticDetail(id string) error {
+	for {
+		diag, ok := c.aiNotifyDiagnosticByID(id)
+		if !ok {
+			return fmt.Errorf("unknown AI notify integration: %s", id)
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-ai-notify-detail",
+			Entries:    aiNotifyDiagnosticDetailEntries(diag),
+			Title:      "AI Notify - " + diag.Name,
+			Prompt:     "Settings > AI Settings > Notify integrations > " + diag.Name + " > ",
+			Footer:     projmuxFooter("Read-only  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		return fmt.Errorf("unknown AI notify diagnostic detail action: %s", action)
+	}
+}
+
+func (c *settingsCommand) currentAINotifyDiagnostics() []doctorAINotifyIntegration {
+	if c.aiNotifyDiagnostics != nil {
+		return c.aiNotifyDiagnostics()
+	}
+	return doctorAINotifyDiagnostics(c.ai)
+}
+
+func (c *settingsCommand) aiNotifyDiagnosticsSummary() string {
+	counts := map[doctorAINotifyStatus]int{}
+	for _, diag := range c.currentAINotifyDiagnostics() {
+		counts[diag.Status]++
+	}
+	parts := make([]string, 0, 3)
+	for _, status := range []doctorAINotifyStatus{
+		doctorAINotifyStatusInstalled,
+		doctorAINotifyStatusConflict,
+		doctorAINotifyStatusMissing,
+	} {
+		if counts[status] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
+		}
+	}
+	if len(parts) == 0 {
+		return "read-only doctor status"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (c *settingsCommand) aiNotifyDiagnosticEntries() []intpickercompat.Entry {
+	diagnostics := c.currentAINotifyDiagnostics()
+	entries := make([]intpickercompat.Entry, 0, len(diagnostics)+1)
+	entries = append(entries, settingsBackEntry())
+	for _, diag := range diagnostics {
+		entries = append(entries, aiNotifyDiagnosticEntry(diag))
+	}
+	return entries
+}
+
+func (c *settingsCommand) aiNotifyDiagnosticByID(id string) (doctorAINotifyIntegration, bool) {
+	for _, diag := range c.currentAINotifyDiagnostics() {
+		if diag.ID == id {
+			return diag, true
+		}
+	}
+	return doctorAINotifyIntegration{}, false
+}
+
+func aiNotifyDiagnosticEntry(diag doctorAINotifyIntegration) intpickercompat.Entry {
+	glyph, color := aiNotifyDiagnosticTone(diag.Status)
+	desc := string(diag.Status)
+	if diag.ConfigPath != "" {
+		desc += " - " + diag.ConfigPath
+	}
+	if diag.ConflictReason != "" {
+		desc += " - " + diag.ConflictReason
+	}
+	return intpickercompat.Entry{
+		Label:     settingsLabel(glyph, color, diag.Name, desc),
+		Value:     settingsActionPrefixAINotifyDiagnostic + diag.ID,
+		SearchKey: strings.Join([]string{diag.Name, string(diag.Status), diag.ConfigPath, diag.ConflictReason, diag.InstallCommand, diag.RemoveCommand, diag.DryRunCommand}, " "),
+	}
+}
+
+func aiNotifyDiagnosticTone(status doctorAINotifyStatus) (string, string) {
+	switch status {
+	case doctorAINotifyStatusInstalled:
+		return settingsGlyphToggle, settingsColorAdd
+	case doctorAINotifyStatusConflict:
+		return settingsGlyphInfo, settingsColorRemove
+	default:
+		return settingsGlyphInactive, settingsColorDim
+	}
+}
+
+func aiNotifyDiagnosticDetailEntries(diag doctorAINotifyIntegration) []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{Label: settingsLabelInfo("Status", string(diag.Status), "doctor"), Value: settingsNoopValue},
+	}
+	if diag.ConfigPath != "" {
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Config path", diag.ConfigPath, ""), Value: settingsNoopValue})
+	}
+	if diag.ConflictReason != "" {
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Conflict", diag.ConflictReason, ""), Value: settingsNoopValue})
+	}
+	entries = append(entries,
+		intpickercompat.Entry{Label: settingsLabelInfo("Install command", diag.InstallCommand, "CLI only"), Value: settingsNoopValue},
+		intpickercompat.Entry{Label: settingsLabelInfo("Remove command", diag.RemoveCommand, "CLI only"), Value: settingsNoopValue},
+		intpickercompat.Entry{Label: settingsLabelInfo("Dry-run command", diag.DryRunCommand, "CLI only"), Value: settingsNoopValue},
+		intpickercompat.Entry{Label: settingsLabelDim("Read-only", "Settings shows guidance only and does not execute these commands"), Value: settingsNoopValue},
+	)
+	return entries
 }
 
 func (c *settingsCommand) aiEntries() []intpickercompat.Entry {

@@ -171,6 +171,11 @@ dependencies. `--dry-run` prints those commands without executing them.
 combined with `--json`. Doctor does not diagnose terminal key delivery; use
 `projmux setup` for that.
 
+`Settings > AI Settings > Notify integrations` shows the same read-only
+statuses, conflicts, config paths, and AI integration install/remove/dry-run
+commands. Settings does not install or remove external Codex, Claude, or tmux
+notify wiring.
+
 ## focus
 
 ```
