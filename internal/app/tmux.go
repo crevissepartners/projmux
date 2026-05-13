@@ -860,6 +860,7 @@ func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx t
 }
 
 func addHookTrustPopupTargetEnv(env map[string]string, ctx tmuxPopupContext) {
+	env[hookTrustInlineEnv] = "1"
 	if strings.TrimSpace(ctx.TargetClient) != "" {
 		env[hookTrustPopupTargetClientEnv] = ctx.TargetClient
 	}
