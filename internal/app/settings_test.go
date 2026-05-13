@@ -1260,9 +1260,11 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	var notificationsOptions intpickercompat.Options
 	var listOptions intpickercompat.Options
 	var detailOptions intpickercompat.Options
+	tmuxRunner := &recordingTmuxRunner{}
 	cmd := &settingsCommand{
 		ai:                  testAICommand(t.TempDir()),
 		aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return diagnostics },
+		tmuxRunner:          tmuxRunner,
 		runCommand: func(string, ...string) error {
 			t.Fatal("settings AI notify diagnostics must not execute external commands")
 			return nil
@@ -1310,6 +1312,9 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	if got, want := listOptions.UI, "settings-notifications-delivery"; got != want {
 		t.Fatalf("delivery sources UI = %q, want %q", got, want)
 	}
+	if got, want := listOptions.Footer, "Enter: copy install command + view details"; !strings.Contains(got, want) {
+		t.Fatalf("delivery sources footer = %q, want %q", got, want)
+	}
 	for _, diag := range diagnostics {
 		if !hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+diag.ID) {
 			t.Fatalf("AI notify diagnostics entries = %#v, want %q", listOptions.Entries, diag.ID)
@@ -1344,6 +1349,82 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 		if entry.Value != settingsBackValue && entry.Value != settingsNoopValue {
 			t.Fatalf("AI notify detail entry = %#v, want read-only/noop value", entry)
 		}
+	}
+	wantCopy := recordedTmuxCall{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate codex --mode hooks"}}
+	if !hasRecordedTmuxCall(tmuxRunner.calls, wantCopy) {
+		t.Fatalf("tmux calls = %#v, want install command copied via %#v", tmuxRunner.calls, wantCopy)
+	}
+	wantMessage := recordedTmuxCall{name: "tmux", args: []string{"display-message", "Codex hooks install command copied to clipboard"}}
+	if !hasRecordedTmuxCall(tmuxRunner.calls, wantMessage) {
+		t.Fatalf("tmux calls = %#v, want copied display message %#v", tmuxRunner.calls, wantMessage)
+	}
+}
+
+func TestSettingsAINotifyDiagnosticsCopyFailureStillOpensDetail(t *testing.T) {
+	t.Parallel()
+
+	diagnostics := []doctorAINotifyIntegration{{
+		ID:             "claude-hooks",
+		Name:           "Claude Code hooks",
+		Status:         doctorAINotifyStatusMissing,
+		ConfigPath:     "/home/tester/.claude/settings.json",
+		InstallCommand: "projmux ai integrate claude",
+		RemoveCommand:  "projmux ai integrate claude --remove",
+		DryRunCommand:  "projmux ai integrate claude --dry-run",
+	}}
+
+	var calls int
+	var detailOptions intpickercompat.Options
+	tmuxRunner := &recordingTmuxRunner{err: errors.New("tmux clipboard unavailable")}
+	cmd := &settingsCommand{
+		ai:                  testAICommand(t.TempDir()),
+		aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return diagnostics },
+		tmuxRunner:          tmuxRunner,
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
+			case 2:
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
+			case 3:
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "claude-hooks"}, nil
+			case 4:
+				detailOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 5:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 6:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 7:
+				return intpickercompat.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intpickercompat.Result{}, nil
+			}
+		}),
+	}
+	cmd.nativePicker = nativePickerFromCompatRunner(cmd.runner)
+
+	var stderr bytes.Buffer
+	if err := cmd.Run(nil, &bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := detailOptions.UI, "settings-notifications-delivery-detail"; got != want {
+		t.Fatalf("delivery source detail UI = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContaining(detailOptions.Entries, "projmux ai integrate claude") {
+		t.Fatalf("AI notify detail entries = %#v, want install command despite clipboard failure", detailOptions.Entries)
+	}
+	wantCopy := recordedTmuxCall{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate claude"}}
+	if !hasRecordedTmuxCall(tmuxRunner.calls, wantCopy) {
+		t.Fatalf("tmux calls = %#v, want attempted clipboard copy %#v", tmuxRunner.calls, wantCopy)
+	}
+	if hasRecordedTmuxCall(tmuxRunner.calls, recordedTmuxCall{name: "tmux", args: []string{"display-message", "Claude Code hooks install command copied to clipboard"}}) {
+		t.Fatalf("tmux calls = %#v, did not expect success message after failed copy", tmuxRunner.calls)
+	}
+	if got := stderr.String(); !strings.Contains(got, "warning: copy Claude Code hooks install command to clipboard: tmux clipboard unavailable") {
+		t.Fatalf("stderr = %q, want clipboard failure warning", got)
 	}
 }
 
@@ -4539,6 +4620,15 @@ func entryIndexLabelContaining(entries []intpickercompat.Entry, value string) in
 		}
 	}
 	return -1
+}
+
+func hasRecordedTmuxCall(calls []recordedTmuxCall, want recordedTmuxCall) bool {
+	for _, call := range calls {
+		if call.name == want.name && reflect.DeepEqual(call.args, want.args) {
+			return true
+		}
+	}
+	return false
 }
 
 func testKeybindingSettingsCommand(t *testing.T, home string, run func(intpickercompat.Options) (intpickercompat.Result, error)) *settingsCommand {
