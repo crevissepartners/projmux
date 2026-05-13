@@ -536,7 +536,7 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 				t.Fatalf("display call = %#v, want no title option", got)
 			}
 			command := got.args[len(got.args)-1]
-			if !strings.Contains(command, "'/tmp/proj mux/bin/projmux' 'notify' 'list' '--ui=sidebar'") {
+			if !strings.Contains(command, "'/tmp/proj mux/bin/projmux' 'notify' 'list' '--ui=sidebar' '--client' '"+clientKey+"'") {
 				t.Fatalf("popup command = %q, want notify sidebar command", command)
 			}
 		})

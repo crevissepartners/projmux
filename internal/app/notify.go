@@ -203,6 +203,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		live       = fs.Bool("live", false, "include live tmux pane attention explanations")
 		limit      = fs.Int("limit", 0, "limit number of returned entries (0 = no limit)")
 		ui         = fs.String("ui", "table", "table|sidebar")
+		clientTTY  = fs.String("client", "", "origin tmux client tty for sidebar focus")
 		severities multiFlag
 		sources    multiFlag
 	)
@@ -258,7 +259,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if *ui == "sidebar" {
-		return c.runSidebar(entries, stdout, stderr)
+		return c.runSidebar(entries, stdout, stderr, c.notifyOriginClient(*clientTTY))
 	}
 
 	if *asJSON {
@@ -284,7 +285,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	return writeNotifyTable(stdout, entries, c.clock())
 }
 
-func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr io.Writer) error {
+func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr io.Writer, clientTTY string) error {
 	if c.native == nil {
 		return errors.New("native picker is not configured")
 	}
@@ -333,7 +334,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 		if !ok {
 			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
 		}
-		if err := c.focusNotification(entry, "notify-sidebar", "row-select"); err != nil {
+		if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
 			if isFocusTargetUnresolved(err) {
 				if ackErr := store.Ack(id); ackErr != nil {
 					return fmt.Errorf("ack target-gone notification: %w", ackErr)
@@ -538,7 +539,20 @@ func findNotificationByID(entries []notify.Notification, id string) (notify.Noti
 	return notify.Notification{}, false
 }
 
-func (c *notifyCommand) focusNotification(entry notify.Notification, source, kind string) error {
+func (c *notifyCommand) notifyOriginClient(explicit string) string {
+	if client := strings.TrimSpace(explicit); client != "" {
+		return client
+	}
+	if c.lookupEnv == nil {
+		return ""
+	}
+	if client := strings.TrimSpace(c.lookupEnv("PROJMUX_NOTIFY_ORIGIN_CLIENT")); client != "" {
+		return client
+	}
+	return strings.TrimSpace(c.lookupEnv("PROJMUX_ORIGIN_CLIENT"))
+}
+
+func (c *notifyCommand) focusNotification(entry notify.Notification, source, kind, clientTTY string) error {
 	if c.runner == nil {
 		return errors.New("notify focus runner is not configured")
 	}
@@ -560,6 +574,9 @@ func (c *notifyCommand) focusNotification(entry notify.Notification, source, kin
 	args := []string{"focus", "--target", target, "--source", source, "--kind", kind}
 	if socket := strings.TrimSpace(entry.Socket); socket != "" {
 		args = append(args, "--socket", socket)
+	}
+	if client := strings.TrimSpace(clientTTY); client != "" {
+		args = append(args, "--client", client)
 	}
 	if _, err := c.runner.Run(context.Background(), binaryPath, args...); err != nil {
 		return fmt.Errorf("focus notification: %w", err)
@@ -1003,7 +1020,7 @@ func printNotifyUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]")
 	fmt.Fprintln(w, "                        [--severity info|warn|critical] [--source ai|k8s|git|external]")
 	fmt.Fprintln(w, "                        [--ttl <seconds>] [--id <s>] [--json]")
-	fmt.Fprintln(w, "  projmux notify list  [--live] [--json] [--limit N] [--ui table|sidebar] [--severity ...] [--source ...]")
+	fmt.Fprintln(w, "  projmux notify list  [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>] [--severity ...] [--source ...]")
 	fmt.Fprintln(w, "  projmux notify ack   <id> | --all")
 	fmt.Fprintln(w, "  projmux notify reconcile [--json]")
 }
@@ -1015,7 +1032,7 @@ func printNotifyListUsage(w io.Writer) {
 	fmt.Fprintln(w, "Use `projmux attention list` for live pane attention state only.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux notify list [--live] [--json] [--limit N] [--ui table|sidebar] [--severity ...] [--source ...]")
+	fmt.Fprintln(w, "  projmux notify list [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>] [--severity ...] [--source ...]")
 }
 
 func printNotifyReconcileUsage(w io.Writer) {

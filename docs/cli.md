@@ -184,6 +184,7 @@ notify wiring.
 
 ```
 projmux focus --target SESSION[:WINDOW[.PANE]] [--socket <path>]
+              [--client <tty>]
               [--source ai|status-bar|external|os-notification|toast]
               [--kind reply-ready|busy-cleared|segment-click|toast-click|custom]
               [--json]
@@ -197,6 +198,12 @@ client on the selected socket. It never force-detaches other clients. If no
 client is attached on that socket, it emits the configured desktop
 notification instead. `--socket` is explicit; when omitted, the socket is
 derived from `$TMUX`.
+
+`--client` is a preferred origin tmux client. In-app consumers such as the
+status bar and notify sidebar pass the clicked client so focus redirects that
+display first. If that client is gone, focus falls back to an attached client
+already viewing the target session, then the stable first attached client.
+Toast clicks do not pass `--client`.
 
 `--uri` is the entry point used by the WSL Toast click handler (see
 [configuration.md](configuration.md#toast-click-handler-wsl--windows-terminal)).
@@ -233,7 +240,7 @@ projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]>
                      [--socket <s>] [--severity info|warn|critical]
                      [--source ai|k8s|git|external] [--ttl <seconds>]
                      [--id <s>] [--json]
-projmux notify list  [--live] [--json] [--limit N] [--ui table|sidebar]
+projmux notify list  [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>]
                      [--severity ...] [--source ...]
 projmux notify ack   <id> | --all
 projmux notify reconcile [--json]
@@ -257,7 +264,8 @@ projmux notify reconcile [--json]
   acks the selected row, and `Ctrl-X` clears all; opening or navigating the
   sidebar does not ack. The sidebar uses two-line cards with notification text
   first and compact age/project/window/pane metadata below. Hidden queue ids
-  remain action values, but the sidebar has no search input.
+  remain action values, but the sidebar has no search input. `--client` is
+  used by tmux popup launchers to keep row-select focus on the clicked client.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
   panes whose attention state is `reply` AND whose AI agent option is

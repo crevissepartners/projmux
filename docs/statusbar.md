@@ -66,7 +66,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
 | `sessionstate` | 1 | show a secondary Session State snapshot status and restore preview popup; primary inspection lives under Settings > Project > Session State | `prefix s r` |
 | `usage`   | 1 | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
-| `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click`, then ack on focus success | `prefix s n`  |
+| `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click [--client <tty>]`, then ack on focus success | `prefix s n`  |
 
 `notify` reads the pending queue only. For a live pane-state view that is
 independent of queued reminders, use `projmux attention list`. To explain why
