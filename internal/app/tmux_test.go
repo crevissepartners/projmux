@@ -293,6 +293,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-e", "PROJMUX_HOOK_TRUST_TARGET_CLIENT=/dev/pts/projmux-test-sidebar",
 		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-1",
 		"-e", "PROJMUX_PICKER_BACKEND=native",
+		"-e", "PROJMUX_SWITCH_TARGET_CLIENT=/dev/pts/projmux-test-sidebar",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_PANE=%1",
 		"-e", "TMUX_SESSIONIZER_CONTEXT_SESSION=work",
@@ -308,6 +309,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	for _, want := range []string{
 		"cd -- '/tmp/work tree'",
 		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/projmux-test-sidebar'",
+		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/projmux-test-sidebar'",
 		"TMUX_SESSIONIZER_CONTEXT_SESSION='work'",
 		"TMUX_SESSIONIZER_CONTEXT_PANE='%1'",
 		"'/tmp/proj mux/bin/projmux' 'switch' '--ui=sidebar'",
@@ -786,6 +788,7 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_PROJDIR='/workspace/projects'",
 		"PROJMUX_MANAGED_ROOTS='/workspace/projects'",
 		hookTrustPopupTargetClientEnv + "='/dev/pts/7'",
+		inttmux.SwitchTargetClientEnv + "='/dev/pts/7'",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("popup command = %q, want substring %q", command, want)
@@ -803,6 +806,7 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_PROJDIR":             "/workspace/projects",
 		"PROJMUX_MANAGED_ROOTS":       "/workspace/projects",
 		hookTrustPopupTargetClientEnv: "/dev/pts/7",
+		inttmux.SwitchTargetClientEnv: "/dev/pts/7",
 	} {
 		if got := options.Env[key]; got != want {
 			t.Fatalf("options.Env[%q] = %q, want %q", key, got, want)
@@ -837,6 +841,9 @@ func TestBuildPopupToggleSessionizerTrustEnvUsesClientOnly(t *testing.T) {
 	if !strings.Contains(command, hookTrustPopupTargetClientEnv+"='/dev/pts/8'") {
 		t.Fatalf("popup command = %q, want target client env", command)
 	}
+	if !strings.Contains(command, inttmux.SwitchTargetClientEnv+"='/dev/pts/8'") {
+		t.Fatalf("popup command = %q, want switch target client env", command)
+	}
 	for _, unwanted := range []string{hookTrustInlineEnv, hookTrustPopupTargetPaneEnv} {
 		if strings.Contains(command, unwanted) {
 			t.Fatalf("popup command = %q, unwanted substring %q", command, unwanted)
@@ -847,6 +854,9 @@ func TestBuildPopupToggleSessionizerTrustEnvUsesClientOnly(t *testing.T) {
 	}
 	if got := options.Env[hookTrustPopupTargetClientEnv]; got != "/dev/pts/8" {
 		t.Fatalf("options.Env[%q] = %q, want target client", hookTrustPopupTargetClientEnv, got)
+	}
+	if got := options.Env[inttmux.SwitchTargetClientEnv]; got != "/dev/pts/8" {
+		t.Fatalf("options.Env[%q] = %q, want target client", inttmux.SwitchTargetClientEnv, got)
 	}
 }
 
