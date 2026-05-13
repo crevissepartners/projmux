@@ -26,14 +26,15 @@ func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
 
 	cmd := &settingsCommand{}
 	want := map[string]settingsEntryMeta{
-		settingsSectionProject:      {Name: "Project Picker", Axis: settingsAxisGlobal},
-		settingsSectionGlobalHooks:  {Name: "Hooks", Axis: settingsAxisGlobal},
-		settingsSectionAI:           {Name: "AI Settings", Axis: settingsAxisGlobal},
-		settingsSectionStatusbar:    {Name: "Appearance", Axis: settingsAxisGlobal},
-		settingsSectionSessionState: {Name: "Session State", Axis: settingsAxisGlobal},
-		settingsSectionKeybindings:  {Name: "Keybindings", Axis: settingsAxisGlobal},
-		settingsSectionLabs:         {Name: "Labs", Axis: settingsAxisGlobal},
-		settingsSectionAbout:        {Name: "About", Axis: settingsAxisGlobal},
+		settingsSectionProject:       {Name: "Project Picker", Axis: settingsAxisGlobal},
+		settingsSectionGlobalHooks:   {Name: "Hooks", Axis: settingsAxisGlobal},
+		settingsSectionAI:            {Name: "AI Settings", Axis: settingsAxisGlobal},
+		settingsSectionNotifications: {Name: "Notifications", Axis: settingsAxisGlobal},
+		settingsSectionStatusbar:     {Name: "Appearance", Axis: settingsAxisGlobal},
+		settingsSectionSessionState:  {Name: "Session State", Axis: settingsAxisGlobal},
+		settingsSectionKeybindings:   {Name: "Keybindings", Axis: settingsAxisGlobal},
+		settingsSectionLabs:          {Name: "Labs", Axis: settingsAxisGlobal},
+		settingsSectionAbout:         {Name: "About", Axis: settingsAxisGlobal},
 	}
 
 	seen := map[string]bool{}
@@ -95,6 +96,7 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 	if got, want := entryValues(options.Entries), []string{
 		settingsSectionProject,
 		settingsSectionAI,
+		settingsSectionNotifications,
 		settingsSectionGlobalHooks,
 		settingsSectionStatusbar,
 		settingsSectionSessionState,
@@ -552,7 +554,9 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsWorkdirList, settingsAxisGlobal},
 		{settingsProjectPins, settingsAxisGlobal},
 		{settingsAIDefaultMode, settingsAxisGlobal},
-		{settingsLabsDesktopNotify, settingsAxisGlobal},
+		{settingsSectionNotifications, settingsAxisGlobal},
+		{settingsNotificationsDesktop, settingsAxisGlobal},
+		{settingsLabsProjectHooks, settingsAxisGlobal},
 		{settingsActionPrefixAI + aiModeCodex, settingsAxisGlobal},
 		{settingsActionPrefixStatusbar + string(config.StatusbarDecorationSymbol), settingsAxisGlobal},
 		{settingsActionPrefixKeymap + "settings", settingsAxisGlobal},
@@ -596,11 +600,13 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	assertCataloguedEntries("root", cmd.rootEntries())
 	assertCataloguedEntries("ai root", cmd.aiRootEntries())
 	assertCataloguedEntries("ai default mode", cmd.aiEntries())
+	assertCataloguedEntries("notifications", cmd.notificationsEntries())
+	assertCataloguedEntries("desktop notifications", cmd.desktopNotifyEntries())
 	assertCataloguedEntries("appearance", cmd.statusbarEntries())
 	assertCataloguedEntries("session state", cmd.sessionStateEntries())
 	assertCataloguedEntries("project picker", cmd.projectPickerEntries())
 	assertCataloguedEntries("labs", cmd.labsEntries())
-	assertCataloguedEntries("desktop notifications", cmd.labsDesktopNotifyEntries())
+	assertCataloguedEntries("labs project hooks", cmd.labsProjectHooksEntries())
 
 	projectRootEntries, err := cmd.projectRootEntries()
 	if err != nil {
@@ -702,6 +708,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got, want := entryValues(rootOptions.Entries), []string{
 		settingsSectionProject,
 		settingsSectionAI,
+		settingsSectionNotifications,
 		settingsSectionGlobalHooks,
 		settingsSectionStatusbar,
 		settingsSectionSessionState,
@@ -713,6 +720,9 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}
 	if !hasEntryValue(rootOptions.Entries, settingsSectionAI) {
 		t.Fatalf("root settings entries = %#v, want AI section", rootOptions.Entries)
+	}
+	if !hasEntryValue(rootOptions.Entries, settingsSectionNotifications) {
+		t.Fatalf("root settings entries = %#v, want Notifications section", rootOptions.Entries)
 	}
 	if !hasEntryValue(rootOptions.Entries, settingsSectionProject) {
 		t.Fatalf("root settings entries = %#v, want project picker section", rootOptions.Entries)
@@ -750,8 +760,8 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if !hasEntryValue(aiOptions.Entries, settingsAIDefaultMode) {
 		t.Fatalf("AI settings entries = %#v, want Default split mode detail row", aiOptions.Entries)
 	}
-	if !hasEntryValue(aiOptions.Entries, settingsAINotifyDiagnostics) {
-		t.Fatalf("AI settings entries = %#v, want Notify integrations diagnostics row", aiOptions.Entries)
+	if hasEntryValue(aiOptions.Entries, settingsAINotifyDiagnostics) {
+		t.Fatalf("AI settings entries = %#v, want Notify integrations moved to Notifications", aiOptions.Entries)
 	}
 	if hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeClaude) ||
 		hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeCodex) ||
@@ -828,11 +838,16 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	if got, want := labsOptions.UI, "settings-labs"; got != want {
 		t.Fatalf("labs settings UI = %q, want %q", got, want)
 	}
-	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOn)) {
-		t.Fatalf("labs settings entries = %#v, want project hooks on row", labsOptions.Entries)
+	if !hasEntryValue(labsOptions.Entries, settingsLabsProjectHooks) {
+		t.Fatalf("labs settings entries = %#v, want project hooks overview row", labsOptions.Entries)
 	}
-	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
-		t.Fatalf("labs settings entries = %#v, want project hooks off row", labsOptions.Entries)
+	if hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOn)) ||
+		hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
+		t.Fatalf("labs settings entries = %#v, want no direct project hooks mutation rows", labsOptions.Entries)
+	}
+	if hasEntryValue(labsOptions.Entries, settingsNotificationsDesktop) ||
+		hasEntryLabelContaining(labsOptions.Entries, "Desktop notifications") {
+		t.Fatalf("labs settings entries = %#v, want Desktop notifications moved to Notifications", labsOptions.Entries)
 	}
 	for _, entry := range labsOptions.Entries {
 		if strings.HasPrefix(entry.Value, settingsActionPrefixPicker) {
@@ -897,6 +912,7 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 	home := t.TempDir()
 	var calls int
 	var labsOptions intpickercompat.Options
+	var overviewOptions intpickercompat.Options
 	var tmuxCalls [][]string
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
@@ -919,6 +935,9 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
 			case 2:
 				labsOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsLabsProjectHooks}, nil
+			case 3:
+				overviewOptions = options
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHooks + string(config.ProjectHooksOff)}, nil
 			default:
 				return intpickercompat.Result{}, nil
@@ -931,6 +950,9 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
 			case 2:
 				labsOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsLabsProjectHooks}, nil
+			case 3:
+				overviewOptions = options
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHooks + string(config.ProjectHooksOff)}, nil
 			default:
 				return intpickercompat.Result{}, nil
@@ -941,8 +963,11 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
-		t.Fatalf("labs settings entries = %#v, want project hooks off row", labsOptions.Entries)
+	if !hasEntryValue(labsOptions.Entries, settingsLabsProjectHooks) {
+		t.Fatalf("labs settings entries = %#v, want project hooks overview row", labsOptions.Entries)
+	}
+	if !hasEntryValue(overviewOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
+		t.Fatalf("project hooks overview entries = %#v, want project hooks off row", overviewOptions.Entries)
 	}
 
 	paths, err := config.Homes{HomeDir: home}.Paths()
@@ -1149,11 +1174,11 @@ func TestSettingsAIRootNestsDefaultModeAndExcludesDesktopNotifications(t *testin
 	if !hasEntryValue(root, settingsAIDefaultMode) {
 		t.Fatalf("AI root entries = %#v, want Default split mode row", root)
 	}
-	if !hasEntryValue(root, settingsAINotifyDiagnostics) {
-		t.Fatalf("AI root entries = %#v, want Notify integrations diagnostics row", root)
+	if hasEntryValue(root, settingsAINotifyDiagnostics) {
+		t.Fatalf("AI root entries = %#v, want Notify integrations moved to Notifications", root)
 	}
-	if got, want := len(root), 3; got != want {
-		t.Fatalf("AI root entries = %#v, want back row plus AI subsections only", root)
+	if got, want := len(root), 2; got != want {
+		t.Fatalf("AI root entries = %#v, want back row plus AI default mode only", root)
 	}
 	for _, want := range []string{
 		settingsActionPrefixAI + aiModeClaude,
@@ -1232,7 +1257,7 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	}
 
 	var calls int
-	var aiOptions intpickercompat.Options
+	var notificationsOptions intpickercompat.Options
 	var listOptions intpickercompat.Options
 	var detailOptions intpickercompat.Options
 	cmd := &settingsCommand{
@@ -1250,10 +1275,10 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			calls++
 			switch calls {
 			case 1:
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionAI}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
 			case 2:
-				aiOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsAINotifyDiagnostics}, nil
+				notificationsOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
 			case 3:
 				listOptions = options
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "codex-hooks"}, nil
@@ -1279,11 +1304,11 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !hasEntryValue(aiOptions.Entries, settingsAINotifyDiagnostics) {
-		t.Fatalf("AI settings entries = %#v, want notify diagnostics row", aiOptions.Entries)
+	if !hasEntryValue(notificationsOptions.Entries, settingsNotificationsDelivery) {
+		t.Fatalf("Notifications entries = %#v, want delivery sources row", notificationsOptions.Entries)
 	}
-	if got, want := listOptions.UI, "settings-ai-notify"; got != want {
-		t.Fatalf("AI notify diagnostics UI = %q, want %q", got, want)
+	if got, want := listOptions.UI, "settings-notifications-delivery"; got != want {
+		t.Fatalf("delivery sources UI = %q, want %q", got, want)
 	}
 	for _, diag := range diagnostics {
 		if !hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+diag.ID) {
@@ -1297,10 +1322,10 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 		}
 	}
 	if !hasEntryLabelContaining(listOptions.Entries, "unmanaged notify command") {
-		t.Fatalf("AI notify diagnostics entries = %#v, want conflict reason", listOptions.Entries)
+		t.Fatalf("delivery sources entries = %#v, want conflict reason", listOptions.Entries)
 	}
-	if got, want := detailOptions.UI, "settings-ai-notify-detail"; got != want {
-		t.Fatalf("AI notify detail UI = %q, want %q", got, want)
+	if got, want := detailOptions.UI, "settings-notifications-delivery-detail"; got != want {
+		t.Fatalf("delivery source detail UI = %q, want %q", got, want)
 	}
 	for _, want := range []string{
 		"conflict",
@@ -1322,7 +1347,7 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	}
 }
 
-func TestSettingsLabsDesktopNotifyDetailRows(t *testing.T) {
+func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1336,9 +1361,18 @@ func TestSettingsLabsDesktopNotifyDetailRows(t *testing.T) {
 		},
 	}
 
-	root := cmd.labsEntries()
-	if !hasEntryValue(root, settingsLabsDesktopNotify) {
-		t.Fatalf("labs entries = %#v, want Desktop notifications detail row", root)
+	root := cmd.notificationsEntries()
+	if !hasEntryValue(root, settingsNotificationsDesktop) {
+		t.Fatalf("notifications entries = %#v, want Desktop notifications detail row", root)
+	}
+	for _, want := range []string{
+		settingsNotificationsDelivery,
+		settingsNotificationsQueue,
+		settingsNotificationsHookOverride,
+	} {
+		if !hasEntryValue(root, want) {
+			t.Fatalf("notifications entries = %#v, want row %q", root, want)
+		}
 	}
 	for _, value := range []string{
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNone),
@@ -1346,11 +1380,11 @@ func TestSettingsLabsDesktopNotifyDetailRows(t *testing.T) {
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
 	} {
 		if hasEntryValue(root, value) {
-			t.Fatalf("labs entries = %#v, want no direct desktop notification choice %q", root, value)
+			t.Fatalf("notifications entries = %#v, want no direct desktop notification choice %q", root, value)
 		}
 	}
 
-	detail := cmd.labsDesktopNotifyEntries()
+	detail := cmd.desktopNotifyEntries()
 	for _, want := range []string{
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNone),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),

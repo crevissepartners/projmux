@@ -79,6 +79,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsSectionEffectiveMerge:      {Name: "Effective merge view", Axis: settingsAxisProject},
 	settingsSectionProjectSessionState: {Name: "Session State", Axis: settingsAxisProject},
 	settingsSectionAI:                  {Name: "AI Settings", Axis: settingsAxisGlobal},
+	settingsSectionNotifications:       {Name: "Notifications", Axis: settingsAxisGlobal},
 	settingsSectionStatusbar:           {Name: "Appearance", Axis: settingsAxisGlobal},
 	settingsSectionSessionState:        {Name: "Session State", Axis: settingsAxisGlobal},
 	settingsSectionKeybindings:         {Name: "Keybindings", Axis: settingsAxisGlobal},
@@ -98,7 +99,11 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsKeybindingsInit:            {Name: "Keybinding Init", Axis: settingsAxisGlobal},
 	settingsAIDefaultMode:              {Name: "Default split mode", Axis: settingsAxisGlobal},
 	settingsAINotifyDiagnostics:        {Name: "AI notify diagnostics", Axis: settingsAxisGlobal},
-	settingsLabsDesktopNotify:          {Name: "Desktop notifications", Axis: settingsAxisGlobal},
+	settingsNotificationsDesktop:       {Name: "Desktop notifications", Axis: settingsAxisGlobal},
+	settingsNotificationsDelivery:      {Name: "Delivery sources", Axis: settingsAxisGlobal},
+	settingsNotificationsQueue:         {Name: "In-app queue", Axis: settingsAxisGlobal},
+	settingsNotificationsHookOverride:  {Name: "Notification hook override", Axis: settingsAxisGlobal},
+	settingsLabsProjectHooks:           {Name: "Project Hooks", Axis: settingsAxisGlobal},
 	settingsSessionStateDelete:         {Name: "Delete session snapshot", Axis: settingsAxisGlobal},
 	settingsLabKeybindings:             {Name: "Keybindings", Axis: settingsAxisGlobal},
 	settingsUpdateApply:                {Name: "Update Now", Axis: settingsAxisGlobal},
@@ -158,6 +163,7 @@ const (
 	settingsSectionProjectSessionState     = "section:project-sessionstate"
 	settingsSectionKeybindings             = "section:keybindings"
 	settingsSectionProject                 = "section:project-picker"
+	settingsSectionNotifications           = "section:notifications"
 	settingsSectionStatusbar               = "section:statusbar"
 	settingsSectionSessionState            = "section:sessionstate"
 	settingsSectionLabs                    = "section:labs"
@@ -195,7 +201,11 @@ const (
 	settingsKeybindingsInit                = "keybindings:init"
 	settingsAIDefaultMode                  = "ai-default-mode"
 	settingsAINotifyDiagnostics            = "ai-notify-diagnostics"
-	settingsLabsDesktopNotify              = "labs:desktop-notify"
+	settingsNotificationsDesktop           = "notifications:desktop"
+	settingsNotificationsDelivery          = "notifications:delivery"
+	settingsNotificationsQueue             = "notifications:queue"
+	settingsNotificationsHookOverride      = "notifications:hook-override"
+	settingsLabsProjectHooks               = "labs:project-hooks"
 	settingsLabKeybindings                 = "labs:keybindings"
 	settingsSessionStateDelete             = "sessionstate:delete"
 	settingsWelcomeShow                    = "welcome:show"
@@ -293,6 +303,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionAI {
 		return c.runAISection(stdout, stderr)
+	}
+	if section == settingsSectionNotifications {
+		return c.runNotificationsSection(stdout, stderr)
 	}
 	if section == settingsSectionKeybindings {
 		return c.runKeybindingsSection(stdout, stderr)
@@ -457,6 +470,10 @@ func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompa
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "AI Settings", "default split mode"),
 			Value: settingsSectionAI,
+		},
+		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Notifications", "desktop mode, delivery sources, queue surfaces"),
+			Value: settingsSectionNotifications,
 		},
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Hooks", "global lifecycle hook paths"),
@@ -660,6 +677,16 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.aiRootEntries(),
 			Title:      "AI Settings",
 			Prompt:     "Settings > AI Settings > ",
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		}, nil
+	case settingsSectionNotifications:
+		return intpickercompat.Options{
+			UI:         "settings-notifications",
+			Entries:    c.notificationsEntries(),
+			Title:      "Notifications - Delivery, desktop, and queue surfaces",
+			Prompt:     "Settings > Notifications > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -1462,6 +1489,72 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 	}
 }
 
+func (c *settingsCommand) runNotificationsSection(stdout, stderr io.Writer) error {
+	for {
+		options, err := c.sectionOptions(settingsSectionNotifications)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsNotificationsDesktop:
+			if err := c.runNotificationsDesktopSection(stdout, stderr); err != nil {
+				return err
+			}
+		case action == settingsNotificationsDelivery:
+			if err := c.runNotificationsDeliverySourcesSection(stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown notifications settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runNotificationsDesktopSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-notifications-desktop",
+			Entries:    c.desktopNotifyEntries(),
+			Title:      "Notifications - Desktop notifications",
+			Prompt:     "Settings > Notifications > Desktop notifications > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixDesktopNotifyMode):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown desktop notification settings action: %s", action)
+		}
+	}
+}
+
 func (c *settingsCommand) runAIDefaultModeSection(stdout, stderr io.Writer) error {
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
@@ -1505,22 +1598,51 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Default split mode", current),
 		Value:     settingsAIDefaultMode,
 		SearchKey: "default split mode claude codex shell selective",
-	}, intpickercompat.Entry{
-		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Notify integrations", c.aiNotifyDiagnosticsSummary()),
-		Value:     settingsAINotifyDiagnostics,
-		SearchKey: "ai notify integrations doctor codex claude tmux bell hooks diagnostics",
 	})
 }
 
-func (c *settingsCommand) runAINotifyDiagnosticsSection(stdout, stderr io.Writer) error {
+func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
+	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
+	hookSummary := "not set"
+	if c.lookupEnv != nil {
+		if value := strings.TrimSpace(c.lookupEnv("PROJMUX_NOTIFY_HOOK")); value != "" {
+			hookSummary = value
+		}
+	}
+	return []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Desktop notifications", string(notifyMode)+" - "+string(notifySource)),
+			Value:     settingsNotificationsDesktop,
+			SearchKey: "desktop notifications none notify raise toast osfocus",
+		},
+		{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Delivery sources", c.aiNotifyDiagnosticsSummary()),
+			Value:     settingsNotificationsDelivery,
+			SearchKey: "delivery sources producer setup doctor codex claude tmux bell hooks diagnostics",
+		},
+		{
+			Label:     settingsLabelInfo("In-app queue", "statusbar/sidebar", "consume pending notify rows"),
+			Value:     settingsNotificationsQueue,
+			SearchKey: "in app queue notify sidebar statusbar pending",
+		},
+		{
+			Label:     settingsLabelInfo("Notification hook override", hookSummary, "PROJMUX_NOTIFY_HOOK env"),
+			Value:     settingsNotificationsHookOverride,
+			SearchKey: "PROJMUX_NOTIFY_HOOK notification hook override env",
+		},
+	}
+}
+
+func (c *settingsCommand) runNotificationsDeliverySourcesSection(stdout, stderr io.Writer) error {
 	_ = stdout
 	_ = stderr
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings-ai-notify",
+			UI:         "settings-notifications-delivery",
 			Entries:    c.aiNotifyDiagnosticEntries(),
-			Title:      "AI Settings - Notify integration diagnostics",
-			Prompt:     "Settings > AI Settings > Notify integrations > ",
+			Title:      "Notifications - Delivery sources",
+			Prompt:     "Settings > Notifications > Delivery sources > ",
 			Footer:     projmuxFooter("Enter: view details  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -1548,6 +1670,10 @@ func (c *settingsCommand) runAINotifyDiagnosticsSection(stdout, stderr io.Writer
 	}
 }
 
+func (c *settingsCommand) runAINotifyDiagnosticsSection(stdout, stderr io.Writer) error {
+	return c.runNotificationsDeliverySourcesSection(stdout, stderr)
+}
+
 func (c *settingsCommand) runAINotifyDiagnosticDetail(id string) error {
 	for {
 		diag, ok := c.aiNotifyDiagnosticByID(id)
@@ -1555,10 +1681,10 @@ func (c *settingsCommand) runAINotifyDiagnosticDetail(id string) error {
 			return fmt.Errorf("unknown AI notify integration: %s", id)
 		}
 		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings-ai-notify-detail",
+			UI:         "settings-notifications-delivery-detail",
 			Entries:    aiNotifyDiagnosticDetailEntries(diag),
 			Title:      "AI Notify - " + diag.Name,
-			Prompt:     "Settings > AI Settings > Notify integrations > " + diag.Name + " > ",
+			Prompt:     "Settings > Notifications > Delivery sources > " + diag.Name + " > ",
 			Footer:     projmuxFooter("Read-only  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -2230,15 +2356,9 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 			if err := c.runKeybindingsSectionWithActive(settingsKeybindingsDiagnostic, stdout, stderr); err != nil {
 				return err
 			}
-		case action == settingsLabsDesktopNotify:
-			if err := c.runLabsDesktopNotifySection(stdout, stderr); err != nil {
-				return err
-			}
+		case action == settingsLabsProjectHooks:
+			return c.runLabsProjectHooksSection(stdout, stderr)
 		case strings.HasPrefix(action, settingsActionPrefixHooks):
-			if err := c.execute(action, stdout, stderr); err != nil {
-				return err
-			}
-		case strings.HasPrefix(action, settingsActionPrefixDesktopNotifyMode):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err
 			}
@@ -2248,13 +2368,13 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 	}
 }
 
-func (c *settingsCommand) runLabsDesktopNotifySection(stdout, stderr io.Writer) error {
+func (c *settingsCommand) runLabsProjectHooksSection(stdout, stderr io.Writer) error {
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings-labs-desktop-notify",
-			Entries:    c.labsDesktopNotifyEntries(),
-			Title:      "Labs - Desktop notifications",
-			Prompt:     "Settings > Labs > Desktop notifications > ",
+			UI:         "settings-labs-project-hooks",
+			Entries:    c.labsProjectHooksEntries(),
+			Title:      "Labs - Project Hooks",
+			Prompt:     "Settings > Labs > Project Hooks > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -2271,12 +2391,12 @@ func (c *settingsCommand) runLabsDesktopNotifySection(stdout, stderr io.Writer) 
 			return nil
 		case action == settingsNoopValue:
 			continue
-		case strings.HasPrefix(action, settingsActionPrefixDesktopNotifyMode):
+		case strings.HasPrefix(action, settingsActionPrefixHooks):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("unknown desktop notification settings action: %s", action)
+			return fmt.Errorf("unknown project hooks lab action: %s", action)
 		}
 	}
 }
@@ -2703,14 +2823,26 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	current, source := c.currentPickerBackend()
 	hookMode, hookSource := c.currentProjectHooksMode()
-	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
-	entries := make([]intpickercompat.Entry, 0, 6)
+	entries := make([]intpickercompat.Entry, 0, 4)
 	entries = append(entries, settingsBackEntry())
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Desktop notifications", string(notifyMode)+" - "+string(notifySource)),
-		Value:     settingsLabsDesktopNotify,
-		SearchKey: "Desktop notifications none notify raise toast osfocus",
+		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Project Hooks", string(hookMode)+" - "+hookSource),
+		Value:     settingsLabsProjectHooks,
+		SearchKey: "Project Hooks trusted local hooks on off",
 	})
+	if source != "" {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Picker source", string(current), source),
+			Value: settingsNoopValue,
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) labsProjectHooksEntries() []intpickercompat.Entry {
+	hookMode, hookSource := c.currentProjectHooksMode()
+	entries := make([]intpickercompat.Entry, 0, 4)
+	entries = append(entries, settingsBackEntry())
 	entries = append(entries, intpickercompat.Entry{
 		Label: settingsLabelInfo("Project hooks", string(hookMode), hookSource),
 		Value: settingsNoopValue,
@@ -2733,16 +2865,10 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 			Value: settingsActionPrefixHooks + string(item.mode),
 		})
 	}
-	if source != "" {
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Picker source", string(current), source),
-			Value: settingsNoopValue,
-		})
-	}
 	return entries
 }
 
-func (c *settingsCommand) labsDesktopNotifyEntries() []intpickercompat.Entry {
+func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
 	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
