@@ -278,7 +278,7 @@ func statusbarSessionStatePreviewLines(snap sessionstate.Snapshot, cols int) []s
 				return lines
 			}
 			panesSeen++
-			lines = append(lines, statusbarSessionStateClip("  "+statusbarSessionStatePanePreview(window.Index, pane), cols))
+			lines = append(lines, statusbarSessionStateClip("  "+statusbarSessionStatePanePreview(snap.SavedAt, window.Index, pane), cols))
 		}
 	}
 	if len(lines) == 0 {
@@ -287,7 +287,7 @@ func statusbarSessionStatePreviewLines(snap sessionstate.Snapshot, cols int) []s
 	return lines
 }
 
-func statusbarSessionStatePanePreview(windowIndex int, pane sessionstate.Pane) string {
+func statusbarSessionStatePanePreview(savedAt time.Time, windowIndex int, pane sessionstate.Pane) string {
 	recipe := pane.Recipe
 	kind := strings.TrimSpace(recipe.Kind)
 	if kind == "" {
@@ -299,6 +299,12 @@ func statusbarSessionStatePanePreview(windowIndex int, pane sessionstate.Pane) s
 		detail = strings.TrimSpace(recipe.Agent)
 		if resumeID := strings.TrimSpace(recipe.ResumeID); resumeID != "" {
 			detail += " resume " + resumeID
+		}
+		if health := sessionStateResumeHealthText(recipe, savedAt); health != "" {
+			if detail != "" {
+				detail += " "
+			}
+			detail += health
 		}
 		if topic := strings.TrimSpace(recipe.Topic); topic != "" {
 			detail += " topic " + topic

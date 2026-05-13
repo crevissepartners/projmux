@@ -62,11 +62,13 @@ type Pane struct {
 
 // Recipe records how a pane should be classified for future restore.
 type Recipe struct {
-	Kind     string `json:"kind"`
-	Agent    string `json:"agent,omitempty"`
-	ResumeID string `json:"resume_id,omitempty"`
-	Topic    string `json:"topic,omitempty"`
-	Command  string `json:"command,omitempty"`
+	Kind            string `json:"kind"`
+	Agent           string `json:"agent,omitempty"`
+	ResumeID        string `json:"resume_id,omitempty"`
+	ResumeSource    string `json:"resume_source,omitempty"`
+	ResumeUpdatedAt string `json:"resume_updated_at,omitempty"`
+	Topic           string `json:"topic,omitempty"`
+	Command         string `json:"command,omitempty"`
 }
 
 const (
@@ -114,6 +116,19 @@ func AgentRecipe(agent, resumeID, topic string) Recipe {
 		Agent:    agent,
 		ResumeID: resumeID,
 		Topic:    topic,
+	}
+}
+
+// AgentRecipeWithResumeMetadata returns the agent recipe form with resume
+// provenance metadata used by read-only health surfaces.
+func AgentRecipeWithResumeMetadata(agent, resumeID, topic, source, updatedAt string) Recipe {
+	return Recipe{
+		Kind:            RecipeKindAgent,
+		Agent:           agent,
+		ResumeID:        strings.TrimSpace(resumeID),
+		ResumeSource:    strings.TrimSpace(source),
+		ResumeUpdatedAt: strings.TrimSpace(updatedAt),
+		Topic:           topic,
 	}
 }
 
@@ -341,7 +356,7 @@ func (s Snapshot) Validate() error {
 func (r Recipe) Validate() error {
 	switch r.Kind {
 	case RecipeKindShell:
-		if r.Agent != "" || r.ResumeID != "" || r.Topic != "" || r.Command != "" {
+		if r.Agent != "" || r.ResumeID != "" || r.ResumeSource != "" || r.ResumeUpdatedAt != "" || r.Topic != "" || r.Command != "" {
 			return fmt.Errorf("%w: shell recipe cannot include replay metadata", ErrInvalidSnapshot)
 		}
 	case RecipeKindAgent:
@@ -355,7 +370,7 @@ func (r Recipe) Validate() error {
 		if strings.TrimSpace(r.Command) == "" {
 			return fmt.Errorf("%w: startup recipe requires command", ErrInvalidSnapshot)
 		}
-		if r.Agent != "" || r.ResumeID != "" || r.Topic != "" {
+		if r.Agent != "" || r.ResumeID != "" || r.ResumeSource != "" || r.ResumeUpdatedAt != "" || r.Topic != "" {
 			return fmt.Errorf("%w: startup recipe cannot include agent metadata", ErrInvalidSnapshot)
 		}
 	case "":

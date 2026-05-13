@@ -373,8 +373,8 @@ func TestRecipeJSONForms(t *testing.T) {
 		},
 		{
 			name: "agent",
-			in:   AgentRecipe("claude", "abcdef-1234", "keybinding in-app"),
-			want: `{"kind":"agent","agent":"claude","resume_id":"abcdef-1234","topic":"keybinding in-app"}`,
+			in:   AgentRecipeWithResumeMetadata("claude", "abcdef-1234", "keybinding in-app", "session-id", "2026-05-12T03:04:05Z"),
+			want: `{"kind":"agent","agent":"claude","resume_id":"abcdef-1234","resume_source":"session-id","resume_updated_at":"2026-05-12T03:04:05Z","topic":"keybinding in-app"}`,
 		},
 		{
 			name: "startup",

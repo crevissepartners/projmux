@@ -50,6 +50,8 @@ type sessionStatePaneRow struct {
 	aiAgent        string
 	aiTopic        string
 	aiResumeID     string
+	aiResumeSource string
+	aiResumeAt     string
 }
 
 type sessionStateResumeRefreshPaneRow struct {
@@ -523,6 +525,8 @@ func (c *Client) listSessionStatePanes(ctx context.Context, sessionName string) 
 		"#{"+sessionStateAIAgentOption+"}",
 		"#{"+sessionStateAITopicOption+"}",
 		"#{"+sessionStateAIResumeIDOption+"}",
+		"#{"+sessionStateAIResumeSourceOption+"}",
+		"#{"+sessionStateAIResumeAtOption+"}",
 	))
 	if err != nil {
 		return nil, fmt.Errorf("capture tmux session %q panes: %w", sessionName, err)
@@ -558,8 +562,8 @@ func classifySessionStatePane(pane sessionStatePaneRow) sessionstate.Recipe {
 	if strings.TrimSpace(pane.recipeKind) == sessionstate.RecipeKindStartup && strings.TrimSpace(pane.startupCommand) != "" {
 		return sessionstate.StartupRecipe(pane.startupCommand)
 	}
-	if strings.TrimSpace(pane.aiManaged) != "" && strings.TrimSpace(pane.aiAgent) != "" && strings.TrimSpace(pane.aiResumeID) != "" {
-		return sessionstate.AgentRecipe(pane.aiAgent, pane.aiResumeID, pane.aiTopic)
+	if strings.TrimSpace(pane.aiManaged) != "" && strings.TrimSpace(pane.aiAgent) != "" {
+		return sessionstate.AgentRecipeWithResumeMetadata(pane.aiAgent, pane.aiResumeID, pane.aiTopic, pane.aiResumeSource, pane.aiResumeAt)
 	}
 	return sessionstate.ShellRecipe()
 }
@@ -603,8 +607,14 @@ func parseSessionStatePanes(output []byte) ([]sessionStatePaneRow, error) {
 		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
-		fields := splitTmuxFields(rawLine, 11)
-		if len(fields) != 11 {
+		fields := splitTmuxFields(rawLine, 13)
+		if len(fields) != 13 {
+			legacy := splitTmuxFields(rawLine, 11)
+			if len(legacy) == 11 {
+				fields = append(legacy, "", "")
+			}
+		}
+		if len(fields) != 13 {
 			return nil, fmt.Errorf("parse tmux sessionstate panes: malformed row %q", rawLine)
 		}
 		windowIndex, err := strconv.Atoi(strings.TrimSpace(fields[0]))
@@ -631,6 +641,8 @@ func parseSessionStatePanes(output []byte) ([]sessionStatePaneRow, error) {
 			aiAgent:        strings.TrimSpace(fields[8]),
 			aiTopic:        strings.TrimSpace(fields[9]),
 			aiResumeID:     strings.TrimSpace(fields[10]),
+			aiResumeSource: strings.TrimSpace(fields[11]),
+			aiResumeAt:     strings.TrimSpace(fields[12]),
 		})
 	}
 	return panes, nil

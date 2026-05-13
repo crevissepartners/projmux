@@ -342,6 +342,61 @@ func TestDoctorJSONIncludesAINotifyDiagnostics(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "git": true, "stty": true,
+	})
+	cmd.resumeDiagnostics = func() []doctorSessionStateResumeDiagnostic {
+		return []doctorSessionStateResumeDiagnostic{
+			{
+				Session:         "workspace",
+				WindowIndex:     0,
+				PaneIndex:       1,
+				Agent:           "codex",
+				Status:          "stale",
+				Confidence:      "medium",
+				ResumeSource:    "codex-log",
+				ResumeUpdatedAt: "2026-05-12T03:04:05Z",
+				Reason:          "resume metadata older than 24h0m0s",
+				SnapshotPath:    "/tmp/workspace.json",
+			},
+		}
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"Session State resume metadata",
+		"[stale]",
+		"codex",
+		"workspace:0.1",
+		"confidence: medium",
+		"source: codex-log",
+		"resume metadata older than 24h0m0s",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, out)
+		}
+	}
+
+	stdout.Reset()
+	if err := cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(--json) error = %v", err)
+	}
+	var report doctorReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json unmarshal error = %v\n%s", err, stdout.String())
+	}
+	if len(report.SessionStateResume) != 1 || report.SessionStateResume[0].Status != "stale" || report.SessionStateResume[0].Confidence != "medium" {
+		t.Fatalf("SessionStateResume = %#v, want stale medium diagnostic", report.SessionStateResume)
+	}
+}
+
 func TestDoctorAINotifyDiagnosticsReuseReadOnlyPlans(t *testing.T) {
 	t.Parallel()
 
