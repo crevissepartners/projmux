@@ -27,15 +27,19 @@ const (
 	aiModeCodex     = "codex"
 	aiModeShell     = "shell"
 
-	aiPaneManagedOption     = "@projmux_ai_managed"
-	aiPaneAgentOption       = "@projmux_ai_agent"
-	aiPaneContextOption     = "@projmux_ai_context"
-	aiPaneStateOption       = "@projmux_ai_state"
-	aiPaneTopicOption       = "@projmux_ai_topic"
-	aiPaneTopicManualOption = "@projmux_ai_topic_manual"
-	aiPaneHookActiveOption  = "@projmux_ai_hook_active"
-	aiPaneThreadIDOption    = "@projmux_ai_thread_id"
-	aiPaneSessionIDOption   = "@projmux_ai_session_id"
+	aiPaneManagedOption         = "@projmux_ai_managed"
+	aiPaneAgentOption           = "@projmux_ai_agent"
+	aiPaneContextOption         = "@projmux_ai_context"
+	aiPaneStateOption           = "@projmux_ai_state"
+	aiPaneTopicOption           = "@projmux_ai_topic"
+	aiPaneTopicManualOption     = "@projmux_ai_topic_manual"
+	aiPaneHookActiveOption      = "@projmux_ai_hook_active"
+	aiPaneThreadIDOption        = "@projmux_ai_thread_id"
+	aiPaneSessionIDOption       = "@projmux_ai_session_id"
+	aiPaneResumeIDOption        = "@projmux_ai_resume_id"
+	aiPaneResumeSourceOption    = "@projmux_ai_resume_source"
+	aiPaneTranscriptPathOption  = "@projmux_ai_transcript_path"
+	aiPaneResumeUpdatedAtOption = "@projmux_ai_resume_updated_at"
 )
 
 type aiCommandRunner interface {
