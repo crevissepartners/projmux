@@ -36,6 +36,18 @@ type codexNotifyPayload struct {
 	LastAssistantMessage string
 }
 
+type codexHookPayload struct {
+	EventName      string
+	ThreadID       string
+	SessionID      string
+	TurnID         string
+	CWD            string
+	TranscriptPath string
+	Model          string
+	ToolName       string
+	ToolInput      map[string]any
+}
+
 type aiPaneMatchInput struct {
 	CWD       string
 	ThreadID  string
@@ -81,6 +93,23 @@ func (c *aiCommand) runIngest(args []string, stderr io.Writer) error {
 			return errors.New("ai ingest codex-notify requires a JSON payload argument")
 		}
 		return c.ingestCodexNotify([]byte(args[1]))
+	case "codex-hook":
+		if len(args) != 1 {
+			printAIUsage(stderr)
+			return errors.New("ai ingest codex-hook reads JSON from stdin and accepts no payload arguments")
+		}
+		reader := c.stdin
+		if reader == nil {
+			reader = os.Stdin
+		}
+		data, err := io.ReadAll(io.LimitReader(reader, 1024*1024+1))
+		if err != nil {
+			return fmt.Errorf("read codex hook payload: %w", err)
+		}
+		if len(data) > 1024*1024 {
+			return errors.New("codex hook payload exceeds 1 MiB")
+		}
+		return c.ingestCodexHook(data)
 	case "claude-hook":
 		if len(args) != 1 {
 			printAIUsage(stderr)
@@ -305,6 +334,54 @@ func (c *aiCommand) ingestCodexNotify(data []byte) error {
 	return c.applyAIStatusWithNotify("waiting", paneID, notifyInput)
 }
 
+func (c *aiCommand) ingestCodexHook(data []byte) error {
+	payload, err := parseCodexHookPayload(data)
+	if err != nil {
+		return err
+	}
+
+	paneID := c.matchAIPane(aiPaneMatchInput{
+		CWD:       payload.CWD,
+		ThreadID:  payload.matchThreadID(),
+		SessionID: payload.SessionID,
+	})
+	if paneID == "" {
+		return nil
+	}
+
+	metadata := payload.codexHookMetadata()
+	switch payload.EventName {
+	case "UserPromptSubmit":
+		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
+		return c.applyAIStatusWithNotify("thinking", paneID, attentionNotifyInput{
+			Metadata: metadata,
+		})
+	case "Stop":
+		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
+		body := formatCodexHookStopNotifyBody(payload)
+		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
+			ID:       codexHookNotifyID(payload, "stop"),
+			Text:     body.Text,
+			Severity: body.Severity,
+			Metadata: metadata,
+			Force:    true,
+		})
+	case "PermissionRequest":
+		topic := truncateRunes(formatCodexToolInputSummary(payload.ToolName, payload.ToolInput), 80)
+		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, topic)
+		body := formatCodexHookPermissionNotifyBody(payload)
+		return c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
+			ID:       codexHookNotifyID(payload, "permission"),
+			Text:     body.Text,
+			Severity: body.Severity,
+			Metadata: metadata,
+			Force:    true,
+		})
+	default:
+		return nil
+	}
+}
+
 func (c *aiCommand) ingestClaudeHook(data []byte) error {
 	payload, err := parseClaudeHookPayload(data)
 	if err != nil {
@@ -423,6 +500,39 @@ func parseCodexNotifyPayload(data []byte) (codexNotifyPayload, error) {
 	return payload, nil
 }
 
+func parseCodexHookPayload(data []byte) (codexHookPayload, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return codexHookPayload{}, fmt.Errorf("parse codex hook payload: %w", err)
+	}
+	payload := codexHookPayload{
+		EventName:      firstString(raw, "hook_event_name", "event_name"),
+		ThreadID:       firstString(raw, "thread_id", "thread-id"),
+		SessionID:      firstString(raw, "session_id", "session-id"),
+		TurnID:         firstString(raw, "turn_id", "turn-id"),
+		CWD:            firstString(raw, "cwd", "workspace", "project_dir"),
+		TranscriptPath: firstString(raw, "transcript_path", "transcriptPath"),
+		Model:          firstString(raw, "model"),
+		ToolName:       firstString(raw, "tool_name", "toolName"),
+	}
+	if payload.CWD == "" {
+		payload.CWD = firstNestedString(raw["workspace"], "cwd", "path")
+	}
+	if payload.ToolName == "" {
+		payload.ToolName = firstNestedString(raw["tool"], "name", "tool_name")
+	}
+	payload.ToolInput = mapFromAny(raw["tool_input"])
+	if len(payload.ToolInput) == 0 {
+		payload.ToolInput = mapFromAny(raw["input"])
+	}
+	if len(payload.ToolInput) == 0 {
+		payload.ToolInput = mapFromAny(raw["tool"])
+		delete(payload.ToolInput, "name")
+		delete(payload.ToolInput, "tool_name")
+	}
+	return payload, nil
+}
+
 func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -513,6 +623,39 @@ func (p codexNotifyPayload) codexMetadata() map[string]string {
 		}
 	}
 	return out
+}
+
+func (p codexHookPayload) codexHookMetadata() map[string]string {
+	metadata := map[string]string{
+		"agent":           aiModeCodex,
+		"event":           p.EventName,
+		"session_id":      p.SessionID,
+		"thread_id":       p.matchThreadID(),
+		"turn_id":         p.TurnID,
+		"cwd":             p.CWD,
+		"transcript_path": p.TranscriptPath,
+		"model":           p.Model,
+		"tool_name":       p.ToolName,
+	}
+	for key, value := range p.ToolInput {
+		if text := stringFromAny(value); text != "" {
+			metadata["tool_input."+key] = truncateRunes(text, 160)
+		}
+	}
+	out := make(map[string]string, len(metadata))
+	for k, v := range metadata {
+		if value := strings.TrimSpace(v); value != "" {
+			out[k] = value
+		}
+	}
+	return out
+}
+
+func (p codexHookPayload) matchThreadID() string {
+	if threadID := strings.TrimSpace(p.ThreadID); threadID != "" {
+		return threadID
+	}
+	return p.SessionID
 }
 
 func (p claudeHookPayload) claudeMetadata() map[string]string {
@@ -641,6 +784,25 @@ func codexNotifyID(p codexNotifyPayload) string {
 	default:
 		return ""
 	}
+}
+
+func codexHookNotifyID(p codexHookPayload, kind string) string {
+	parts := []string{"ai", "codex", kind}
+	if value := strings.TrimSpace(p.SessionID); value != "" {
+		parts = append(parts, value)
+	}
+	if value := strings.TrimSpace(p.TurnID); value != "" {
+		parts = append(parts, value)
+	}
+	if kind == "permission" {
+		if value := strings.TrimSpace(p.ToolName); value != "" {
+			parts = append(parts, value)
+		}
+		if summary := formatCodexToolInputSummary(p.ToolName, p.ToolInput); summary != "" {
+			parts = append(parts, truncateRunes(summary, 40))
+		}
+	}
+	return strings.Join(parts, ":")
 }
 
 func claudeNotifyID(p claudeHookPayload) string {

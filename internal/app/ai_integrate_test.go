@@ -126,6 +126,142 @@ func TestAIIntegrateCodexRemoveOnlyManagedBlock(t *testing.T) {
 	}
 }
 
+func TestAIIntegrateCodexHooksDryRunDoesNotWrite(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "hooks", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode hooks --dry-run error = %v", err)
+	}
+
+	path := filepath.Join(home, codexConfigRelativePath)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("config stat err = %v, want missing file", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "dry-run") || !strings.Contains(out, codexHooksMarkerBegin) || !strings.Contains(out, codexHookCommand) || !strings.Contains(out, "codex_hooks = true") {
+		t.Fatalf("stdout = %q, want hooks dry-run preview", out)
+	}
+}
+
+func TestAIIntegrateCodexHooksInstallsManagedBlockAndPreservesConfig(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, codexConfigRelativePath)
+	writeCodexTestFile(t, path, `model = "gpt-5.1-codex"
+# keep this user setting
+`)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "hooks"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode hooks error = %v", err)
+	}
+
+	got := readCodexTestFile(t, path)
+	if !strings.Contains(got, codexHooksMarkerBegin) || !strings.Contains(got, "[features]") || !strings.Contains(got, "codex_hooks = true") {
+		t.Fatalf("config missing hooks feature block:\n%s", got)
+	}
+	for _, event := range codexHookEvents {
+		if !strings.Contains(got, "[[hooks."+event+"]]") {
+			t.Fatalf("config missing hooks event %s:\n%s", event, got)
+		}
+	}
+	if strings.Count(got, codexHookCommand) != len(codexHookEvents) {
+		t.Fatalf("config command count = %d, want %d:\n%s", strings.Count(got, codexHookCommand), len(codexHookEvents), got)
+	}
+	if !strings.Contains(got, `model = "gpt-5.1-codex"`) || !strings.Contains(got, "# keep this user setting") {
+		t.Fatalf("config did not preserve unmanaged content:\n%s", got)
+	}
+	if !strings.Contains(stdout.String(), "configured Codex hooks") {
+		t.Fatalf("stdout = %q, want configured hooks message", stdout.String())
+	}
+}
+
+func TestAIIntegrateCodexHooksInstallIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+
+	if err := cmd.Run([]string{"integrate", "codex", "--mode=hooks"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("first Run integrate codex --mode hooks error = %v", err)
+	}
+	path := filepath.Join(home, codexConfigRelativePath)
+	first := readCodexTestFile(t, path)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "codex", "--mode=hooks"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("second Run integrate codex --mode hooks error = %v", err)
+	}
+	second := readCodexTestFile(t, path)
+	if second != first {
+		t.Fatalf("second hooks install changed config:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+	if !strings.Contains(stdout.String(), "no changes") {
+		t.Fatalf("stdout = %q, want no changes", stdout.String())
+	}
+}
+
+func TestAIIntegrateCodexHooksRemoveOnlySelectedManagedBlock(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, codexConfigRelativePath)
+	writeCodexTestFile(t, path, codexHooksBlock()+codexNotifyBlock()+`model = "gpt-5.1-codex"
+`)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "hooks", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode hooks --remove error = %v", err)
+	}
+	got := readCodexTestFile(t, path)
+	if strings.Contains(got, codexHooksMarkerBegin) || !strings.Contains(got, codexNotifyMarkerBegin) || !strings.Contains(got, `model = "gpt-5.1-codex"`) {
+		t.Fatalf("config after selected hooks remove =\n%s", got)
+	}
+	if !strings.Contains(stdout.String(), "removed projmux-managed Codex hooks") {
+		t.Fatalf("stdout = %q, want removed hooks message", stdout.String())
+	}
+}
+
+func TestAIIntegrateCodexRemoveWithoutModeRemovesManagedNotifyAndHooks(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, codexConfigRelativePath)
+	writeCodexTestFile(t, path, codexHooksBlock()+codexNotifyBlock()+`model = "gpt-5.1-codex"
+`)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "codex", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --remove error = %v", err)
+	}
+	got := readCodexTestFile(t, path)
+	if strings.Contains(got, codexHooksMarkerBegin) || strings.Contains(got, codexNotifyMarkerBegin) || !strings.Contains(got, `model = "gpt-5.1-codex"`) {
+		t.Fatalf("config after remove-all =\n%s", got)
+	}
+	if !strings.Contains(stdout.String(), "removed projmux-managed Codex legacy notify and hooks") {
+		t.Fatalf("stdout = %q, want removed both message", stdout.String())
+	}
+}
+
+func TestAIIntegrateCodexHooksDoesNotTouchClaudeSettings(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	claudePath := filepath.Join(home, claudeSettingsRelativePath)
+	writeCodexTestFile(t, claudePath, `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo claude"}]}]}}`+"\n")
+	before := readCodexTestFile(t, claudePath)
+
+	if err := cmd.Run([]string{"integrate", "codex", "--mode", "hooks"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate codex --mode hooks error = %v", err)
+	}
+	if got := readCodexTestFile(t, claudePath); got != before {
+		t.Fatalf("Claude settings changed:\nbefore:%s\nafter:%s", before, got)
+	}
+}
+
 func TestAIIntegrateClaudeInstallsManagedHooks(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)

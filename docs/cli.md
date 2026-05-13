@@ -350,9 +350,10 @@ projmux ai status   set <thinking|waiting|idle> [--pane <id>]
 projmux ai notify   <reset|notify> [--pane <id>]
 projmux ai watch-title [--pane <id>]
 projmux ai ingest   codex-notify '<json>'
+projmux ai ingest   codex-hook < payload.json
 projmux ai ingest   claude-hook < payload.json
 projmux ai ingest   bell --pane <pane_id>
-projmux ai integrate codex [--dry-run] [--remove]
+projmux ai integrate codex [--mode legacy-notify|hooks] [--dry-run] [--remove]
 projmux ai integrate claude [--dry-run] [--remove]
 projmux ai integrate tmux-bell [--dry-run] [--remove]
 projmux ai topic     ...
@@ -370,6 +371,16 @@ payload `cwd`, then cached thread/session pane options, marks the pane
 hook-active, sets AI state to waiting, and writes a metadata-bearing notify
 queue entry. Panes marked `@projmux_ai_hook_active=1` are skipped by the
 title watcher.
+
+`ingest codex-hook` is the hook-facing entrypoint for Codex hooks-engine JSON.
+It reads one JSON payload from stdin and handles `UserPromptSubmit`,
+`Stop`, and `PermissionRequest`. It accepts the common Codex hook fields
+`hook_event_name`/`event_name`, `thread_id`, `session_id`, `turn_id`, `cwd`,
+`transcript_path`, `model`, `tool_name`, nested `tool.name`, `tool_input`,
+and `input`. `UserPromptSubmit` marks the matched pane hook-active and moves it
+to thinking/busy without pushing a queue entry. `Stop` pushes an info
+completion row. `PermissionRequest` pushes a critical approval row with the
+tool name and concise action summary.
 
 `ingest claude-hook` is the hook-facing entrypoint for Claude Code hooks. It
 reads one JSON payload from stdin and handles the core hook events:
@@ -453,14 +464,38 @@ and hooks are preserved. If a supported event already contains an unmanaged
 `projmux ai ingest claude-hook` command, projmux refuses to install over it and
 leaves the settings file untouched.
 
+`projmux ai integrate codex --mode hooks` manages a separate hooks-engine
+block in `~/.codex/config.toml`. It enables `[features] codex_hooks = true`
+and installs broad command hooks for `PermissionRequest`, `UserPromptSubmit`,
+and `Stop`:
+
+```toml
+[features]
+codex_hooks = true
+
+[[hooks.PermissionRequest]]
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+
+[[hooks.UserPromptSubmit]]
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+
+[[hooks.Stop]]
+command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+```
+
+The default Codex mode remains `legacy-notify` for compatibility. Hooks mode is
+idempotent, preserves unrelated Codex config, and refuses to install over
+unmanaged `codex_hooks`/Codex hook wiring it cannot safely own. `--remove`
+without an explicit `--mode` removes both projmux-managed Codex blocks; with
+`--mode hooks`, it removes only the hooks block. Codex may still require
+reviewing or trusting the hook through its `/hooks` flow before commands run.
+
 `integrate tmux-bell` is opt-in server-level tmux wiring for arbitrary tools
 that emit BEL or OSC 9. It applies `allow-passthrough on`, `monitor-bell on`,
 `bell-action other`, and appends a marked `pane-bell-event` hook that invokes
 `projmux ai ingest bell --pane "#{pane_id}"`. `--dry-run` prints the tmux
 commands. `--remove` unsets only hook entries carrying the projmux marker and
 leaves user-owned `pane-bell-event` hooks alone.
-
-Codex hooks-engine mode is not part of this command yet.
 
 ## tmux
 

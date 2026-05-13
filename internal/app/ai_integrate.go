@@ -16,6 +16,9 @@ const (
 	codexNotifyMarkerBegin  = "# >>> projmux managed codex legacy notify"
 	codexNotifyMarkerEnd    = "# <<< projmux managed codex legacy notify"
 	codexNotifyLine         = `notify = ["projmux", "ai", "ingest", "codex-notify"]`
+	codexHooksMarkerBegin   = "# >>> projmux managed codex hooks"
+	codexHooksMarkerEnd     = "# <<< projmux managed codex hooks"
+	codexHookCommand        = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
 
 	claudeSettingsRelativePath = ".claude/settings.json"
 	claudeHookManagedMarker    = "projmux-managed:claude-hook:v1"
@@ -34,6 +37,13 @@ type codexNotifyPlan struct {
 	changed  bool
 	conflict string
 }
+
+type codexIntegrationMode string
+
+const (
+	codexIntegrationLegacyNotify codexIntegrationMode = "legacy-notify"
+	codexIntegrationHooks        codexIntegrationMode = "hooks"
+)
 
 type claudeHookPlan struct {
 	path     string
@@ -59,6 +69,12 @@ var claudeHookEvents = []string{
 	"StopFailure",
 	"SubagentStop",
 	"TeammateIdle",
+}
+
+var codexHookEvents = []string{
+	"PermissionRequest",
+	"UserPromptSubmit",
+	"Stop",
 }
 
 func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error {
@@ -149,8 +165,10 @@ func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) 
 func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("ai integrate codex", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dryRun := fs.Bool("dry-run", false, "print planned Codex notify config changes without writing")
-	remove := fs.Bool("remove", false, "remove projmux-managed Codex notify wiring")
+	dryRun := fs.Bool("dry-run", false, "print planned Codex config changes without writing")
+	remove := fs.Bool("remove", false, "remove projmux-managed Codex wiring")
+	modeFlag := fs.String("mode", string(codexIntegrationLegacyNotify), "Codex integration mode: legacy-notify or hooks")
+	modeExplicit := flagWasProvided(args, "mode")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -159,12 +177,20 @@ func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) e
 		return errors.New("ai integrate codex does not accept positional arguments")
 	}
 
-	plan, err := c.planCodexNotifyIntegration(*remove)
+	mode := codexIntegrationMode(strings.TrimSpace(*modeFlag))
+	switch mode {
+	case codexIntegrationLegacyNotify, codexIntegrationHooks:
+	default:
+		return fmt.Errorf("unknown Codex integration mode %q (want legacy-notify or hooks)", *modeFlag)
+	}
+
+	removeAllManaged := *remove && !modeExplicit
+	plan, err := c.planCodexIntegration(mode, *remove, removeAllManaged)
 	if err != nil {
 		return err
 	}
 	if *dryRun {
-		return printCodexNotifyDryRun(stdout, plan)
+		return printCodexIntegrationDryRun(stdout, plan)
 	}
 	if plan.conflict != "" {
 		return errors.New(plan.conflict + "; run `projmux ai integrate codex --dry-run` to preview without writing")
@@ -178,6 +204,13 @@ func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) e
 	}
 	_, err = fmt.Fprintf(stdout, "%s\n", plan.action)
 	return err
+}
+
+func (c *aiCommand) planCodexIntegration(mode codexIntegrationMode, remove, removeAllManaged bool) (codexNotifyPlan, error) {
+	if mode == codexIntegrationHooks || removeAllManaged {
+		return c.planCodexHooksIntegration(remove, removeAllManaged)
+	}
+	return c.planCodexNotifyIntegration(remove)
 }
 
 func (c *aiCommand) planCodexNotifyIntegration(remove bool) (codexNotifyPlan, error) {
@@ -220,6 +253,62 @@ func (c *aiCommand) planCodexNotifyIntegration(remove bool) (codexNotifyPlan, er
 		plan.action = "configured Codex legacy notify in " + path
 	} else {
 		plan.action = "no changes: Codex legacy notify is already configured in " + path
+	}
+	return plan, nil
+}
+
+func (c *aiCommand) planCodexHooksIntegration(remove, removeAllManaged bool) (codexNotifyPlan, error) {
+	home, err := c.homeDir()
+	if err != nil {
+		return codexNotifyPlan{}, fmt.Errorf("resolve home directory: %w", err)
+	}
+	path := filepath.Join(home, codexConfigRelativePath)
+	current, err := c.readCodexConfig(path)
+	if err != nil {
+		return codexNotifyPlan{}, err
+	}
+
+	withoutHooks, hadHooks, err := removeManagedBlock(current, codexHooksMarkerBegin, codexHooksMarkerEnd, "Codex config contains an unterminated projmux-managed hooks block")
+	if err != nil {
+		return codexNotifyPlan{}, err
+	}
+	withoutManaged := withoutHooks
+	hadNotify := false
+	if removeAllManaged {
+		withoutManaged, hadNotify, err = removeCodexNotifyManagedBlocks(withoutManaged)
+		if err != nil {
+			return codexNotifyPlan{}, err
+		}
+	}
+	plan := codexNotifyPlan{path: path, current: current, next: withoutManaged}
+
+	if remove {
+		plan.changed = (hadHooks || hadNotify) && withoutManaged != current
+		switch {
+		case hadHooks && hadNotify:
+			plan.action = "removed projmux-managed Codex legacy notify and hooks wiring from " + path
+		case hadHooks:
+			plan.action = "removed projmux-managed Codex hooks wiring from " + path
+		case hadNotify:
+			plan.action = "removed projmux-managed Codex legacy notify wiring from " + path
+		default:
+			plan.action = "no changes: projmux-managed Codex wiring is not present in " + path
+		}
+		return plan, nil
+	}
+
+	if line, ok := findUnmanagedCodexHooksLine(withoutManaged); ok {
+		plan.conflict = fmt.Sprintf("Codex hooks are already configured outside a projmux-managed block in %s: %s", path, line)
+		plan.action = "would refuse to install Codex hooks wiring"
+		return plan, nil
+	}
+	next := codexHooksBlock() + withoutManaged
+	plan.next = next
+	plan.changed = next != current
+	if plan.changed {
+		plan.action = "configured Codex hooks in " + path
+	} else {
+		plan.action = "no changes: Codex hooks are already configured in " + path
 	}
 	return plan, nil
 }
@@ -462,6 +551,31 @@ func printCodexNotifyDryRun(stdout io.Writer, plan codexNotifyPlan) error {
 	}
 }
 
+func printCodexIntegrationDryRun(stdout io.Writer, plan codexNotifyPlan) error {
+	if _, err := fmt.Fprintf(stdout, "projmux ai integrate codex (dry-run)\nconfig: %s\n", plan.path); err != nil {
+		return err
+	}
+	if plan.conflict != "" {
+		_, err := fmt.Fprintf(stdout, "%s\n%s\n", plan.action, plan.conflict)
+		return err
+	}
+	if !plan.changed {
+		_, err := fmt.Fprintf(stdout, "%s\n", plan.action)
+		return err
+	}
+	switch {
+	case plan.next == "":
+		_, err := fmt.Fprintln(stdout, "would remove projmux-managed Codex wiring")
+		return err
+	case plan.current == "":
+		_, err := fmt.Fprintf(stdout, "would create config with managed block:\n%s", plan.next)
+		return err
+	default:
+		_, err := fmt.Fprintf(stdout, "would update config to:\n%s", plan.next)
+		return err
+	}
+}
+
 func printClaudeHookDryRun(stdout io.Writer, plan claudeHookPlan) error {
 	if _, err := fmt.Fprintf(stdout, "projmux ai integrate claude (dry-run)\nsettings: %s\n", plan.path); err != nil {
 		return err
@@ -515,25 +629,47 @@ func codexNotifyBlock() string {
 	}, "\n") + "\n"
 }
 
+func codexHooksBlock() string {
+	lines := []string{
+		codexHooksMarkerBegin,
+		"[features]",
+		"codex_hooks = true",
+		"",
+	}
+	for _, event := range codexHookEvents {
+		lines = append(lines,
+			"[[hooks."+event+"]]",
+			`command = "`+codexHookCommand+`"`,
+			"",
+		)
+	}
+	lines = append(lines, codexHooksMarkerEnd)
+	return strings.Join(lines, "\n") + "\n"
+}
+
 func removeCodexNotifyManagedBlocks(content string) (string, bool, error) {
+	return removeManagedBlock(content, codexNotifyMarkerBegin, codexNotifyMarkerEnd, "Codex config contains an unterminated projmux-managed notify block")
+}
+
+func removeManagedBlock(content, begin, end, unterminatedMessage string) (string, bool, error) {
 	lines := strings.SplitAfter(content, "\n")
 	var out strings.Builder
 	removed := false
 	for i := 0; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) != codexNotifyMarkerBegin {
+		if strings.TrimSpace(lines[i]) != begin {
 			out.WriteString(lines[i])
 			continue
 		}
 		removed = true
 		foundEnd := false
 		for i++; i < len(lines); i++ {
-			if strings.TrimSpace(lines[i]) == codexNotifyMarkerEnd {
+			if strings.TrimSpace(lines[i]) == end {
 				foundEnd = true
 				break
 			}
 		}
 		if !foundEnd {
-			return "", false, errors.New("Codex config contains an unterminated projmux-managed notify block")
+			return "", false, errors.New(unterminatedMessage)
 		}
 	}
 	return out.String(), removed, nil
@@ -550,6 +686,38 @@ func findUnmanagedNotifyLine(content string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func findUnmanagedCodexHooksLine(content string) (string, bool) {
+	for line := range strings.SplitSeq(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(trimmed, "projmux ai ingest codex-hook") {
+			return trimmed, true
+		}
+		if trimmed == "[features]" {
+			return trimmed, true
+		}
+		if rest, ok := strings.CutPrefix(trimmed, "codex_hooks"); ok && strings.HasPrefix(strings.TrimSpace(rest), "=") {
+			return trimmed, true
+		}
+		if strings.HasPrefix(trimmed, "features.codex_hooks") {
+			return trimmed, true
+		}
+	}
+	return "", false
+}
+
+func flagWasProvided(args []string, name string) bool {
+	long := "--" + name
+	for _, arg := range args {
+		if arg == long || strings.HasPrefix(arg, long+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseClaudeSettings(content, path string) (map[string]any, error) {

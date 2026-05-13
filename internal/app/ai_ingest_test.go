@@ -42,6 +42,50 @@ func TestParseCodexNotifyPayload(t *testing.T) {
 	}
 }
 
+func TestParseCodexHookPayload(t *testing.T) {
+	t.Parallel()
+
+	payload, err := parseCodexHookPayload([]byte(`{
+		"hook_event_name": "PermissionRequest",
+		"thread_id": "thread-123",
+		"session_id": "codex-session",
+		"turn_id": "turn-456",
+		"cwd": "/repo/projmux",
+		"transcript_path": "/tmp/codex.jsonl",
+		"model": "gpt-5.1-codex",
+		"tool": {"name": "Bash"},
+		"tool_input": {"command": "go test ./internal/app"}
+	}`))
+	if err != nil {
+		t.Fatalf("parseCodexHookPayload() error = %v", err)
+	}
+	if payload.EventName != "PermissionRequest" || payload.ThreadID != "thread-123" || payload.SessionID != "codex-session" || payload.TurnID != "turn-456" || payload.CWD != "/repo/projmux" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if payload.TranscriptPath != "/tmp/codex.jsonl" || payload.Model != "gpt-5.1-codex" || payload.ToolName != "Bash" {
+		t.Fatalf("payload fields = %+v", payload)
+	}
+	if got := stringFromAny(payload.ToolInput["command"]); got != "go test ./internal/app" {
+		t.Fatalf("tool input command = %q", got)
+	}
+
+	payload, err = parseCodexHookPayload([]byte(`{
+		"event_name": "PermissionRequest",
+		"session-id": "codex-session",
+		"workspace": {"path": "/repo/projmux"},
+		"tool": {"name": "Shell", "command": "make test"}
+	}`))
+	if err != nil {
+		t.Fatalf("parseCodexHookPayload() alias error = %v", err)
+	}
+	if payload.EventName != "PermissionRequest" || payload.CWD != "/repo/projmux" || payload.ToolName != "Shell" {
+		t.Fatalf("alias payload = %+v", payload)
+	}
+	if got := stringFromAny(payload.ToolInput["command"]); got != "make test" {
+		t.Fatalf("alias tool input command = %q", got)
+	}
+}
+
 func TestMatchAIPanePriority(t *testing.T) {
 	t.Parallel()
 
@@ -72,6 +116,111 @@ func TestMatchAIPanePriority(t *testing.T) {
 	}
 	if got := cmd.matchAIPane(aiPaneMatchInput{SessionID: "session-2"}); got != "%thread" {
 		t.Fatalf("session match = %q, want %%thread", got)
+	}
+}
+
+func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "PermissionRequest",
+		"session_id": "codex-session",
+		"turn_id": "turn-456",
+		"cwd": "/repo/projmux",
+		"model": "gpt-5.1-codex",
+		"tool_name": "Bash",
+		"tool_input": {"command": "go test ./internal/app"}
+	}`)
+	cmd.readCommand = codexHookIngestReadCommand("%7")
+
+	err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run ingest codex-hook PermissionRequest error = %v", err)
+	}
+	for _, want := range []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeCodex}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneSessionIDOption, "codex-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneThreadIDOption, "codex-session"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
+	} {
+		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
+			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
+		}
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:codex:permission:codex-session:turn-456:Bash:go test ./internal/app" {
+		t.Fatalf("ID = %q", got.ID)
+	}
+	if got.Text != "Codex · 승인 필요 · Bash: go test ./internal/app" {
+		t.Fatalf("Text = %q", got.Text)
+	}
+	if got.Severity != notify.SeverityCritical {
+		t.Fatalf("Severity = %q", got.Severity)
+	}
+	if got.Metadata["agent"] != "codex" || got.Metadata["event"] != "PermissionRequest" || got.Metadata["model"] != "gpt-5.1-codex" || got.Metadata["tool_input.command"] != "go test ./internal/app" {
+		t.Fatalf("Metadata = %#v", got.Metadata)
+	}
+}
+
+func TestIngestCodexHookStopPushesInfoQueueEntry(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "Stop",
+		"session_id": "codex-session",
+		"turn_id": "turn-456",
+		"cwd": "/repo/projmux"
+	}`)
+	cmd.readCommand = codexHookIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest codex-hook Stop error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:codex:stop:codex-session:turn-456" || got.Text != "Codex · 응답 완료" || got.Severity != notify.SeverityInfo {
+		t.Fatalf("pushed = %#v", got)
+	}
+}
+
+func TestIngestCodexHookUserPromptSetsThinkingWithoutQueue(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "UserPromptSubmit",
+		"session_id": "codex-session",
+		"cwd": "/repo/projmux",
+		"model": "gpt-5.1-codex"
+	}`)
+	cmd.readCommand = codexHookIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest codex-hook UserPromptSubmit error = %v", err)
+	}
+	if len(store.pushed) != 0 {
+		t.Fatalf("push count = %d, want 0", len(store.pushed))
+	}
+	for _, want := range []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeCodex}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "thinking"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", attentionStateOption, attentionStateBusy}},
+	} {
+		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
+			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
+		}
 	}
 }
 
@@ -296,6 +445,19 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				LastAssistantMessage: "Implemented hook notify ingest.",
 			}),
 			want: aiNotifyBody{Text: "Codex · 응답 완료 · Implemented hook notify ingest."},
+		},
+		{
+			name: "codex hook permission bash command",
+			body: formatCodexHookPermissionNotifyBody(codexHookPayload{
+				ToolName:  "Bash",
+				ToolInput: map[string]any{"command": "go test ./internal/app"},
+			}),
+			want: aiNotifyBody{Text: "Codex · 승인 필요 · Bash: go test ./internal/app", Severity: notify.SeverityCritical},
+		},
+		{
+			name: "codex hook stop",
+			body: formatCodexHookStopNotifyBody(codexHookPayload{}),
+			want: aiNotifyBody{Text: "Codex · 응답 완료", Severity: notify.SeverityInfo},
 		},
 		{
 			name: "claude notification permission prompt",
@@ -648,6 +810,29 @@ func claudeIngestReadCommand(paneID string) func(context.Context, string, ...str
 			return []byte(paneID + "\x1f/repo/projmux\x1f\x1f\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{@projmux_ai_agent}"}):
 			return []byte("claude\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#S"}):
+			return []byte("workspace\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{window_id}"}):
+			return []byte("@1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{pane_id}"}):
+			return []byte(paneID + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{socket_path}"}):
+			return []byte("/tmp/tmux-1000/projmux\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+func codexHookIngestReadCommand(paneID string) func(context.Context, string, ...string) ([]byte, error) {
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}):
+			return []byte(paneID + "\x1f/repo/projmux\x1f\x1fcodex-session\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{@projmux_ai_agent}"}):
+			return []byte("codex\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#S"}):
 			return []byte("workspace\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{window_id}"}):
