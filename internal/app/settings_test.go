@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -647,45 +648,22 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	home := t.TempDir()
 	ai := testAICommand(home)
 	switcher := testSettingsSwitchCommand(t, &stubSwitchPinStore{})
-	var calls int
 	var rootOptions intpickercompat.Options
 	var aiOptions intpickercompat.Options
 	var aiDetailOptions intpickercompat.Options
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) { rootOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAI}},
+		{observe: func(o intpickercompat.Options) { aiOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsAIDefaultMode}},
+		{observe: func(o intpickercompat.Options) { aiDetailOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAI + "codex"}},
+	})
 	cmd := &settingsCommand{
-		ai:       ai,
-		switcher: switcher,
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			if calls == 1 {
-				rootOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionAI}, nil
-			}
-			if calls == 2 {
-				aiOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsAIDefaultMode}, nil
-			}
-			if calls == 3 {
-				aiDetailOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAI + "codex"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			if calls == 1 {
-				rootOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionAI}, nil
-			}
-			if calls == 2 {
-				aiOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsAIDefaultMode}, nil
-			}
-			if calls == 3 {
-				aiDetailOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAI + "codex"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		})),
+		ai:           ai,
+		switcher:     switcher,
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -790,9 +768,13 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	var calls int
 	var labsOptions intpickercompat.Options
 	var tmuxCalls [][]string
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}},
+		{observe: func(o intpickercompat.Options) { labsOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
 		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
@@ -807,30 +789,8 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
 			return nil
 		},
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			switch calls {
-			case 1:
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
-			case 2:
-				labsOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-			default:
-				return intpickercompat.Result{}, nil
-			}
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			switch calls {
-			case 1:
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
-			case 2:
-				labsOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-			default:
-				return intpickercompat.Result{}, nil
-			}
-		})),
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -920,10 +880,16 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	var calls int
 	var labsOptions intpickercompat.Options
 	var overviewOptions intpickercompat.Options
 	var tmuxCalls [][]string
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}},
+		{observe: func(o intpickercompat.Options) { labsOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsLabsProjectHooks}},
+		{observe: func(o intpickercompat.Options) { overviewOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHooks + string(config.ProjectHooksOff)}},
+	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
 		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
@@ -938,36 +904,8 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
 			return nil
 		},
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			switch calls {
-			case 1:
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
-			case 2:
-				labsOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsLabsProjectHooks}, nil
-			case 3:
-				overviewOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHooks + string(config.ProjectHooksOff)}, nil
-			default:
-				return intpickercompat.Result{}, nil
-			}
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			switch calls {
-			case 1:
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
-			case 2:
-				labsOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsLabsProjectHooks}, nil
-			case 3:
-				overviewOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHooks + string(config.ProjectHooksOff)}, nil
-			default:
-				return intpickercompat.Result{}, nil
-			}
-		})),
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1002,11 +940,19 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	var calls int
 	var statusbarOptions intpickercompat.Options
 	var detailOptions intpickercompat.Options
 	var changeOptions intpickercompat.Options
 	var tmuxCalls [][]string
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}},
+		{observe: func(o intpickercompat.Options) { statusbarOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit)}},
+		{observe: func(o intpickercompat.Options) { detailOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":change"}},
+		{observe: func(o intpickercompat.Options) { changeOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":" + string(config.StatusbarDecorationEmoji)}},
+	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
 		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
@@ -1021,42 +967,8 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
 			return nil
 		},
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			switch calls {
-			case 1:
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}, nil
-			case 2:
-				statusbarOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit)}, nil
-			case 3:
-				detailOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":change"}, nil
-			case 4:
-				changeOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":" + string(config.StatusbarDecorationEmoji)}, nil
-			default:
-				return intpickercompat.Result{}, nil
-			}
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			switch calls {
-			case 1:
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}, nil
-			case 2:
-				statusbarOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit)}, nil
-			case 3:
-				detailOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":change"}, nil
-			case 4:
-				changeOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":" + string(config.StatusbarDecorationEmoji)}, nil
-			default:
-				return intpickercompat.Result{}, nil
-			}
-		})),
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -2437,48 +2349,26 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 
 	store := &stubSwitchPinStore{}
 	switcher := testSettingsSwitchCommand(t, store)
-	var calls int
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) {
+			if got, want := o.UI, "settings"; got != want {
+				t.Fatalf("settings UI = %q, want %q", got, want)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
+		{observe: func(o intpickercompat.Options) {
+			if got, want := o.UI, "settings-project-picker"; got != want {
+				t.Fatalf("project settings UI = %q, want %q", got, want)
+			}
+			if !hasEntryValue(o.Entries, settingsBackValue) {
+				t.Fatalf("project settings entries = %#v, want back entry", o.Entries)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "add:/home/tester/source/repos/app"}},
+	})
 	cmd := &settingsCommand{
-		ai:       testAICommand(t.TempDir()),
-		switcher: switcher,
-		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			if calls == 1 {
-				if got, want := options.UI, "settings"; got != want {
-					t.Fatalf("settings UI = %q, want %q", got, want)
-				}
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionProject}, nil
-			}
-			if calls == 2 {
-				if got, want := options.UI, "settings-project-picker"; got != want {
-					t.Fatalf("project settings UI = %q, want %q", got, want)
-				}
-				if !hasEntryValue(options.Entries, settingsBackValue) {
-					t.Fatalf("project settings entries = %#v, want back entry", options.Entries)
-				}
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "add:/home/tester/source/repos/app"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			calls++
-			if calls == 1 {
-				if got, want := options.UI, "settings"; got != want {
-					t.Fatalf("settings UI = %q, want %q", got, want)
-				}
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionProject}, nil
-			}
-			if calls == 2 {
-				if got, want := options.UI, "settings-project-picker"; got != want {
-					t.Fatalf("project settings UI = %q, want %q", got, want)
-				}
-				if !hasEntryValue(options.Entries, settingsBackValue) {
-					t.Fatalf("project settings entries = %#v, want back entry", options.Entries)
-				}
-				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "add:/home/tester/source/repos/app"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		})),
+		ai:           testAICommand(t.TempDir()),
+		switcher:     switcher,
+		runner:       runner,
+		nativePicker: native,
 	}
 
 	var stdout bytes.Buffer
@@ -5008,4 +4898,34 @@ func loadSavedWorkdirsFromFile(home string) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// pickerStep scripts a single picker invocation: observe the incoming
+// options (optional) then return the next reply.
+type pickerStep struct {
+	observe func(intpickercompat.Options)
+	reply   intpickercompat.Result
+	err     error
+}
+
+// scriptedPicker returns a (runner, nativePicker) pair backed by a single
+// step list. It collapses the previously doubled lambda body that tests
+// used to populate both fields with the same call-counting switch.
+func scriptedPicker(t *testing.T, steps []pickerStep) (switchRunner, intpicker.Runner) {
+	t.Helper()
+	var calls int
+	fn := func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		idx := calls
+		calls++
+		if idx >= len(steps) {
+			return intpickercompat.Result{}, nil
+		}
+		s := steps[idx]
+		if s.observe != nil {
+			s.observe(options)
+		}
+		return s.reply, s.err
+	}
+	runner := switchRunnerFunc(fn)
+	return runner, nativePickerFromCompatRunner(runner)
 }
