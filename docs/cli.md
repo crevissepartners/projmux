@@ -626,9 +626,10 @@ flags with the top-level `switch` UX:
   generated config. The generated app config uses absolute `$SHELL` as the
   tmux default shell when set, otherwise `/bin/sh`. On a new target app
   session, default `shell` opens a startup picker when auto-restore is enabled
-  and a saved snapshot or project layout preset is available. Rows are ordered
-  saved snapshot, layout presets alphabetically, then empty session. Closing
-  the picker falls back to an empty session and continues startup. `--saved`
+  and either project context, a saved snapshot, or a project layout preset is
+  available. Rows are ordered saved snapshot, layout presets alphabetically,
+  then empty session. Closing the picker falls back to an empty session and
+  continues startup. `--saved`
   forces replay from the saved session snapshot, `--layout <name>` forces replay
   from a project layout preset, and `--empty` skips saved/preset replay. These
   flags bypass the picker and the auto-restore toggle, are mutually exclusive,

@@ -391,9 +391,10 @@ autosave command is quiet and debounced per session, and stores snapshots under
 `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`.
 
 On default `projmux shell`, startup candidates are checked before creating a
-new app session only when auto-restore is enabled. When at least one saved
-snapshot or project layout preset is available, projmux opens a native startup
-picker with saved first, presets in alphabetical order, and empty last.
+new app session only when auto-restore is enabled. In project context, projmux
+opens a native startup picker even when the only choice is empty startup. When
+saved snapshots or project layout presets are available, rows appear with saved
+first, presets in alphabetical order, and empty last.
 When a project context is available, default `projmux shell` targets that
 project's session identity and starts in the project root, so saved snapshot
 lookup uses the same key as project sessions. Without project context, or with

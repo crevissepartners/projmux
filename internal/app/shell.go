@@ -244,7 +244,10 @@ func (c *shellCommand) prepareAutoShellSession(ctx context.Context, socketName, 
 	}
 	candidates := c.shellSessionCandidates(sessionName)
 	if len(candidates) == 0 {
-		return
+		if !c.shouldOfferEmptyStartupPicker(cwd) {
+			return
+		}
+		candidates = []shellSessionCandidate{emptyShellSessionCandidate()}
 	}
 
 	runner := shellAppTmuxRunner{runner: c.tmuxRunner, socketName: socketName, configPath: configPath}
@@ -435,12 +438,28 @@ func (c *shellCommand) shellSessionCandidates(sessionName string) []shellSession
 	if len(candidates) == 0 {
 		return nil
 	}
-	candidates = append(candidates, shellSessionCandidate{
+	candidates = append(candidates, emptyShellSessionCandidate())
+	return candidates
+}
+
+func emptyShellSessionCandidate() shellSessionCandidate {
+	return shellSessionCandidate{
 		Kind:        shellStartEmpty,
 		Label:       "Empty session",
 		Description: "start without restoring windows",
-	})
-	return candidates
+	}
+}
+
+func (c *shellCommand) shouldOfferEmptyStartupPicker(cwd string) bool {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return false
+	}
+	home, err := c.home()
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(cwd) != filepath.Clean(home)
 }
 
 func (c *shellCommand) pickShellStartupMode(candidates []shellSessionCandidate, stderr io.Writer) shellStartMode {

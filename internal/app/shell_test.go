@@ -203,20 +203,33 @@ func TestShellDefaultSessionUsesProjectContextIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := &recordingShellRunner{}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "has-session", "-t", "repos-projmux"): errors.New("can't find session: repos-projmux"),
+		},
+	}
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:  func(string) string { return "" },
 		homeDir:    func() (string, error) { return home, nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
+		tmuxRunner: tmux,
 		getwd:      func() (string, error) { return nested, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			if len(options.Entries) != 1 || options.Entries[0].Value != shellStartupPickerValueEmpty {
+				t.Fatalf("startup picker entries = %#v, want empty session only", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: shellStartupPickerValueEmpty}, nil
+		})),
 	}
 
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "repos-projmux", "-c", project}
+	wantArgs := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", project}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
 	}
@@ -235,6 +248,12 @@ func TestShellDefaultSessionUsesPROJMUXCWDProjectContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := &recordingShellRunner{}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "has-session", "-t", "repos-projmux"): errors.New("can't find session: repos-projmux"),
+		},
+	}
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv: func(name string) string {
@@ -246,14 +265,21 @@ func TestShellDefaultSessionUsesPROJMUXCWDProjectContext(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
+		tmuxRunner: tmux,
 		getwd:      func() (string, error) { return wdProject, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			if len(options.Entries) != 1 || options.Entries[0].Value != shellStartupPickerValueEmpty {
+				t.Fatalf("startup picker entries = %#v, want empty session only", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: shellStartupPickerValueEmpty}, nil
+		})),
 	}
 
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "repos-projmux", "-c", envProject}
+	wantArgs := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", envProject}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
 	}
@@ -375,6 +401,137 @@ func TestShellDefaultProjectTargetUsesProjectSnapshotCandidates(t *testing.T) {
 	wantAttach := []string{"-L", "pmx", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", project}
 	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
 		t.Fatalf("attach command = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
+	}
+}
+
+func TestShellDefaultFreshProjectShowsEmptyStartupPickerBeforeAttach(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	configPath := filepath.Join(home, "tmux.conf")
+	var order []string
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"): errors.New("can't find session: repos-projmux"),
+		},
+	}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   func(context.Context, []string, string, ...string) error { order = append(order, "attach"); return nil },
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+		getwd:        func() (string, error) { return project, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			order = append(order, "picker")
+			if options.UI != "shell-startup" {
+				t.Fatalf("startup picker UI = %q, want shell-startup", options.UI)
+			}
+			if len(options.Entries) != 1 || options.Entries[0].Value != shellStartupPickerValueEmpty {
+				t.Fatalf("startup picker entries = %#v, want empty session only", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: shellStartupPickerValueEmpty}, nil
+		})),
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !reflect.DeepEqual(order, []string{"picker", "attach"}) {
+		t.Fatalf("order = %#v, want picker before attach", order)
+	}
+	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"}}}
+	if !reflect.DeepEqual(tmux.calls, wantCalls) {
+		t.Fatalf("tmux calls = %#v, want existing-session guard only", tmux.calls)
+	}
+}
+
+func TestShellDefaultFreshProjectPickerFailureFallsBackToAttach(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{
+		errors: map[string]error{
+			shellTmuxCallKey("tmux", "-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"): errors.New("can't find session: repos-projmux"),
+		},
+	}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   foreground.run,
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+		getwd:        func() (string, error) { return project, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{}, errors.New("picker unavailable")
+		})),
+	}
+
+	var stderr bytes.Buffer
+	if err := cmd.Run([]string{"--socket", "pmx", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "startup picker skipped: picker unavailable") {
+		t.Fatalf("stderr = %q, want picker failure diagnostic", stderr.String())
+	}
+	wantAttach := []string{"-L", "pmx", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", project}
+	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
+		t.Fatalf("attach command = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
+	}
+}
+
+func TestShellDefaultFreshProjectExistingSessionSkipsEmptyStartupPicker(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "projmux")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	foreground := &recordingShellRunner{}
+	configPath := filepath.Join(home, "tmux.conf")
+	tmux := &scriptedShellTmuxRunner{}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		writeFile:    os.WriteFile,
+		runCommand:   foreground.run,
+		tmuxRunner:   tmux,
+		sessionStore: func() (sessionstate.Store, error) { return store, nil },
+		getwd:        func() (string, error) { return project, nil },
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("startup picker should not run for existing fresh project session: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
+	}
+
+	if err := cmd.Run([]string{"--socket", "pmx", "--config", configPath, "--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	wantCalls := []recordedTmuxCall{{name: "tmux", args: []string{"-L", "pmx", "-f", configPath, "has-session", "-t", "repos-projmux"}}}
+	if !reflect.DeepEqual(tmux.calls, wantCalls) {
+		t.Fatalf("tmux calls = %#v, want existing-session guard only", tmux.calls)
+	}
+	if foreground.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", foreground.name)
 	}
 }
 

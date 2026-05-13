@@ -50,11 +50,13 @@ fresh apply also removes the current saved snapshot for that session, preventing
 an older saved row from reappearing in the next startup picker.
 
 `projmux shell` opens an interactive startup picker before creating a new app
-session when auto-restore is enabled and there is at least one saved or preset
-startup candidate. The picker lists the saved snapshot first, then project
-presets alphabetically, then an empty-session row. Choosing a saved snapshot
-uses the same saved replay path as auto-restore, choosing a preset converts it
-to a session-state snapshot and replays it, and choosing empty keeps the prior
+session when auto-restore is enabled and saved snapshot or project layout
+candidates exist. Fresh project targets with no saved snapshot or layout preset
+also show the empty-session row as a blocking startup decision. When saved or
+preset candidates exist, the picker lists the saved snapshot first, then project
+presets alphabetically, then empty session. Choosing a saved snapshot uses the
+same saved replay path as auto-restore, choosing a preset converts it to a
+session-state snapshot and replays it, and choosing empty keeps the prior
 empty-session behavior. Closing the picker or making no selection falls back to
 empty startup. When auto-restore is disabled, default `projmux shell` skips
 candidate lookup and the picker, then follows the normal empty attach path.
