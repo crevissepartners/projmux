@@ -311,14 +311,49 @@ func TestStatusbarClickNotifyStaleHeadSkipsFocus(t *testing.T) {
 			return nil, nil
 		},
 	}
-	store := &stubNotifyStore{listEntries: []notify.Notification{{
-		ID:      "ai:main:%2",
-		Text:    "codex: reply ready",
-		Source:  notify.SourceAI,
-		Session: "main",
-		Window:  "1",
-		Pane:    "%2",
-	}}}
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	store := &stubNotifyStore{listEntries: []notify.Notification{
+		{
+			ID:        "ai:main:%2",
+			Text:      "codex: reply ready",
+			Severity:  notify.SeverityCritical,
+			Source:    notify.SourceAI,
+			Session:   "main",
+			Window:    "1",
+			Pane:      "%2",
+			CreatedAt: now,
+		},
+		{
+			ID:        "ai:main:%2:older-info",
+			Text:      "older same-pane info",
+			Severity:  notify.SeverityInfo,
+			Source:    notify.SourceAI,
+			Session:   "main",
+			Window:    "1",
+			Pane:      "%2",
+			CreatedAt: now.Add(-time.Minute),
+		},
+		{
+			ID:        "ai:main:%2:older-critical",
+			Text:      "older same-pane critical",
+			Severity:  notify.SeverityCritical,
+			Source:    notify.SourceAI,
+			Session:   "main",
+			Window:    "1",
+			Pane:      "%2",
+			CreatedAt: now.Add(-2 * time.Minute),
+		},
+		{
+			ID:        "ai:main:%3:older-info",
+			Text:      "older other-pane info",
+			Severity:  notify.SeverityInfo,
+			Source:    notify.SourceAI,
+			Session:   "main",
+			Window:    "1",
+			Pane:      "%3",
+			CreatedAt: now.Add(-3 * time.Minute),
+		},
+	}}
 	cmd := newStatusbarTestCommand(runner, store)
 
 	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -332,8 +367,9 @@ func TestStatusbarClickNotifyStaleHeadSkipsFocus(t *testing.T) {
 	if !sawTmuxDisplayMessage(runner.calls, notifyAckOnlyToast(notifyDisplayStale)) {
 		t.Fatalf("missing stale ack-only toast; calls = %#v", runner.calls)
 	}
-	if store.ackedID != "ai:main:%2" {
-		t.Fatalf("ackedID = %q, want %q (stale fast path must still ack so the row clears)", store.ackedID, "ai:main:%2")
+	wantAcked := []string{"ai:main:%2", "ai:main:%2:older-info"}
+	if !equalStringSlices(store.ackedIDs, wantAcked) {
+		t.Fatalf("ackedIDs = %#v, want %#v (stale fast path must clear selected row and older same-pane non-critical AI rows)", store.ackedIDs, wantAcked)
 	}
 }
 
