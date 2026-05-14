@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/crevissepartners/projmux/compare/v0.6.2...v0.6.3) (2026-05-14)
+
+
+### Bug Fixes
+
+* clean up notify sidebar keymap ([#294](https://github.com/crevissepartners/projmux/issues/294)) ([ef11881](https://github.com/crevissepartners/projmux/commit/ef118812156a3724c36ae7f466451cddcfd142ba))
+
 ## [0.6.2](https://github.com/crevissepartners/projmux/compare/v0.6.1...v0.6.2) (2026-05-14)
 
 
