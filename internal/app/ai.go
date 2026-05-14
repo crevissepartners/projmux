@@ -583,24 +583,40 @@ func (c *aiCommand) resolveTopicPaneID(explicit string) (string, error) {
 	return "", errors.New("ai topic requires a tmux pane (set --pane or run inside tmux)")
 }
 
+type aiSplitInvocation struct {
+	direction    string
+	agent        string
+	agentSet     bool
+	execOverride []string
+}
+
 func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
-	direction, err := parseAISplitDirection(args, "ai split", stderr)
+	invocation, err := parseAISplitInvocation(args, stderr)
 	if err != nil {
 		return err
+	}
+	if invocation.agentSet {
+		if invocation.agent == aiModeSelective {
+			return c.openPickerToggle(invocation.direction)
+		}
+		if invocation.agent == aiModeShell && len(invocation.execOverride) == 0 {
+			return c.runShellSplit(invocation.direction)
+		}
+		return c.runAgentSplitWithOverride(invocation.agent, invocation.direction, invocation.execOverride)
 	}
 
 	mode := c.getMode()
 	switch mode {
 	case aiModeClaude:
-		return c.runAgentSplit(aiModeClaude, direction)
+		return c.runAgentSplit(aiModeClaude, invocation.direction)
 	case aiModeCodex:
-		return c.runAgentSplit(aiModeCodex, direction)
+		return c.runAgentSplit(aiModeCodex, invocation.direction)
 	case aiModeShell:
-		return c.runShellSplit(direction)
+		return c.runShellSplit(invocation.direction)
 	case aiModeSelective:
-		return c.openPickerToggle(direction)
+		return c.openPickerToggle(invocation.direction)
 	default:
-		return c.openPickerToggle(direction)
+		return c.openPickerToggle(invocation.direction)
 	}
 }
 
@@ -827,19 +843,18 @@ func (c *aiCommand) openPickerToggle(direction string) error {
 }
 
 func (c *aiCommand) runAgentSplit(mode, direction string) error {
-	if mode == aiModeShell {
-		return c.runShellSplit(direction)
-	}
-	agentBin := c.findAgentBinary(mode)
-	if agentBin == "" {
-		_ = c.displayMessage("selected runner is not installed: " + mode)
-		return fmt.Errorf("selected runner is not installed: %s", mode)
-	}
+	return c.runAgentSplitWithOverride(mode, direction, nil)
+}
 
+func (c *aiCommand) runAgentSplitWithOverride(mode, direction string, execOverride []string) error {
+	execArgv, pathPrepend, err := c.agentExecArgv(mode, execOverride)
+	if err != nil {
+		return err
+	}
 	targetPane := c.resolveTargetPane()
 	contextDir := c.resolveAgentContextDir(mode)
 	title := c.buildAgentTitle(mode, contextDir)
-	command := c.agentLaunchCommand(mode, agentBin, contextDir, title)
+	command := c.agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title, execArgv)
 	commandShell := posixCommandShell(c.lookupEnv)
 	if targetPane == "" {
 		return c.run(commandShell, "-lc", command)
@@ -863,6 +878,21 @@ func (c *aiCommand) runAgentSplit(mode, direction string) error {
 	c.applySplitLayout(targetPane, direction)
 	c.startAIWatchTitle(paneID)
 	return nil
+}
+
+func (c *aiCommand) agentExecArgv(mode string, execOverride []string) ([]string, string, error) {
+	if len(execOverride) > 0 {
+		return append([]string(nil), execOverride...), "", nil
+	}
+	if mode == aiModeShell {
+		return loginShellCommand(defaultInteractiveShell(c.lookupEnv)), "", nil
+	}
+	agentBin := c.findAgentBinary(mode)
+	if agentBin == "" {
+		_ = c.displayMessage("selected runner is not installed: " + mode)
+		return nil, "", fmt.Errorf("selected runner is not installed: %s", mode)
+	}
+	return []string{agentBin}, filepath.Dir(agentBin), nil
 }
 
 func (c *aiCommand) runShellSplit(direction string) error {
@@ -1116,22 +1146,31 @@ func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
 }
 
 func (c *aiCommand) agentLaunchCommand(mode, agentBin, contextDir, title string) string {
+	return c.agentLaunchCommandForArgv(mode, filepath.Dir(agentBin), contextDir, title, []string{agentBin})
+}
+
+func (c *aiCommand) agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title string, execArgv []string) string {
 	titleVar := "__" + mode + "_title"
 	parts := []string{}
 	// nvm/fnm/asdf/volta colocate `node` with the agent CLI; non-interactive
 	// login shells may not source their init scripts, so without this prepend
 	// the agent's `env node` shebang can fail and the pane exits immediately.
-	if binDir := filepath.Dir(agentBin); binDir != "" && binDir != "." && binDir != "/" {
-		parts = append(parts, "export PATH="+shellQuote(binDir)+`":$PATH"`)
+	if pathPrepend != "" && pathPrepend != "." && pathPrepend != "/" {
+		parts = append(parts, "export PATH="+shellQuote(pathPrepend)+`":$PATH"`)
 	}
 	if contextDir != "" {
 		parts = append(parts, "cd "+shellQuote(contextDir))
+	}
+	execParts := make([]string, 0, len(execArgv)+1)
+	execParts = append(execParts, "exec")
+	for _, arg := range execArgv {
+		execParts = append(execParts, shellQuote(arg))
 	}
 	parts = append(parts,
 		titleVar+"="+shellQuote(title),
 		`printf '\033]0;%s\007' "$`+titleVar+`"`,
 		`if [[ -n "${TMUX:-}" ]]; then tmux select-pane -T "$`+titleVar+`" >/dev/null 2>&1 || true; fi`,
-		"exec "+shellQuote(agentBin),
+		strings.Join(execParts, " "),
 	)
 	return strings.Join(parts, " && ")
 }
@@ -1611,6 +1650,67 @@ func parseAISplitDirection(args []string, command string, stderr io.Writer) (str
 		printAIUsage(stderr)
 		return "", fmt.Errorf("%s direction must be right or down", command)
 	}
+}
+
+func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation, error) {
+	invocation := aiSplitInvocation{direction: "right"}
+	positionals := make([]string, 0, 1)
+	overrideSeen := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--":
+			overrideSeen = true
+			invocation.execOverride = append([]string(nil), args[i+1:]...)
+			i = len(args)
+		case arg == "--agent":
+			if i+1 >= len(args) {
+				printAIUsage(stderr)
+				return aiSplitInvocation{}, errors.New("ai split --agent requires a value")
+			}
+			invocation.agent = strings.TrimSpace(args[i+1])
+			invocation.agentSet = true
+			i++
+		case strings.HasPrefix(arg, "--agent="):
+			invocation.agent = strings.TrimSpace(strings.TrimPrefix(arg, "--agent="))
+			invocation.agentSet = true
+		case strings.HasPrefix(arg, "-"):
+			printAIUsage(stderr)
+			return aiSplitInvocation{}, fmt.Errorf("unknown ai split flag: %s", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if overrideSeen && len(invocation.execOverride) == 0 {
+		printAIUsage(stderr)
+		return aiSplitInvocation{}, errors.New("ai split -- requires an argv command")
+	}
+	if overrideSeen && strings.TrimSpace(invocation.execOverride[0]) == "" {
+		printAIUsage(stderr)
+		return aiSplitInvocation{}, errors.New("ai split argv override requires non-empty command")
+	}
+	if overrideSeen && !invocation.agentSet {
+		printAIUsage(stderr)
+		return aiSplitInvocation{}, errors.New("ai split argv override requires --agent")
+	}
+	direction, err := parseAISplitDirection(positionals, "ai split", stderr)
+	if err != nil {
+		return aiSplitInvocation{}, err
+	}
+	invocation.direction = direction
+	if invocation.agentSet {
+		switch invocation.agent {
+		case aiModeClaude, aiModeCodex, aiModeShell, aiModeSelective:
+		default:
+			printAIUsage(stderr)
+			return aiSplitInvocation{}, fmt.Errorf("unknown ai split agent: %s", invocation.agent)
+		}
+		if invocation.agent == aiModeSelective && len(invocation.execOverride) > 0 {
+			printAIUsage(stderr)
+			return aiSplitInvocation{}, errors.New("ai split --agent selective cannot use argv override")
+		}
+	}
+	return invocation, nil
 }
 
 func trimAIStatePrefix(title string) string {
@@ -2323,7 +2423,7 @@ func parsePositiveInt(value string) int {
 
 func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux ai split [right|down]")
+	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|shell|selective>] [right|down] [-- <argv>...]")
 	fmt.Fprintln(w, "  projmux ai picker [--inside] [--shell] [right|down]")
 	fmt.Fprintln(w, "  projmux ai settings [--get|--set <mode>]")
 	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")

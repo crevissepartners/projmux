@@ -352,6 +352,240 @@ func TestAgentLaunchCommandPrependsAgentBinDirToPath(t *testing.T) {
 	}
 }
 
+func TestAISplitAgentFlagLaunchesClaudeWithoutChangingCodexDefault(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claudeBin := writeExecutable(t, filepath.Join(home, "bin", "claude"))
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"claude": claudeBin}, "%7", "%9")
+
+	if err := cmd.Run([]string{"split", "--agent", "claude", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent claude error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if got, want := readModeFile(t, home), "codex\n"; got != want {
+		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeClaude}) {
+		t.Fatalf("commands = %#v, want Claude AI pane metadata", commands)
+	}
+	if !containsAICommandArgSubstring(commands, "exec "+shellQuote(claudeBin)) {
+		t.Fatalf("commands = %#v, want Claude exec", commands)
+	}
+}
+
+func TestAISplitAgentFlagLaunchesCodexWithoutChangingClaudeDefault(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeClaude); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"codex": codexBin}, "%7", "%9")
+
+	if err := cmd.Run([]string{"split", "--agent=codex", "down"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent codex error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if got, want := readModeFile(t, home), "claude\n"; got != want {
+		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-v", "-t", "%7", "-c", work, "/bin/bash", "-lc"}) {
+		t.Fatalf("commands = %#v, want vertical Codex split", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeCodex}) {
+		t.Fatalf("commands = %#v, want Codex AI pane metadata", commands)
+	}
+	if !containsAICommandArgSubstring(commands, "exec "+shellQuote(codexBin)) {
+		t.Fatalf("commands = %#v, want Codex exec", commands)
+	}
+}
+
+func TestAISplitAgentArgvOverrideKeepsPaneSetupWatcherAndLayout(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	stubAISplitReadCommand(cmd, home, work, nil, "%7", "%9")
+
+	err := cmd.Run([]string{"split", "--agent", "codex", "right", "--", "codex", "--model", "gpt-5.1 codex", "quote'd"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run split --agent codex -- argv error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	wantExec := "exec 'codex' '--model' 'gpt-5.1 codex' 'quote'\\''d'"
+	if !containsAICommandArgSubstring(commands, wantExec) {
+		t.Fatalf("commands = %#v, want argv override exec %q", commands, wantExec)
+	}
+	for _, want := range [][]string{
+		{"set-option", "-p", "-t", "%9", aiPaneManagedOption, "1"},
+		{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeCodex},
+		{"set-option", "-p", "-t", "%9", aiPaneContextOption, work},
+		{"set-option", "-p", "-t", "%9", aiPaneTopicOption, "repo"},
+		{"set-option", "-p", "-t", "%9", aiPaneStateOption, "idle"},
+		{"run-shell", "-b", "'/tmp/projmux' ai watch-title '%9'"},
+		{"resize-pane", "-t", "%7", "-x", "40"},
+		{"resize-pane", "-t", "%9", "-x", "40"},
+	} {
+		if !containsAICommandArgs(commands, "tmux", want) {
+			t.Fatalf("commands = %#v, want command %v", commands, want)
+		}
+	}
+	if containsAICommand(commands, "command") {
+		t.Fatalf("commands = %#v, did not expect binary lookup for argv override", commands)
+	}
+}
+
+func TestAISplitAgentSelectiveDelegatesToPickerWithoutChangingDefault(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.executable = func() (string, error) { return "/tmp/projmux bin", nil }
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{client_tty}"}) {
+			return []byte("/dev/pts/7\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "selective", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent selective error = %v", err)
+	}
+
+	if got, want := readModeFile(t, home), "codex\n"; got != want {
+		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+	want := []recordedAICommand{{
+		name: "/tmp/projmux bin",
+		args: []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-picker-right"},
+	}}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAISplitAgentShellUsesPlainShellSplit(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "TMUX":
+			return "/tmp/tmux"
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		case "TMUX_SPLIT_TARGET_PANE":
+			return "%7"
+		case "SHELL":
+			return "/bin/bash"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
+			return []byte("%7\n"), nil
+		}
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-t", "%7", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}) {
+			return []byte("%7\t0\t0\t40\t10\n%9\t0\t11\t40\t10\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "shell", "down"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent shell error = %v", err)
+	}
+
+	want := []recordedAICommand{
+		{name: "tmux", args: []string{"split-window", "-v", "-t", "%7", "-c", work, "/bin/bash", "-l"}},
+		{name: "tmux", args: []string{"resize-pane", "-t", "%7", "-y", "10"}},
+		{name: "tmux", args: []string{"resize-pane", "-t", "%9", "-y", "10"}},
+	}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+	for _, forbidden := range [][]string{
+		{"set-option", "-p", "-t", "%9", aiPaneManagedOption, "1"},
+		{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeShell},
+		{"run-shell", "-b", "'/tmp/projmux' ai watch-title '%9'"},
+	} {
+		if containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", forbidden) {
+			t.Fatalf("commands = %#v, did not expect managed AI command %v", cmdRecorder(cmd).commands, forbidden)
+		}
+	}
+}
+
+func TestAISplitAgentFlagUsageErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "invalid agent",
+			args: []string{"split", "--agent", "openai", "right"},
+			want: "unknown ai split agent: openai",
+		},
+		{
+			name: "selective cannot use argv override",
+			args: []string{"split", "--agent", "selective", "right", "--", "codex"},
+			want: "ai split --agent selective cannot use argv override",
+		},
+		{
+			name: "argv override requires agent",
+			args: []string{"split", "right", "--", "codex"},
+			want: "ai split argv override requires --agent",
+		},
+		{
+			name: "argv override first arg empty",
+			args: []string{"split", "--agent", "codex", "right", "--", ""},
+			want: "ai split argv override requires non-empty command",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := testAICommand(t.TempDir())
+			stderr := &bytes.Buffer{}
+			err := cmd.Run(tt.args, &bytes.Buffer{}, stderr)
+			if err == nil {
+				t.Fatalf("Run(%v) error = nil, want usage error", tt.args)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want contains %q", err, tt.want)
+			}
+			if !strings.Contains(stderr.String(), "Usage:") {
+				t.Fatalf("stderr = %q, want usage", stderr.String())
+			}
+			if len(cmdRecorder(cmd).commands) != 0 {
+				t.Fatalf("commands = %#v, want none", cmdRecorder(cmd).commands)
+			}
+		})
+	}
+}
+
 func TestAISplitSelectiveTreatsCancelledPickerAsNoOp(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
@@ -1547,6 +1781,44 @@ func cmdRecorder(cmd *aiCommand) *aiCommandRecorder {
 	aiRecordersMu.Lock()
 	defer aiRecordersMu.Unlock()
 	return aiRecorders[cmd]
+}
+
+func stubAISplitReadCommand(cmd *aiCommand, home, work string, bins map[string]string, targetPane, newPane string) {
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		case "SHELL":
+			return "/bin/bash"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" && len(args) == 2 && args[0] == "-v" {
+			if bin := bins[args[1]]; bin != "" {
+				return []byte(bin + "\n"), nil
+			}
+			return nil, os.ErrNotExist
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+			return []byte(targetPane + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
+			return []byte(newPane + "\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", targetPane, "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
+			return []byte(targetPane + "\t0\t0\t40\t10\n" + newPane + "\t41\t0\t40\t10\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
 }
 
 func readModeFile(t *testing.T, home string) string {
