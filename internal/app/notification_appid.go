@@ -57,5 +57,10 @@ const (
 	// v3 — incremented after the handler moved from direct `wsl.exe` launch to
 	// a hidden PowerShell wrapper to avoid the visible Windows console flash on
 	// Toast click. Existing v2 markers are left orphaned for the same reason.
-	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered_v3"
+	//
+	// v4 — incremented after the hidden wrapper stopped passing `%1` after
+	// `-Command`, which PowerShell parsed as command text and broke URI query
+	// separators. Existing v3 markers are left orphaned so affected servers
+	// install the ProcessStartInfo/CreateNoWindow wrapper on their next Notify.
+	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered_v4"
 )

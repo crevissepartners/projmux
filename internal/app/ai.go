@@ -1955,12 +1955,47 @@ try {
 }
 
 func buildWSLURIProtocolHandlerCommand(distro, binaryPath string) string {
-	launcher := `& { param([string]$uri) Start-Process -WindowStyle Hidden -FilePath 'wsl.exe' -ArgumentList @('-d', ` + psSingleQuoted(distro) + `, '--exec', ` + psSingleQuoted(binaryPath) + `, 'focus', '--uri', $uri) }`
-	return `powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "` + launcher + `" "%1"`
+	args := strings.Join([]string{
+		windowsCommandLineArg("-d"),
+		windowsCommandLineArg(distro),
+		windowsCommandLineArg("--exec"),
+		windowsCommandLineArg(binaryPath),
+		windowsCommandLineArg("focus"),
+		windowsCommandLineArg("--uri"),
+	}, " ")
+	launcher := `$uri = '%1'; $psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = 'wsl.exe'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden; $psi.Arguments = ` + psSingleQuoted(args+` "`) + ` + $uri + ` + psSingleQuoted(`"`) + `; [System.Diagnostics.Process]::Start($psi) | Out-Null`
+	return `powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "` + launcher + `"`
 }
 
 func psSingleQuoted(value string) string {
 	return "'" + psEscape(value) + "'"
+}
+
+func windowsCommandLineArg(value string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	backslashes := 0
+	for _, r := range value {
+		switch r {
+		case '\\':
+			backslashes++
+		case '"':
+			b.WriteString(strings.Repeat("\\", backslashes*2+1))
+			b.WriteRune(r)
+			backslashes = 0
+		default:
+			if backslashes > 0 {
+				b.WriteString(strings.Repeat("\\", backslashes))
+				backslashes = 0
+			}
+			b.WriteRune(r)
+		}
+	}
+	if backslashes > 0 {
+		b.WriteString(strings.Repeat("\\", backslashes*2))
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func buildRegisterToastAppIDPowerShell(appID, displayName, iconURI string) string {

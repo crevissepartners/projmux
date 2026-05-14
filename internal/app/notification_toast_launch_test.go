@@ -63,7 +63,7 @@ func TestBuildRegisterURIProtocolPowerShell_WritesAllRegistryKeys(t *testing.T) 
 		`Set-ItemProperty -Path $regPath -Name '(Default)' -Value 'URL:projmux'`,
 		"Set-ItemProperty -Path $regPath -Name 'URL Protocol' -Value ''",
 		`powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass`,
-		`Start-Process -WindowStyle Hidden -FilePath ''wsl.exe''`,
+		`$psi.CreateNoWindow = $true`,
 		`Set-ItemProperty -Path $cmdPath -Name '(Default)'`,
 	}
 	for _, want := range wantSubstrings {
@@ -83,7 +83,10 @@ func TestBuildRegisterURIProtocolPowerShell_UsesHiddenLauncherNotDirectWSLComman
 	}
 	for _, want := range []string{
 		`powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass`,
-		`Start-Process -WindowStyle Hidden -FilePath ''wsl.exe''`,
+		`$psi.FileName = ''wsl.exe''`,
+		`$psi.UseShellExecute = $false`,
+		`$psi.CreateNoWindow = $true`,
+		`$psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing hidden launcher intent %q:\n%s", want, script)
@@ -102,14 +105,14 @@ func TestBuildWSLURIProtocolHandlerCommand_BypassesShellWithExecAndAbsolutePath(
 	// `-- projmux focus` form shipped in PR #178 broke on the very first
 	// `&`-bearing toast click; do not let it come back.
 	command := buildWSLURIProtocolHandlerCommand("Ubuntu-24.04", "/home/me/go/bin/projmux")
-	wantLaunch := `Start-Process -WindowStyle Hidden -FilePath 'wsl.exe' -ArgumentList @('-d', 'Ubuntu-24.04', '--exec', '/home/me/go/bin/projmux', 'focus', '--uri', $uri)`
+	wantLaunch := `$psi.Arguments = '"-d" "Ubuntu-24.04" "--exec" "/home/me/go/bin/projmux" "focus" "--uri" "' + $uri + '"'`
 	if !strings.Contains(command, wantLaunch) {
 		t.Fatalf("expected hidden launch command %q in command:\n%s", wantLaunch, command)
 	}
 	if strings.Contains(command, `-- projmux focus`) {
 		t.Fatalf("command must not use the legacy `-- projmux focus` form (shell-interpreted, breaks on `&`):\n%s", command)
 	}
-	if !strings.Contains(command, "'--exec'") {
+	if !strings.Contains(command, `"--exec"`) {
 		t.Fatalf("command must use `--exec` to bypass the login shell:\n%s", command)
 	}
 }
@@ -119,9 +122,8 @@ func TestBuildWSLURIProtocolHandlerCommand_ForwardsURIAsArgument(t *testing.T) {
 
 	command := buildWSLURIProtocolHandlerCommand("Ubuntu-24.04", "/home/me/go/bin/projmux")
 	for _, want := range []string{
-		`param([string]$uri)`,
-		`'focus', '--uri', $uri`,
-		`"%1"`,
+		`$uri = '%1'`,
+		`"focus" "--uri" "' + $uri + '"'`,
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("handler command missing URI forwarding token %q:\n%s", want, command)
@@ -129,9 +131,10 @@ func TestBuildWSLURIProtocolHandlerCommand_ForwardsURIAsArgument(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		`--uri "%1"`,
-		`--uri '%1'`,
+		`--uri" "%1`,
 		`$uri = "%1"`,
-		`$uri = '%1'`,
+		`param([string]$uri)`,
+		`" "%1"`,
 	} {
 		if strings.Contains(command, forbidden) {
 			t.Fatalf("handler command shell-interpolates %%1 with %q:\n%s", forbidden, command)
@@ -146,7 +149,7 @@ func TestBuildWSLURIProtocolHandlerCommand_PSEscapesDistro(t *testing.T) {
 	// WSL distro registration) must be PowerShell-escaped to keep the
 	// quoted string literal balanced.
 	command := buildWSLURIProtocolHandlerCommand("weird's-distro", "/home/me/go/bin/projmux")
-	if !strings.Contains(command, `'-d', 'weird''s-distro', '--exec'`) {
+	if !strings.Contains(command, `"weird''s-distro"`) {
 		t.Fatalf("expected single-quote-escaped distro in launch command; got:\n%s", command)
 	}
 }
@@ -158,7 +161,17 @@ func TestBuildWSLURIProtocolHandlerCommand_PSEscapesBinaryPath(t *testing.T) {
 	// the quoted PowerShell literal so a pathological install location can't
 	// break the registration script.
 	command := buildWSLURIProtocolHandlerCommand("Ubuntu-24.04", "/home/o'brien/bin/projmux")
-	if !strings.Contains(command, `'--exec', '/home/o''brien/bin/projmux', 'focus'`) {
+	if !strings.Contains(command, `"/home/o''brien/bin/projmux"`) {
 		t.Fatalf("expected single-quote-escaped binary path in launch command; got:\n%s", command)
+	}
+}
+
+func TestWindowsCommandLineArgQuotesSpacesAndQuotes(t *testing.T) {
+	t.Parallel()
+
+	got := windowsCommandLineArg(`C:\Program Files\projmux "test"\`)
+	want := `"C:\Program Files\projmux \"test\"\\"`
+	if got != want {
+		t.Fatalf("windowsCommandLineArg() = %q, want %q", got, want)
 	}
 }
