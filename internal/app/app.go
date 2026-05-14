@@ -73,6 +73,7 @@ type App struct {
 	popupWaitKey *popupWaitKeyCommand
 	preview      *previewCommand
 	prune        *pruneCommand
+	quit         *quitCommand
 	sessions     *sessionsCommand
 	sessionState *sessionStateCommand
 	sessionPopup *sessionPopupCommand
@@ -95,6 +96,7 @@ func New() *App {
 	ai := newAICommand()
 	switcher := newSwitchCommand()
 	update := newUpdateCommand()
+	quit := newQuitCommand()
 	return &App{
 		ai:           ai,
 		attention:    newAttentionCommand(),
@@ -110,10 +112,11 @@ func New() *App {
 		popupWaitKey: newPopupWaitKeyCommand(),
 		preview:      newPreviewCommand(),
 		prune:        newPruneCommand(),
+		quit:         quit,
 		sessions:     newSessionsCommand(),
 		sessionState: newSessionStateCommand(),
 		sessionPopup: newSessionPopupCommand(),
-		settings:     newSettingsCommand(ai, switcher, update),
+		settings:     newSettingsCommand(ai, switcher, update, quit),
 		setup:        newSetupCommand(),
 		shell:        newShellCommand(update),
 		status:       newStatusCommand(),
@@ -168,6 +171,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.preview.Run(args[1:], stdout, stderr)
 	case "prune":
 		return a.prune.Run(args[1:], stdout, stderr)
+	case "quit":
+		return a.quit.Run(args[1:], stdout, stderr)
 	case "sessions":
 		return a.sessions.Run(args[1:], stdout, stderr)
 	case "session-state":
@@ -227,6 +232,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
 	fmt.Fprintln(w, "  prune     Trim stale tmux lifecycle state")
+	fmt.Fprintln(w, "  quit      Quit the app-owned projmux tmux runtime")
 	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
 	fmt.Fprintln(w, "  session-state  Inspect and manage saved tmux session snapshots")
 	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")

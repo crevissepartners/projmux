@@ -3277,11 +3277,15 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	if !hasEntryValue(aboutOptions.Entries, settingsUpdateApply) {
 		t.Fatalf("settings about entries = %#v, want update apply action", aboutOptions.Entries)
 	}
+	if !hasEntryValue(aboutOptions.Entries, settingsQuitOpen) {
+		t.Fatalf("settings about entries = %#v, want quit action", aboutOptions.Entries)
+	}
 	for _, want := range []string{
 		"projmux " + version.String(),
 		"https://github.com/crevissepartners/projmux",
 		"Update Now",
 		"Check Updates",
+		"Quit projmux",
 		latest,
 		"update_available",
 		"Installer",
@@ -3301,6 +3305,46 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		if !hasEntryLabelContaining(aboutOptions.Entries, want) {
 			t.Fatalf("settings about entries = %#v, want label containing %q", aboutOptions.Entries, want)
 		}
+	}
+}
+
+func TestSettingsAboutQuitRowRoutesThroughQuitPicker(t *testing.T) {
+	t.Parallel()
+
+	tmuxRunner := &recordingTmuxRunner{}
+	var quitOptions intpickercompat.Options
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAbout}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsQuitOpen}},
+		{observe: func(o intpickercompat.Options) { quitOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: quitActionCancel}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+		{reply: intpickercompat.Result{}},
+	})
+	quit := &quitCommand{
+		runner:       tmuxRunner,
+		nativePicker: native,
+	}
+	cmd := &settingsCommand{
+		ai:           testAICommand(t.TempDir()),
+		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		update:       nil,
+		quit:         quit,
+		runner:       runner,
+		nativePicker: native,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if quitOptions.UI != "quit" {
+		t.Fatalf("quit options UI = %q, want quit", quitOptions.UI)
+	}
+	if !hasEntryValue(quitOptions.Entries, quitActionQuit) || !hasEntryValue(quitOptions.Entries, quitActionCancel) {
+		t.Fatalf("quit options entries = %#v, want quit and cancel actions", quitOptions.Entries)
+	}
+	if len(tmuxRunner.calls) != 0 {
+		t.Fatalf("about quit row caused tmux calls before explicit quit selection: %#v", tmuxRunner.calls)
 	}
 }
 
