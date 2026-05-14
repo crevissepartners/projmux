@@ -22,7 +22,11 @@ npm install -g projmux
 projmux shell
 ```
 
-![projmux shell project sidebar demo](docs/assets/projmux-shell-sidebar.gif)
+<p align="center">
+  <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI attention demo" width="820">
+  <br>
+  <em>An agent finishes in another project. Open notifications, select it, and jump straight back.</em>
+</p>
 
 ## Why
 
@@ -100,6 +104,7 @@ For update behavior by installer type, see [Upgrading](docs/upgrading.md).
 - [Hooks](docs/hooks.md)
 - [Usage tracking](docs/usage-tracking.md)
 - [Agent Workflow](docs/agent-workflow.md)
+- [README Hero GIF Recording](docs/readme-hero-gif-recording.md)
 
 ## Development
 

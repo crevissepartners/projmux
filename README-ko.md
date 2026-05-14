@@ -12,7 +12,11 @@ attention까지 함께 다루는 터미널 workspace 도구입니다.
 
 [English README](README.md)
 
-![projmux shell project sidebar demo](docs/assets/projmux-shell-sidebar.gif)
+<p align="center">
+  <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI attention demo" width="820">
+  <br>
+  <em>다른 프로젝트에서 일하는 동안 agent 작업이 끝나면 notification에서 바로 해당 pane으로 돌아갑니다.</em>
+</p>
 
 ## 무엇인가
 
@@ -88,6 +92,7 @@ projmux shell
 - [Hooks](docs/hooks.md)
 - [Usage tracking](docs/usage-tracking.md)
 - [Agent Workflow](docs/agent-workflow.md)
+- [README Hero GIF Recording](docs/readme-hero-gif-recording.md)
 
 ## 개발
 
