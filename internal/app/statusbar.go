@@ -582,8 +582,7 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 	// and the user would be stuck repeatedly toasting the same row. The toast
 	// remains as a UX signal that the focus side of the click was skipped.
 	if display := c.classifyHeadDisplayBestEffort(head); display != notifyDisplayLive {
-		ackErr := store.Ack(head.ID)
-		if ackErr != nil {
+		if ackErr := ackFocusedNotification(store, head, entries); ackErr != nil {
 			return c.runTmux(stderr, "display-message", fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(display), focusFailureSummary(ackErr)))
 		}
 		return c.runTmux(stderr, "display-message", notifyAckOnlyToast(display))
@@ -616,7 +615,7 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		// entry so the user can retry, and surface the reason as a toast instead
 		// of a tmux error popup.
 		if isFocusTargetUnresolved(runErr) {
-			if err := store.Ack(head.ID); err != nil {
+			if err := ackFocusedNotification(store, head, entries); err != nil {
 				return c.runTmux(stderr, "display-message", fmt.Sprintf("notify target gone; ack failed: %s", focusFailureSummary(err)))
 			}
 			return c.runTmux(stderr, "display-message", "notify target gone; cleared")
