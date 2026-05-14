@@ -30,7 +30,7 @@ const (
 	// WSL. The scheme is shared across all environments — only WSL +
 	// Windows Terminal users actually register the handler today (other
 	// platforms keep the in-app focus path). The handler command we register
-	// launches a hidden PowerShell wrapper which then runs
+	// launches a GUI-subsystem WScript wrapper which then runs
 	// `wsl.exe -d <distro> --exec <abs-binary-path> focus --uri <uri>`.
 	// `--exec` bypasses the user's login shell so URI query separators (`&`)
 	// don't get parsed as background-job operators by zsh/bash.
@@ -62,5 +62,9 @@ const (
 	// `-Command`, which PowerShell parsed as command text and broke URI query
 	// separators. Existing v3 markers are left orphaned so affected servers
 	// install the ProcessStartInfo/CreateNoWindow wrapper on their next Notify.
-	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered_v4"
+	//
+	// v5 — incremented after the first process in the protocol command moved
+	// from console-subsystem PowerShell to GUI-subsystem WScript because
+	// PowerShell itself could still flash before hiding its window.
+	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered_v5"
 )

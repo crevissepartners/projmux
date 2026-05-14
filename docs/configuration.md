@@ -279,7 +279,7 @@ gated here.
 
 Click activation is wired only for `raise`. The `projmux://` URI handler is
 registered on the first `raise` Notify of each tmux server (gated by the
-`@projmux_uri_protocol_registered_v4` marker). The
+`@projmux_uri_protocol_registered_v5` marker). The
 mode only controls whether a toast fires at all and whether to follow it
 up with an on-push auto-raise.
 
@@ -319,13 +319,13 @@ the first time a Toast is dispatched on each tmux server. Clicking the
 toast hands control back to projmux inside WSL via the registered command:
 
 ```text
-powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "<hidden launcher>"
+wscript.exe //B //Nologo "%LOCALAPPDATA%\projmux\projmux-uri-handler.vbs" "%1"
 ```
 
-The hidden launcher stores the substituted `%1` URI in a PowerShell variable,
-then starts `wsl.exe` through `System.Diagnostics.ProcessStartInfo` with
-`UseShellExecute=false` and `CreateNoWindow=true`. Its argv semantics are
-equivalent to:
+Registration writes the VBScript launcher under `%LOCALAPPDATA%\projmux`.
+The launcher receives `%1` as a WScript argument, quotes it as an argv value,
+and starts `wsl.exe` hidden through `WScript.Shell.Run`. Its argv semantics
+are equivalent to:
 
 ```text
 wsl.exe -d $WSL_DISTRO_NAME --exec <absolute-path-to-projmux> focus --uri <uri>
@@ -350,17 +350,17 @@ notify path so users do not configure anything:
    silently quarantines such shortcuts moments after creation, which
    leaves no AppID-tagged shortcut and breaks both the routing and the
    click path. `cmd.exe /c exit` is treated as benign and survives.
-4. The WSL handler uses a PowerShell hidden wrapper instead of launching
-   `wsl.exe` directly, avoiding the transient Windows console flash on Toast
-   click. Inside that wrapper it still uses `--exec`, not `--`.
+4. The WSL handler uses a WScript launcher instead of launching `wsl.exe` or
+   `powershell.exe` directly, avoiding the transient Windows console flash on
+   Toast click. Inside that launcher it still uses `--exec`, not `--`.
    `wsl.exe -- <cmd>` routes its tail through the user's login shell, which
    parses `&` query-string separators as background-job operators (zsh emits
    `parse error near '&'`). `--exec` skips the shell and invokes the binary
-   directly. The `%1` URI is assigned inside a PowerShell single-quoted
-   literal before the `wsl.exe` argument string is built, so `&` query
-   separators are data instead of PowerShell or shell syntax. The absolute WSL
-   filesystem path to the binary is captured at registration so PATH does not
-   need to be populated under `--exec`.
+   directly. The `%1` URI is passed as a WScript argument and then quoted as
+   the `--uri` argv value, so `&` query separators are data instead of
+   PowerShell or shell syntax. The absolute WSL filesystem path to the binary
+   is captured at registration so PATH does not need to be populated under
+   `--exec`.
 
 The URI carries the originating pane id and tmux socket so the click
 round-trips back to the exact pane that fired the notification, which
@@ -371,13 +371,14 @@ Registration markers and the writes involved:
 - Registry keys (HKCU): `SOFTWARE\Classes\projmux\(Default)`,
   `SOFTWARE\Classes\projmux\URL Protocol`, and
   `SOFTWARE\Classes\projmux\shell\open\command\(Default)`.
-- tmux user-option marker `@projmux_uri_protocol_registered_v4` records that
+- Launcher file: `%LOCALAPPDATA%\projmux\projmux-uri-handler.vbs`.
+- tmux user-option marker `@projmux_uri_protocol_registered_v5` records that
   registration has been attempted on this server so the script runs at most
-  once per server boot. (The v3 marker
-  `@projmux_uri_protocol_registered_v3` was bumped when the hidden wrapper
-  stopped passing `%1` after `-Command` and moved to
-  `ProcessStartInfo`/`CreateNoWindow`; existing v3 users re-register
-  transparently on the next Notify after upgrade and the orphaned v3 key
+  once per server boot. (The v4 marker
+  `@projmux_uri_protocol_registered_v4` was bumped when the protocol command's
+  first process moved from console-subsystem PowerShell to GUI-subsystem
+  WScript; existing v4 users re-register transparently on the next Notify
+  after upgrade and the orphaned v4 key
   requires no cleanup.)
 
 Limitations:

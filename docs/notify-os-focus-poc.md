@@ -327,19 +327,18 @@ machine is:
    leaves no AppID-tagged shortcut at all and breaks both the toast
    routing and (since the AppID has to be live when the toast fires) the
    click path. `cmd.exe /c exit` is benign and survives.
-4. **WSL handler command uses a hidden wrapper and keeps `--exec`**. The
-   registry protocol handler launches PowerShell with `-WindowStyle Hidden`
-   so ShellExecute does not flash a visible `wsl.exe` console window. The
-   wrapper starts `wsl.exe` through `System.Diagnostics.ProcessStartInfo` with
-   `UseShellExecute=false` and `CreateNoWindow=true`. Inside that wrapper,
+4. **WSL handler command uses a GUI launcher and keeps `--exec`**. The
+   registry protocol handler launches `wscript.exe //B //Nologo` with a
+   VBScript launcher written under `%LOCALAPPDATA%\projmux`, so ShellExecute
+   does not start a console-subsystem first process. The launcher starts
+   `wsl.exe` hidden through `WScript.Shell.Run`. Inside that launcher,
    `wsl.exe -- <cmd>` remains forbidden because it routes its tail through the
    user's default login shell, which parses `&` query-string separators as
    background-job operators (zsh emits `parse error near '&'`). `--exec` skips
    the shell and invokes the binary directly. PATH is empty under `--exec`, so
    the registry command uses the absolute WSL filesystem path captured at
-   registration time. The `%1` URI is assigned inside a PowerShell
-   single-quoted literal and then forwarded as the `--uri` argv value, not
-   shell-interpolated.
+   registration time. The `%1` URI is passed as a WScript argument and then
+   forwarded as the `--uri` argv value, not shell-interpolated.
 
 #### Lessons (so future readers don't repeat them)
 
@@ -353,10 +352,11 @@ machine is:
 - Do not use `wsl.exe -- projmux ...` in the registry handler.
   Re-introducing the login-shell hop will surface as `parse error near
   '&'` from the user's shell at click time.
-- The `@projmux_uri_protocol_registered_v4` marker exists because v3 passed
-  `%1` after `-Command`, letting PowerShell parse `&` query separators before
-  `projmux focus --uri` could run. Re-registration is idempotent so upgrades
-  from v3 transparently install the new handler — the old marker key just
+- The `@projmux_uri_protocol_registered_v5` marker exists because v4 still
+  used console-subsystem PowerShell as the protocol command's first process,
+  which could flash before `-WindowStyle Hidden` took effect. Re-registration
+  is idempotent so upgrades from v4 transparently install the new handler —
+  the old marker key just
   goes orphaned.
 
 Multi-distro dispatch (one handler per distro, or a distro-selector
