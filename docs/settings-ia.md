@@ -19,7 +19,7 @@ view-first layout:
   page is split into four chips: `Bindings`, `Diagnostic`, `Probe`, and `Init`.
 - `Settings > Notifications` owns notification delivery IA. Desktop notification
   mode, AI desktop notification dedupe duration, delivery source diagnostics,
-  in-app queue status, and
+  AI hook quiet policy, in-app queue status, and
   `PROJMUX_NOTIFY_HOOK` visibility live together without mixing mutation
   boundaries.
 - `Settings > Notifications > Desktop notifications` owns the desktop
@@ -33,6 +33,10 @@ view-first layout:
   Settings copies command text only; it does not install or remove external
   notify wiring. The legacy Codex notify source is intentionally omitted from
   Settings.
+- `Settings > Notifications > Hook quiet policy` shows Codex/Claude hook
+  runtime action values and writes only
+  `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json`. It does not
+  edit catalog `install` values or run agent install/remove commands.
 - `Settings > Labs` keeps experimental toggles, but keybindings no longer have a
   visible Labs row. The hidden compatibility action still redirects to the
   unified Keybindings page.

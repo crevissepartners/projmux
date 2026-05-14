@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
@@ -290,6 +291,72 @@ func TestIngestCodexHookCatalogOverrideEventFallsBackToQuiet(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, `"event":"ExperimentalEvent"`) || !strings.Contains(got, `"result":"quiet"`) || !strings.Contains(got, `"reason":"catalog quiet event"`) {
 		t.Fatalf("log output = %q", got)
+	}
+}
+
+func TestIngestCodexHookRuntimeQuietAppliesToKnownNotifyEvent(t *testing.T) {
+	home := t.TempDir()
+	paths := config.DefaultPaths(filepath.Join(home, ".config"), filepath.Join(home, ".local", "state"))
+	if err := config.SaveAIHookActionsFile(paths.AIHookActionsFile(), config.AIHookActionsFile{
+		Version: 1,
+		Providers: map[string]config.AIHookProviderActions{
+			aiHookProviderCodex: {Events: map[string]string{"Stop": aiHookActionQuiet}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "Stop",
+		"session_id": "codex-session",
+		"turn_id": "turn-456",
+		"cwd": "/repo/projmux"
+	}`)
+	cmd.readCommand = codexHookIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest codex-hook Stop error = %v", err)
+	}
+	if len(store.pushed) != 0 {
+		t.Fatalf("push count = %d, want 0: %#v", len(store.pushed), store.pushed)
+	}
+	var out bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest log --json error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, `"event":"Stop"`) || !strings.Contains(got, `"result":"quiet"`) || !strings.Contains(got, `"reason":"runtime quiet event"`) {
+		t.Fatalf("log output = %q", got)
+	}
+}
+
+func TestAIHookRuntimeActionDoesNotChangeInstallEvents(t *testing.T) {
+	home := t.TempDir()
+	paths := config.DefaultPaths(filepath.Join(home, ".config"), filepath.Join(home, ".local", "state"))
+	if err := config.SaveAIHookActionsFile(paths.AIHookActionsFile(), config.AIHookActionsFile{
+		Version: 1,
+		Providers: map[string]config.AIHookProviderActions{
+			aiHookProviderCodex: {Events: map[string]string{"Stop": aiHookActionQuiet}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	events, err := cmd.aiHookInstallEvents(aiHookProviderCodex)
+	if err != nil {
+		t.Fatalf("aiHookInstallEvents error = %v", err)
+	}
+	if !containsString(events, "Stop") {
+		t.Fatalf("install events = %#v, want Stop preserved despite runtime quiet", events)
+	}
+	if got := cmd.aiHookEffectiveAction(aiHookProviderCodex, "Stop"); got.Action != aiHookActionQuiet || got.Source != aiHookActionSourceRuntime {
+		t.Fatalf("effective Stop action = %#v, want runtime quiet", got)
 	}
 }
 
@@ -628,6 +695,69 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 	}
 }
 
+func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case desktopNotifyModeEnv:
+			return "notify"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#S"}):
+			return []byte("workspace\n"), nil
+		case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#W"}):
+			return []byte("editor\n"), nil
+		case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{pane_current_path}"}):
+			return []byte("/repo/projmux\n"), nil
+		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo/projmux", "rev-parse", "--is-inside-work-tree"}):
+			return []byte("true\n"), nil
+		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo/projmux", "symbolic-ref", "--quiet", "--short", "HEAD"}):
+			return []byte("feat/hooks\n"), nil
+		case name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}):
+			return []byte("/usr/bin/notify-send\n"), nil
+		default:
+			return nil, os.ErrNotExist
+		}
+	}
+
+	text := "Codex · 승인 필요 · Bash: go test ./internal/app"
+	notification := cmd.aiTextNotification("%7", text, notify.SeverityCritical)
+	if notification.Summary != text {
+		t.Fatalf("Summary = %q, want queue text %q", notification.Summary, text)
+	}
+	if !strings.Contains(notification.Body, "projmux/feat/hooks") || !strings.Contains(notification.Body, "workspace:editor") {
+		t.Fatalf("Body = %q, want project/session context", notification.Body)
+	}
+
+	if err := cmd.notifyAIText("%7", text, notify.SeverityCritical, true); err != nil {
+		t.Fatalf("notifyAIText error = %v", err)
+	}
+	var notifySend recordedAICommand
+	for _, command := range cmdRecorder(cmd).commands {
+		if command.name == "notify-send" {
+			notifySend = command
+			break
+		}
+	}
+	if notifySend.name == "" {
+		t.Fatalf("commands = %#v, want notify-send dispatch", cmdRecorder(cmd).commands)
+	}
+	if !reflect.DeepEqual(notifySend.args[len(notifySend.args)-2:], []string{text, notification.Body}) {
+		t.Fatalf("notify-send args = %#v, want summary/body from shared payload", notifySend.args)
+	}
+	toastScript := buildToastPowerShell(notification.Summary, notification.Body, notification.AppName, notification.Tag, notification.Group, "", "")
+	if !strings.Contains(toastScript, text) || !strings.Contains(toastScript, notification.Body) {
+		t.Fatalf("toast script missing shared payload:\n%s", toastScript)
+	}
+}
+
 func TestIngestClaudeUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 	home := t.TempDir()
 	store := &stubNotifyStore{}
@@ -909,6 +1039,41 @@ func TestIngestClaudeSubagentStopLogsQuietWithoutNotify(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, `"source":"claude-hook"`) || !strings.Contains(got, `"event":"SubagentStop"`) || !strings.Contains(got, `"result":"quiet"`) {
 		t.Fatalf("log output = %q", got)
+	}
+}
+
+func TestIngestClaudeRuntimeNotifyAppliesToKnownQuietEvent(t *testing.T) {
+	home := t.TempDir()
+	paths := config.DefaultPaths(filepath.Join(home, ".config"), filepath.Join(home, ".local", "state"))
+	if err := config.SaveAIHookActionsFile(paths.AIHookActionsFile(), config.AIHookActionsFile{
+		Version: 1,
+		Providers: map[string]config.AIHookProviderActions{
+			aiHookProviderClaude: {Events: map[string]string{"SubagentStop": aiHookActionNotify}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "SubagentStop",
+		"session_id": "claude-session",
+		"cwd": "/repo/projmux",
+		"subagent": {"type": "reviewer", "id": "sub-7"}
+	}`)
+	cmd.readCommand = claudeIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest claude-hook SubagentStop error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	if got := store.pushed[0].Text; got != "Claude · 서브에이전트 종료 · reviewer · sub-7" {
+		t.Fatalf("Text = %q", got)
 	}
 }
 
