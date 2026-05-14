@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.6.2](https://github.com/crevissepartners/projmux/compare/v0.6.1...v0.6.2) (2026-05-14)
+
+
+### Features
+
+* add projmux quit lifecycle ([#278](https://github.com/crevissepartners/projmux/issues/278)) ([5d302a9](https://github.com/crevissepartners/projmux/commit/5d302a9fb887f96f1ee5afababae80855fd60197))
+* **ai:** add direct split agent override ([#287](https://github.com/crevissepartners/projmux/issues/287)) ([5041d74](https://github.com/crevissepartners/projmux/commit/5041d74106227ce578b7033790a6c39c2634098e))
+* **notify:** configure AI hook quiet policy ([#276](https://github.com/crevissepartners/projmux/issues/276)) ([5b2857f](https://github.com/crevissepartners/projmux/commit/5b2857f0387e9e2922686128a7991c70f1eb8cf7))
+* **notify:** make AI OS notifications transient ([#279](https://github.com/crevissepartners/projmux/issues/279)) ([d591a6d](https://github.com/crevissepartners/projmux/commit/d591a6d160f01145255ccfbe7df5c2ab4748358f))
+* **notify:** tune AI notification consumption ([#273](https://github.com/crevissepartners/projmux/issues/273)) ([b712dc4](https://github.com/crevissepartners/projmux/commit/b712dc42c4c4bd03981b6ca8bf2d2d801c49c332))
+
+
+### Bug Fixes
+
+* **ai:** append split extra args to resolved agent ([#289](https://github.com/crevissepartners/projmux/issues/289)) ([35127f7](https://github.com/crevissepartners/projmux/commit/35127f77cdbb016b7c4dc982f4929c0fd642c223))
+* append ai split agent extra args ([35127f7](https://github.com/crevissepartners/projmux/commit/35127f77cdbb016b7c4dc982f4929c0fd642c223))
+* clip notify status body before metadata ([#282](https://github.com/crevissepartners/projmux/issues/282)) ([0bba0fe](https://github.com/crevissepartners/projmux/commit/0bba0fee4620c98a28fb21f11d1245e26f442fc6))
+* **notify:** bulk ack stale AI rows ([#280](https://github.com/crevissepartners/projmux/issues/280)) ([3b89030](https://github.com/crevissepartners/projmux/commit/3b89030a49b57b24d0b171623b90be1be4013d9a))
+* **notify:** clean old URI protocol markers ([#292](https://github.com/crevissepartners/projmux/issues/292)) ([bb1fdff](https://github.com/crevissepartners/projmux/commit/bb1fdff7c6c4a7b2ec879840e34fb0c3a1c1dd4f))
+* **notify:** hide WSL toast click handler ([#284](https://github.com/crevissepartners/projmux/issues/284)) ([4e1b577](https://github.com/crevissepartners/projmux/commit/4e1b5774835da0211f0ad65f08d787ac0b5d37aa))
+* **notify:** implement generic hook runtime notify ([#281](https://github.com/crevissepartners/projmux/issues/281)) ([2a2958f](https://github.com/crevissepartners/projmux/commit/2a2958f97edb442c081d7741b6e4eececf6175e2))
+* **notify:** keep sidebar open after row ack ([#288](https://github.com/crevissepartners/projmux/issues/288)) ([77c812b](https://github.com/crevissepartners/projmux/commit/77c812be6443c09021813d3301df380189960a9b))
+* **notify:** preserve WSL toast URI forwarding ([#285](https://github.com/crevissepartners/projmux/issues/285)) ([258e12a](https://github.com/crevissepartners/projmux/commit/258e12a9857c12ee225c16857085b73130fffb3f))
+* **notify:** route WSL toast clicks through hidden cmd ([#290](https://github.com/crevissepartners/projmux/issues/290)) ([811ce46](https://github.com/crevissepartners/projmux/commit/811ce4651f51d23696681e53750e4dde5798b54f))
+* **notify:** use WScript for WSL toast clicks ([#286](https://github.com/crevissepartners/projmux/issues/286)) ([7e3c7e7](https://github.com/crevissepartners/projmux/commit/7e3c7e71759da62603c1ff4afa82bd3bfa2eb591))
+* prompt stale project hook trust in popups ([#275](https://github.com/crevissepartners/projmux/issues/275)) ([2b5755c](https://github.com/crevissepartners/projmux/commit/2b5755ce69bb4b5b177d5b1b7c18a4af09c24579))
+* **sessionstate:** direct-start agent replay ([#283](https://github.com/crevissepartners/projmux/issues/283)) ([ae1ba21](https://github.com/crevissepartners/projmux/commit/ae1ba215476c0fb73032217ef47975f6986fb15e))
+* **settings:** flatten appearance icon picker ([b0c91f0](https://github.com/crevissepartners/projmux/commit/b0c91f09110b1ce5e6595fdbcbd130ecfb2616a9))
+* use exact tmux session targets ([#274](https://github.com/crevissepartners/projmux/issues/274)) ([c85df48](https://github.com/crevissepartners/projmux/commit/c85df48d607a15bd66ebb1489ba16515105c5d95))
+
+
+### Reverts
+
+* **settings:** expand loop-compacted presence checks back inline ([#267](https://github.com/crevissepartners/projmux/issues/267)) ([0c5e867](https://github.com/crevissepartners/projmux/commit/0c5e8675ef99b97214facac1abc9f91a032f249e))
+
 ## [0.6.1](https://github.com/crevissepartners/projmux/compare/v0.6.0...v0.6.1) (2026-05-13)
 
 
