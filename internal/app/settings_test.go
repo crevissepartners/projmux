@@ -1643,6 +1643,14 @@ func TestSettingsNotificationsHookActionsShowsAndSavesRuntimeQuietPolicy(t *test
 	if !hasEntryLabelContaining(codexEvents, "install=true") {
 		t.Fatalf("codex hook entries = %#v, want install read-only hint", codexEvents)
 	}
+	choices := cmd.aiHookActionChoiceEntries(aiHookProviderCodex, "PreToolUse")
+	if !hasEntryLabelContaining(choices, "generic in-app queue only") || !hasEntryLabelContaining(choices, "OS toast unsupported") {
+		t.Fatalf("PreToolUse action choices = %#v, want generic in-app-only hint", choices)
+	}
+	stopChoices := cmd.aiHookActionChoiceEntries(aiHookProviderCodex, "Stop")
+	if !hasEntryLabelContaining(stopChoices, "OS toast supported") {
+		t.Fatalf("Stop action choices = %#v, want specialized OS toast support hint", stopChoices)
+	}
 
 	var stdout bytes.Buffer
 	if err := cmd.setAIHookAction(aiHookProviderCodex, "Stop", aiHookActionQuiet, &stdout); err != nil {

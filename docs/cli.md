@@ -363,7 +363,12 @@ Runtime action overrides from
 precedence over catalog `action` during ingest, including known events such as
 `Stop` and `PermissionRequest`. These overrides are managed by
 `Settings > Notifications > Hook quiet policy` and do not change the catalog
-`install` field used by `projmux ai integrate codex`.
+`install` field used by `projmux ai integrate codex`. A runtime `notify`
+override for a known Codex event without a specialized handler, such as
+`PreToolUse` or `PostToolUse`, pushes a short generic in-app row like
+`Codex · PreToolUse · Bash`. Generic rows are queue/sidebar/statusbar only and
+do not dispatch OS desktop notifications, `PROJMUX_NOTIFY_HOOK`, or
+`[hooks.send-noti]`.
 
 `ingest claude-hook` is the hook-facing entrypoint for Claude Code hooks. It
 reads one JSON payload from stdin and handles the default Claude Code 2.1.140

@@ -3650,6 +3650,9 @@ func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.
 			seen[event.Name] = true
 			resolution := cmd.aiHookEffectiveAction(provider, event.Name)
 			desc := resolution.Action + " - " + resolution.Source
+			if resolution.Action == aiHookActionNotify {
+				desc += " - " + aiHookNotifyDeliveryDescription(provider, event.Name)
+			}
 			if event.Install {
 				desc += " - install=true"
 			} else {
@@ -3702,7 +3705,7 @@ func (c *settingsCommand) aiHookActionChoiceEntries(provider, event string) []in
 		desc   string
 	}{
 		{"default", "use embedded or local catalog action"},
-		{aiHookActionNotify, "send in-app and desktop notification when supported"},
+		{aiHookActionNotify, aiHookNotifyDeliveryDescription(provider, event)},
 		{aiHookActionState, "update pane state without notification delivery"},
 		{aiHookActionQuiet, "mark hook-active and log only"},
 	}
@@ -3737,6 +3740,44 @@ func aiHookProviderLabel(provider string) string {
 		return "Claude"
 	default:
 		return provider
+	}
+}
+
+func aiHookNotifyDeliveryDescription(provider, event string) string {
+	if aiHookHasDesktopNotifyHandler(provider, event) {
+		return "in-app queue + OS toast supported by specialized handler"
+	}
+	if aiHookHasGenericNotifyHandler(provider, event) {
+		return "generic in-app queue only; OS toast unsupported"
+	}
+	return "no notify handler; falls back to hook-active log only"
+}
+
+func aiHookHasDesktopNotifyHandler(provider, event string) bool {
+	switch provider {
+	case aiHookProviderCodex:
+		switch event {
+		case "PermissionRequest", "Stop":
+			return true
+		}
+	case aiHookProviderClaude:
+		switch event {
+		case "Notification", "PermissionRequest", "Stop", "StopFailure", "SubagentStop", "TeammateIdle":
+			return true
+		}
+	}
+	return false
+}
+
+func aiHookHasGenericNotifyHandler(provider, event string) bool {
+	if provider != aiHookProviderCodex {
+		return false
+	}
+	switch event {
+	case "PreToolUse", "PostToolUse", "PreCompact", "PostCompact", "SessionStart":
+		return true
+	default:
+		return false
 	}
 }
 

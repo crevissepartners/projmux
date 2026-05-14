@@ -257,6 +257,13 @@ overrides catalog `action` values during ingest, including known Codex and
 Claude events. It does not change hook installation; `projmux ai integrate`
 continues to use the embedded/local catalog `install` fields.
 
+Delivery depends on the event handler. Specialized notify handlers, such as
+Codex `PermissionRequest` and `Stop`, can write the in-app notify queue and use
+the configured OS desktop notification path. Known Codex events without a
+specialized handler can be runtime-overridden to `notify`, but that creates
+only a generic in-app queue/sidebar/statusbar row; it does not fire OS toast,
+`notify-send`, `PROJMUX_NOTIFY_HOOK`, or `[hooks.send-noti]`.
+
 ### Desktop notification mode
 
 The OS-level dispatch carries three modes. The in-app notify queue, the

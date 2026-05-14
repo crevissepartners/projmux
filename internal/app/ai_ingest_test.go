@@ -243,6 +243,132 @@ func TestIngestCodexHookQuietEventsMarkPaneAndLogWithoutNotify(t *testing.T) {
 	}
 }
 
+func TestIngestCodexHookRuntimeNotifyPushesGenericQueueOnlyRow(t *testing.T) {
+	home := t.TempDir()
+	paths := config.DefaultPaths(filepath.Join(home, ".config"), filepath.Join(home, ".local", "state"))
+	if err := config.SaveAIHookActionsFile(paths.AIHookActionsFile(), config.AIHookActionsFile{
+		Version: 1,
+		Providers: map[string]config.AIHookProviderActions{
+			aiHookProviderCodex: {Events: map[string]string{"PreToolUse": aiHookActionNotify}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "PROJMUX_NOTIFY_HOOK":
+			return "/tmp/projmux-notify-hook"
+		default:
+			return ""
+		}
+	}
+	cmd.runCommand = func(_ context.Context, name string, args ...string) error {
+		if name == "/tmp/projmux-notify-hook" {
+			t.Fatalf("generic hook notify must not dispatch desktop notifier: %s %#v", name, args)
+		}
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		return nil
+	}
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "PreToolUse",
+		"session_id": "codex-session",
+		"turn_id": "turn-456",
+		"cwd": "/repo/projmux",
+		"model": "gpt-5.1-codex",
+		"tool_name": "Bash",
+		"tool_input": {"command": "go test ./internal/app", "description": "run focused tests"}
+	}`)
+	cmd.readCommand = codexHookIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest codex-hook PreToolUse error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1: %#v", len(store.pushed), store.pushed)
+	}
+	got := store.pushed[0]
+	if got.Text != "Codex · PreToolUse · Bash" || got.Severity != notify.SeverityInfo {
+		t.Fatalf("pushed = %#v", got)
+	}
+	if got.Metadata["provider"] != "codex" || got.Metadata["event"] != "PreToolUse" || got.Metadata["tool"] != "Bash" || got.Metadata["cwd"] != "/repo/projmux" || got.Metadata["session_id"] != "codex-session" || got.Metadata["turn_id"] != "turn-456" {
+		t.Fatalf("metadata = %#v", got.Metadata)
+	}
+	for key := range got.Metadata {
+		if strings.HasPrefix(key, "tool_input.") {
+			t.Fatalf("generic metadata includes tool input key %q in %#v", key, got.Metadata)
+		}
+	}
+	for _, disallowed := range []string{desktopNotifyModeEnv, "@projmux_desktop_notified", "@projmux_desktop_notification_key", "@projmux_desktop_notification_at"} {
+		if containsAICommandArg(cmdRecorder(cmd).commands, disallowed) {
+			t.Fatalf("commands = %#v, generic notify touched desktop notifier state %q", cmdRecorder(cmd).commands, disallowed)
+		}
+	}
+	var out bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest log --json error = %v", err)
+	}
+	gotLog := out.String()
+	if !strings.Contains(gotLog, `"event":"PreToolUse"`) || !strings.Contains(gotLog, `"result":"notify"`) {
+		t.Fatalf("log output = %q", gotLog)
+	}
+}
+
+func TestIngestCodexHookRuntimeNotifySuppressesSendNotiHook(t *testing.T) {
+	home := t.TempDir()
+	paths := config.DefaultPaths(filepath.Join(home, ".config"), filepath.Join(home, ".local", "state"))
+	if err := config.SaveAIHookActionsFile(paths.AIHookActionsFile(), config.AIHookActionsFile{
+		Version: 1,
+		Providers: map[string]config.AIHookProviderActions{
+			aiHookProviderCodex: {Events: map[string]string{"PostToolUse": aiHookActionNotify}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &stubNotifyStore{}
+	runner := &recordingNotifyHookRunner{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{
+		store: store,
+		ttl:   time.Minute,
+		hooks: &sendNotiHookDispatcher{
+			runner:    runner,
+			lookupEnv: func(string) string { return "" },
+			getwd:     func() (string, error) { return t.TempDir(), nil },
+		},
+	}
+	cmd.stdin = strings.NewReader(`{
+		"hook_event_name": "PostToolUse",
+		"session_id": "codex-session",
+		"turn_id": "turn-456",
+		"cwd": "/repo/projmux",
+		"tool_name": "Edit",
+		"tool_input": {"file_path": "/repo/projmux/internal/app/ai_ingest.go"}
+	}`)
+	cmd.readCommand = codexHookIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest codex-hook PostToolUse error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1: %#v", len(store.pushed), store.pushed)
+	}
+	if got := store.pushed[0].Text; got != "Codex · PostToolUse · Edit" {
+		t.Fatalf("Text = %q", got)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("send-noti RunAsync call count = %d, want 0", runner.calls)
+	}
+}
+
 func TestIngestCodexHookCatalogOverrideEventFallsBackToQuiet(t *testing.T) {
 	home := t.TempDir()
 	configHome := filepath.Join(home, ".xdg-config")
