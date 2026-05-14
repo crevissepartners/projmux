@@ -657,11 +657,12 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 		return errSessionNameRequired
 	}
 
-	command := []string{"attach-session", "-t", sessionName}
+	target := exactSessionTarget(sessionName)
+	command := []string{"attach-session", "-t", target}
 	action := "attach"
 	inside := c.InsideSession()
 	if inside {
-		command = c.switchClientCommand(sessionName)
+		command = c.switchClientCommand(target)
 		action = "switch"
 	}
 
@@ -670,7 +671,7 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 	}
 
 	if inside {
-		c.runPostAttach(ctx, sessionName, sessionName)
+		c.runPostAttach(ctx, sessionName, target)
 	}
 	return nil
 }
@@ -758,7 +759,7 @@ func (c *Client) SwitchClient(ctx context.Context, sessionName string) error {
 		return errSessionNameRequired
 	}
 
-	if _, err := c.runner.Run(ctx, "tmux", "switch-client", "-t", sessionName); err != nil {
+	if _, err := c.runner.Run(ctx, "tmux", "switch-client", "-t", exactSessionTarget(sessionName)); err != nil {
 		return fmt.Errorf("switch tmux client to session %q: %w", sessionName, err)
 	}
 
@@ -771,7 +772,7 @@ func (c *Client) KillSession(ctx context.Context, sessionName string) error {
 		return errSessionNameRequired
 	}
 
-	if _, err := c.runner.Run(ctx, "tmux", "kill-session", "-t", sessionName); err != nil {
+	if _, err := c.runner.Run(ctx, "tmux", "kill-session", "-t", exactSessionTarget(sessionName)); err != nil {
 		return fmt.Errorf("kill tmux session %q: %w", sessionName, err)
 	}
 
@@ -857,7 +858,7 @@ func (c *Client) InsideSession() bool {
 }
 
 func (c *Client) sessionExists(ctx context.Context, sessionName string) (bool, error) {
-	if _, err := c.runner.Run(ctx, "tmux", "has-session", "-t", sessionName); err != nil {
+	if _, err := c.runner.Run(ctx, "tmux", "has-session", "-t", exactSessionTarget(sessionName)); err != nil {
 		if isExitCode(err, 1) {
 			return false, nil
 		}
@@ -1103,10 +1104,10 @@ func shellQuote(value string) string {
 
 func sessionWindowTarget(sessionName, windowIndex string) string {
 	if strings.TrimSpace(windowIndex) == "" {
-		return strings.TrimSpace(sessionName)
+		return exactSessionTarget(sessionName)
 	}
 
-	return fmt.Sprintf("%s:%s", strings.TrimSpace(sessionName), strings.TrimSpace(windowIndex))
+	return fmt.Sprintf("%s:%s", exactSessionTarget(sessionName), strings.TrimSpace(windowIndex))
 }
 
 func sessionPaneTarget(sessionName, windowIndex, paneIndex string) string {
@@ -1116,6 +1117,14 @@ func sessionPaneTarget(sessionName, windowIndex, paneIndex string) string {
 	}
 
 	return fmt.Sprintf("%s.%s", target, strings.TrimSpace(paneIndex))
+}
+
+func exactSessionTarget(sessionName string) string {
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" || strings.HasPrefix(sessionName, "=") {
+		return sessionName
+	}
+	return "=" + sessionName
 }
 
 func resolvePopupOptions(options PopupOptions) (PopupOptions, error) {

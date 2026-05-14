@@ -886,6 +886,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 	case "session-popup":
 		options.Width = popupSize(ctx.ClientWidth, 80, 120)
 		options.Height = popupSize(ctx.ClientHeight, 70, 28)
+		addSwitchTargetClientEnv(env, ctx)
 		commandArgs = []string{"sessions", "--ui=popup"}
 	case "sessionizer":
 		options.Width = popupSize(ctx.ClientWidth, 80, 120)
