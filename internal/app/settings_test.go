@@ -1475,6 +1475,7 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 	for _, want := range []string{
 		settingsNotificationsAIDedupe,
 		settingsNotificationsDelivery,
+		settingsNotificationsHookActions,
 		settingsNotificationsQueue,
 		settingsNotificationsHookOverride,
 	} {
@@ -1512,6 +1513,62 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 	}
 	if !sawInfo {
 		t.Fatalf("desktop notification entries = %#v, want info row with raise + env source", detail)
+	}
+}
+
+func TestSettingsNotificationsHookActionsShowsAndSavesRuntimeQuietPolicy(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	ai := testAICommand(home)
+	ai.readFile = os.ReadFile
+	cmd := &settingsCommand{
+		ai:        ai,
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string { return "" },
+		runCommand: func(string, ...string) error {
+			t.Fatal("hook quiet policy settings must not execute external commands")
+			return nil
+		},
+		runOutput: func(string, ...string) ([]byte, error) {
+			t.Fatal("hook quiet policy settings must not shell out for command output")
+			return nil, nil
+		},
+	}
+
+	root := cmd.notificationsEntries()
+	if !hasEntryValue(root, settingsNotificationsHookActions) {
+		t.Fatalf("notifications entries = %#v, want hook quiet policy row", root)
+	}
+	providers := cmd.aiHookProviderEntries()
+	for _, want := range []string{
+		settingsActionPrefixAIHookProvider + aiHookProviderCodex,
+		settingsActionPrefixAIHookProvider + aiHookProviderClaude,
+	} {
+		if !hasEntryValue(providers, want) {
+			t.Fatalf("provider entries = %#v, want %q", providers, want)
+		}
+	}
+	codexEvents := cmd.aiHookEventEntries(aiHookProviderCodex)
+	if !hasEntryValue(codexEvents, settingsActionPrefixAIHookEvent+aiHookProviderCodex+":Stop") {
+		t.Fatalf("codex hook entries = %#v, want Stop row", codexEvents)
+	}
+	if !hasEntryLabelContaining(codexEvents, "install=true") {
+		t.Fatalf("codex hook entries = %#v, want install read-only hint", codexEvents)
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.setAIHookAction(aiHookProviderCodex, "Stop", aiHookActionQuiet, &stdout); err != nil {
+		t.Fatalf("setAIHookAction error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "codex Stop = quiet") {
+		t.Fatalf("stdout = %q, want saved action", got)
+	}
+	if got := ai.aiHookEffectiveAction(aiHookProviderCodex, "Stop"); got.Action != aiHookActionQuiet || got.Source != aiHookActionSourceRuntime {
+		t.Fatalf("effective Stop action = %#v, want runtime quiet", got)
+	}
+	if events, err := ai.aiHookInstallEvents(aiHookProviderCodex); err != nil || !containsString(events, "Stop") {
+		t.Fatalf("install events = %#v, err = %v; want Stop preserved", events, err)
 	}
 }
 

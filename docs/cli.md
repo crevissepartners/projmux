@@ -357,6 +357,12 @@ to quiet/log-only handling. A local catalog entry with `"action": "quiet"`
 therefore lets newly discovered events be installed and observed without
 creating notification noise; `"notify"` and `"state"` still require a built-in
 handler before they can change pane state or push queue rows.
+Runtime action overrides from
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json` take
+precedence over catalog `action` during ingest, including known events such as
+`Stop` and `PermissionRequest`. These overrides are managed by
+`Settings > Notifications > Hook quiet policy` and do not change the catalog
+`install` field used by `projmux ai integrate codex`.
 
 `ingest claude-hook` is the hook-facing entrypoint for Claude Code hooks. It
 reads one JSON payload from stdin and handles the default Claude Code 2.1.140
@@ -378,6 +384,11 @@ push a queue entry.
 Unknown Claude events also fall back to quiet/log-only handling after pane
 matching. Catalog `action` is honored for quiet fallback events; notify/state
 actions need built-in handlers for event-specific body text and state changes.
+Runtime action overrides from
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json` take
+precedence over catalog `action` for known Claude events too; for example a
+noisy notify event can be made state-only or quiet without changing installed
+Claude hook commands.
 
 `ingest bell --pane <pane_id>` is the narrow tmux-bell fallback ingest path.
 It does not require the pane to be AI-managed. Projmux resolves session,

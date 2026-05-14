@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -103,6 +104,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsNotificationsDesktop:       {Name: "Desktop notifications", Axis: settingsAxisGlobal},
 	settingsNotificationsAIDedupe:      {Name: "AI notification dedupe", Axis: settingsAxisGlobal},
 	settingsNotificationsDelivery:      {Name: "Delivery sources", Axis: settingsAxisGlobal},
+	settingsNotificationsHookActions:   {Name: "Hook quiet policy", Axis: settingsAxisGlobal},
 	settingsNotificationsQueue:         {Name: "In-app queue", Axis: settingsAxisGlobal},
 	settingsNotificationsHookOverride:  {Name: "Notification hook override", Axis: settingsAxisGlobal},
 	settingsLabsProjectHooks:           {Name: "Project Hooks", Axis: settingsAxisGlobal},
@@ -122,6 +124,9 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixAINotifyDiagnostic, settingsEntryMeta{Name: "AI notify diagnostics", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixDesktopNotifyMode, settingsEntryMeta{Name: "Desktop notifications", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAINotifyDedupe, settingsEntryMeta{Name: "AI notification dedupe", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixAIHookProvider, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixAIHookEvent, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixAIHookSet, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHooks, settingsEntryMeta{Name: "Project hook policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHookAdd, settingsEntryMeta{Name: "Hook maker - add", Axis: settingsAxisBoth}},
 	{settingsActionPrefixHookEdit, settingsEntryMeta{Name: "Hook maker - edit", Axis: settingsAxisBoth}},
@@ -176,6 +181,9 @@ const (
 	settingsActionPrefixAINotifyDiagnostic = "ai-notify:"
 	settingsActionPrefixAINotifyCommand    = "ai-notify-command:"
 	settingsActionPrefixAINotifyDedupe     = "ai-notify-dedupe:"
+	settingsActionPrefixAIHookProvider     = "ai-hook-provider:"
+	settingsActionPrefixAIHookEvent        = "ai-hook-event:"
+	settingsActionPrefixAIHookSet          = "ai-hook-set:"
 	settingsActionPrefixDesktopNotifyMode  = "desktop-notify-mode:"
 	settingsActionPrefixHooks              = "project-hooks:"
 	settingsActionPrefixKeymap             = "keymap:"
@@ -210,6 +218,7 @@ const (
 	settingsNotificationsDesktop           = "notifications:desktop"
 	settingsNotificationsAIDedupe          = "notifications:ai-dedupe"
 	settingsNotificationsDelivery          = "notifications:delivery"
+	settingsNotificationsHookActions       = "notifications:hook-actions"
 	settingsNotificationsQueue             = "notifications:queue"
 	settingsNotificationsHookOverride      = "notifications:hook-override"
 	settingsLabsProjectHooks               = "labs:project-hooks"
@@ -1554,6 +1563,10 @@ func (c *settingsCommand) runNotificationsSection(stdout, stderr io.Writer) erro
 			if err := c.runNotificationsDeliverySourcesSection(stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsNotificationsHookActions:
+			if err := c.runNotificationsHookActionsSection(stdout, stderr); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unknown notifications settings action: %s", action)
 		}
@@ -1734,6 +1747,11 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 			SearchKey: "delivery sources producer setup doctor codex claude tmux bell hooks diagnostics",
 		},
 		{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Hook quiet policy", c.aiHookActionsSummary()),
+			Value:     settingsNotificationsHookActions,
+			SearchKey: "hook quiet policy runtime action codex claude notify state quiet",
+		},
+		{
 			Label:     settingsLabelInfo("In-app queue", "statusbar/sidebar", "consume pending notify rows"),
 			Value:     settingsNotificationsQueue,
 			SearchKey: "in app queue notify sidebar statusbar pending",
@@ -1743,6 +1761,120 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 			Value:     settingsNotificationsHookOverride,
 			SearchKey: "PROJMUX_NOTIFY_HOOK notification hook override env",
 		},
+	}
+}
+
+func (c *settingsCommand) runNotificationsHookActionsSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-notifications-hook-actions",
+			Entries:    c.aiHookProviderEntries(),
+			Title:      "Notifications - Hook quiet policy",
+			Prompt:     "Settings > Notifications > Hook quiet policy > ",
+			Footer:     projmuxFooter("Enter: view hooks  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixAIHookProvider):
+			provider := strings.TrimPrefix(action, settingsActionPrefixAIHookProvider)
+			if err := c.runAIHookProviderActionSection(provider, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI hook policy action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAIHookProviderActionSection(provider string, stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-notifications-hook-provider",
+			Entries:    c.aiHookEventEntries(provider),
+			Title:      "Hook quiet policy - " + aiHookProviderLabel(provider),
+			Prompt:     "Settings > Notifications > Hook quiet policy > " + aiHookProviderLabel(provider) + " > ",
+			Footer:     projmuxFooter("Enter: change action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixAIHookEvent):
+			p, event, ok := parseAIHookSettingsPair(strings.TrimPrefix(action, settingsActionPrefixAIHookEvent))
+			if !ok || p != provider {
+				return fmt.Errorf("unknown AI hook event action: %s", action)
+			}
+			if err := c.runAIHookEventActionSection(provider, event, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI hook provider action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAIHookEventActionSection(provider, event string, stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-notifications-hook-event",
+			Entries:    c.aiHookActionChoiceEntries(provider, event),
+			Title:      "Hook quiet policy - " + aiHookProviderLabel(provider) + " " + event,
+			Prompt:     "Settings > Notifications > Hook quiet policy > " + aiHookProviderLabel(provider) + " > " + event + " > ",
+			Footer:     projmuxFooter("Enter: save  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixAIHookSet):
+			p, e, next, ok := parseAIHookSettingsTriple(strings.TrimPrefix(action, settingsActionPrefixAIHookSet))
+			if !ok || p != provider || e != event {
+				return fmt.Errorf("unknown AI hook action choice: %s", action)
+			}
+			if next == "default" {
+				if err := c.clearAIHookAction(provider, event, stdout); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := c.setAIHookAction(provider, event, next, stdout); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI hook event action: %s", action)
+		}
 	}
 }
 
@@ -3504,6 +3636,202 @@ func (c *settingsCommand) aiNotifyDedupeEntries() []intpickercompat.Entry {
 		Value: settingsActionPrefixAINotifyDedupe + "custom",
 	})
 	return entries
+}
+
+func (c *settingsCommand) aiHookActionsSummary() string {
+	file := c.currentAIHookActionsFile()
+	count := 0
+	for _, provider := range file.Providers {
+		count += len(provider.Events)
+	}
+	if count == 0 {
+		return "catalog defaults"
+	}
+	return fmt.Sprintf("%d runtime override(s)", count)
+}
+
+func (c *settingsCommand) aiHookProviderEntries() []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Runtime config", c.aiHookActionsSummary(), "install events stay in catalog"),
+			Value: settingsNoopValue,
+		},
+	}
+	providers := []string{aiHookProviderCodex, aiHookProviderClaude}
+	file := c.currentAIHookActionsFile()
+	for provider := range file.Providers {
+		if provider != aiHookProviderCodex && provider != aiHookProviderClaude {
+			providers = append(providers, provider)
+		}
+	}
+	sort.Strings(providers[2:])
+	for _, provider := range providers {
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, aiHookProviderLabel(provider)+" hooks", c.aiHookProviderSummary(provider)),
+			Value:     settingsActionPrefixAIHookProvider + provider,
+			SearchKey: provider + " hooks quiet notify state runtime catalog",
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) aiHookProviderSummary(provider string) string {
+	cmd := c.aiForSettings()
+	catalog, err := cmd.loadAIHookCatalog(provider)
+	if err != nil {
+		file := c.currentAIHookActionsFile()
+		if actions, ok := file.Providers[provider]; ok && len(actions.Events) > 0 {
+			return fmt.Sprintf("%d runtime event(s)", len(actions.Events))
+		}
+		return "no catalog"
+	}
+	counts := map[string]int{}
+	for _, event := range catalog.Events {
+		counts[cmd.aiHookEffectiveAction(provider, event.Name).Action]++
+	}
+	return fmt.Sprintf("%d notify, %d state, %d quiet", counts[aiHookActionNotify], counts[aiHookActionState], counts[aiHookActionQuiet])
+}
+
+func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Scope", "runtime action only", "install field is unchanged"),
+			Value: settingsNoopValue,
+		},
+	}
+	cmd := c.aiForSettings()
+	seen := map[string]bool{}
+	if catalog, err := cmd.loadAIHookCatalog(provider); err == nil {
+		for _, event := range catalog.Events {
+			seen[event.Name] = true
+			resolution := cmd.aiHookEffectiveAction(provider, event.Name)
+			desc := resolution.Action + " - " + resolution.Source
+			if event.Install {
+				desc += " - install=true"
+			} else {
+				desc += " - install=false"
+			}
+			entries = append(entries, intpickercompat.Entry{
+				Label:     settingsLabel(aiHookActionGlyph(resolution.Action), aiHookActionColor(resolution.Action), event.Name, desc),
+				Value:     settingsActionPrefixAIHookEvent + provider + ":" + event.Name,
+				SearchKey: strings.Join([]string{provider, event.Name, resolution.Action, resolution.Source, "quiet notify state"}, " "),
+			})
+		}
+	}
+	file := c.currentAIHookActionsFile()
+	if actions, ok := file.Providers[provider]; ok {
+		extras := make([]string, 0, len(actions.Events))
+		for event := range actions.Events {
+			if !seen[event] {
+				extras = append(extras, event)
+			}
+		}
+		sort.Strings(extras)
+		for _, event := range extras {
+			action := actions.Events[event]
+			entries = append(entries, intpickercompat.Entry{
+				Label:     settingsLabel(aiHookActionGlyph(action), aiHookActionColor(action), event, action+" - runtime - install not managed"),
+				Value:     settingsActionPrefixAIHookEvent + provider + ":" + event,
+				SearchKey: strings.Join([]string{provider, event, action, "runtime quiet notify state"}, " "),
+			})
+		}
+	}
+	return entries
+}
+
+func (c *settingsCommand) aiHookActionChoiceEntries(provider, event string) []intpickercompat.Entry {
+	cmd := c.aiForSettings()
+	resolution := cmd.aiHookEffectiveAction(provider, event)
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Current", resolution.Action, resolution.Source),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Install", "unchanged", "Settings only changes runtime action"),
+			Value: settingsNoopValue,
+		},
+	}
+	choices := []struct {
+		action string
+		desc   string
+	}{
+		{"default", "use embedded or local catalog action"},
+		{aiHookActionNotify, "send in-app and desktop notification when supported"},
+		{aiHookActionState, "update pane state without notification delivery"},
+		{aiHookActionQuiet, "mark hook-active and log only"},
+	}
+	for _, choice := range choices {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if (choice.action == "default" && resolution.Source == aiHookActionSourceCatalog) || choice.action == resolution.Action && resolution.Source == aiHookActionSourceRuntime {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabel(glyph, color, choice.action, choice.desc),
+			Value:     settingsActionPrefixAIHookSet + provider + ":" + event + ":" + choice.action,
+			SearchKey: provider + " " + event + " " + choice.action + " " + choice.desc,
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) aiForSettings() *aiCommand {
+	if c.ai != nil {
+		return c.ai
+	}
+	return &aiCommand{homeDir: c.homeDir, lookupEnv: c.lookupEnv}
+}
+
+func aiHookProviderLabel(provider string) string {
+	switch provider {
+	case aiHookProviderCodex:
+		return "Codex"
+	case aiHookProviderClaude:
+		return "Claude"
+	default:
+		return provider
+	}
+}
+
+func aiHookActionGlyph(action string) string {
+	switch action {
+	case aiHookActionNotify:
+		return settingsGlyphToggle
+	case aiHookActionState:
+		return settingsGlyphInfo
+	default:
+		return settingsGlyphInactive
+	}
+}
+
+func aiHookActionColor(action string) string {
+	switch action {
+	case aiHookActionNotify:
+		return settingsColorAdd
+	case aiHookActionState:
+		return settingsColorType
+	default:
+		return settingsColorDim
+	}
+}
+
+func parseAIHookSettingsPair(value string) (provider, event string, ok bool) {
+	provider, event, ok = strings.Cut(value, ":")
+	return provider, event, ok && provider != "" && event != ""
+}
+
+func parseAIHookSettingsTriple(value string) (provider, event, action string, ok bool) {
+	provider, rest, ok := strings.Cut(value, ":")
+	if !ok {
+		return "", "", "", false
+	}
+	event, action, ok = strings.Cut(rest, ":")
+	return provider, event, action, ok && provider != "" && event != "" && action != ""
 }
 
 func parseAINotifyDedupeSeconds(raw string) (int, error) {

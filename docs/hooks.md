@@ -325,6 +325,19 @@ catalog `"action": "quiet"` makes that quiet fallback explicit. Catalog
 `"notify"` and `"state"` entries still need a built-in handler before they can
 push queue rows or change pane state.
 
+Runtime action overrides are stored separately from the install catalog at:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json
+```
+
+`Settings > Notifications > Hook quiet policy` reads and writes that file. The
+runtime file only changes ingest behavior (`notify`, `state`, or `quiet`);
+`projmux ai integrate codex` still uses the catalog `install` field to decide
+which hooks to write. Runtime overrides also apply to known specialized
+events, so `Stop` or `PermissionRequest` can be made state-only or quiet
+without changing which hook commands are installed.
+
 Codex may require reviewing or trusting hooks through its `/hooks` flow before
 commands run. Projmux only writes the managed config block; it does not attempt
 to auto-trust hooks.
@@ -558,11 +571,16 @@ and ingest debugging only.
 ```
 
 Claude ingest has built-in notify/state handlers for the known completion,
-notification, approval, prompt-submit, error, and teammate-idle events. Events
-without a specialized handler, including unknown future events, are
-quiet/log-only after pane matching. Catalog `"action": "quiet"` is used for
+notification, approval, prompt-submit, error, subagent-stop, and teammate-idle
+events. Events without a specialized handler, including unknown future events,
+are quiet/log-only after pane matching. Catalog `"action": "quiet"` is used for
 that fallback; catalog `"notify"` and `"state"` entries still need built-in
-handler code for event-specific queue rows or state transitions.
+handler code for event-specific queue rows or state transitions. Runtime action
+overrides live in the same
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json` file used by
+Codex and are managed from `Settings > Notifications > Hook quiet policy`.
+They only affect ingest delivery; `projmux ai integrate claude` still uses the
+catalog `install` field for installed hook events.
 
 ## Ingest Debug Log
 

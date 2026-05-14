@@ -234,6 +234,18 @@ The value is stored as integer seconds and applies only to AI desktop
 notification dispatch. The tmux bell fallback keeps its fixed 5 second
 dedupe window.
 
+AI hook runtime actions are stored at:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json
+```
+
+Settings exposes this at `Settings > Notifications > Hook quiet policy`.
+The file maps provider/event names to `notify`, `state`, or `quiet` and
+overrides catalog `action` values during ingest, including known Codex and
+Claude events. It does not change hook installation; `projmux ai integrate`
+continues to use the embedded/local catalog `install` fields.
+
 ### Desktop notification mode
 
 The OS-level dispatch carries three modes. The in-app notify queue, the

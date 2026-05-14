@@ -181,6 +181,14 @@ func (c *aiCommand) applyAIStatus(state, paneID string) error {
 }
 
 func (c *aiCommand) applyAIStatusWithNotify(state, paneID string, notifyIn attentionNotifyInput) error {
+	return c.applyAIStatusInternal(state, paneID, notifyIn, true)
+}
+
+func (c *aiCommand) applyAIStatusStateOnly(state, paneID string, notifyIn attentionNotifyInput) error {
+	return c.applyAIStatusInternal(state, paneID, notifyIn, false)
+}
+
+func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attentionNotifyInput, dispatchNotify bool) error {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
 		return nil
@@ -212,8 +220,8 @@ func (c *aiCommand) applyAIStatusWithNotify(state, paneID string, notifyIn atten
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionFocusArmedOption, "1")
 		}
 		// Force controls notification delivery (queue + OS), not the badge.
-		if notifyIn.Force || !visible {
-			_ = c.notifyAI(paneID)
+		if dispatchNotify && (notifyIn.Force || !visible) {
+			_ = c.notifyAIWithInput(paneID, notifyIn)
 			c.notifyProducer().PushReplyReady(notifyIn)
 		} else {
 			c.notifyProducer().AckReplyReady(notifyIn)
@@ -278,6 +286,48 @@ func (c *aiCommand) notifyAI(paneID string) error {
 
 func (c *aiCommand) notifyAIForce(paneID string) error {
 	return c.notifyAIWithMode(paneID, true)
+}
+
+func (c *aiCommand) notifyAIWithInput(paneID string, in attentionNotifyInput) error {
+	if strings.TrimSpace(in.Text) == "" {
+		return c.notifyAI(paneID)
+	}
+	return c.notifyAIText(paneID, in.Text, in.Severity, in.Force)
+}
+
+func (c *aiCommand) notifyAIText(paneID, text, severity string, force bool) error {
+	paneID = strings.TrimSpace(paneID)
+	text = strings.TrimSpace(text)
+	if paneID == "" || text == "" {
+		return nil
+	}
+	key := aiNotificationKey("hook", text)
+	if !force && c.duplicateAINotificationRecent(paneID, key) {
+		c.recordAINotification(paneID, key)
+		return nil
+	}
+	notification := c.aiTextNotification(paneID, text, severity)
+	if err := c.notificationNotifier().Notify(notification); err != nil {
+		return nil
+	}
+	c.recordAINotification(paneID, key)
+	return nil
+}
+
+func (c *aiCommand) aiTextNotification(paneID, text, severity string) aiNotification {
+	sessionName := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#S")
+	windowName := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#W")
+	panePath := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_current_path}")
+	agent := aiNotificationTextAgent(text)
+	return aiNotification{
+		Summary: strings.TrimSpace(text),
+		Body:    aiNotificationBody("", aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
+		Urgency: aiUrgencyForSeverity(severity),
+		AppName: desktopAppID,
+		Icon:    c.notificationIcon(agent),
+		Tag:     paneID,
+		Group:   sessionName,
+	}
 }
 
 func (c *aiCommand) notifyAIWithMode(paneID string, force bool) error {
@@ -1644,6 +1694,24 @@ func aiUrgencyForKind(kind string) string {
 		return "critical"
 	default:
 		return "normal"
+	}
+}
+
+func aiUrgencyForSeverity(severity string) string {
+	if strings.TrimSpace(severity) == "critical" {
+		return "critical"
+	}
+	return "normal"
+}
+
+func aiNotificationTextAgent(text string) string {
+	switch {
+	case strings.HasPrefix(strings.TrimSpace(text), "Codex"):
+		return "Codex"
+	case strings.HasPrefix(strings.TrimSpace(text), "Claude"):
+		return "Claude"
+	default:
+		return "AI"
 	}
 }
 

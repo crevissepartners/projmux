@@ -155,6 +155,42 @@ func TestPathsNotificationFiles(t *testing.T) {
 	if got, want := paths.AINotifyDedupeSecondsFile(), filepath.Join(paths.ConfigDir, AINotifyDedupeSecondsFileName); got != want {
 		t.Fatalf("AINotifyDedupeSecondsFile() = %q, want %q", got, want)
 	}
+	if got, want := paths.AIHookActionsFile(), filepath.Join(paths.ConfigDir, AIHookActionsFileName); got != want {
+		t.Fatalf("AIHookActionsFile() = %q, want %q", got, want)
+	}
+}
+
+func TestAIHookActionsFileRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", AIHookActionsFileName)
+	missing, err := LoadAIHookActionsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIHookActionsFile(missing) error = %v", err)
+	}
+	if len(missing.Providers) != 0 {
+		t.Fatalf("missing Providers = %#v, want empty", missing.Providers)
+	}
+
+	want := AIHookActionsFile{
+		Version: 1,
+		Providers: map[string]AIHookProviderActions{
+			"codex": {Events: map[string]string{"Stop": "quiet"}},
+			"future-agent": {Events: map[string]string{
+				"FutureEvent": "state",
+			}},
+		},
+	}
+	if err := SaveAIHookActionsFile(path, want); err != nil {
+		t.Fatalf("SaveAIHookActionsFile() error = %v", err)
+	}
+	got, err := LoadAIHookActionsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIHookActionsFile() error = %v", err)
+	}
+	if got.Providers["codex"].Events["Stop"] != "quiet" || got.Providers["future-agent"].Events["FutureEvent"] != "state" {
+		t.Fatalf("AI hook actions = %#v", got)
+	}
 }
 
 func TestPathsProjectHooksFile(t *testing.T) {
