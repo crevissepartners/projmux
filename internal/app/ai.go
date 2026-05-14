@@ -2014,16 +2014,19 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 //
 // The GUI-subsystem WScript launcher avoids the visible console flash caused
 // by Windows ShellExecute launching console-subsystem `wsl.exe` or
-// `powershell.exe` directly from the protocol handler. Inside the launcher,
-// `--exec` instead of `--` remains load-bearing: `wsl.exe -- <cmd> <args>`
-// routes `<cmd> <args>` through the user's default login shell (zsh/bash). The
-// `projmux://` URI carries `&` characters as query-parameter separators, and
-// zsh parses `&` as a background-job operator before projmux ever runs,
-// emitting `zsh:1: parse error near '&'`. `--exec` skips the shell and invokes
-// the binary directly with the args verbatim. Because `--exec` doesn't load
-// shell init files, PATH may be empty, so we register the absolute WSL
-// filesystem path to the projmux binary captured at registration time
-// (whichever binary actually wrote the registry key).
+// `powershell.exe` directly from the protocol handler. WScript.Shell.Run does
+// not pass quoted fixed arguments to wsl.exe the same way PowerShell does, so
+// the launcher uses hidden `%ComSpec% /d /s /c` as the command-line parser and
+// caret-escapes URI query separators before invoking wsl.exe. Inside that
+// command, `--exec` instead of `--` remains load-bearing: `wsl.exe -- <cmd>
+// <args>` routes `<cmd> <args>` through the user's default login shell
+// (zsh/bash). The `projmux://` URI carries `&` characters as query-parameter
+// separators, and zsh parses `&` as a background-job operator before projmux
+// ever runs, emitting `zsh:1: parse error near '&'`. `--exec` skips the shell
+// and invokes the binary directly with the args verbatim. Because `--exec`
+// doesn't load shell init files, PATH may be empty, so we register the
+// absolute WSL filesystem path to the projmux binary captured at registration
+// time (whichever binary actually wrote the registry key).
 //
 // The handler captures the user's *current* WSL_DISTRO_NAME because the
 // click is received on the Windows side with no knowledge of which distro
@@ -2068,13 +2071,6 @@ try {
 }
 
 func buildWSLURIProtocolLauncherVBScript(distro, binaryPath string) string {
-	argv := []string{"wsl.exe", "-d", distro, "--exec", binaryPath, "focus", "--uri"}
-	quoted := make([]string, 0, len(argv)+1)
-	for _, arg := range argv {
-		quoted = append(quoted, "QuoteArg("+vbsDoubleQuoted(arg)+")")
-	}
-	quoted = append(quoted, "QuoteArg(uri)")
-	commandExpr := strings.Join(quoted, ` & " " & `)
 	return `Option Explicit
 
 Dim uri
@@ -2083,34 +2079,21 @@ If WScript.Arguments.Count < 1 Then
 End If
 uri = WScript.Arguments.Item(0)
 
-Dim shell, command
-command = ` + commandExpr + `
+Dim shell, inner, command
+inner = "wsl.exe -d " & CmdEscape(` + vbsDoubleQuoted(distro) + `) & " --exec " & CmdEscape(` + vbsDoubleQuoted(binaryPath) + `) & " focus --uri " & CmdEscape(uri)
+command = "%ComSpec% /d /s /c " & Chr(34) & inner & Chr(34)
 Set shell = CreateObject("WScript.Shell")
 shell.Run command, 0, False
 
-Function QuoteArg(value)
-  Dim result, i, ch, backslashes
-  result = """"
-  backslashes = 0
-  For i = 1 To Len(value)
-    ch = Mid(value, i, 1)
-    If ch = "\" Then
-      backslashes = backslashes + 1
-    ElseIf ch = """" Then
-      result = result & String(backslashes * 2 + 1, "\") & """"
-      backslashes = 0
-    Else
-      If backslashes > 0 Then
-        result = result & String(backslashes, "\")
-        backslashes = 0
-      End If
-      result = result & ch
-    End If
-  Next
-  If backslashes > 0 Then
-    result = result & String(backslashes * 2, "\")
-  End If
-  QuoteArg = result & """"
+Function CmdEscape(value)
+  Dim s
+  s = value
+  s = Replace(s, "^", "^^")
+  s = Replace(s, "&", "^&")
+  s = Replace(s, "|", "^|")
+  s = Replace(s, "<", "^<")
+  s = Replace(s, ">", "^>")
+  CmdEscape = s
 End Function`
 }
 

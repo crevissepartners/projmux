@@ -66,5 +66,10 @@ const (
 	// v5 — incremented after the first process in the protocol command moved
 	// from console-subsystem PowerShell to GUI-subsystem WScript because
 	// PowerShell itself could still flash before hiding its window.
-	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered_v5"
+	//
+	// v6 — incremented after the WScript launcher added a hidden cmd.exe
+	// command-line parser hop. WScript.Shell.Run passed quoted wsl.exe
+	// arguments literally enough to break focus; cmd.exe strips the caret
+	// escapes around URI `&` separators before wsl.exe receives the argv.
+	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered_v6"
 )

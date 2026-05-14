@@ -279,7 +279,7 @@ gated here.
 
 Click activation is wired only for `raise`. The `projmux://` URI handler is
 registered on the first `raise` Notify of each tmux server (gated by the
-`@projmux_uri_protocol_registered_v5` marker). The
+`@projmux_uri_protocol_registered_v6` marker). The
 mode only controls whether a toast fires at all and whether to follow it
 up with an on-push auto-raise.
 
@@ -323,9 +323,9 @@ wscript.exe //B //Nologo "%LOCALAPPDATA%\projmux\projmux-uri-handler.vbs" "%1"
 ```
 
 Registration writes the VBScript launcher under `%LOCALAPPDATA%\projmux`.
-The launcher receives `%1` as a WScript argument, quotes it as an argv value,
-and starts `wsl.exe` hidden through `WScript.Shell.Run`. Its argv semantics
-are equivalent to:
+The launcher receives `%1` as a WScript argument, caret-escapes command-line
+metacharacters such as `&`, and starts a hidden `%ComSpec% /d /s /c` command
+that invokes `wsl.exe`. Its argv semantics are equivalent to:
 
 ```text
 wsl.exe -d $WSL_DISTRO_NAME --exec <absolute-path-to-projmux> focus --uri <uri>
@@ -356,11 +356,11 @@ notify path so users do not configure anything:
    `wsl.exe -- <cmd>` routes its tail through the user's login shell, which
    parses `&` query-string separators as background-job operators (zsh emits
    `parse error near '&'`). `--exec` skips the shell and invokes the binary
-   directly. The `%1` URI is passed as a WScript argument and then quoted as
-   the `--uri` argv value, so `&` query separators are data instead of
-   PowerShell or shell syntax. The absolute WSL filesystem path to the binary
-   is captured at registration so PATH does not need to be populated under
-   `--exec`.
+   directly. The `%1` URI is passed as a WScript argument and then forwarded
+   through a hidden cmd.exe command line with `&` escaped as `^&`, so query
+   separators are data instead of PowerShell, cmd, or WSL login-shell syntax.
+   The absolute WSL filesystem path to the binary is captured at registration
+   so PATH does not need to be populated under `--exec`.
 
 The URI carries the originating pane id and tmux socket so the click
 round-trips back to the exact pane that fired the notification, which
@@ -372,13 +372,12 @@ Registration markers and the writes involved:
   `SOFTWARE\Classes\projmux\URL Protocol`, and
   `SOFTWARE\Classes\projmux\shell\open\command\(Default)`.
 - Launcher file: `%LOCALAPPDATA%\projmux\projmux-uri-handler.vbs`.
-- tmux user-option marker `@projmux_uri_protocol_registered_v5` records that
+- tmux user-option marker `@projmux_uri_protocol_registered_v6` records that
   registration has been attempted on this server so the script runs at most
-  once per server boot. (The v4 marker
-  `@projmux_uri_protocol_registered_v4` was bumped when the protocol command's
-  first process moved from console-subsystem PowerShell to GUI-subsystem
-  WScript; existing v4 users re-register transparently on the next Notify
-  after upgrade and the orphaned v4 key
+  once per server boot. (The v5 marker
+  `@projmux_uri_protocol_registered_v5` was bumped when the WScript launcher
+  added the hidden cmd.exe parser hop; existing v5 users re-register
+  transparently on the next Notify after upgrade and the orphaned v5 key
   requires no cleanup.)
 
 Limitations:
