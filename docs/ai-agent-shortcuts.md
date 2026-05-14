@@ -90,6 +90,30 @@ aliases, or terminal custom actions. The important part is that the registered
 surface calls `projmux ai split --agent <agent> <direction>` and passes only
 agent flags after `--`.
 
+### Bare-Name Default
+
+When a surface registers a bare agent name without an explicit direction
+suffix, treat it as the `right` variant. `right` is the convention for the
+unqualified shortcut; `down` is always spelled out.
+
+For Codex-style skill surfaces:
+
+```text
+$projmux-codex      → projmux ai split --agent codex right
+$projmux-claude     → projmux ai split --agent claude right
+```
+
+For Claude-style slash-command surfaces:
+
+```text
+/projmux:codex      → projmux ai split --agent codex right
+/projmux:claude     → projmux ai split --agent claude right
+```
+
+Register the bare name as a thin alias of the `*-right` shortcut so that the
+two surfaces stay in lockstep. The `*-down` variant must be invoked by its
+full name; do not introduce a separate bare default for `down`.
+
 ## Skill Template
 
 Use this shape when a tool lets you define a user-level skill that tells an
@@ -235,4 +259,6 @@ in shared docs; put those in your private user-level command files.
 - Omit the separator entirely when there are no extra agent arguments.
 - Use `--agent shell` with no tail for a plain shell split.
 - Use `--agent selective` with no tail for the picker.
+- Treat a bare agent name (`/projmux:codex`, `$projmux-claude`) as the
+  `right` variant; spell out `*-down` shortcuts in full.
 - Keep tracked project docs and `AGENTS.md` free of private shortcut policy.
