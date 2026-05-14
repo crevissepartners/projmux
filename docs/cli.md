@@ -319,7 +319,7 @@ supplied window.
 ## ai
 
 ```
-projmux ai split    [--agent <claude|codex|shell|selective>] [right|down] [-- <argv>...]
+projmux ai split    [--agent <claude|codex|shell|selective>] [right|down] [-- <extra-arg>...]
 projmux ai picker   --inside <right|down>
 projmux ai settings
 projmux ai status   set <thinking|waiting|idle> [--pane <id>]
@@ -344,10 +344,10 @@ entry into the notify queue.
 `ai split right|down` uses the configured default split mode. Add
 `--agent claude`, `--agent codex`, `--agent shell`, or `--agent selective` for
 a one-shot launch without changing that default. `--agent selective` opens the
-existing picker flow; `--agent shell` without an argv tail opens the existing
-plain shell split. Arguments after `--` replace only the final exec command
-inside the managed wrapper; projmux still sets the context directory, tmux
-title, AI pane metadata, title watcher, and split layout.
+existing picker flow; `--agent shell` opens the existing plain shell split.
+Arguments after `--` are extra arguments appended to the resolved `claude` or
+`codex` executable inside the managed wrapper; projmux still sets the context
+directory, tmux title, AI pane metadata, title watcher, and split layout.
 
 `ingest codex-hook` is the hook-facing entrypoint for Codex hooks-engine JSON.
 It reads one JSON payload from stdin and handles the default Codex hook catalog
