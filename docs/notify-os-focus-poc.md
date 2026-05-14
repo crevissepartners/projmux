@@ -330,15 +330,17 @@ machine is:
 4. **WSL handler command uses a GUI launcher and keeps `--exec`**. The
    registry protocol handler launches `wscript.exe //B //Nologo` with a
    VBScript launcher written under `%LOCALAPPDATA%\projmux`, so ShellExecute
-   does not start a console-subsystem first process. The launcher starts
-   `wsl.exe` hidden through `WScript.Shell.Run`. Inside that launcher,
-   `wsl.exe -- <cmd>` remains forbidden because it routes its tail through the
-   user's default login shell, which parses `&` query-string separators as
-   background-job operators (zsh emits `parse error near '&'`). `--exec` skips
-   the shell and invokes the binary directly. PATH is empty under `--exec`, so
-   the registry command uses the absolute WSL filesystem path captured at
-   registration time. The `%1` URI is passed as a WScript argument and then
-   forwarded as the `--uri` argv value, not shell-interpolated.
+   does not start a console-subsystem first process. The launcher starts a
+   hidden `%ComSpec% /d /s /c` command through `WScript.Shell.Run`; that cmd
+   command invokes `wsl.exe` after stripping caret escapes from URI query
+   separators. Inside that command, `wsl.exe -- <cmd>` remains forbidden
+   because it routes its tail through the user's default login shell, which
+   parses `&` query-string separators as background-job operators (zsh emits
+   `parse error near '&'`). `--exec` skips the shell and invokes the binary
+   directly. PATH is empty under `--exec`, so the registry command uses the
+   absolute WSL filesystem path captured at registration time. The `%1` URI is
+   passed as a WScript argument and then forwarded as the `--uri` argv value,
+   not shell-interpolated.
 
 #### Lessons (so future readers don't repeat them)
 
@@ -352,11 +354,10 @@ machine is:
 - Do not use `wsl.exe -- projmux ...` in the registry handler.
   Re-introducing the login-shell hop will surface as `parse error near
   '&'` from the user's shell at click time.
-- The `@projmux_uri_protocol_registered_v5` marker exists because v4 still
-  used console-subsystem PowerShell as the protocol command's first process,
-  which could flash before `-WindowStyle Hidden` took effect. Re-registration
-  is idempotent so upgrades from v4 transparently install the new handler —
-  the old marker key just
+- The `@projmux_uri_protocol_registered_v6` marker exists because v5 invoked
+  `wsl.exe` directly from WScript with quoted fixed arguments, which avoided
+  flash but broke the focus command. Re-registration is idempotent so upgrades
+  from v5 transparently install the new handler — the old marker key just
   goes orphaned.
 
 Multi-distro dispatch (one handler per distro, or a distro-selector

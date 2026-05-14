@@ -89,7 +89,8 @@ func TestBuildRegisterURIProtocolPowerShell_UsesHiddenLauncherNotDirectWSLComman
 		`wscript.exe //B //Nologo "`,
 		`"%1"`,
 		`shell.Run command, 0, False`,
-		`QuoteArg("wsl.exe") & " " & QuoteArg("-d")`,
+		`%ComSpec% /d /s /c `,
+		`CmdEscape(uri)`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing hidden launcher intent %q:\n%s", want, script)
@@ -118,14 +119,9 @@ func TestBuildWSLURIProtocolLauncherVBScript_BypassesShellWithExecAndAbsolutePat
 	// `&`-bearing toast click; do not let it come back.
 	script := buildWSLURIProtocolLauncherVBScript("Ubuntu-24.04", "/home/me/go/bin/projmux")
 	for _, want := range []string{
-		`QuoteArg("wsl.exe")`,
-		`QuoteArg("-d")`,
-		`QuoteArg("Ubuntu-24.04")`,
-		`QuoteArg("--exec")`,
-		`QuoteArg("/home/me/go/bin/projmux")`,
-		`QuoteArg("focus")`,
-		`QuoteArg("--uri")`,
-		`QuoteArg(uri)`,
+		`inner = "wsl.exe -d " & CmdEscape("Ubuntu-24.04") & " --exec " & CmdEscape("/home/me/go/bin/projmux") & " focus --uri " & CmdEscape(uri)`,
+		`command = "%ComSpec% /d /s /c " & Chr(34) & inner & Chr(34)`,
+		`shell.Run command, 0, False`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("expected launcher token %q in script:\n%s", want, script)
@@ -134,7 +130,7 @@ func TestBuildWSLURIProtocolLauncherVBScript_BypassesShellWithExecAndAbsolutePat
 	if strings.Contains(script, `-- projmux focus`) {
 		t.Fatalf("launcher must not use the legacy `-- projmux focus` form (shell-interpreted, breaks on `&`):\n%s", script)
 	}
-	if !strings.Contains(script, `QuoteArg("--exec")`) {
+	if !strings.Contains(script, ` --exec `) {
 		t.Fatalf("launcher must use `--exec` to bypass the login shell:\n%s", script)
 	}
 }
@@ -148,7 +144,8 @@ func TestBuildWSLURIProtocolLauncherVBScript_ForwardsURIAsArgument(t *testing.T)
 		`wscript.exe //B //Nologo "`,
 		`"%1"`,
 		`uri = WScript.Arguments.Item(0)`,
-		`QuoteArg("--uri") & " " & QuoteArg(uri)`,
+		`focus --uri " & CmdEscape(uri)`,
+		`s = Replace(s, "&", "^&")`,
 	} {
 		if !strings.Contains(registerScript+"\n"+launcherScript, want) {
 			t.Fatalf("handler command missing URI forwarding token %q:\n%s\n%s", want, registerScript, launcherScript)
@@ -172,7 +169,7 @@ func TestBuildWSLURIProtocolLauncherVBScript_EscapesDistro(t *testing.T) {
 	t.Parallel()
 
 	script := buildWSLURIProtocolLauncherVBScript(`weird"distro`, "/home/me/go/bin/projmux")
-	if !strings.Contains(script, `QuoteArg("weird""distro")`) {
+	if !strings.Contains(script, `CmdEscape("weird""distro")`) {
 		t.Fatalf("expected double-quote-escaped distro in launcher script; got:\n%s", script)
 	}
 }
@@ -181,7 +178,7 @@ func TestBuildWSLURIProtocolLauncherVBScript_EscapesBinaryPath(t *testing.T) {
 	t.Parallel()
 
 	script := buildWSLURIProtocolLauncherVBScript("Ubuntu-24.04", `/home/me/bin/proj"mux`)
-	if !strings.Contains(script, `QuoteArg("/home/me/bin/proj""mux")`) {
+	if !strings.Contains(script, `CmdEscape("/home/me/bin/proj""mux")`) {
 		t.Fatalf("expected double-quote-escaped binary path in launcher script; got:\n%s", script)
 	}
 }
