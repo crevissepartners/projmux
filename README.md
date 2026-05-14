@@ -99,6 +99,7 @@ For update behavior by installer type, see [Upgrading](docs/upgrading.md).
 - [Install](docs/install.md)
 - [Configuration](docs/configuration.md)
 - [Terminal Keybindings](docs/keybindings.md)
+- [AI Agent Shortcuts](docs/ai-agent-shortcuts.md)
 - [CLI Reference](docs/cli.md)
 - [Statusbar](docs/statusbar.md)
 - [Hooks](docs/hooks.md)

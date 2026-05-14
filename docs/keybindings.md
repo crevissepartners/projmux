@@ -83,7 +83,9 @@ does not stretch lopsided.
 The AI split bindings use the configured default mode. For one-shot launches,
 run `projmux ai split --agent claude|codex|shell|selective right|down`. Extra
 args after `--` are appended to the resolved `claude` or `codex` executable for
-a managed pane.
+a managed pane. To register user-level skills, slash commands, editor actions,
+or launcher shortcuts that call those one-shot launches, see
+[AI Agent Shortcuts](ai-agent-shortcuts.md).
 
 ### Inside the pickers
 

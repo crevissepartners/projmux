@@ -348,6 +348,8 @@ existing picker flow; `--agent shell` opens the existing plain shell split.
 Arguments after `--` are extra arguments appended to the resolved `claude` or
 `codex` executable inside the managed wrapper; projmux still sets the context
 directory, tmux title, AI pane metadata, title watcher, and split layout.
+For user-level skill, slash-command, editor, or launcher registrations that
+call this contract, see [AI Agent Shortcuts](ai-agent-shortcuts.md).
 
 `ingest codex-hook` is the hook-facing entrypoint for Codex hooks-engine JSON.
 It reads one JSON payload from stdin and handles the default Codex hook catalog
