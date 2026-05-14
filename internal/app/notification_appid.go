@@ -50,13 +50,11 @@ const (
 	// v2 — incremented after the hot-fix that switched the registry command
 	// from `wsl.exe -- projmux ...` (broke on `&` due to shell
 	// interpretation) to `wsl.exe --exec <abs-path> ...`. Existing v1 marker
-	// users get a fresh registration on their next Notify dispatch; the v1
-	// key (`@projmux_uri_protocol_registered`) is left orphaned —
-	// re-registration is idempotent so no cleanup is needed.
+	// users get a fresh registration on their next Notify dispatch.
 	//
 	// v3 — incremented after the handler moved from direct `wsl.exe` launch to
 	// a hidden PowerShell wrapper to avoid the visible Windows console flash on
-	// Toast click. Existing v2 markers are left orphaned for the same reason.
+	// Toast click.
 	//
 	// v4 — incremented after the hidden wrapper stopped passing `%1` after
 	// `-Command`, which PowerShell parsed as command text and broke URI query
@@ -73,3 +71,11 @@ const (
 	// escapes around URI `&` separators before wsl.exe receives the argv.
 	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered_v6"
 )
+
+var legacyURIProtocolRegisteredTmuxOptions = []string{
+	"@projmux_uri_protocol_registered",
+	"@projmux_uri_protocol_registered_v2",
+	"@projmux_uri_protocol_registered_v3",
+	"@projmux_uri_protocol_registered_v4",
+	"@projmux_uri_protocol_registered_v5",
+}

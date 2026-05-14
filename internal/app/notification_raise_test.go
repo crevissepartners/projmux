@@ -127,6 +127,11 @@ func TestNotifyMode_RaiseWSLToastKeepsClickTarget(t *testing.T) {
 	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", uriProtocolRegisteredTmuxOption, "1"}) {
 		t.Fatalf("commands = %#v, want uri protocol marker write in raise mode", cmdRecorder(cmd).commands)
 	}
+	for _, option := range legacyURIProtocolRegisteredTmuxOptions {
+		if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", "-u", option}) {
+			t.Fatalf("commands = %#v, want legacy uri protocol marker cleanup for %s", cmdRecorder(cmd).commands, option)
+		}
+	}
 	if got := chain.snapshot(); len(got) != 1 {
 		t.Fatalf("osfocus chain calls = %#v, want one raise call", got)
 	}

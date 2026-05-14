@@ -377,8 +377,9 @@ Registration markers and the writes involved:
   once per server boot. (The v5 marker
   `@projmux_uri_protocol_registered_v5` was bumped when the WScript launcher
   added the hidden cmd.exe parser hop; existing v5 users re-register
-  transparently on the next Notify after upgrade and the orphaned v5 key
-  requires no cleanup.)
+  transparently on the next Notify after upgrade. After successful v6
+  registration, projmux removes legacy URI marker keys from v1 through v5 so
+  tmux state reflects only the active handler generation.)
 
 Limitations:
 

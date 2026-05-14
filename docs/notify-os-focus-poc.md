@@ -357,8 +357,9 @@ machine is:
 - The `@projmux_uri_protocol_registered_v6` marker exists because v5 invoked
   `wsl.exe` directly from WScript with quoted fixed arguments, which avoided
   flash but broke the focus command. Re-registration is idempotent so upgrades
-  from v5 transparently install the new handler — the old marker key just
-  goes orphaned.
+  from v5 transparently install the new handler. Once v6 registration
+  succeeds, projmux removes the legacy URI marker keys from v1 through v5 so
+  old handler generations do not linger in tmux state.
 
 Multi-distro dispatch (one handler per distro, or a distro-selector
 arg) is a known tier-2 follow-up — current registration captures the
