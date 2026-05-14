@@ -2266,47 +2266,15 @@ func (c *settingsCommand) runAppearanceTargetSection(target statusbarDecorationT
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixStatusbar):
 			raw := strings.TrimPrefix(action, settingsActionPrefixStatusbar)
-			actionTarget, op, ok := parseStatusbarDecorationDetailAction(raw)
-			if !ok || actionTarget != target {
+			actionTarget, mode, ok := parseStatusbarDecorationDetailAction(raw)
+			if !ok || actionTarget != target || !isStatusbarDecorationMode(mode) {
 				return fmt.Errorf("unknown appearance detail action: %s", action)
 			}
-			switch op {
-			case "change":
-				if err := c.runAppearanceTargetChangeSection(actionTarget, stdout, stderr); err != nil {
-					return err
-				}
-			default:
-				return fmt.Errorf("unknown appearance detail action: %s", action)
-			}
-		default:
-			return fmt.Errorf("unknown appearance detail action: %s", action)
-		}
-	}
-}
-
-func (c *settingsCommand) runAppearanceTargetChangeSection(target statusbarDecorationTarget, stdout, stderr io.Writer) error {
-	for {
-		options, err := c.statusbarDecorationTargetChangeOptions(target)
-		if err != nil {
-			return err
-		}
-		result, err := c.runPicker(options)
-		if err != nil {
-			return err
-		}
-		action := strings.TrimSpace(result.Value)
-		if result.Key != "enter" || action == "" {
-			return errSettingsClosed
-		}
-		switch {
-		case action == settingsBackValue:
-			return nil
-		case strings.HasPrefix(action, settingsActionPrefixStatusbar):
-			if err := c.setStatusbarDecoration(strings.TrimPrefix(action, settingsActionPrefixStatusbar)); err != nil {
+			if err := c.setStatusbarDecoration(string(actionTarget) + ":" + mode); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("unknown appearance change action: %s", action)
+			return fmt.Errorf("unknown appearance detail action: %s", action)
 		}
 	}
 }
@@ -2322,23 +2290,6 @@ func (c *settingsCommand) statusbarDecorationTargetOptions(target statusbarDecor
 		Title:      meta.Title,
 		TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject()),
 		Prompt:     "Settings > Appearance > " + meta.Name + " > ",
-		Footer:     projmuxFooter("Enter: open  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
-		ExpectKeys: []string{"enter"},
-		Bindings:   settingsCloseBindings(),
-	}, nil
-}
-
-func (c *settingsCommand) statusbarDecorationTargetChangeOptions(target statusbarDecorationTarget) (intpickercompat.Options, error) {
-	meta, ok := statusbarDecorationTargetMeta(target)
-	if !ok {
-		return intpickercompat.Options{}, fmt.Errorf("unknown appearance target: %s", target)
-	}
-	return intpickercompat.Options{
-		UI:         "settings-statusbar-change",
-		Entries:    c.statusbarDecorationTargetChangeEntries(target),
-		Title:      meta.Title + " - Change",
-		TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject()),
-		Prompt:     "Settings > Appearance > " + meta.Name + " > Change > ",
 		Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
@@ -2353,41 +2304,18 @@ func (c *settingsCommand) statusbarDecorationTargetEntries(target statusbarDecor
 		{Label: settingsLabelInfo("Current", string(current), meta.Description), Value: settingsNoopValue},
 	}
 	for _, mode := range statusbarDecorationModes() {
-		source := "preview"
-		if mode == current {
-			source = "current preview"
-		}
-		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabelInfo("Preview "+string(mode), statusbarDecorationPreview(target, mode), source),
-			Value:     settingsNoopValue,
-			SearchKey: string(target) + " " + string(mode) + " preview " + statusbarDecorationPreview(target, mode),
-		})
-	}
-	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Change", "choose off, symbol, or emoji"),
-		Value:     settingsActionPrefixStatusbar + string(target) + ":change",
-		SearchKey: "appearance decoration statusbar change " + string(target) + " " + meta.Name,
-	})
-	return entries
-}
-
-func (c *settingsCommand) statusbarDecorationTargetChangeEntries(target statusbarDecorationTarget) []intpickercompat.Entry {
-	current := c.currentStatusbarDecorations().modeForTarget(target)
-	meta, _ := statusbarDecorationTargetMeta(target)
-	entries := []intpickercompat.Entry{settingsBackEntry()}
-	for _, mode := range statusbarDecorationModes() {
 		glyph := settingsGlyphInactive
 		color := settingsColorDim
-		desc := statusbarDecorationModeDescription(mode)
+		desc := statusbarDecorationPreview(target, mode) + " - " + statusbarDecorationModeDescription(mode)
 		if mode == current {
 			glyph = settingsGlyphToggle
 			color = settingsColorAdd
 			desc += " - current"
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(glyph, color, "Set "+string(mode), desc),
+			Label:     settingsLabel(glyph, color, "Preview "+string(mode), desc),
 			Value:     settingsActionPrefixStatusbar + string(target) + ":" + string(mode),
-			SearchKey: "appearance decoration statusbar " + string(target) + " " + string(mode) + " " + meta.Name,
+			SearchKey: string(target) + " " + string(mode) + " preview " + statusbarDecorationPreview(target, mode),
 		})
 	}
 	return entries
@@ -2398,6 +2326,15 @@ func statusbarDecorationModes() []config.StatusbarDecoration {
 		config.StatusbarDecorationOff,
 		config.StatusbarDecorationSymbol,
 		config.StatusbarDecorationEmoji,
+	}
+}
+
+func isStatusbarDecorationMode(value string) bool {
+	switch config.StatusbarDecoration(strings.TrimSpace(value)) {
+	case config.StatusbarDecorationOff, config.StatusbarDecorationSymbol, config.StatusbarDecorationEmoji:
+		return true
+	default:
+		return false
 	}
 }
 
