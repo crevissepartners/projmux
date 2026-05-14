@@ -66,7 +66,8 @@ Project root and discovery:
 
 Notifications:
 
-- `PROJMUX_NOTIFY_HOOK` — external executable that receives AI desktop notifications instead of the built-in sender. The hook is invoked with positional arguments: summary, body, urgency, app name, tag, group, icon path. When unset, projmux uses `notify-send` on Linux and PowerShell toasts on WSL.
+- `PROJMUX_NOTIFY_HOOK` — external executable that receives AI desktop notifications instead of the built-in sender. The hook is invoked with positional arguments: summary, body, OS urgency, app name, tag, group, icon path. The urgency argument is the transient OS notification urgency, not the persistent notify-queue severity. When unset, projmux uses `notify-send` on Linux and PowerShell toasts on WSL.
+- `PROJMUX_NOTIFY_EXPIRE_MS` — AI desktop notification expiration in milliseconds. Defaults to `5000`; unset, zero, negative, and non-numeric values fall back to the default.
 - `PROJMUX_WSL_TOAST_ICON_DIR` — override directory for the icon copied into a Windows-readable path before the WSL toast call.
 
 Usage tracking:

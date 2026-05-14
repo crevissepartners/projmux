@@ -320,13 +320,14 @@ func (c *aiCommand) aiTextNotification(paneID, text, severity string) aiNotifica
 	panePath := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_current_path}")
 	agent := aiNotificationTextAgent(text)
 	return aiNotification{
-		Summary: strings.TrimSpace(text),
-		Body:    aiNotificationBody("", aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
-		Urgency: aiUrgencyForSeverity(severity),
-		AppName: desktopAppID,
-		Icon:    c.notificationIcon(agent),
-		Tag:     paneID,
-		Group:   sessionName,
+		Summary:  strings.TrimSpace(text),
+		Body:     aiNotificationBody("", aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
+		Urgency:  aiOSNotificationUrgency(severity),
+		ExpireMS: c.notificationExpireMS(),
+		AppName:  desktopAppID,
+		Icon:     c.notificationIcon(agent),
+		Tag:      paneID,
+		Group:    sessionName,
 	}
 }
 
@@ -356,13 +357,14 @@ func (c *aiCommand) notifyAIWithMode(paneID string, force bool) error {
 	}
 
 	notification := aiNotification{
-		Summary: aiSummaryForKind(replyKind, agentName, cleanTitle),
-		Body:    aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
-		Urgency: aiUrgencyForKind(replyKind),
-		AppName: desktopAppID,
-		Icon:    c.notificationIcon(agentName),
-		Tag:     paneID,
-		Group:   sessionName,
+		Summary:  aiSummaryForKind(replyKind, agentName, cleanTitle),
+		Body:     aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
+		Urgency:  aiOSNotificationUrgency(replyKind),
+		ExpireMS: c.notificationExpireMS(),
+		AppName:  desktopAppID,
+		Icon:     c.notificationIcon(agentName),
+		Tag:      paneID,
+		Group:    sessionName,
 	}
 	if err := c.notificationNotifier().Notify(notification); err != nil {
 		return nil
@@ -383,9 +385,6 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	if paneID == "" {
 		return nil
 	}
-	if isTruthyTmuxOption(c.readTmuxPaneOption(paneID, aiPaneHookActiveOption)) {
-		return nil
-	}
 
 	interval := c.watchInterval()
 	settleLimit := c.watchSettleLoops()
@@ -394,11 +393,11 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	settleCount := 0
 	lastBusySignal := ""
 	for {
-		currentPaneID, err := c.read("tmux", "display-message", "-p", "-t", paneID, "#{pane_id}")
-		if err != nil || strings.TrimSpace(string(currentPaneID)) != paneID {
+		alive, hookActive := c.readAIWatchTitleGate(paneID)
+		if !alive {
 			return nil
 		}
-		if isTruthyTmuxOption(c.readTmuxPaneOption(paneID, aiPaneHookActiveOption)) {
+		if hookActive {
 			return nil
 		}
 		snapshot := c.readAIWatchSnapshot(paneID)
@@ -1503,6 +1502,24 @@ func (c *aiCommand) readAIWatchSnapshot(paneID string) aiPaneInfo {
 	return info
 }
 
+func (c *aiCommand) readAIWatchTitleGate(paneID string) (alive bool, hookActive bool) {
+	const delim = "__PROJMUX_TMUX_AI_GATE_SEP__"
+	if out, err := c.read("tmux", "display-message", "-p", "-t", paneID, "#{pane_id}"+delim+"#{"+aiPaneHookActiveOption+"}"); err == nil {
+		currentPaneID, active, ok := strings.Cut(strings.TrimSpace(string(out)), delim)
+		if ok {
+			if strings.TrimSpace(currentPaneID) != paneID {
+				return false, false
+			}
+			return true, isTruthyTmuxOption(active)
+		}
+	}
+	currentPaneID, err := c.read("tmux", "display-message", "-p", "-t", paneID, "#{pane_id}")
+	if err != nil || strings.TrimSpace(string(currentPaneID)) != paneID {
+		return false, false
+	}
+	return true, isTruthyTmuxOption(c.readTmuxPaneOption(paneID, aiPaneHookActiveOption))
+}
+
 func (c *aiCommand) readAIPaneCapture(paneID string) string {
 	return c.readTrimmed("tmux", "capture-pane", "-p", "-J", "-S", "-80", "-t", paneID)
 }
@@ -1688,19 +1705,7 @@ func aiSummaryForKind(kind, agentName, topic string) string {
 	return summary
 }
 
-func aiUrgencyForKind(kind string) string {
-	switch kind {
-	case "approval_required", "selection_required", "confirmation_required", "input_required":
-		return "critical"
-	default:
-		return "normal"
-	}
-}
-
-func aiUrgencyForSeverity(severity string) string {
-	if strings.TrimSpace(severity) == "critical" {
-		return "critical"
-	}
+func aiOSNotificationUrgency(string) string {
 	return "normal"
 }
 
@@ -1844,7 +1849,7 @@ func aiAttentionMismatch(nextState, attentionState string) bool {
 // This lets the WSL hook short-circuit cleanly when the inbound
 // notification has no pane id (`aiNotification.Tag` empty) without breaking
 // non-WSL notify paths that never compute a URI.
-func buildToastPowerShell(summary, body, appName, tag, group, iconPath, launchURI string) string {
+func buildToastPowerShell(summary, body, appName, tag, group, iconPath, launchURI string, expireMS int) string {
 	tagLine := ""
 	if tag != "" {
 		tagLine = "$toast.Tag = '" + psEscape(truncate64(tag)) + "'"
@@ -1861,10 +1866,16 @@ func buildToastPowerShell(summary, body, appName, tag, group, iconPath, launchUR
 	if launchURI != "" {
 		toastAttrs = ` launch="` + xmlEscape(launchURI) + `" activationType="protocol"`
 	}
+	toastDuration := ""
+	expirationLine := ""
+	if expireMS > 0 {
+		toastDuration = ` duration="short"`
+		expirationLine = "$toast.ExpirationTime = [DateTimeOffset]::Now.AddMilliseconds(" + fmt.Sprintf("%d", expireMS) + ")"
+	}
 	return `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] | Out-Null
 $xml = @'
-<toast` + toastAttrs + `>
+<toast` + toastDuration + toastAttrs + `>
   <visual>
     <binding template="ToastGeneric">` + iconXML + `
       <text>` + xmlEscape(summary) + `</text>
@@ -1878,6 +1889,7 @@ $tpl.LoadXml($xml)
 $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 ` + tagLine + `
 ` + groupLine + `
+` + expirationLine + `
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('` + psEscape(appName) + `').Show($toast)
 `
 }

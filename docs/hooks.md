@@ -199,6 +199,13 @@ Claude, and tmux AI notify diagnostics: status, conflicts, config paths, and
 copyable CLI install/remove/dry-run commands. It does not install or remove
 external Codex, Claude, or tmux settings.
 
+`PROJMUX_NOTIFY_HOOK` is separate from `[hooks.send-noti]`: it replaces the
+desktop sender and receives positional arguments
+`summary body urgency app-name tag group icon-path`. That `urgency` value is
+the OS notification urgency, not the notify-queue severity. AI approval,
+input, selection, and confirmation rows can stay critical in the queue and UI
+while the desktop notification hook receives `normal`.
+
 ## Codex Hooks Engine
 
 `projmux doctor` reports Codex hooks-engine wiring separately from legacy
@@ -433,7 +440,10 @@ fire at high volume.
 Pane matching follows the shared AI ingest order: inherited `$TMUX_PANE`, then
 payload `cwd`, then cached session id pane options. A matched pane is marked
 with `@projmux_ai_hook_active=1`, so `projmux ai watch-title` skips the pane
-and hook payloads become the primary signal.
+after a minimal hook-active gate instead of polling pane title/capture output;
+hook payloads become the primary signal. The tmux bell fallback does not mark
+panes hook-active, so title/capture fallback remains available for panes that
+only emit bells.
 
 The Claude hook payload is intentionally accepted directly at the ingest
 boundary. Core identity fields accept `hook_event_name`/`event_name`,

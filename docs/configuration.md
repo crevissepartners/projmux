@@ -156,6 +156,7 @@ configured key opens and closes the popup.
 | `TMUX_SESSIONIZER_ROOTS` | Legacy alias still honored at runtime for managed roots. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in Linux/WSL sender. Separate from declarative `[hooks.send-noti]`. |
 | `PROJMUX_NOTIFY_HOOK_DEPTH` | Internal recursion guard for `send-noti` hooks. Depth `>= 1` suppresses nested hook dispatch while still allowing the queue write itself. |
+| `PROJMUX_NOTIFY_EXPIRE_MS` | AI desktop notification expiration in milliseconds. Defaults to `5000`; unset, zero, negative, and non-numeric values fall back to the default. |
 | `PROJMUX_DESKTOP_NOTIFY_MODE` | OS desktop notification mode override. `none` / `notify` / `raise` (case insensitive). When set, this takes priority over every other resolution rung. The in-app notify queue is not affected. |
 | `PROJMUX_DESKTOP_NOTIFY` | Legacy on/off override kept for backward compatibility. `on` maps to `notify`, `off` maps to `none`. Honored only when `PROJMUX_DESKTOP_NOTIFY_MODE` is unset. |
 | `PROJMUX_WSL_TOAST_ICON_DIR` | Directory used when copying the WSL toast icon into a Windows-readable path. |
@@ -205,7 +206,17 @@ This environment variable remains the imperative "replace desktop notification
 sender" escape hatch. It does not run through the declarative hook trust/config
 system and it does not receive the notify-queue JSON payload. For additive
 forwarding after a successful queue write, prefer `[hooks.send-noti]` in
-`config.toml`.
+`config.toml`. The `urgency` argument is the OS notification urgency, not the
+internal notify-queue severity; AI desktop notifications default to OS urgency
+`normal` even when the statusbar, Alt-2, and persistent queue row remain
+critical.
+
+AI desktop notifications are transient by default. Linux `notify-send` receives
+`--urgency=normal` and `--expire-time=${PROJMUX_NOTIFY_EXPIRE_MS:-5000}`. WSL
+PowerShell Toasts use `duration="short"` and set `ExpirationTime` explicitly.
+If WSL falls back to `wsl-notify-send.exe`, urgency and expiration are
+best-effort because that adapter does not expose a stable equivalent for every
+host setup.
 
 `[hooks.send-noti]` and `PROJMUX_NOTIFY_HOOK` can coexist:
 

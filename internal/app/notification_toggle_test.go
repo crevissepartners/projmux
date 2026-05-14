@@ -120,6 +120,39 @@ func TestDesktopNotifyResolverModeCascade(t *testing.T) {
 	}
 }
 
+func TestNotificationExpireMSDefaultOverrideInvalid(t *testing.T) {
+	home := t.TempDir()
+	cases := []struct {
+		name string
+		env  string
+		want int
+	}{
+		{name: "default", want: defaultAINotifyExpireMS},
+		{name: "override", env: "2500", want: 2500},
+		{name: "zero invalid", env: "0", want: defaultAINotifyExpireMS},
+		{name: "negative invalid", env: "-1", want: defaultAINotifyExpireMS},
+		{name: "text invalid", env: "soon", want: defaultAINotifyExpireMS},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := testAICommand(home)
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "HOME":
+					return home
+				case aiNotifyExpireMSEnv:
+					return tc.env
+				default:
+					return ""
+				}
+			}
+			if got := cmd.notificationExpireMS(); got != tc.want {
+				t.Fatalf("notificationExpireMS() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseDesktopNotifyModeAccepts(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

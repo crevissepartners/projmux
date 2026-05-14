@@ -8,15 +8,18 @@ import (
 func TestBuildToastPowerShell_OmitsLaunchWhenURIEmpty(t *testing.T) {
 	t.Parallel()
 
-	script := buildToastPowerShell("hello", "world", "com.crevisse.projmux", "%8", "session", "", "")
+	script := buildToastPowerShell("hello", "world", "com.crevisse.projmux", "%8", "session", "", "", defaultAINotifyExpireMS)
 	if strings.Contains(script, "launch=") {
 		t.Fatalf("expected launch attribute absent when launchURI is empty; got:\n%s", script)
 	}
 	if strings.Contains(script, "activationType=") {
 		t.Fatalf("expected activationType attribute absent when launchURI is empty; got:\n%s", script)
 	}
-	if !strings.Contains(script, "<toast>") {
-		t.Fatalf("expected bare <toast> open tag without launch URI; got:\n%s", script)
+	if !strings.Contains(script, `<toast duration="short">`) {
+		t.Fatalf("expected passive short-duration <toast> open tag without launch URI; got:\n%s", script)
+	}
+	if !strings.Contains(script, "$toast.ExpirationTime = [DateTimeOffset]::Now.AddMilliseconds(5000)") {
+		t.Fatalf("expected explicit toast expiration; got:\n%s", script)
 	}
 }
 
@@ -24,9 +27,15 @@ func TestBuildToastPowerShell_InjectsLaunchAndProtocolActivation(t *testing.T) {
 	t.Parallel()
 
 	uri := buildFocusURI("%8", "/tmp/tmux-1000/projmux")
-	script := buildToastPowerShell("hello", "world", "com.crevisse.projmux", "%8", "session", "", uri)
+	script := buildToastPowerShell("hello", "world", "com.crevisse.projmux", "%8", "session", "", uri, 2500)
 	if !strings.Contains(script, `activationType="protocol"`) {
 		t.Fatalf("expected activationType=\"protocol\"; got:\n%s", script)
+	}
+	if !strings.Contains(script, `<toast duration="short" launch="`) {
+		t.Fatalf("expected launch URI on short-duration toast; got:\n%s", script)
+	}
+	if !strings.Contains(script, "$toast.ExpirationTime = [DateTimeOffset]::Now.AddMilliseconds(2500)") {
+		t.Fatalf("expected configured toast expiration; got:\n%s", script)
 	}
 	if !strings.Contains(script, `launch="`) {
 		t.Fatalf("expected launch attribute present; got:\n%s", script)

@@ -6,19 +6,26 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/integrations/osfocus"
 )
 
+const (
+	aiNotifyExpireMSEnv     = "PROJMUX_NOTIFY_EXPIRE_MS"
+	defaultAINotifyExpireMS = 5000
+)
+
 type aiNotification struct {
-	Summary string
-	Body    string
-	Urgency string
-	AppName string
-	Icon    string
-	Tag     string
-	Group   string
+	Summary  string
+	Body     string
+	Urgency  string
+	ExpireMS int
+	AppName  string
+	Icon     string
+	Tag      string
+	Group    string
 }
 
 type aiNotifier interface {
@@ -74,13 +81,14 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	if mode == desktopNotifyModeNone {
 		return nil
 	}
+	expireMS := notification.ExpireMS
 	if n.command.isWSL() {
 		n.command.ensureWSLLegacyAppIDCleaned(notification)
 		if mode == desktopNotifyModeRaise {
 			n.command.ensureWSLURIProtocol()
 		}
 		_ = n.ensureWSLToastAppID(notification)
-		if err := n.dispatchWSLToast(notification, mode == desktopNotifyModeRaise); err == nil {
+		if err := n.dispatchWSLToast(notification, mode == desktopNotifyModeRaise, expireMS); err == nil {
 			n.maybeRaiseHostTerminal(mode, notification)
 			return nil
 		}
@@ -102,13 +110,19 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	if n.command.readTrimmed("command", "-v", "notify-send") == "" {
 		return errors.New("notify-send is unavailable")
 	}
-	if err := n.command.run("notify-send",
-		"--app-name="+notification.AppName,
-		"--icon="+icon,
-		"--urgency="+notification.Urgency,
+	args := []string{
+		"--app-name=" + notification.AppName,
+		"--icon=" + icon,
+		"--urgency=" + notification.Urgency,
+	}
+	if expireMS > 0 {
+		args = append(args, "--expire-time="+strconv.Itoa(expireMS))
+	}
+	args = append(args,
 		notification.Summary,
 		notification.Body,
-	); err != nil {
+	)
+	if err := n.command.run("notify-send", args...); err != nil {
 		return err
 	}
 	n.maybeRaiseHostTerminal(mode, notification)
@@ -141,7 +155,7 @@ func (n aiDesktopNotifier) maybeRaiseHostTerminal(mode desktopNotifyMode, notifi
 	_ = chain.Focus(osfocus.Target{Pane: strings.TrimSpace(notification.Tag)})
 }
 
-func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification, clickToFocus bool) error {
+func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification, clickToFocus bool, expireMS int) error {
 	powerShell := n.command.resolvePowerShell()
 	if powerShell == "" {
 		return errors.New("powershell.exe is unavailable")
@@ -168,8 +182,16 @@ func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification, clickTo
 		notification.Group,
 		n.command.wslToastIconPath(notification.Icon),
 		launchURI,
+		expireMS,
 	)
 	return n.command.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script))
+}
+
+func (c *aiCommand) notificationExpireMS() int {
+	if ms := parsePositiveInt(c.env(aiNotifyExpireMSEnv)); ms > 0 {
+		return ms
+	}
+	return defaultAINotifyExpireMS
 }
 
 func (n aiDesktopNotifier) ensureWSLToastAppID(notification aiNotification) error {
