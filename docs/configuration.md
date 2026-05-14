@@ -279,7 +279,7 @@ gated here.
 
 Click activation is wired only for `raise`. The `projmux://` URI handler is
 registered on the first `raise` Notify of each tmux server (gated by the
-`@projmux_uri_protocol_registered_v3` marker). The
+`@projmux_uri_protocol_registered_v4` marker). The
 mode only controls whether a toast fires at all and whether to follow it
 up with an on-push auto-raise.
 
@@ -319,10 +319,13 @@ the first time a Toast is dispatched on each tmux server. Clicking the
 toast hands control back to projmux inside WSL via the registered command:
 
 ```text
-powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "<hidden launcher>" "%1"
+powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "<hidden launcher>"
 ```
 
-The hidden launcher then runs `wsl.exe` with argv semantics equivalent to:
+The hidden launcher stores the substituted `%1` URI in a PowerShell variable,
+then starts `wsl.exe` through `System.Diagnostics.ProcessStartInfo` with
+`UseShellExecute=false` and `CreateNoWindow=true`. Its argv semantics are
+equivalent to:
 
 ```text
 wsl.exe -d $WSL_DISTRO_NAME --exec <absolute-path-to-projmux> focus --uri <uri>
@@ -353,10 +356,11 @@ notify path so users do not configure anything:
    `wsl.exe -- <cmd>` routes its tail through the user's login shell, which
    parses `&` query-string separators as background-job operators (zsh emits
    `parse error near '&'`). `--exec` skips the shell and invokes the binary
-   directly. The `%1` URI is forwarded as a PowerShell argument and then as a
-   `wsl.exe` argv element, not interpolated into a shell command. The absolute
-   WSL filesystem path to the binary is captured at registration so PATH does
-   not need to be populated under `--exec`.
+   directly. The `%1` URI is assigned inside a PowerShell single-quoted
+   literal before the `wsl.exe` argument string is built, so `&` query
+   separators are data instead of PowerShell or shell syntax. The absolute WSL
+   filesystem path to the binary is captured at registration so PATH does not
+   need to be populated under `--exec`.
 
 The URI carries the originating pane id and tmux socket so the click
 round-trips back to the exact pane that fired the notification, which
@@ -367,12 +371,13 @@ Registration markers and the writes involved:
 - Registry keys (HKCU): `SOFTWARE\Classes\projmux\(Default)`,
   `SOFTWARE\Classes\projmux\URL Protocol`, and
   `SOFTWARE\Classes\projmux\shell\open\command\(Default)`.
-- tmux user-option marker `@projmux_uri_protocol_registered_v3` records that
+- tmux user-option marker `@projmux_uri_protocol_registered_v4` records that
   registration has been attempted on this server so the script runs at most
-  once per server boot. (The v2 marker
-  `@projmux_uri_protocol_registered_v2` was bumped when the registry command
-  moved behind the hidden wrapper; existing v2 users re-register
-  transparently on the next Notify after upgrade and the orphaned v2 key
+  once per server boot. (The v3 marker
+  `@projmux_uri_protocol_registered_v3` was bumped when the hidden wrapper
+  stopped passing `%1` after `-Command` and moved to
+  `ProcessStartInfo`/`CreateNoWindow`; existing v3 users re-register
+  transparently on the next Notify after upgrade and the orphaned v3 key
   requires no cleanup.)
 
 Limitations:
