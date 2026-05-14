@@ -860,6 +860,31 @@ func TestBuildPopupToggleSessionizerTrustEnvUsesClientOnly(t *testing.T) {
 	}
 }
 
+func TestBuildPopupToggleSessionPopupPropagatesSwitchTargetClient(t *testing.T) {
+	command, options, err := buildPopupToggleWithPickerBackend(
+		tmuxPopupToggleMode{Raw: "session-popup", Canonical: "session-popup"},
+		"/tmp/projmux",
+		"/tmp/marker",
+		tmuxPopupContext{
+			TargetClient: "/dev/pts/8",
+			OriginPane:   "%2",
+			ClientWidth:  200,
+			ClientHeight: 50,
+		},
+		intpicker.Backend("legacy"),
+		func(string) string { return "" },
+	)
+	if err != nil {
+		t.Fatalf("buildPopupToggleWithPickerBackend() error = %v", err)
+	}
+	if !strings.Contains(command, inttmux.SwitchTargetClientEnv+"='/dev/pts/8'") {
+		t.Fatalf("popup command = %q, want switch target client env", command)
+	}
+	if got := options.Env[inttmux.SwitchTargetClientEnv]; got != "/dev/pts/8" {
+		t.Fatalf("options.Env[%q] = %q, want target client", inttmux.SwitchTargetClientEnv, got)
+	}
+}
+
 func TestAppRunTmuxPopupTogglePropagatesLegacySessionizerRoots(t *testing.T) {
 	t.Parallel()
 

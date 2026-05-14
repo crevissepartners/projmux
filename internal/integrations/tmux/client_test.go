@@ -876,7 +876,7 @@ func TestClientEnsureSessionCreatesMissingSession(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
 		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
@@ -898,7 +898,7 @@ func TestClientEnsureSessionSkipsCreateWhenSessionExists(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1013,7 +1013,7 @@ func TestClientOpenSessionSwitchesInsideTmux(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"switch-client", "-t", "workspace"}},
+		{name: "tmux", args: []string{"switch-client", "-t", "=workspace"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1043,7 +1043,7 @@ func TestClientOpenSessionTargetsClientInsideTmux(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"switch-client", "-c", "/dev/pts/7", "-t", "workspace"}},
+		{name: "tmux", args: []string{"switch-client", "-c", "/dev/pts/7", "-t", "=workspace"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1064,7 +1064,7 @@ func TestClientOpenSessionAttachesOutsideTmux(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"attach-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"attach-session", "-t", "=workspace"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1099,7 +1099,7 @@ func TestClientSwitchClientRunsTmuxSwitch(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"switch-client", "-t", "workspace"}},
+		{name: "tmux", args: []string{"switch-client", "-t", "=workspace"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1150,7 +1150,7 @@ func TestClientKillSessionRunsTmuxKill(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"kill-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"kill-session", "-t", "=workspace"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1380,7 +1380,7 @@ func TestClientOpenSessionTargetSwitchesToPaneInsideTmux(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"switch-client", "-t", "workspace:3.8"}},
+		{name: "tmux", args: []string{"switch-client", "-t", "=workspace:3.8"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1410,7 +1410,7 @@ func TestClientOpenSessionTargetTargetsClientInsideTmux(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"switch-client", "-c", "/dev/pts/7", "-t", "workspace:3.8"}},
+		{name: "tmux", args: []string{"switch-client", "-c", "/dev/pts/7", "-t", "=workspace:3.8"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1435,8 +1435,8 @@ func TestClientOpenSessionTargetRunsPostAttachAfterInsideTmuxSwitch(t *testing.T
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"switch-client", "-t", "workspace:3.8"}},
-		{name: "tmux", args: []string{"display-message", "-p", "-t", "workspace:3.8", "-F", "#{pane_current_path}"}},
+		{name: "tmux", args: []string{"switch-client", "-t", "=workspace:3.8"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "=workspace:3.8", "-F", "#{pane_current_path}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1463,7 +1463,7 @@ func TestClientOpenSessionTargetAttachesToWindowOutsideTmux(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"attach-session", "-t", "workspace:3"}},
+		{name: "tmux", args: []string{"attach-session", "-t", "=workspace:3"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1485,7 +1485,7 @@ func TestClientOpenSessionTargetSkipsPostAttachOutsideTmux(t *testing.T) {
 	}
 
 	want := []commandCall{
-		{name: "tmux", args: []string{"attach-session", "-t", "workspace:3"}},
+		{name: "tmux", args: []string{"attach-session", "-t", "=workspace:3"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
@@ -1783,7 +1783,7 @@ func TestClientEnsureSessionRunsLifecycleHooksForNewSession(t *testing.T) {
 	}
 
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
 		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_current_command}"}},
 		{name: "tmux", args: []string{"send-keys", "-t", "%7", "echo ready", "Enter"}},
@@ -1819,7 +1819,7 @@ func TestClientEnsureSessionSkipsStartupMarkersWhenNoStartupHook(t *testing.T) {
 	}
 
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
 		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
@@ -1853,7 +1853,7 @@ func TestClientEnsureSessionSkipsStartupMarkersWhenNoCommand(t *testing.T) {
 			}
 
 			wantCalls := []commandCall{
-				{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+				{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
 				{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
 			}
 			if !reflect.DeepEqual(runner.calls, wantCalls) {
@@ -1886,7 +1886,7 @@ func TestClientEnsureSessionSkipsStartupMarkersWhenSendKeysFails(t *testing.T) {
 	}
 
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
 		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_current_command}"}},
 		{name: "tmux", args: []string{"send-keys", "-t", "%7", "echo ready", "Enter"}},
@@ -1920,7 +1920,7 @@ func TestClientEnsureSessionPreCreateAbortSkipsNewSession(t *testing.T) {
 		t.Fatalf("EnsureSession error = %v, want pre-create blocked", err)
 	}
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("unexpected tmux calls %#v", runner.calls)
@@ -1952,7 +1952,7 @@ func TestClientEnsureSessionAppliesProjectSessionEnvOnCreateAndAfterCreate(t *te
 	}
 
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
 		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-e", "FOO=bar", "-e", "ZED=last", "-P", "-F", "#{pane_id}"}},
 		{name: "tmux", args: []string{"set-environment", "-t", "workspace", "FOO", "bar"}},
 		{name: "tmux", args: []string{"set-environment", "-t", "workspace", "ZED", "last"}},
@@ -2133,8 +2133,8 @@ func TestClientOpenSessionRunsPostAttachAfterInsideTmuxSwitch(t *testing.T) {
 	}
 
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"switch-client", "-t", "workspace"}},
-		{name: "tmux", args: []string{"display-message", "-p", "-t", "workspace", "-F", "#{pane_current_path}"}},
+		{name: "tmux", args: []string{"switch-client", "-t", "=workspace"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "=workspace", "-F", "#{pane_current_path}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("unexpected tmux calls %#v", runner.calls)
@@ -2162,7 +2162,7 @@ func TestClientOpenSessionSkipsPostAttachOutsideTmux(t *testing.T) {
 	}
 
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"attach-session", "-t", "workspace"}},
+		{name: "tmux", args: []string{"attach-session", "-t", "=workspace"}},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("unexpected tmux calls %#v", runner.calls)
