@@ -18,11 +18,16 @@ view-first layout:
 - `Settings > Keybindings` is the single entry point for keybinding work. The
   page is split into four chips: `Bindings`, `Diagnostic`, `Probe`, and `Init`.
 - `Settings > Notifications` owns notification delivery IA. Desktop notification
-  mode, delivery source diagnostics, in-app queue status, and
+  mode, AI desktop notification dedupe duration, delivery source diagnostics,
+  in-app queue status, and
   `PROJMUX_NOTIFY_HOOK` visibility live together without mixing mutation
   boundaries.
 - `Settings > Notifications > Desktop notifications` owns the desktop
   notification mode. The detail choices are `none`, `notify`, and `raise`.
+- `Settings > Notifications > AI notification dedupe` owns the duplicate
+  desktop AI notification collapse window. It stores integer seconds and shows
+  the effective source; `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` remains the top
+  override. The tmux bell fallback keeps its fixed 5 second window.
 - `Settings > Notifications > Delivery sources` shows Codex hooks, Claude, and
   tmux producer diagnostics plus copyable install/remove/dry-run commands.
   Settings copies command text only; it does not install or remove external

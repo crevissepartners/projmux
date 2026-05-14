@@ -221,6 +221,19 @@ the Linux `--app-name`, the macOS sender label, and the Windows
 ships with a one-shot Windows cleanup that removes the legacy Start Menu
 shortcut and registry entry the first time projmux runs.
 
+AI desktop notifications collapse repeated pane-local notifications using a
+seconds window. Resolution priority is:
+
+1. `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS`
+2. Settings saved value at
+   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-notify-dedupe-seconds`
+3. default `120`
+
+Settings exposes this at `Settings > Notifications > AI notification dedupe`.
+The value is stored as integer seconds and applies only to AI desktop
+notification dispatch. The tmux bell fallback keeps its fixed 5 second
+dedupe window.
+
 ### Desktop notification mode
 
 The OS-level dispatch carries three modes. The in-app notify queue, the
@@ -456,7 +469,7 @@ These are intended for debugging or local policy, not routine setup:
 
 | Variable | Purpose |
 | --- | --- |
-| `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` | Collapse window for duplicate AI notifications keyed on `(summary, tag)`. |
+| `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` | Override the Settings/default collapse window for duplicate AI desktop notifications keyed on the pane-local AI notification key. |
 | `PROJMUX_CODEX_TITLE_WATCH_INTERVAL` | Title-watch loop pacing for Codex panes. |
 | `PROJMUX_CODEX_REPLY_SETTLE_LOOPS` | Reply-detection settle-loop pacing for Codex panes. |
 | `TMUX_KUBE_CACHE_TTL` | Kubernetes status segment cache TTL. |

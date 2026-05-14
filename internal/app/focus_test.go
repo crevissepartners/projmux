@@ -9,6 +9,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
 type focusFakeCall struct {
@@ -687,6 +690,58 @@ func TestFocus_URISetsToastClickTelemetryKind(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "kind=toast-click") {
 		t.Fatalf("stderr = %q, want kind=toast-click", stderr.String())
+	}
+}
+
+func TestFocusURIToastClickAcksLatestAIQueueEntryAfterFocus(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	store := &stubNotifyStore{listEntries: []notify.Notification{
+		{
+			ID:        "selected-critical",
+			Severity:  notify.SeverityCritical,
+			Source:    notify.SourceAI,
+			Session:   "ws",
+			Window:    "0",
+			Pane:      "%2",
+			Socket:    "/sock",
+			CreatedAt: now,
+		},
+		{
+			ID:        "older-info",
+			Severity:  notify.SeverityInfo,
+			Source:    notify.SourceAI,
+			Session:   "ws",
+			Window:    "0",
+			Pane:      "%2",
+			Socket:    "/sock",
+			CreatedAt: now.Add(-time.Minute),
+		},
+	}}
+	uri := buildFocusURI("%2", "/sock")
+	runner := &focusFakeRunner{
+		respond: func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "display-message"):
+				return []byte("ws" + focusFieldSeparator + "0\n"), nil
+			case containsArg(args, "list-sessions"):
+				return []byte("100\tws\t1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0\tws\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	cmd := newFocusTestCommand(runner, nil, nil)
+	cmd.notifyStoreFn = func() (notifyStore, error) { return store, nil }
+
+	if err := cmd.Run([]string{"--uri", uri, "--json"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	want := []string{"selected-critical", "older-info"}
+	if !slices.Equal(store.ackedIDs, want) {
+		t.Fatalf("ackedIDs = %#v, want %#v", store.ackedIDs, want)
 	}
 }
 

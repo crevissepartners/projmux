@@ -1260,10 +1260,7 @@ func (c *aiCommand) duplicateAINotificationRecent(paneID, key string) bool {
 	if key == "" {
 		return false
 	}
-	dedupeSeconds := parsePositiveInt(c.env("PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS"))
-	if dedupeSeconds <= 0 {
-		dedupeSeconds = 120
-	}
+	dedupeSeconds := c.aiNotifyDedupeSeconds()
 	if c.readTmuxPaneOption(paneID, "@projmux_desktop_notification_key") != key {
 		return false
 	}

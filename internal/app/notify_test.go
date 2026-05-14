@@ -24,6 +24,7 @@ type stubNotifyStore struct {
 	listErr     error
 
 	ackedID  string
+	ackedIDs []string
 	ackErr   error
 	ackAll   int
 	ackAllOK bool
@@ -57,6 +58,7 @@ func (s *stubNotifyStore) List() ([]notify.Notification, error) {
 
 func (s *stubNotifyStore) Ack(id string) error {
 	s.ackedID = id
+	s.ackedIDs = append(s.ackedIDs, id)
 	return s.ackErr
 }
 

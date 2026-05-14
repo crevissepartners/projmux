@@ -1473,6 +1473,7 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 		t.Fatalf("notifications entries = %#v, want Desktop notifications detail row", root)
 	}
 	for _, want := range []string{
+		settingsNotificationsAIDedupe,
 		settingsNotificationsDelivery,
 		settingsNotificationsQueue,
 		settingsNotificationsHookOverride,
@@ -1511,6 +1512,48 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 	}
 	if !sawInfo {
 		t.Fatalf("desktop notification entries = %#v, want info row with raise + env source", detail)
+	}
+}
+
+func TestSettingsNotificationsAIDedupeRowsAndCustomWrite(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string { return "" },
+	}
+
+	root := cmd.notificationsEntries()
+	if !hasEntryValue(root, settingsNotificationsAIDedupe) {
+		t.Fatalf("notifications entries = %#v, want AI dedupe row", root)
+	}
+
+	detail := cmd.aiNotifyDedupeEntries()
+	for _, want := range []string{
+		settingsActionPrefixAINotifyDedupe + "30",
+		settingsActionPrefixAINotifyDedupe + "60",
+		settingsActionPrefixAINotifyDedupe + "120",
+		settingsActionPrefixAINotifyDedupe + "300",
+		settingsActionPrefixAINotifyDedupe + "custom",
+	} {
+		if !hasEntryValue(detail, want) {
+			t.Fatalf("AI dedupe entries = %#v, want row %q", detail, want)
+		}
+	}
+	if !hasEntryLabelContaining(detail, "tmux bell fallback stays 5s") {
+		t.Fatalf("AI dedupe entries = %#v, want scope row preserving bell fallback", detail)
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.setAINotifyDedupeSeconds(75, &stdout); err != nil {
+		t.Fatalf("setAINotifyDedupeSeconds error = %v", err)
+	}
+	if got := cmd.currentAINotifyDedupeSeconds(); got.Seconds != 75 || got.Source != aiNotifyDedupeSourceSetting {
+		t.Fatalf("current AI dedupe = %#v, want 75/setting", got)
+	}
+	if got, want := stdout.String(), "AI notification dedupe: 75s\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 

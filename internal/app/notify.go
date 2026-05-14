@@ -343,7 +343,7 @@ func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr
 			}
 			return err
 		}
-		if err := store.Ack(id); err != nil {
+		if err := ackFocusedNotification(store, entry, entries); err != nil {
 			return fmt.Errorf("ack focused notification: %w", err)
 		}
 		return nil
