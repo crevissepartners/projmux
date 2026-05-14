@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +26,12 @@ type ReplayOptions struct {
 	// FallbackCWD is used when a stored cwd no longer exists. When empty or
 	// unusable, panes fall back to the snapshot default cwd and then $HOME.
 	FallbackCWD string
+
+	// AgentBinaryResolver overrides agent executable discovery for tests.
+	AgentBinaryResolver func(agent string) string
+
+	// CommandShell overrides the POSIX shell used for direct-start wrappers.
+	CommandShell string
 }
 
 // ApplyToExistingSessionOptions controls destructive replay into an
@@ -56,11 +64,12 @@ type ReplayWarning struct {
 // environment variables, including secrets. Agent recipe replay is limited to
 // adapters with explicit safe command generation.
 func Replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOptions) (ReplayResult, error) {
-	return replay(ctx, runner, snap, opts, replayOptions{replayPaneRecipes: true})
+	return replay(ctx, runner, snap, opts, replayOptions{replayPaneRecipes: true, directStartAgents: true})
 }
 
 type replayOptions struct {
 	replayPaneRecipes bool
+	directStartAgents bool
 }
 
 func replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOptions, replayOpts replayOptions) (ReplayResult, error) {
@@ -76,6 +85,7 @@ func replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOption
 	if err != nil {
 		return result, err
 	}
+	agentLauncher := newAgentLaunchResolver(opts)
 
 	windows := sortedWindows(snap.Windows)
 	sessionCWD := resolver.resolveSession(snap.DefaultCWD, &result)
@@ -88,7 +98,13 @@ func replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOption
 		}
 	}
 
-	if _, err := runner.Run(ctx, "tmux", "new-session", "-d", "-s", snap.Session, "-c", createCWD); err != nil {
+	args := []string{"new-session", "-d", "-s", snap.Session, "-c", createCWD}
+	if len(windows) > 0 {
+		if panes := sortedPanes(windows[0].Panes); len(panes) > 0 {
+			args = append(args, replayPaneLaunchTail(agentLauncher, windows[0], panes[0], createCWD, &result, replayOpts)...)
+		}
+	}
+	if _, err := runner.Run(ctx, "tmux", args...); err != nil {
 		return result, fmt.Errorf("replay tmux session %q: %w", snap.Session, err)
 	}
 	if len(windows) == 0 {
@@ -116,6 +132,9 @@ func replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOption
 			if strings.TrimSpace(window.Name) != "" {
 				args = append(args, "-n", window.Name)
 			}
+			if len(panes) > 0 {
+				args = append(args, replayPaneLaunchTail(agentLauncher, window, panes[0], windowCWD, &result, replayOpts)...)
+			}
 			if _, err := runner.Run(ctx, "tmux", args...); err != nil {
 				return result, fmt.Errorf("replay tmux window %d: %w", window.Index, err)
 			}
@@ -125,7 +144,9 @@ func replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOption
 			pane := panes[paneOffset]
 			cwd := resolver.resolvePane(pane.CWD, window.Index, pane.Index, &result)
 			targetPane := panes[paneOffset-1].Index
-			if _, err := runner.Run(ctx, "tmux", "split-window", "-d", "-t", paneTarget(snap.Session, window.Index, targetPane), "-c", cwd); err != nil {
+			args := []string{"split-window", "-d", "-t", paneTarget(snap.Session, window.Index, targetPane), "-c", cwd}
+			args = append(args, replayPaneLaunchTail(agentLauncher, window, pane, cwd, &result, replayOpts)...)
+			if _, err := runner.Run(ctx, "tmux", args...); err != nil {
 				return result, fmt.Errorf("replay tmux window %d pane %d: %w", window.Index, pane.Index, err)
 			}
 		}
@@ -141,7 +162,7 @@ func replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOption
 			}
 		}
 		if replayOpts.replayPaneRecipes {
-			if err := replayPaneRecipes(ctx, runner, snap.Session, window, panes, &result); err != nil {
+			if err := replayPaneRecipes(ctx, runner, snap.Session, window, panes, &result, replayOpts); err != nil {
 				return result, err
 			}
 		}
@@ -229,7 +250,7 @@ func ApplyToExistingSession(ctx context.Context, runner Runner, snap Snapshot, o
 	}
 
 	for _, window := range windows {
-		if err := replayPaneRecipes(ctx, runner, snap.Session, window, sortedPanes(window.Panes), &result); err != nil {
+		if err := replayPaneRecipes(ctx, runner, snap.Session, window, sortedPanes(window.Panes), &result, replayOptions{replayPaneRecipes: true}); err != nil {
 			return result, err
 		}
 	}
@@ -240,8 +261,11 @@ func ApplyToExistingSession(ctx context.Context, runner Runner, snap Snapshot, o
 	return result, nil
 }
 
-func replayPaneRecipes(ctx context.Context, runner Runner, session string, window Window, panes []Pane, result *ReplayResult) error {
+func replayPaneRecipes(ctx context.Context, runner Runner, session string, window Window, panes []Pane, result *ReplayResult, replayOpts replayOptions) error {
 	for _, pane := range panes {
+		if replayOpts.directStartAgents && pane.Recipe.Kind == RecipeKindAgent {
+			continue
+		}
 		if err := replayPaneRecipe(ctx, runner, paneTarget(session, window.Index, pane.Index), window.Index, pane, result); err != nil {
 			return err
 		}
@@ -258,6 +282,83 @@ func replayPaneRecipe(ctx context.Context, runner Runner, target string, windowI
 	default:
 		return nil
 	}
+}
+
+type agentLaunchResolver struct {
+	binaryResolver func(agent string) string
+	commandShell   string
+}
+
+func newAgentLaunchResolver(opts ReplayOptions) agentLaunchResolver {
+	resolver := opts.AgentBinaryResolver
+	if resolver == nil {
+		resolver = findAgentBinary
+	}
+	shell := strings.TrimSpace(opts.CommandShell)
+	if shell == "" {
+		shell = commandShell()
+	}
+	return agentLaunchResolver{binaryResolver: resolver, commandShell: shell}
+}
+
+func replayPaneLaunchTail(launcher agentLaunchResolver, window Window, pane Pane, cwd string, result *ReplayResult, replayOpts replayOptions) []string {
+	if !replayOpts.directStartAgents || !replayOpts.replayPaneRecipes || pane.Recipe.Kind != RecipeKindAgent {
+		return nil
+	}
+	agent := strings.ToLower(strings.TrimSpace(pane.Recipe.Agent))
+	var resumeArgs []string
+	var err error
+	switch agent {
+	case claudeagent.AgentName:
+		resumeArgs, err = claudeagent.ResumeArgs(pane.Recipe.ResumeID)
+	case codexagent.AgentName:
+		resumeArgs, err = codexagent.ResumeArgs(pane.Recipe.ResumeID)
+	default:
+		return nil
+	}
+	if err != nil {
+		appendReplayWarning(result, ReplayWarning{
+			Scope:       "agent",
+			WindowIndex: window.Index,
+			PaneIndex:   pane.Index,
+			Reason:      err.Error(),
+		})
+		return nil
+	}
+	agentBin := launcher.binaryResolver(agent)
+	if agentBin == "" {
+		appendReplayWarning(result, ReplayWarning{
+			Scope:       "agent",
+			WindowIndex: window.Index,
+			PaneIndex:   pane.Index,
+			Reason:      "missing " + agent + " binary",
+		})
+		return nil
+	}
+	title := strings.TrimSpace(pane.Recipe.Topic)
+	if title == "" {
+		title = agent
+	}
+	command := agentLaunchCommand(agent, agentBin, cwd, title, resumeArgs[1:])
+	return []string{launcher.commandShell, "-lc", command}
+}
+
+func agentLaunchCommand(agent, agentBin, cwd, title string, argv []string) string {
+	titleVar := "__" + agent + "_title"
+	parts := []string{}
+	if binDir := filepath.Dir(agentBin); binDir != "" && binDir != "." && binDir != "/" {
+		parts = append(parts, "export PATH="+shellQuote(binDir)+`":$PATH"`)
+	}
+	if cwd != "" {
+		parts = append(parts, "cd "+shellQuote(cwd))
+	}
+	parts = append(parts,
+		titleVar+"="+shellQuote(title),
+		`printf '\033]0;%s\007' "$`+titleVar+`"`,
+		`if [ -n "${TMUX:-}" ]; then tmux select-pane -T "$`+titleVar+`" >/dev/null 2>&1 || true; fi`,
+		"exec "+shellJoin(append([]string{agentBin}, argv...)),
+	)
+	return strings.Join(parts, " && ")
 }
 
 func replayAgentRecipe(ctx context.Context, runner Runner, target string, windowIndex int, pane Pane, result *ReplayResult) error {
@@ -351,6 +452,114 @@ func appendReplayWarning(result *ReplayResult, warning ReplayWarning) {
 		return
 	}
 	result.Warnings = append(result.Warnings, warning)
+}
+
+func findAgentBinary(agent string) string {
+	binName := strings.TrimSpace(agent)
+	switch binName {
+	case claudeagent.AgentName, codexagent.AgentName:
+	default:
+		return ""
+	}
+
+	home, _ := os.UserHomeDir()
+	if path := firstExecutable(
+		lookPath(binName),
+		filepath.Join(home, ".npm-global", "bin", binName),
+		filepath.Join(home, ".local", "bin", binName),
+	); path != "" {
+		return path
+	}
+	if path := newestExecutable(nodeManagerCandidates(home, binName)); path != "" {
+		return path
+	}
+	if binName == codexagent.AgentName {
+		matches, _ := filepath.Glob(filepath.Join(home, ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
+		return newestExecutable(matches)
+	}
+	return ""
+}
+
+func commandShell() string {
+	shell := strings.TrimSpace(os.Getenv("SHELL"))
+	if shell == "" || !filepath.IsAbs(shell) || strings.ContainsAny(shell, "\x00\r\n") {
+		return "/bin/sh"
+	}
+	switch filepath.Base(shell) {
+	case "bash", "dash", "ksh", "mksh", "sh", "zsh":
+		return shell
+	default:
+		return "/bin/sh"
+	}
+}
+
+func lookPath(binName string) string {
+	path, err := exec.LookPath(binName)
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+func firstExecutable(paths ...string) string {
+	for _, path := range paths {
+		if isExecutable(path) {
+			return path
+		}
+	}
+	return ""
+}
+
+func newestExecutable(paths []string) string {
+	var newest string
+	var newestModTime int64
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			continue
+		}
+		modTime := info.ModTime().UnixNano()
+		if newest == "" || modTime > newestModTime {
+			newest = path
+			newestModTime = modTime
+		}
+	}
+	return newest
+}
+
+func nodeManagerCandidates(home, binName string) []string {
+	if home == "" || binName == "" {
+		return nil
+	}
+	var candidates []string
+	globs := []string{
+		filepath.Join(home, ".nvm", "versions", "node", "*", "bin", binName),
+		filepath.Join(home, ".fnm", "node-versions", "*", "installation", "bin", binName),
+		filepath.Join(home, ".asdf", "installs", "nodejs", "*", "bin", binName),
+	}
+	for _, pattern := range globs {
+		matches, _ := filepath.Glob(pattern)
+		candidates = append(candidates, matches...)
+	}
+	candidates = append(candidates, filepath.Join(home, ".volta", "bin", binName))
+	return candidates
+}
+
+func isExecutable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+}
+
+func shellJoin(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 type cwdResolver struct {

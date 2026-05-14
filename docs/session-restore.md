@@ -38,6 +38,17 @@ unknown sources are low or none. The old statusbar Session State shortcut has
 been removed; use `Projects > Sessions > State` or the `projmux session-state`
 CLI for inspection/actions.
 
+Agent restore direct-starts supported resume commands when creating fresh tmux
+panes, matching the `projmux ai split` wrapper shape: the wrapper prepends the
+agent binary directory to `PATH`, changes to the saved cwd, sets the terminal
+and tmux pane title from the saved agent topic, then execs `codex resume <id>`
+or `claude --resume <id>`. This avoids typing agent resumes with
+`tmux send-keys`. The restore wrapper is still a non-interactive shell command
+tail, so it does not replay the original pane's interactive shell startup,
+environment, shell functions, aliases, or live process state. Startup recipes
+continue to use their saved `send-keys` command replay, and shell recipes only
+restore cwd/layout.
+
 Settings > Session State is global settings only: global auto-save, auto-save
 interval, and storage/retention policy. It does not show the current
 snapshot tree. Delete for current-session snapshots and destructive restore
