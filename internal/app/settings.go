@@ -33,6 +33,7 @@ type settingsCommand struct {
 	ai                  *aiCommand
 	switcher            *switchCommand
 	update              *updateCommand
+	quit                *quitCommand
 	runner              intpickercompat.Runner
 	nativePicker        intpicker.Runner
 	homeDir             func() (string, error)
@@ -114,6 +115,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsUpdateApply:                {Name: "Update Now", Axis: settingsAxisGlobal},
 	settingsUpdateCheck:                {Name: "Check Updates", Axis: settingsAxisGlobal},
 	settingsWelcomeShow:                {Name: "Welcome", Axis: settingsAxisGlobal},
+	settingsQuitOpen:                   {Name: "Quit projmux", Axis: settingsAxisGlobal},
 }
 
 var settingsEntryPrefixCatalog = []struct {
@@ -198,6 +200,7 @@ const (
 	settingsActionPrefixSwitch             = "switch:"
 	settingsActionPrefixUpdate             = "update:"
 	settingsActionPrefixWorkdir            = "workdir:"
+	settingsActionPrefixQuit               = "quit:"
 	settingsProjectAdd                     = "project:add"
 	settingsProjectPins                    = "project:pins"
 	settingsProjectRootManage              = "project-root:manage"
@@ -206,6 +209,7 @@ const (
 	settingsProjdirSetTyped                = "projdir:set-typed"
 	settingsUpdateApply                    = "update:apply"
 	settingsUpdateCheck                    = "update:check"
+	settingsQuitOpen                       = "quit:open"
 	settingsWorkdirAdd                     = "workdir:add"
 	settingsWorkdirList                    = "workdir:list"
 	settingsWorkdirTyped                   = "workdir:typed"
@@ -230,11 +234,12 @@ const (
 	settingsKeymapFieldPrefix              = "prefix"
 )
 
-func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand) *settingsCommand {
+func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand, quit *quitCommand) *settingsCommand {
 	return &settingsCommand{
 		ai:           ai,
 		switcher:     switcher,
 		update:       update,
+		quit:         quit,
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		homeDir:      os.UserHomeDir,
 		lookupEnv:    os.Getenv,
@@ -3938,6 +3943,10 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Welcome", "revisit the shell quickstart guide"),
 		Value: settingsWelcomeShow,
 	})
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Quit projmux", "open quit actions"),
+		Value: settingsQuitOpen,
+	})
 	if statusErr != nil {
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Update", "status unavailable", statusErr.Error()),
@@ -4037,6 +4046,16 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return welcome.Run(nil, stdout, stderr)
 		default:
 			return fmt.Errorf("unknown welcome settings action: %s", value)
+		}
+	case strings.HasPrefix(value, settingsActionPrefixQuit):
+		if c.quit == nil {
+			return errors.New("quit settings are not configured")
+		}
+		switch strings.TrimPrefix(value, settingsActionPrefixQuit) {
+		case "open":
+			return c.quit.Run(nil, stdout, stderr)
+		default:
+			return fmt.Errorf("unknown quit settings action: %s", value)
 		}
 	case strings.HasPrefix(value, settingsActionPrefixWorkdir):
 		action := strings.TrimPrefix(value, settingsActionPrefixWorkdir)

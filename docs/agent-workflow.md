@@ -44,6 +44,7 @@
 - `make test` also covers `projmux ai integrate tmux-bell` dry-run/install/remove tmux command planning, managed `alert-bell` hook append/idempotence/removal, preservation of unmanaged bell hooks, and `projmux ai ingest bell --pane` queue push/metadata/dedupe behavior for non-AI-managed panes.
 - `make test` also covers `projmux ai ingest log` tail/path rendering and bounded JSONL log trimming for ingest diagnostics.
 - `make test` also now covers onboarding revisit and welcome wiring (`projmux welcome`, `Settings > About > Welcome`, `pending_attach_welcome`, attach-time `welcome --popup` one-time claim/env suppression/tmux popup payload, and generated `client-attached` app config wiring) via shell welcome tests.
+- `make test` also covers `projmux quit` action-picker rows, cancel/close no-op behavior, explicit quit of only app-owned `tmux -L projmux` runtimes marked by `@projmux_app=1`, missing/default runtime no-ops, dispatcher wiring, and `Settings > About > Quit projmux` routing through the same picker before any shutdown side effect.
 - Current focused unit coverage also includes strict notify SOT behavior
   (TTL does not remove rows, focus success and target-gone clicks ack,
   reconcile reports stale rows), `notify list --live` queue/live explanations, notify sidebar

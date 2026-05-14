@@ -31,6 +31,7 @@ projmux <command> [args...]
 | `pin` | Manage pinned project directories. |
 | `preview` | Manage persisted tmux preview selection. |
 | `prune` | Trim stale tmux lifecycle state. |
+| `quit` | Quit the app-owned projmux tmux runtime. |
 | `sessions` | Pick and open an existing tmux session. |
 | `session-popup` | Read tmux popup preview state. |
 | `settings` | Configure projmux. |
@@ -664,7 +665,7 @@ flags with the top-level `switch` UX:
   retention window.
 - `tag` — manage the tagged-selection set.
 
-## current / shell / attach / settings
+## current / shell / attach / settings / quit
 
 - `current` — print `pane_current_path` for the active tmux pane (used
   by the shell jump binding).
@@ -677,6 +678,12 @@ flags with the top-level `switch` UX:
   snapshot`, and `Empty session` before creating a closed project session.
   `Latest snapshot` is auto-saved; named snapshots are fixed until the user
   saves or replaces them.
+- `quit` — open an action picker with `Quit projmux` and `Cancel`. Selecting
+  `Quit projmux` terminates only a `tmux -L projmux` runtime whose global
+  `@projmux_app` option is set by the generated app config. Missing servers,
+  default tmux servers, embedded tmux servers, and other tmux runtimes without
+  that marker are no-ops. Non-interactive callers must pass `--yes` or
+  `--force`; the default command always goes through the action picker.
 - `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
   the most recent session, with bounded retention and a fallback policy.
 - `settings` — interactive configuration UI for the project picker, AI
@@ -697,9 +704,10 @@ flags with the top-level `switch` UX:
   available for experimental settings. The About section reads the cached
   update status without network access;
   selecting Check Updates runs `projmux update check`, and Update Now runs
-  `projmux update apply`. The same About section also lists the keybinding
-  diagnostic path: zero-config first, `setup` for swallowed keys, `init` for
-  supported terminal fallbacks, and `doctor` for dependencies.
+  `projmux update apply`. `Settings > About > Quit projmux` routes through the
+  same `projmux quit` action picker. The same About section also lists the
+  keybinding diagnostic path: zero-config first, `setup` for swallowed keys,
+  `init` for supported terminal fallbacks, and `doctor` for dependencies.
 
 ## See also
 

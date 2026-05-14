@@ -236,7 +236,7 @@ func TestProductionPickerConstructorsDoNotCreateCompatRunner(t *testing.T) {
 	if cmd := newAICommand(); cmd.runner != nil {
 		t.Fatal("newAICommand() created compat runner")
 	}
-	if cmd := newSettingsCommand(testAICommand(t.TempDir()), testSettingsSwitchCommand(t, &stubSwitchPinStore{}), nil); cmd.runner != nil {
+	if cmd := newSettingsCommand(testAICommand(t.TempDir()), testSettingsSwitchCommand(t, &stubSwitchPinStore{}), nil, nil); cmd.runner != nil {
 		t.Fatal("newSettingsCommand() created compat runner")
 	}
 	if cmd := newSwitchCommand(); cmd.runner != nil {
