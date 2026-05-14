@@ -1476,7 +1476,7 @@ func (c *switchCommand) openTarget(ctx context.Context, target string) error {
 	if exists {
 		return c.openProjectSession(ctx, sessionName)
 	}
-	return c.ensureAndOpenProjectSession(ctx, sessionName, target)
+	return c.openProjectTarget(ctx, target, sessionName)
 }
 
 func (c *switchCommand) openProjectTargetPath(ctx context.Context, target string) error {

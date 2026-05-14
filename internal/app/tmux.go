@@ -490,6 +490,7 @@ func (c *tmuxCommand) runPopupSwitch(args []string, stderr io.Writer) error {
 	if c.switchPopup != nil {
 		options = c.switchPopup(popupCtx)
 	}
+	options = withHookTrustInlineEnv(options)
 	options = c.applyPickerPopupBackend(options)
 
 	if err := c.popup.DisplayPopupWithOptions(context.Background(), command, options); err != nil {
@@ -867,6 +868,22 @@ func addHookTrustPopupTargetEnv(env map[string]string, ctx tmuxPopupContext) {
 	}
 }
 
+func addHookTrustInlineEnv(env map[string]string) {
+	env[hookTrustInlineEnv] = "1"
+}
+
+func withHookTrustInlineEnv(options inttmux.PopupOptions) inttmux.PopupOptions {
+	env := options.Env
+	if env == nil {
+		env = map[string]string{}
+	} else {
+		env = maps.Clone(env)
+	}
+	addHookTrustInlineEnv(env)
+	options.Env = env
+	return options
+}
+
 func addSwitchTargetClientEnv(env map[string]string, ctx tmuxPopupContext) {
 	if strings.TrimSpace(ctx.TargetClient) != "" {
 		env[inttmux.SwitchTargetClientEnv] = ctx.TargetClient
@@ -892,6 +909,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		options.Width = popupSize(ctx.ClientWidth, 80, 120)
 		options.Height = popupSize(ctx.ClientHeight, 70, 28)
 		cwd = ctx.ContextDir
+		addHookTrustInlineEnv(env)
 		addHookTrustPopupTargetEnv(env, ctx)
 		addSwitchTargetClientEnv(env, ctx)
 		env["TMUX_SESSIONIZER_CONTEXT_DIR"] = ctx.ContextDir
@@ -904,6 +922,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		options.X = "0"
 		options.Y = "0"
 		cwd = ctx.ContextDir
+		addHookTrustInlineEnv(env)
 		addHookTrustPopupTargetEnv(env, ctx)
 		addSwitchTargetClientEnv(env, ctx)
 		env["TMUX_SESSIONIZER_CONTEXT_DIR"] = ctx.ContextDir
