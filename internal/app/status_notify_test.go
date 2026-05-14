@@ -265,6 +265,40 @@ func fixtureAIEntry(now time.Time) []notify.Notification {
 	}
 }
 
+func TestStatusNotifyLongBodyClipsBeforeDroppingAge(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	entries := []notify.Notification{
+		{
+			ID:        "a",
+			Text:      "claude: reply ready with a very long body that should clip before metadata disappears",
+			Severity:  notify.SeverityInfo,
+			Source:    notify.SourceAI,
+			Session:   "project",
+			CreatedAt: now,
+		},
+		{ID: "b", Text: "older", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "project"},
+		{ID: "c", Text: "oldest", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "project"},
+	}
+	out := formatStatusNotify(entries, 80, now)
+	if visualLen(out) > 80 {
+		t.Fatalf("visualLen=%d > 80: %q", visualLen(out), out)
+	}
+	for _, want := range []string{
+		notifyLineOpen + renderNotifyProjectBadge("project"),
+		renderNotifyBadge("NEED", notify.SeverityInfo),
+		renderNotifyAgentBadge("claude"),
+		"just now",
+		"+2",
+		"…",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in %q", want, out)
+		}
+	}
+}
+
 func TestStatusNotifyWidthTier1Long(t *testing.T) {
 	t.Parallel()
 
@@ -287,11 +321,11 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 	}
 }
 
-func TestStatusNotifyWidthTier2DropsAge(t *testing.T) {
+func TestStatusNotifyWidthTier2ClipsTextBeforeAge(t *testing.T) {
 	t.Parallel()
 
 	// The project/state/agent badge stack makes this budget tight enough to
-	// drop age while retaining the contextual badges.
+	// clip body text while retaining contextual badges and age.
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 45, now)
 	if visualLen(out) > 45 {
@@ -302,29 +336,30 @@ func TestStatusNotifyWidthTier2DropsAge(t *testing.T) {
 		renderNotifyBadge("NEED", notify.SeverityInfo),
 		renderNotifyAgentBadge("claude"),
 		"reply ready",
+		"2m",
 		"+1",
+		"…",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tier2 missing %q in %q", want, out)
 		}
 	}
-	if strings.Contains(out, "2m") {
-		t.Fatalf("tier2 must drop age: %q", out)
-	}
 }
 
-func TestStatusNotifyWidthTier3TruncatesText(t *testing.T) {
+func TestStatusNotifyWidthTier3DropsAgeAfterClippingText(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	out := formatStatusNotify(fixtureAIEntry(now), 40, now)
-	if visualLen(out) > 40 {
-		t.Fatalf("tier3 visualLen=%d > 40: %q", visualLen(out), out)
+	out := formatStatusNotify(fixtureAIEntry(now), 28, now)
+	if visualLen(out) > 28 {
+		t.Fatalf("tier3 visualLen=%d > 28: %q", visualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
 		renderNotifyBadge("NEED", notify.SeverityInfo),
+		renderNotifyAgentBadge("claude"),
 		"+1",
+		"…",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tier3 missing %q in %q", want, out)

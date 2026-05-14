@@ -513,10 +513,10 @@ var notifyKnownAgents = []string{"claude", "codex"}
 // The renderer degrades through five tiers as `maxWidth` shrinks:
 //
 //  1. Full long form: line block + badges + text + age + count.
-//  2. Drop `<age>` (and its preceding `·`).
-//  3. Truncate `<text>` with a trailing `…`.
-//  4. Drop the badges entirely; fall back to a standalone `●` severity icon.
-//  5. Hard truncate everything (icon + count are still preserved).
+//  2. Truncate `<text>` with a trailing `…`, preserving age and count.
+//  3. Drop `<age>` (and its preceding `·`) while preserving badges and count.
+//  4. Drop the badges; fall back to a standalone `●` severity icon + text.
+//  5. Hard truncate everything, appending the reset directive.
 //
 // `now` is the wall-clock used to compute the relative age. Pass the zero
 // time to suppress the age field entirely.
@@ -555,9 +555,13 @@ func formatStatusNotifyWithLive(entries []notify.Notification, maxWidth int, now
 	tiers := []func() string{
 		// Tier 1: full long form.
 		func() string { return assembleNotify(badge, text, age, plus) },
-		// Tier 2: drop age.
-		func() string { return assembleNotify(badge, text, "", plus) },
-		// Tier 3: truncate text with trailing ellipsis.
+		// Tier 2: keep badges, age, and count; shrink body text first.
+		func() string {
+			budget := tierBudget(maxWidth, badge, age, plus)
+			truncated := shrinkText(text, budget)
+			return assembleNotify(badge, truncated, age, plus)
+		},
+		// Tier 3: if clipping text is still too wide, drop age next.
 		func() string {
 			budget := tierBudget(maxWidth, badge, "", plus)
 			truncated := shrinkText(text, budget)
