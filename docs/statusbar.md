@@ -103,7 +103,10 @@ needed, and colors that sync line amber once it is more than 60 seconds old.
 The notification HUD detail surface (`Alt-2` / `User2`) opens the right-side
 notification popup with newest-first rows and an amber title. When notification
 icon decoration is `symbol` or `emoji`, the bell appears before the title text.
-Selecting a row still focuses and acknowledges that notification.
+Selecting a row still focuses and acknowledges that notification. Pressing `x`
+on a row acknowledges it without focusing, keeps the popup open, and refreshes
+the remaining rows from the queue while preserving the selection position where
+possible.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,

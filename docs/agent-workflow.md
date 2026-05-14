@@ -50,7 +50,9 @@
   (TTL does not remove rows, focus success and target-gone clicks ack,
   reconcile reports stale rows), `notify list --live` queue/live explanations, notify sidebar
   two-line card rendering with age/project/window/pane metadata plus focus/ack/clear-all
-  actions, and `focus` dispatch diagnostics for session fallback, unresolved
+  actions, including in-place `x` ack that refreshes the sidebar without
+  focusing, preserves selection position where possible, and renders the empty
+  state after the last row is acked, and `focus` dispatch diagnostics for session fallback, unresolved
   targets, window fallback, pane fallback, explicit id failures as unresolved exits, and
   notify-only fallback.
 - Picker focused unit coverage includes backend-neutral picker item/action mapping, native title-focused filtering, numeric selection, shared close actions including raw and CSI-u Ctrl-X native custom actions, deprecated picker backend value normalization, AI picker title chrome and stable search-key ordering, Settings title chrome and root section order, Settings Labs shell without backend choices plus keybinding diagnostic list/detail/probe outcome/init delegation coverage, environment override normalization, compact multi-line metadata gutters with one-column-indented metadata, proportional native scrollbar thumb rendering, multiline partial next/previous item row rendering with rendered-row scrollbar units, fixed split-preview and sidebar list viewports with scrollbar tracks, native up/down-family navigation wrap with empty-list safety and PageUp/PageDown/Home/End clamp regression coverage, native mouse down/follow-drag/release behavior, preview tab/control normalization before width clipping, optional native frame titlebars without same-line rule fill and with titlebar border reset guards, titled native Alt-1 sidebar chrome, statusbar-preserving sidebar popup height, native-only compact project sidebar popup sizing, and notify sidebar title/popup sizing.

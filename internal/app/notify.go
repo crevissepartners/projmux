@@ -248,6 +248,10 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	if *ui == "sidebar" {
+		return c.runSidebar(store, severities, sources, *limit, stdout, stderr, c.notifyOriginClient(*clientTTY))
+	}
+
 	entries, err := store.List()
 	if err != nil {
 		return fmt.Errorf("list notifications: %w", err)
@@ -256,10 +260,6 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	entries = filterEntries(entries, severities, sources)
 	if *limit > 0 && len(entries) > *limit {
 		entries = entries[:*limit]
-	}
-
-	if *ui == "sidebar" {
-		return c.runSidebar(entries, stdout, stderr, c.notifyOriginClient(*clientTTY))
 	}
 
 	if *asJSON {
@@ -285,68 +285,87 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	return writeNotifyTable(stdout, entries, c.clock())
 }
 
-func (c *notifyCommand) runSidebar(entries []notify.Notification, stdout, stderr io.Writer, clientTTY string) error {
+func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []string, limit int, stdout, stderr io.Writer, clientTTY string) error {
 	if c.native == nil {
 		return errors.New("native picker is not configured")
 	}
-	now := c.clock()
-	liveByID := c.notifyLiveByIDBestEffort()
-	compatOptions := intpickercompat.Options{
-		UI:            "notify-sidebar",
-		Read0:         true,
-		Title:         "\x1b[1;38;5;220m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
-		Prompt:        "Notify > ",
-		Header:        "Newest first",
-		Footer:        "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
-		ExpectKeys:    []string{"x", "ctrl-x"},
-		Bindings:      []string{"alt-2:abort"},
-		Entries:       notifySidebarEntriesWithLive(entries, now, liveByID),
-		DisableSearch: true,
-	}
-	result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.picker, compatOptions)
-	if err != nil {
-		return fmt.Errorf("run notify sidebar: %w", err)
-	}
-	id := strings.TrimSpace(result.Value)
-	if id == "" || id == notifySidebarEmptyValue {
-		return nil
-	}
-	store, err := c.requireStore()
-	if err != nil {
-		return err
-	}
-	switch result.Key {
-	case "ctrl-x":
-		removed, err := store.AckAll()
+
+	nextIndex := -1
+	for {
+		entries, err := store.List()
 		if err != nil {
-			return fmt.Errorf("clear all notifications: %w", err)
+			return fmt.Errorf("list notifications: %w", err)
 		}
-		_, err = fmt.Fprintf(stdout, "cleared %d notification(s)\n", removed)
-		return err
-	case "x":
-		if err := store.Ack(id); err != nil {
-			return fmt.Errorf("ack notification: %w", err)
+		entries = filterEntries(entries, severities, sources)
+		if limit > 0 && len(entries) > limit {
+			entries = entries[:limit]
 		}
-		_, err = fmt.Fprintf(stdout, "ack %s\n", id)
-		return err
-	default:
-		entry, ok := findNotificationByID(entries, id)
-		if !ok {
-			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
-		}
-		if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
-			if isFocusTargetUnresolved(err) {
-				if ackErr := store.Ack(id); ackErr != nil {
-					return fmt.Errorf("ack target-gone notification: %w", ackErr)
-				}
-				return nil
+		bindings := []string{"alt-2:abort"}
+		if len(entries) == 0 {
+			nextIndex = -1
+		} else if nextIndex >= 0 {
+			if nextIndex >= len(entries) {
+				nextIndex = len(entries) - 1
 			}
+			bindings = append(bindings, fmt.Sprintf("start:pos(%d)", nextIndex+1))
+		}
+
+		now := c.clock()
+		liveByID := c.notifyLiveByIDBestEffort()
+		compatOptions := intpickercompat.Options{
+			UI:            "notify-sidebar",
+			Read0:         true,
+			Title:         "\x1b[1;38;5;220m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
+			Prompt:        "Notify > ",
+			Header:        "Newest first",
+			Footer:        "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
+			ExpectKeys:    []string{"x", "ctrl-x"},
+			Bindings:      bindings,
+			Entries:       notifySidebarEntriesWithLive(entries, now, liveByID),
+			DisableSearch: true,
+		}
+		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.picker, compatOptions)
+		if err != nil {
+			return fmt.Errorf("run notify sidebar: %w", err)
+		}
+		id := strings.TrimSpace(result.Value)
+		if id == "" || id == notifySidebarEmptyValue {
+			return nil
+		}
+
+		switch result.Key {
+		case "ctrl-x":
+			removed, err := store.AckAll()
+			if err != nil {
+				return fmt.Errorf("clear all notifications: %w", err)
+			}
+			_, err = fmt.Fprintf(stdout, "cleared %d notification(s)\n", removed)
 			return err
+		case "x":
+			nextIndex = indexNotificationByID(entries, id)
+			if err := store.Ack(id); err != nil {
+				return fmt.Errorf("ack notification: %w", err)
+			}
+			continue
+		default:
+			entry, ok := findNotificationByID(entries, id)
+			if !ok {
+				return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
+			}
+			if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
+				if isFocusTargetUnresolved(err) {
+					if ackErr := store.Ack(id); ackErr != nil {
+						return fmt.Errorf("ack target-gone notification: %w", ackErr)
+					}
+					return nil
+				}
+				return err
+			}
+			if err := ackFocusedNotification(store, entry, entries); err != nil {
+				return fmt.Errorf("ack focused notification: %w", err)
+			}
+			return nil
 		}
-		if err := ackFocusedNotification(store, entry, entries); err != nil {
-			return fmt.Errorf("ack focused notification: %w", err)
-		}
-		return nil
 	}
 }
 
@@ -537,6 +556,15 @@ func findNotificationByID(entries []notify.Notification, id string) (notify.Noti
 		}
 	}
 	return notify.Notification{}, false
+}
+
+func indexNotificationByID(entries []notify.Notification, id string) int {
+	for i, e := range entries {
+		if e.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 func (c *notifyCommand) notifyOriginClient(explicit string) string {
