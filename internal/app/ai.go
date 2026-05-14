@@ -584,10 +584,10 @@ func (c *aiCommand) resolveTopicPaneID(explicit string) (string, error) {
 }
 
 type aiSplitInvocation struct {
-	direction    string
-	agent        string
-	agentSet     bool
-	execOverride []string
+	direction string
+	agent     string
+	agentSet  bool
+	extraArgs []string
 }
 
 func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
@@ -599,10 +599,10 @@ func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 		if invocation.agent == aiModeSelective {
 			return c.openPickerToggle(invocation.direction)
 		}
-		if invocation.agent == aiModeShell && len(invocation.execOverride) == 0 {
+		if invocation.agent == aiModeShell && len(invocation.extraArgs) == 0 {
 			return c.runShellSplit(invocation.direction)
 		}
-		return c.runAgentSplitWithOverride(invocation.agent, invocation.direction, invocation.execOverride)
+		return c.runAgentSplitWithExtraArgs(invocation.agent, invocation.direction, invocation.extraArgs)
 	}
 
 	mode := c.getMode()
@@ -843,11 +843,11 @@ func (c *aiCommand) openPickerToggle(direction string) error {
 }
 
 func (c *aiCommand) runAgentSplit(mode, direction string) error {
-	return c.runAgentSplitWithOverride(mode, direction, nil)
+	return c.runAgentSplitWithExtraArgs(mode, direction, nil)
 }
 
-func (c *aiCommand) runAgentSplitWithOverride(mode, direction string, execOverride []string) error {
-	execArgv, pathPrepend, err := c.agentExecArgv(mode, execOverride)
+func (c *aiCommand) runAgentSplitWithExtraArgs(mode, direction string, extraArgs []string) error {
+	execArgv, pathPrepend, err := c.agentExecArgv(mode, extraArgs)
 	if err != nil {
 		return err
 	}
@@ -880,11 +880,11 @@ func (c *aiCommand) runAgentSplitWithOverride(mode, direction string, execOverri
 	return nil
 }
 
-func (c *aiCommand) agentExecArgv(mode string, execOverride []string) ([]string, string, error) {
-	if len(execOverride) > 0 {
-		return append([]string(nil), execOverride...), "", nil
-	}
+func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, string, error) {
 	if mode == aiModeShell {
+		if len(extraArgs) > 0 {
+			return nil, "", errors.New("ai split --agent shell cannot use extra args")
+		}
 		return loginShellCommand(defaultInteractiveShell(c.lookupEnv)), "", nil
 	}
 	agentBin := c.findAgentBinary(mode)
@@ -892,7 +892,9 @@ func (c *aiCommand) agentExecArgv(mode string, execOverride []string) ([]string,
 		_ = c.displayMessage("selected runner is not installed: " + mode)
 		return nil, "", fmt.Errorf("selected runner is not installed: %s", mode)
 	}
-	return []string{agentBin}, filepath.Dir(agentBin), nil
+	execArgv := []string{agentBin}
+	execArgv = append(execArgv, extraArgs...)
+	return execArgv, filepath.Dir(agentBin), nil
 }
 
 func (c *aiCommand) runShellSplit(direction string) error {
@@ -1655,13 +1657,13 @@ func parseAISplitDirection(args []string, command string, stderr io.Writer) (str
 func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation, error) {
 	invocation := aiSplitInvocation{direction: "right"}
 	positionals := make([]string, 0, 1)
-	overrideSeen := false
+	extraArgsSeen := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
 		case arg == "--":
-			overrideSeen = true
-			invocation.execOverride = append([]string(nil), args[i+1:]...)
+			extraArgsSeen = true
+			invocation.extraArgs = append([]string(nil), args[i+1:]...)
 			i = len(args)
 		case arg == "--agent":
 			if i+1 >= len(args) {
@@ -1681,17 +1683,17 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 			positionals = append(positionals, arg)
 		}
 	}
-	if overrideSeen && len(invocation.execOverride) == 0 {
+	if extraArgsSeen && len(invocation.extraArgs) == 0 {
 		printAIUsage(stderr)
-		return aiSplitInvocation{}, errors.New("ai split -- requires an argv command")
+		return aiSplitInvocation{}, errors.New("ai split -- requires extra args")
 	}
-	if overrideSeen && strings.TrimSpace(invocation.execOverride[0]) == "" {
+	if extraArgsSeen && strings.TrimSpace(invocation.extraArgs[0]) == "" {
 		printAIUsage(stderr)
-		return aiSplitInvocation{}, errors.New("ai split argv override requires non-empty command")
+		return aiSplitInvocation{}, errors.New("ai split extra args require a non-empty first argument")
 	}
-	if overrideSeen && !invocation.agentSet {
+	if extraArgsSeen && !invocation.agentSet {
 		printAIUsage(stderr)
-		return aiSplitInvocation{}, errors.New("ai split argv override requires --agent")
+		return aiSplitInvocation{}, errors.New("ai split extra args require --agent")
 	}
 	direction, err := parseAISplitDirection(positionals, "ai split", stderr)
 	if err != nil {
@@ -1705,9 +1707,13 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 			printAIUsage(stderr)
 			return aiSplitInvocation{}, fmt.Errorf("unknown ai split agent: %s", invocation.agent)
 		}
-		if invocation.agent == aiModeSelective && len(invocation.execOverride) > 0 {
+		if invocation.agent == aiModeSelective && len(invocation.extraArgs) > 0 {
 			printAIUsage(stderr)
-			return aiSplitInvocation{}, errors.New("ai split --agent selective cannot use argv override")
+			return aiSplitInvocation{}, errors.New("ai split --agent selective cannot use extra args")
+		}
+		if invocation.agent == aiModeShell && len(invocation.extraArgs) > 0 {
+			printAIUsage(stderr)
+			return aiSplitInvocation{}, errors.New("ai split --agent shell cannot use extra args")
 		}
 	}
 	return invocation, nil
@@ -2478,7 +2484,7 @@ func parsePositiveInt(value string) int {
 
 func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|shell|selective>] [right|down] [-- <argv>...]")
+	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|shell|selective>] [right|down] [-- <extra-arg>...]")
 	fmt.Fprintln(w, "  projmux ai picker [--inside] [--shell] [right|down]")
 	fmt.Fprintln(w, "  projmux ai settings [--get|--set <mode>]")
 	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")

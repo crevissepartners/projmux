@@ -415,24 +415,25 @@ func TestAISplitAgentFlagLaunchesCodexWithoutChangingClaudeDefault(t *testing.T)
 	}
 }
 
-func TestAISplitAgentArgvOverrideKeepsPaneSetupWatcherAndLayout(t *testing.T) {
+func TestAISplitCodexExtraArgsKeepsPaneSetupWatcherAndLayout(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
 	cmd := testAICommand(home)
-	stubAISplitReadCommand(cmd, home, work, nil, "%7", "%9")
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"codex": codexBin}, "%7", "%9")
 
-	err := cmd.Run([]string{"split", "--agent", "codex", "right", "--", "codex", "--model", "gpt-5.1 codex", "quote'd"}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := cmd.Run([]string{"split", "--agent", "codex", "right", "--", "--model", "gpt-5.1 codex", "quote'd"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
-		t.Fatalf("Run split --agent codex -- argv error = %v", err)
+		t.Fatalf("Run split --agent codex -- extra args error = %v", err)
 	}
 
 	commands := cmdRecorder(cmd).commands
-	wantExec := "exec 'codex' '--model' 'gpt-5.1 codex' 'quote'\\''d'"
+	wantExec := "exec " + shellQuote(codexBin) + " '--model' 'gpt-5.1 codex' 'quote'\\''d'"
 	if !containsAICommandArgSubstring(commands, wantExec) {
-		t.Fatalf("commands = %#v, want argv override exec %q", commands, wantExec)
+		t.Fatalf("commands = %#v, want resolved Codex exec with extra args %q", commands, wantExec)
 	}
 	for _, want := range [][]string{
 		{"set-option", "-p", "-t", "%9", aiPaneManagedOption, "1"},
@@ -448,8 +449,36 @@ func TestAISplitAgentArgvOverrideKeepsPaneSetupWatcherAndLayout(t *testing.T) {
 			t.Fatalf("commands = %#v, want command %v", commands, want)
 		}
 	}
-	if containsAICommand(commands, "command") {
-		t.Fatalf("commands = %#v, did not expect binary lookup for argv override", commands)
+	if !containsAICommandArgs(commands, "command", []string{"-v", "codex"}) {
+		t.Fatalf("commands = %#v, want Codex binary lookup", commands)
+	}
+}
+
+func TestAISplitClaudeExtraArgsUseResolvedBinary(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claudeBin := writeExecutable(t, filepath.Join(home, "bin", "claude"))
+	cmd := testAICommand(home)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"claude": claudeBin}, "%7", "%9")
+
+	err := cmd.Run([]string{"split", "--agent", "claude", "down", "--", "--dangerously-skip-permissions"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run split --agent claude -- extra args error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	wantExec := "exec " + shellQuote(claudeBin) + " '--dangerously-skip-permissions'"
+	if !containsAICommandArgSubstring(commands, wantExec) {
+		t.Fatalf("commands = %#v, want resolved Claude exec with extra args %q", commands, wantExec)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-v", "-t", "%7", "-c", work, "/bin/bash", "-lc"}) {
+		t.Fatalf("commands = %#v, want vertical Claude split", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeClaude}) {
+		t.Fatalf("commands = %#v, want Claude AI pane metadata", commands)
 	}
 }
 
@@ -550,19 +579,24 @@ func TestAISplitAgentFlagUsageErrors(t *testing.T) {
 			want: "unknown ai split agent: openai",
 		},
 		{
-			name: "selective cannot use argv override",
+			name: "selective cannot use extra args",
 			args: []string{"split", "--agent", "selective", "right", "--", "codex"},
-			want: "ai split --agent selective cannot use argv override",
+			want: "ai split --agent selective cannot use extra args",
 		},
 		{
-			name: "argv override requires agent",
+			name: "extra args require agent",
 			args: []string{"split", "right", "--", "codex"},
-			want: "ai split argv override requires --agent",
+			want: "ai split extra args require --agent",
 		},
 		{
-			name: "argv override first arg empty",
+			name: "extra args first arg empty",
 			args: []string{"split", "--agent", "codex", "right", "--", ""},
-			want: "ai split argv override requires non-empty command",
+			want: "ai split extra args require a non-empty first argument",
+		},
+		{
+			name: "shell cannot use extra args",
+			args: []string{"split", "--agent", "shell", "right", "--", "echo", "hi"},
+			want: "ai split --agent shell cannot use extra args",
 		},
 	}
 	for _, tt := range tests {

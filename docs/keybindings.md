@@ -81,8 +81,9 @@ When a pane closes, projmux re-spreads remaining panes so the surviving split
 does not stretch lopsided.
 
 The AI split bindings use the configured default mode. For one-shot launches,
-run `projmux ai split --agent claude|codex|shell|selective right|down`. An argv
-tail after `--` overrides only the final exec command for a managed pane.
+run `projmux ai split --agent claude|codex|shell|selective right|down`. Extra
+args after `--` are appended to the resolved `claude` or `codex` executable for
+a managed pane.
 
 ### Inside the pickers
 
