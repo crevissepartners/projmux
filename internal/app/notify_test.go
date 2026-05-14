@@ -323,10 +323,10 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close"; got != want {
+	if got, want := picker.options.Footer, "Enter: focus + ack  |  a: ack  |  x: clear non-critical  |  Ctrl-X: clear all  |  Esc/Alt-2: close"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
-	if got, want := picker.options.ExpectKeys, []string{"x", "ctrl-x"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options.ExpectKeys, []string{"a", "x", "ctrl-x"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expect keys = %#v, want %#v", got, want)
 	}
 	if len(picker.options.Entries) != 1 || picker.options.Entries[0].Value != "abc" {
@@ -589,7 +589,7 @@ func TestNotifyListSidebarTargetGoneAcksSelectedRow(t *testing.T) {
 	}
 }
 
-func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
+func TestNotifyListSidebarAAcksSelectedRowAndRefreshes(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{
@@ -601,7 +601,8 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	}
 	picker := &recordingNotifyPicker{
 		results: []intpickercompat.Result{
-			{Key: "x", Value: "def"},
+			{Key: "a", Value: "def"},
+			{Key: "a", Value: "abc"},
 			{},
 		},
 	}
@@ -615,17 +616,17 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if store.ackedID != "def" {
-		t.Fatalf("ackedID = %q, want def", store.ackedID)
+	if store.ackedID != "abc" {
+		t.Fatalf("ackedID = %q, want abc", store.ackedID)
 	}
-	if got, want := store.ackedIDs, []string{"def"}; !reflect.DeepEqual(got, want) {
+	if got, want := store.ackedIDs, []string{"def", "abc"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ackedIDs = %#v, want %#v", got, want)
 	}
-	if store.listCalls != 2 {
-		t.Fatalf("List calls = %d, want 2", store.listCalls)
+	if store.listCalls != 3 {
+		t.Fatalf("List calls = %d, want 3", store.listCalls)
 	}
-	if len(picker.options) != 2 {
-		t.Fatalf("picker runs = %d, want 2", len(picker.options))
+	if len(picker.options) != 3 {
+		t.Fatalf("picker runs = %d, want 3", len(picker.options))
 	}
 	first := picker.options[0].Entries
 	if len(first) != 3 || first[0].Value != "abc" || first[1].Value != "def" || first[2].Value != "ghi" {
@@ -641,6 +642,13 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options[1].Bindings, []string{"alt-2:abort", "start:pos(2)"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("second picker bindings = %#v, want %#v", got, want)
 	}
+	third := picker.options[2].Entries
+	if len(third) != 1 || third[0].Value != "ghi" {
+		t.Fatalf("third picker entries = %#v, want ghi", third)
+	}
+	if got, want := picker.options[2].Bindings, []string{"alt-2:abort", "start:pos(1)"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("third picker bindings = %#v, want %#v", got, want)
+	}
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want no sidebar ack output", stdout.String())
 	}
@@ -649,11 +657,63 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	}
 }
 
-func TestNotifyListSidebarXAckLastRowRendersEmptyState(t *testing.T) {
+func TestNotifyListSidebarXClearsNonCriticalAndPreservesCritical(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{
-		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
+		listEntries: []notify.Notification{
+			{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
+			{ID: "def", Text: "blocked", Severity: notify.SeverityCritical, Source: notify.SourceAI, Session: "main"},
+			{ID: "ghi", Text: "warn", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main"},
+		},
+	}
+	picker := &recordingNotifyPicker{
+		results: []intpickercompat.Result{
+			{Key: "x", Value: "def"},
+			{},
+		},
+	}
+	cmd := newCmd(store)
+	cmd.picker = picker
+	cmd.native = nativePickerFromCompatRunner(picker)
+	cmd.runner = &focusFakeRunner{}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if got, want := store.ackedIDs, []string{"abc", "ghi"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want %#v", got, want)
+	}
+	if len(picker.options) != 2 {
+		t.Fatalf("picker runs = %d, want 2", len(picker.options))
+	}
+	second := picker.options[1].Entries
+	if len(second) != 1 || second[0].Value != "def" {
+		t.Fatalf("second picker entries = %#v, want critical def preserved", second)
+	}
+	if second[0].Value == "abc" || second[0].Value == "ghi" {
+		t.Fatalf("second picker entries = %#v, want non-critical rows removed", second)
+	}
+	if got, want := picker.options[1].Bindings, []string{"alt-2:abort", "start:pos(1)"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("second picker bindings = %#v, want %#v", got, want)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want no sidebar clear output", stdout.String())
+	}
+	if focusCalls := filterFocusCalls(cmd.runner.(*focusFakeRunner).calls); len(focusCalls) != 0 {
+		t.Fatalf("focus calls = %#v, want none", focusCalls)
+	}
+}
+
+func TestNotifyListSidebarXClearNonCriticalRendersEmptyState(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
+			{ID: "def", Text: "warn", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main"},
+		},
 	}
 	picker := &recordingNotifyPicker{
 		results: []intpickercompat.Result{
@@ -669,7 +729,7 @@ func TestNotifyListSidebarXAckLastRowRendersEmptyState(t *testing.T) {
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if got, want := store.ackedIDs, []string{"abc"}; !reflect.DeepEqual(got, want) {
+	if got, want := store.ackedIDs, []string{"abc", "def"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ackedIDs = %#v, want %#v", got, want)
 	}
 	if len(picker.options) != 2 {
@@ -686,11 +746,11 @@ func TestNotifyListSidebarXAckLastRowRendersEmptyState(t *testing.T) {
 		t.Fatalf("empty picker bindings = %#v, want %#v", got, want)
 	}
 	if stdout.String() != "" {
-		t.Fatalf("stdout = %q, want no sidebar ack output", stdout.String())
+		t.Fatalf("stdout = %q, want no sidebar clear output", stdout.String())
 	}
 }
 
-func TestNotifyListSidebarXAckLastRowStartsAtPreviousRow(t *testing.T) {
+func TestNotifyListSidebarAAckLastRowStartsAtPreviousRow(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{
@@ -701,7 +761,7 @@ func TestNotifyListSidebarXAckLastRowStartsAtPreviousRow(t *testing.T) {
 	}
 	picker := &recordingNotifyPicker{
 		results: []intpickercompat.Result{
-			{Key: "x", Value: "def"},
+			{Key: "a", Value: "def"},
 			{},
 		},
 	}
@@ -727,7 +787,7 @@ func TestNotifyListSidebarXAckLastRowStartsAtPreviousRow(t *testing.T) {
 	}
 }
 
-func TestNotifyListSidebarXAckRefreshesLiveStateEachLoop(t *testing.T) {
+func TestNotifyListSidebarAAckRefreshesLiveStateEachLoop(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -739,7 +799,7 @@ func TestNotifyListSidebarXAckRefreshesLiveStateEachLoop(t *testing.T) {
 	}
 	picker := &recordingNotifyPicker{
 		results: []intpickercompat.Result{
-			{Key: "x", Value: "ai:main:%2"},
+			{Key: "a", Value: "ai:main:%2"},
 			{},
 		},
 	}

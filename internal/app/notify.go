@@ -318,8 +318,8 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 			Title:         "\x1b[1;38;5;220m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
 			Prompt:        "Notify > ",
 			Header:        "Newest first",
-			Footer:        "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
-			ExpectKeys:    []string{"x", "ctrl-x"},
+			Footer:        "Enter: focus + ack  |  a: ack  |  x: clear non-critical  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
+			ExpectKeys:    []string{"a", "x", "ctrl-x"},
 			Bindings:      bindings,
 			Entries:       notifySidebarEntriesWithLive(entries, now, liveByID),
 			DisableSearch: true,
@@ -341,10 +341,16 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 			}
 			_, err = fmt.Fprintf(stdout, "cleared %d notification(s)\n", removed)
 			return err
-		case "x":
+		case "a":
 			nextIndex = indexNotificationByID(entries, id)
 			if err := store.Ack(id); err != nil {
 				return fmt.Errorf("ack notification: %w", err)
+			}
+			continue
+		case "x":
+			nextIndex = indexNotificationByID(entries, id)
+			if err := ackNonCriticalNotifications(store, entries); err != nil {
+				return err
 			}
 			continue
 		default:
@@ -367,6 +373,18 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 			return nil
 		}
 	}
+}
+
+func ackNonCriticalNotifications(store notifyStore, entries []notify.Notification) error {
+	for _, entry := range entries {
+		if entry.Severity == notify.SeverityCritical {
+			continue
+		}
+		if err := store.Ack(entry.ID); err != nil {
+			return fmt.Errorf("clear non-critical notification: %w", err)
+		}
+	}
+	return nil
 }
 
 const notifySidebarEmptyValue = "__projmux_notify_empty__"
