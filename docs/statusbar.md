@@ -75,6 +75,13 @@ The notify segment renders the newest queued item as a single notification
 block: project, state (`NEED`/`INFO`/`WARN`/`CRIT`), optional agent, text,
 age, and `+N` for older pending entries. Window/pane ids are not shown in the
 compact status segment.
+When the notify block is wider than its cell budget, clipping shrinks the body
+text first and appends an ellipsis while preserving project, state, agent, age,
+and count metadata. If the segment is still too wide, the age is dropped next
+while badges and the `+N` count stay visible when possible. Very narrow widths
+fall back to the severity-colored dot plus clipped text and count; the final
+hard-truncate path still closes with `#[default]` so later status segments do
+not inherit notification styling.
 `usage` opens a native-framed detail HUD for the compact usage bar. It reads
 the cached usage state in-process, keeps the existing `projmux usage` CLI
 output shape unchanged for external consumers, aligns model/window rows with
