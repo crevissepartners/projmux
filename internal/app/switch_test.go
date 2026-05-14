@@ -198,6 +198,40 @@ func TestSwitchExecuteSidebarHookProjectUsesInlineStartupAndTrust(t *testing.T) 
 	}
 }
 
+func TestSwitchExecutePopupProjectCreateUsesProjectOpenTrust(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(target, ".projmux"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".projmux", "config.toml"), []byte("[hooks.post-create]\nrun = \"echo hook\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessions := &capturingSwitchSessionExecutor{exists: map[string]bool{"target": false}}
+	cmd := &switchCommand{
+		sessions:  sessions,
+		identity:  stubSwitchIdentityResolver{name: "target"},
+		homeDir:   func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(string) string { return "" },
+	}
+
+	reopen, err := cmd.execute(context.Background(), switchPlan{
+		UI:          switchUIPopup,
+		Selection:   target,
+		SessionName: "target",
+	}, nil)
+	if err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if reopen {
+		t.Fatal("execute() reopen = true, want false")
+	}
+	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want project trust before create", got)
+	}
+}
+
 func TestSwitchExecuteSidebarExistingHookProjectOpensDirectly(t *testing.T) {
 	t.Parallel()
 
