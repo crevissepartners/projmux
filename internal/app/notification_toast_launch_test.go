@@ -58,12 +58,16 @@ func TestBuildRegisterURIProtocolPowerShell_WritesAllRegistryKeys(t *testing.T) 
 	wantSubstrings := []string{
 		`$regPath = "HKCU:\SOFTWARE\Classes\projmux"`,
 		`$cmdPath = "$regPath\shell\open\command"`,
+		`$launcherDir = Join-Path $launcherRoot 'projmux'`,
+		`$launcherPath = Join-Path $launcherDir 'projmux-uri-handler.vbs'`,
 		"New-Item -Path $regPath -Force",
 		"New-Item -Path $cmdPath -Force",
+		"New-Item -Path $launcherDir -ItemType Directory -Force",
+		"Set-Content -Path $launcherPath -Value $launcherScript -Encoding ASCII",
 		`Set-ItemProperty -Path $regPath -Name '(Default)' -Value 'URL:projmux'`,
 		"Set-ItemProperty -Path $regPath -Name 'URL Protocol' -Value ''",
-		`powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass`,
-		`$psi.CreateNoWindow = $true`,
+		`wscript.exe //B //Nologo "`,
+		`projmux-uri-handler.vbs`,
 		`Set-ItemProperty -Path $cmdPath -Name '(Default)'`,
 	}
 	for _, want := range wantSubstrings {
@@ -82,19 +86,27 @@ func TestBuildRegisterURIProtocolPowerShell_UsesHiddenLauncherNotDirectWSLComman
 		t.Fatalf("script must not register direct wsl.exe protocol command %q:\n%s", direct, script)
 	}
 	for _, want := range []string{
-		`powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass`,
-		`$psi.FileName = ''wsl.exe''`,
-		`$psi.UseShellExecute = $false`,
-		`$psi.CreateNoWindow = $true`,
-		`$psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden`,
+		`wscript.exe //B //Nologo "`,
+		`"%1"`,
+		`shell.Run command, 0, False`,
+		`QuoteArg("wsl.exe") & " " & QuoteArg("-d")`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing hidden launcher intent %q:\n%s", want, script)
 		}
 	}
+	for _, forbidden := range []string{
+		`powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command`,
+		`Start-Process -WindowStyle Hidden -FilePath`,
+		`$psi.CreateNoWindow = $true`,
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("script must not register console-subsystem hidden wrapper %q:\n%s", forbidden, script)
+		}
+	}
 }
 
-func TestBuildWSLURIProtocolHandlerCommand_BypassesShellWithExecAndAbsolutePath(t *testing.T) {
+func TestBuildWSLURIProtocolLauncherVBScript_BypassesShellWithExecAndAbsolutePath(t *testing.T) {
 	t.Parallel()
 
 	// Regression guard: the registered launch command must use `--exec`
@@ -104,74 +116,82 @@ func TestBuildWSLURIProtocolHandlerCommand_BypassesShellWithExecAndAbsolutePath(
 	// doesn't load shell init files, so PATH is unreliable). The bare
 	// `-- projmux focus` form shipped in PR #178 broke on the very first
 	// `&`-bearing toast click; do not let it come back.
-	command := buildWSLURIProtocolHandlerCommand("Ubuntu-24.04", "/home/me/go/bin/projmux")
-	wantLaunch := `$psi.Arguments = '"-d" "Ubuntu-24.04" "--exec" "/home/me/go/bin/projmux" "focus" "--uri" "' + $uri + '"'`
-	if !strings.Contains(command, wantLaunch) {
-		t.Fatalf("expected hidden launch command %q in command:\n%s", wantLaunch, command)
+	script := buildWSLURIProtocolLauncherVBScript("Ubuntu-24.04", "/home/me/go/bin/projmux")
+	for _, want := range []string{
+		`QuoteArg("wsl.exe")`,
+		`QuoteArg("-d")`,
+		`QuoteArg("Ubuntu-24.04")`,
+		`QuoteArg("--exec")`,
+		`QuoteArg("/home/me/go/bin/projmux")`,
+		`QuoteArg("focus")`,
+		`QuoteArg("--uri")`,
+		`QuoteArg(uri)`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected launcher token %q in script:\n%s", want, script)
+		}
 	}
-	if strings.Contains(command, `-- projmux focus`) {
-		t.Fatalf("command must not use the legacy `-- projmux focus` form (shell-interpreted, breaks on `&`):\n%s", command)
+	if strings.Contains(script, `-- projmux focus`) {
+		t.Fatalf("launcher must not use the legacy `-- projmux focus` form (shell-interpreted, breaks on `&`):\n%s", script)
 	}
-	if !strings.Contains(command, `"--exec"`) {
-		t.Fatalf("command must use `--exec` to bypass the login shell:\n%s", command)
+	if !strings.Contains(script, `QuoteArg("--exec")`) {
+		t.Fatalf("launcher must use `--exec` to bypass the login shell:\n%s", script)
 	}
 }
 
-func TestBuildWSLURIProtocolHandlerCommand_ForwardsURIAsArgument(t *testing.T) {
+func TestBuildWSLURIProtocolLauncherVBScript_ForwardsURIAsArgument(t *testing.T) {
 	t.Parallel()
 
-	command := buildWSLURIProtocolHandlerCommand("Ubuntu-24.04", "/home/me/go/bin/projmux")
+	registerScript := buildRegisterURIProtocolPowerShell("projmux", "Ubuntu-24.04", "/home/me/go/bin/projmux")
+	launcherScript := buildWSLURIProtocolLauncherVBScript("Ubuntu-24.04", "/home/me/go/bin/projmux")
 	for _, want := range []string{
-		`$uri = '%1'`,
-		`"focus" "--uri" "' + $uri + '"'`,
+		`wscript.exe //B //Nologo "`,
+		`"%1"`,
+		`uri = WScript.Arguments.Item(0)`,
+		`QuoteArg("--uri") & " " & QuoteArg(uri)`,
 	} {
-		if !strings.Contains(command, want) {
-			t.Fatalf("handler command missing URI forwarding token %q:\n%s", want, command)
+		if !strings.Contains(registerScript+"\n"+launcherScript, want) {
+			t.Fatalf("handler command missing URI forwarding token %q:\n%s\n%s", want, registerScript, launcherScript)
 		}
 	}
 	for _, forbidden := range []string{
 		`--uri "%1"`,
 		`--uri" "%1`,
 		`$uri = "%1"`,
+		`$uri = '%1'`,
 		`param([string]$uri)`,
-		`" "%1"`,
+		`-Command`,
 	} {
-		if strings.Contains(command, forbidden) {
-			t.Fatalf("handler command shell-interpolates %%1 with %q:\n%s", forbidden, command)
+		if strings.Contains(registerScript, forbidden) {
+			t.Fatalf("handler command shell-interpolates %%1 with %q:\n%s", forbidden, registerScript)
 		}
 	}
 }
 
-func TestBuildWSLURIProtocolHandlerCommand_PSEscapesDistro(t *testing.T) {
+func TestBuildWSLURIProtocolLauncherVBScript_EscapesDistro(t *testing.T) {
 	t.Parallel()
 
-	// Distro names with single quotes (unusual but technically allowed in
-	// WSL distro registration) must be PowerShell-escaped to keep the
-	// quoted string literal balanced.
-	command := buildWSLURIProtocolHandlerCommand("weird's-distro", "/home/me/go/bin/projmux")
-	if !strings.Contains(command, `"weird''s-distro"`) {
-		t.Fatalf("expected single-quote-escaped distro in launch command; got:\n%s", command)
+	script := buildWSLURIProtocolLauncherVBScript(`weird"distro`, "/home/me/go/bin/projmux")
+	if !strings.Contains(script, `QuoteArg("weird""distro")`) {
+		t.Fatalf("expected double-quote-escaped distro in launcher script; got:\n%s", script)
 	}
 }
 
-func TestBuildWSLURIProtocolHandlerCommand_PSEscapesBinaryPath(t *testing.T) {
+func TestBuildWSLURIProtocolLauncherVBScript_EscapesBinaryPath(t *testing.T) {
 	t.Parallel()
 
-	// Binary paths shouldn't contain single quotes in practice, but defend
-	// the quoted PowerShell literal so a pathological install location can't
-	// break the registration script.
-	command := buildWSLURIProtocolHandlerCommand("Ubuntu-24.04", "/home/o'brien/bin/projmux")
-	if !strings.Contains(command, `"/home/o''brien/bin/projmux"`) {
-		t.Fatalf("expected single-quote-escaped binary path in launch command; got:\n%s", command)
+	script := buildWSLURIProtocolLauncherVBScript("Ubuntu-24.04", `/home/me/bin/proj"mux`)
+	if !strings.Contains(script, `QuoteArg("/home/me/bin/proj""mux")`) {
+		t.Fatalf("expected double-quote-escaped binary path in launcher script; got:\n%s", script)
 	}
 }
 
-func TestWindowsCommandLineArgQuotesSpacesAndQuotes(t *testing.T) {
+func TestVBSDoubleQuotedEscapesQuotes(t *testing.T) {
 	t.Parallel()
 
-	got := windowsCommandLineArg(`C:\Program Files\projmux "test"\`)
-	want := `"C:\Program Files\projmux \"test\"\\"`
+	got := vbsDoubleQuoted(`C:\Program Files\projmux "test"\`)
+	want := `"C:\Program Files\projmux ""test""\"`
 	if got != want {
-		t.Fatalf("windowsCommandLineArg() = %q, want %q", got, want)
+		t.Fatalf("vbsDoubleQuoted() = %q, want %q", got, want)
 	}
 }

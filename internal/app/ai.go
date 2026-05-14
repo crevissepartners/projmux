@@ -1910,20 +1910,20 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 //
 //	(Default)                          = "URL:projmux"
 //	URL Protocol                       = ""
-//	shell\open\command\(Default)       = powershell.exe ... -WindowStyle Hidden ... "%1"
+//	shell\open\command\(Default)       = wscript.exe //B //Nologo <launcher.vbs> "%1"
 //
-// The hidden PowerShell wrapper avoids the visible console flash caused by
-// Windows ShellExecute launching console-subsystem `wsl.exe` directly from the
-// protocol handler. Inside the wrapper, `--exec` instead of `--` remains
-// load-bearing: `wsl.exe -- <cmd> <args>` routes `<cmd> <args>` through the
-// user's default login shell (zsh/bash). The `projmux://` URI carries `&`
-// characters as query-parameter separators, and zsh parses `&` as a
-// background-job operator before projmux ever runs, emitting
-// `zsh:1: parse error near '&'`. `--exec` skips the shell and invokes the
-// binary directly with the args verbatim. Because `--exec` doesn't load shell
-// init files, PATH may be empty, so we register the absolute WSL filesystem
-// path to the projmux binary captured at registration time (whichever binary
-// actually wrote the registry key).
+// The GUI-subsystem WScript launcher avoids the visible console flash caused
+// by Windows ShellExecute launching console-subsystem `wsl.exe` or
+// `powershell.exe` directly from the protocol handler. Inside the launcher,
+// `--exec` instead of `--` remains load-bearing: `wsl.exe -- <cmd> <args>`
+// routes `<cmd> <args>` through the user's default login shell (zsh/bash). The
+// `projmux://` URI carries `&` characters as query-parameter separators, and
+// zsh parses `&` as a background-job operator before projmux ever runs,
+// emitting `zsh:1: parse error near '&'`. `--exec` skips the shell and invokes
+// the binary directly with the args verbatim. Because `--exec` doesn't load
+// shell init files, PATH may be empty, so we register the absolute WSL
+// filesystem path to the projmux binary captured at registration time
+// (whichever binary actually wrote the registry key).
 //
 // The handler captures the user's *current* WSL_DISTRO_NAME because the
 // click is received on the Windows side with no knowledge of which distro
@@ -1939,6 +1939,15 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 func buildRegisterURIProtocolPowerShell(scheme, distro, binaryPath string) string {
 	return `$regPath = "HKCU:\SOFTWARE\Classes\` + psEscape(scheme) + `"
 $cmdPath = "$regPath\shell\open\command"
+$launcherRoot = $env:LOCALAPPDATA
+if ([string]::IsNullOrWhiteSpace($launcherRoot)) {
+  $launcherRoot = $env:TEMP
+}
+$launcherDir = Join-Path $launcherRoot 'projmux'
+$launcherPath = Join-Path $launcherDir '` + psEscape(scheme) + `-uri-handler.vbs'
+$launcherScript = @'
+` + buildWSLURIProtocolLauncherVBScript(distro, binaryPath) + `
+'@
 try {
   if (-not (Test-Path $regPath)) {
     New-Item -Path $regPath -Force | Out-Null
@@ -1946,56 +1955,67 @@ try {
   if (-not (Test-Path $cmdPath)) {
     New-Item -Path $cmdPath -Force | Out-Null
   }
+  if (-not (Test-Path $launcherDir)) {
+    New-Item -Path $launcherDir -ItemType Directory -Force | Out-Null
+  }
+  Set-Content -Path $launcherPath -Value $launcherScript -Encoding ASCII
   Set-ItemProperty -Path $regPath -Name '(Default)' -Value 'URL:` + psEscape(scheme) + `' -Type String
   Set-ItemProperty -Path $regPath -Name 'URL Protocol' -Value '' -Type String
-  $launchCmd = '` + psEscape(buildWSLURIProtocolHandlerCommand(distro, binaryPath)) + `'
+  $launchCmd = 'wscript.exe //B //Nologo "' + $launcherPath + '" "%1"'
   Set-ItemProperty -Path $cmdPath -Name '(Default)' -Value $launchCmd -Type String
 } catch { }
 `
 }
 
-func buildWSLURIProtocolHandlerCommand(distro, binaryPath string) string {
-	args := strings.Join([]string{
-		windowsCommandLineArg("-d"),
-		windowsCommandLineArg(distro),
-		windowsCommandLineArg("--exec"),
-		windowsCommandLineArg(binaryPath),
-		windowsCommandLineArg("focus"),
-		windowsCommandLineArg("--uri"),
-	}, " ")
-	launcher := `$uri = '%1'; $psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = 'wsl.exe'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden; $psi.Arguments = ` + psSingleQuoted(args+` "`) + ` + $uri + ` + psSingleQuoted(`"`) + `; [System.Diagnostics.Process]::Start($psi) | Out-Null`
-	return `powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "` + launcher + `"`
+func buildWSLURIProtocolLauncherVBScript(distro, binaryPath string) string {
+	argv := []string{"wsl.exe", "-d", distro, "--exec", binaryPath, "focus", "--uri"}
+	quoted := make([]string, 0, len(argv)+1)
+	for _, arg := range argv {
+		quoted = append(quoted, "QuoteArg("+vbsDoubleQuoted(arg)+")")
+	}
+	quoted = append(quoted, "QuoteArg(uri)")
+	commandExpr := strings.Join(quoted, ` & " " & `)
+	return `Option Explicit
+
+Dim uri
+If WScript.Arguments.Count < 1 Then
+  WScript.Quit 0
+End If
+uri = WScript.Arguments.Item(0)
+
+Dim shell, command
+command = ` + commandExpr + `
+Set shell = CreateObject("WScript.Shell")
+shell.Run command, 0, False
+
+Function QuoteArg(value)
+  Dim result, i, ch, backslashes
+  result = """"
+  backslashes = 0
+  For i = 1 To Len(value)
+    ch = Mid(value, i, 1)
+    If ch = "\" Then
+      backslashes = backslashes + 1
+    ElseIf ch = """" Then
+      result = result & String(backslashes * 2 + 1, "\") & """"
+      backslashes = 0
+    Else
+      If backslashes > 0 Then
+        result = result & String(backslashes, "\")
+        backslashes = 0
+      End If
+      result = result & ch
+    End If
+  Next
+  If backslashes > 0 Then
+    result = result & String(backslashes * 2, "\")
+  End If
+  QuoteArg = result & """"
+End Function`
 }
 
-func psSingleQuoted(value string) string {
-	return "'" + psEscape(value) + "'"
-}
-
-func windowsCommandLineArg(value string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	backslashes := 0
-	for _, r := range value {
-		switch r {
-		case '\\':
-			backslashes++
-		case '"':
-			b.WriteString(strings.Repeat("\\", backslashes*2+1))
-			b.WriteRune(r)
-			backslashes = 0
-		default:
-			if backslashes > 0 {
-				b.WriteString(strings.Repeat("\\", backslashes))
-				backslashes = 0
-			}
-			b.WriteRune(r)
-		}
-	}
-	if backslashes > 0 {
-		b.WriteString(strings.Repeat("\\", backslashes*2))
-	}
-	b.WriteByte('"')
-	return b.String()
+func vbsDoubleQuoted(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func buildRegisterToastAppIDPowerShell(appID, displayName, iconURI string) string {
