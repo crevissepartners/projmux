@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -440,6 +441,9 @@ func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiBellDedupeOption, "100"}}) {
 		t.Fatalf("commands = %#v, want bell dedupe timestamp", cmdRecorder(cmd).commands)
 	}
+	if hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}}) {
+		t.Fatalf("commands = %#v, did not expect tmux bell fallback to mark pane hook-active", cmdRecorder(cmd).commands)
+	}
 }
 
 func TestSplitTmuxUnitFieldsAcceptsRawAndEscapedSeparators(t *testing.T) {
@@ -732,6 +736,9 @@ func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
 	if notification.Summary != text {
 		t.Fatalf("Summary = %q, want queue text %q", notification.Summary, text)
 	}
+	if notification.Urgency != "normal" {
+		t.Fatalf("Urgency = %q, want OS urgency normal for critical queue text", notification.Urgency)
+	}
 	if !strings.Contains(notification.Body, "projmux/feat/hooks") || !strings.Contains(notification.Body, "workspace:editor") {
 		t.Fatalf("Body = %q, want project/session context", notification.Body)
 	}
@@ -752,7 +759,13 @@ func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
 	if !reflect.DeepEqual(notifySend.args[len(notifySend.args)-2:], []string{text, notification.Body}) {
 		t.Fatalf("notify-send args = %#v, want summary/body from shared payload", notifySend.args)
 	}
-	toastScript := buildToastPowerShell(notification.Summary, notification.Body, notification.AppName, notification.Tag, notification.Group, "", "")
+	for _, want := range []string{"--urgency=normal", "--expire-time=5000"} {
+		found := slices.Contains(notifySend.args, want)
+		if !found {
+			t.Fatalf("notify-send args = %#v, want %q", notifySend.args, want)
+		}
+	}
+	toastScript := buildToastPowerShell(notification.Summary, notification.Body, notification.AppName, notification.Tag, notification.Group, "", "", defaultAINotifyExpireMS)
 	if !strings.Contains(toastScript, text) || !strings.Contains(toastScript, notification.Body) {
 		t.Fatalf("toast script missing shared payload:\n%s", toastScript)
 	}
@@ -1154,17 +1167,20 @@ func TestIngestClaudeUnknownEventFallsBackToQuiet(t *testing.T) {
 func TestAIWatchTitleSkipsHookActivePane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
-	paneIDReads := 0
+	titleCaptureReads := 0
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
 		switch {
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%5", "#{" + aiPaneHookActiveOption + "}"}):
-			return []byte("1\n"), nil
-		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%5", "#{pane_id}"}):
-			paneIDReads++
-			return []byte("%5\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%5", "#{pane_id}__PROJMUX_TMUX_AI_GATE_SEP__#{" + aiPaneHookActiveOption + "}"}):
+			return []byte("%5__PROJMUX_TMUX_AI_GATE_SEP__1\n"), nil
+		case len(args) >= 5 && args[0] == "display-message" && args[3] == "%5" && strings.Contains(args[4], "#{pane_title}"):
+			titleCaptureReads++
+			return []byte("\n"), nil
+		case reflect.DeepEqual(args, []string{"capture-pane", "-p", "-J", "-S", "-80", "-t", "%5"}):
+			titleCaptureReads++
+			return []byte("\n"), nil
 		default:
 			return nil, os.ErrNotExist
 		}
@@ -1173,8 +1189,8 @@ func TestAIWatchTitleSkipsHookActivePane(t *testing.T) {
 	if err := cmd.Run([]string{"watch-title", "%5"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run watch-title error = %v", err)
 	}
-	if paneIDReads != 0 {
-		t.Fatalf("paneIDReads = %d, want 0", paneIDReads)
+	if titleCaptureReads != 0 {
+		t.Fatalf("titleCaptureReads = %d, want 0", titleCaptureReads)
 	}
 	if len(cmdRecorder(cmd).commands) != 0 {
 		t.Fatalf("commands = %#v, want no writes for hook-active pane", cmdRecorder(cmd).commands)

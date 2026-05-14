@@ -637,7 +637,7 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 	if !containsAICommandArgs(commands, hook, []string{
 		"Codex 입력 필요 · answer ready",
 		"검토 대기: answer ready · projmux/main",
-		"critical",
+		"normal",
 		desktopAppID,
 		"%9",
 		"repo",
@@ -780,6 +780,8 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		"CreateToastNotifier('" + desktopAppID + "').Show($toast)",
 		"$toast.Tag = '%2'",
 		"$toast.Group = 'repo'",
+		`<toast duration="short">`,
+		"$toast.ExpirationTime = [DateTimeOffset]::Now.AddMilliseconds(5000)",
 		"Codex 승인 필요 · approval needed",
 		"검토 대기: approval needed · projmux/main",
 		iconWin,
