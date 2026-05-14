@@ -22,6 +22,7 @@ type stubNotifyStore struct {
 
 	listEntries []notify.Notification
 	listErr     error
+	listCalls   int
 
 	ackedID  string
 	ackedIDs []string
@@ -41,6 +42,25 @@ func (p *stubNotifyPicker) Run(options intpickercompat.Options) (intpickercompat
 	return p.result, p.err
 }
 
+type recordingNotifyPicker struct {
+	options []intpickercompat.Options
+	results []intpickercompat.Result
+	err     error
+}
+
+func (p *recordingNotifyPicker) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
+	p.options = append(p.options, options)
+	if p.err != nil {
+		return intpickercompat.Result{}, p.err
+	}
+	if len(p.results) == 0 {
+		return intpickercompat.Result{}, nil
+	}
+	result := p.results[0]
+	p.results = p.results[1:]
+	return result, nil
+}
+
 type notifyPickerFunc func(options intpickercompat.Options) (intpickercompat.Result, error)
 
 func (f notifyPickerFunc) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
@@ -53,17 +73,30 @@ func (s *stubNotifyStore) Push(in notify.PushInput) (notify.Notification, notify
 }
 
 func (s *stubNotifyStore) List() ([]notify.Notification, error) {
+	s.listCalls++
 	return append([]notify.Notification(nil), s.listEntries...), s.listErr
 }
 
 func (s *stubNotifyStore) Ack(id string) error {
 	s.ackedID = id
 	s.ackedIDs = append(s.ackedIDs, id)
+	if s.ackErr == nil {
+		next := s.listEntries[:0]
+		for _, entry := range s.listEntries {
+			if entry.ID != id {
+				next = append(next, entry)
+			}
+		}
+		s.listEntries = next
+	}
 	return s.ackErr
 }
 
 func (s *stubNotifyStore) AckAll() (int, error) {
 	s.ackAllOK = true
+	if s.ackErr == nil {
+		s.listEntries = nil
+	}
 	return s.ackAll, s.ackErr
 }
 
@@ -560,9 +593,74 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
+			{ID: "def", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
+			{ID: "ghi", Text: "blocked", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main"},
+		},
+	}
+	picker := &recordingNotifyPicker{
+		results: []intpickercompat.Result{
+			{Key: "x", Value: "def"},
+			{},
+		},
+	}
+	runner := &focusFakeRunner{}
+	cmd := newCmd(store)
+	cmd.picker = picker
+	cmd.native = nativePickerFromCompatRunner(picker)
+	cmd.runner = runner
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if store.ackedID != "def" {
+		t.Fatalf("ackedID = %q, want def", store.ackedID)
+	}
+	if got, want := store.ackedIDs, []string{"def"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want %#v", got, want)
+	}
+	if store.listCalls != 2 {
+		t.Fatalf("List calls = %d, want 2", store.listCalls)
+	}
+	if len(picker.options) != 2 {
+		t.Fatalf("picker runs = %d, want 2", len(picker.options))
+	}
+	first := picker.options[0].Entries
+	if len(first) != 3 || first[0].Value != "abc" || first[1].Value != "def" || first[2].Value != "ghi" {
+		t.Fatalf("first picker entries = %#v, want abc then def then ghi", first)
+	}
+	if got, want := picker.options[0].Bindings, []string{"alt-2:abort"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first picker bindings = %#v, want %#v", got, want)
+	}
+	second := picker.options[1].Entries
+	if len(second) != 2 || second[0].Value != "abc" || second[1].Value != "ghi" {
+		t.Fatalf("second picker entries = %#v, want abc then ghi", second)
+	}
+	if got, want := picker.options[1].Bindings, []string{"alt-2:abort", "start:pos(2)"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("second picker bindings = %#v, want %#v", got, want)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want no sidebar ack output", stdout.String())
+	}
+	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 0 {
+		t.Fatalf("focus calls = %#v, want none", focusCalls)
+	}
+}
+
+func TestNotifyListSidebarXAckLastRowRendersEmptyState(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{
 		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
 	}
-	picker := &stubNotifyPicker{result: intpickercompat.Result{Key: "x", Value: "abc"}}
+	picker := &recordingNotifyPicker{
+		results: []intpickercompat.Result{
+			{Key: "x", Value: "abc"},
+			{},
+		},
+	}
 	cmd := newCmd(store)
 	cmd.picker = picker
 	cmd.native = nativePickerFromCompatRunner(picker)
@@ -571,11 +669,115 @@ func TestNotifyListSidebarAcksSelectedRow(t *testing.T) {
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if store.ackedID != "abc" {
-		t.Fatalf("ackedID = %q, want abc", store.ackedID)
+	if got, want := store.ackedIDs, []string{"abc"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want %#v", got, want)
 	}
-	if !strings.Contains(stdout.String(), "ack abc") {
-		t.Fatalf("stdout = %q", stdout.String())
+	if len(picker.options) != 2 {
+		t.Fatalf("picker runs = %d, want 2", len(picker.options))
+	}
+	second := picker.options[1].Entries
+	if len(second) != 1 || second[0].Value != notifySidebarEmptyValue {
+		t.Fatalf("second picker entries = %#v, want empty state", second)
+	}
+	if second[0].Label != "No pending notifications" {
+		t.Fatalf("empty label = %q", second[0].Label)
+	}
+	if got, want := picker.options[1].Bindings, []string{"alt-2:abort"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("empty picker bindings = %#v, want %#v", got, want)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want no sidebar ack output", stdout.String())
+	}
+}
+
+func TestNotifyListSidebarXAckLastRowStartsAtPreviousRow(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
+			{ID: "def", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
+		},
+	}
+	picker := &recordingNotifyPicker{
+		results: []intpickercompat.Result{
+			{Key: "x", Value: "def"},
+			{},
+		},
+	}
+	cmd := newCmd(store)
+	cmd.picker = picker
+	cmd.native = nativePickerFromCompatRunner(picker)
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if got, want := store.ackedIDs, []string{"def"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want %#v", got, want)
+	}
+	if len(picker.options) != 2 {
+		t.Fatalf("picker runs = %d, want 2", len(picker.options))
+	}
+	second := picker.options[1].Entries
+	if len(second) != 1 || second[0].Value != "abc" {
+		t.Fatalf("second picker entries = %#v, want only abc", second)
+	}
+	if got, want := picker.options[1].Bindings, []string{"alt-2:abort", "start:pos(1)"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("second picker bindings = %#v, want %#v", got, want)
+	}
+}
+
+func TestNotifyListSidebarXAckRefreshesLiveStateEachLoop(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "ai:main:%2", Text: "codex: first", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%2", CreatedAt: now},
+			{ID: "ai:main:%3", Text: "codex: second", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%3", CreatedAt: now},
+		},
+	}
+	picker := &recordingNotifyPicker{
+		results: []intpickercompat.Result{
+			{Key: "x", Value: "ai:main:%2"},
+			{},
+		},
+	}
+	var liveCalls int
+	runner := &focusFakeRunner{respond: func(args []string) ([]byte, error) {
+		if containsArg(args, "list-panes") {
+			liveCalls++
+			if liveCalls == 1 {
+				return notifyLivePaneRows(
+					[]string{"main", "@1", "%2", "0", "codex", "reply", "waiting", "codex", "first", "/tmp/tmux/default"},
+					[]string{"main", "@1", "%3", "0", "codex", "reply", "waiting", "codex", "second", "/tmp/tmux/default"},
+				), nil
+			}
+			return []byte{}, nil
+		}
+		return nil, errors.New("unexpected runner call")
+	}}
+	cmd := newCmd(store)
+	cmd.now = func() time.Time { return now }
+	cmd.picker = picker
+	cmd.native = nativePickerFromCompatRunner(picker)
+	cmd.runner = runner
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if liveCalls != 2 {
+		t.Fatalf("live list calls = %d, want 2", liveCalls)
+	}
+	if len(picker.options) != 2 {
+		t.Fatalf("picker runs = %d, want 2", len(picker.options))
+	}
+	second := picker.options[1].Entries
+	if len(second) != 1 || second[0].Value != "ai:main:%3" {
+		t.Fatalf("second picker entries = %#v, want only ai:main:%%3", second)
+	}
+	if !strings.Contains(second[0].Label, "STALE") {
+		t.Fatalf("second label = %q, want refreshed stale state", second[0].Label)
 	}
 }
 
