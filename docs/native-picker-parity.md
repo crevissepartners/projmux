@@ -27,7 +27,7 @@ native picker engine and is not a public dependency-policy change.
 | selected multi-line marker | selected switch/session/notify cards | Covered for app multiline rows | native uses the same compact pointer-width red `▌` gutter as the first selected project line, and metadata lines align to the project-name column without the old deeper indent; `nativeContinuation`; `TestNativeInteractiveRendersSelectedMultilineContinuationMarker`; `TestInteractiveRowLinesUsesCompactSelectedMetaIndent`; `TestInteractiveRowLinesAlignsUnselectedMetaWithProjectName` |
 | fzf current row colors | simple and multi-line rows | Covered for app rows | `nativeCurrentStart`, `nativePointer`; pointer/continuation gutter tokens carry the current-row background; `TestNativeSelectedContentKeepsCurrentStyleAfterReset`; `TestNativeInteractiveUsesCurrentStyleForSimpleSelection` |
 | `--expect` keys | Enter/Ctrl-X/Alt-P/notify keys | Covered | `pickercompat.PickerOptions`; `TestNativeInteractiveSupportsCustomExpectKeys` |
-| printable expect keys | notify sidebar `x` ack | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
+| printable expect keys | notify sidebar `a` ack and `x` non-critical clear | Covered | `TestNativeInteractiveSupportsPrintableExpectKeys`; Docker no-fzf e2e |
 | control expect keys | notify sidebar `Ctrl-X`, settings `Ctrl-Alt-S` close | Covered | `TestNativeInteractiveSupportsControlExpectKeys`; `TestNativeInteractiveSupportsControlAltCloseKeys` |
 | close `--bind key:abort` | Esc, Ctrl-C, Alt-N, Ctrl-Alt-S variants | Covered | `CloseActions`; `TestNativeRunnerUsesSharedCloseActions` |
 | terminal CSI-u key encoding | app keybind probe sequences, Ghostty/kitty-style modified keys | Covered | native handles app-specific Alt keys, generic modified letters/digits, and non-text keys such as Enter/Esc/Backspace/Tab; `TestNativeInteractiveSupportsCSIuAppKeyBindings` |
@@ -108,7 +108,7 @@ contract; native popups still rely on the existing borderless tmux popup path.
   preview cursor, selects `bravo-web`, and asserts tmux reports the selected
   session's active target on the expected window with the expected pane path.
 - `notify sidebar`: native routing is unit-covered; Docker no-fzf e2e pushes a
-  notification, presses printable expect key `x`, and verifies the row is acked.
+  notification, presses printable expect key `a`, and verifies the row is acked.
 
 ## Experimental Boundaries
 

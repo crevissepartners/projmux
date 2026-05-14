@@ -94,11 +94,14 @@ preserves the stable JSON array used by scripts.
 
 `--ui=sidebar` opens the notify queue as an interactive right-side list when
 run inside the tmux popup surface. Enter focuses the selected target pane and
-acks the row after focus succeeds. `x` acks the selected row in place, keeps
+acks the row after focus succeeds. `a` acks the selected row in place, keeps
 the sidebar open, and refreshes the list from the queue while preserving the
 selection position where possible; acking the last remaining row renders the
-empty state until the popup is closed. `Ctrl-X` clears all rows via `notify ack
---all` and exits. Rows are intentionally compact: the visible label keeps
+empty state until the popup is closed. `x` bulk-clears non-critical rows
+(`severity != critical`) without focusing and preserves critical rows.
+`Ctrl-X` clears all rows via `notify ack --all` and exits. Footer: `Enter:
+focus + ack  |  a: ack  |  x: clear non-critical  |  Ctrl-X: clear all  |
+Esc/Alt-2: close`. Rows are intentionally compact: the visible label keeps
 notification text first, then age, project, window, and pane metadata; hidden
 queue ids remain action values but the sidebar has no search input and
 intentionally does not expose a separate metadata detail view.

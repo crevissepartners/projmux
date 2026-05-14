@@ -211,9 +211,9 @@ projmux notify reconcile [--json]
   reply badges that do not queue because no AI agent is attached, live AI
   reply panes missing a queue entry, matched AI reply entries, and stale
   queue entries whose live pane no longer matches. `--ui=sidebar` opens the
-  compact interactive notify list where Enter focuses and acks a target, `x`
-  acks the selected row, and `Ctrl-X` clears all; opening or navigating the
-  sidebar does not ack. The sidebar uses two-line cards with notification text
+  compact interactive notify list where Enter focuses and acks a target, `a`
+  acks the selected row, `x` clears non-critical rows, and `Ctrl-X` clears all;
+  opening or navigating the sidebar does not ack. The sidebar uses two-line cards with notification text
   first and compact age/project/window/pane metadata below. Hidden queue ids
   remain action values, but the sidebar has no search input. `--client` is
   used by tmux popup launchers to keep row-select focus on the clicked client.
