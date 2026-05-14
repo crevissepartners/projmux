@@ -51,9 +51,9 @@ view-first layout:
   such as `Set startup command...`, `Clear startup command`, kube edits, and env
   add/remove rows live inside those details.
 - `Settings > Appearance` is view-first. The root opens `Path icon`, `Git icon`,
-  and `Notify icon` details. Each detail shows the current mode and off/symbol/
-  emoji rendered previews first, and its `Change` page contains only the
-  off/symbol/emoji mutation choices.
+  and `Notify icon` details. Each detail shows the current mode plus
+  immediately selectable off/symbol/emoji preview rows. There is no separate
+  `Change` page for icon decoration.
 
 Hooks remain the reference pattern for this IA:
 

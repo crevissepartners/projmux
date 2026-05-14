@@ -918,19 +918,176 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 	t.Parallel()
 
+	tests := []struct {
+		name    string
+		target  statusbarDecorationTarget
+		initial config.StatusbarDecoration
+		selects config.StatusbarDecoration
+		preview string
+	}{
+		{
+			name:    "path",
+			target:  statusbarDecorationTargetCwd,
+			initial: config.StatusbarDecorationOff,
+			selects: config.StatusbarDecorationEmoji,
+			preview: "📁 ~/source/repos/projmux",
+		},
+		{
+			name:    "git",
+			target:  statusbarDecorationTargetGit,
+			initial: config.StatusbarDecorationOff,
+			selects: config.StatusbarDecorationSymbol,
+			preview: " main * ↑1",
+		},
+		{
+			name:    "notify",
+			target:  statusbarDecorationTargetNotify,
+			initial: config.StatusbarDecorationEmoji,
+			selects: config.StatusbarDecorationOff,
+			preview: "Pending Notifications",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			paths, err := config.Homes{HomeDir: home}.Paths()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := config.SaveStatusbarDecorationFile(statusbarDecorationTargetFile(paths, tc.target), tc.initial); err != nil {
+				t.Fatalf("seed statusbar decoration: %v", err)
+			}
+
+			var statusbarOptions intpickercompat.Options
+			var detailOptions intpickercompat.Options
+			var refreshedOptions intpickercompat.Options
+			var sawChangePage bool
+			var tmuxCalls [][]string
+			actionPrefix := settingsActionPrefixStatusbar + string(tc.target)
+			runner, native := scriptedPicker(t, []pickerStep{
+				{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}},
+				{observe: func(o intpickercompat.Options) {
+					statusbarOptions = o
+					sawChangePage = sawChangePage || o.UI == "settings-statusbar-change"
+				},
+					reply: intpickercompat.Result{Key: "enter", Value: actionPrefix}},
+				{observe: func(o intpickercompat.Options) {
+					detailOptions = o
+					sawChangePage = sawChangePage || o.UI == "settings-statusbar-change"
+				},
+					reply: intpickercompat.Result{Key: "enter", Value: actionPrefix + ":" + string(tc.selects)}},
+				{observe: func(o intpickercompat.Options) {
+					refreshedOptions = o
+					sawChangePage = sawChangePage || o.UI == "settings-statusbar-change"
+				}},
+			})
+			cmd := &settingsCommand{
+				ai:       testAICommand(home),
+				switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+				homeDir:  func() (string, error) { return home, nil },
+				lookupEnv: func(name string) string {
+					if name == "TMUX" {
+						return "/tmp/tmux"
+					}
+					return ""
+				},
+				runCommand: func(name string, args ...string) error {
+					tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+					return nil
+				},
+				runner:       runner,
+				nativePicker: native,
+			}
+
+			if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if got, want := statusbarOptions.UI, "settings-statusbar"; got != want {
+				t.Fatalf("statusbar settings UI = %q, want %q", got, want)
+			}
+			if got, want := statusbarOptions.Title, "Appearance - Icon decoration"; got != want {
+				t.Fatalf("statusbar settings title = %q, want %q", got, want)
+			}
+			if got, want := statusbarOptions.Prompt, "Settings > Appearance > "; got != want {
+				t.Fatalf("statusbar settings prompt = %q, want %q", got, want)
+			}
+			if got := statusbarOptions.Header; got != "" {
+				t.Fatalf("statusbar settings header = %q, want description only in title", got)
+			}
+			if got := statusbarOptions.TitleChips; len(got) < 2 || !got[0].Active || strings.TrimSpace(got[0].ClickValue) != "" {
+				t.Fatalf("statusbar settings chips = %#v, want passive Global/Project tabs", got)
+			}
+			for _, target := range []statusbarDecorationTarget{statusbarDecorationTargetCwd, statusbarDecorationTargetGit, statusbarDecorationTargetNotify} {
+				if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(target)) {
+					t.Fatalf("statusbar settings entries = %#v, want %s detail row", statusbarOptions.Entries, target)
+				}
+				if hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(target)+":"+string(config.StatusbarDecorationEmoji)) {
+					t.Fatalf("statusbar settings entries = %#v, want no direct mutation row at root", statusbarOptions.Entries)
+				}
+			}
+			if got, want := detailOptions.UI, "settings-statusbar-detail"; got != want {
+				t.Fatalf("detail UI = %q, want %q", got, want)
+			}
+			if strings.Contains(detailOptions.Title, "Change") || strings.Contains(detailOptions.Prompt, "Change") {
+				t.Fatalf("detail options = %#v, want no Change page title or prompt", detailOptions)
+			}
+			for _, mode := range statusbarDecorationModes() {
+				value := actionPrefix + ":" + string(mode)
+				if !hasEntryValue(detailOptions.Entries, value) {
+					t.Fatalf("detail entries = %#v, want direct %s row", detailOptions.Entries, value)
+				}
+				if !hasEntryLabelContaining(detailOptions.Entries, "Preview "+string(mode)) {
+					t.Fatalf("detail entries = %#v, want preview label for %s", detailOptions.Entries, mode)
+				}
+			}
+			if !hasEntryLabelContaining(detailOptions.Entries, "Current") {
+				t.Fatalf("detail entries = %#v, want current row", detailOptions.Entries)
+			}
+			if !hasEntryLabelContaining(detailOptions.Entries, tc.preview) {
+				t.Fatalf("detail entries = %#v, want preview %q", detailOptions.Entries, tc.preview)
+			}
+			if hasEntryValue(detailOptions.Entries, actionPrefix+":change") || hasEntryLabelContaining(detailOptions.Entries, "Change") {
+				t.Fatalf("detail entries = %#v, want no Change row", detailOptions.Entries)
+			}
+			if sawChangePage {
+				t.Fatalf("picker opened settings-statusbar-change")
+			}
+			if !hasEntryLabelContainingAll(refreshedOptions.Entries, "Current", string(tc.selects)) {
+				t.Fatalf("refreshed entries = %#v, want current display refreshed to %s", refreshedOptions.Entries, tc.selects)
+			}
+			if !hasEntryLabelContainingAll(refreshedOptions.Entries, "Preview "+string(tc.selects), "current") {
+				t.Fatalf("refreshed entries = %#v, want selected preview marked current", refreshedOptions.Entries)
+			}
+
+			got, err := config.LoadStatusbarDecorationFile(statusbarDecorationTargetFile(paths, tc.target))
+			if err != nil {
+				t.Fatalf("LoadStatusbarDecorationFile() error = %v", err)
+			}
+			if got != tc.selects {
+				t.Fatalf("%s decoration = %q, want %q", tc.target, got, tc.selects)
+			}
+			if !reflect.DeepEqual(tmuxCalls, [][]string{
+				{"tmux", "set-option", "-g", statusbarDecorationTmuxOptionForTarget(tc.target), string(tc.selects)},
+				{"tmux", "display-message", "decoration " + string(tc.target) + ": " + string(tc.selects)},
+			}) {
+				t.Fatalf("tmux calls = %#v", tmuxCalls)
+			}
+		})
+	}
+}
+
+func TestSettingsHubStatusbarDecorationChangeActionIsUnreachable(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
-	var statusbarOptions intpickercompat.Options
-	var detailOptions intpickercompat.Options
-	var changeOptions intpickercompat.Options
-	var tmuxCalls [][]string
+	actionPrefix := settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit)
 	runner, native := scriptedPicker(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}},
-		{observe: func(o intpickercompat.Options) { statusbarOptions = o },
-			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit)}},
-		{observe: func(o intpickercompat.Options) { detailOptions = o },
-			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":change"}},
-		{observe: func(o intpickercompat.Options) { changeOptions = o },
-			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":" + string(config.StatusbarDecorationEmoji)}},
+		{reply: intpickercompat.Result{Key: "enter", Value: actionPrefix}},
+		{reply: intpickercompat.Result{Key: "enter", Value: actionPrefix + ":change"}},
 	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
@@ -942,84 +1099,14 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 			}
 			return ""
 		},
-		runCommand: func(name string, args ...string) error {
-			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
-			return nil
-		},
+		runCommand:   func(string, ...string) error { return nil },
 		runner:       runner,
 		nativePicker: native,
 	}
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if got, want := statusbarOptions.UI, "settings-statusbar"; got != want {
-		t.Fatalf("statusbar settings UI = %q, want %q", got, want)
-	}
-	if got, want := statusbarOptions.Title, "Appearance - Icon decoration"; got != want {
-		t.Fatalf("statusbar settings title = %q, want %q", got, want)
-	}
-	if got, want := statusbarOptions.Prompt, "Settings > Appearance > "; got != want {
-		t.Fatalf("statusbar settings prompt = %q, want %q", got, want)
-	}
-	if got := statusbarOptions.Header; got != "" {
-		t.Fatalf("statusbar settings header = %q, want description only in title", got)
-	}
-	if got := statusbarOptions.TitleChips; len(got) < 2 || !got[0].Active || strings.TrimSpace(got[0].ClickValue) != "" {
-		t.Fatalf("statusbar settings chips = %#v, want passive Global/Project tabs", got)
-	}
-	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetCwd)) {
-		t.Fatalf("statusbar settings entries = %#v, want cwd detail row", statusbarOptions.Entries)
-	}
-	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetGit)) {
-		t.Fatalf("statusbar settings entries = %#v, want git detail row", statusbarOptions.Entries)
-	}
-	if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetNotify)) {
-		t.Fatalf("statusbar settings entries = %#v, want notify detail row", statusbarOptions.Entries)
-	}
-	if hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetGit)+":"+string(config.StatusbarDecorationEmoji)) {
-		t.Fatalf("statusbar settings entries = %#v, want no direct mutation row at root", statusbarOptions.Entries)
-	}
-	if got, want := detailOptions.UI, "settings-statusbar-detail"; got != want {
-		t.Fatalf("detail UI = %q, want %q", got, want)
-	}
-	for _, want := range []string{"Current", "Preview off", "Preview symbol", "Preview emoji", "🐱 main * ↑1"} {
-		if !hasEntryLabelContaining(detailOptions.Entries, want) {
-			t.Fatalf("detail entries = %#v, want label containing %q", detailOptions.Entries, want)
-		}
-	}
-	if !hasEntryValue(detailOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetGit)+":change") {
-		t.Fatalf("detail entries = %#v, want Change row", detailOptions.Entries)
-	}
-	if hasEntryValue(detailOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetGit)+":"+string(config.StatusbarDecorationEmoji)) {
-		t.Fatalf("detail entries = %#v, want no direct mutation row", detailOptions.Entries)
-	}
-	if got, want := changeOptions.UI, "settings-statusbar-change"; got != want {
-		t.Fatalf("change UI = %q, want %q", got, want)
-	}
-	if hasEntryLabelContaining(changeOptions.Entries, "Preview emoji") {
-		t.Fatalf("change entries = %#v, want mutation-only rows without repeated view", changeOptions.Entries)
-	}
-	if !hasEntryValue(changeOptions.Entries, settingsActionPrefixStatusbar+string(statusbarDecorationTargetGit)+":"+string(config.StatusbarDecorationEmoji)) {
-		t.Fatalf("change entries = %#v, want emoji set row", changeOptions.Entries)
-	}
-
-	paths, err := config.Homes{HomeDir: home}.Paths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := config.LoadStatusbarDecorationFile(statusbarDecorationTargetFile(paths, statusbarDecorationTargetGit))
-	if err != nil {
-		t.Fatalf("LoadStatusbarDecorationFile() error = %v", err)
-	}
-	if got != config.StatusbarDecorationEmoji {
-		t.Fatalf("git decoration = %q, want %q", got, config.StatusbarDecorationEmoji)
-	}
-	if !reflect.DeepEqual(tmuxCalls, [][]string{
-		{"tmux", "set-option", "-g", statusbarDecorationGitTmuxOption, "emoji"},
-		{"tmux", "display-message", "decoration git: emoji"},
-	}) {
-		t.Fatalf("tmux calls = %#v", tmuxCalls)
+	err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "unknown appearance detail action") {
+		t.Fatalf("Run() error = %v, want stale Change action rejected", err)
 	}
 }
 
@@ -4444,6 +4531,22 @@ func entryValues(entries []intpickercompat.Entry) []string {
 func hasEntryLabelContaining(entries []intpickercompat.Entry, value string) bool {
 	for _, entry := range entries {
 		if strings.Contains(entry.Label, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEntryLabelContainingAll(entries []intpickercompat.Entry, values ...string) bool {
+	for _, entry := range entries {
+		matches := true
+		for _, value := range values {
+			if !strings.Contains(entry.Label, value) {
+				matches = false
+				break
+			}
+		}
+		if matches {
 			return true
 		}
 	}
