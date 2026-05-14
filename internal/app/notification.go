@@ -271,6 +271,9 @@ func (c *aiCommand) ensureWSLURIProtocol() {
 	if err := c.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script)); err != nil {
 		return
 	}
+	for _, option := range legacyURIProtocolRegisteredTmuxOptions {
+		_ = c.run("tmux", "set-option", "-g", "-u", option)
+	}
 	_ = c.run("tmux", "set-option", "-g", uriProtocolRegisteredTmuxOption, "1")
 }
 
