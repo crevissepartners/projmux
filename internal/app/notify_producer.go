@@ -28,13 +28,14 @@ type attentionNotifyProducer interface {
 // the only mandatory field; the producer reads everything else off tmux via
 // Lookup.
 type attentionNotifyInput struct {
-	PaneID   string
-	Lookup   attentionNotifyLookup
-	ID       string
-	Text     string
-	Severity string
-	Metadata map[string]string
-	Force    bool
+	PaneID        string
+	Lookup        attentionNotifyLookup
+	ID            string
+	Text          string
+	Severity      string
+	Metadata      map[string]string
+	Force         bool
+	SuppressHooks bool
 }
 
 // attentionNotifyLookup is the minimal tmux read surface the producer needs.
@@ -145,7 +146,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	if err != nil {
 		return
 	}
-	if p.hooks != nil {
+	if p.hooks != nil && !in.SuppressHooks {
 		p.hooks.Dispatch(entry, notifyHookMeta{
 			Type:    "ai-reply-ready",
 			Agent:   agent,

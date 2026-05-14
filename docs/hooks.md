@@ -343,7 +343,15 @@ runtime file only changes ingest behavior (`notify`, `state`, or `quiet`);
 `projmux ai integrate codex` still uses the catalog `install` field to decide
 which hooks to write. Runtime overrides also apply to known specialized
 events, so `Stop` or `PermissionRequest` can be made state-only or quiet
-without changing which hook commands are installed.
+without changing which hook commands are installed. When a known Codex event
+without a specialized handler, such as `PreToolUse` or `PostToolUse`, is set to
+runtime `notify`, projmux pushes a generic in-app notify row such as
+`Codex · PreToolUse · Bash`. That generic path is queue/sidebar/statusbar only:
+it does not dispatch `[hooks.send-noti]`, `PROJMUX_NOTIFY_HOOK`, `notify-send`,
+or Windows toast.
+Generic metadata is limited to safe summary fields such as provider, event,
+tool, cwd, thread, session, turn, and model; raw payloads and tool input are
+not stored.
 
 Codex may require reviewing or trusting hooks through its `/hooks` flow before
 commands run. Projmux only writes the managed config block; it does not attempt

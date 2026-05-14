@@ -33,6 +33,13 @@ func formatCodexHookStopNotifyBody(codexHookPayload) aiNotifyBody {
 	}
 }
 
+func formatCodexGenericHookNotifyBody(p codexHookPayload) aiNotifyBody {
+	return aiNotifyBody{
+		Text:     joinAINotifyText("Codex", p.EventName, p.ToolName),
+		Severity: notify.SeverityInfo,
+	}
+}
+
 func formatClaudeNotificationNotifyBody(p claudeHookPayload) aiNotifyBody {
 	label, severity := claudeNotificationLabelSeverity(p.NotificationType)
 	return aiNotifyBody{

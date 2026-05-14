@@ -449,6 +449,14 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	case "PreToolUse", "PostToolUse", "PreCompact", "PostCompact", "SessionStart":
+		if c.shouldPushGenericCodexHookNotify(action) {
+			if err := c.pushGenericCodexHookNotify(paneID, payload); err != nil {
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+				return err
+			}
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+			return nil
+		}
 		c.quietCodexHook(paneID, payload, aiHookNoHandlerReason(action))
 		return nil
 	default:
@@ -696,6 +704,23 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 func (c *aiCommand) quietCodexHook(paneID string, payload codexHookPayload, reason string) {
 	c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+}
+
+func (c *aiCommand) shouldPushGenericCodexHookNotify(action aiHookActionResolution) bool {
+	return action.Action == aiHookActionNotify && action.Source == aiHookActionSourceRuntime
+}
+
+func (c *aiCommand) pushGenericCodexHookNotify(paneID string, payload codexHookPayload) error {
+	c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
+	body := formatCodexGenericHookNotifyBody(payload)
+	return c.applyAIStatusQueueOnly("waiting", paneID, attentionNotifyInput{
+		ID:            codexHookNotifyID(payload, "generic"),
+		Text:          body.Text,
+		Severity:      body.Severity,
+		Metadata:      payload.codexGenericHookMetadata(),
+		Force:         true,
+		SuppressHooks: true,
+	})
 }
 
 func (c *aiCommand) quietClaudeHook(paneID string, payload claudeHookPayload, reason string) {
@@ -946,6 +971,28 @@ func (p codexHookPayload) codexHookMetadata() map[string]string {
 		if text := stringFromAny(value); text != "" {
 			metadata["tool_input."+key] = truncateRunes(text, 160)
 		}
+	}
+	out := make(map[string]string, len(metadata))
+	for k, v := range metadata {
+		if value := strings.TrimSpace(v); value != "" {
+			out[k] = value
+		}
+	}
+	return out
+}
+
+func (p codexHookPayload) codexGenericHookMetadata() map[string]string {
+	metadata := map[string]string{
+		"provider":   aiHookProviderCodex,
+		"agent":      aiModeCodex,
+		"event":      p.EventName,
+		"tool":       p.ToolName,
+		"tool_name":  p.ToolName,
+		"cwd":        p.CWD,
+		"thread_id":  p.matchThreadID(),
+		"session_id": p.SessionID,
+		"turn_id":    p.TurnID,
+		"model":      p.Model,
 	}
 	out := make(map[string]string, len(metadata))
 	for k, v := range metadata {

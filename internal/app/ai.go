@@ -181,14 +181,19 @@ func (c *aiCommand) applyAIStatus(state, paneID string) error {
 }
 
 func (c *aiCommand) applyAIStatusWithNotify(state, paneID string, notifyIn attentionNotifyInput) error {
-	return c.applyAIStatusInternal(state, paneID, notifyIn, true)
+	return c.applyAIStatusInternal(state, paneID, notifyIn, true, true)
 }
 
 func (c *aiCommand) applyAIStatusStateOnly(state, paneID string, notifyIn attentionNotifyInput) error {
-	return c.applyAIStatusInternal(state, paneID, notifyIn, false)
+	return c.applyAIStatusInternal(state, paneID, notifyIn, false, false)
 }
 
-func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attentionNotifyInput, dispatchNotify bool) error {
+func (c *aiCommand) applyAIStatusQueueOnly(state, paneID string, notifyIn attentionNotifyInput) error {
+	notifyIn.SuppressHooks = true
+	return c.applyAIStatusInternal(state, paneID, notifyIn, true, false)
+}
+
+func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attentionNotifyInput, dispatchQueue, dispatchDesktop bool) error {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
 		return nil
@@ -219,9 +224,11 @@ func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attenti
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateReply)
 			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionFocusArmedOption, "1")
 		}
-		// Force controls notification delivery (queue + OS), not the badge.
-		if dispatchNotify && (notifyIn.Force || !visible) {
-			_ = c.notifyAIWithInput(paneID, notifyIn)
+		// Force controls notification delivery, not the badge.
+		if dispatchQueue && (notifyIn.Force || !visible) {
+			if dispatchDesktop {
+				_ = c.notifyAIWithInput(paneID, notifyIn)
+			}
 			c.notifyProducer().PushReplyReady(notifyIn)
 		} else {
 			c.notifyProducer().AckReplyReady(notifyIn)
