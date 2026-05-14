@@ -148,6 +148,15 @@ func TestPathsSessionStateFiles(t *testing.T) {
 	}
 }
 
+func TestPathsNotificationFiles(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{ConfigDir: "/tmp/config/projmux"}
+	if got, want := paths.AINotifyDedupeSecondsFile(), filepath.Join(paths.ConfigDir, AINotifyDedupeSecondsFileName); got != want {
+		t.Fatalf("AINotifyDedupeSecondsFile() = %q, want %q", got, want)
+	}
+}
+
 func TestPathsProjectHooksFile(t *testing.T) {
 	t.Parallel()
 

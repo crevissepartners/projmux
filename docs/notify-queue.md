@@ -213,12 +213,23 @@ client selection policy.
 
 Outcomes:
 
-- **Focus succeeded** — ack the entry. Focus is the single consume path for
-  routed notification clicks.
+- **Focus succeeded** — ack the selected entry, even when it is critical.
+  Then bulk-ack older same-session/same-pane non-critical AI rows. Bulk cleanup
+  never consumes `critical`, permission-request, stop-failure, `external`,
+  `git`, or `k8s` rows; those remain pending unless the user selected that row
+  directly.
 - **Focus exited 2 (target unresolved)** — ack the entry and toast
   `notify target gone; cleared`.
 - **Other failure** — keep the entry, toast `focus failed: <reason>`
   so the user can retry without losing the row.
+
+The same consume policy is shared by notify-sidebar Enter and OS
+click-to-focus Toast callbacks after a real tmux focus dispatch succeeds.
+Pane focus hooks and attention clear paths remain live-attention-only and do
+not ack the notify queue. Non-critical AI completion producers also compact
+older same-pane non-critical AI rows after replacing/pushing their latest row,
+so reply-ready/stop/bell-style completion rows stay latest-state centered
+without changing the queue schema or TTL contract.
 
 The handler never returns a non-zero error to tmux's `run-shell`; every
 failure becomes a `display-message` toast so a transient miss does not

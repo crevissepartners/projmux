@@ -153,6 +153,11 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 			Message: entry.Text,
 		})
 	}
+	if entry.Severity != notify.SeverityCritical {
+		if entries, err := p.store.List(); err == nil {
+			_ = ackOlderSameTargetAINotifications(p.store, entry, entries)
+		}
+	}
 }
 
 // AckReplyReady is kept for the attention state-machine seam, but it no

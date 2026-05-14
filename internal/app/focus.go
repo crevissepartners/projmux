@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	corefocus "github.com/crevissepartners/projmux/internal/core/focus"
+	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
 // focusExitNotResolved is the exit code emitted when an explicit target cannot
@@ -36,11 +37,12 @@ type focusNotifier interface {
 }
 
 type focusCommand struct {
-	runner       focusCommandRunner
-	lookupEnv    func(string) string
-	stdout       io.Writer
-	stderr       io.Writer
-	notifierOnce func(stderr io.Writer) focusNotifier
+	runner        focusCommandRunner
+	lookupEnv     func(string) string
+	stdout        io.Writer
+	stderr        io.Writer
+	notifierOnce  func(stderr io.Writer) focusNotifier
+	notifyStoreFn func() (notifyStore, error)
 	// osFocusChain is the OS-window/terminal raise dispatcher invoked after
 	// the tmux pane focus succeeds. Tests stub it to avoid shelling out to
 	// adapters like wt.exe; production code defaults to defaultOSFocusChain.
@@ -75,8 +77,9 @@ type focusResult struct {
 
 func newFocusCommand() *focusCommand {
 	return &focusCommand{
-		runner:    focusExecRunner{},
-		lookupEnv: os.Getenv,
+		runner:        focusExecRunner{},
+		lookupEnv:     os.Getenv,
+		notifyStoreFn: defaultStatusNotifyStore,
 		notifierOnce: func(stderr io.Writer) focusNotifier {
 			// Reuse the existing notifier chain (WSL toast, notify-send, hook).
 			ai := newAICommand()
@@ -139,6 +142,11 @@ func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 		return err
 	}
+	if opts.URI != "" && res.Dispatch != "notify-only" {
+		if ackErr := c.ackFocusedURIQueueEntry(target, socket); ackErr != nil && !opts.JSON {
+			fmt.Fprintf(stderr, "focus: notify ack failed: %v\n", ackErr)
+		}
+	}
 	return nil
 }
 
@@ -149,6 +157,53 @@ func focusResultIsUnresolvedID(res focusResult) bool {
 	default:
 		return false
 	}
+}
+
+func (c *focusCommand) ackFocusedURIQueueEntry(target corefocus.Target, socket string) error {
+	if c.notifyStoreFn == nil || !target.HasPane() {
+		return nil
+	}
+	store, err := c.notifyStoreFn()
+	if err != nil {
+		return nil
+	}
+	entries, err := store.List()
+	if err != nil {
+		return err
+	}
+	selected, ok := latestAINotificationForFocusTarget(entries, target, socket)
+	if !ok {
+		return nil
+	}
+	return ackFocusedNotification(store, selected, entries)
+}
+
+func latestAINotificationForFocusTarget(entries []notify.Notification, target corefocus.Target, socket string) (notify.Notification, bool) {
+	targetPane := strings.TrimSpace(target.PaneSelector())
+	if strings.TrimSpace(target.Session) == "" || targetPane == "" {
+		return notify.Notification{}, false
+	}
+	targetSocket := strings.TrimSpace(socket)
+	var selected notify.Notification
+	for _, entry := range entries {
+		if entry.Source != notify.SourceAI {
+			continue
+		}
+		if strings.TrimSpace(entry.Session) != strings.TrimSpace(target.Session) {
+			continue
+		}
+		if strings.TrimSpace(entry.Pane) != targetPane {
+			continue
+		}
+		entrySocket := strings.TrimSpace(entry.Socket)
+		if targetSocket != "" && entrySocket != "" && entrySocket != targetSocket {
+			continue
+		}
+		if selected.ID == "" || entry.CreatedAt.After(selected.CreatedAt) {
+			selected = entry
+		}
+	}
+	return selected, selected.ID != ""
 }
 
 func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {

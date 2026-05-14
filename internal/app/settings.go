@@ -101,6 +101,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsAIDefaultMode:              {Name: "Default split mode", Axis: settingsAxisGlobal},
 	settingsAINotifyDiagnostics:        {Name: "AI notify diagnostics", Axis: settingsAxisGlobal},
 	settingsNotificationsDesktop:       {Name: "Desktop notifications", Axis: settingsAxisGlobal},
+	settingsNotificationsAIDedupe:      {Name: "AI notification dedupe", Axis: settingsAxisGlobal},
 	settingsNotificationsDelivery:      {Name: "Delivery sources", Axis: settingsAxisGlobal},
 	settingsNotificationsQueue:         {Name: "In-app queue", Axis: settingsAxisGlobal},
 	settingsNotificationsHookOverride:  {Name: "Notification hook override", Axis: settingsAxisGlobal},
@@ -120,6 +121,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixAI, settingsEntryMeta{Name: "AI Settings", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAINotifyDiagnostic, settingsEntryMeta{Name: "AI notify diagnostics", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixDesktopNotifyMode, settingsEntryMeta{Name: "Desktop notifications", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixAINotifyDedupe, settingsEntryMeta{Name: "AI notification dedupe", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHooks, settingsEntryMeta{Name: "Project hook policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHookAdd, settingsEntryMeta{Name: "Hook maker - add", Axis: settingsAxisBoth}},
 	{settingsActionPrefixHookEdit, settingsEntryMeta{Name: "Hook maker - edit", Axis: settingsAxisBoth}},
@@ -173,6 +175,7 @@ const (
 	settingsActionPrefixAI                 = "ai:"
 	settingsActionPrefixAINotifyDiagnostic = "ai-notify:"
 	settingsActionPrefixAINotifyCommand    = "ai-notify-command:"
+	settingsActionPrefixAINotifyDedupe     = "ai-notify-dedupe:"
 	settingsActionPrefixDesktopNotifyMode  = "desktop-notify-mode:"
 	settingsActionPrefixHooks              = "project-hooks:"
 	settingsActionPrefixKeymap             = "keymap:"
@@ -205,6 +208,7 @@ const (
 	settingsAIDefaultMode                  = "ai-default-mode"
 	settingsAINotifyDiagnostics            = "ai-notify-diagnostics"
 	settingsNotificationsDesktop           = "notifications:desktop"
+	settingsNotificationsAIDedupe          = "notifications:ai-dedupe"
 	settingsNotificationsDelivery          = "notifications:delivery"
 	settingsNotificationsQueue             = "notifications:queue"
 	settingsNotificationsHookOverride      = "notifications:hook-override"
@@ -1542,6 +1546,10 @@ func (c *settingsCommand) runNotificationsSection(stdout, stderr io.Writer) erro
 			if err := c.runNotificationsDesktopSection(stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsNotificationsAIDedupe:
+			if err := c.runNotificationsAIDedupeSection(stdout, stderr); err != nil {
+				return err
+			}
 		case action == settingsNotificationsDelivery:
 			if err := c.runNotificationsDeliverySourcesSection(stdout, stderr); err != nil {
 				return err
@@ -1550,6 +1558,74 @@ func (c *settingsCommand) runNotificationsSection(stdout, stderr io.Writer) erro
 			return fmt.Errorf("unknown notifications settings action: %s", action)
 		}
 	}
+}
+
+func (c *settingsCommand) runNotificationsAIDedupeSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-notifications-ai-dedupe",
+			Entries:    c.aiNotifyDedupeEntries(),
+			Title:      "Notifications - AI dedupe window",
+			Prompt:     "Settings > Notifications > AI dedupe > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsActionPrefixAINotifyDedupe+"custom":
+			if err := c.runNotificationsAIDedupeCustom(stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixAINotifyDedupe):
+			seconds, err := parseAINotifyDedupeSeconds(strings.TrimPrefix(action, settingsActionPrefixAINotifyDedupe))
+			if err != nil {
+				return err
+			}
+			if err := c.setAINotifyDedupeSeconds(seconds, stdout); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI notification dedupe settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runNotificationsAIDedupeCustom(stdout, stderr io.Writer) error {
+	current := c.currentAINotifyDedupeSeconds()
+	result, err := c.runPicker(intpickercompat.Options{
+		UI:           "settings-notifications-ai-dedupe-custom",
+		Entries:      nil,
+		AcceptQuery:  true,
+		InitialQuery: strconv.Itoa(current.Seconds),
+		Title:        "Notifications - Custom AI dedupe",
+		Prompt:       "AI dedupe seconds > ",
+		Footer:       projmuxFooter("Enter: save  |  Example: 120  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		ExpectKeys:   []string{"enter"},
+		Bindings:     settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+	if result.Key != "enter" {
+		return nil
+	}
+	seconds, err := parseAINotifyDedupeSeconds(result.Query)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return nil
+	}
+	return c.setAINotifyDedupeSeconds(seconds, stdout)
 }
 
 func (c *settingsCommand) runNotificationsDesktopSection(stdout, stderr io.Writer) error {
@@ -1633,6 +1709,7 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 
 func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
+	dedupe := c.currentAINotifyDedupeSeconds()
 	hookSummary := "not set"
 	if c.lookupEnv != nil {
 		if value := strings.TrimSpace(c.lookupEnv("PROJMUX_NOTIFY_HOOK")); value != "" {
@@ -1645,6 +1722,11 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Desktop notifications", string(notifyMode)+" - "+string(notifySource)),
 			Value:     settingsNotificationsDesktop,
 			SearchKey: "desktop notifications none notify raise toast osfocus",
+		},
+		{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "AI notification dedupe", fmt.Sprintf("%ds - %s", dedupe.Seconds, dedupe.Source)),
+			Value:     settingsNotificationsAIDedupe,
+			SearchKey: "AI notification dedupe seconds duration duplicate collapse desktop",
 		},
 		{
 			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Delivery sources", c.aiNotifyDiagnosticsSummary()),
@@ -3390,6 +3472,46 @@ func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 		})
 	}
 	return entries
+}
+
+func (c *settingsCommand) aiNotifyDedupeEntries() []intpickercompat.Entry {
+	current := c.currentAINotifyDedupeSeconds()
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("AI notification dedupe", fmt.Sprintf("%ds", current.Seconds), string(current.Source)),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: settingsLabelInfo("Scope", "desktop AI notifications", "tmux bell fallback stays 5s"),
+			Value: settingsNoopValue,
+		},
+	}
+	for _, seconds := range []int{30, 60, 120, 300} {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if seconds == current.Seconds {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabel(glyph, color, fmt.Sprintf("%ds", seconds), "collapse duplicate desktop AI notifications"),
+			Value: settingsActionPrefixAINotifyDedupe + strconv.Itoa(seconds),
+		})
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphType, settingsColorType, "Custom seconds", "store a positive seconds value"),
+		Value: settingsActionPrefixAINotifyDedupe + "custom",
+	})
+	return entries
+}
+
+func parseAINotifyDedupeSeconds(raw string) (int, error) {
+	seconds, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || seconds <= 0 {
+		return 0, fmt.Errorf("AI notification dedupe %q must be positive seconds", raw)
+	}
+	return seconds, nil
 }
 
 func (c *settingsCommand) currentProjectHooksMode() (config.ProjectHooksMode, string) {

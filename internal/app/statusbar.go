@@ -623,7 +623,7 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		}
 		return c.runTmux(stderr, "display-message", fmt.Sprintf("focus failed: %s", focusFailureSummary(runErr)))
 	}
-	if err := store.Ack(head.ID); err != nil {
+	if err := ackFocusedNotification(store, head, entries); err != nil {
 		return c.runTmux(stderr, "display-message", fmt.Sprintf("focused; ack failed: %s", focusFailureSummary(err)))
 	}
 	return nil
