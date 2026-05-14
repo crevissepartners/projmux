@@ -30,9 +30,10 @@ const (
 	// WSL. The scheme is shared across all environments — only WSL +
 	// Windows Terminal users actually register the handler today (other
 	// platforms keep the in-app focus path). The handler command we register
-	// looks like `wsl.exe -d <distro> --exec <abs-binary-path> focus --uri "%1"`
-	// — `--exec` bypasses the user's login shell so URI query separators
-	// (`&`) don't get parsed as background-job operators by zsh/bash.
+	// launches a hidden PowerShell wrapper which then runs
+	// `wsl.exe -d <distro> --exec <abs-binary-path> focus --uri <uri>`.
+	// `--exec` bypasses the user's login shell so URI query separators (`&`)
+	// don't get parsed as background-job operators by zsh/bash.
 	//
 	// This implements the "(a) on-push (자동)" trigger mode from the
 	// roadmap detail (Notify 시 터미널 OS 포커스) by piping the user's
@@ -52,5 +53,9 @@ const (
 	// users get a fresh registration on their next Notify dispatch; the v1
 	// key (`@projmux_uri_protocol_registered`) is left orphaned —
 	// re-registration is idempotent so no cleanup is needed.
-	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered_v2"
+	//
+	// v3 — incremented after the handler moved from direct `wsl.exe` launch to
+	// a hidden PowerShell wrapper to avoid the visible Windows console flash on
+	// Toast click. Existing v2 markers are left orphaned for the same reason.
+	uriProtocolRegisteredTmuxOption = "@projmux_uri_protocol_registered_v3"
 )

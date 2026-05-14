@@ -279,8 +279,10 @@ carries a `launch="projmux://focus?..." activationType="protocol"`
 attribute, and the first dispatch of a tmux server boot registers the
 `projmux://` scheme in `HKCU\SOFTWARE\Classes\projmux\…` so Windows
 routes the click to
-`wsl.exe -d <distro> --exec <abs-path> focus --uri "%1"`. Inside WSL,
-`projmux focus --uri` parses the URI, resolves the pane id to its
+`powershell.exe -NoProfile -WindowStyle Hidden ... "%1"`. That hidden
+launcher starts `wsl.exe -d <distro> --exec <abs-path> focus --uri <uri>`
+without routing the URI through a shell. Inside WSL, `projmux focus --uri`
+parses the URI, resolves the pane id to its
 `session:window.%paneID` target via `tmux display-message`, and reuses
 the existing focus dispatch. This closes the previously-deferred (a)
 on-push trigger mode in the Windows-only scope: the toast becomes the
@@ -325,13 +327,17 @@ machine is:
    leaves no AppID-tagged shortcut at all and breaks both the toast
    routing and (since the AppID has to be live when the toast fires) the
    click path. `cmd.exe /c exit` is benign and survives.
-4. **WSL handler command uses `--exec` not `--`**. `wsl.exe -- <cmd>`
-   routes its tail through the user's default login shell, which parses
-   `&` query-string separators as background-job operators (zsh emits
-   `parse error near '&'`). `--exec` skips the shell and invokes the
-   binary directly. PATH is empty under `--exec`, so the registry
-   command uses the absolute WSL filesystem path captured at registration
-   time.
+4. **WSL handler command uses a hidden wrapper and keeps `--exec`**. The
+   registry protocol handler launches PowerShell with `-WindowStyle Hidden`
+   so ShellExecute does not flash a visible `wsl.exe` console window. Inside
+   that wrapper, `wsl.exe -- <cmd>` remains forbidden because it routes its
+   tail through the user's default login shell, which parses `&`
+   query-string separators as background-job operators (zsh emits
+   `parse error near '&'`). `--exec` skips the shell and invokes the binary
+   directly. PATH is empty under `--exec`, so the registry command uses the
+   absolute WSL filesystem path captured at registration time. The `%1` URI
+   is passed as an argument to the hidden wrapper and then as the `--uri` argv
+   value, not shell-interpolated.
 
 #### Lessons (so future readers don't repeat them)
 
@@ -345,10 +351,10 @@ machine is:
 - Do not use `wsl.exe -- projmux ...` in the registry handler.
   Re-introducing the login-shell hop will surface as `parse error near
   '&'` from the user's shell at click time.
-- The `@projmux_uri_protocol_registered_v2` marker exists because the
-  v1 marker came before the `--exec` fix. Re-registration is idempotent
-  so upgrades from v1 transparently install the new handler — the old
-  marker key just goes orphaned.
+- The `@projmux_uri_protocol_registered_v3` marker exists because v2 came
+  before the hidden-wrapper fix. Re-registration is idempotent so upgrades
+  from v2 transparently install the new handler — the old marker key just
+  goes orphaned.
 
 Multi-distro dispatch (one handler per distro, or a distro-selector
 arg) is a known tier-2 follow-up — current registration captures the
