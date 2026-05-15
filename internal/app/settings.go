@@ -2000,6 +2000,7 @@ func (c *settingsCommand) aiNotifyDiagnosticsSummary() string {
 		doctorAINotifyStatusInstalled,
 		doctorAINotifyStatusConflict,
 		doctorAINotifyStatusMissing,
+		doctorAINotifyStatusSkip,
 	} {
 		if counts[status] > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
