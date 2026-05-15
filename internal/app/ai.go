@@ -19,6 +19,7 @@ import (
 	"unicode/utf16"
 
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -853,13 +854,16 @@ func (c *aiCommand) runAgentSplitWithExtraArgs(mode, direction string, extraArgs
 	if err != nil {
 		return err
 	}
+	usePSMux := c.usePSMuxAIBackend()
 	targetPane := c.resolveTargetPane()
 	contextDir := c.resolveAgentContextDir(mode)
 	title := c.buildAgentTitle(mode, contextDir)
-	command := c.agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title, execArgv)
-	commandShell := posixCommandShell(c.lookupEnv)
+	command, commandArgs, err := c.agentSplitCommand(mode, pathPrepend, contextDir, title, execArgv)
+	if err != nil {
+		return err
+	}
 	if targetPane == "" {
-		return c.run(commandShell, "-lc", command)
+		return c.run(command[0], command[1:]...)
 	}
 
 	splitDirection := intmux.SplitRight
@@ -871,10 +875,13 @@ func (c *aiCommand) runAgentSplitWithExtraArgs(mode, direction string, extraArgs
 		Direction:    splitDirection,
 		Target:       targetPane,
 		Cwd:          contextDir,
-		Command:      []string{commandShell, "-lc", command},
+		Command:      commandArgs,
 	})
 	if err != nil {
 		return err
+	}
+	if usePSMux {
+		return nil
 	}
 	c.configureAIPane(paneID, mode, contextDir, title)
 	c.applySplitLayout(targetPane, direction)
@@ -900,21 +907,37 @@ func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, st
 }
 
 func (c *aiCommand) runShellSplit(direction string) error {
+	usePSMux := c.usePSMuxAIBackend()
 	targetPane := c.resolveTargetPane()
 	contextDir := c.resolveContextDir()
 	splitDirection := intmux.SplitRight
 	if direction == "down" {
 		splitDirection = intmux.SplitDown
 	}
+	command := loginShellCommand(defaultInteractiveShell(c.lookupEnv))
+	returnPaneID := false
+	if usePSMux {
+		rendered, err := psmuxSplitCommandTail(psmuxInteractiveShellCommand(c.lookupEnv))
+		if err != nil {
+			return err
+		}
+		command = []string{rendered}
+		returnPaneID = true
+	}
 
-	_, err := c.muxRunner().SplitWindow(context.Background(), intmux.SplitWindowOptions{
-		Direction: splitDirection,
-		Target:    targetPane,
-		Cwd:       contextDir,
-		Command:   loginShellCommand(defaultInteractiveShell(c.lookupEnv)),
+	paneID, err := c.muxRunner().SplitWindow(context.Background(), intmux.SplitWindowOptions{
+		ReturnPaneID: returnPaneID,
+		Direction:    splitDirection,
+		Target:       targetPane,
+		Cwd:          contextDir,
+		Command:      command,
 	})
 	if err != nil {
 		return err
+	}
+	if usePSMux {
+		_ = strings.TrimSpace(paneID)
+		return nil
 	}
 	c.applySplitLayout(targetPane, direction)
 	return nil
@@ -1034,12 +1057,12 @@ func (c *aiCommand) resolveContextDir() string {
 		return dir
 	}
 	if c.env("TMUX") != "" {
-		if path := c.readTrimmed("tmux", "display-message", "-p", "-F", "#{pane_current_path}"); isDir(path) {
+		if path := c.readMuxTrimmed("display-message", "-p", "-F", "#{pane_current_path}"); isDir(path) {
 			return path
 		}
 	}
 	if target := c.resolveRecentTmuxTarget(); target != "" {
-		if path := c.readTrimmed("tmux", "display-message", "-p", "-t", target, "-F", "#{pane_current_path}"); isDir(path) {
+		if path := c.readMuxTrimmed("display-message", "-p", "-t", target, "-F", "#{pane_current_path}"); isDir(path) {
 			return path
 		}
 	}
@@ -1062,22 +1085,22 @@ func (c *aiCommand) resolveAgentContextDir(mode string) string {
 
 func (c *aiCommand) resolveTargetPane() string {
 	if pane := strings.TrimSpace(c.env("TMUX_SPLIT_TARGET_PANE")); pane != "" {
-		if resolved := c.readTrimmed("tmux", "display-message", "-p", "-t", pane, "-F", "#{pane_id}"); resolved != "" {
+		if resolved := c.readMuxTrimmed("display-message", "-p", "-t", pane, "-F", "#{pane_id}"); resolved != "" {
 			return resolved
 		}
 		return pane
 	}
 	if c.env("TMUX") != "" {
-		return c.readTrimmed("tmux", "display-message", "-p", "-F", "#{pane_id}")
+		return c.readMuxTrimmed("display-message", "-p", "-F", "#{pane_id}")
 	}
 	if target := c.resolveRecentTmuxTarget(); target != "" {
-		return c.readTrimmed("tmux", "display-message", "-p", "-t", target, "-F", "#{pane_id}")
+		return c.readMuxTrimmed("display-message", "-p", "-t", target, "-F", "#{pane_id}")
 	}
 	return ""
 }
 
 func (c *aiCommand) resolveRecentTmuxTarget() string {
-	out, err := c.read("tmux", "list-clients", "-F", "#{client_activity}\t#{session_id}")
+	out, err := c.readMux("list-clients", "-F", "#{client_activity}\t#{session_id}")
 	if err != nil {
 		return ""
 	}
@@ -1151,6 +1174,19 @@ func (c *aiCommand) agentLaunchCommand(mode, agentBin, contextDir, title string)
 	return c.agentLaunchCommandForArgv(mode, filepath.Dir(agentBin), contextDir, title, []string{agentBin})
 }
 
+func (c *aiCommand) agentSplitCommand(mode, pathPrepend, contextDir, title string, execArgv []string) ([]string, []string, error) {
+	if c.usePSMuxAIBackend() {
+		rendered, err := psmuxSplitCommandTail(execArgv)
+		if err != nil {
+			return nil, nil, err
+		}
+		return execArgv, []string{rendered}, nil
+	}
+	command := c.agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title, execArgv)
+	commandShell := posixCommandShell(c.lookupEnv)
+	return append([]string{commandShell, "-lc"}, command), []string{commandShell, "-lc", command}, nil
+}
+
 func (c *aiCommand) agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title string, execArgv []string) string {
 	titleVar := "__" + mode + "_title"
 	parts := []string{}
@@ -1175,6 +1211,26 @@ func (c *aiCommand) agentLaunchCommandForArgv(mode, pathPrepend, contextDir, tit
 		strings.Join(execParts, " "),
 	)
 	return strings.Join(parts, " && ")
+}
+
+func (c *aiCommand) usePSMuxAIBackend() bool {
+	return usePSMuxBackend(c.lookupEnv, nil)
+}
+
+func psmuxSplitCommandTail(argv []string) (string, error) {
+	if len(argv) == 0 {
+		return "", errors.New("psmux split command requires argv")
+	}
+	return intpsmux.RenderPowerShellCommand(argv[0], argv[1:]...)
+}
+
+func psmuxInteractiveShellCommand(lookupEnv func(string) string) []string {
+	if lookupEnv != nil {
+		if shell := strings.TrimSpace(lookupEnv("SHELL")); shell != "" && !strings.ContainsAny(shell, "\x00\r\n") {
+			return []string{shell}
+		}
+	}
+	return []string{"powershell", "-NoLogo"}
 }
 
 func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string) {
@@ -1324,29 +1380,121 @@ func (c *aiCommand) read(name string, args ...string) ([]byte, error) {
 	return c.readCommand(context.Background(), name, args...)
 }
 
+func (c *aiCommand) readMux(args ...string) ([]byte, error) {
+	if c.usePSMuxAIBackend() {
+		return c.muxRunner().Read(context.Background(), args...)
+	}
+	return c.read("tmux", args...)
+}
+
+func (c *aiCommand) readMuxTrimmed(args ...string) string {
+	out, err := c.readMux(args...)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func (c *aiCommand) muxRunner() intmux.Runner {
-	return intmux.NewRunner(aiCommandMuxBackend{
+	backend := aiCommandMuxBackend{
 		runCommand:  c.runCommand,
 		readCommand: c.readCommand,
-	})
+	}
+	if c.usePSMuxAIBackend() {
+		backend.commandName = "psmux"
+		backend.prefix = []string{"-L", defaultAppSocket}
+	}
+	return intmux.NewRunner(backend)
 }
 
 type aiCommandMuxBackend struct {
 	runCommand  func(ctx context.Context, name string, args ...string) error
 	readCommand func(ctx context.Context, name string, args ...string) ([]byte, error)
+	commandName string
+	prefix      []string
 }
 
 func (b aiCommandMuxBackend) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	actualName := name
+	actualArgs := args
+	if name == "tmux" && strings.TrimSpace(b.commandName) != "" {
+		actualName = b.commandName
+		actualArgs = append(append([]string(nil), b.prefix...), psmuxMuxArgs(args)...)
+	}
 	if name == "tmux" && !aiMuxCommandNeedsOutput(args) {
 		if b.runCommand != nil {
-			return nil, b.runCommand(ctx, name, args...)
+			return nil, b.runCommand(ctx, actualName, actualArgs...)
 		}
 		return nil, errors.New("ai command runner is not configured")
 	}
 	if b.readCommand == nil {
 		return nil, errors.New("ai command reader is not configured")
 	}
-	return b.readCommand(ctx, name, args...)
+	return b.readCommand(ctx, actualName, actualArgs...)
+}
+
+func psmuxMuxArgs(args []string) []string {
+	if len(args) == 0 || args[0] != "split-window" {
+		return args
+	}
+	detached := false
+	direction := ""
+	returnPaneID := false
+	format := ""
+	target := ""
+	cwd := ""
+	commandStart := len(args)
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "-d":
+			detached = true
+		case "-h", "-v":
+			direction = args[i]
+		case "-P":
+			returnPaneID = true
+		case "-F":
+			if i+1 < len(args) {
+				format = args[i+1]
+				i++
+			}
+		case "-t":
+			if i+1 < len(args) {
+				target = args[i+1]
+				i++
+			}
+		case "-c":
+			if i+1 < len(args) {
+				cwd = args[i+1]
+				i++
+			}
+		default:
+			commandStart = i
+			i = len(args)
+		}
+	}
+	out := []string{"split-window"}
+	if detached {
+		out = append(out, "-d")
+	}
+	if direction != "" {
+		out = append(out, direction)
+	}
+	if returnPaneID {
+		out = append(out, "-P")
+		if format != "" {
+			out = append(out, "-F", format)
+		}
+	}
+	if target != "" {
+		out = append(out, "-t", target)
+	}
+	if cwd != "" {
+		out = append(out, "-c", cwd)
+	}
+	if commandStart < len(args) {
+		out = append(out, args[commandStart:]...)
+	}
+	return out
 }
 
 func aiMuxCommandNeedsOutput(args []string) bool {

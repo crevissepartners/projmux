@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -704,6 +705,182 @@ func TestAISplitShellUsesTmuxSplitWindow(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAISplitShellUsesPSMuxSplitWindowPowerShellTail(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "work")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeShell); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		case "TMUX":
+			return "/tmp/psmux"
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		case "TMUX_SPLIT_TARGET_PANE":
+			return "%7"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "psmux" && reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
+			return []byte("%7\n"), nil
+		}
+		if name == "psmux" && len(args) >= 5 && reflect.DeepEqual(args[:5], []string{"-L", defaultAppSocket, "split-window", "-v", "-P"}) {
+			return []byte("%9\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "down"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run psmux shell split error = %v", err)
+	}
+
+	tail, err := intpsmux.RenderPowerShellCommand("powershell", "-NoLogo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []recordedAICommand{
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window", "-v", "-P", "-F", "#{pane_id}", "-t", "%7", "-c", work, tail}},
+	}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAISplitCodexUsesPSMuxSplitWindowPowerShellTailAndSkipsTmuxMetadata(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin with space", "codex"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		case "TMUX":
+			return "/tmp/psmux"
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		case "TMUX_SPLIT_TARGET_PANE":
+			return "%7"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(codexBin + "\n"), nil
+		}
+		if name == "psmux" && reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
+			return []byte("%7\n"), nil
+		}
+		if name == "psmux" && len(args) >= 5 && reflect.DeepEqual(args[:5], []string{"-L", defaultAppSocket, "split-window", "-h", "-P"}) {
+			return []byte("%42\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	err := cmd.Run([]string{"split", "--agent", "codex", "right", "--", "--model", "gpt-5.1 codex", "quote'd"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run psmux codex split error = %v", err)
+	}
+
+	tail, err := intpsmux.RenderPowerShellCommand(codexBin, "--model", "gpt-5.1 codex", "quote'd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := cmdRecorder(cmd).commands
+	for _, want := range []recordedAICommand{
+		{name: "command", args: []string{"-v", "codex"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window", "-h", "-P", "-F", "#{pane_id}", "-t", "%7", "-c", work, tail}},
+	} {
+		if !containsRecordedAICommand(commands, want) {
+			t.Fatalf("commands = %#v, want command %#v", commands, want)
+		}
+	}
+	for _, forbidden := range []recordedAICommand{
+		{name: "tmux"},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "set-option"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "run-shell"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "resize-pane"}},
+	} {
+		if containsRecordedAICommandPrefix(commands, forbidden) {
+			t.Fatalf("commands = %#v, did not expect %#v", commands, forbidden)
+		}
+	}
+}
+
+func TestAISplitClaudeUsesPSMuxSplitWindowPowerShellTail(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claudeBin := writeExecutable(t, filepath.Join(home, "bin", "claude"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		case "TMUX":
+			return "/tmp/psmux"
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		case "TMUX_SPLIT_TARGET_PANE":
+			return "%7"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "claude"}) {
+			return []byte(claudeBin + "\n"), nil
+		}
+		if name == "psmux" && reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
+			return []byte("%7\n"), nil
+		}
+		if name == "psmux" && len(args) >= 5 && reflect.DeepEqual(args[:5], []string{"-L", defaultAppSocket, "split-window", "-v", "-P"}) {
+			return []byte("%43\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "claude", "down", "--", "--dangerously-skip-permissions"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run psmux claude split error = %v", err)
+	}
+
+	tail, err := intpsmux.RenderPowerShellCommand(claudeBin, "--dangerously-skip-permissions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := recordedAICommand{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window", "-v", "-P", "-F", "#{pane_id}", "-t", "%7", "-c", work, tail}}
+	if !containsRecordedAICommand(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want command %#v", cmdRecorder(cmd).commands, want)
 	}
 }
 
@@ -1879,6 +2056,27 @@ func containsAICommandArgs(commands []recordedAICommand, name string, prefix []s
 			continue
 		}
 		if reflect.DeepEqual(command.args[:len(prefix)], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRecordedAICommand(commands []recordedAICommand, want recordedAICommand) bool {
+	for _, command := range commands {
+		if command.name == want.name && reflect.DeepEqual(command.args, want.args) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRecordedAICommandPrefix(commands []recordedAICommand, want recordedAICommand) bool {
+	for _, command := range commands {
+		if command.name != want.name || len(command.args) < len(want.args) {
+			continue
+		}
+		if reflect.DeepEqual(command.args[:len(want.args)], want.args) {
 			return true
 		}
 	}
