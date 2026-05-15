@@ -90,7 +90,7 @@ func quitActionOptions() intpickercompat.Options {
 		DisableSearch: true,
 		Entries: []intpickercompat.Entry{
 			{
-				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Quit projmux", "terminate the app-owned tmux runtime"),
+				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Quit projmux", "terminate the app-owned mux runtime"),
 				Value: quitActionQuit,
 			},
 			{
@@ -107,7 +107,11 @@ func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string)
 		return errors.New("quit target socket is required")
 	}
 	if c.runner == nil {
-		return errors.New("quit tmux runner is not configured")
+		return errors.New("quit mux runner is not configured")
+	}
+	command := "tmux"
+	if usePSMuxBackend(c.lookupEnv, nil) {
+		command = "psmux"
 	}
 	appOwned, err := c.appRuntimeOwned(ctx, socketName)
 	if err != nil {
@@ -116,20 +120,24 @@ func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string)
 	if !appOwned {
 		return nil
 	}
-	_, err = c.runner.Run(ctx, "tmux", "-L", socketName, "kill-server")
+	_, err = c.runner.Run(ctx, command, "-L", socketName, "kill-server")
 	if err != nil {
-		return fmt.Errorf("quit app tmux runtime: %w", err)
+		return fmt.Errorf("quit app %s runtime: %w", command, err)
 	}
 	return nil
 }
 
 func (c *quitCommand) appRuntimeOwned(ctx context.Context, socketName string) (bool, error) {
-	output, err := c.runner.Run(ctx, "tmux", "-L", socketName, "show-options", "-gv", "@projmux_app")
+	command := "tmux"
+	if usePSMuxBackend(c.lookupEnv, nil) {
+		command = "psmux"
+	}
+	output, err := c.runner.Run(ctx, command, "-L", socketName, "show-options", "-gv", "@projmux_app")
 	if err != nil {
 		if tmuxServerMissing(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("check app tmux runtime: %w", err)
+		return false, fmt.Errorf("check app %s runtime: %w", command, err)
 	}
 	return strings.TrimSpace(string(output)) == "1", nil
 }
