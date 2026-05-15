@@ -255,6 +255,153 @@ func TestRunnerDisplayPaneFieldsBuildsDisplayMessageRead(t *testing.T) {
 	}
 }
 
+func TestRunnerDisplayPopupBuildsExistingPopupArgs(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	err := runner.DisplayPopup(context.Background(), "printf hello", PopupOptions{
+		Target:        "%4",
+		Cwd:           "/repo",
+		Env:           map[string]string{"PROJMUX_PICKER_BACKEND": "native"},
+		NoBorder:      true,
+		X:             "0",
+		Y:             "0",
+		Width:         "40",
+		Height:        "20",
+		CloseBehavior: PopupCloseOnExit,
+	})
+	if err != nil {
+		t.Fatalf("DisplayPopup returned error: %v", err)
+	}
+
+	wantArgs := []string{
+		"display-popup",
+		"-t", "%4",
+		"-E",
+		"-B",
+		"-d", "/repo",
+		"-e", "PROJMUX_PICKER_BACKEND=native",
+		"-x", "0",
+		"-y", "0",
+		"-w", "40",
+		"-h", "20",
+		"printf hello",
+	}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
+func TestRunnerClosePopupBuildsScopedCloseArgs(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	if err := runner.ClosePopup(context.Background(), ClosePopupOptions{
+		Client: " /dev/pts/7 ",
+		Target: " %4 ",
+	}); err != nil {
+		t.Fatalf("ClosePopup returned error: %v", err)
+	}
+
+	wantArgs := []string{"display-popup", "-c", "/dev/pts/7", "-t", "%4", "-C"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
+func TestRunnerCapturePaneBuildsExistingJoinedCaptureArgs(t *testing.T) {
+	backend := &recordingBackend{out: []byte(" line one \n")}
+	runner := NewRunner(backend)
+
+	got, err := runner.CapturePane(context.Background(), CapturePaneOptions{
+		Target:    "%8",
+		StartLine: -80,
+		JoinLines: true,
+	})
+	if err != nil {
+		t.Fatalf("CapturePane returned error: %v", err)
+	}
+
+	wantArgs := []string{"capture-pane", "-p", "-J", "-S", "-80", "-t", "%8"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+	if got != " line one " {
+		t.Fatalf("CapturePane = %q, want line with only trailing newline trimmed", got)
+	}
+}
+
+func TestRunnerCapturePaneBuildsExistingGenericCaptureArgs(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	if _, err := runner.CapturePane(context.Background(), CapturePaneOptions{
+		Target:    "%8",
+		StartLine: -80,
+	}); err != nil {
+		t.Fatalf("CapturePane returned error: %v", err)
+	}
+
+	wantArgs := []string{"capture-pane", "-p", "-t", "%8", "-S", "-80"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
+func TestRunnerSwitchClientBuildsSocketScopedArgs(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	if err := runner.SwitchClient(context.Background(), SwitchClientOptions{
+		Socket: "/tmp/projmux.sock",
+		Client: "/dev/pts/9",
+		Target: "workspace",
+	}); err != nil {
+		t.Fatalf("SwitchClient returned error: %v", err)
+	}
+
+	wantArgs := []string{"-S", "/tmp/projmux.sock", "switch-client", "-c", "/dev/pts/9", "-t", "workspace"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
+func TestRunnerSelectPaneBuildsTargetAndTitleArgs(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	if err := runner.SelectPane(context.Background(), SelectPaneOptions{
+		Socket:   "/tmp/projmux.sock",
+		Target:   "%9",
+		Title:    "",
+		SetTitle: true,
+	}); err != nil {
+		t.Fatalf("SelectPane returned error: %v", err)
+	}
+
+	wantArgs := []string{"-S", "/tmp/projmux.sock", "select-pane", "-T", "", "-t", "%9"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
+func TestRunnerSelectWindowBuildsSocketScopedArgs(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	if err := runner.SelectWindow(context.Background(), SelectWindowOptions{
+		Socket: "/tmp/projmux.sock",
+		Target: "workspace:1",
+	}); err != nil {
+		t.Fatalf("SelectWindow returned error: %v", err)
+	}
+
+	wantArgs := []string{"-S", "/tmp/projmux.sock", "select-window", "-t", "workspace:1"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
 func TestParseFormatRowsPinsMalformedAndTrimmingBehavior(t *testing.T) {
 	output := []byte("  one \x1f two \r\nmissing\nthree\x1ffour\x1fextra\n five\\037six \n")
 

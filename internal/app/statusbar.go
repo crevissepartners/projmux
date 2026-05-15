@@ -27,6 +27,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -271,7 +272,7 @@ func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) err
 			return c.handleWindowListClick(opts, stderr)
 		}
 		if idx := windowIndexFromRangeToken(raw); idx != "" {
-			return c.runTmux(stderr, "select-window", "-t", ":"+idx)
+			return c.selectWindow(stderr, ":"+idx)
 		}
 		return nil
 	}
@@ -337,7 +338,7 @@ func (c *statusbarCommand) handleWindowListClick(opts statusbarClickOptions, std
 	if id == "" {
 		return nil
 	}
-	return c.runTmux(stderr, "select-window", "-t", "@"+id)
+	return c.selectWindow(stderr, "@"+id)
 }
 
 // dispatchTable maps each known range id to its click handler. A method on the
@@ -395,14 +396,12 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 	// `-T` border title — `frame.go` renders an identical title bar inline so
 	// duplicating it via tmux chrome would offset the visual header and
 	// double-decorate the surface.
-	if err := c.runTmuxNoFallback(stderr,
-		"display-popup",
-		"-E",
-		"-B",
-		"-w", strconv.Itoa(popup.Width),
-		"-h", strconv.Itoa(popup.Height),
-		popup.Command,
-	); err == nil {
+	if err := c.displayPopupNoFallback(popup.Command, intmux.PopupOptions{
+		NoBorder:      true,
+		Width:         strconv.Itoa(popup.Width),
+		Height:        strconv.Itoa(popup.Height),
+		CloseBehavior: intmux.PopupCloseOnExit,
+	}); err == nil {
 		return nil
 	}
 
@@ -468,14 +467,12 @@ func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Wri
 	// chrome (outer box + titlebar + divider) so we drop tmux's `-T` border
 	// title and pass `-B` to suppress tmux's popup border entirely. Mixing
 	// both would double-decorate the popup and offset the geometry.
-	if err := c.runTmuxNoFallback(stderr,
-		"display-popup",
-		"-E",
-		"-B",
-		"-w", strconv.Itoa(popup.Width),
-		"-h", strconv.Itoa(popup.Height),
-		popup.Command,
-	); err == nil {
+	if err := c.displayPopupNoFallback(popup.Command, intmux.PopupOptions{
+		NoBorder:      true,
+		Width:         strconv.Itoa(popup.Width),
+		Height:        strconv.Itoa(popup.Height),
+		CloseBehavior: intmux.PopupCloseOnExit,
+	}); err == nil {
 		return nil
 	}
 	return c.runTmux(stderr, "display-message", popup.Toast)
@@ -1217,6 +1214,23 @@ func (c *statusbarCommand) runTmuxNoFallback(_ io.Writer, args ...string) error 
 	}
 	_, err := c.runner.Run(context.Background(), "tmux", args...)
 	return err
+}
+
+func (c *statusbarCommand) selectWindow(stderr io.Writer, target string) error {
+	if c.runner == nil {
+		return c.runTmux(stderr, "select-window", "-t", target)
+	}
+	if err := intmux.NewRunner(c.runner).SelectWindow(context.Background(), intmux.SelectWindowOptions{Target: target}); err != nil {
+		fmt.Fprintf(stderr, "statusbar: tmux select-window -t %s: %v\n", target, err)
+	}
+	return nil
+}
+
+func (c *statusbarCommand) displayPopupNoFallback(command string, options intmux.PopupOptions) error {
+	if c.runner == nil {
+		return errors.New("statusbar runner is not configured")
+	}
+	return intmux.NewRunner(c.runner).DisplayPopup(context.Background(), command, options)
 }
 
 func printStatusbarUsage(w io.Writer) {

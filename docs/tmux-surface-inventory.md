@@ -94,6 +94,38 @@ to the semantic capability that a future psmux audit/backend must provide.
 | `DisplayPaneFields` bell pane fields | `display-message -p -t <pane>` | `#{session_name}`, `#{window_id}`, `#{window_name}`, `#{pane_id}`, `#{pane_title}`, `#{pane_current_command}`, `#{socket_path}` | tmux bell ingest |
 | `ListWindows` window inventory | `list-windows -F` | `#{window_index}`, `#{window_id}`, `#{window_name}`, `#{window_layout}`, `#{window_panes}`, `#{pane_current_path}` | API available for the existing typed tmux window reads; conversion deferred outside Phase 2B app read slice |
 
+## Phase 2C Interactive Command Slice
+
+Phase 2C adds semantic helpers in `internal/integrations/mux` for the visible
+interactive tmux commands that a future backend must either support or report
+as unsupported:
+
+- `DisplayPopup` covers `display-popup` launch args while preserving the
+  existing tmux option ordering from `BuildDisplayPopupArgs`.
+- `ClosePopup` covers scoped `display-popup [-c <client>] [-t <pane>] -C`
+  close behavior.
+- `CapturePane` covers both `capture-pane -p -J -S <n> -t <pane>` and
+  `capture-pane -p -t <pane> -S <n>` forms.
+- `SwitchClient`, `SelectPane`, and `SelectWindow` cover focus/statusbar
+  navigation commands, including optional `-S <socket>` and `-c <client>`
+  targeting where the current tmux paths use them.
+
+Converted app-layer paths include popup-toggle open/close (including notify
+sidebar popup close-by-client), statusbar path/usage popups and window-list
+passthrough, focus switch/window/pane selection, and AI watch-title joined
+capture.
+
+### Phase 2C psmux Audit Capability Mapping
+
+| Capability | Current tmux command | Converted paths |
+| --- | --- | --- |
+| `DisplayPopup` | `display-popup [-c <client>] [-t <pane>] [-E] [-B] [-d <cwd>] [-e KEY=VALUE] [-x <x>] [-y <y>] [-w <w>] [-h <h>] [-T <title>] <command>` | `tmux popup-toggle`, statusbar path popup, statusbar usage popup |
+| `ClosePopup` | `display-popup [-c <client>] [-t <pane>] -C` | `tmux popup-toggle` close path, including notify sidebar client-scoped close |
+| `CapturePane` | `capture-pane -p -J -S -80 -t <pane>`; `capture-pane -p -t <pane> -S <start>` | AI watch-title capture path converted; generic typed tmux client helper remains a tmux client path |
+| `SwitchClient` | `[-S <socket>] switch-client [-c <client>] -t <session>` | `projmux focus` dispatch |
+| `SelectPane` | `[-S <socket>] select-pane [-T <title>] -t <target>` | `projmux focus` pane selection; title form available for existing pane-title surfaces |
+| `SelectWindow` | `[-S <socket>] select-window -t <target>` | `projmux focus` window selection, statusbar window-list passthrough |
+
 ## Classification Key
 
 | Class | Meaning |
@@ -114,7 +146,7 @@ to the semantic capability that a future psmux audit/backend must provide.
 | `new-session -d -s <session> -c <cwd> [-e KEY=VALUE]` | `required MVP` | `Client.createDetachedSession` | Create detached project sessions. With lifecycle hooks enabled, adds `-P -F "#{pane_id}"` to capture the first pane id. |
 | `new-session -A -s <session> [-c <cwd>]` | `required MVP` | `projmux shell` | Attach/create the isolated app session. Wrapped with `-L <socket> -f <config>`. |
 | `attach-session -t <target>` | `required MVP` | `Client.OpenSession`, `Client.OpenSessionTarget` | Outside-tmux open path. Pane targets degrade to session/window where attach cannot select a pane. |
-| `switch-client [-c <client>] -t <target>` | `required MVP`, `focus` | `Client.OpenSession`, `focusCommand`, generated status key table | Inside-tmux open/focus path. `PROJMUX_SWITCH_TARGET_CLIENT` can force the originating client. |
+| `switch-client [-c <client>] -t <target>` | `required MVP`, `focus` | `Client.OpenSession`, `focusCommand`, generated status key table | Inside-tmux open/focus path. `PROJMUX_SWITCH_TARGET_CLIENT` can force the originating client. Phase 2C mux API: `SwitchClient`. |
 | `list-sessions -F ...` | `required MVP`, `focus`, `e2e/support` | `RecentSessions`, `RecentSessionSummaries`, `ListEphemeralSessions`, `focus`, `tmux apply` | Drives session picker rows, focus fallback, app reload probe, and ephemeral cleanup. |
 | `list-windows -F ...` | `required MVP`, `session-state`, `hooks/status` | `ListSessionWindows`, `runRebalancePanes`, session-state capture/replay | Reads window inventory, window ids, pane counts, layouts. |
 | `list-panes -F ...` | `required MVP`, `hooks/status`, `session-state` | `ListAllPanes`, AI matching, attention list, notify reconcile, session-state capture | Main pane inventory primitive. |
@@ -126,12 +158,12 @@ to the semantic capability that a future psmux audit/backend must provide.
 
 | Command | Class | Production call sites | Purpose / notes |
 | --- | --- | --- | --- |
-| `display-popup ... <command>` | `interactive UI` | `tmux popup-*`, AI picker, hook trust prompt, welcome popup, statusbar pwd/usage popups | Native tmux popup surface. Uses `-E`, `-B`, `-c`, `-t`, `-d`, `-e`, `-x`, `-y`, `-w`, `-h`, `-T` depending on mode. |
-| `display-popup [-c <client>] [-t <pane>] -C` | `interactive UI` | `tmux popup-toggle` | Closes a scoped popup. Notify sidebar close targets client instead of origin pane. |
+| `display-popup ... <command>` | `interactive UI` | `tmux popup-*`, AI picker, hook trust prompt, welcome popup, statusbar pwd/usage popups | Native tmux popup surface. Uses `-E`, `-B`, `-c`, `-t`, `-d`, `-e`, `-x`, `-y`, `-w`, `-h`, `-T` depending on mode. Phase 2C mux API: `DisplayPopup`. |
+| `display-popup [-c <client>] [-t <pane>] -C` | `interactive UI` | `tmux popup-toggle` | Closes a scoped popup. Notify sidebar close targets client instead of origin pane. Phase 2C mux API: `ClosePopup`. |
 | `display-message [message]` | `interactive UI`, `hooks/status` | AI/status/settings/attention/statusbar fallback paths | User-visible toasts and error fallbacks that avoid tmux `run-shell` error popups. |
-| `select-pane -T <title> -t <pane>` | `interactive UI`, `hooks/status`, `session-state` | attention toggle/clear, AI topic/title, `tmux rename-pane`, replay shell wrapper | Sets pane title and topic-adjacent UI metadata. |
-| `select-pane -t <target>` | `focus`, `session-state` | `focusCommand`, session-state replay | Selects target pane after focus or replay. |
-| `select-window -t <target>` | `interactive UI`, `focus`, `session-state` | statusbar window-list passthrough, focus, live replay | Restores native window click behavior and selects replay/focus targets. |
+| `select-pane -T <title> -t <pane>` | `interactive UI`, `hooks/status`, `session-state` | attention toggle/clear, AI topic/title, `tmux rename-pane`, replay shell wrapper | Sets pane title and topic-adjacent UI metadata. Phase 2C mux API: `SelectPane`. |
+| `select-pane -t <target>` | `focus`, `session-state` | `focusCommand`, session-state replay | Selects target pane after focus or replay. Phase 2C mux API: `SelectPane`. |
+| `select-window -t <target>` | `interactive UI`, `focus`, `session-state` | statusbar window-list passthrough, focus, live replay | Restores native window click behavior and selects replay/focus targets. Phase 2C mux API: `SelectWindow`. |
 | `split-window [-h|-v] [-P -F "#{pane_id}"] [-t <pane>] [-c <cwd>] <cmd>` | `required MVP`, `interactive UI` | AI split, session-state replay | Creates AI/shell panes. AI agent split reads the new pane id from `-P -F`. |
 | `resize-pane -t <pane> -x|-y <size>` | `interactive UI` | AI split layout rebalance | Best-effort equal sizing after AI split. |
 | `set-buffer -w -- <text>` | `interactive UI` | Settings copy helpers | Copies generated install/remove/dry-run commands to the tmux clipboard. |
@@ -165,8 +197,8 @@ to the semantic capability that a future psmux audit/backend must provide.
 
 | Command | Class | Production call sites | Purpose / notes |
 | --- | --- | --- | --- |
-| `capture-pane -p -J -S -80 -t <pane>` | `capture`, `hooks/status` | AI watch-title/notification inference | Reads recent pane text joined into logical lines. |
-| `capture-pane -p -t <pane> -S <n>` | `capture`, `required MVP` if generic pane viewer is used | `Client.CapturePane` | Generic typed tmux client capture helper. |
+| `capture-pane -p -J -S -80 -t <pane>` | `capture`, `hooks/status` | AI watch-title/notification inference | Reads recent pane text joined into logical lines. Phase 2C mux API: `CapturePane`. |
+| `capture-pane -p -t <pane> -S <n>` | `capture`, `required MVP` if generic pane viewer is used | `Client.CapturePane` | Generic typed tmux client capture helper. Phase 2C mux API supports this form; typed client conversion remains deferred. |
 | `rename-window -t <target> <name>` | `session-state` | session-state replay | Restores first window name. |
 | `new-window -d -t <target> -c <cwd> [-n <name>] [cmd...]` | `session-state` | session-state replay | Recreates additional windows. |
 | `select-layout -t <target> <layout>` | `session-state` | session-state replay | Restores captured window layouts. |
@@ -328,6 +360,7 @@ Required tmux commands:
 - `display-message -p -F #{client_tty|client_pid|pane_id|#S|pane_current_path|client_width|client_height|@projmux_statusbar_decoration}`
 - `display-popup` with sizing, target/client, env, cwd, border, title, and close-on-exit flags.
 - `display-popup -C` to close toggle popups.
+- Phase 2C mux APIs: `DisplayPopup`, `ClosePopup`.
 
 Dependent generated commands:
 
@@ -345,6 +378,7 @@ Required tmux commands/config:
 - `bind-key s switch-client -T projmux-status`
 - `bind-key -T projmux-status <key> run-shell ...`
 - Runtime handlers: `display-message`, `display-popup`, `select-window`, `show-option`, `list-panes`.
+- Phase 2C mux APIs used by runtime handlers: `DisplayPopup`, `SelectWindow`.
 
 ### Hook
 
@@ -362,6 +396,7 @@ Required tmux commands:
 
 - AI title/watch inference: `capture-pane -p -J -S -80 -t <pane>`.
 - Generic tmux client helper: `capture-pane -p -t <pane> -S <start>`.
+- Phase 2C mux API: `CapturePane`.
 
 psmux audit should check both forms separately because joined-line capture
 (`-J`) is product-visible for AI topic/notification inference.
@@ -377,6 +412,7 @@ Required tmux commands:
 - `select-pane -t <session>:<window>.<pane>`
 - URI translation: `display-message -p -t <pane-id> "#S<sep>#I"`
 - Optional socket wrapper: `tmux -S <socket> ...`
+- Phase 2C mux APIs: `SwitchClient`, `SelectWindow`, `SelectPane`.
 
 ### Session-State
 
@@ -421,29 +457,29 @@ Status values for Phase 3: `pass`, `partial`, `missing`, `unknown`.
 | Capability | tmux command / format surface | Current class | psmux status | Audit notes |
 | --- | --- | --- | --- | --- |
 | Create detached project session | `new-session -d -s -c [-e] [-P -F "#{pane_id}"]` | `required MVP` | `unknown` | Must return first pane id when lifecycle/startup hooks need it. |
-| Attach or switch to session | `attach-session`, `switch-client [-c] -t` | `required MVP`, `focus` | `unknown` | Outside/inside mux behavior may differ on Windows Terminal. |
+| Attach or switch to session | `attach-session`, `switch-client [-c] -t` | `required MVP`, `focus` | `unknown` | Outside/inside mux behavior may differ on Windows Terminal. Phase 2C mux API: `SwitchClient`. |
 | App shell server | `tmux -L <socket> -f <config> new-session -A -s` | `required MVP` | `unknown` | Need socket/server equivalent or explicit unsupported capability. |
 | Session inventory | `list-sessions -F` plus session formats | `required MVP`, `focus` | `unknown` | Requires activity, attached count, windows, ids. |
 | Window inventory | `list-windows -F` plus window formats | `required MVP`, `session-state` | `unknown` | Requires layout and window id for restore/live replay. |
 | Pane inventory | `list-panes -a/-s -F` plus pane/user-option formats | `required MVP`, `hooks/status`, `session-state` | `unknown` | Highest-risk metadata surface. |
-| Popup launch | `display-popup` with target/client/env/cwd/size/border/title/close flags | `interactive UI` | `unknown` | Roadmap already flags popup as a major risk. |
-| Popup close | `display-popup -C` | `interactive UI` | `unknown` | Needed for toggle semantics. |
+| Popup launch | `display-popup` with target/client/env/cwd/size/border/title/close flags | `interactive UI` | `unknown` | Roadmap already flags popup as a major risk. Phase 2C mux API: `DisplayPopup`. |
+| Popup close | `display-popup -C` | `interactive UI` | `unknown` | Needed for toggle semantics. Phase 2C mux API: `ClosePopup`. |
 | Current context formats | `display-message -p -F #{pane_current_path}`, `#{pane_id}`, `#{client_tty}`, `#{client_width}`, `#{client_height}` | `interactive UI` | `unknown` | Popup and AI split depend on these. Phase 2A mux API: `DisplayMessage`, `DisplayMessageTrimmed`. |
 | Focus URI translation | `display-message -p -t %N "#S<sep>#I"` | `focus` | `unknown` | Must map pane id to session/window for toast clicks. |
 | Client inventory | `list-clients -F #{client_name} #{client_session} #{client_active_pane}` | `focus`, `hooks/status` | `unknown` | Needed for focus and reply auto-ack correctness. |
 | Pane split | `split-window -h/-v [-P -F "#{pane_id}"] [-t] [-c] <cmd>` | `required MVP` | `unknown` | MVP AI/shell split requirement. |
 | Resize panes | `resize-pane -x/-y` | `interactive UI` | `unknown` | Can be `partial` if MVP can tolerate default split sizing. |
-| Pane title | `select-pane -T` and `#{pane_title}` | `interactive UI`, `hooks/status` | `unknown` | Used by attention and AI labels. |
+| Pane title | `select-pane -T` and `#{pane_title}` | `interactive UI`, `hooks/status` | `unknown` | Used by attention and AI labels. Phase 2C mux API: `SelectPane`. |
 | Pane options | `set-option -p`, `display-message -p "#{@...}"` | `required MVP`, `hooks/status`, `session-state` | `unknown` | Needs arbitrary user option storage or replacement metadata store. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`, `ShowPaneOption`, `PaneOptionFormat`. |
 | Global/session options | `set-option -g`, `show-option -gqv`, `set-option -t -q` | `hooks/status`, `session-state` | `unknown` | Required for settings, decoration, app markers, session-state source. |
 | Generated statusbar | `status`, `status-format`, `#[range=user|...]`, `#(...)`, `#{W:...}` | `hooks/status` | `unknown` | May need a separate psmux-native status model. |
 | Statusbar mouse/key dispatch | `MouseDown1Status`, `if-shell -F`, `switch-client -T`, `run-shell` | `interactive UI`, `hooks/status` | `unknown` | Product UX should degrade explicitly if unsupported. |
 | Hooks | `set-hook`, `show-hooks`, `run-shell -b`, `#{hook_pane}` | `hooks/status` | `unknown` | Alert bell and focus hooks may be unavailable. |
 | Bell fallback | `monitor-bell`, `bell-action`, `alert-bell`, `#{pane_id}` | `hooks/status` | `unknown` | Optional but important for unknown AI tools. |
-| Capture pane | `capture-pane -p`, `capture-pane -p -J` | `capture` | `unknown` | Joined capture is separately audited from raw capture. |
+| Capture pane | `capture-pane -p`, `capture-pane -p -J` | `capture` | `unknown` | Joined capture is separately audited from raw capture. Phase 2C mux API: `CapturePane`. |
 | Session-state replay | `new-window`, `split-window`, `rename-window`, `select-layout`, `select-pane`, `send-keys` | `session-state` | `unknown` | Likely outside psmux MVP except basic create/split. |
-| Live overwrite replay | `move-window`, `kill-window`, `select-window` | `legacy/cleanup candidate` | `unknown` | Candidate to exclude from psmux MVP and possibly remove. |
+| Live overwrite replay | `move-window`, `kill-window`, `select-window` | `legacy/cleanup candidate` | `unknown` | Candidate to exclude from psmux MVP and possibly remove. Phase 2C mux API covers `SelectWindow` only. |
 | Config reload | `source-file`, generated config file semantics | `e2e/support` | `unknown` | Required only if psmux has config-file parity. |
 | Clipboard helper | `set-buffer -w` | `interactive UI` | `unknown` | Settings copy helper can fall back to OS clipboard later. |
-| Socket targeting | `-L <socket>`, `-S <socket>` | `required MVP`, `focus` | `unknown` | psmux equivalent may be named server/session context. |
+| Socket targeting | `-L <socket>`, `-S <socket>` | `required MVP`, `focus` | `unknown` | psmux equivalent may be named server/session context. Phase 2C focus APIs carry `-S <socket>`. |
 | Quoting/process launch | POSIX shell wrappers, tmux config quoting, `run-shell` | `required MVP`, `interactive UI` | `unknown` | Phase 3 must audit PowerShell-native quoting separately. |

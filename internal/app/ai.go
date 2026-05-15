@@ -1611,7 +1611,15 @@ func (c *aiCommand) readAIWatchTitleGate(paneID string) (alive bool, hookActive 
 }
 
 func (c *aiCommand) readAIPaneCapture(paneID string) string {
-	return c.readTrimmed("tmux", "capture-pane", "-p", "-J", "-S", "-80", "-t", paneID)
+	out, err := c.muxRunner().CapturePane(context.Background(), intmux.CapturePaneOptions{
+		Target:    paneID,
+		StartLine: -80,
+		JoinLines: true,
+	})
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 func (c *aiCommand) recordAITopic(paneID, topic, manual string) {
