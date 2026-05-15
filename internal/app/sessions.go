@@ -57,6 +57,20 @@ type sessionsCommand struct {
 
 func newSessionsCommand() *sessionsCommand {
 	client := inttmux.NewClient(inttmux.ExecRunner{})
+	if usePSMuxBackend(os.Getenv, nil) {
+		client := newDefaultPSMuxClient()
+		return &sessionsCommand{
+			recent:     client,
+			store:      newSessionPopupCommand().store,
+			opener:     client,
+			killer:     client,
+			native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+			executable: os.Executable,
+			lookupEnv:  os.Getenv,
+			homeDir:    os.UserHomeDir,
+			stateStore: sessionstate.NewDefaultStoreFromEnv,
+		}
+	}
 	return &sessionsCommand{
 		recent:     client,
 		store:      newSessionPopupCommand().store,

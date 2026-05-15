@@ -114,7 +114,7 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if config == "" {
 		config = c.defaultConfigPath()
 	}
-	if !*noInstall && c.useNativePSMuxShell() {
+	if !*noInstall && c.usePSMuxShell() {
 		if err := c.writePSMuxAppConfig(config, binaryPath); err != nil {
 			return err
 		}
@@ -128,7 +128,7 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	command := "tmux"
-	if c.useNativePSMuxShell() {
+	if c.usePSMuxShell() {
 		command = "psmux"
 	}
 	runArgs := []string{"-L", socketName, "-f", config, "new-session", "-A", "-s", target.SessionName}
@@ -479,7 +479,7 @@ func (c *shellCommand) defaultConfigPath() string {
 		}
 	}
 	name := "tmux.conf"
-	if c.useNativePSMuxShell() {
+	if c.usePSMuxShell() {
 		name = "psmux.conf"
 	}
 	return filepath.Join(configHome, "projmux", name)
@@ -523,12 +523,8 @@ func (c *shellCommand) run(ctx context.Context, name string, args ...string) err
 	return c.runCommand(ctx, withoutEnv(os.Environ(), "TMUX"), name, args...)
 }
 
-func (c *shellCommand) useNativePSMuxShell() bool {
-	goos := runtime.GOOS
-	if c.goos != nil {
-		goos = c.goos()
-	}
-	return strings.EqualFold(strings.TrimSpace(goos), "windows")
+func (c *shellCommand) usePSMuxShell() bool {
+	return usePSMuxBackend(c.lookupEnv, c.goos)
 }
 
 func runForegroundCommand(ctx context.Context, env []string, name string, args ...string) error {

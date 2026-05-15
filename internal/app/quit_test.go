@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,6 +66,34 @@ func TestQuitCommandSelectionKillsOnlyAppOwnedRuntime(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("tmux calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestQuitCommandUsesPSMuxBackendAndKeepsAppOwnedGuard(t *testing.T) {
+	t.Setenv(muxBackendEnvVar, "psmux")
+
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"psmux", "-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}, "\x00"): "1\n",
+		},
+	}
+	cmd := &quitCommand{
+		lookupEnv: os.Getenv,
+		runner:    runner,
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{Key: "enter", Value: quitActionQuit}, nil
+		})),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []recordedTmuxCall{
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "kill-server"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("mux calls = %#v, want %#v", runner.calls, want)
 	}
 }
 

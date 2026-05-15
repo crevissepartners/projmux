@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -48,6 +49,18 @@ type tmuxPreviewInventory struct {
 func newPreviewCommand() *previewCommand {
 	paths, err := config.DefaultPathsFromEnv()
 	client := inttmux.NewClient(inttmux.ExecRunner{})
+	if usePSMuxBackend(os.Getenv, nil) {
+		client := newDefaultPSMuxClient()
+		cmd := &previewCommand{
+			inventory: tmuxPreviewInventory{client: client},
+		}
+		if err != nil {
+			cmd.storeErr = fmt.Errorf("resolve default config paths: %w", err)
+			return cmd
+		}
+		cmd.store = corepreview.NewDefaultStore(paths)
+		return cmd
+	}
 
 	cmd := &previewCommand{
 		inventory: tmuxPreviewInventory{client: client},

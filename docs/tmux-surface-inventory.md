@@ -323,6 +323,27 @@ full tmux sidebar parity, full hook parity, session-state replay,
 session-state schema changes, sidecar metadata storage, pane option workaround
 implementation, and Phase 5 packaging/distribution work.
 
+### Phase 4A App/Session Foundation
+
+Phase 4A adds only the psmux app/session foundation:
+
+- backend selection uses `PROJMUX_MUX_BACKEND=tmux|psmux`, with native Windows
+  defaulting to psmux and non-Windows hosts defaulting to tmux.
+- `projmux shell` continues to use the app socket/session naming
+  `-L projmux` / `home` and writes `psmux.conf` only for the psmux backend.
+- project session create, attach/open, switch, recent-session summaries, and
+  preview/session inventory can use `psmux -L projmux`.
+- psmux inventory is based on `list-sessions`, `list-windows`, and
+  `list-panes` core fields only. Pane-scoped `@projmux_*` metadata is left
+  empty/degraded; no sidecar store or pane-option workaround is introduced.
+- `projmux quit` keeps the `@projmux_app=1` global marker guard before
+  `kill-server` on the selected app runtime backend.
+
+Phase 4A still excludes the Phase 4B project switch sidebar/keybinding UI,
+Phase 4C splits/agents, notify sidebar, rich preview, metadata recovery,
+statusbar mouse integration, advanced focus/ack/consume, full hook parity, and
+session-state restore parity.
+
 Rich metadata should be revisited only after the psmux MVP is usable. The two
 acceptable later directions are upstream psmux parity for pane-scoped custom
 user options, or a projmux-owned sidecar pane metadata store with reconcile,
