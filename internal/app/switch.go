@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	coretags "github.com/crevissepartners/projmux/internal/core/tags"
+	"github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -1173,11 +1174,11 @@ func tmuxProjdirOption() string {
 	if os.Getenv("TMUX") == "" {
 		return ""
 	}
-	out, err := exec.Command("tmux", "show-option", "-gqv", "@projmux_projdir").Output()
+	out, err := mux.ReadTrimmed(context.Background(), "show-option", "-gqv", "@projmux_projdir")
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return out
 }
 
 // memoizeProjdir best-effort persists value to the saved-projdir file. It
