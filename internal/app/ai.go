@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -114,7 +115,7 @@ func (l aiNotifyLookup) PaneFormat(paneID, format string) string {
 	if l.cmd == nil {
 		return ""
 	}
-	return l.cmd.readTrimmed("tmux", "display-message", "-p", "-t", paneID, format)
+	return l.cmd.readTmuxDisplayMessageTrimmed(paneID, format)
 }
 
 func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -1324,6 +1325,31 @@ func (c *aiCommand) read(name string, args ...string) ([]byte, error) {
 	return c.readCommand(context.Background(), name, args...)
 }
 
+func (c *aiCommand) muxRunner() intmux.Runner {
+	return intmux.NewRunner(aiCommandMuxBackend{
+		runCommand:  c.runCommand,
+		readCommand: c.readCommand,
+	})
+}
+
+type aiCommandMuxBackend struct {
+	runCommand  func(ctx context.Context, name string, args ...string) error
+	readCommand func(ctx context.Context, name string, args ...string) ([]byte, error)
+}
+
+func (b aiCommandMuxBackend) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if name == "tmux" && len(args) > 0 && args[0] == "set-option" {
+		if b.runCommand == nil {
+			return nil, errors.New("ai command runner is not configured")
+		}
+		return nil, b.runCommand(ctx, name, args...)
+	}
+	if b.readCommand == nil {
+		return nil, errors.New("ai command reader is not configured")
+	}
+	return b.readCommand(ctx, name, args...)
+}
+
 func (c *aiCommand) readTrimmed(name string, args ...string) string {
 	out, err := c.read(name, args...)
 	if err != nil {
@@ -1332,8 +1358,23 @@ func (c *aiCommand) readTrimmed(name string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func (c *aiCommand) readTmuxDisplayMessageTrimmed(paneID, format string) string {
+	output, err := c.muxRunner().DisplayMessageTrimmed(context.Background(), intmux.DisplayMessageOptions{
+		Target: paneID,
+		Format: format,
+	})
+	if err != nil {
+		return ""
+	}
+	return output
+}
+
 func (c *aiCommand) readTmuxPaneOption(paneID, option string) string {
-	return c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{"+option+"}")
+	output, err := c.muxRunner().ShowPaneOption(context.Background(), paneID, option)
+	if err != nil {
+		return ""
+	}
+	return output
 }
 
 // paneVisibleToClient mirrors attentionCommand.paneVisibleToClient: a pane is
@@ -1369,11 +1410,12 @@ func (c *aiCommand) duplicateAINotificationRecent(paneID, key string) bool {
 }
 
 func (c *aiCommand) recordAINotification(paneID, key string) {
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, "@projmux_desktop_notified", "1")
+	runner := c.muxRunner()
+	_ = runner.SetPaneOption(context.Background(), paneID, "@projmux_desktop_notified", "1")
 	if key != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, "@projmux_desktop_notification_key", key)
+		_ = runner.SetPaneOption(context.Background(), paneID, "@projmux_desktop_notification_key", key)
 	}
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, "@projmux_desktop_notification_at", fmt.Sprintf("%d", c.now().Unix()))
+	_ = runner.SetPaneOption(context.Background(), paneID, "@projmux_desktop_notification_at", fmt.Sprintf("%d", c.now().Unix()))
 }
 
 func (c *aiCommand) resolvePowerShell() string {
