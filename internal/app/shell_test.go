@@ -162,7 +162,7 @@ func TestShellNativeWindowsWritesPSMuxConfigAndRunsIsolatedPSMux(t *testing.T) {
 		"set -g status-left \" #{session_name} \"",
 		"#(& 'C:\\Program Files\\projmux weird\\projmux.exe' 'status' 'git' '#{pane_current_path}')",
 		"bind-key -n C-n new-window -c \"#{pane_current_path}\"",
-		"bind-key -n M-1 display-popup -d \"#{pane_current_path}\" -T \"Projects\" -E \"$env:PROJMUX_MUX_BACKEND = 'psmux'; $env:PROJMUX_PICKER_BACKEND = 'native'; $env:PROJMUX_NATIVE_LINE_MODE = '1'; & 'C:\\Program Files\\projmux weird\\projmux.exe' 'switch' '--ui=sidebar'\"",
+		"bind-key -n M-1 display-popup -d \"#{pane_current_path}\" -x 0 -y 0 -w 42% -h 100% -T \"Projects\" -E powershell -NoProfile -Command \"$env:PROJMUX_MUX_BACKEND = 'psmux'; $env:PROJMUX_PICKER_BACKEND = 'native'; $env:PROJMUX_NATIVE_LINE_MODE = '1'; & 'C:\\Program Files\\projmux weird\\projmux.exe' 'switch' '--ui=sidebar'\"",
 	} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("psmux config = %q, want substring %q", config, want)
@@ -290,7 +290,7 @@ func TestPSMuxAppConfigRendersPowerShellCallbackWithSensitiveBinaryPath(t *testi
 		powerShellEnvAssignment("PROJMUX_NATIVE_LINE_MODE", "1"),
 		switchCallback,
 	}, "; ")
-	wantSwitch := "display-popup -d \"#{pane_current_path}\" -T \"Projects\" -E " + psmuxConfigQuote(wantSwitchCallback)
+	wantSwitch := "display-popup -d \"#{pane_current_path}\" -x 0 -y 0 -w 42% -h 100% -T \"Projects\" -E " + psmuxPowerShellCommandTail(wantSwitchCallback)
 	if !strings.Contains(config, wantSwitch) {
 		t.Fatalf("psmux config = %q, want project switch binding %q", config, wantSwitch)
 	}

@@ -206,6 +206,114 @@ func TestFindAgentBinaryPrefersPathOverNodeManager(t *testing.T) {
 	}
 }
 
+func TestFindAgentBinaryPSMuxCodexPrefersPowerShellPS1Shim(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, "npm-bin")
+	codexPS1 := writeExecutable(t, filepath.Join(binDir, "codex.ps1"))
+	writeExecutable(t, filepath.Join(binDir, "codex.cmd"))
+	writeExecutable(t, filepath.Join(binDir, "codex.exe"))
+	writeExecutable(t, filepath.Join(binDir, "codex"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		case "PATH":
+			return binDir
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "powershell" && len(args) == 3 && args[0] == "-NoProfile" && args[1] == "-Command" && strings.Contains(args[2], "Get-Command") {
+			return []byte(codexPS1 + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	got := cmd.findAgentBinary(aiModeCodex)
+	if got != codexPS1 {
+		t.Fatalf("findAgentBinary = %q, want PowerShell ps1 shim %q", got, codexPS1)
+	}
+	if containsRecordedAICommandPrefix(cmdRecorder(cmd).commands, recordedAICommand{name: "command", args: []string{"-v", "codex"}}) {
+		t.Fatalf("commands = %#v, did not expect POSIX command -v lookup on psmux", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestFindAgentBinaryPSMuxCodexRecognizesWindowsShimCandidates(t *testing.T) {
+	cases := []struct {
+		name     string
+		fileName string
+	}{
+		{"cmd shim", "codex.cmd"},
+		{"ps1 shim without PATHEXT", "codex.ps1"},
+		{"exe shim", "codex.exe"},
+		{"extensionless shim", "codex"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			binDir := filepath.Join(home, "npm-bin")
+			want := writeExecutable(t, filepath.Join(binDir, tc.fileName))
+			cmd := testAICommand(home)
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "HOME":
+					return home
+				case muxBackendEnvVar:
+					return string(muxBackendPSMux)
+				case "PATH":
+					return binDir
+				default:
+					return ""
+				}
+			}
+			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+				return nil, os.ErrNotExist
+			}
+
+			got := cmd.findAgentBinary(aiModeCodex)
+			if got != want {
+				t.Fatalf("findAgentBinary = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestFindAgentBinaryPSMuxCodexUsesWhereFallback(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, "npm-bin")
+	extensionless := writeExecutable(t, filepath.Join(binDir, "codex"))
+	cmdShim := writeExecutable(t, filepath.Join(binDir, "codex.cmd"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "where.exe" && reflect.DeepEqual(args, []string{"codex"}) {
+			return []byte(extensionless + "\n" + cmdShim + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	got := cmd.findAgentBinary(aiModeCodex)
+	if got != cmdShim {
+		t.Fatalf("findAgentBinary = %q, want where.exe cmd shim %q over extensionless %q", got, cmdShim, extensionless)
+	}
+}
+
 func TestFindAgentBinaryPicksNewestNvmVersion(t *testing.T) {
 	home := t.TempDir()
 	older := writeExecutable(t, filepath.Join(home, ".nvm", "versions", "node", "v18.0.0", "bin", "codex"))
@@ -230,6 +338,15 @@ func TestFindAgentBinaryReturnsEmptyWhenAbsent(t *testing.T) {
 	}
 	if cmd.agentAvailable(aiModeCodex) {
 		t.Fatalf("agentAvailable on empty home = true, want false")
+	}
+}
+
+func TestAISplitMissingRunnerPreservesTmuxMessage(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+
+	err := cmd.Run([]string{"split", "--agent", "codex", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || err.Error() != "selected runner is not installed: codex" {
+		t.Fatalf("Run split missing codex error = %v, want selected runner is not installed: codex", err)
 	}
 }
 
@@ -783,15 +900,14 @@ func TestAISplitCodexUsesPSMuxSplitWindowPowerShellTailAndSkipsTmuxMetadata(t *t
 			return work
 		case "TMUX_SPLIT_TARGET_PANE":
 			return "%7"
+		case "PATH":
+			return filepath.Dir(codexBin)
 		default:
 			return ""
 		}
 	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
-		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
-			return []byte(codexBin + "\n"), nil
-		}
 		if name == "psmux" && reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
 			return []byte("%7\n"), nil
 		}
@@ -812,7 +928,6 @@ func TestAISplitCodexUsesPSMuxSplitWindowPowerShellTailAndSkipsTmuxMetadata(t *t
 	}
 	commands := cmdRecorder(cmd).commands
 	for _, want := range []recordedAICommand{
-		{name: "command", args: []string{"-v", "codex"}},
 		{name: "psmux", args: []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}},
 		{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window", "-h", "-P", "-F", "#{pane_id}", "-t", "%7", "-c", work, tail}},
 	} {
@@ -852,15 +967,14 @@ func TestAISplitClaudeUsesPSMuxSplitWindowPowerShellTail(t *testing.T) {
 			return work
 		case "TMUX_SPLIT_TARGET_PANE":
 			return "%7"
+		case "PATH":
+			return filepath.Dir(claudeBin)
 		default:
 			return ""
 		}
 	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
-		if name == "command" && reflect.DeepEqual(args, []string{"-v", "claude"}) {
-			return []byte(claudeBin + "\n"), nil
-		}
 		if name == "psmux" && reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
 			return []byte("%7\n"), nil
 		}
@@ -881,6 +995,44 @@ func TestAISplitClaudeUsesPSMuxSplitWindowPowerShellTail(t *testing.T) {
 	want := recordedAICommand{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window", "-v", "-P", "-F", "#{pane_id}", "-t", "%7", "-c", work, tail}}
 	if !containsRecordedAICommand(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want command %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAISplitClaudePSMuxReportsNativeInstallerPathGuidance(t *testing.T) {
+	home := t.TempDir()
+	claudeNative := writeExecutable(t, filepath.Join(home, ".local", "bin", "claude.exe"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		return nil, os.ErrNotExist
+	}
+
+	err := cmd.Run([]string{"split", "--agent", "claude", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run psmux claude split error = nil, want PATH guidance for %s", claudeNative)
+	}
+	for _, want := range []string{
+		"selected runner is installed at " + claudeNative,
+		"but is not on PATH",
+		"add " + filepath.Dir(claudeNative) + " to PATH",
+		"restart psmux",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Run error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if containsRecordedAICommandPrefix(cmdRecorder(cmd).commands, recordedAICommand{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window"}}) {
+		t.Fatalf("commands = %#v, did not expect split launch after missing Claude PATH guidance", cmdRecorder(cmd).commands)
 	}
 }
 

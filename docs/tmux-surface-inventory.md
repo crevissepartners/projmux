@@ -311,6 +311,12 @@ to prove native Windows project navigation and basic AI pane launch:
   PowerShell-rendered callbacks only.
 - minimal project switch sidebar: open the sidebar, list projects/sessions,
   select a project/session, then open or switch to it.
+- Phase 4B-F1 generated psmux config uses an explicit command tail for the
+  project popup (`display-popup ... -E powershell -NoProfile -Command
+  <PowerShell script>`) instead of passing the PowerShell script itself as the
+  `-E` argument. The popup is left anchored with `-x 0 -y 0 -w 42% -h 100%` as
+  the closest sidebar-like psmux fallback; exact tmux sidebar parity remains out
+  of scope and needs native Windows visual confirmation.
 - basic preview if the psmux surface can provide it cheaply; no preview is an
   acceptable MVP fallback.
 - a psmux-capable popup or native picker path for the minimal project switch
