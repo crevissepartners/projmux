@@ -126,6 +126,35 @@ capture.
 | `SelectPane` | `[-S <socket>] select-pane [-T <title>] -t <target>` | `projmux focus` pane selection; title form available for existing pane-title surfaces |
 | `SelectWindow` | `[-S <socket>] select-window -t <target>` | `projmux focus` window selection, statusbar window-list passthrough |
 
+## Phase 2D Lifecycle / Split / Hook Slice
+
+Phase 2D adds semantic helpers in `internal/integrations/mux` for tmux
+lifecycle, pane split, hook, and global/session option commands:
+
+- `NewSession` covers `new-session` lifecycle args, including detached or
+  attach/create mode, socket/config prefixes, session name, cwd, sorted
+  environment injection, optional pane id return via `-P -F "#{pane_id}"`, and
+  an optional command tail.
+- `SplitWindow` covers `split-window -h/-v`, detached splits, target, cwd,
+  optional pane id return via `-P -F "#{pane_id}"`, and command tail ordering.
+- `SetHook` covers global append and unset forms used by tmux bell integration.
+- `SetOption` and `ShowOption` cover global/session option writes and reads
+  where runtime code needs structured option commands rather than raw argv.
+
+Converted paths include project session creation, AI agent/shell split, and
+tmux bell integration option/hook install and removal. Session-state replay
+creation remains on the existing typed tmux path in this phase.
+
+### Phase 2D psmux Audit Capability Mapping
+
+| Capability | Current tmux command | Converted paths |
+| --- | --- | --- |
+| `NewSession` | `[-S <socket>] [-f <config>] new-session [-d] [-A] [-s <session>] [-c <cwd>] [-e KEY=VALUE] [-P -F "#{pane_id}"] [command...]` | Project session create, including lifecycle startup pane id capture |
+| `SplitWindow` | `split-window [-d] [-P -F "#{pane_id}"] [-h/-v] [-t <target>] [-c <cwd>] [command...]` | AI agent split, AI shell split |
+| `SetHook` | `set-hook -ag <hook> <command>`, `set-hook -gu <hook[index]>` | `projmux ai integrate tmux-bell` install/remove |
+| `SetOption` | `set-option -g <option> <value>`, `set-option -t <session> -q <option> <value>` | tmux bell integration option install; API available for session-scoped markers |
+| `ShowOption` | `show-option [-g] [-q] [-v] [-t <target>] <option>` | API available for global/session option reads; conversion deferred to low-risk call sites |
+
 ## Classification Key
 
 | Class | Meaning |
@@ -143,8 +172,8 @@ capture.
 | Command | Class | Production call sites | Purpose / notes |
 | --- | --- | --- | --- |
 | `has-session -t <target>` | `required MVP` | `Client.sessionExists`, `tmuxSessionExists` | Check whether a project/app session exists before create/open. |
-| `new-session -d -s <session> -c <cwd> [-e KEY=VALUE]` | `required MVP` | `Client.createDetachedSession` | Create detached project sessions. With lifecycle hooks enabled, adds `-P -F "#{pane_id}"` to capture the first pane id. |
-| `new-session -A -s <session> [-c <cwd>]` | `required MVP` | `projmux shell` | Attach/create the isolated app session. Wrapped with `-L <socket> -f <config>`. |
+| `new-session -d -s <session> -c <cwd> [-e KEY=VALUE]` | `required MVP` | `Client.createDetachedSession` | Create detached project sessions. With lifecycle hooks enabled, adds `-P -F "#{pane_id}"` to capture the first pane id. Phase 2D mux API: `NewSession`. |
+| `new-session -A -s <session> [-c <cwd>]` | `required MVP` | `projmux shell` | Attach/create the isolated app session. Wrapped with `-L <socket> -f <config>`. Phase 2D mux API available: `NewSession`. |
 | `attach-session -t <target>` | `required MVP` | `Client.OpenSession`, `Client.OpenSessionTarget` | Outside-tmux open path. Pane targets degrade to session/window where attach cannot select a pane. |
 | `switch-client [-c <client>] -t <target>` | `required MVP`, `focus` | `Client.OpenSession`, `focusCommand`, generated status key table | Inside-tmux open/focus path. `PROJMUX_SWITCH_TARGET_CLIENT` can force the originating client. Phase 2C mux API: `SwitchClient`. |
 | `list-sessions -F ...` | `required MVP`, `focus`, `e2e/support` | `RecentSessions`, `RecentSessionSummaries`, `ListEphemeralSessions`, `focus`, `tmux apply` | Drives session picker rows, focus fallback, app reload probe, and ephemeral cleanup. |
@@ -164,7 +193,7 @@ capture.
 | `select-pane -T <title> -t <pane>` | `interactive UI`, `hooks/status`, `session-state` | attention toggle/clear, AI topic/title, `tmux rename-pane`, replay shell wrapper | Sets pane title and topic-adjacent UI metadata. Phase 2C mux API: `SelectPane`. |
 | `select-pane -t <target>` | `focus`, `session-state` | `focusCommand`, session-state replay | Selects target pane after focus or replay. Phase 2C mux API: `SelectPane`. |
 | `select-window -t <target>` | `interactive UI`, `focus`, `session-state` | statusbar window-list passthrough, focus, live replay | Restores native window click behavior and selects replay/focus targets. Phase 2C mux API: `SelectWindow`. |
-| `split-window [-h|-v] [-P -F "#{pane_id}"] [-t <pane>] [-c <cwd>] <cmd>` | `required MVP`, `interactive UI` | AI split, session-state replay | Creates AI/shell panes. AI agent split reads the new pane id from `-P -F`. |
+| `split-window [-h|-v] [-P -F "#{pane_id}"] [-t <pane>] [-c <cwd>] <cmd>` | `required MVP`, `interactive UI` | AI split, session-state replay | Creates AI/shell panes. AI agent split reads the new pane id from `-P -F`. Phase 2D mux API: `SplitWindow` for AI splits; session-state replay remains on the typed tmux path. |
 | `resize-pane -t <pane> -x|-y <size>` | `interactive UI` | AI split layout rebalance | Best-effort equal sizing after AI split. |
 | `set-buffer -w -- <text>` | `interactive UI` | Settings copy helpers | Copies generated install/remove/dry-run commands to the tmux clipboard. |
 | `command-prompt` | `interactive UI` | generated keymap | Prompt-based rename/topic actions in generated config. |
@@ -181,13 +210,13 @@ capture.
 | `set-hook -g after-select-pane run-shell -b ...` | `hooks/status` | generated standalone/app config | Clears attention on selected pane. Uses `#{pane_id}`. |
 | `set-hook -g pane-exited` / `after-kill-pane` | `hooks/status` | generated standalone/app config | Calls `projmux tmux rebalance-panes` after pane removal. |
 | `set-hook -g client-attached` | `hooks/status` | generated app config | Opens the welcome popup once after client attach. |
-| `set-hook -ag alert-bell ...` | `hooks/status` | `projmux ai integrate tmux-bell` | Installs bell fallback to `projmux ai ingest bell --pane "#{pane_id}"`. |
-| `set-hook -gu alert-bell[...]` | `legacy/cleanup candidate`, `hooks/status` | `projmux ai integrate tmux-bell --remove` | Removes projmux-managed alert-bell entries. |
+| `set-hook -ag alert-bell ...` | `hooks/status` | `projmux ai integrate tmux-bell` | Installs bell fallback to `projmux ai ingest bell --pane "#{pane_id}"`. Phase 2D mux API: `SetHook`. |
+| `set-hook -gu alert-bell[...]` | `legacy/cleanup candidate`, `hooks/status` | `projmux ai integrate tmux-bell --remove` | Removes projmux-managed alert-bell entries. Phase 2D mux API: `SetHook`. |
 | `show-hooks -g alert-bell` | `hooks/status` | tmux bell integration planning | Detects existing managed bell fallback. |
 | `run-shell -b <command>` | `hooks/status`, `interactive UI` | generated hooks, generated statusbar binds, AI watch-title | Async hook/status dispatch and title watcher launch. |
-| `show-option -gqv <option>` | `hooks/status`, `legacy/cleanup candidate` | notification mode, statusbar decoration, `@projmux_projdir`, app ownership | Reads global user options and generated app markers. Some call sites still use direct `exec.Command("tmux", ...)`. |
-| `show-option -gv @projmux_app` | `required MVP` for app quit | `quitCommand` | Confirms a socket is app-owned before `kill-server`. |
-| `set-option -g <option> <value>` | `hooks/status` | settings, notification registration, generated config, tmux bell integration | Writes statusbar decoration, desktop notify mode markers, toast URI markers, and tmux bell options. |
+| `show-option -gqv <option>` | `hooks/status`, `legacy/cleanup candidate` | notification mode, statusbar decoration, `@projmux_projdir`, app ownership | Reads global user options and generated app markers. Some call sites still use direct `exec.Command("tmux", ...)`. Phase 2D mux API available: `ShowOption`. |
+| `show-option -gv @projmux_app` | `required MVP` for app quit | `quitCommand` | Confirms a socket is app-owned before `kill-server`. Phase 2D mux API available: `ShowOption`. |
+| `set-option -g <option> <value>` | `hooks/status` | settings, notification registration, generated config, tmux bell integration | Writes statusbar decoration, desktop notify mode markers, toast URI markers, and tmux bell options. Phase 2D mux API: `SetOption` for tmux bell integration. |
 | `set-option -g -u <option>` | `legacy/cleanup candidate` | notification URI migration | Unsets older URI registration markers. |
 | `set-option -p [-u] -t <pane> <option> [value]` | `hooks/status`, `required MVP` for AI | AI state, attention, topics, notification dedupe, session-state recipe metadata | Core pane metadata storage. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`. |
 | `set-option -t <session> -q <option> <value>` | `session-state`, `required MVP` | session autosave/source, ephemeral sessions | Stores session-level live markers. |
@@ -456,9 +485,9 @@ Status values for Phase 3: `pass`, `partial`, `missing`, `unknown`.
 
 | Capability | tmux command / format surface | Current class | psmux status | Audit notes |
 | --- | --- | --- | --- | --- |
-| Create detached project session | `new-session -d -s -c [-e] [-P -F "#{pane_id}"]` | `required MVP` | `unknown` | Must return first pane id when lifecycle/startup hooks need it. |
+| Create detached project session | `new-session -d -s -c [-e] [-P -F "#{pane_id}"]` | `required MVP` | `unknown` | Must return first pane id when lifecycle/startup hooks need it. Phase 2D mux API: `NewSession`. |
 | Attach or switch to session | `attach-session`, `switch-client [-c] -t` | `required MVP`, `focus` | `unknown` | Outside/inside mux behavior may differ on Windows Terminal. Phase 2C mux API: `SwitchClient`. |
-| App shell server | `tmux -L <socket> -f <config> new-session -A -s` | `required MVP` | `unknown` | Need socket/server equivalent or explicit unsupported capability. |
+| App shell server | `tmux -L <socket> -f <config> new-session -A -s` | `required MVP` | `unknown` | Need socket/server equivalent or explicit unsupported capability. Phase 2D mux API available: `NewSession`. |
 | Session inventory | `list-sessions -F` plus session formats | `required MVP`, `focus` | `unknown` | Requires activity, attached count, windows, ids. |
 | Window inventory | `list-windows -F` plus window formats | `required MVP`, `session-state` | `unknown` | Requires layout and window id for restore/live replay. |
 | Pane inventory | `list-panes -a/-s -F` plus pane/user-option formats | `required MVP`, `hooks/status`, `session-state` | `unknown` | Highest-risk metadata surface. |
@@ -467,15 +496,15 @@ Status values for Phase 3: `pass`, `partial`, `missing`, `unknown`.
 | Current context formats | `display-message -p -F #{pane_current_path}`, `#{pane_id}`, `#{client_tty}`, `#{client_width}`, `#{client_height}` | `interactive UI` | `unknown` | Popup and AI split depend on these. Phase 2A mux API: `DisplayMessage`, `DisplayMessageTrimmed`. |
 | Focus URI translation | `display-message -p -t %N "#S<sep>#I"` | `focus` | `unknown` | Must map pane id to session/window for toast clicks. |
 | Client inventory | `list-clients -F #{client_name} #{client_session} #{client_active_pane}` | `focus`, `hooks/status` | `unknown` | Needed for focus and reply auto-ack correctness. |
-| Pane split | `split-window -h/-v [-P -F "#{pane_id}"] [-t] [-c] <cmd>` | `required MVP` | `unknown` | MVP AI/shell split requirement. |
+| Pane split | `split-window -h/-v [-P -F "#{pane_id}"] [-t] [-c] <cmd>` | `required MVP` | `unknown` | MVP AI/shell split requirement. Phase 2D mux API: `SplitWindow`. |
 | Resize panes | `resize-pane -x/-y` | `interactive UI` | `unknown` | Can be `partial` if MVP can tolerate default split sizing. |
 | Pane title | `select-pane -T` and `#{pane_title}` | `interactive UI`, `hooks/status` | `unknown` | Used by attention and AI labels. Phase 2C mux API: `SelectPane`. |
 | Pane options | `set-option -p`, `display-message -p "#{@...}"` | `required MVP`, `hooks/status`, `session-state` | `unknown` | Needs arbitrary user option storage or replacement metadata store. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`, `ShowPaneOption`, `PaneOptionFormat`. |
-| Global/session options | `set-option -g`, `show-option -gqv`, `set-option -t -q` | `hooks/status`, `session-state` | `unknown` | Required for settings, decoration, app markers, session-state source. |
+| Global/session options | `set-option -g`, `show-option -gqv`, `set-option -t -q` | `hooks/status`, `session-state` | `unknown` | Required for settings, decoration, app markers, session-state source. Phase 2D mux APIs: `SetOption`, `ShowOption`. |
 | Generated statusbar | `status`, `status-format`, `#[range=user|...]`, `#(...)`, `#{W:...}` | `hooks/status` | `unknown` | May need a separate psmux-native status model. |
 | Statusbar mouse/key dispatch | `MouseDown1Status`, `if-shell -F`, `switch-client -T`, `run-shell` | `interactive UI`, `hooks/status` | `unknown` | Product UX should degrade explicitly if unsupported. |
-| Hooks | `set-hook`, `show-hooks`, `run-shell -b`, `#{hook_pane}` | `hooks/status` | `unknown` | Alert bell and focus hooks may be unavailable. |
-| Bell fallback | `monitor-bell`, `bell-action`, `alert-bell`, `#{pane_id}` | `hooks/status` | `unknown` | Optional but important for unknown AI tools. |
+| Hooks | `set-hook`, `show-hooks`, `run-shell -b`, `#{hook_pane}` | `hooks/status` | `unknown` | Alert bell and focus hooks may be unavailable. Phase 2D mux API: `SetHook`. |
+| Bell fallback | `monitor-bell`, `bell-action`, `alert-bell`, `#{pane_id}` | `hooks/status` | `unknown` | Optional but important for unknown AI tools. Phase 2D mux APIs: `SetOption`, `SetHook`. |
 | Capture pane | `capture-pane -p`, `capture-pane -p -J` | `capture` | `unknown` | Joined capture is separately audited from raw capture. Phase 2C mux API: `CapturePane`. |
 | Session-state replay | `new-window`, `split-window`, `rename-window`, `select-layout`, `select-pane`, `send-keys` | `session-state` | `unknown` | Likely outside psmux MVP except basic create/split. |
 | Live overwrite replay | `move-window`, `kill-window`, `select-window` | `legacy/cleanup candidate` | `unknown` | Candidate to exclude from psmux MVP and possibly remove. Phase 2C mux API covers `SelectWindow` only. |

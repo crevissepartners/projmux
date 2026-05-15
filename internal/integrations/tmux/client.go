@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
 const SwitchTargetClientEnv = "PROJMUX_SWITCH_TARGET_CLIENT"
@@ -22,8 +23,8 @@ var (
 	errCurrentSessionUnavailable  = errors.New("tmux current session is unavailable")
 	errSessionNameRequired        = errors.New("tmux session name is required")
 	errSessionCWDRequired         = errors.New("tmux session cwd is required")
-	errPopupCommandRequired       = errors.New("tmux popup command is required")
-	errPopupCloseBehaviorInvalid  = errors.New("tmux popup close behavior is invalid")
+	errPopupCommandRequired       = intmux.ErrPopupCommandRequired
+	errPopupCloseBehaviorInvalid  = intmux.ErrPopupCloseBehaviorInvalid
 	errWindowIndexRequired        = errors.New("tmux window index is required when pane index is set")
 	errSessionActivityInvalid     = errors.New("tmux session activity is invalid")
 	errSessionAttachedInvalid     = errors.New("tmux session attached flag is invalid")
@@ -184,26 +185,14 @@ type WindowPane struct {
 	Active bool
 }
 
-type PopupCloseBehavior string
+type PopupCloseBehavior = intmux.PopupCloseBehavior
 
 const (
-	PopupCloseOnExit PopupCloseBehavior = "close-on-exit"
-	PopupKeepOpen    PopupCloseBehavior = "keep-open"
+	PopupCloseOnExit = intmux.PopupCloseOnExit
+	PopupKeepOpen    = intmux.PopupKeepOpen
 )
 
-type PopupOptions struct {
-	Client        string
-	Target        string
-	Cwd           string
-	Env           map[string]string
-	NoBorder      bool
-	X             string
-	Y             string
-	Width         string
-	Height        string
-	Title         string
-	CloseBehavior PopupCloseBehavior
-}
+type PopupOptions = intmux.PopupOptions
 
 // RecentSessionSummary describes one recent tmux session with lightweight row
 // metadata for session pickers.
@@ -504,20 +493,13 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 }
 
 func (c *Client) createDetachedSession(ctx context.Context, sessionName, cwd string, env map[string]string) (string, error) {
-	args := []string{"new-session", "-d", "-s", sessionName, "-c", cwd}
-	for _, key := range sortedMapKeys(env) {
-		args = append(args, "-e", key+"="+env[key])
-	}
-	if c.lifecycle == nil {
-		_, err := c.runner.Run(ctx, "tmux", args...)
-		return "", err
-	}
-	args = append(args, "-P", "-F", "#{pane_id}")
-	output, err := c.runner.Run(ctx, "tmux", args...)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
+	return intmux.NewRunner(c.runner).NewSession(ctx, intmux.NewSessionOptions{
+		Detached:     true,
+		Session:      sessionName,
+		Cwd:          cwd,
+		Env:          env,
+		ReturnPaneID: c.lifecycle != nil,
+	})
 }
 
 func (c *Client) projectSessionEnv(cwd string) map[string]string {
@@ -800,52 +782,7 @@ func (c *Client) DisplayPopupWithOptions(ctx context.Context, command string, op
 
 // BuildDisplayPopupArgs maps structured popup options to tmux display-popup args.
 func BuildDisplayPopupArgs(command string, options PopupOptions) ([]string, error) {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return nil, errPopupCommandRequired
-	}
-
-	resolved, err := resolvePopupOptions(options)
-	if err != nil {
-		return nil, err
-	}
-
-	args := []string{"display-popup"}
-	if resolved.Client != "" {
-		args = append(args, "-c", resolved.Client)
-	}
-	if resolved.Target != "" {
-		args = append(args, "-t", resolved.Target)
-	}
-	if resolved.CloseBehavior == PopupCloseOnExit {
-		args = append(args, "-E")
-	}
-	if resolved.NoBorder {
-		args = append(args, "-B")
-	}
-	if resolved.Cwd != "" {
-		args = append(args, "-d", resolved.Cwd)
-	}
-	for _, key := range sortedEnvKeys(resolved.Env) {
-		args = append(args, "-e", key+"="+resolved.Env[key])
-	}
-	if resolved.X != "" {
-		args = append(args, "-x", resolved.X)
-	}
-	if resolved.Y != "" {
-		args = append(args, "-y", resolved.Y)
-	}
-	if resolved.Width != "" {
-		args = append(args, "-w", resolved.Width)
-	}
-	if resolved.Height != "" {
-		args = append(args, "-h", resolved.Height)
-	}
-	if resolved.Title != "" {
-		args = append(args, "-T", resolved.Title)
-	}
-	args = append(args, command)
-	return args, nil
+	return intmux.BuildDisplayPopupArgs(command, options)
 }
 
 // InsideSession reports whether the caller is already running inside tmux.
@@ -1125,66 +1062,6 @@ func exactSessionTarget(sessionName string) string {
 		return sessionName
 	}
 	return "=" + sessionName
-}
-
-func resolvePopupOptions(options PopupOptions) (PopupOptions, error) {
-	resolved := PopupOptions{
-		Client:        strings.TrimSpace(options.Client),
-		Target:        strings.TrimSpace(options.Target),
-		Cwd:           strings.TrimSpace(options.Cwd),
-		Env:           cleanPopupEnv(options.Env),
-		NoBorder:      options.NoBorder,
-		X:             strings.TrimSpace(options.X),
-		Y:             strings.TrimSpace(options.Y),
-		Width:         strings.TrimSpace(options.Width),
-		Height:        strings.TrimSpace(options.Height),
-		Title:         strings.TrimSpace(options.Title),
-		CloseBehavior: options.CloseBehavior,
-	}
-
-	if resolved.Width == "" {
-		resolved.Width = "80%"
-	}
-	if resolved.Height == "" {
-		resolved.Height = "80%"
-	}
-	if resolved.CloseBehavior == "" {
-		resolved.CloseBehavior = PopupCloseOnExit
-	}
-
-	switch resolved.CloseBehavior {
-	case PopupCloseOnExit, PopupKeepOpen:
-		return resolved, nil
-	default:
-		return PopupOptions{}, errPopupCloseBehaviorInvalid
-	}
-}
-
-func cleanPopupEnv(env map[string]string) map[string]string {
-	if len(env) == 0 {
-		return nil
-	}
-	cleaned := make(map[string]string, len(env))
-	for key, value := range env {
-		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
-		cleaned[key] = value
-	}
-	if len(cleaned) == 0 {
-		return nil
-	}
-	return cleaned
-}
-
-func sortedEnvKeys(env map[string]string) []string {
-	keys := make([]string, 0, len(env))
-	for key := range env {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func tmuxFormat(fields ...string) string {

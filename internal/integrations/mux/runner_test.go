@@ -402,6 +402,184 @@ func TestRunnerSelectWindowBuildsSocketScopedArgs(t *testing.T) {
 	}
 }
 
+func TestRunnerNewSessionBuildsDetachedSessionWithEnvAndPaneIDRead(t *testing.T) {
+	backend := &recordingBackend{out: []byte(" %7 \n")}
+	runner := NewRunner(backend)
+
+	paneID, err := runner.NewSession(context.Background(), NewSessionOptions{
+		Detached: true,
+		Session:  " workspace ",
+		Cwd:      " /repo ",
+		Env: map[string]string{
+			"ZED": "last",
+			"FOO": "bar",
+		},
+		ReturnPaneID: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSession returned error: %v", err)
+	}
+
+	wantArgs := []string{"new-session", "-d", "-s", "workspace", "-c", "/repo", "-e", "FOO=bar", "-e", "ZED=last", "-P", "-F", "#{pane_id}"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+	if paneID != "%7" {
+		t.Fatalf("NewSession paneID = %q, want %%7", paneID)
+	}
+}
+
+func TestRunnerNewSessionBuildsAttachSessionWithSocketAndConfig(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	_, err := runner.NewSession(context.Background(), NewSessionOptions{
+		Socket:     " pmx-dev ",
+		ConfigPath: " /tmp/tmux.conf ",
+		Attach:     true,
+		Session:    "dev",
+		Cwd:        "/repo",
+	})
+	if err != nil {
+		t.Fatalf("NewSession returned error: %v", err)
+	}
+
+	wantArgs := []string{"-S", "pmx-dev", "-f", "/tmp/tmux.conf", "new-session", "-A", "-s", "dev", "-c", "/repo"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
+func TestRunnerNewWindowBuildsDetachedWindowWithNameAndCommand(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	if err := runner.NewWindow(context.Background(), NewWindowOptions{
+		Detached: true,
+		Target:   " home:1 ",
+		Cwd:      "/repo",
+		Name:     "logs",
+		Command:  []string{"/bin/bash", "-l"},
+	}); err != nil {
+		t.Fatalf("NewWindow returned error: %v", err)
+	}
+
+	wantArgs := []string{"new-window", "-d", "-t", "home:1", "-c", "/repo", "-n", "logs", "/bin/bash", "-l"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
+func TestRunnerSplitWindowBuildsPaneIDReadWithDirectionCwdAndCommand(t *testing.T) {
+	backend := &recordingBackend{out: []byte("%9\n")}
+	runner := NewRunner(backend)
+
+	paneID, err := runner.SplitWindow(context.Background(), SplitWindowOptions{
+		ReturnPaneID: true,
+		Direction:    SplitRight,
+		Target:       " %7 ",
+		Cwd:          "/repo",
+		Command:      []string{"/bin/bash", "-lc", "exec codex"},
+	})
+	if err != nil {
+		t.Fatalf("SplitWindow returned error: %v", err)
+	}
+
+	wantArgs := []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%7", "-c", "/repo", "/bin/bash", "-lc", "exec codex"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+	if paneID != "%9" {
+		t.Fatalf("SplitWindow paneID = %q, want %%9", paneID)
+	}
+}
+
+func TestRunnerSplitWindowBuildsDetachedReplayStyleArgs(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	if _, err := runner.SplitWindow(context.Background(), SplitWindowOptions{
+		Detached: true,
+		Target:   "home:0.0",
+		Cwd:      "/repo",
+	}); err != nil {
+		t.Fatalf("SplitWindow returned error: %v", err)
+	}
+
+	wantArgs := []string{"split-window", "-d", "-t", "home:0.0", "-c", "/repo"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
+func TestRunnerSetHookBuildsAppendAndUnsetArgs(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := NewRunner(backend)
+
+	if err := runner.SetHook(context.Background(), SetHookOptions{
+		Global:  true,
+		Append:  true,
+		Hook:    " alert-bell ",
+		Command: `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}"'`,
+	}); err != nil {
+		t.Fatalf("SetHook append returned error: %v", err)
+	}
+
+	wantArgs := []string{"set-hook", "-ag", "alert-bell", `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}"'`}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+
+	if err := runner.SetHook(context.Background(), SetHookOptions{
+		Global: true,
+		Unset:  true,
+		Hook:   "alert-bell[2]",
+	}); err != nil {
+		t.Fatalf("SetHook unset returned error: %v", err)
+	}
+
+	wantArgs = []string{"set-hook", "-gu", "alert-bell[2]"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+}
+
+func TestRunnerSetOptionAndShowOptionBuildGlobalArgs(t *testing.T) {
+	backend := &recordingBackend{out: []byte(" on \n")}
+	runner := NewRunner(backend)
+
+	if err := runner.SetOption(context.Background(), SetOptionOptions{
+		Global: true,
+		Option: " allow-passthrough ",
+		Value:  "on",
+	}); err != nil {
+		t.Fatalf("SetOption returned error: %v", err)
+	}
+
+	wantArgs := []string{"set-option", "-g", "allow-passthrough", "on"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+
+	got, err := runner.ShowOption(context.Background(), ShowOptionOptions{
+		Global:    true,
+		Quiet:     true,
+		ValueOnly: true,
+		Option:    "@projmux_app",
+	})
+	if err != nil {
+		t.Fatalf("ShowOption returned error: %v", err)
+	}
+
+	wantArgs = []string{"show-option", "-gqv", "@projmux_app"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+	if got != "on" {
+		t.Fatalf("ShowOption = %q, want on", got)
+	}
+}
+
 func TestParseFormatRowsPinsMalformedAndTrimmingBehavior(t *testing.T) {
 	output := []byte("  one \x1f two \r\nmissing\nthree\x1ffour\x1fextra\n five\\037six \n")
 

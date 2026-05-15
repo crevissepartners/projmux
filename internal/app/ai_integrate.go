@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
 const (
@@ -95,12 +98,38 @@ func (c *aiCommand) runIntegrateTmuxBell(args []string, stdout, stderr io.Writer
 		commands = plan.removeCommands
 	}
 	for _, args := range commands {
-		if err := c.run("tmux", args...); err != nil {
+		if err := c.runTmuxBellCommand(args); err != nil {
 			return fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
 		}
 	}
 	_, err := fmt.Fprintf(stdout, "%s\n", plan.action)
 	return err
+}
+
+func (c *aiCommand) runTmuxBellCommand(args []string) error {
+	if len(args) == 4 && args[0] == "set-option" && args[1] == "-g" {
+		return c.muxRunner().SetOption(context.Background(), intmux.SetOptionOptions{
+			Global: true,
+			Option: args[2],
+			Value:  args[3],
+		})
+	}
+	if len(args) == 4 && args[0] == "set-hook" && args[1] == "-ag" {
+		return c.muxRunner().SetHook(context.Background(), intmux.SetHookOptions{
+			Global:  true,
+			Append:  true,
+			Hook:    args[2],
+			Command: args[3],
+		})
+	}
+	if len(args) == 3 && args[0] == "set-hook" && args[1] == "-gu" {
+		return c.muxRunner().SetHook(context.Background(), intmux.SetHookOptions{
+			Global: true,
+			Unset:  true,
+			Hook:   args[2],
+		})
+	}
+	return c.run("tmux", args...)
 }
 
 func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) error {

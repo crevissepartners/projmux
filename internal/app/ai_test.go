@@ -2140,6 +2140,24 @@ func TestBuildRegisterToastAppIDShortcutTargetIsCmdExe(t *testing.T) {
 	}
 }
 
+func TestAICommandMuxBackendNonOutputCommandRequiresRunner(t *testing.T) {
+	readerCalled := false
+	backend := aiCommandMuxBackend{
+		readCommand: func(context.Context, string, ...string) ([]byte, error) {
+			readerCalled = true
+			return []byte("unexpected"), nil
+		},
+	}
+
+	_, err := backend.Run(context.Background(), "tmux", "set-hook", "-ag", "alert-bell", "run-shell -b true")
+	if err == nil || err.Error() != "ai command runner is not configured" {
+		t.Fatalf("Run error = %v, want ai command runner is not configured", err)
+	}
+	if readerCalled {
+		t.Fatal("readCommand called for non-output mux command")
+	}
+}
+
 // TestBuildRegisterToastAppIDDoesNotSetToastActivatorCLSID guards against a
 // well-meaning "fix" that adds PKEY_AppUserModel_ToastActivatorCLSID
 // (pid=26) to the shortcut. Setting that property routes Windows toast
