@@ -1349,8 +1349,9 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g status-position bottom",
 		"set -g status-keys vi",
 		"set -g window-status-separator \" \"",
+		"set -g allow-rename off",
 		"set -g automatic-rename on",
-		"set -g automatic-rename-format \"#{pane_title}\"",
+		"set -g automatic-rename-format " + tmuxConfigQuote(tmuxVisiblePaneLabelFormat()),
 		"set -s user-keys[11] \"\\033[9012u\"",
 		"set -g mode-keys vi",
 		"set -sg escape-time 100",
@@ -1433,6 +1434,61 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)
+		}
+	}
+}
+
+func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
+	t.Parallel()
+
+	visibleLabel := tmuxVisiblePaneLabelFormat()
+	shellLabel := tmuxShellPaneLabelFormat()
+	paneBorder := tmuxPaneBorderFormat()
+	configText := tmuxAppConfig("/tmp/projmux", "/bin/sh", config.StatusbarDecorationOff)
+
+	wantShellLabel := "#{?#{||:#{||:#{||:#{==:#{pane_current_command},zsh},#{==:#{pane_current_command},bash}},#{||:#{==:#{pane_current_command},fish},#{==:#{pane_current_command},sh}}},#{||:#{==:#{pane_current_command},nu},#{==:#{pane_current_command},xonsh}}},#{pane_current_command},#{pane_title}}"
+	if shellLabel != wantShellLabel {
+		t.Fatalf("shell label format = %q, want %q", shellLabel, wantShellLabel)
+	}
+	if zshIndex, titleIndex := strings.Index(shellLabel, "#{==:#{pane_current_command},zsh}"), strings.Index(shellLabel, "#{pane_title}"); zshIndex < 0 || titleIndex < 0 || zshIndex > titleIndex {
+		t.Fatalf("shell label format = %q, want zsh command match before raw pane_title fallback", shellLabel)
+	}
+
+	wantVisibleLabel := "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + shellLabel + "}"
+	if visibleLabel != wantVisibleLabel {
+		t.Fatalf("visible pane label format = %q, want AI topic before shell fallback: %q", visibleLabel, wantVisibleLabel)
+	}
+	if topicIndex, shellIndex := strings.Index(visibleLabel, "#{@projmux_ai_topic}"), strings.Index(visibleLabel, shellLabel); topicIndex < 0 || shellIndex < 0 || topicIndex > shellIndex {
+		t.Fatalf("visible pane label format = %q, want @projmux_ai_topic before shell/current-command fallback", visibleLabel)
+	}
+	if !strings.Contains(paneBorder, visibleLabel) {
+		t.Fatalf("pane border format = %q, want visible label %q", paneBorder, visibleLabel)
+	}
+
+	wantPaneBorderLine := "set -g pane-border-format " + tmuxConfigQuote(paneBorder)
+	if !strings.Contains(configText, wantPaneBorderLine+"\n") {
+		t.Fatalf("app config = %q, want pane border to use exact shared visible label line %q", configText, wantPaneBorderLine)
+	}
+	wantAutomaticRenameLine := "set -g automatic-rename-format " + tmuxConfigQuote(visibleLabel)
+	if !strings.Contains(configText, wantAutomaticRenameLine+"\n") {
+		t.Fatalf("app config = %q, want automatic rename to use exact visible label helper line %q", configText, wantAutomaticRenameLine)
+	}
+	if strings.Contains(configText, "set -g automatic-rename-format \"#{pane_title}\"") {
+		t.Fatalf("app config = %q, automatic rename must not depend solely on raw pane_title", configText)
+	}
+}
+
+func TestTmuxAppShellTitlePolicyDisablesProgramWindowRename(t *testing.T) {
+	t.Parallel()
+
+	configText := tmuxAppConfig("/tmp/projmux", "/bin/sh", config.StatusbarDecorationOff)
+	for _, want := range []string{
+		"set -g allow-rename off",
+		"set -g automatic-rename on",
+		"set -g automatic-rename-format " + tmuxConfigQuote(tmuxVisiblePaneLabelFormat()),
+	} {
+		if !strings.Contains(configText, want) {
+			t.Fatalf("app config = %q, want shell title policy line %q", configText, want)
 		}
 	}
 }
