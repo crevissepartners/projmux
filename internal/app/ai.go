@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -861,20 +862,20 @@ func (c *aiCommand) runAgentSplitWithExtraArgs(mode, direction string, extraArgs
 		return c.run(commandShell, "-lc", command)
 	}
 
-	splitFlag := "-h"
+	splitDirection := intmux.SplitRight
 	if direction == "down" {
-		splitFlag = "-v"
+		splitDirection = intmux.SplitDown
 	}
-	args := []string{"split-window", "-P", "-F", "#{pane_id}", splitFlag, "-t", targetPane}
-	if contextDir != "" {
-		args = append(args, "-c", contextDir)
-	}
-	args = append(args, commandShell, "-lc", command)
-	out, err := c.read("tmux", args...)
+	paneID, err := c.muxRunner().SplitWindow(context.Background(), intmux.SplitWindowOptions{
+		ReturnPaneID: true,
+		Direction:    splitDirection,
+		Target:       targetPane,
+		Cwd:          contextDir,
+		Command:      []string{commandShell, "-lc", command},
+	})
 	if err != nil {
 		return err
 	}
-	paneID := strings.TrimSpace(string(out))
 	c.configureAIPane(paneID, mode, contextDir, title)
 	c.applySplitLayout(targetPane, direction)
 	c.startAIWatchTitle(paneID)
@@ -901,20 +902,18 @@ func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, st
 func (c *aiCommand) runShellSplit(direction string) error {
 	targetPane := c.resolveTargetPane()
 	contextDir := c.resolveContextDir()
-	splitFlag := "-h"
+	splitDirection := intmux.SplitRight
 	if direction == "down" {
-		splitFlag = "-v"
+		splitDirection = intmux.SplitDown
 	}
 
-	args := []string{"split-window", splitFlag}
-	if targetPane != "" {
-		args = append(args, "-t", targetPane)
-	}
-	if contextDir != "" {
-		args = append(args, "-c", contextDir)
-	}
-	args = append(args, loginShellCommand(defaultInteractiveShell(c.lookupEnv))...)
-	if err := c.run("tmux", args...); err != nil {
+	_, err := c.muxRunner().SplitWindow(context.Background(), intmux.SplitWindowOptions{
+		Direction: splitDirection,
+		Target:    targetPane,
+		Cwd:       contextDir,
+		Command:   loginShellCommand(defaultInteractiveShell(c.lookupEnv)),
+	})
+	if err != nil {
 		return err
 	}
 	c.applySplitLayout(targetPane, direction)
@@ -1338,16 +1337,31 @@ type aiCommandMuxBackend struct {
 }
 
 func (b aiCommandMuxBackend) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if name == "tmux" && len(args) > 0 && args[0] == "set-option" {
-		if b.runCommand == nil {
-			return nil, errors.New("ai command runner is not configured")
+	if name == "tmux" && !aiMuxCommandNeedsOutput(args) {
+		if b.runCommand != nil {
+			return nil, b.runCommand(ctx, name, args...)
 		}
-		return nil, b.runCommand(ctx, name, args...)
+		return nil, errors.New("ai command runner is not configured")
 	}
 	if b.readCommand == nil {
 		return nil, errors.New("ai command reader is not configured")
 	}
 	return b.readCommand(ctx, name, args...)
+}
+
+func aiMuxCommandNeedsOutput(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	switch args[0] {
+	case "display-message", "list-panes", "list-windows", "capture-pane", "show-option", "show-hooks":
+		return true
+	case "split-window", "new-session":
+		if slices.Contains(args[1:], "-P") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *aiCommand) readTrimmed(name string, args ...string) string {

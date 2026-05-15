@@ -2,19 +2,36 @@ package mux
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
-
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
-type PopupOptions = inttmux.PopupOptions
-type PopupCloseBehavior = inttmux.PopupCloseBehavior
+var (
+	ErrPopupCommandRequired      = errors.New("tmux popup command is required")
+	ErrPopupCloseBehaviorInvalid = errors.New("tmux popup close behavior is invalid")
+)
+
+type PopupCloseBehavior string
 
 const (
-	PopupCloseOnExit = inttmux.PopupCloseOnExit
-	PopupKeepOpen    = inttmux.PopupKeepOpen
+	PopupCloseOnExit PopupCloseBehavior = "close-on-exit"
+	PopupKeepOpen    PopupCloseBehavior = "keep-open"
 )
+
+type PopupOptions struct {
+	Client        string
+	Target        string
+	Cwd           string
+	Env           map[string]string
+	NoBorder      bool
+	X             string
+	Y             string
+	Width         string
+	Height        string
+	Title         string
+	CloseBehavior PopupCloseBehavior
+}
 
 // ClosePopupOptions describes a scoped `display-popup -C` close command.
 type ClosePopupOptions struct {
@@ -84,11 +101,59 @@ func SelectWindow(ctx context.Context, opts SelectWindowOptions) error {
 
 // DisplayPopup opens a tmux popup and executes the provided shell command.
 func (r Runner) DisplayPopup(ctx context.Context, command string, options PopupOptions) error {
-	args, err := inttmux.BuildDisplayPopupArgs(command, options)
+	args, err := BuildDisplayPopupArgs(command, options)
 	if err != nil {
 		return err
 	}
 	return r.Run(ctx, args...)
+}
+
+// BuildDisplayPopupArgs maps structured popup options to tmux display-popup args.
+func BuildDisplayPopupArgs(command string, options PopupOptions) ([]string, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil, ErrPopupCommandRequired
+	}
+
+	resolved, err := resolvePopupOptions(options)
+	if err != nil {
+		return nil, err
+	}
+
+	args := []string{"display-popup"}
+	if resolved.Client != "" {
+		args = append(args, "-c", resolved.Client)
+	}
+	if resolved.Target != "" {
+		args = append(args, "-t", resolved.Target)
+	}
+	if resolved.CloseBehavior == PopupCloseOnExit {
+		args = append(args, "-E")
+	}
+	if resolved.NoBorder {
+		args = append(args, "-B")
+	}
+	if resolved.Cwd != "" {
+		args = append(args, "-d", resolved.Cwd)
+	}
+	args = appendEnvArgs(args, resolved.Env)
+	if resolved.X != "" {
+		args = append(args, "-x", resolved.X)
+	}
+	if resolved.Y != "" {
+		args = append(args, "-y", resolved.Y)
+	}
+	if resolved.Width != "" {
+		args = append(args, "-w", resolved.Width)
+	}
+	if resolved.Height != "" {
+		args = append(args, "-h", resolved.Height)
+	}
+	if resolved.Title != "" {
+		args = append(args, "-T", resolved.Title)
+	}
+	args = append(args, command)
+	return args, nil
 }
 
 // ClosePopup closes a scoped tmux popup.
@@ -157,4 +222,55 @@ func appendSocketArgs(args []string, socket string) []string {
 		args = append(args, "-S", resolved)
 	}
 	return args
+}
+
+func resolvePopupOptions(options PopupOptions) (PopupOptions, error) {
+	resolved := PopupOptions{
+		Client:        strings.TrimSpace(options.Client),
+		Target:        strings.TrimSpace(options.Target),
+		Cwd:           strings.TrimSpace(options.Cwd),
+		Env:           cleanPopupEnv(options.Env),
+		NoBorder:      options.NoBorder,
+		X:             strings.TrimSpace(options.X),
+		Y:             strings.TrimSpace(options.Y),
+		Width:         strings.TrimSpace(options.Width),
+		Height:        strings.TrimSpace(options.Height),
+		Title:         strings.TrimSpace(options.Title),
+		CloseBehavior: options.CloseBehavior,
+	}
+
+	if resolved.Width == "" {
+		resolved.Width = "80%"
+	}
+	if resolved.Height == "" {
+		resolved.Height = "80%"
+	}
+	if resolved.CloseBehavior == "" {
+		resolved.CloseBehavior = PopupCloseOnExit
+	}
+
+	switch resolved.CloseBehavior {
+	case PopupCloseOnExit, PopupKeepOpen:
+		return resolved, nil
+	default:
+		return PopupOptions{}, ErrPopupCloseBehaviorInvalid
+	}
+}
+
+func cleanPopupEnv(env map[string]string) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+	cleaned := make(map[string]string, len(env))
+	for key, value := range env {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		cleaned[key] = value
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return cleaned
 }
