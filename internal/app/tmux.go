@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -416,12 +417,7 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	if err := os.WriteFile(marker, []byte(popupCtx.OriginPane+"\n"), 0o644); err != nil {
 		return fmt.Errorf("write tmux popup marker: %w", err)
 	}
-	displayArgs, err := inttmux.BuildDisplayPopupArgs(command, options)
-	if err != nil {
-		_ = os.Remove(marker)
-		return err
-	}
-	if _, err := c.runner.Run(ctx, "tmux", displayArgs...); err != nil {
+	if err := intmux.NewRunner(c.runner).DisplayPopup(ctx, command, intmux.PopupOptions(options)); err != nil {
 		_ = os.Remove(marker)
 		if isNoSelectionExit(err) {
 			return nil
@@ -844,15 +840,13 @@ func (c *tmuxCommand) tmuxFormat(ctx context.Context, format string) string {
 }
 
 func (c *tmuxCommand) closePopup(ctx context.Context, targetPane, targetClient string) error {
-	args := []string{"display-popup"}
-	if strings.TrimSpace(targetClient) != "" {
-		args = append(args, "-c", targetClient)
+	if c.runner == nil {
+		return errors.New("configure tmux runner: tmux runner is not configured")
 	}
-	if strings.TrimSpace(targetPane) != "" {
-		args = append(args, "-t", targetPane)
-	}
-	args = append(args, "-C")
-	if _, err := c.runner.Run(ctx, "tmux", args...); err != nil {
+	if err := intmux.NewRunner(c.runner).ClosePopup(ctx, intmux.ClosePopupOptions{
+		Client: targetClient,
+		Target: targetPane,
+	}); err != nil {
 		return fmt.Errorf("close tmux popup: %w", err)
 	}
 	return nil
