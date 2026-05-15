@@ -11,6 +11,16 @@ projmux session-state restore --dry-run [--session <name>]
 projmux session-state delete [--session <name>]
 ```
 
+Snapshots preserve source metadata, not a final display label. Window records
+keep `window_name`; pane records keep `pane_title`, recipe fields, AI topic
+metadata (`@projmux_ai_topic`), and resume metadata when available. There is no
+`display_label` field in the snapshot schema. After restore, pane borders and
+app window tabs are display-time tmux policy: the app config derives both from
+the active pane's visible label expression, while raw shell or terminal titles
+remain metadata that may change independently. Branch names continue to appear
+in the statusbar git segment; branch-based shell title overwrites are not the
+canonical Projmux window naming source.
+
 The primary inspection surface is `Projects > Sessions > State`. It shows a
 read-only overview first: latest snapshot status, named snapshots, window ->
 pane structure, cwd, recipe, and agent resume health. Mutation belongs one

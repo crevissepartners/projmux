@@ -90,6 +90,30 @@ Ephemeral runtime state:
 - popup marker files
 - current tagged selection set
 
+## Naming metadata model
+
+Projmux keeps visible naming separate from source metadata:
+
+- **Pane border label** is the primary visible pane name. In the app tmux
+  config it resolves to AI topic first, known interactive shell command
+  (`zsh`, `bash`, `fish`, `sh`, `nu`, `xonsh`) second, and raw pane title last.
+- **Window tab name** follows the active pane's visible pane label through the
+  same tmux format expression used by the pane border. Historically the app
+  config used raw `#{pane_title}` for `automatic-rename-format`, which let shell
+  OSC titles such as branch names diverge from the pane border; generated app
+  config now keeps the two aligned.
+- **Terminal / pane title** remains raw title metadata owned by the running app
+  or shell. It is still available to tmux and to Projmux features that need
+  title evidence, but it is not the canonical Projmux window naming source.
+- **AI topic** is the user-facing AI pane name. AI panes may set the pane title,
+  pane border label, window tab name, and `@projmux_ai_topic` from the topic.
+- **Git branch** belongs in the statusbar git segment. Branch-based terminal
+  title overwrites are not promoted to the primary Projmux pane or window name.
+- **Session snapshots** store source metadata such as `window_name`,
+  `pane_title`, `@projmux_ai_topic`, and agent resume metadata. They do not store
+  a resolved `display_label`; visible labels are recomputed by tmux policy at
+  display time.
+
 ## Notify queue
 
 `projmux` keeps a single JSON-backed queue of pending notifications at
