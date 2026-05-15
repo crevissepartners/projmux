@@ -64,6 +64,36 @@ metadata/read surfaces that psmux must eventually model:
 Phase 2A intentionally does not introduce list-pane/list-window, popup, focus,
 capture, lifecycle, or psmux backend behavior.
 
+## Phase 2B Pane And Window Inventory Reads
+
+Phase 2B adds semantic structured inventory helpers in
+`internal/integrations/mux` while keeping tmux as the only production backend:
+
+- `ListPanes` covers fixed-format `list-panes -F` reads for pane inventory.
+- `ListWindows` covers fixed-format `list-windows -F` reads for window
+  inventory.
+- `DisplayPaneFields` covers one-pane `display-message -p` field reads.
+- `FieldDelimiter` and `ParseFormatRows` centralize delimiter choice, escaped
+  unit-separator compatibility, malformed-row skipping, and field trimming.
+
+Converted app-layer read paths include AI hook pane matching, tmux bell pane
+field reads, `attention list`/window badge reads, and notify queue reconcile.
+The session-state typed tmux client remains on its existing capture path in this
+phase so replay schema and generation logic stay unchanged.
+
+### Phase 2B psmux Audit Capability Mapping
+
+The table below maps the tmux format variables used by Phase 2B inventory reads
+to the semantic capability that a future psmux audit/backend must provide.
+
+| Capability | Current tmux read | Format variables / options | Converted read paths |
+| --- | --- | --- | --- |
+| `ListPanes` pane identity | `list-panes -a -F` | `#{session_name}`, `#{window_id}`, `#{pane_id}`, `#{pane_active}`, `#{socket_path}` | `attention list`, notify reconcile |
+| `ListPanes` pane labels/state | `list-panes -a -F`, `list-panes -t <window> -F` | `#{pane_title}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}` | `attention list`, attention window badge, notify reconcile |
+| `ListPanes` AI hook match fields | `list-panes -a -F` | `#{pane_id}`, `#{pane_current_path}`, `#{@projmux_ai_thread_id}`, `#{@projmux_ai_session_id}` | AI hook pane matching |
+| `DisplayPaneFields` bell pane fields | `display-message -p -t <pane>` | `#{session_name}`, `#{window_id}`, `#{window_name}`, `#{pane_id}`, `#{pane_title}`, `#{pane_current_command}`, `#{socket_path}` | tmux bell ingest |
+| `ListWindows` window inventory | `list-windows -F` | `#{window_index}`, `#{window_id}`, `#{window_name}`, `#{window_layout}`, `#{window_panes}`, `#{pane_current_path}` | API available for the existing typed tmux window reads; conversion deferred outside Phase 2B app read slice |
+
 ## Classification Key
 
 | Class | Meaning |

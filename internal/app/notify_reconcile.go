@@ -9,22 +9,26 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
-// reconcileListPanesFormat is the tab/pipe-separated format used by the
-// reconcile pass. The producer key set (session, pane id, agent, topic,
-// socket) drives id construction and queue text composition; the
+// reconcileListPanesFormats are the fields used by the reconcile pass. The
+// producer key set (session, pane id, agent, topic, socket) drives id
+// construction and queue text composition; the
 // attention/ai state fields decide whether the pane should be in the queue.
-const reconcileListPanesFormat = "" +
-	"#{session_name}|" +
-	"#{window_id}|" +
-	"#{pane_id}|" +
-	"#{" + attentionStateOption + "}|" +
-	"#{" + aiPaneStateOption + "}|" +
-	"#{" + aiPaneAgentOption + "}|" +
-	"#{" + aiPaneTopicOption + "}|" +
-	"#{socket_path}"
+var reconcileListPanesFormats = []string{
+	intmux.TmuxFormat("session_name"),
+	intmux.TmuxFormat("window_id"),
+	intmux.TmuxFormat("pane_id"),
+	intmux.PaneOptionFormat(attentionStateOption),
+	intmux.PaneOptionFormat(aiPaneStateOption),
+	intmux.PaneOptionFormat(aiPaneAgentOption),
+	intmux.PaneOptionFormat(aiPaneTopicOption),
+	intmux.TmuxFormat("socket_path"),
+}
+
+var reconcileListPanesFormat = intmux.JoinFormats("|", reconcileListPanesFormats...)
 
 // reconcileResult is the summary returned by the reconcile pass.
 type reconcileResult struct {
@@ -188,32 +192,26 @@ func (c *notifyCommand) listReconcilePanes() ([]reconcilePane, error) {
 	if c == nil || c.runner == nil {
 		return nil, errors.New("tmux runner is not configured")
 	}
-	output, err := c.runner.Run(context.Background(), "tmux", "list-panes", "-a", "-F", reconcileListPanesFormat)
+	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
+		All:              true,
+		Formats:          reconcileListPanesFormats,
+		Delimiter:        "|",
+		AllowExtraFields: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes: %w", err)
 	}
-	lines := strings.Split(strings.TrimRight(string(output), "\r\n"), "\n")
-	out := make([]reconcilePane, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.Split(line, "|")
-		// The format string emits exactly 8 fields; tmux silently substitutes
-		// empty strings for unset options so a short row is malformed.
-		if len(fields) < 8 {
-			continue
-		}
+	out := make([]reconcilePane, 0, len(rows))
+	for _, fields := range rows {
 		p := reconcilePane{
-			Session:        strings.TrimSpace(fields[0]),
-			Window:         strings.TrimSpace(fields[1]),
-			Pane:           strings.TrimSpace(fields[2]),
-			AttentionState: strings.TrimSpace(fields[3]),
-			AIState:        strings.TrimSpace(fields[4]),
-			Agent:          strings.TrimSpace(fields[5]),
-			Topic:          strings.TrimSpace(fields[6]),
-			Socket:         strings.TrimSpace(fields[7]),
+			Session:        fields[0],
+			Window:         fields[1],
+			Pane:           fields[2],
+			AttentionState: fields[3],
+			AIState:        fields[4],
+			Agent:          fields[5],
+			Topic:          fields[6],
+			Socket:         fields[7],
 		}
 		if p.Session == "" || p.Pane == "" {
 			continue
