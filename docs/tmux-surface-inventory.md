@@ -274,33 +274,59 @@ Phase 3A should add an explicit mux capability contract:
 - Unsupported capabilities must fail or degrade explicitly; they must not
   silently pretend pane metadata was stored.
 
-Phase 3B should implement the psmux backend and richer app runtime beyond the
-Phase 3A0-5 shell-entry smoke:
+Phase 3B is audit-only. It should complete the public psmux parity matrix,
+record the Phase 2A-2D and Phase 3A0 smoke results, and identify the remaining
+native Windows PowerShell checks. It must not implement psmux backend/runtime
+work, sidecar metadata, session-state schema changes, replay behavior, or
+distribution work.
 
-- backend selection for new runtime/session creation only; live session
-  migration between tmux and psmux remains unsupported.
-- `source-file`, `show-options`, and `kill-server` smoke coverage.
-- core session/window/pane lifecycle: create, list, attach/switch, split, and
-  basic command launch.
-- native field reads such as session/window/pane ids, current path, current
-  command, pane title, and socket path where available.
+Phase 4 should report degraded psmux capabilities explicitly while keeping the
+MVP narrow:
 
-Phase 3C should ship degraded psmux UX for features that currently depend on
-pane user options:
-
-- AI/shell split can launch commands, but pane topic, AI state, attention ack,
-  notification dedupe, and agent resume metadata are disabled or shown as
-  unsupported.
+- pane user options are missing in psmux 3.3.4, so pane topic, AI state,
+  attention ack, notification dedupe, and agent resume metadata must be
+  disabled or shown as unsupported until a later implementation phase.
 - notify/status/session-state code paths should report missing pane metadata
   capability rather than relying on empty `@projmux_*` reads.
 - `doctor` and settings diagnostics should identify the active backend and its
   missing metadata capabilities.
 
-Phase 4 should revisit rich metadata after the psmux MVP is usable. The two
-acceptable directions are upstream psmux parity for pane-scoped custom user
-options, or a projmux-owned sidecar pane metadata store with reconcile,
-locking, stale-record cleanup, and pane-id reuse protection. Sidecar metadata
-is intentionally not part of the psmux MVP.
+### Phase 4 MVP Subset
+
+This section is a Phase 3B scope boundary only; Phase 4 implementation remains
+out of scope for the audit branch.
+
+Phase 4 should implement only the smallest psmux-capable product slice needed
+to prove native Windows project navigation and basic AI pane launch:
+
+- app shell launch on the psmux backend with explicit degraded capability
+  reporting.
+- project session create, attach/open, and switch.
+- right/down split plus Codex/Claude pane launch when command-tail split works.
+- basic pane identity/context reads: pane id, window id, session name, current
+  path, current command, title, and socket path where available.
+- global/session options via `set-option` and `show-options`; pane-scoped
+  custom `@projmux_*` options stay degraded/unsupported.
+- minimal generated status line: app marker, basic status row, and
+  PowerShell-rendered callbacks only.
+- minimal project switch sidebar: open the sidebar, list projects/sessions,
+  select a project/session, then open or switch to it.
+- basic preview if the psmux surface can provide it cheaply; no preview is an
+  acceptable MVP fallback.
+- a psmux-capable popup or native picker path for the minimal project switch
+  sidebar only.
+
+Phase 4 explicitly excludes notify sidebar work, rich sidebar preview, pane
+metadata badges, AI pane topic/state/notify/session-state resume metadata
+recovery, statusbar mouse integration, advanced focus/ack/consume semantics,
+full tmux sidebar parity, full hook parity, session-state replay,
+session-state schema changes, sidecar metadata storage, pane option workaround
+implementation, and Phase 5 packaging/distribution work.
+
+Rich metadata should be revisited only after the psmux MVP is usable. The two
+acceptable later directions are upstream psmux parity for pane-scoped custom
+user options, or a projmux-owned sidecar pane metadata store with reconcile,
+locking, stale-record cleanup, and pane-id reuse protection.
 
 ## Classification Key
 
@@ -626,37 +652,120 @@ raw tmux calls are centralized:
 
 ## psmux Parity Audit
 
-Phase 3 can use this section as the initial matrix location. If the table grows
-too large, split it to `docs/psmux-parity-audit.md` and leave a link here.
+Phase 3B owns audit, matrix, and documentation only. It records the current
+psmux parity result after Phase 2A-2D and Phase 3A0. It must not implement
+psmux backend/runtime work, session-state replay or schema changes, sidecar
+metadata, or Phase 5 distribution.
+
+Observed private audit environment: Windows Terminal plus PowerShell, psmux
+3.3.4. Public docs should keep the reproducible command shape and status
+classification here; raw command output belongs in private audit notes.
 
 Status values for Phase 3: `pass`, `partial`, `missing`, `unknown`.
 
 | Capability | tmux command / format surface | Current class | psmux status | Audit notes |
 | --- | --- | --- | --- | --- |
-| Create detached project session | `new-session -d -s -c [-e] [-P -F "#{pane_id}"]` | `required MVP` | `unknown` | Must return first pane id when lifecycle/startup hooks need it. Phase 2D mux API: `NewSession`. |
-| Attach or switch to session | `attach-session`, `switch-client [-c] -t` | `required MVP`, `focus` | `unknown` | Outside/inside mux behavior may differ on Windows Terminal. Phase 2C mux API: `SwitchClient`. |
-| App shell server | `tmux -L <socket> -f <config> new-session -A -s` / `psmux -L <socket> -f <config> new-session -A -s` | `required MVP` | `partial` | Phase 3A0-5 implements the native Windows shell-entry path with a minimal generated psmux config. Native Windows PowerShell smoke still needs manual confirmation; richer app runtime remains Phase 3B+. Phase 2D mux API available: `NewSession`. |
-| Session inventory | `list-sessions -F` plus session formats | `required MVP`, `focus` | `unknown` | Requires activity, attached count, windows, ids. |
-| Window inventory | `list-windows -F` plus window formats | `required MVP`, `session-state` | `unknown` | Requires layout and window id for restore/live replay. |
-| Pane inventory | `list-panes -a/-s -F` plus pane/user-option formats | `required MVP`, `hooks/status`, `session-state` | `unknown` | Highest-risk metadata surface. |
-| Popup launch | `display-popup` with target/client/env/cwd/size/border/title/close flags | `interactive UI` | `unknown` | Roadmap already flags popup as a major risk. Phase 2C mux API: `DisplayPopup`. |
-| Popup close | `display-popup -C` | `interactive UI` | `unknown` | Needed for toggle semantics. Phase 2C mux API: `ClosePopup`. |
-| Current context formats | `display-message -p -F #{pane_current_path}`, `#{pane_id}`, `#{client_tty}`, `#{client_width}`, `#{client_height}` | `interactive UI` | `unknown` | Popup and AI split depend on these. Phase 2A mux API: `DisplayMessage`, `DisplayMessageTrimmed`. |
-| Focus URI translation | `display-message -p -t %N "#S<sep>#I"` | `focus` | `unknown` | Must map pane id to session/window for toast clicks. |
-| Client inventory | `list-clients -F #{client_name} #{client_session} #{client_active_pane}` | `focus`, `hooks/status` | `unknown` | Needed for focus and reply auto-ack correctness. |
-| Pane split | `split-window -h/-v [-P -F "#{pane_id}"] [-t] [-c] <cmd>` | `required MVP` | `unknown` | MVP AI/shell split requirement. Phase 2D mux API: `SplitWindow`. |
-| Resize panes | `resize-pane -x/-y` | `interactive UI` | `unknown` | Can be `partial` if MVP can tolerate default split sizing. |
-| Pane title | `select-pane -T` and `#{pane_title}` | `interactive UI`, `hooks/status` | `unknown` | Used by attention and AI labels. Phase 2C mux API: `SelectPane`. |
-| Pane options | `set-option -p`, `display-message -p "#{@...}"` | `required MVP`, `hooks/status`, `session-state` | `unknown` | Needs arbitrary user option storage or replacement metadata store. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`, `ShowPaneOption`, `PaneOptionFormat`. |
-| Global/session options | `set-option -g`, `show-options -gqv`, `set-option -t -q` | `hooks/status`, `session-state` | `unknown` | Required for settings, decoration, app markers, session-state source. Phase 2D mux APIs: `SetOption`, `ShowOption`. |
-| Generated statusbar | `status`, `status-format`, `#[range=user|...]`, `#(...)`, `#{W:...}` | `hooks/status` | `partial` | Phase 3A0-5 generated psmux config has only a basic status row and one PowerShell-rendered `status git` callback. Full statusbar ranges, mouse dispatch, and HUD rows remain future scope. |
-| Statusbar mouse/key dispatch | `MouseDown1Status`, `if-shell -F`, `switch-client -T`, `run-shell` | `interactive UI`, `hooks/status` | `unknown` | Product UX should degrade explicitly if unsupported. |
-| Hooks | `set-hook`, `show-hooks`, `run-shell -b`, `#{hook_pane}` | `hooks/status` | `unknown` | Alert bell and focus hooks may be unavailable. Phase 2D mux API: `SetHook`. |
-| Bell fallback | `monitor-bell`, `bell-action`, `alert-bell`, `#{pane_id}` | `hooks/status` | `unknown` | Optional but important for unknown AI tools. Phase 2D mux APIs: `SetOption`, `SetHook`. |
-| Capture pane | `capture-pane -p`, `capture-pane -p -J` | `capture` | `unknown` | Joined capture is separately audited from raw capture. Phase 2C mux API: `CapturePane`. |
-| Session-state replay | `new-window`, `split-window`, `rename-window`, `select-layout`, `select-pane`, `send-keys` | `session-state` | `unknown` | Likely outside psmux MVP except basic create/split. |
-| Live overwrite replay | `move-window`, `kill-window`, `select-window` | `legacy/cleanup candidate` | `unknown` | Candidate to exclude from psmux MVP and possibly remove. Phase 2C mux API covers `SelectWindow` only. |
-| Config reload | `source-file`, generated config file semantics | `e2e/support` | `unknown` | Required only if psmux has config-file parity. |
-| Clipboard helper | `set-buffer -w` | `interactive UI` | `unknown` | Settings copy helper can fall back to OS clipboard later. |
-| Socket targeting | `-L <socket>`, `-S <socket>` | `required MVP`, `focus` | `unknown` | psmux equivalent may be named server/session context. Phase 2C focus APIs carry `-S <socket>`. |
-| Quoting/process launch | POSIX shell wrappers, tmux config quoting, `run-shell` | `required MVP`, `interactive UI` | `unknown` | Phase 3 must audit PowerShell-native quoting separately. |
+| Create detached project session | `new-session -d -s -c [-e] [-P -F "#{pane_id}"]` | `required MVP` | `pass` | Detached create, cwd, and `-P -F "#{pane_id}"` return passed. Phase 2D mux API: `NewSession`. |
+| Attach or switch to session | `attach-session`, `switch-client [-c] -t` | `required MVP`, `focus` | `partial` | Basic target selection passed in smoke. Complex cross-client and cross-session focus in Windows Terminal remains follow-up; use the `switch-client` line in the native smoke block. Phase 2C mux API: `SwitchClient`. |
+| App shell server | `tmux -L <socket> -f <config> new-session -A -s` / `psmux -L <socket> -f <config> new-session -A -s` | `required MVP` | `partial` | Phase 3A0-5 implements the native Windows shell-entry path with a minimal generated psmux config. User-run native PowerShell shell smoke is still pending; run the app shell lines in the native smoke block. Phase 2D mux API: `NewSession`. |
+| Session inventory | `list-sessions -F` plus session formats | `required MVP`, `focus` | `unknown` | No Phase 3B result has been recorded for full session activity, attached count, windows, and ids. Run the `list-sessions` line in the native smoke block. |
+| Window inventory | `list-windows -F` plus window formats | `required MVP`, `session-state` | `partial` | Basic index, id, name, and pane-count passed. Layout was not fully audited and matters only if session restore enters psmux scope. |
+| Pane inventory | `list-panes -a/-s -F` plus pane/user-option formats | `required MVP`, `hooks/status`, `session-state` | `partial` | Core fields passed. Custom `@projmux_*` fields are empty because pane user options are missing. |
+| Popup launch | `display-popup` with target/client/env/cwd/size/border/title/close flags | `interactive UI` | `partial` | Command returned no error. Visual rendering, focus behavior, close semantics, and option coverage need user visual confirmation; run the popup lines in the native smoke block. Phase 2C mux API: `DisplayPopup`. |
+| Popup close | `display-popup -C` | `interactive UI` | `partial` | Command returned no error. Toggle/close semantics need user visual confirmation with the popup lines in the native smoke block. Phase 2C mux API: `ClosePopup`. |
+| Current context formats | `display-message -p -F #{pane_current_path}`, `#{pane_id}`, `#{session_name}`, `#{pane_current_command}`, `#{pane_title}` | `interactive UI` | `pass` | Target-scoped `DisplayMessage` and `DisplayMessageTrimmed` passed for pane id, session name, current path, current command, and title. Phase 2A mux APIs: `DisplayMessage`, `DisplayMessageTrimmed`. |
+| Display pane fields | `display-message -p -t <pane> "#{pane_id}|#{window_id}|#{socket_path}"` | `focus` | `pass` | Pane id, window id, and socket path tuple passed. |
+| Focus URI translation | `display-message -p -t %N "#S<sep>#I"` | `focus` | `unknown` | Pane-to-session/window mapping for toast click focus was not fully recorded. Run the target-scoped `display-message` lines in the native smoke block before enabling focus UX. |
+| Client inventory | `list-clients -F #{client_name} #{client_session} #{client_active_pane}` | `focus`, `hooks/status` | `unknown` | Needed for focus and reply auto-ack correctness. Run from inside an attached psmux client with the `list-clients` line in the native smoke block. |
+| New window | `new-window [-d] [-n] [-c] [-P -F "#{pane_id}"] [command...]` | `required MVP`, `session-state` | `pass` | Name and cwd create passed. Command tail remains follow-up only if session-state restore enters psmux scope. |
+| Pane split | `split-window -h/-v [-P -F "#{pane_id}"] [-t] [-c] <cmd>` | `required MVP` | `partial` | Horizontal split with pane-id return, cwd, and command tail passed. Vertical split remains a follow-up smoke if product scope requires it. Phase 2D mux API: `SplitWindow`. |
+| Resize panes | `resize-pane -x/-y` | `interactive UI` | `unknown` | Not recorded in Phase 3B. This can remain outside the MVP if default popup/native picker sizing is acceptable; run the `resize-pane` line in the native smoke block before adding resize-dependent UX. |
+| Pane title | `select-pane -T` and `#{pane_title}` | `interactive UI`, `hooks/status` | `pass` | Basic `SelectPane` target selection and title format read passed. Phase 2C mux API: `SelectPane`. |
+| Pane options | `set-option -p`, `display-message -p "#{@...}"`, `show-options -p` | `required MVP`, `hooks/status`, `session-state` | `missing` | `set-option -p` is accepted, but custom `@projmux_audit_key` is not visible through `display-message "#{@...}"` or `show-options -p`. Classify `SetPaneOption`, `UnsetPaneOption`, and `ShowPaneOption` as degraded/unsupported for Phase 4, not a Phase 4 blocker. |
+| Global/session set options | `set-option -g`, `set-option -t -q` | `hooks/status`, `session-state` | `pass` | Global and session custom option writes passed. Phase 2D mux API: `SetOption`. |
+| Global/session show options | `show-options [-g] [-q] [-v] [-t <target>] <option>` | `hooks/status`, `session-state` | `partial` | Plural `show-options` works for global/session reads. psmux 3.3.4 lacks tmux's singular `show-option` alias, so adapters and shared surfaces must use `show-options` plural. Phase 2D mux API: `ShowOption`. |
+| Generated statusbar | `status`, `status-format`, `#[range=user|...]`, `#(...)`, `#{W:...}` | `hooks/status` | `partial` | Phase 3A0-5 covers a basic status row and PowerShell-rendered `status git` callback only. Full status ranges, mouse dispatch, and HUD rows remain future scope. |
+| Statusbar mouse/key dispatch | `MouseDown1Status`, `if-shell -F`, `switch-client -T`, `run-shell` | `interactive UI`, `hooks/status` | `unknown` | Not recorded. Defer from Phase 4 MVP; run targeted statusbar smoke only before implementing mouse/key dispatch. |
+| Hooks | `set-hook`, `show-hooks`, `run-shell -b`, `#{hook_pane}` | `hooks/status` | `partial` | Custom hook set/show/unset passed. Real Projmux hook names, events, payload execution, and hook format vars need targeted follow-up only if hooks enter psmux scope. Phase 2D mux API: `SetHook`. |
+| Bell fallback | `monitor-bell`, `bell-action`, `alert-bell`, `#{pane_id}` | `hooks/status` | `unknown` | Not recorded. Defer from Phase 4 MVP; run targeted bell smoke before supporting unknown AI-tool notification fallback. Phase 2D mux APIs: `SetOption`, `SetHook`. |
+| Capture pane | `capture-pane -p`, `capture-pane -p -J` | `capture` | `partial` | Raw capture passed. Joined `-J` needs explicit follow-up smoke if AI title inference enters psmux scope. Phase 2C mux API: `CapturePane`. |
+| Select window | `select-window -t <session>:<window>` | `focus`, `session-state` | `pass` | Basic target selection passed. Complex cross-client focus remains follow-up. Phase 2C mux API: `SelectWindow`. |
+| Session-state replay | `new-window`, `split-window`, `rename-window`, `select-layout`, `select-pane`, `send-keys` | `session-state` | `unknown` | Out of Phase 3B and Phase 4 MVP scope except the already-audited create/split primitives. Run targeted replay smoke only if session restore later enters psmux scope. |
+| Live overwrite replay | `move-window`, `kill-window`, `select-window` | `legacy/cleanup candidate` | `unknown` | Out of Phase 3B and Phase 4 MVP scope; candidate to exclude from psmux and possibly remove. Phase 2C mux API covers `SelectWindow` only. |
+| Config reload | `source-file`, generated config file semantics | `e2e/support` | `unknown` | No Phase 3B result has been recorded. Run `psmux -L $Socket source-file $Config` from the native smoke block before depending on config reload parity. |
+| Clipboard helper | `set-buffer -w` | `interactive UI` | `unknown` | Not recorded. Settings copy helper can fall back to OS clipboard later; run a targeted `set-buffer -w` smoke before adding psmux clipboard UX. |
+| Socket targeting | `-L <socket>`, `-S <socket>` | `required MVP`, `focus` | `partial` | The app shell path and psmux `-L` smoke shape are represented, but user-run shell smoke is still pending. Keep `-S` focus socket behavior as follow-up. |
+| Quoting/process launch | PowerShell callbacks, generated config quoting, child command launch | `required MVP`, `interactive UI` | `partial` | Phase 3A0-5 uses PowerShell-native generated callback rendering. The native user-run shell smoke with difficult characters remains pending; use the app shell lines in the native smoke block. |
+
+Remaining native Windows PowerShell smoke block:
+
+```powershell
+# Run from the repo root in Windows PowerShell with Go and psmux 3.3.4 on PATH.
+# Keep raw command output in private audit notes, not this public document.
+$ErrorActionPreference = 'Stop'
+$Socket = 'projmux-audit'
+$Session = 'projmux-audit'
+$Config = Join-Path $env:TEMP 'projmux-psmux-audit.conf'
+$ShellConfig = Join-Path $env:TEMP 'projmux-psmux-shell-smoke.conf'
+$Projmux = Join-Path $env:TEMP 'projmux.exe'
+$Repo = (Get-Location).Path
+
+go build -o $Projmux .\cmd\projmux
+psmux -L $Socket kill-server 2>$null
+
+Set-Content -Encoding UTF8 -Path $Config -Value @"
+set -g @projmux_app 1
+set -g status on
+set -g status-left 'projmux '
+set -g status-right '#(& '$($Projmux -replace "'", "''")' 'status' 'git' '#{pane_current_path}')'
+"@
+
+psmux -L $Socket -f $Config new-session -d -s $Session -c $Repo -P -F '#{pane_id}'
+psmux -L $Socket source-file $Config
+psmux -L $Socket list-sessions -F '#{session_name}|#{session_id}|#{session_windows}|#{session_attached}'
+psmux -L $Socket list-windows -t $Session -F '#{window_index}|#{window_id}|#{window_name}|#{window_panes}|#{window_layout}'
+psmux -L $Socket list-panes -a -F '#{session_name}|#{window_id}|#{pane_id}|#{pane_current_path}|#{pane_current_command}|#{pane_title}|#{@projmux_audit_key}'
+psmux -L $Socket display-message -p -t "$Session:0.0" '#{pane_id}|#{window_id}|#{socket_path}|#{session_name}|#{pane_current_path}|#{pane_current_command}|#{pane_title}'
+
+psmux -L $Socket set-option -g '@projmux_audit_global' ok
+psmux -L $Socket show-options -gqv '@projmux_audit_global'
+psmux -L $Socket set-option -t $Session -q '@projmux_audit_session' ok
+psmux -L $Socket show-options -t $Session -qv '@projmux_audit_session'
+psmux -L $Socket show-option -gqv '@projmux_audit_global'
+
+psmux -L $Socket set-option -p -t "$Session:0.0" '@projmux_audit_key' ok
+psmux -L $Socket display-message -p -t "$Session:0.0" '#{@projmux_audit_key}'
+psmux -L $Socket show-options -p -t "$Session:0.0"
+
+psmux -L $Socket new-window -d -t $Session -n audit-window -c $Repo -P -F '#{pane_id}'
+psmux -L $Socket split-window -h -d -t "$Session:0.0" -c $Repo -P -F '#{pane_id}' powershell -NoLogo -NoExit
+psmux -L $Socket split-window -v -d -t "$Session:0.0" -c $Repo -P -F '#{pane_id}' powershell -NoLogo -NoExit
+psmux -L $Socket select-window -t "$Session:1"
+psmux -L $Socket select-pane -t "$Session:0.0"
+psmux -L $Socket select-pane -T 'audit title' -t "$Session:0.0"
+psmux -L $Socket resize-pane -t "$Session:0.0" -x 100 -y 30
+
+psmux -L $Socket capture-pane -p -t "$Session:0.0"
+psmux -L $Socket capture-pane -p -J -S -80 -t "$Session:0.0"
+
+psmux -L $Socket set-hook -g 'projmux-audit-hook' 'display-message audit-hook'
+psmux -L $Socket show-hooks -g 'projmux-audit-hook'
+psmux -L $Socket set-hook -gu 'projmux-audit-hook'
+
+psmux -L $Socket display-popup -t "$Session:0.0" -T 'projmux audit popup' -w 60 -h 10 -E powershell -NoProfile -Command 'Write-Host "confirm popup rendering, focus, and close"; Start-Sleep -Seconds 3'
+psmux -L $Socket display-popup -C
+
+# Run these from inside an attached psmux client before enabling focus UX:
+psmux -L $Socket list-clients -F '#{client_name}|#{client_session}|#{client_active_pane}'
+psmux -L $Socket switch-client -t $Session
+
+# Run this app-shell smoke separately because it opens the interactive app path.
+$env:PROJMUX_WELCOME = '0'
+& $Projmux shell --config $ShellConfig --session 'projmux shell audit chars '' " ` $ & | < > ; ( ) { } ^ % !' --bin $Projmux
+psmux -L projmux list-sessions
+psmux -L projmux show-options -gqv '@projmux_app'
+psmux -L projmux kill-server
+Remove-Item Env:\PROJMUX_WELCOME -ErrorAction SilentlyContinue
+
+psmux -L $Socket kill-server
+```
