@@ -252,7 +252,7 @@ func TestAttentionWindowPrefersBusyBadge(t *testing.T) {
 
 	runner := &recordingAttentionRunner{
 		outputs: map[string][]byte{
-			"tmux list-panes -t @1 -F #{pane_title}\t#{@projmux_attention_state}": []byte("plain\treply\n⠋ working\t\n"),
+			"tmux list-panes -t @1 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}": []byte("plain\treply" + attentionListSeparator + "reply\n⠋ working" + attentionListSeparator + "\n"),
 		},
 	}
 	cmd := &attentionCommand{runner: runner}
@@ -271,7 +271,7 @@ func TestAttentionWindowShowsReplyBadge(t *testing.T) {
 
 	runner := &recordingAttentionRunner{
 		outputs: map[string][]byte{
-			"tmux list-panes -t @2 -F #{pane_title}\t#{@projmux_attention_state}": []byte("plain\t\n✳ ready\t\n"),
+			"tmux list-panes -t @2 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}": []byte("plain" + attentionListSeparator + "\n✳ ready" + attentionListSeparator + "\n"),
 		},
 	}
 	cmd := &attentionCommand{runner: runner}

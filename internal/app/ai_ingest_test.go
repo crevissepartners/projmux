@@ -572,20 +572,6 @@ func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 	}
 }
 
-func TestSplitTmuxUnitFieldsAcceptsRawAndEscapedSeparators(t *testing.T) {
-	for name, raw := range map[string]string{
-		"raw":     "one\x1ftwo\x1fthree",
-		"escaped": "one\\037two\\037three",
-	} {
-		t.Run(name, func(t *testing.T) {
-			got := splitTmuxUnitFields(raw)
-			if !reflect.DeepEqual(got, []string{"one", "two", "three"}) {
-				t.Fatalf("splitTmuxUnitFields(%q) = %#v", raw, got)
-			}
-		})
-	}
-}
-
 func TestIngestBellRequiresPaneFlag(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
 	err := cmd.Run([]string{"ingest", "bell"}, &bytes.Buffer{}, &bytes.Buffer{})

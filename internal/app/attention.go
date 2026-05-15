@@ -23,18 +23,23 @@ const (
 )
 
 const (
-	attentionListSeparator = "\x1f"
-	attentionListFormat    = "#{session_name}" + attentionListSeparator +
-		"#{window_id}" + attentionListSeparator +
-		"#{pane_id}" + attentionListSeparator +
-		"#{pane_active}" + attentionListSeparator +
-		"#{pane_title}" + attentionListSeparator +
-		"#{" + attentionStateOption + "}" + attentionListSeparator +
-		"#{" + aiPaneStateOption + "}" + attentionListSeparator +
-		"#{" + aiPaneAgentOption + "}" + attentionListSeparator +
-		"#{" + aiPaneTopicOption + "}" + attentionListSeparator +
-		"#{socket_path}"
+	attentionListSeparator = intmux.FieldDelimiter
 )
+
+var attentionListFormats = []string{
+	intmux.TmuxFormat("session_name"),
+	intmux.TmuxFormat("window_id"),
+	intmux.TmuxFormat("pane_id"),
+	intmux.TmuxFormat("pane_active"),
+	intmux.TmuxFormat("pane_title"),
+	intmux.PaneOptionFormat(attentionStateOption),
+	intmux.PaneOptionFormat(aiPaneStateOption),
+	intmux.PaneOptionFormat(aiPaneAgentOption),
+	intmux.PaneOptionFormat(aiPaneTopicOption),
+	intmux.TmuxFormat("socket_path"),
+}
+
+var attentionListFormat = intmux.JoinFormats(attentionListSeparator, attentionListFormats...)
 
 type attentionCommand struct {
 	runner   tmuxRunner
@@ -320,62 +325,64 @@ func (c *attentionCommand) paneOption(paneID, option string) string {
 }
 
 func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindowRow {
-	output, err := c.run("tmux", "list-panes", "-t", windowID, "-F", "#{pane_title}\t#{@projmux_attention_state}")
+	if c == nil || c.runner == nil {
+		return nil
+	}
+	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
+		Target: windowID,
+		Formats: []string{
+			intmux.TmuxFormat("pane_title"),
+			intmux.PaneOptionFormat(attentionStateOption),
+		},
+	})
 	if err != nil {
 		return nil
 	}
 
-	lines := strings.Split(strings.TrimRight(string(output), "\r\n"), "\n")
-	rows := make([]attentionWindowRow, 0, len(lines))
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.SplitN(line, "\t", 2)
-		row := attentionWindowRow{Title: fields[0]}
-		if len(fields) == 2 {
-			row.State = strings.TrimSpace(fields[1])
-		}
-		rows = append(rows, row)
+	out := make([]attentionWindowRow, 0, len(rows))
+	for _, fields := range rows {
+		out = append(out, attentionWindowRow{
+			Title: fields[0],
+			State: fields[1],
+		})
 	}
-	return rows
+	return out
 }
 
 func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
-	output, err := c.run("tmux", "list-panes", "-a", "-F", attentionListFormat)
+	if c == nil || c.runner == nil {
+		return nil, errors.New("attention tmux runner is not configured")
+	}
+	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
+		All:              true,
+		Formats:          attentionListFormats,
+		Delimiter:        attentionListSeparator,
+		AllowExtraFields: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes: %w", err)
 	}
 
-	lines := strings.Split(strings.TrimRight(string(output), "\r\n"), "\n")
-	rows := make([]attentionPaneRow, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.Split(line, attentionListSeparator)
-		if len(fields) < 10 {
-			continue
-		}
+	out := make([]attentionPaneRow, 0, len(rows))
+	for _, fields := range rows {
 		row := attentionPaneRow{
-			Session:        strings.TrimSpace(fields[0]),
-			Window:         strings.TrimSpace(fields[1]),
-			Pane:           strings.TrimSpace(fields[2]),
-			Active:         strings.TrimSpace(fields[3]) == "1",
-			Title:          strings.TrimSpace(fields[4]),
-			AttentionState: strings.TrimSpace(fields[5]),
-			AIState:        strings.TrimSpace(fields[6]),
-			Agent:          strings.TrimSpace(fields[7]),
-			Topic:          strings.TrimSpace(fields[8]),
-			Socket:         strings.TrimSpace(fields[9]),
+			Session:        fields[0],
+			Window:         fields[1],
+			Pane:           fields[2],
+			Active:         fields[3] == "1",
+			Title:          fields[4],
+			AttentionState: fields[5],
+			AIState:        fields[6],
+			Agent:          fields[7],
+			Topic:          fields[8],
+			Socket:         fields[9],
 		}
 		if row.Session == "" || row.Pane == "" {
 			continue
 		}
-		rows = append(rows, row)
+		out = append(out, row)
 	}
-	return rows, nil
+	return out, nil
 }
 
 func filterAttentionRows(rows []attentionPaneRow) []attentionPaneRow {

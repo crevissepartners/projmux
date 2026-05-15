@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -15,18 +16,38 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
-const aiIngestListPanesFormat = "#{pane_id}\x1f#{pane_current_path}\x1f#{" + aiPaneThreadIDOption + "}\x1f#{" + aiPaneSessionIDOption + "}"
 const claudeTranscriptTailLimit = 256 * 1024
 const (
 	aiBellDedupeOption = "@projmux_ai_bell_notified_at"
 	aiBellDedupeWindow = 5 * time.Second
-	aiBellPaneFormat   = "#{session_name}\x1f#{window_id}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_title}\x1f#{pane_current_command}\x1f#{socket_path}"
 	aiIngestLogName    = "ai-ingest.log"
 	aiIngestLogMaxSize = 1024 * 1024
 	aiIngestLogRetain  = 512 * 1024
 )
+
+var aiIngestListPanesFormats = []string{
+	intmux.TmuxFormat("pane_id"),
+	intmux.TmuxFormat("pane_current_path"),
+	intmux.PaneOptionFormat(aiPaneThreadIDOption),
+	intmux.PaneOptionFormat(aiPaneSessionIDOption),
+}
+
+var aiIngestListPanesFormat = intmux.JoinFormats(intmux.FieldDelimiter, aiIngestListPanesFormats...)
+
+var aiBellPaneFormats = []string{
+	intmux.TmuxFormat("session_name"),
+	intmux.TmuxFormat("window_id"),
+	intmux.TmuxFormat("window_name"),
+	intmux.TmuxFormat("pane_id"),
+	intmux.TmuxFormat("pane_title"),
+	intmux.TmuxFormat("pane_current_command"),
+	intmux.TmuxFormat("socket_path"),
+}
+
+var aiBellPaneFormat = intmux.JoinFormats(intmux.FieldDelimiter, aiBellPaneFormats...)
 
 type codexHookPayload struct {
 	EventName      string
@@ -299,22 +320,18 @@ func (c *aiCommand) aiNotifyStore() (notifyStore, error) {
 }
 
 func (c *aiCommand) readBellPaneInfo(paneID string) (bellPaneInfo, bool) {
-	out := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, aiBellPaneFormat)
-	if out == "" {
-		return bellPaneInfo{}, false
-	}
-	fields := splitTmuxUnitFields(out)
-	if len(fields) < 7 {
+	fields, err := c.muxRunner().DisplayPaneFields(context.Background(), paneID, aiBellPaneFormats...)
+	if err != nil || len(fields) < 7 {
 		return bellPaneInfo{}, false
 	}
 	info := bellPaneInfo{
-		Session: strings.TrimSpace(fields[0]),
-		Window:  strings.TrimSpace(fields[1]),
-		WinName: strings.TrimSpace(fields[2]),
-		Pane:    strings.TrimSpace(fields[3]),
-		Title:   strings.TrimSpace(fields[4]),
-		Command: strings.TrimSpace(fields[5]),
-		Socket:  strings.TrimSpace(fields[6]),
+		Session: fields[0],
+		Window:  fields[1],
+		WinName: fields[2],
+		Pane:    fields[3],
+		Title:   fields[4],
+		Command: fields[5],
+		Socket:  fields[6],
 	}
 	if info.Pane == "" {
 		info.Pane = paneID
@@ -1103,36 +1120,27 @@ func (c *aiCommand) matchAIPane(in aiPaneMatchInput) string {
 }
 
 func (c *aiCommand) listAIPaneMatchRows() []aiPaneMatchRow {
-	out, err := c.read("tmux", "list-panes", "-a", "-F", aiIngestListPanesFormat)
+	rows, err := c.muxRunner().ListPanes(context.Background(), intmux.ListPanesOptions{
+		All:     true,
+		Formats: aiIngestListPanesFormats,
+	})
 	if err != nil {
 		return nil
 	}
-	rows := strings.Split(strings.TrimSpace(string(out)), "\n")
 	matches := make([]aiPaneMatchRow, 0, len(rows))
-	for _, raw := range rows {
-		fields := splitTmuxUnitFields(raw)
-		if len(fields) != 4 {
-			continue
-		}
-		paneID := strings.TrimSpace(fields[0])
+	for _, fields := range rows {
+		paneID := fields[0]
 		if paneID == "" {
 			continue
 		}
 		matches = append(matches, aiPaneMatchRow{
 			PaneID:    paneID,
-			CWD:       strings.TrimSpace(fields[1]),
-			ThreadID:  strings.TrimSpace(fields[2]),
-			SessionID: strings.TrimSpace(fields[3]),
+			CWD:       fields[1],
+			ThreadID:  fields[2],
+			SessionID: fields[3],
 		})
 	}
 	return matches
-}
-
-func splitTmuxUnitFields(raw string) []string {
-	if strings.Contains(raw, "\x1f") {
-		return strings.Split(raw, "\x1f")
-	}
-	return strings.Split(raw, "\\037")
 }
 
 func cleanMatchPath(path string) string {

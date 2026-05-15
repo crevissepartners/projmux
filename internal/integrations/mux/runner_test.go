@@ -172,3 +172,108 @@ func TestJoinFormatsKeepsCallerDelimiter(t *testing.T) {
 		t.Fatalf("JoinFormats = %q, want %q", got, want)
 	}
 }
+
+func TestRunnerListPanesBuildsStructuredInventoryRead(t *testing.T) {
+	backend := &recordingBackend{out: []byte(" dev \x1f %3 \x1f reply \nshort\n")}
+	runner := NewRunner(backend)
+
+	rows, err := runner.ListPanes(context.Background(), ListPanesOptions{
+		All: true,
+		Formats: []string{
+			TmuxFormat("session_name"),
+			TmuxFormat("pane_id"),
+			PaneOptionFormat("@projmux_attention_state"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("ListPanes returned error: %v", err)
+	}
+
+	wantArgs := []string{
+		"list-panes",
+		"-a",
+		"-F",
+		"#{session_name}" + FieldDelimiter + "#{pane_id}" + FieldDelimiter + "#{@projmux_attention_state}",
+	}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+	wantRows := [][]string{{"dev", "%3", "reply"}}
+	if !reflect.DeepEqual(rows, wantRows) {
+		t.Fatalf("ListPanes rows = %#v, want %#v", rows, wantRows)
+	}
+}
+
+func TestRunnerListWindowsBuildsStructuredInventoryRead(t *testing.T) {
+	backend := &recordingBackend{out: []byte("1|editor\n")}
+	runner := NewRunner(backend)
+
+	rows, err := runner.ListWindows(context.Background(), ListWindowsOptions{
+		Target:    " dev ",
+		Delimiter: "|",
+		Formats: []string{
+			TmuxFormat("window_index"),
+			TmuxFormat("window_name"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("ListWindows returned error: %v", err)
+	}
+
+	wantArgs := []string{"list-windows", "-t", "dev", "-F", "#{window_index}|#{window_name}"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+	wantRows := [][]string{{"1", "editor"}}
+	if !reflect.DeepEqual(rows, wantRows) {
+		t.Fatalf("ListWindows rows = %#v, want %#v", rows, wantRows)
+	}
+}
+
+func TestRunnerDisplayPaneFieldsBuildsDisplayMessageRead(t *testing.T) {
+	backend := &recordingBackend{out: []byte(" dev \x1f @1 \x1f %3 \n")}
+	runner := NewRunner(backend)
+
+	row, err := runner.DisplayPaneFields(
+		context.Background(),
+		" %3 ",
+		TmuxFormat("session_name"),
+		TmuxFormat("window_id"),
+		TmuxFormat("pane_id"),
+	)
+	if err != nil {
+		t.Fatalf("DisplayPaneFields returned error: %v", err)
+	}
+
+	wantArgs := []string{"display-message", "-p", "-t", "%3", "#{session_name}" + FieldDelimiter + "#{window_id}" + FieldDelimiter + "#{pane_id}"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+	wantRow := []string{"dev", "@1", "%3"}
+	if !reflect.DeepEqual(row, wantRow) {
+		t.Fatalf("DisplayPaneFields row = %#v, want %#v", row, wantRow)
+	}
+}
+
+func TestParseFormatRowsPinsMalformedAndTrimmingBehavior(t *testing.T) {
+	output := []byte("  one \x1f two \r\nmissing\nthree\x1ffour\x1fextra\n five\\037six \n")
+
+	rows := ParseFormatRows(output, FormatRowsOptions{
+		Delimiter:  FieldDelimiter,
+		FieldCount: 2,
+	})
+	want := [][]string{{"one", "two"}, {"five", "six"}}
+	if !reflect.DeepEqual(rows, want) {
+		t.Fatalf("ParseFormatRows strict rows = %#v, want %#v", rows, want)
+	}
+
+	rows = ParseFormatRows(output, FormatRowsOptions{
+		Delimiter:        FieldDelimiter,
+		FieldCount:       2,
+		AllowExtraFields: true,
+	})
+	want = [][]string{{"one", "two"}, {"three", "four"}, {"five", "six"}}
+	if !reflect.DeepEqual(rows, want) {
+		t.Fatalf("ParseFormatRows extra rows = %#v, want %#v", rows, want)
+	}
+}
