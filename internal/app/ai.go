@@ -898,8 +898,9 @@ func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, st
 	}
 	agentBin := c.findAgentBinary(mode)
 	if agentBin == "" {
-		_ = c.displayMessage("selected runner is not installed: " + mode)
-		return nil, "", fmt.Errorf("selected runner is not installed: %s", mode)
+		message := c.missingAgentRunnerMessage(mode)
+		_ = c.displayMessage(message)
+		return nil, "", errors.New(message)
 	}
 	execArgv := []string{agentBin}
 	execArgv = append(execArgv, extraArgs...)
@@ -1287,6 +1288,10 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 		return ""
 	}
 
+	if c.usePSMuxAIBackend() {
+		return c.findPSMuxAgentBinary(mode, binName)
+	}
+
 	home := c.homeOrEmpty()
 	if path := firstExecutable(
 		c.readTrimmed("command", "-v", binName),
@@ -1303,6 +1308,153 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 		return newestExecutable(matches)
 	}
 	return ""
+}
+
+func (c *aiCommand) findPSMuxAgentBinary(mode, binName string) string {
+	if path := c.findPSMuxPowerShellCommand(binName); path != "" {
+		return path
+	}
+	if path := firstExistingWindowsCommandCandidate(psmuxWindowsPathCandidates(c.env("PATH"), binName)); path != "" {
+		return path
+	}
+	if path := firstExistingWindowsCommandCandidate(psmuxWhereCandidates(c.readTrimmed("where.exe", binName), binName)); path != "" {
+		return path
+	}
+
+	home := c.homeOrEmpty()
+	if mode == aiModeCodex {
+		matches, _ := filepath.Glob(filepath.Join(home, ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
+		if path := newestExistingFile(matches); path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+func (c *aiCommand) findPSMuxPowerShellCommand(binName string) string {
+	script := "$cmd = Get-Command -Name " + powerShellSingleQuote(binName) + " -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1; if ($cmd) { if ($cmd.Source) { $cmd.Source } elseif ($cmd.Path) { $cmd.Path } }"
+	return firstExistingWindowsCommandCandidate([]string{
+		c.readTrimmed("powershell", "-NoProfile", "-Command", script),
+		c.readTrimmed("pwsh", "-NoProfile", "-Command", script),
+	})
+}
+
+func (c *aiCommand) missingAgentRunnerMessage(mode string) string {
+	if c.usePSMuxAIBackend() {
+		if mode == aiModeClaude {
+			nativePath := filepath.Join(c.homeOrEmpty(), ".local", "bin", "claude.exe")
+			if existingFile(nativePath) {
+				return fmt.Sprintf("selected runner is installed at %s but is not on PATH; add %s to PATH and restart psmux", nativePath, filepath.Dir(nativePath))
+			}
+		}
+		return fmt.Sprintf("selected runner is not installed or unsupported on this mux backend: %s", mode)
+	}
+	return fmt.Sprintf("selected runner is not installed: %s", mode)
+}
+
+func psmuxWhereCandidates(output, binName string) []string {
+	var candidates []string
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		candidates = append(candidates, line)
+	}
+	return sortWindowsCommandCandidates(candidates, binName)
+}
+
+func psmuxWindowsPathCandidates(pathList, binName string) []string {
+	var candidates []string
+	for _, dir := range splitPSMuxPathList(pathList) {
+		for _, name := range windowsCommandCandidateNames(binName) {
+			candidates = append(candidates, filepath.Join(dir, name))
+		}
+	}
+	return candidates
+}
+
+func splitPSMuxPathList(pathList string) []string {
+	if strings.TrimSpace(pathList) == "" {
+		return nil
+	}
+	var parts []string
+	if strings.Contains(pathList, ";") {
+		parts = strings.Split(pathList, ";")
+	} else {
+		parts = filepath.SplitList(pathList)
+	}
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func windowsCommandCandidateNames(binName string) []string {
+	return []string{binName + ".cmd", binName + ".ps1", binName + ".exe", binName}
+}
+
+func sortWindowsCommandCandidates(candidates []string, binName string) []string {
+	priority := map[string]int{}
+	for i, name := range windowsCommandCandidateNames(binName) {
+		priority[strings.ToLower(name)] = i
+	}
+	out := append([]string(nil), candidates...)
+	sort.SliceStable(out, func(i, j int) bool {
+		left, ok := priority[strings.ToLower(windowsPathBase(out[i]))]
+		if !ok {
+			left = len(priority)
+		}
+		right, ok := priority[strings.ToLower(windowsPathBase(out[j]))]
+		if !ok {
+			right = len(priority)
+		}
+		return left < right
+	})
+	return out
+}
+
+func windowsPathBase(path string) string {
+	idx := strings.LastIndexAny(path, `/\`)
+	if idx < 0 {
+		return path
+	}
+	return path[idx+1:]
+}
+
+func firstExistingWindowsCommandCandidate(paths []string) string {
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if existingFile(path) {
+			return path
+		}
+	}
+	return ""
+}
+
+func existingFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func newestExistingFile(paths []string) string {
+	var newestPath string
+	var newestMod time.Time
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if newestPath == "" || info.ModTime().After(newestMod) {
+			newestPath = path
+			newestMod = info.ModTime()
+		}
+	}
+	return newestPath
 }
 
 // nodeManagerCandidates returns possible install paths for a globally-installed
