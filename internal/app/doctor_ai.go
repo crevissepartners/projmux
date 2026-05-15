@@ -6,6 +6,7 @@ const (
 	doctorAINotifyStatusInstalled doctorAINotifyStatus = "installed"
 	doctorAINotifyStatusMissing   doctorAINotifyStatus = "missing"
 	doctorAINotifyStatusConflict  doctorAINotifyStatus = "conflict"
+	doctorAINotifyStatusSkip      doctorAINotifyStatus = "skip"
 )
 
 type doctorAINotifyIntegration struct {
@@ -126,4 +127,13 @@ func doctorTmuxBellIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegratio
 	}
 	out.Status = doctorAINotifyStatusMissing
 	return out
+}
+
+func doctorTmuxBellUnsupportedDiagnostic() doctorAINotifyIntegration {
+	return doctorAINotifyIntegration{
+		ID:       "tmux-bell",
+		Name:     "tmux bell fallback",
+		Status:   doctorAINotifyStatusSkip,
+		Guidance: "unsupported on the native Windows psmux track; use Codex or Claude hooks for AI notifications",
+	}
 }
