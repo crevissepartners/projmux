@@ -229,6 +229,42 @@ Phase 3A0-5 acceptance/checklist:
   replay, or backend capability redesign.
 - unsupported psmux capabilities fail or degrade explicitly in the smoke notes.
 
+Phase 3A0-5 result:
+
+- native Windows `projmux.exe shell` now writes a separate generated
+  `psmux.conf` and launches `psmux -L projmux -f <config> new-session -A -s
+  <session> [-c <cwd>]`.
+- Linux, WSL, and macOS continue to write the existing tmux app config and
+  launch `tmux -L projmux -f <config> new-session -A -s <session> [-c <cwd>]`.
+- the generated psmux config is intentionally minimal: app marker, mouse,
+  history, basic status, automatic rename, and `C-n` new-window. Pane-scoped
+  metadata, popups, rich hooks, notify sidebar, and session-state replay remain
+  disabled/follow-up.
+- the psmux status callback uses
+  `internal/integrations/psmux.ProjmuxCommand(...).PowerShell()` and renders
+  as `#(& '<projmux.exe>' 'status' 'git' '#{pane_current_path}')`; POSIX tmux
+  quoting helpers are not used for callback argv.
+
+Native Windows PowerShell smoke commands for PR/archive notes:
+
+```powershell
+$Projmux = "$env:TEMP\projmux.exe"
+go build -o $Projmux .\cmd\projmux
+$env:PROJMUX_WELCOME = "0"
+$Session = 'projmux smoke chars '' " ` $ & | < > ; ( ) { } ^ % !'
+& $Projmux shell --config "$env:TEMP\projmux-psmux-smoke.conf" --session $Session --bin $Projmux
+psmux -L projmux list-sessions
+psmux -L projmux show-options -gqv @projmux_app
+psmux -L projmux kill-server
+Remove-Item Env:\PROJMUX_WELCOME -ErrorAction SilentlyContinue
+```
+
+Expected command shape from the implementation:
+
+```text
+psmux -L projmux -f <generated config> new-session -A -s <session> [-c <cwd>]
+```
+
 Phase 3A should add an explicit mux capability contract:
 
 - `PaneUserOptions=false` for psmux until upstream parity or a projmux metadata
@@ -238,14 +274,12 @@ Phase 3A should add an explicit mux capability contract:
 - Unsupported capabilities must fail or degrade explicitly; they must not
   silently pretend pane metadata was stored.
 
-Phase 3B should implement the minimal psmux backend and app runtime:
+Phase 3B should implement the psmux backend and richer app runtime beyond the
+Phase 3A0-5 shell-entry smoke:
 
 - backend selection for new runtime/session creation only; live session
   migration between tmux and psmux remains unsupported.
-- `psmux -L <namespace> -f <config>` app runtime isolation, plus
-  `source-file`, `show-options`, and `kill-server` smoke coverage.
-- `projmux.exe shell` on PowerShell should launch the isolated psmux app
-  runtime rather than tmux.
+- `source-file`, `show-options`, and `kill-server` smoke coverage.
 - core session/window/pane lifecycle: create, list, attach/switch, split, and
   basic command launch.
 - native field reads such as session/window/pane ids, current path, current
@@ -601,7 +635,7 @@ Status values for Phase 3: `pass`, `partial`, `missing`, `unknown`.
 | --- | --- | --- | --- | --- |
 | Create detached project session | `new-session -d -s -c [-e] [-P -F "#{pane_id}"]` | `required MVP` | `unknown` | Must return first pane id when lifecycle/startup hooks need it. Phase 2D mux API: `NewSession`. |
 | Attach or switch to session | `attach-session`, `switch-client [-c] -t` | `required MVP`, `focus` | `unknown` | Outside/inside mux behavior may differ on Windows Terminal. Phase 2C mux API: `SwitchClient`. |
-| App shell server | `tmux -L <socket> -f <config> new-session -A -s` | `required MVP` | `unknown` | Need socket/server equivalent or explicit unsupported capability. Phase 2D mux API available: `NewSession`. |
+| App shell server | `tmux -L <socket> -f <config> new-session -A -s` / `psmux -L <socket> -f <config> new-session -A -s` | `required MVP` | `partial` | Phase 3A0-5 implements the native Windows shell-entry path with a minimal generated psmux config. Native Windows PowerShell smoke still needs manual confirmation; richer app runtime remains Phase 3B+. Phase 2D mux API available: `NewSession`. |
 | Session inventory | `list-sessions -F` plus session formats | `required MVP`, `focus` | `unknown` | Requires activity, attached count, windows, ids. |
 | Window inventory | `list-windows -F` plus window formats | `required MVP`, `session-state` | `unknown` | Requires layout and window id for restore/live replay. |
 | Pane inventory | `list-panes -a/-s -F` plus pane/user-option formats | `required MVP`, `hooks/status`, `session-state` | `unknown` | Highest-risk metadata surface. |
@@ -615,7 +649,7 @@ Status values for Phase 3: `pass`, `partial`, `missing`, `unknown`.
 | Pane title | `select-pane -T` and `#{pane_title}` | `interactive UI`, `hooks/status` | `unknown` | Used by attention and AI labels. Phase 2C mux API: `SelectPane`. |
 | Pane options | `set-option -p`, `display-message -p "#{@...}"` | `required MVP`, `hooks/status`, `session-state` | `unknown` | Needs arbitrary user option storage or replacement metadata store. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`, `ShowPaneOption`, `PaneOptionFormat`. |
 | Global/session options | `set-option -g`, `show-options -gqv`, `set-option -t -q` | `hooks/status`, `session-state` | `unknown` | Required for settings, decoration, app markers, session-state source. Phase 2D mux APIs: `SetOption`, `ShowOption`. |
-| Generated statusbar | `status`, `status-format`, `#[range=user|...]`, `#(...)`, `#{W:...}` | `hooks/status` | `unknown` | May need a separate psmux-native status model. |
+| Generated statusbar | `status`, `status-format`, `#[range=user|...]`, `#(...)`, `#{W:...}` | `hooks/status` | `partial` | Phase 3A0-5 generated psmux config has only a basic status row and one PowerShell-rendered `status git` callback. Full statusbar ranges, mouse dispatch, and HUD rows remain future scope. |
 | Statusbar mouse/key dispatch | `MouseDown1Status`, `if-shell -F`, `switch-client -T`, `run-shell` | `interactive UI`, `hooks/status` | `unknown` | Product UX should degrade explicitly if unsupported. |
 | Hooks | `set-hook`, `show-hooks`, `run-shell -b`, `#{hook_pane}` | `hooks/status` | `unknown` | Alert bell and focus hooks may be unavailable. Phase 2D mux API: `SetHook`. |
 | Bell fallback | `monitor-bell`, `bell-action`, `alert-bell`, `#{pane_id}` | `hooks/status` | `unknown` | Optional but important for unknown AI tools. Phase 2D mux APIs: `SetOption`, `SetHook`. |
