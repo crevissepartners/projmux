@@ -48,6 +48,22 @@ binary invocation does not spread further. Existing typed tmux clients and
 test-injected runner fields remain valid and do not need a broad rewrite in
 this phase.
 
+## Phase 2A Semantic Mux Reads And Pane Options
+
+Phase 2A adds semantic helpers in `internal/integrations/mux` for the pane
+metadata/read surfaces that psmux must eventually model:
+
+- `SetPaneOption`, `UnsetPaneOption`, and `ShowPaneOption` cover
+  `set-option -p` writes/unsets and `display-message -p "#{@...}"` reads.
+- `DisplayMessage` and `DisplayMessageTrimmed` cover `display-message -p`
+  format reads while preserving fake-runner injection through app-owned mux
+  runners.
+- `TmuxFormat`, `PaneOptionFormat`, and `JoinFormats` centralize common tmux
+  format assembly so converted call sites do not hand-build `#{...}` strings.
+
+Phase 2A intentionally does not introduce list-pane/list-window, popup, focus,
+capture, lifecycle, or psmux backend behavior.
+
 ## Classification Key
 
 | Class | Meaning |
@@ -111,7 +127,7 @@ this phase.
 | `show-option -gv @projmux_app` | `required MVP` for app quit | `quitCommand` | Confirms a socket is app-owned before `kill-server`. |
 | `set-option -g <option> <value>` | `hooks/status` | settings, notification registration, generated config, tmux bell integration | Writes statusbar decoration, desktop notify mode markers, toast URI markers, and tmux bell options. |
 | `set-option -g -u <option>` | `legacy/cleanup candidate` | notification URI migration | Unsets older URI registration markers. |
-| `set-option -p [-u] -t <pane> <option> [value]` | `hooks/status`, `required MVP` for AI | AI state, attention, topics, notification dedupe, session-state recipe metadata | Core pane metadata storage. |
+| `set-option -p [-u] -t <pane> <option> [value]` | `hooks/status`, `required MVP` for AI | AI state, attention, topics, notification dedupe, session-state recipe metadata | Core pane metadata storage. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`. |
 | `set-option -t <session> -q <option> <value>` | `session-state`, `required MVP` | session autosave/source, ephemeral sessions | Stores session-level live markers. |
 | `source-file <config>` | `e2e/support`, app runtime support | `tmux apply`, install smoke | Reloads generated app config into live `-L projmux` server. |
 
@@ -382,13 +398,13 @@ Status values for Phase 3: `pass`, `partial`, `missing`, `unknown`.
 | Pane inventory | `list-panes -a/-s -F` plus pane/user-option formats | `required MVP`, `hooks/status`, `session-state` | `unknown` | Highest-risk metadata surface. |
 | Popup launch | `display-popup` with target/client/env/cwd/size/border/title/close flags | `interactive UI` | `unknown` | Roadmap already flags popup as a major risk. |
 | Popup close | `display-popup -C` | `interactive UI` | `unknown` | Needed for toggle semantics. |
-| Current context formats | `display-message -p -F #{pane_current_path}`, `#{pane_id}`, `#{client_tty}`, `#{client_width}`, `#{client_height}` | `interactive UI` | `unknown` | Popup and AI split depend on these. |
+| Current context formats | `display-message -p -F #{pane_current_path}`, `#{pane_id}`, `#{client_tty}`, `#{client_width}`, `#{client_height}` | `interactive UI` | `unknown` | Popup and AI split depend on these. Phase 2A mux API: `DisplayMessage`, `DisplayMessageTrimmed`. |
 | Focus URI translation | `display-message -p -t %N "#S<sep>#I"` | `focus` | `unknown` | Must map pane id to session/window for toast clicks. |
 | Client inventory | `list-clients -F #{client_name} #{client_session} #{client_active_pane}` | `focus`, `hooks/status` | `unknown` | Needed for focus and reply auto-ack correctness. |
 | Pane split | `split-window -h/-v [-P -F "#{pane_id}"] [-t] [-c] <cmd>` | `required MVP` | `unknown` | MVP AI/shell split requirement. |
 | Resize panes | `resize-pane -x/-y` | `interactive UI` | `unknown` | Can be `partial` if MVP can tolerate default split sizing. |
 | Pane title | `select-pane -T` and `#{pane_title}` | `interactive UI`, `hooks/status` | `unknown` | Used by attention and AI labels. |
-| Pane options | `set-option -p`, `display-message -p "#{@...}"` | `required MVP`, `hooks/status`, `session-state` | `unknown` | Needs arbitrary user option storage or replacement metadata store. |
+| Pane options | `set-option -p`, `display-message -p "#{@...}"` | `required MVP`, `hooks/status`, `session-state` | `unknown` | Needs arbitrary user option storage or replacement metadata store. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`, `ShowPaneOption`, `PaneOptionFormat`. |
 | Global/session options | `set-option -g`, `show-option -gqv`, `set-option -t -q` | `hooks/status`, `session-state` | `unknown` | Required for settings, decoration, app markers, session-state source. |
 | Generated statusbar | `status`, `status-format`, `#[range=user|...]`, `#(...)`, `#{W:...}` | `hooks/status` | `unknown` | May need a separate psmux-native status model. |
 | Statusbar mouse/key dispatch | `MouseDown1Status`, `if-shell -F`, `switch-client -T`, `run-shell` | `interactive UI`, `hooks/status` | `unknown` | Product UX should degrade explicitly if unsupported. |

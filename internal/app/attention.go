@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -80,11 +81,14 @@ func (l attentionLookup) PaneFormat(paneID, format string) string {
 	if l.cmd == nil || l.cmd.runner == nil {
 		return ""
 	}
-	output, err := l.cmd.run("tmux", "display-message", "-p", "-t", paneID, format)
+	output, err := intmux.NewRunner(l.cmd.runner).DisplayMessageTrimmed(context.Background(), intmux.DisplayMessageOptions{
+		Target: paneID,
+		Format: format,
+	})
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return output
 }
 
 func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -270,7 +274,13 @@ type attentionPaneRow struct {
 }
 
 func (c *attentionCommand) paneTitle(paneID string) string {
-	output, err := c.run("tmux", "display-message", "-p", "-t", paneID, "#{pane_title}")
+	if c.runner == nil {
+		return ""
+	}
+	output, err := intmux.NewRunner(c.runner).DisplayMessage(context.Background(), intmux.DisplayMessageOptions{
+		Target: paneID,
+		Format: intmux.TmuxFormat("pane_title"),
+	})
 	if err != nil {
 		return ""
 	}
@@ -299,11 +309,14 @@ func (c *attentionCommand) paneVisibleToClient(paneID string) bool {
 }
 
 func (c *attentionCommand) paneOption(paneID, option string) string {
-	output, err := c.run("tmux", "display-message", "-p", "-t", paneID, "#{"+option+"}")
+	if c.runner == nil {
+		return ""
+	}
+	output, err := intmux.NewRunner(c.runner).ShowPaneOption(context.Background(), paneID, option)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return output
 }
 
 func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindowRow {
@@ -418,11 +431,17 @@ func formatAttentionActive(active bool) string {
 }
 
 func (c *attentionCommand) setPaneOption(paneID, option, value string) {
-	_, _ = c.run("tmux", "set-option", "-p", "-t", paneID, option, value)
+	if c.runner == nil {
+		return
+	}
+	_ = intmux.NewRunner(c.runner).SetPaneOption(context.Background(), paneID, option, value)
 }
 
 func (c *attentionCommand) unsetPaneOption(paneID, option string) {
-	_, _ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, option)
+	if c.runner == nil {
+		return
+	}
+	_ = intmux.NewRunner(c.runner).UnsetPaneOption(context.Background(), paneID, option)
 }
 
 func (c *attentionCommand) selectPaneTitle(paneID, title string) {
