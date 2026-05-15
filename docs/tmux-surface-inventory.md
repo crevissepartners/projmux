@@ -39,6 +39,15 @@ and legacy cleanup candidates. Test fixture command strings are used to confirm
 the production contract, but they are not treated as separate product surface
 unless the corresponding production path exists.
 
+## Phase 1 Runner Boundary
+
+Phase 1 introduces `internal/integrations/mux` as a thin command-runner
+boundary over the existing tmux backend. New app-layer subprocess calls to the
+`tmux` binary should use `mux.Run`, `mux.Read`, or `mux.ReadTrimmed` so raw
+binary invocation does not spread further. Existing typed tmux clients and
+test-injected runner fields remain valid and do not need a broad rewrite in
+this phase.
+
 ## Classification Key
 
 | Class | Meaning |

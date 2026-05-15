@@ -1,8 +1,10 @@
 package app
 
 import (
-	"os/exec"
+	"context"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
 // notification_toggle.go owns the OS-desktop-notification mode selector.
@@ -205,9 +207,9 @@ func (c *aiCommand) desktopNotifyModeResolution() (desktopNotifyMode, desktopNot
 }
 
 // settingsDesktopNotifyResolver builds the same resolver from a
-// `settingsCommand`. settingsCommand uses raw `runCommand` / direct
-// `exec.Command` for its tmux reads, so we wire the lookup through
-// `exec.Command` directly (mirroring `tmuxProjdirOption`).
+// `settingsCommand`. settingsCommand does not own an injected tmux reader, so
+// production tmux reads go through the central mux runner while the pure
+// resolver remains unit-testable.
 //
 // isWSL and wtPresent are derived from the env lookup so the Settings
 // render path computes the same default as the runtime gate.
@@ -224,11 +226,11 @@ func settingsDesktopNotifyResolver(lookupEnv func(string) string) desktopNotifyR
 			if lookupEnv == nil || strings.TrimSpace(lookupEnv("TMUX")) == "" {
 				return ""
 			}
-			out, err := exec.Command("tmux", "show-option", "-gqv", name).Output()
+			out, err := mux.ReadTrimmed(context.Background(), "show-option", "-gqv", name)
 			if err != nil {
 				return ""
 			}
-			return strings.TrimSpace(string(out))
+			return out
 		},
 		isWSL:     wsl,
 		wtPresent: wt,
