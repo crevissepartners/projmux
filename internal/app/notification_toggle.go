@@ -101,7 +101,7 @@ const (
 // processes or touching `/proc`.
 type desktopNotifyResolver struct {
 	lookupEnv func(string) string
-	// readTmuxOption reads a global user-option (`tmux show-option -gqv …`).
+	// readTmuxOption reads a global user-option (`tmux show-options -gqv …`).
 	// Must return the trimmed string, or empty when tmux is unavailable or
 	// the option is unset.
 	readTmuxOption func(name string) string
@@ -192,13 +192,13 @@ func (c *aiCommand) desktopNotifyModeResolution() (desktopNotifyMode, desktopNot
 	resolver := desktopNotifyResolver{
 		lookupEnv: c.lookupEnv,
 		readTmuxOption: func(name string) string {
-			// tmux show-option only makes sense inside a tmux client
+			// tmux show-options only makes sense inside a tmux client
 			// (we follow the same TMUX gate used elsewhere in the
 			// codebase — see tmuxProjdirOption in switch.go).
 			if strings.TrimSpace(c.env("TMUX")) == "" {
 				return ""
 			}
-			return c.readTrimmed("tmux", "show-option", "-gqv", name)
+			return c.readTrimmed("tmux", "show-options", "-gqv", name)
 		},
 		isWSL:     c.isWSL(),
 		wtPresent: strings.TrimSpace(c.env("WT_SESSION")) != "",
@@ -226,7 +226,12 @@ func settingsDesktopNotifyResolver(lookupEnv func(string) string) desktopNotifyR
 			if lookupEnv == nil || strings.TrimSpace(lookupEnv("TMUX")) == "" {
 				return ""
 			}
-			out, err := mux.ReadTrimmed(context.Background(), "show-option", "-gqv", name)
+			out, err := mux.ShowOption(context.Background(), mux.ShowOptionOptions{
+				Global:    true,
+				Quiet:     true,
+				ValueOnly: true,
+				Option:    name,
+			})
 			if err != nil {
 				return ""
 			}

@@ -85,7 +85,7 @@ func TestStatusGitPrintsConfiguredSymbolDecorator(t *testing.T) {
 		switch {
 		case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "#{pane_current_path}"}):
 			return []byte("/repo\n"), nil
-		case name == "tmux" && reflect.DeepEqual(args, []string{"show-option", "-gqv", statusbarDecorationTmuxOption}):
+		case name == "tmux" && reflect.DeepEqual(args, []string{"show-options", "-gqv", statusbarDecorationTmuxOption}):
 			return []byte("symbol\n"), nil
 		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "rev-parse", "--is-inside-work-tree"}):
 			return []byte("true\n"), nil

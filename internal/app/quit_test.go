@@ -46,7 +46,7 @@ func TestQuitCommandSelectionKillsOnlyAppOwnedRuntime(t *testing.T) {
 
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{
-			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}, "\x00"): "1\n",
+			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}, "\x00"): "1\n",
 		},
 	}
 	cmd := &quitCommand{
@@ -60,7 +60,7 @@ func TestQuitCommandSelectionKillsOnlyAppOwnedRuntime(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}},
+		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
 		{name: "tmux", args: []string{"-L", defaultAppSocket, "kill-server"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
@@ -105,7 +105,7 @@ func TestQuitCommandNonAppRuntimeIsNoop(t *testing.T) {
 
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{
-			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}, "\x00"): "0\n",
+			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}, "\x00"): "0\n",
 		},
 	}
 	cmd := &quitCommand{runner: runner}
@@ -114,7 +114,7 @@ func TestQuitCommandNonAppRuntimeIsNoop(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}},
+		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("tmux calls = %#v, want only ownership check", runner.calls)
@@ -131,7 +131,7 @@ func TestQuitCommandMissingRuntimeIsNoop(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}},
+		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("tmux calls = %#v, want only ownership check", runner.calls)

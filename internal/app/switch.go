@@ -1167,14 +1167,19 @@ func extraProjdirRoots(lookup func(string) string) []string {
 
 // tmuxProjdirOption returns the tmux user-option @projmux_projdir value when
 // running inside a tmux client. The TMUX env gate keeps us off the default
-// socket when projmux runs outside tmux, where show-option may either fail
+// socket when projmux runs outside tmux, where the option read may either fail
 // or return a stale value from another server. Errors are swallowed because
 // the caller falls through to the next priority source.
 func tmuxProjdirOption() string {
 	if os.Getenv("TMUX") == "" {
 		return ""
 	}
-	out, err := mux.ReadTrimmed(context.Background(), "show-option", "-gqv", "@projmux_projdir")
+	out, err := mux.ShowOption(context.Background(), mux.ShowOptionOptions{
+		Global:    true,
+		Quiet:     true,
+		ValueOnly: true,
+		Option:    "@projmux_projdir",
+	})
 	if err != nil {
 		return ""
 	}

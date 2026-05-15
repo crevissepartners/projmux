@@ -1354,7 +1354,7 @@ func aiMuxCommandNeedsOutput(args []string) bool {
 		return true
 	}
 	switch args[0] {
-	case "display-message", "list-panes", "list-windows", "capture-pane", "show-option", "show-hooks":
+	case "display-message", "list-panes", "list-windows", "capture-pane", "show-option", "show-options", "show-hooks":
 		return true
 	case "split-window", "new-session":
 		if slices.Contains(args[1:], "-P") {

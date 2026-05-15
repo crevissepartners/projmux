@@ -22,7 +22,7 @@ tmux split-window -d -t e2e-alpha:0 -c "$project_a" sleep 300
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/apply-empty.out" "skipped reload: no live tmux server -L projmux"
 
 tmux source-file "$XDG_CONFIG_HOME/projmux/tmux.conf"
-app_flag="$(tmux show-option -gqv @projmux_app)"
+app_flag="$(tmux show-options -gqv @projmux_app)"
 if [[ "$app_flag" != "1" ]]; then
   echo "expected sourced app config to set @projmux_app=1, got: $app_flag" >&2
   exit 1

@@ -153,7 +153,77 @@ creation remains on the existing typed tmux path in this phase.
 | `SplitWindow` | `split-window [-d] [-P -F "#{pane_id}"] [-h/-v] [-t <target>] [-c <cwd>] [command...]` | AI agent split, AI shell split |
 | `SetHook` | `set-hook -ag <hook> <command>`, `set-hook -gu <hook[index]>` | `projmux ai integrate tmux-bell` install/remove |
 | `SetOption` | `set-option -g <option> <value>`, `set-option -t <session> -q <option> <value>` | tmux bell integration option install; API available for session-scoped markers |
-| `ShowOption` | `show-option [-g] [-q] [-v] [-t <target>] <option>` | API available for global/session option reads; conversion deferred to low-risk call sites |
+| `ShowOption` | `show-options [-g] [-q] [-v] [-t <target>] <option>` | API available for global/session option reads; converted low-risk call sites use the plural spelling for psmux parity |
+
+## Phase 3 psmux MVP Direction
+
+Phase 3 should bring up a psmux backend before solving rich pane metadata.
+psmux 3.3.4 supports global and session user options, but pane-scoped custom
+`@...` options are not persisted by `set-option -p` in current smoke results.
+The psmux MVP therefore treats pane user options as an unsupported capability
+instead of a launch blocker.
+
+Phase 3A0 should bootstrap native Windows `projmux.exe` execution before the
+psmux backend is wired into product flows. Split it into explicit subphases so
+native PowerShell work does not get conflated with the later psmux backend:
+
+- **Phase 3A0-1: Windows build unblock.** Make `GOOS=windows GOARCH=amd64 go
+  build ./cmd/projmux` succeed. WSL-only focus code, POSIX process attributes,
+  and shell assumptions must be build-tagged, stubbed, or moved behind
+  platform adapters.
+- **Phase 3A0-2: Pure PowerShell CLI smoke.** Run `projmux.exe --version` and
+  other mux-free diagnostics/config commands from PowerShell. This phase should
+  prove that startup, argument parsing, config/state path calculation, and
+  read-only commands do not require tmux, WSL, or POSIX shell tools.
+- **Phase 3A0-3: Windows dependency and path policy.** Teach diagnostics to
+  distinguish native Windows/psmux from WSL/Linux/tmux. `tmux`, `stty`, `/bin/sh`,
+  and WSL-only helpers must not be required for a native psmux track.
+- **Phase 3A0-4: PowerShell process-launch and quoting policy.** Define how
+  generated psmux config invokes `projmux.exe` and child commands without
+  POSIX quoting. This must be settled before hooks, status commands, or popup
+  launchers call back into projmux on Windows.
+- **Phase 3A0-5: Native shell entry smoke.** Add the first limited
+  `projmux.exe shell` PowerShell smoke that reaches a psmux app runtime, with
+  rich pane metadata still disabled.
+
+Phase 3A should add an explicit mux capability contract:
+
+- `PaneUserOptions=false` for psmux until upstream parity or a projmux metadata
+  store exists.
+- `GlobalUserOptions=true` and `SessionUserOptions=true` when backed by
+  `show-options` / `set-option`.
+- Unsupported capabilities must fail or degrade explicitly; they must not
+  silently pretend pane metadata was stored.
+
+Phase 3B should implement the minimal psmux backend and app runtime:
+
+- backend selection for new runtime/session creation only; live session
+  migration between tmux and psmux remains unsupported.
+- `psmux -L <namespace> -f <config>` app runtime isolation, plus
+  `source-file`, `show-options`, and `kill-server` smoke coverage.
+- `projmux.exe shell` on PowerShell should launch the isolated psmux app
+  runtime rather than tmux.
+- core session/window/pane lifecycle: create, list, attach/switch, split, and
+  basic command launch.
+- native field reads such as session/window/pane ids, current path, current
+  command, pane title, and socket path where available.
+
+Phase 3C should ship degraded psmux UX for features that currently depend on
+pane user options:
+
+- AI/shell split can launch commands, but pane topic, AI state, attention ack,
+  notification dedupe, and agent resume metadata are disabled or shown as
+  unsupported.
+- notify/status/session-state code paths should report missing pane metadata
+  capability rather than relying on empty `@projmux_*` reads.
+- `doctor` and settings diagnostics should identify the active backend and its
+  missing metadata capabilities.
+
+Phase 4 should revisit rich metadata after the psmux MVP is usable. The two
+acceptable directions are upstream psmux parity for pane-scoped custom user
+options, or a projmux-owned sidecar pane metadata store with reconcile,
+locking, stale-record cleanup, and pane-id reuse protection. Sidecar metadata
+is intentionally not part of the psmux MVP.
 
 ## Classification Key
 
@@ -214,8 +284,8 @@ creation remains on the existing typed tmux path in this phase.
 | `set-hook -gu alert-bell[...]` | `legacy/cleanup candidate`, `hooks/status` | `projmux ai integrate tmux-bell --remove` | Removes projmux-managed alert-bell entries. Phase 2D mux API: `SetHook`. |
 | `show-hooks -g alert-bell` | `hooks/status` | tmux bell integration planning | Detects existing managed bell fallback. |
 | `run-shell -b <command>` | `hooks/status`, `interactive UI` | generated hooks, generated statusbar binds, AI watch-title | Async hook/status dispatch and title watcher launch. |
-| `show-option -gqv <option>` | `hooks/status`, `legacy/cleanup candidate` | notification mode, statusbar decoration, `@projmux_projdir`, app ownership | Reads global user options and generated app markers. Some call sites still use direct `exec.Command("tmux", ...)`. Phase 2D mux API available: `ShowOption`. |
-| `show-option -gv @projmux_app` | `required MVP` for app quit | `quitCommand` | Confirms a socket is app-owned before `kill-server`. Phase 2D mux API available: `ShowOption`. |
+| `show-options -gqv <option>` | `hooks/status`, `legacy/cleanup candidate` | notification mode, statusbar decoration, `@projmux_projdir`, app ownership | Reads global user options and generated app markers. The plural form works on tmux and psmux; avoid tmux's singular alias in shared surfaces. |
+| `show-options -gv @projmux_app` | `required MVP` for app quit | `quitCommand` | Confirms a socket is app-owned before `kill-server`. Phase 2D mux API available: `ShowOption`. |
 | `set-option -g <option> <value>` | `hooks/status` | settings, notification registration, generated config, tmux bell integration | Writes statusbar decoration, desktop notify mode markers, toast URI markers, and tmux bell options. Phase 2D mux API: `SetOption` for tmux bell integration. |
 | `set-option -g -u <option>` | `legacy/cleanup candidate` | notification URI migration | Unsets older URI registration markers. |
 | `set-option -p [-u] -t <pane> <option> [value]` | `hooks/status`, `required MVP` for AI | AI state, attention, topics, notification dedupe, session-state recipe metadata | Core pane metadata storage. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`. |
@@ -240,7 +310,7 @@ creation remains on the existing typed tmux path in this phase.
 | Command | Class | Source | Purpose / notes |
 | --- | --- | --- | --- |
 | `tmux -L <socket> new-session -d ...` | `e2e/support` | integration/install smoke scripts | Creates isolated smoke servers. |
-| `tmux -L <socket> show-option -gqv @projmux_app` | `e2e/support` | install/integration/e2e smoke scripts | Confirms generated app config was sourced. |
+| `tmux -L <socket> show-options -gqv @projmux_app` | `e2e/support` | install/integration/e2e smoke scripts | Confirms generated app config was sourced. |
 | `tmux set-option -p ... @projmux_ai_*` | `e2e/support` | e2e smoke | Seeds AI/status metadata for visual smoke. |
 | `tmux display-message -p ...`, `list-panes`, `list-windows` | `e2e/support` | native picker POC scripts | Verifies tmux state during native picker POC runs. |
 | `set-environment -g PROJMUX_*` in generated POC config | `e2e/support` | native picker POC scripts | Seeds environment for sandboxed native picker tests. |
@@ -406,7 +476,7 @@ Required tmux commands/config:
 - `bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" { select-window -t = } { run-shell ... }`
 - `bind-key s switch-client -T projmux-status`
 - `bind-key -T projmux-status <key> run-shell ...`
-- Runtime handlers: `display-message`, `display-popup`, `select-window`, `show-option`, `list-panes`.
+- Runtime handlers: `display-message`, `display-popup`, `select-window`, `show-options`, `list-panes`.
 - Phase 2C mux APIs used by runtime handlers: `DisplayPopup`, `SelectWindow`.
 
 ### Hook
@@ -460,8 +530,9 @@ Required tmux commands:
 These items should not block Phase 1, but they are useful pressure points when
 raw tmux calls are centralized:
 
-- Direct `exec.Command("tmux", "show-option", ...)` remains in
-  `tmuxProjdirOption` and the settings desktop notification resolver.
+- Global option reads should use the mux `ShowOption` helper or spell the
+  command as `show-options`; tmux accepts the singular alias, but psmux 3.3.4
+  does not.
 - Legacy desktop notify option `@projmux_desktop_notify` remains a read alias
   for old boolean state.
 - URI registration markers `@projmux_uri_protocol_registered` through `_v5`
@@ -476,7 +547,7 @@ raw tmux calls are centralized:
 - Native picker POC scripts contain raw tmux setup and assertions; keep them in
   e2e/support unless they graduate into production paths.
 
-## psmux Parity Audit Draft Matrix
+## psmux Parity Audit
 
 Phase 3 can use this section as the initial matrix location. If the table grows
 too large, split it to `docs/psmux-parity-audit.md` and leave a link here.
@@ -500,7 +571,7 @@ Status values for Phase 3: `pass`, `partial`, `missing`, `unknown`.
 | Resize panes | `resize-pane -x/-y` | `interactive UI` | `unknown` | Can be `partial` if MVP can tolerate default split sizing. |
 | Pane title | `select-pane -T` and `#{pane_title}` | `interactive UI`, `hooks/status` | `unknown` | Used by attention and AI labels. Phase 2C mux API: `SelectPane`. |
 | Pane options | `set-option -p`, `display-message -p "#{@...}"` | `required MVP`, `hooks/status`, `session-state` | `unknown` | Needs arbitrary user option storage or replacement metadata store. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`, `ShowPaneOption`, `PaneOptionFormat`. |
-| Global/session options | `set-option -g`, `show-option -gqv`, `set-option -t -q` | `hooks/status`, `session-state` | `unknown` | Required for settings, decoration, app markers, session-state source. Phase 2D mux APIs: `SetOption`, `ShowOption`. |
+| Global/session options | `set-option -g`, `show-options -gqv`, `set-option -t -q` | `hooks/status`, `session-state` | `unknown` | Required for settings, decoration, app markers, session-state source. Phase 2D mux APIs: `SetOption`, `ShowOption`. |
 | Generated statusbar | `status`, `status-format`, `#[range=user|...]`, `#(...)`, `#{W:...}` | `hooks/status` | `unknown` | May need a separate psmux-native status model. |
 | Statusbar mouse/key dispatch | `MouseDown1Status`, `if-shell -F`, `switch-client -T`, `run-shell` | `interactive UI`, `hooks/status` | `unknown` | Product UX should degrade explicitly if unsupported. |
 | Hooks | `set-hook`, `show-hooks`, `run-shell -b`, `#{hook_pane}` | `hooks/status` | `unknown` | Alert bell and focus hooks may be unavailable. Phase 2D mux API: `SetHook`. |

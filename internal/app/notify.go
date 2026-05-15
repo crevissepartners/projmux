@@ -632,11 +632,11 @@ func (c *notifyCommand) focusNotification(entry notify.Notification, source, kin
 
 func (c *notifyCommand) statusbarDecoration() config.StatusbarDecoration {
 	if envValue(c.lookupEnv, "TMUX") != "" && c.runner != nil {
-		out, err := c.runner.Run(context.Background(), "tmux", "show-option", "-gqv", statusbarDecorationNotifyTmuxOption)
+		out, err := c.runner.Run(context.Background(), "tmux", "show-options", "-gqv", statusbarDecorationNotifyTmuxOption)
 		if err == nil && strings.TrimSpace(string(out)) != "" {
 			return config.NormalizeStatusbarDecoration(string(out))
 		}
-		out, err = c.runner.Run(context.Background(), "tmux", "show-option", "-gqv", statusbarDecorationTmuxOption)
+		out, err = c.runner.Run(context.Background(), "tmux", "show-options", "-gqv", statusbarDecorationTmuxOption)
 		if err == nil && strings.TrimSpace(string(out)) != "" {
 			return config.NormalizeStatusbarDecoration(string(out))
 		}

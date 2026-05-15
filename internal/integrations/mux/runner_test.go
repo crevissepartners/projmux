@@ -24,7 +24,7 @@ func TestRunnerReadInvokesTmuxWithExactArgs(t *testing.T) {
 	backend := &recordingBackend{out: []byte("  value \n")}
 	runner := NewRunner(backend)
 
-	out, err := runner.Read(context.Background(), "show-option", "-gqv", "@projmux_projdir")
+	out, err := runner.Read(context.Background(), "display-message", "-p", "#{pane_id}")
 	if err != nil {
 		t.Fatalf("Read returned error: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestRunnerReadInvokesTmuxWithExactArgs(t *testing.T) {
 	if backend.name != "tmux" {
 		t.Fatalf("backend name = %q, want tmux", backend.name)
 	}
-	wantArgs := []string{"show-option", "-gqv", "@projmux_projdir"}
+	wantArgs := []string{"display-message", "-p", "#{pane_id}"}
 	if !reflect.DeepEqual(backend.args, wantArgs) {
 		t.Fatalf("backend args = %#v, want %#v", backend.args, wantArgs)
 	}
@@ -162,6 +162,52 @@ func TestRunnerDisplayMessageAllowsTargetlessRead(t *testing.T) {
 	}
 	if got != "%3" {
 		t.Fatalf("DisplayMessageTrimmed = %q, want %%3", got)
+	}
+}
+
+func TestRunnerShowOptionUsesPluralCommandForPsmuxParity(t *testing.T) {
+	backend := &recordingBackend{out: []byte("value\n")}
+	runner := NewRunner(backend)
+
+	got, err := runner.ShowOption(context.Background(), ShowOptionOptions{
+		Global:    true,
+		Quiet:     true,
+		ValueOnly: true,
+		Option:    " @projmux_projdir ",
+	})
+	if err != nil {
+		t.Fatalf("ShowOption returned error: %v", err)
+	}
+
+	wantArgs := []string{"show-options", "-gqv", "@projmux_projdir"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+	if got != "value" {
+		t.Fatalf("ShowOption = %q, want value", got)
+	}
+}
+
+func TestRunnerShowOptionSupportsTargetedSessionRead(t *testing.T) {
+	backend := &recordingBackend{out: []byte("fresh\n")}
+	runner := NewRunner(backend)
+
+	got, err := runner.ShowOption(context.Background(), ShowOptionOptions{
+		Target:    " workspace ",
+		Quiet:     true,
+		ValueOnly: true,
+		Option:    "@projmux_sessionstate_source",
+	})
+	if err != nil {
+		t.Fatalf("ShowOption returned error: %v", err)
+	}
+
+	wantArgs := []string{"show-options", "-qv", "-t", "workspace", "@projmux_sessionstate_source"}
+	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
+		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+	}
+	if got != "fresh" {
+		t.Fatalf("ShowOption = %q, want fresh", got)
 	}
 }
 
@@ -571,7 +617,7 @@ func TestRunnerSetOptionAndShowOptionBuildGlobalArgs(t *testing.T) {
 		t.Fatalf("ShowOption returned error: %v", err)
 	}
 
-	wantArgs = []string{"show-option", "-gqv", "@projmux_app"}
+	wantArgs = []string{"show-options", "-gqv", "@projmux_app"}
 	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
 		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
 	}

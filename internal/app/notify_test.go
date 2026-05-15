@@ -380,7 +380,7 @@ func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 			store := &stubNotifyStore{}
 			picker := &stubNotifyPicker{}
 			runner := &focusFakeRunner{respond: func(args []string) ([]byte, error) {
-				if reflect.DeepEqual(args, []string{"show-option", "-gqv", statusbarDecorationNotifyTmuxOption}) {
+				if reflect.DeepEqual(args, []string{"show-options", "-gqv", statusbarDecorationNotifyTmuxOption}) {
 					return []byte(tt.decoration + "\n"), nil
 				}
 				return nil, errors.New("unexpected runner call")

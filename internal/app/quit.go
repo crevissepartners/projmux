@@ -124,7 +124,7 @@ func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string)
 }
 
 func (c *quitCommand) appRuntimeOwned(ctx context.Context, socketName string) (bool, error) {
-	output, err := c.runner.Run(ctx, "tmux", "-L", socketName, "show-option", "-gv", "@projmux_app")
+	output, err := c.runner.Run(ctx, "tmux", "-L", socketName, "show-options", "-gv", "@projmux_app")
 	if err != nil {
 		if tmuxServerMissing(err) {
 			return false, nil
