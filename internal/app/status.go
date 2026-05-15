@@ -177,10 +177,10 @@ func parseGitAheadBehind(line string) (int, int) {
 
 func (c *statusCommand) statusbarDecoration() config.StatusbarDecoration {
 	if c.env("TMUX") != "" {
-		if raw := c.readTrimmed("tmux", "show-option", "-gqv", statusbarDecorationGitTmuxOption); strings.TrimSpace(raw) != "" {
+		if raw := c.readTrimmed("tmux", "show-options", "-gqv", statusbarDecorationGitTmuxOption); strings.TrimSpace(raw) != "" {
 			return config.NormalizeStatusbarDecoration(raw)
 		}
-		if raw := c.readTrimmed("tmux", "show-option", "-gqv", statusbarDecorationTmuxOption); strings.TrimSpace(raw) != "" {
+		if raw := c.readTrimmed("tmux", "show-options", "-gqv", statusbarDecorationTmuxOption); strings.TrimSpace(raw) != "" {
 			return config.NormalizeStatusbarDecoration(raw)
 		}
 	}

@@ -58,7 +58,9 @@ type SetOptionOptions struct {
 	Value  string
 }
 
-// ShowOptionOptions describes a `show-option` read.
+// ShowOptionOptions describes a `show-options` read. Use the plural command
+// form because tmux supports both show-option/show-options while psmux only
+// supports show-options.
 type ShowOptionOptions struct {
 	Global    bool
 	Quiet     bool
@@ -210,7 +212,7 @@ func (r Runner) SetOption(ctx context.Context, opts SetOptionOptions) error {
 
 // ShowOption reads a tmux option.
 func (r Runner) ShowOption(ctx context.Context, opts ShowOptionOptions) (string, error) {
-	args := []string{"show-option"}
+	args := []string{"show-options"}
 	if flags := showOptionFlags(opts); flags != "" {
 		args = append(args, flags)
 	}

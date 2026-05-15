@@ -241,7 +241,7 @@ func (c *aiCommand) ensureWSLURIProtocol() {
 	if !c.isWSL() {
 		return
 	}
-	if strings.TrimSpace(c.readTrimmed("tmux", "show-option", "-gqv", uriProtocolRegisteredTmuxOption)) == "1" {
+	if strings.TrimSpace(c.readTrimmed("tmux", "show-options", "-gqv", uriProtocolRegisteredTmuxOption)) == "1" {
 		return
 	}
 	distro := strings.TrimSpace(c.env("WSL_DISTRO_NAME"))
@@ -293,7 +293,7 @@ func (c *aiCommand) ensureWSLLegacyAppIDCleaned(_ aiNotification) {
 	if !c.isWSL() {
 		return
 	}
-	if strings.TrimSpace(c.readTrimmed("tmux", "show-option", "-gqv", legacyAppIDCleanedTmuxOption)) == "1" {
+	if strings.TrimSpace(c.readTrimmed("tmux", "show-options", "-gqv", legacyAppIDCleanedTmuxOption)) == "1" {
 		return
 	}
 	powerShell := c.resolvePowerShell()
