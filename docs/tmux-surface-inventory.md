@@ -181,10 +181,53 @@ native PowerShell work does not get conflated with the later psmux backend:
 - **Phase 3A0-4: PowerShell process-launch and quoting policy.** Define how
   generated psmux config invokes `projmux.exe` and child commands without
   POSIX quoting. This must be settled before hooks, status commands, or popup
-  launchers call back into projmux on Windows.
+  launchers call back into projmux on Windows. Policy/helper coverage now
+  lives in `internal/integrations/psmux`: generated psmux config renders
+  PowerShell-native command lines with `& '<projmux.exe>' '<arg>'...`, while
+  native process-launch code keeps argv structured or uses the Windows
+  CreateProcess command-line renderer only at that boundary.
 - **Phase 3A0-5: Native shell entry smoke.** Add the first limited
   `projmux.exe shell` PowerShell smoke that reaches a psmux app runtime, with
   rich pane metadata still disabled.
+
+### Generated psmux Command Rendering Policy
+
+psmux-native generated config must not reuse `tmuxShellQuote`,
+`tmuxConfigQuote`, `sh -c`, POSIX environment-prefix syntax, or cmd.exe
+metacharacter escaping. Those helpers remain tmux/POSIX-only.
+
+When generated psmux config needs to call back into `projmux.exe`, render a
+PowerShell-native invocation from an argv model:
+
+- executable: first token after PowerShell's call operator, e.g.
+  `& 'C:\Program Files\projmux\projmux.exe'`;
+- arguments: one single-quoted literal per argv element;
+- single quote inside an argv element: doubled (`'can''t'`);
+- spaces, backtick, `$`, `&`, `|`, `<`, `>`, `;`, parentheses, braces, caret,
+  percent, and exclamation are data inside single-quoted literals;
+- NUL, CR, and LF are rejected for generated one-line config commands.
+
+When psmux backend code can launch a process directly, it should keep
+`Executable` plus `Args` structured until the native process boundary. If a
+single Windows command-line string is unavoidable for `CreateProcess`, use the
+psmux Windows command-line renderer for direct CreateProcess/C-runtime argv
+parsing only; do not feed that string through PowerShell or `cmd.exe /c`.
+If future code must launch through `cmd.exe /c`, add a separate cmd.exe
+renderer with tests for cmd metacharacters instead of extending the
+CreateProcess helper.
+
+Phase 3A0-5 acceptance/checklist:
+
+- `projmux.exe shell` chooses the psmux path only on native Windows/PowerShell;
+  tmux/POSIX `projmux shell` behavior stays unchanged.
+- generated psmux config uses the PowerShell argv renderer for all callbacks to
+  `projmux.exe` and child commands.
+- Windows paths and args containing spaces, single quote, double quote,
+  backtick, dollar, ampersand, pipe, redirect characters, semicolon,
+  parentheses, braces, caret, percent, and exclamation survive a smoke launch.
+- the smoke reaches a minimal psmux app runtime without pane-scoped metadata,
+  replay, or backend capability redesign.
+- unsupported psmux capabilities fail or degrade explicitly in the smoke notes.
 
 Phase 3A should add an explicit mux capability contract:
 
