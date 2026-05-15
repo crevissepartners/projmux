@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ type shellCommand struct {
 	updatePromptRunner intpickercompat.Runner
 	nativePicker       intpicker.Runner
 	getwd              func() (string, error)
+	goos               func() string
 	now                func() time.Time
 }
 
@@ -64,6 +66,7 @@ func newShellCommand(update *updateCommand) *shellCommand {
 		update:       update,
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		getwd:        os.Getwd,
+		goos:         func() string { return runtime.GOOS },
 		now:          time.Now,
 	}
 }
@@ -111,7 +114,11 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if config == "" {
 		config = c.defaultConfigPath()
 	}
-	if !*noInstall {
+	if !*noInstall && c.useNativePSMuxShell() {
+		if err := c.writePSMuxAppConfig(config, binaryPath); err != nil {
+			return err
+		}
+	} else if !*noInstall {
 		if err := c.writeAppConfig(config, binaryPath); err != nil {
 			return err
 		}
@@ -120,11 +127,15 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	command := "tmux"
+	if c.useNativePSMuxShell() {
+		command = "psmux"
+	}
 	runArgs := []string{"-L", socketName, "-f", config, "new-session", "-A", "-s", target.SessionName}
 	if target.CWD != "" {
 		runArgs = append(runArgs, "-c", target.CWD)
 	}
-	return c.run(context.Background(), "tmux", runArgs...)
+	return c.run(context.Background(), command, runArgs...)
 }
 
 type shellTarget struct {
@@ -433,6 +444,26 @@ func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
 	return nil
 }
 
+func (c *shellCommand) writePSMuxAppConfig(path, binaryPath string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("shell psmux app config path is required")
+	}
+	if c.writeFile == nil {
+		return errors.New("configure shell psmux app config writer: file writer is not configured")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create shell psmux app config directory: %w", err)
+	}
+	config, err := psmuxAppConfig(binaryPath)
+	if err != nil {
+		return err
+	}
+	if err := c.writeFile(path, []byte(config), 0o644); err != nil {
+		return fmt.Errorf("write shell psmux app config: %w", err)
+	}
+	return nil
+}
+
 func (c *shellCommand) defaultShell() string {
 	return defaultInteractiveShell(c.lookupEnv)
 }
@@ -447,7 +478,11 @@ func (c *shellCommand) defaultConfigPath() string {
 			configHome = filepath.Join(homeDir, ".config")
 		}
 	}
-	return filepath.Join(configHome, "projmux", "tmux.conf")
+	name := "tmux.conf"
+	if c.useNativePSMuxShell() {
+		name = "psmux.conf"
+	}
+	return filepath.Join(configHome, "projmux", name)
 }
 
 func (c *shellCommand) expandHome(path string) string {
@@ -486,6 +521,14 @@ func (c *shellCommand) run(ctx context.Context, name string, args ...string) err
 		return errors.New("shell command runner is not configured")
 	}
 	return c.runCommand(ctx, withoutEnv(os.Environ(), "TMUX"), name, args...)
+}
+
+func (c *shellCommand) useNativePSMuxShell() bool {
+	goos := runtime.GOOS
+	if c.goos != nil {
+		goos = c.goos()
+	}
+	return strings.EqualFold(strings.TrimSpace(goos), "windows")
 }
 
 func runForegroundCommand(ctx context.Context, env []string, name string, args ...string) error {
