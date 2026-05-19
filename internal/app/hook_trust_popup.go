@@ -178,10 +178,11 @@ func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Read
 
 func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectHookPromptRequest) hooks.ProjectHookDecision {
 	fmt.Fprintln(writer, projmuxpicker.CurrentStart+" Trust project hooks "+projmuxpicker.Reset)
-	fmt.Fprintln(writer, hookTrustMuted("Project-local automation is disabled until this file hash is trusted."))
+	scope := hookTrustRequestScope(req)
+	fmt.Fprintln(writer, hookTrustMuted(scope.description))
 	fmt.Fprintln(writer)
 	writeHookTrustField(writer, "repo", req.RepoPath)
-	writeHookTrustField(writer, "hook", req.RelativePath)
+	writeHookTrustField(writer, scope.label, req.RelativePath)
 	if req.PreviousSHA256 != "" {
 		writeHookTrustField(writer, "trusted sha", req.PreviousSHA256)
 	}
@@ -199,7 +200,7 @@ func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectH
 	fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
 	fmt.Fprintln(writer, hookTrustActionLine("[o] Allow once", "run this time only"))
 	fmt.Fprintln(writer, hookTrustActionLine("[a] Allow always", "trust this exact file hash"))
-	fmt.Fprintln(writer, hookTrustActionLine("[d] Deny", "skip this hook"))
+	fmt.Fprintln(writer, hookTrustActionLine("[d] Deny", scope.denyDetail))
 
 	input := bufio.NewReader(reader)
 	for range 3 {
@@ -216,6 +217,27 @@ func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectH
 		fmt.Fprintln(writer, hookTrustMuted("Enter o, a, or d."))
 	}
 	return hooks.ProjectHookDeny
+}
+
+type hookTrustScopeCopy struct {
+	label       string
+	description string
+	denyDetail  string
+}
+
+func hookTrustRequestScope(req hooks.ProjectHookPromptRequest) hookTrustScopeCopy {
+	if strings.TrimSpace(req.RelativePath) == ".projmux/config.toml" {
+		return hookTrustScopeCopy{
+			label:       "config",
+			description: "Project-local config is disabled until this file hash is trusted.",
+			denyDetail:  "skip project config",
+		}
+	}
+	return hookTrustScopeCopy{
+		label:       "hook",
+		description: "Project-local automation is disabled until this file hash is trusted.",
+		denyDetail:  "skip this hook",
+	}
 }
 
 func writeHookTrustField(w io.Writer, label, value string) {

@@ -84,7 +84,16 @@ metadata when available. `Back` returns to the project list without creating,
 replaying, or opening a session. After the startup mode is selected, project
 hook/config trust is evaluated if needed; approval continues the selected path
 and deny/cancel aborts before session create, snapshot replay, or startup
-command. Existing sessions switch directly without a startup picker.
+command. The Alt-1 sidebar does not render trust approve/deny rows inline:
+before trust is requested, projmux snapshots the sidebar query/selection
+context and hands the selected open continuation to a detached tmux job. That
+job closes the sidebar popup state for the client and opens the shared `Trust
+project hooks` popup as a client-scoped decision surface, so no code relies on
+the self-closing sidebar popup process continuing after `display-popup -C`.
+Deny/cancel or trust-popup errors return to the sidebar near the same
+query/selection with a visible status message; only a missing/invalid context
+may fall back to a closed popup plus tmux message. Existing sessions switch
+directly without a startup picker or trust gate.
 
 Default `projmux shell` no longer opens a compatibility startup picker and no
 longer accepts startup selector flags for session-state restore. It always

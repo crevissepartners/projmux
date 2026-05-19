@@ -25,6 +25,19 @@ const (
 )
 
 var errProjectStartupBack = errors.New("project startup back")
+var errProjectTrustDenied = errors.New("project trust denied")
+
+type errProjectTrustGate struct {
+	err error
+}
+
+func (e errProjectTrustGate) Error() string {
+	return "project trust gate: " + e.err.Error()
+}
+
+func (e errProjectTrustGate) Unwrap() error {
+	return e.err
+}
 
 type switchProjectTrustAuthorizer interface {
 	AuthorizeProjectHooks(ctx context.Context, cwd string) (bool, error)
@@ -56,18 +69,21 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 	if mode.Kind == projectStartupKindBack {
 		return errProjectStartupBack
 	}
+	return c.authorizeAndContinueProjectOpen(ctx, target, sessionName, mode)
+}
+
+func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate) error {
 	trusted, err := c.authorizeProjectOpen(ctx, target)
 	if err != nil {
-		return err
+		return errProjectTrustGate{err: err}
 	}
 	if !trusted {
-		// Trust was denied: skip snapshot replay (which would re-run
-		// previously-recorded startup recipes) and open a bare session at
-		// the project cwd instead of silently doing nothing. The internal
-		// trust gate inside runStartupCommand prevents the startup command
-		// from firing for an untrusted project.
-		return c.ensureAndOpenProjectSession(ctx, sessionName, target)
+		return errProjectTrustDenied
 	}
+	return c.continueProjectOpen(ctx, target, sessionName, mode)
+}
+
+func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate) error {
 	switch mode.Kind {
 	case projectStartupKindLatest:
 		return c.restoreProjectLatestSnapshot(ctx, sessionName, target)
