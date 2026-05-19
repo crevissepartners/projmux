@@ -916,7 +916,6 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		options.X = "0"
 		options.Y = "0"
 		cwd = ctx.ContextDir
-		addHookTrustInlineEnv(env)
 		addHookTrustPopupTargetEnv(env, ctx)
 		addSwitchTargetClientEnv(env, ctx)
 		env["TMUX_SESSIONIZER_CONTEXT_DIR"] = ctx.ContextDir
@@ -982,7 +981,17 @@ func inheritPopupPickerEnv(env map[string]string, lookupEnv func(string) string)
 	if lookupEnv == nil {
 		lookupEnv = os.Getenv
 	}
-	for _, key := range []string{intpicker.BackendEnv, intpicker.NativeDebugLogEnv, intpicker.NativeTTYFallbackEnv, "PROJMUX_PROJDIR", "PROJMUX_MANAGED_ROOTS", "TMUX_SESSIONIZER_ROOTS"} {
+	for _, key := range []string{
+		intpicker.BackendEnv,
+		intpicker.NativeDebugLogEnv,
+		intpicker.NativeTTYFallbackEnv,
+		"PROJMUX_PROJDIR",
+		"PROJMUX_MANAGED_ROOTS",
+		"TMUX_SESSIONIZER_ROOTS",
+		switchInitialQueryEnv,
+		switchInitialSelectionEnv,
+		switchStatusMessageEnv,
+	} {
 		if value := strings.TrimSpace(lookupEnv(key)); value != "" {
 			env[key] = value
 		}

@@ -446,7 +446,12 @@ fixed snapshots. Rows include saved-at date/time metadata when projmux can
 determine it. `Back` returns to the project list without creating, replaying, or
 opening a session. After the startup mode is selected, project hook/config trust
 is evaluated if needed; approval continues the selected path and deny/cancel
-aborts without session create, snapshot replay, or startup command. Existing
+aborts without session create, snapshot replay, or startup command. The Alt-1
+sidebar opens trust as the shared client-scoped `Trust project hooks` popup
+instead of inline sidebar rows. The selected open continuation runs in a
+detached tmux job that can close the sidebar before trust without depending on
+the self-closing sidebar process to keep running. Deny/cancel refreshes the
+original sidebar query/selection context with a visible status message. Existing
 sessions switch directly without a startup picker.
 
 Default `projmux shell` no longer opens a startup picker or replays session-state

@@ -15,7 +15,9 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -154,7 +156,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}
 }
 
-func TestSwitchExecuteSidebarHookProjectUsesInlineStartupAndTrust(t *testing.T) {
+func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *testing.T) {
 	t.Parallel()
 
 	target := t.TempDir()
@@ -164,11 +166,10 @@ func TestSwitchExecuteSidebarHookProjectUsesInlineStartupAndTrust(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(target, ".projmux", "config.toml"), []byte("[startup]\nrun = \"agent\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sessions := &capturingSwitchSessionExecutor{exists: map[string]bool{"target": false}}
 	tmuxRunner := &recordingTmuxRunner{}
 	cmd := &switchCommand{
 		tmuxRunner: tmuxRunner,
-		sessions:   sessions,
+		sessions:   &capturingSwitchSessionExecutor{exists: map[string]bool{"target": false}},
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		identity:   stubSwitchIdentityResolver{name: "target"},
 		lookupEnv: func(name string) string {
@@ -190,11 +191,200 @@ func TestSwitchExecuteSidebarHookProjectUsesInlineStartupAndTrust(t *testing.T) 
 	if reopen {
 		t.Fatal("execute() reopen = true, want false")
 	}
-	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want inline trust then open", got)
+	if len(tmuxRunner.calls) != 1 {
+		t.Fatalf("tmux calls = %#v, want one run-shell continuation", tmuxRunner.calls)
 	}
-	if len(tmuxRunner.calls) != 0 {
-		t.Fatalf("tmux calls = %#v, want no display-popup handoff", tmuxRunner.calls)
+	call := tmuxRunner.calls[0]
+	if call.name != "tmux" || len(call.args) != 3 || !reflect.DeepEqual(call.args[:2], []string{"run-shell", "-b"}) {
+		t.Fatalf("tmux call = %#v, want detached continuation", call)
+	}
+	command := call.args[2]
+	for _, want := range []string{
+		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/9'",
+		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/9'",
+		"'/tmp/projmux' 'switch' 'sidebar-open'",
+		"'--path' " + tmuxShellQuote(target),
+		"'--session' 'target'",
+		"'--mode' 'empty'",
+		"'--client' '/dev/pts/9'",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("continuation command = %q, want substring %q", command, want)
+		}
+	}
+	if strings.Contains(command, "display-popup -C") {
+		t.Fatalf("continuation command = %q, should not self-close before launching", command)
+	}
+}
+
+func TestSwitchPrepareSidebarTrustPopupRemovesMarkerAndUsesClientScope(t *testing.T) {
+	t.Parallel()
+
+	client := "/dev/pts/projmux-trust-test"
+	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%hidden-pane\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{}
+	cmd := &switchCommand{
+		tmuxRunner: runner,
+		lookupEnv: func(name string) string {
+			if name == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return ""
+		},
+	}
+
+	if err := cmd.prepareSidebarTrustPopup(context.Background()); err != nil {
+		t.Fatalf("prepareSidebarTrustPopup() error = %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want removed", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("tmux calls = %#v, want one close", runner.calls)
+	}
+	if got, want := runner.calls[0], (recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-c", client, "-C"}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("tmux call = %#v, want %#v", got, want)
+	}
+}
+
+func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	sessions := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
+	tmuxRunner := &recordingTmuxRunner{}
+	cmd := &switchCommand{
+		sessions:   sessions,
+		tmuxRunner: tmuxRunner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	err := cmd.runSidebarOpen([]string{
+		"--path", target,
+		"--session", "target",
+		"--mode", projectStartupKindEmpty,
+		"--query", "tar",
+		"--client", "/dev/pts/9",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("runSidebarOpen() error = %v", err)
+	}
+	if sessions.ensureSessionName != "" || sessions.restoreSessionName != "" || sessions.openSessionName != "" {
+		t.Fatalf("deny should not create/replay/open: %#v", sessions)
+	}
+	if got, want := sessions.calls, []string{"authorize:" + target}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if len(tmuxRunner.calls) != 2 {
+		t.Fatalf("tmux calls = %#v, want close then reopen", tmuxRunner.calls)
+	}
+	if got, want := tmuxRunner.calls[0], (recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-c", "/dev/pts/9", "-C"}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("close call = %#v, want %#v", got, want)
+	}
+	reopen := tmuxRunner.calls[1]
+	if reopen.name != "tmux" || len(reopen.args) != 3 || !reflect.DeepEqual(reopen.args[:2], []string{"run-shell", "-b"}) {
+		t.Fatalf("reopen call = %#v, want detached popup-toggle", reopen)
+	}
+	command := reopen.args[2]
+	for _, want := range []string{
+		switchInitialQueryEnv + "='tar'",
+		switchInitialSelectionEnv + "=" + tmuxShellQuote(target),
+		switchStatusMessageEnv + "='Trust denied'",
+		"'/tmp/projmux' 'tmux' 'popup-toggle' '--client' '/dev/pts/9' 'sessionizer-sidebar'",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("reopen command = %q, want substring %q", command, want)
+		}
+	}
+}
+
+func TestSwitchSidebarOpenApproveContinuesSelectedEmptyOpen(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	sessions := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+	tmuxRunner := &recordingTmuxRunner{}
+	cmd := &switchCommand{
+		sessions:   sessions,
+		tmuxRunner: tmuxRunner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	err := cmd.runSidebarOpen([]string{
+		"--path", target,
+		"--session", "target",
+		"--mode", projectStartupKindEmpty,
+		"--client", "/dev/pts/9",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("runSidebarOpen() error = %v", err)
+	}
+	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if len(tmuxRunner.calls) != 1 {
+		t.Fatalf("tmux calls = %#v, want only sidebar close", tmuxRunner.calls)
+	}
+	if got, want := tmuxRunner.calls[0], (recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-c", "/dev/pts/9", "-C"}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("close call = %#v, want %#v", got, want)
+	}
+}
+
+func TestSwitchSidebarOpenTrustPopupUsesClientScope(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	tmuxRunner := &recordingTmuxRunner{}
+	popupRunner := &hookTrustPopupRecordingRunner{}
+	var cmd *switchCommand
+	sessions := &sidebarOpenTrustPopupExecutor{
+		lookupEnv: func(name string) string { return cmd.lookupEnv(name) },
+		executable: func() (string, error) {
+			return "/tmp/projmux", nil
+		},
+		popupRunner: popupRunner,
+	}
+	cmd = &switchCommand{
+		sessions:   sessions,
+		tmuxRunner: tmuxRunner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux/default,1,0"
+			}
+			return ""
+		},
+	}
+
+	err := cmd.runSidebarOpen([]string{
+		"--path", target,
+		"--session", "target",
+		"--mode", projectStartupKindEmpty,
+		"--client", "/dev/pts/9",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("runSidebarOpen() error = %v", err)
+	}
+	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if len(popupRunner.calls) != 1 {
+		t.Fatalf("trust popup calls = %#v, want one display-popup", popupRunner.calls)
+	}
+	call := popupRunner.calls[0]
+	if call.name != "tmux" || len(call.args) == 0 || call.args[0] != "display-popup" {
+		t.Fatalf("trust popup call = %#v, want display-popup", call)
+	}
+	if !containsTmuxArgPair(call.args, "-c", "/dev/pts/9") {
+		t.Fatalf("trust popup args = %#v, want client scope", call.args)
+	}
+	if containsTmuxArg(call.args, "-t") {
+		t.Fatalf("trust popup args = %#v, want no unrelated pane target", call.args)
 	}
 }
 
@@ -916,7 +1106,7 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 	}
 }
 
-func TestSwitchProjectOpenTrustDenyAfterStartupSelectionFallsBackToEmptySession(t *testing.T) {
+func TestSwitchProjectOpenTrustDenyAfterStartupSelectionAbortsWithoutSession(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -940,8 +1130,9 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionFallsBackToEmptySession(
 		nativePicker: native,
 	}
 
-	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
+	err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace")
+	if !errors.Is(err, errProjectTrustDenied) {
+		t.Fatalf("openProjectTarget() error = %v, want trust denied", err)
 	}
 	if !executor.authorizeCalled {
 		t.Fatal("trust gate was not checked")
@@ -952,21 +1143,15 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionFallsBackToEmptySession(
 	if executor.restoreSessionName != "" {
 		t.Fatalf("snapshot restore ran after deny: restore=%q", executor.restoreSessionName)
 	}
-	if got, want := executor.ensureSessionName, "workspace"; got != want {
-		t.Fatalf("ensure session = %q, want %q", got, want)
+	if executor.ensureSessionName != "" || executor.ensureCWD != "" || executor.openSessionName != "" {
+		t.Fatalf("deny should not create/open a session: %#v", executor)
 	}
-	if got, want := executor.ensureCWD, "/tmp/workspace"; got != want {
-		t.Fatalf("ensure cwd = %q, want %q", got, want)
-	}
-	if got, want := executor.openSessionName, "workspace"; got != want {
-		t.Fatalf("open session = %q, want %q", got, want)
-	}
-	if got, want := executor.calls, []string{"authorize:/tmp/workspace", "ensure:workspace", "open:workspace"}; !equalStrings(got, want) {
+	if got, want := executor.calls, []string{"authorize:/tmp/workspace"}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
 }
 
-func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndOpensEmpty(t *testing.T) {
+func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndCreate(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1001,13 +1186,17 @@ func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndOpensEmpty(t
 		nativePicker: native,
 	}
 
-	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
+	err := cmd.openProjectTarget(context.Background(), project, "workspace")
+	if !errors.Is(err, errProjectTrustDenied) {
+		t.Fatalf("openProjectTarget() error = %v, want trust denied", err)
 	}
 	if executor.restoreSessionName != "" {
 		t.Fatalf("snapshot restore ran after trust deny: restore=%q", executor.restoreSessionName)
 	}
-	if got, want := executor.calls, []string{"authorize:" + project, "ensure:workspace", "open:workspace"}; !equalStrings(got, want) {
+	if executor.ensureSessionName != "" || executor.openSessionName != "" {
+		t.Fatalf("deny should not create/open a session: %#v", executor)
+	}
+	if got, want := executor.calls, []string{"authorize:" + project}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
 }
@@ -1148,6 +1337,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	cmd.nativePicker = nativePickerFromCompatRunner(fakeRunner)
 	cmd.sessions = fakeExecutor
 	cmd.executable = func() (string, error) { return "/tmp/projmux", nil }
+	cmd.tmuxRunner = &recordingTmuxRunner{}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -1194,14 +1384,14 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got, want := fakeRunner.last.Footer, "C-x: kill | M-p: pin"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
-	if got, want := fakeExecutor.ensureSessionName, "managed-work-a"; got != want {
-		t.Fatalf("ensure session = %q, want %q", got, want)
+	if got := fakeExecutor.ensureSessionName; got != "" {
+		t.Fatalf("ensure session = %q, want continuation handoff", got)
 	}
-	if got, want := fakeExecutor.ensureCWD, fixture.path("managed/work-a"); got != want {
-		t.Fatalf("ensure cwd = %q, want %q", got, want)
+	if got := fakeExecutor.ensureCWD; got != "" {
+		t.Fatalf("ensure cwd = %q, want continuation handoff", got)
 	}
-	if got, want := fakeExecutor.openSessionName, "managed-work-a"; got != want {
-		t.Fatalf("open session = %q, want %q", got, want)
+	if got := fakeExecutor.openSessionName; got != "" {
+		t.Fatalf("open session = %q, want continuation handoff", got)
 	}
 }
 
@@ -2545,6 +2735,38 @@ type capturingSwitchSessionExecutor struct {
 	authorizeErr       error
 	existsErr          error
 	recentErr          error
+}
+
+type sidebarOpenTrustPopupExecutor struct {
+	lookupEnv   func(string) string
+	executable  func() (string, error)
+	popupRunner tmuxRunner
+	calls       []string
+}
+
+func (e *sidebarOpenTrustPopupExecutor) EnsureSession(_ context.Context, sessionName, _ string) error {
+	e.calls = append(e.calls, "ensure:"+sessionName)
+	return nil
+}
+
+func (e *sidebarOpenTrustPopupExecutor) OpenSession(_ context.Context, sessionName string) error {
+	e.calls = append(e.calls, "open:"+sessionName)
+	return nil
+}
+
+func (e *sidebarOpenTrustPopupExecutor) SessionExists(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (e *sidebarOpenTrustPopupExecutor) AuthorizeProjectHooks(_ context.Context, cwd string) (bool, error) {
+	e.calls = append(e.calls, "authorize:"+cwd)
+	prompt := tmuxProjectHookPrompt(e.lookupEnv, e.executable, e.popupRunner)
+	decision := prompt(hooks.ProjectHookPromptRequest{
+		RepoPath:     cwd,
+		RelativePath: ".projmux/config.toml",
+		SHA256:       "abc123",
+	})
+	return decision != hooks.ProjectHookDeny, nil
 }
 
 func (e *capturingSwitchSessionExecutor) EnsureSession(_ context.Context, sessionName, cwd string) error {

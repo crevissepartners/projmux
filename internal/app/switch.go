@@ -27,16 +27,19 @@ import (
 )
 
 const (
-	switchUIFlag             = "ui"
-	switchUIPopup            = "popup"
-	switchUISidebar          = "sidebar"
-	switchKillExpectKey      = "ctrl-x"
-	switchPinExpectKey       = "alt-p"
-	switchSettingsSentinel   = "__projmux_settings__"
-	switchContextSessionEnv  = "TMUX_SESSIONIZER_CONTEXT_SESSION"
-	managedRootsEnvVar       = "PROJMUX_MANAGED_ROOTS"
-	legacyManagedRootsEnvVar = "TMUX_SESSIONIZER_ROOTS"
-	projdirEnvVar            = "PROJMUX_PROJDIR"
+	switchUIFlag              = "ui"
+	switchUIPopup             = "popup"
+	switchUISidebar           = "sidebar"
+	switchKillExpectKey       = "ctrl-x"
+	switchPinExpectKey        = "alt-p"
+	switchSettingsSentinel    = "__projmux_settings__"
+	switchContextSessionEnv   = "TMUX_SESSIONIZER_CONTEXT_SESSION"
+	switchInitialQueryEnv     = "PROJMUX_SWITCH_INITIAL_QUERY"
+	switchInitialSelectionEnv = "PROJMUX_SWITCH_INITIAL_SELECTION"
+	switchStatusMessageEnv    = "PROJMUX_SWITCH_STATUS_MESSAGE"
+	managedRootsEnvVar        = "PROJMUX_MANAGED_ROOTS"
+	legacyManagedRootsEnvVar  = "TMUX_SESSIONIZER_ROOTS"
+	projdirEnvVar             = "PROJMUX_PROJDIR"
 )
 
 var switchPinHiddenWhitelist = []string{
@@ -120,6 +123,7 @@ type switchCommand struct {
 	tmuxProjdir     func() string
 	nativePicker    intpicker.Runner
 	focusSession    string
+	sidebarResume   switchSidebarResume
 }
 
 type switchKubeInfo struct {
@@ -139,6 +143,15 @@ type switchPlan struct {
 	HomeDir       string
 	CurrentPath   string
 	OriginSession string
+	Query         string
+	InitialQuery  string
+	StatusMessage string
+}
+
+type switchSidebarResume struct {
+	Query     string
+	Selection string
+	Message   string
 }
 
 func newSwitchCommand() *switchCommand {
@@ -216,6 +229,8 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return c.runKill(args[1:], stdout, stderr)
 		case "open":
 			return c.runOpen(args[1:], stderr)
+		case "sidebar-open":
+			return c.runSidebarOpen(args[1:], stderr)
 		case "settings":
 			return c.runSettings(stdout, stderr)
 		case "preview":
@@ -538,6 +553,23 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 	if inputs.HomeDir == "" {
 		inputs.HomeDir = homeDir
 	}
+	resume := switchSidebarResume{}
+	if ui == switchUISidebar && c.sidebarResume != (switchSidebarResume{}) {
+		resume = c.sidebarResume
+		c.sidebarResume = switchSidebarResume{}
+	}
+	if ui == switchUISidebar && resume == (switchSidebarResume{}) && c.lookupEnv != nil {
+		resume = switchSidebarResume{
+			Query:     strings.TrimSpace(c.lookupEnv(switchInitialQueryEnv)),
+			Selection: cleanOptionalPath(c.lookupEnv(switchInitialSelectionEnv)),
+			Message:   strings.TrimSpace(c.lookupEnv(switchStatusMessageEnv)),
+		}
+	}
+	if ui == switchUISidebar {
+		if strings.TrimSpace(resume.Selection) != "" {
+			inputs.CurrentPath = resume.Selection
+		}
+	}
 
 	paths, err := c.discover(inputs)
 	if err != nil {
@@ -550,6 +582,8 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 		HomeDir:       homeDir,
 		CurrentPath:   cleanOptionalPath(inputs.CurrentPath),
 		OriginSession: c.originSession(),
+		InitialQuery:  strings.TrimSpace(resume.Query),
+		StatusMessage: strings.TrimSpace(resume.Message),
 	}
 
 	return c.completePlan(plan)
@@ -1371,6 +1405,7 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 		return switchPlan{}, err
 	}
 	plan.Action = strings.TrimSpace(result.Key)
+	plan.Query = strings.TrimSpace(result.Query)
 	selection := result.Value
 	selection = cleanOptionalPath(selection)
 	plan.Selection = selection
@@ -1441,7 +1476,7 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 	}
 
 	if plan.UI == switchUISidebar {
-		if err := c.openProjectTargetPath(ctx, plan.Selection); err != nil {
+		if err := c.openProjectTargetPathFromSidebar(ctx, plan); err != nil {
 			if errors.Is(err, errProjectStartupBack) {
 				return true, nil
 			}
@@ -1451,6 +1486,9 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 	}
 
 	if err := c.openTarget(ctx, plan.Selection); err != nil {
+		if errors.Is(err, errProjectTrustDenied) {
+			return false, nil
+		}
 		return false, err
 	}
 	return false, nil
@@ -1506,6 +1544,246 @@ func (c *switchCommand) openProjectTargetPath(ctx context.Context, target string
 	return c.openProjectTarget(ctx, target, sessionName)
 }
 
+func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, plan switchPlan) error {
+	target := cleanOptionalPath(plan.Selection)
+	if target == "" {
+		return nil
+	}
+	sessionName := strings.TrimSpace(plan.SessionName)
+	if sessionName == "" {
+		var err error
+		sessionName, err = c.resolveTargetSession(target)
+		if err != nil || sessionName == "" {
+			return err
+		}
+	}
+	plan.SessionName = sessionName
+	exists, err := c.switchSessionExists(ctx, sessionName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return c.openProjectSession(ctx, sessionName)
+	}
+	mode := projectStartupCandidate{Kind: projectStartupKindEmpty}
+	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
+		mode = c.pickProjectStartupMode(sessionName, target)
+	}
+	if mode.Kind == projectStartupKindBack {
+		return errProjectStartupBack
+	}
+	return c.launchSidebarOpenContinuation(ctx, plan, mode)
+}
+
+func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan switchPlan, mode projectStartupCandidate) error {
+	if c.tmuxRunner == nil {
+		return fmt.Errorf("switch sidebar continuation runner is not configured")
+	}
+	if c.executable == nil {
+		return fmt.Errorf("switch sidebar continuation executable is not configured")
+	}
+	binaryPath, err := c.executable()
+	if err != nil {
+		return fmt.Errorf("resolve switch sidebar continuation executable: %w", err)
+	}
+	client := firstNonEmpty(
+		c.lookupEnvValue(inttmux.SwitchTargetClientEnv),
+		c.lookupEnvValue(hookTrustPopupTargetClientEnv),
+	)
+	args := []string{
+		"switch",
+		"sidebar-open",
+		"--path", cleanOptionalPath(plan.Selection),
+		"--session", strings.TrimSpace(plan.SessionName),
+		"--mode", strings.TrimSpace(mode.Kind),
+		"--query", strings.TrimSpace(plan.Query),
+	}
+	if strings.TrimSpace(mode.Name) != "" {
+		args = append(args, "--name", strings.TrimSpace(mode.Name))
+	}
+	if strings.TrimSpace(client) != "" {
+		args = append(args, "--client", strings.TrimSpace(client))
+	}
+	env := map[string]string{}
+	if strings.TrimSpace(client) != "" {
+		env[hookTrustPopupTargetClientEnv] = strings.TrimSpace(client)
+		env[inttmux.SwitchTargetClientEnv] = strings.TrimSpace(client)
+	}
+	command := buildShellCommand(binaryPath, args, env)
+	if _, err := c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", command); err != nil {
+		return fmt.Errorf("launch sidebar open continuation: %w", err)
+	}
+	return nil
+}
+
+func (c *switchCommand) lookupEnvValue(name string) string {
+	if c.lookupEnv == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.lookupEnv(name))
+}
+
+func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("switch sidebar-open", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	target := fs.String("path", "", "project path to open")
+	sessionName := fs.String("session", "", "target session name")
+	mode := fs.String("mode", projectStartupKindEmpty, "startup mode")
+	name := fs.String("name", "", "named snapshot name")
+	query := fs.String("query", "", "sidebar query to restore on deny")
+	client := fs.String("client", "", "tmux client to restore sidebar popup")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("switch sidebar-open does not accept positional arguments")
+	}
+	openTarget := cleanOptionalPath(*target)
+	if openTarget == "" {
+		return fmt.Errorf("switch sidebar-open requires --path")
+	}
+	openSession := strings.TrimSpace(*sessionName)
+	if openSession == "" {
+		var err error
+		openSession, err = c.resolveTargetSession(openTarget)
+		if err != nil || openSession == "" {
+			return err
+		}
+	}
+	targetClient := strings.TrimSpace(*client)
+	if targetClient != "" {
+		restoreLookup := c.withSidebarOpenClientEnv(targetClient)
+		defer restoreLookup()
+	}
+	c.closeSidebarPopupForTrust(context.Background(), targetClient)
+	openMode := projectStartupCandidate{Kind: strings.TrimSpace(*mode), Name: strings.TrimSpace(*name)}
+	if openMode.Kind == "" {
+		openMode.Kind = projectStartupKindEmpty
+	}
+	exists, err := c.switchSessionExists(context.Background(), openSession)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return c.openProjectSession(context.Background(), openSession)
+	}
+	err = c.authorizeAndContinueProjectOpen(context.Background(), openTarget, openSession, openMode)
+	if err == nil {
+		return nil
+	}
+	resume := switchSidebarResume{
+		Query:     strings.TrimSpace(*query),
+		Selection: openTarget,
+		Message:   sidebarTrustStatusMessage(err),
+	}
+	if reopenErr := c.reopenSidebarAfterTrust(context.Background(), targetClient, resume); reopenErr != nil {
+		return reopenErr
+	}
+	return nil
+}
+
+func (c *switchCommand) withSidebarOpenClientEnv(client string) func() {
+	previous := c.lookupEnv
+	c.lookupEnv = func(name string) string {
+		switch name {
+		case hookTrustPopupTargetClientEnv, inttmux.SwitchTargetClientEnv, "PROJMUX_POPUP_TARGET_CLIENT":
+			return client
+		default:
+			if previous == nil {
+				return ""
+			}
+			return previous(name)
+		}
+	}
+	return func() {
+		c.lookupEnv = previous
+	}
+}
+
+func sidebarTrustStatusMessage(err error) string {
+	if errors.Is(err, errProjectTrustDenied) {
+		return "Trust denied"
+	}
+	var trustErr errProjectTrustGate
+	if errors.As(err, &trustErr) {
+		return "Trust error: " + trustErr.Unwrap().Error()
+	}
+	if err != nil {
+		return "Project open error: " + err.Error()
+	}
+	return ""
+}
+
+func (c *switchCommand) reopenSidebarAfterTrust(ctx context.Context, client string, resume switchSidebarResume) error {
+	if c.tmuxRunner == nil {
+		return fmt.Errorf("switch sidebar reopen runner is not configured")
+	}
+	if c.executable == nil {
+		return fmt.Errorf("switch sidebar reopen executable is not configured")
+	}
+	binaryPath, err := c.executable()
+	if err != nil {
+		return fmt.Errorf("resolve switch sidebar reopen executable: %w", err)
+	}
+	if strings.TrimSpace(client) == "" {
+		_, _ = c.tmuxRunner.Run(ctx, "tmux", "display-message", strings.TrimSpace(resume.Message))
+		return nil
+	}
+	env := map[string]string{
+		switchInitialQueryEnv:     strings.TrimSpace(resume.Query),
+		switchInitialSelectionEnv: cleanOptionalPath(resume.Selection),
+		switchStatusMessageEnv:    strings.TrimSpace(resume.Message),
+	}
+	command := buildShellCommand(binaryPath, []string{"tmux", "popup-toggle", "--client", strings.TrimSpace(client), "sessionizer-sidebar"}, env)
+	if _, err := c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", command); err != nil {
+		return fmt.Errorf("reopen sidebar after trust: %w", err)
+	}
+	return nil
+}
+
+func (c *switchCommand) closeSidebarPopupForTrust(ctx context.Context, targetClient string) {
+	targetClient = strings.TrimSpace(targetClient)
+	if targetClient == "" || c.tmuxRunner == nil {
+		return
+	}
+	marker := popupMarkerPath(sanitizePopupKey(targetClient), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	_ = mux.NewRunner(c.tmuxRunner).ClosePopup(ctx, mux.ClosePopupOptions{
+		Client: targetClient,
+	})
+}
+
+func (c *switchCommand) prepareSidebarTrustPopup(ctx context.Context) error {
+	if c.lookupEnv == nil || c.tmuxRunner == nil {
+		return nil
+	}
+	targetClient := firstNonEmpty(
+		c.lookupEnv(inttmux.SwitchTargetClientEnv),
+		c.lookupEnv(hookTrustPopupTargetClientEnv),
+	)
+	if strings.TrimSpace(targetClient) == "" {
+		return nil
+	}
+	c.closeSidebarPopupForTrust(ctx, targetClient)
+	return nil
+}
+
+func buildShellCommand(binaryPath string, args []string, env map[string]string) string {
+	command := []string{}
+	for _, key := range sortedStringKeys(env) {
+		value := env[key]
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		command = append(command, key+"="+tmuxShellQuote(value))
+	}
+	command = append(command, tmuxShellQuote(binaryPath))
+	for _, arg := range args {
+		command = append(command, tmuxShellQuote(arg))
+	}
+	return strings.Join(command, " ")
+}
+
 func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Writer) error {
 	if len(args) != 1 {
 		printSwitchUsage(stderr)
@@ -1550,11 +1828,12 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 	}
 
 	options := intpicker.Options{
-		UI:        plan.UI,
-		Items:     plan.Items,
-		MultiLine: true,
-		Prompt:    "› ",
-		Footer:    switchPickerFooter(plan.UI),
+		UI:           plan.UI,
+		Items:        plan.Items,
+		MultiLine:    true,
+		Prompt:       "› ",
+		Footer:       switchPickerFooter(plan.UI, plan.StatusMessage),
+		InitialQuery: plan.InitialQuery,
 		Actions: append(
 			pickerCloseActions("esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
 			intpicker.CustomActions(switchKillExpectKey, switchPinExpectKey)...,
@@ -1647,6 +1926,10 @@ func (c *switchCommand) switchPickerSurface(plan switchPlan) (switchPickerSurfac
 			surface.InitialIndex = pos - 1
 			surface.InitialIndexSet = true
 		}
+		if pos := switchSidebarInitialFilteredPos(plan); pos > 0 {
+			surface.InitialIndex = pos - 1
+			surface.InitialIndexSet = true
+		}
 		return surface, nil
 	}
 
@@ -1683,17 +1966,26 @@ func switchPreviewWindow(ui string) string {
 	}
 }
 
-func switchPickerFooter(ui string) string {
+func switchPickerFooter(ui, status string) string {
+	status = strings.TrimSpace(status)
 	if ui == switchUISidebar {
-		return projmuxFooter("C-x: kill | M-p: pin")
+		footer := "C-x: kill | M-p: pin"
+		if status != "" {
+			footer += " | " + status
+		}
+		return projmuxFooter(footer)
 	}
-	return projmuxFooter(strings.Join([]string{
+	parts := []string{
 		"Enter: switch to previewed target",
 		"Ctrl-X: kill focused session",
 		"Alt-P: pin/unpin focused directory",
 		"Left/Right: preview window",
 		"Alt-Up/Alt-Down: preview pane",
-	}, "\n"))
+	}
+	if status != "" {
+		parts = append(parts, status)
+	}
+	return projmuxFooter(strings.Join(parts, "\n"))
 }
 
 func projmuxFooter(text string) string {
@@ -1730,6 +2022,19 @@ func switchSidebarInitialPos(plan switchPlan) int {
 		return pathMatchIdx
 	}
 	return homeIdx
+}
+
+func switchSidebarInitialFilteredPos(plan switchPlan) int {
+	if strings.TrimSpace(plan.InitialQuery) == "" || strings.TrimSpace(plan.CurrentPath) == "" {
+		return 0
+	}
+	filtered := intpicker.FilterItems(plan.Items, plan.InitialQuery)
+	for idx, item := range filtered {
+		if cleanOptionalPath(item.Value) == cleanOptionalPath(plan.CurrentPath) {
+			return idx + 1
+		}
+	}
+	return 0
 }
 
 func switchSessionNameForRow(plan switchPlan, value string) string {

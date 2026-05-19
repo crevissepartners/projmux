@@ -296,7 +296,6 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-E",
 		"-B",
 		"-d", "/tmp/work tree",
-		"-e", "PROJMUX_HOOK_TRUST_INLINE=1",
 		"-e", "PROJMUX_HOOK_TRUST_TARGET_CLIENT=/dev/pts/projmux-test-sidebar",
 		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-1",
 		"-e", "PROJMUX_PICKER_BACKEND=native",
@@ -315,7 +314,6 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	command := got.args[len(got.args)-1]
 	for _, want := range []string{
 		"cd -- '/tmp/work tree'",
-		"PROJMUX_HOOK_TRUST_INLINE='1'",
 		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/projmux-test-sidebar'",
 		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/projmux-test-sidebar'",
 		"TMUX_SESSIONIZER_CONTEXT_SESSION='work'",
@@ -327,6 +325,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{
+		"PROJMUX_HOOK_TRUST_INLINE",
 		"PROJMUX_HOOK_TRUST_TARGET_PANE",
 	} {
 		if strings.Contains(command, unwanted) {
@@ -794,7 +793,6 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_NATIVE_TTY_FALLBACK='0'",
 		"PROJMUX_PROJDIR='/workspace/projects'",
 		"PROJMUX_MANAGED_ROOTS='/workspace/projects'",
-		hookTrustInlineEnv + "='1'",
 		hookTrustPopupTargetClientEnv + "='/dev/pts/7'",
 		inttmux.SwitchTargetClientEnv + "='/dev/pts/7'",
 	} {
@@ -813,7 +811,6 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_NATIVE_TTY_FALLBACK": "0",
 		"PROJMUX_PROJDIR":             "/workspace/projects",
 		"PROJMUX_MANAGED_ROOTS":       "/workspace/projects",
-		hookTrustInlineEnv:            "1",
 		hookTrustPopupTargetClientEnv: "/dev/pts/7",
 		inttmux.SwitchTargetClientEnv: "/dev/pts/7",
 	} {
@@ -821,7 +818,7 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 			t.Fatalf("options.Env[%q] = %q, want %q", key, got, want)
 		}
 	}
-	for _, key := range []string{hookTrustPopupTargetPaneEnv} {
+	for _, key := range []string{hookTrustInlineEnv, hookTrustPopupTargetPaneEnv} {
 		if value, ok := options.Env[key]; ok {
 			t.Fatalf("options.Env[%q] = %q, want absent", key, value)
 		}
