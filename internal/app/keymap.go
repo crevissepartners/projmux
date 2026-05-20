@@ -166,6 +166,9 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 	} else {
 		current.Bindings[actionID] = override
 	}
+	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+		return path, err
+	}
 
 	if path == "" {
 		path, err = keymapPath(store.homeDir, store.lookupEnv)
@@ -182,6 +185,52 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 func saveKeymapKeys(store keymapStore, actionID string, keys []string) (string, error) {
 	joined := strings.Join(keys, ",")
 	return saveKeymapOverride(store, actionID, "keys", &joined)
+}
+
+func resetKeymapKeys(store keymapStore, actionID string) (string, error) {
+	current, _, _, path, err := loadKeymapForEdit(store)
+	if err != nil {
+		return path, err
+	}
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if !ok {
+		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	actionID = action.ID
+
+	override := current.Bindings[actionID]
+	if current.Bindings == nil {
+		current.Bindings = map[string]keymapOverride{}
+	}
+	for _, legacy := range action.LegacyIDs {
+		if existing, ok := current.Bindings[legacy]; ok {
+			override = existing
+			delete(current.Bindings, legacy)
+			break
+		}
+	}
+	override.Plain = nil
+	override.Keys = nil
+	override.KeysSet = false
+	if override.Prefix == nil {
+		delete(current.Bindings, actionID)
+	} else {
+		current.Bindings[actionID] = override
+	}
+	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+		return path, err
+	}
+
+	if path == "" {
+		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+		return path, err
+	}
+	return path, nil
 }
 
 func keyBindingActionByID(actions []keyBindingAction, id string) (keyBindingAction, bool) {
