@@ -112,13 +112,6 @@ WRAPPER
       printf "bind-key -n M-3 run-shell \"%s %s #{client_tty} session-popup\"\n" "$popup_env" "$popup_wrapper"
       printf "bind-key -n M-4 run-shell \"%s %s #{client_tty} ai-split-picker-right\"\n" "$popup_env" "$popup_wrapper"
       printf "bind-key -n M-5 run-shell \"%s %s #{client_tty} ai-split-settings\"\n" "$popup_env" "$popup_wrapper"
-      printf "bind-key -n M-6 run-shell \"%s %s #{client_tty} sessionizer\"\n" "$popup_env" "$popup_wrapper"
-      printf "bind-key -n User2 run-shell \"%s %s #{client_tty} notify-sidebar\"\n" "$popup_env" "$popup_wrapper"
-      printf "bind-key -n User3 run-shell \"%s %s #{client_tty} session-popup\"\n" "$popup_env" "$popup_wrapper"
-      printf "bind-key -n User4 run-shell \"%s %s #{client_tty} sessionizer-sidebar\"\n" "$popup_env" "$popup_wrapper"
-      printf "bind-key -n User5 run-shell \"%s %s #{client_tty} ai-split-picker-right\"\n" "$popup_env" "$popup_wrapper"
-      printf "bind-key -n User6 run-shell \"%s %s #{client_tty} ai-split-settings\"\n" "$popup_env" "$popup_wrapper"
-      printf "bind-key -n User12 run-shell \"%s %s #{client_tty} sessionizer\"\n" "$popup_env" "$popup_wrapper"
       printf "bind-key -n C-g run-shell \"%s %s #{client_tty} sessionizer-sidebar\"\n" "$popup_env" "$popup_wrapper"
       printf "bind-key -n C-y run-shell \"%s %s #{client_tty} notify-sidebar\"\n" "$popup_env" "$popup_wrapper"
     } >> "$sandbox_config"
@@ -135,8 +128,8 @@ Demo project root:
   /workspace/projects
 
 Inside tmux, try:
-  Alt-1 / User4: project switch sidebar
-  Alt-2 / User2: notification sidebar
+  Alt-1: project switch sidebar
+  Alt-2: notification sidebar
   Ctrl-g: project switch sidebar fallback for nested tmux
   Ctrl-y: notification sidebar fallback for nested tmux
   projmux switch

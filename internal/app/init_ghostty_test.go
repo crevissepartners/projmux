@@ -117,6 +117,25 @@ func TestGhosttyPlanMergeEmptyConfigAddsAllBindings(t *testing.T) {
 	if !strings.Contains(plan.Updated, ghosttyManagedHeader) {
 		t.Fatalf("Updated missing managed header")
 	}
+	if strings.Contains(plan.Updated, "c"+"si:") {
+		t.Fatalf("Updated contains retired CSI action:\n%s", plan.Updated)
+	}
+}
+
+func TestGhosttyDesiredBindingsUsePlainMeta(t *testing.T) {
+	t.Parallel()
+
+	if len(ghosttyDesiredBindings) == 0 {
+		t.Fatal("ghosttyDesiredBindings is empty, want Alt-1..5 plain Meta mappings")
+	}
+	for _, binding := range ghosttyDesiredBindings {
+		if strings.Contains(binding.Action, "c"+"si:") {
+			t.Fatalf("ghostty binding uses retired CSI action: %#v", binding)
+		}
+		if !strings.HasPrefix(binding.Action, `text:\x1b`) {
+			t.Fatalf("ghostty binding action = %q, want plain Meta text action", binding.Action)
+		}
+	}
 }
 
 func TestGhosttyPlanMergeIdempotent(t *testing.T) {
@@ -147,8 +166,8 @@ func TestGhosttyPlanMergePartialAddsMissingBindings(t *testing.T) {
 	a := newGhosttyTestAdapter(t)
 	// Pre-seed with the first two desired bindings, written by the user.
 	current := "# user config\n" +
-		"keybind = alt+1=csi:9005u\n" +
-		"keybind = alt+2=csi:9003u\n"
+		"keybind = alt+1=text:\\x1b1\n" +
+		"keybind = alt+2=text:\\x1b2\n"
 	plan, err := a.PlanMerge(current, true)
 	if err != nil {
 		t.Fatalf("PlanMerge error = %v", err)
@@ -178,7 +197,7 @@ func TestGhosttyPlanMergePartialAddsMissingBindings(t *testing.T) {
 		t.Fatalf("Updated lost user content:\n%s", plan.Updated)
 	}
 	// Pre-existing user bindings still present.
-	if !strings.Contains(plan.Updated, "keybind = alt+1=csi:9005u") {
+	if !strings.Contains(plan.Updated, "keybind = alt+1=text:\\x1b1") {
 		t.Fatalf("Updated dropped user-owned alt+1 binding")
 	}
 }
@@ -209,7 +228,7 @@ func TestGhosttyPlanMergeConflictSkipsAndWarns(t *testing.T) {
 		t.Fatalf("alt+1 existing = %q, want new_window", conflict.Existing)
 	}
 	// Conflict trigger must NOT appear in the appended block.
-	if strings.Contains(plan.Updated, "keybind = alt+1=csi:9005u") {
+	if strings.Contains(plan.Updated, "keybind = alt+1=text:\x1b1") {
 		t.Fatalf("Updated unexpectedly overrode user mapping:\n%s", plan.Updated)
 	}
 	// Original user mapping still present.
@@ -331,9 +350,9 @@ func TestParseGhosttyKeybind(t *testing.T) {
 		wantAction  string
 		wantOk      bool
 	}{
-		{line: "keybind = alt+1=csi:9005u", wantTrigger: "alt+1", wantAction: "csi:9005u", wantOk: true},
-		{line: "  keybind=alt+2=csi:9003u  ", wantTrigger: "alt+2", wantAction: "csi:9003u", wantOk: true},
-		{line: "# keybind = alt+1=csi:9005u", wantOk: false},
+		{line: "keybind = alt+1=text:\x1b1", wantTrigger: "alt+1", wantAction: "text:\x1b1", wantOk: true},
+		{line: "  keybind=alt+2=text:\x1b2  ", wantTrigger: "alt+2", wantAction: "text:\x1b2", wantOk: true},
+		{line: "# keybind = alt+1=text:\x1b1", wantOk: false},
 		{line: "", wantOk: false},
 		{line: "keybind = onlytrigger", wantOk: false},
 		{line: "font-size = 14", wantOk: false},
@@ -359,9 +378,9 @@ func TestSplitGhosttyConfigStripsManagedBlock(t *testing.T) {
 	t.Parallel()
 
 	raw := "# user\n" +
-		"keybind = ctrl+a=csi:9999u\n" +
+		"keybind = ctrl+a=text:hello\n" +
 		ghosttyManagedHeader + "\n" +
-		"keybind = alt+1=csi:9005u\n" +
+		"keybind = alt+1=text:\\x1b1\n" +
 		ghosttyManagedFooter + "\n" +
 		"font-size = 14\n"
 
@@ -369,17 +388,17 @@ func TestSplitGhosttyConfigStripsManagedBlock(t *testing.T) {
 	if strings.Contains(stripped, ghosttyManagedHeader) {
 		t.Fatalf("stripped still contains managed header:\n%s", stripped)
 	}
-	if strings.Contains(stripped, "alt+1=csi:9005u") {
+	if strings.Contains(stripped, "alt+1=text:\\x1b1") {
 		t.Fatalf("stripped still contains managed binding:\n%s", stripped)
 	}
-	if got, ok := bindings["ctrl+a"]; !ok || got != "csi:9999u" {
-		t.Fatalf("user binding ctrl+a = (%q,%v), want csi:9999u true", got, ok)
+	if got, ok := bindings["ctrl+a"]; !ok || got != "text:hello" {
+		t.Fatalf("user binding ctrl+a = (%q,%v), want text:hello true", got, ok)
 	}
 	// Managed-block bindings are kept in the map so the merge can recognise
 	// them as noop on a second run. They are still excluded from stripped
 	// (verified above).
-	if got, ok := bindings["alt+1"]; !ok || got != "csi:9005u" {
-		t.Fatalf("alt+1 binding from managed block = (%q,%v), want csi:9005u", got, ok)
+	if got, ok := bindings["alt+1"]; !ok || !strings.Contains(got, "x1b1") {
+		t.Fatalf("alt+1 binding from managed block = (%q,%v), want text:\\x1b1", got, ok)
 	}
 	if !strings.Contains(stripped, "font-size = 14") {
 		t.Fatalf("stripped lost trailing user content:\n%s", stripped)
@@ -390,11 +409,11 @@ func TestSplitGhosttyConfigUserOverrideTrumpsManagedBlock(t *testing.T) {
 	t.Parallel()
 
 	// User declared alt+1=new_window before our managed block. The managed
-	// block contains alt+1=csi:9005u. The user's intent must win so the
+	// block contains alt+1=text:\x1b1. The user's intent must win so the
 	// merge classifies alt+1 as skip-conflict instead of noop.
 	raw := "keybind = alt+1=new_window\n" +
 		ghosttyManagedHeader + "\n" +
-		"keybind = alt+1=csi:9005u\n" +
+		"keybind = alt+1=text:\\x1b1\n" +
 		ghosttyManagedFooter + "\n"
 
 	_, bindings := splitGhosttyConfig(raw)

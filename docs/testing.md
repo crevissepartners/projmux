@@ -45,8 +45,8 @@ The Docker suites do not replace checks that depend on a real host terminal,
 desktop shell, or OS integration:
 
 - terminal emulator key delivery and swallowing for guaranteed `Alt-1..5`
-  launch keys, optional user-configured direct aliases, and CSI-u/User
-  fallback chords
+  launch keys, optional user-configured direct aliases, and transport-dependent
+  chords
 - Windows Terminal and WSL interop
 - macOS host path, shell, and GUI behavior
 - desktop notification click callbacks

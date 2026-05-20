@@ -398,6 +398,19 @@ func TestWTPlanMergeEmptyAddsAllBindings(t *testing.T) {
 	if !foundSidebar {
 		t.Fatalf("Sidebar action not found in merged settings")
 	}
+	if strings.Contains(plan.Updated, `\u001b[900`) || strings.Contains(plan.Updated, `\u001b[901`) {
+		t.Fatalf("updated settings contains retired app modified-key input:\n%s", plan.Updated)
+	}
+}
+
+func TestWindowsTerminalDesiredBindingsDoNotUseAppCSIu(t *testing.T) {
+	t.Parallel()
+
+	for _, binding := range wtDesiredBindings {
+		if strings.Contains(binding.Input, "\x1b[900") || strings.Contains(binding.Input, "\x1b[901") {
+			t.Fatalf("windows-terminal binding uses retired app modified-key input: %#v", binding)
+		}
+	}
 }
 
 func TestWTPlanMergeIdempotent(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 func TestClassifyProbeInput(t *testing.T) {
 	t.Parallel()
 
-	keyAlt1 := probeKey{Label: "Alt-1", Action: "Open sidebar (User4)", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"}
+	keyAlt1 := probeKey{Label: "Alt-1", Action: "Open sidebar", Plain: "\x1b1", CSIu: "\x1b[9900u"}
 	keyCtrlShiftR := probeKey{Label: "Ctrl-Shift-R", Action: "No projmux binding by default"}
 
 	cases := []struct {
@@ -22,7 +22,7 @@ func TestClassifyProbeInput(t *testing.T) {
 		wantStatus probeKeyStatus
 	}{
 		{name: "plain alt-1", key: keyAlt1, input: []byte("\x1b1"), wantStatus: probeStatusPlain},
-		{name: "csiu alt-1", key: keyAlt1, input: []byte("\x1b[9005u"), wantStatus: probeStatusCSIu},
+		{name: "legacy app csi-u alt-1 is not a success path", key: keyAlt1, input: []byte("\x1b[9900u"), wantStatus: probeStatusUnknown},
 		{name: "arrow key", key: keyAlt1, input: []byte("\x1b[A"), wantStatus: probeStatusUnknown},
 		{name: "empty input", key: keyAlt1, input: nil, wantStatus: probeStatusTimeout},
 		{name: "no plain, csi-u missing too", key: keyCtrlShiftR, input: []byte("\x1b[1;5R"), wantStatus: probeStatusUnknown},
@@ -50,7 +50,7 @@ func TestClassifyProbeInput(t *testing.T) {
 func TestClassifyProbeInputDoesNotAliasInput(t *testing.T) {
 	t.Parallel()
 
-	key := probeKey{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u"}
+	key := probeKey{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9900u"}
 	src := []byte("\x1b1")
 	res := classifyProbeInput(key, src)
 	src[0] = 'X'
@@ -62,13 +62,13 @@ func TestClassifyProbeInputDoesNotAliasInput(t *testing.T) {
 func TestRenderProbeStatusContainsSequence(t *testing.T) {
 	t.Parallel()
 
-	res := classifyProbeInput(probeKey{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"}, []byte("\x1b[9005u"))
+	res := classifyProbeInput(probeKey{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9900u"}, []byte("\x1b[9900u"))
 	rendered := renderProbeStatus(res)
-	if !strings.Contains(rendered, "csi-u") {
-		t.Fatalf("expected csi-u marker, got %q", rendered)
+	if !strings.Contains(rendered, "MISS unknown") {
+		t.Fatalf("expected unknown marker, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "User4") {
-		t.Fatalf("expected User4 reference, got %q", rendered)
+	if !strings.Contains(rendered, "\\x1b[9900u") {
+		t.Fatalf("expected captured sequence, got %q", rendered)
 	}
 }
 
@@ -79,7 +79,7 @@ func TestVisibleEscape(t *testing.T) {
 		"":             "\"\"",
 		"a":            "a",
 		"\x1b1":        "\\x1b1",
-		"\x1b[9005u":   "\\x1b[9005u",
+		"\x1b[9900u":   "\\x1b[9900u",
 		"\r":           "\\r",
 		"\n":           "\\n",
 		"\t":           "\\t",
@@ -231,7 +231,7 @@ func TestRenderProbeSummaryAllPass(t *testing.T) {
 	terminal := terminalInfo{Slug: "kitty", Name: "kitty", Source: "KITTY_WINDOW_ID", Raw: "1"}
 	results := []probeResult{
 		{Key: probeKey{Label: "Alt-1"}, Status: probeStatusPlain, Sequence: []byte("\x1b1")},
-		{Key: probeKey{Label: "Alt-2"}, Status: probeStatusCSIu, Sequence: []byte("\x1b[9003u")},
+		{Key: probeKey{Label: "Alt-2"}, Status: probeStatusPlain, Sequence: []byte("\x1b2")},
 	}
 	var buf bytes.Buffer
 	renderProbeSummary(&buf, terminal, results)
@@ -288,12 +288,14 @@ func TestSetupCommandRunNonInteractive(t *testing.T) {
 		"Detected terminal:",
 		"Expected key sequences:",
 		"Alt-1",
-		"\\x1b[9005u",
 		"Ctrl-N",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("non-interactive output missing %q\nfull:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "9900u") || strings.Contains(out, "User") {
+		t.Fatalf("non-interactive output should not mention app escape/User keys:\n%s", out)
 	}
 }
 
@@ -313,13 +315,13 @@ func TestSetupCommandRunInteractiveUsesProbeReader(t *testing.T) {
 	t.Parallel()
 
 	keys := []probeKey{
-		{Label: "Alt-1", Action: "sidebar", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
-		{Label: "Alt-2", Action: "notify-sidebar", Plain: "\x1b2", CSIu: "\x1b[9003u", UserKey: "User2"},
-		{Label: "Ctrl-N", Action: "new-window", Plain: "\x0e", CSIu: "\x1b[9008u", UserKey: "User7"},
+		{Label: "Alt-1", Action: "sidebar", Plain: "\x1b1"},
+		{Label: "Alt-2", Action: "notify-sidebar", Plain: "\x1b2"},
+		{Label: "Ctrl-N", Action: "new-window", Plain: "\x0e"},
 	}
 	queue := [][]byte{
 		[]byte("\x1b1"),
-		[]byte("\x1b[9003u"),
+		[]byte("\x1b[9901u"),
 		nil,
 	}
 
@@ -346,9 +348,9 @@ func TestSetupCommandRunInteractiveUsesProbeReader(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"OK plain",
-		"OK csi-u",
+		"MISS unknown",
 		"MISS timeout",
-		"Pass / Fail   : 2 / 1",
+		"Pass / Fail   : 1 / 2",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("interactive output missing %q\nfull:\n%s", want, out)
@@ -360,7 +362,7 @@ func TestSetupCommandRunInteractivePropagatesReadError(t *testing.T) {
 	t.Parallel()
 
 	keys := []probeKey{
-		{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u"},
+		{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9900u"},
 	}
 	cmd := newSetupCommand()
 	cmd.defaultKeys = keys
@@ -432,6 +434,11 @@ func TestDefaultProbeKeysCoverSpec(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("default probe key[%d] = %q, want %q (full got=%v)", i, got[i], want[i], got)
+		}
+	}
+	for _, key := range keys {
+		if key.CSIu != "" || key.UserKey != "" {
+			t.Fatalf("default probe key %s has legacy escape/UserKey route: %#v", key.Label, key)
 		}
 	}
 }

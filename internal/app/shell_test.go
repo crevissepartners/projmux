@@ -66,9 +66,6 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"set -ga update-environment \"PROJMUX_WELCOME\"",
 		"set-hook -g client-attached",
 		"'/tmp/proj mux/bin/projmux' welcome --popup >/dev/null 2>&1",
-		"set -s user-keys[7] \"\\033[9008u\"",
-		"bind-key -n User10 command-prompt",
-		"bind-key -n User11 command-prompt",
 		"set -g status-left-length 20",
 		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] \"",
 		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
@@ -100,16 +97,10 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"$env:PROJMUX_PICKER_BACKEND",
 		"$env:PROJMUX_NATIVE_LINE_MODE",
 		"psmux",
-		// Phase 2.8 regression guard: alt-shift-arrow chords now bind to the
-		// xterm-standard `M-S-Left/Right` form. Their `User8`/`User9` detour
-		// is gone; if the generator regresses, popup-inside chords break in
-		// Ghostty (the original bug).
-		"set -s user-keys[8]",
-		"set -s user-keys[9]",
-		"\\033[9009u",
-		"\\033[9010u",
-		"bind-key -n User8",
-		"bind-key -n User9",
+		"set -s user-keys",
+		"\\033[900",
+		"\\033[901",
+		"bind-key -n User",
 	} {
 		if strings.Contains(config, banned) {
 			t.Fatalf("config = %q, did not expect substring %q", config, banned)

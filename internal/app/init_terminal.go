@@ -11,7 +11,7 @@ import (
 type MergeChange struct {
 	// Trigger is the canonical key combo (e.g. "alt+1").
 	Trigger string
-	// Action is the canonical action string (e.g. "csi:9005u").
+	// Action is the canonical action string (e.g. "esc:1").
 	Action string
 	// Existing is the user's current action mapped to Trigger, if any.
 	Existing string

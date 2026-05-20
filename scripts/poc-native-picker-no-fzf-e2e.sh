@@ -254,7 +254,6 @@ EOF
     printf -v popup_env "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=%q PROJMUX_MANAGED_ROOTS=%q" "$demo_root" "$demo_root"
     {
       printf "bind-key -n M-1 run-shell \"%s /tmp/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
-      printf "bind-key -n User4 run-shell \"%s /tmp/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
     } >> "$shell_config"
     grep -q "PROJMUX_PICKER_BACKEND=native" "$shell_config"
     shell_log=/tmp/projmux-shell.log

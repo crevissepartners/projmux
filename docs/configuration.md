@@ -94,10 +94,9 @@ alias`, `Replace primary`, `Disable default`, `Reset`, `Press new key`, and
 when Settings is running inside tmux, sources that app config so tmux-level
 chords take effect immediately.
 
-Settings reports CSI-u/User-key captures as terminal fallback delivery and
-does not write a keymap entry for them. Raw sequences that cannot be safely
-represented as a tmux plain chord are not persisted; configure terminal
-fallback with `projmux init` instead.
+Raw sequences that cannot be safely represented as a tmux plain chord are not
+persisted. Use Settings to save a safe direct alias, or use `projmux init` for
+the supported terminal mappings.
 
 `~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
 absent, generated tmux config stays on the built-in defaults.
@@ -150,8 +149,7 @@ shows the keymap error row and refuses to overwrite it until the file is fixed.
 The file currently affects generated tmux config from `projmux tmux
 print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
 `projmux tmux install-app`, and `projmux shell`. Terminal init adapters such as
-Ghostty and Windows Terminal still install the built-in CSI-u fallback map.
-`UserN` fallback keys are not aliases and are not written in `keys = [...]`.
+Ghostty and Windows Terminal install built-in plain-byte mappings where needed.
 Changing terminal-layer mappings still requires rerunning `projmux init` and
 restarting the terminal where that terminal requires it.
 

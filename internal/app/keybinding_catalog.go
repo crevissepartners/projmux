@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -30,7 +29,6 @@ const (
 	keyBindingTierGuaranteedLaunchDefault keyBindingTier = "guaranteed-launch-default"
 	keyBindingTierUserConfigurableDirect  keyBindingTier = "user-configurable-direct-binding"
 	keyBindingTierTransportDependent      keyBindingTier = "transport-dependent-special-chord"
-	keyBindingTierCSIuFallback            keyBindingTier = "csi-u-user-fallback-transport"
 	keyBindingTierAmbiguousTerminalChord  keyBindingTier = "ambiguous-terminal-chord"
 	keyBindingTierNativePickerInternal    keyBindingTier = "native-picker-internal-command"
 	keyBindingTierPopupLaunchCloseAlias   keyBindingTier = "popup-launch-close-alias"
@@ -73,6 +71,7 @@ type keyBindingAction struct {
 	PrefixBindOrder int
 
 	GhosttyTrigger string
+	GhosttyAction  string
 	GhosttyOrder   int
 	WTID           string
 	WTKeys         string
@@ -98,15 +97,14 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "M-1",
 			PrefixChord:     "F",
-			UserSlot:        4,
-			CSIu:            "9005",
+			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingPopupToggle,
 			TmuxBody:        "sessionizer-sidebar",
 			Toggleable:      true,
 			PlainBindOrder:  10,
-			UserBindOrder:   50,
 			PrefixBindOrder: 30,
 			GhosttyTrigger:  "alt+1",
+			GhosttyAction:   `text:\x1b1`,
 			GhosttyOrder:    10,
 			WTID:            "User.projmuxSidebar",
 			WTKeys:          "alt+1",
@@ -114,7 +112,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			WTOrder:         10,
 			ProbeOrder:      10,
 			ProbeLabel:      "Alt-1",
-			ProbeAction:     "Open sidebar (User4)",
+			ProbeAction:     "Open sidebar",
 			ProbePlain:      "\x1b1",
 		},
 		{
@@ -126,14 +124,13 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "M-2",
-			UserSlot:       2,
-			CSIu:           "9003",
+			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingPopupToggle,
 			TmuxBody:       "notify-sidebar",
 			Toggleable:     true,
 			PlainBindOrder: 20,
-			UserBindOrder:  30,
 			GhosttyTrigger: "alt+2",
+			GhosttyAction:  `text:\x1b2`,
 			GhosttyOrder:   20,
 			WTID:           "User.projmuxNotifySidebar",
 			WTKeys:         "alt+2",
@@ -141,7 +138,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			WTOrder:        20,
 			ProbeOrder:     20,
 			ProbeLabel:     "Alt-2",
-			ProbeAction:    "Notify sidebar (User2)",
+			ProbeAction:    "Notify sidebar",
 			ProbePlain:     "\x1b2",
 		},
 		{
@@ -154,15 +151,14 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "M-3",
 			PrefixChord:     "b",
-			UserSlot:        3,
-			CSIu:            "9004",
+			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingPopupToggle,
 			TmuxBody:        "session-popup",
 			Toggleable:      true,
 			PlainBindOrder:  30,
-			UserBindOrder:   40,
 			PrefixBindOrder: 10,
 			GhosttyTrigger:  "alt+3",
+			GhosttyAction:   `text:\x1b3`,
 			GhosttyOrder:    30,
 			WTID:            "User.projmuxSessions",
 			WTKeys:          "alt+3",
@@ -170,7 +166,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			WTOrder:         30,
 			ProbeOrder:      30,
 			ProbeLabel:      "Alt-3",
-			ProbeAction:     "Open session popup (User3)",
+			ProbeAction:     "Open session popup",
 			ProbePlain:      "\x1b3",
 		},
 		{
@@ -182,14 +178,13 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "M-4",
-			UserSlot:       5,
-			CSIu:           "9006",
+			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingPopupToggle,
 			TmuxBody:       "ai-split-picker-right",
 			Toggleable:     true,
 			PlainBindOrder: 40,
-			UserBindOrder:  60,
 			GhosttyTrigger: "alt+4",
+			GhosttyAction:  `text:\x1b4`,
 			GhosttyOrder:   40,
 			WTID:           "User.projmuxAIPicker",
 			WTKeys:         "alt+4",
@@ -197,7 +192,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			WTOrder:        40,
 			ProbeOrder:     40,
 			ProbeLabel:     "Alt-4",
-			ProbeAction:    "AI split picker right (User5)",
+			ProbeAction:    "AI split picker right",
 			ProbePlain:     "\x1b4",
 		},
 		{
@@ -209,14 +204,13 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "M-5",
-			UserSlot:       6,
-			CSIu:           "9007",
+			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingPopupToggle,
 			TmuxBody:       "ai-split-settings",
 			Toggleable:     true,
 			PlainBindOrder: 50,
-			UserBindOrder:  70,
 			GhosttyTrigger: "alt+5",
+			GhosttyAction:  `text:\x1b5`,
 			GhosttyOrder:   50,
 			WTID:           "User.projmuxSettings",
 			WTKeys:         "alt+5",
@@ -224,7 +218,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			WTOrder:        50,
 			ProbeOrder:     50,
 			ProbeLabel:     "Alt-5",
-			ProbeAction:    "Settings (User6)",
+			ProbeAction:    "Settings",
 			ProbePlain:     "\x1b5",
 		},
 		{
@@ -237,23 +231,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "",
 			PrefixChord:     "f",
-			UserSlot:        12,
-			CSIu:            "9013",
+			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingPopupToggle,
 			TmuxBody:        "sessionizer",
 			Toggleable:      true,
 			PlainBindOrder:  60,
-			UserBindOrder:   90,
 			PrefixBindOrder: 20,
-			GhosttyTrigger:  "alt+6",
-			GhosttyOrder:    60,
-			WTID:            "User.projmuxSwitch",
-			WTKeys:          "alt+6",
-			WTInput:         "\x1b6",
-			WTOrder:         60,
 			ProbeOrder:      60,
 			ProbeLabel:      "Alt-6",
-			ProbeAction:     "Open sessionizer (User12)",
+			ProbeAction:     "Open sessionizer",
 			ProbePlain:      "\x1b6",
 		},
 		{
@@ -264,62 +250,42 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "",
 			PrefixChord:     "R",
-			UserSlot:        10,
-			CSIu:            "9011",
+			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingCommandPrompt,
 			TmuxBody:        "rename-window -- '%%'",
 			TmuxPromptArgs:  "-I \"#{window_name}\"",
 			PlainBindOrder:  70,
-			UserBindOrder:   80,
 			PrefixBindOrder: 70,
-			GhosttyTrigger:  "ctrl+m",
-			GhosttyOrder:    100,
-			WTID:            "User.projmuxRenameWindow",
-			WTKeys:          "ctrl+m",
-			WTInput:         "\x1b[9011u",
-			WTOrder:         120,
 			ProbeOrder:      100,
 			ProbeLabel:      "Ctrl-M",
-			ProbeAction:     "Rename window (User10)",
+			ProbeAction:     "Rename window",
 			ProbePlain:      "\r",
 		},
 		{
 			ID:             "rename-pane-topic",
 			Description:    "Rename the current tmux pane label",
 			Kind:           keyBindingActionCommand,
-			Tier:           keyBindingTierCSIuFallback,
+			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeStandalone,
-			UserSlot:       11,
-			CSIu:           "9012",
+			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommandPrompt,
 			TmuxBody:       "select-pane -T '%1' \\; set-option -p " + aiPaneTopicOption + " '%1' \\; if-shell -F '#{==:#{" + aiPaneTopicOption + "},}' 'set-option -p -u " + aiPaneTopicManualOption + "' 'set-option -p " + aiPaneTopicManualOption + " 1'",
 			TmuxPromptArgs: "-p \"ai topic:\" -I \"#{pane_title}\"",
-			UserBindOrder:  1,
-			GhosttyTrigger: "ctrl+shift+m",
-			GhosttyOrder:   110,
-			WTID:           "User.projmuxRenamePane",
-			WTKeys:         "ctrl+shift+m",
-			WTInput:        "\x1b[9012u",
-			WTOrder:        130,
 			ProbeOrder:     110,
 			ProbeLabel:     "Ctrl-Shift-M",
-			ProbeAction:    "AI topic prompt (User11)",
+			ProbeAction:    "AI topic prompt",
 		},
 		{
 			ID:              "ai-split-right",
 			Description:     "Open AI split to the right",
 			Kind:            keyBindingActionCommand,
-			Tier:            keyBindingTierCSIuFallback,
+			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
 			PrefixChord:     "r",
-			UserSlot:        0,
-			CSIu:            "9001",
+			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingRunProjmux,
 			TmuxBody:        "ai split right",
-			UserBindOrder:   10,
 			PrefixBindOrder: 50,
-			GhosttyTrigger:  "ctrl+shift+r",
-			GhosttyOrder:    70,
 			WTID:            "User.projmuxAISplitRight",
 			WTKeys:          "ctrl+shift+r",
 			WTInput:         "\x02r",
@@ -333,17 +299,13 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ID:              "ai-split-down",
 			Description:     "Open AI split below",
 			Kind:            keyBindingActionCommand,
-			Tier:            keyBindingTierCSIuFallback,
+			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
 			PrefixChord:     "l",
-			UserSlot:        1,
-			CSIu:            "9002",
+			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingRunProjmux,
 			TmuxBody:        "ai split down",
-			UserBindOrder:   20,
 			PrefixBindOrder: 60,
-			GhosttyTrigger:  "ctrl+shift+l",
-			GhosttyOrder:    80,
 			WTID:            "User.projmuxAISplitDown",
 			WTKeys:          "ctrl+shift+l",
 			WTInput:         "\x02l",
@@ -372,26 +334,21 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "",
-			UserSlot:       7,
-			CSIu:           "9008",
+			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "new-window -c \"#{pane_current_path}\"",
 			PlainBindOrder: 50,
-			UserBindOrder:  10,
-			GhosttyTrigger: "ctrl+shift+n",
-			GhosttyOrder:   90,
 			WTID:           "User.projmuxNewWindow",
 			WTKeys:         "ctrl+n",
 			WTInput:        "\x0e",
 			WTOrder:        90,
 			ProbeOrder:     70,
 			ProbeLabel:     "Ctrl-N",
-			ProbeAction:    "New window (User7)",
+			ProbeAction:    "New window",
 			ProbePlain:     "\x0e",
 		},
 		{
-			// Phase 2.8: dropped UserSlot/CSIu (9009u) detour — tmux now
-			// listens directly for the xterm-standard `M-S-Left` chord that
+			// tmux listens directly for the xterm-standard `M-S-Left` chord that
 			// Ghostty and Windows Terminal emit out of the box. Keeping
 			// `WTInput` ensures Windows Terminal explicitly sends the same
 			// `\x1b[1;4D` sequence (it does not always forward modifier-arrow
@@ -749,34 +706,12 @@ func uniqueNonEmptyStrings(values []string) []string {
 	return out
 }
 
-func tmuxUserKeyLines(actions []keyBindingAction) []string {
-	withUserSlot := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
-		return action.UserSlot != noUserSlot && action.CSIu != ""
-	})
-	sort.SliceStable(withUserSlot, func(i, j int) bool {
-		return withUserSlot[i].UserSlot < withUserSlot[j].UserSlot
-	})
-
-	lines := make([]string, 0, len(withUserSlot))
-	for _, action := range withUserSlot {
-		lines = append(lines, fmt.Sprintf("set -s user-keys[%d] \"\\033[%su\"", action.UserSlot, action.CSIu))
-	}
-	return lines
-}
-
 func tmuxUnbindLines(actions []keyBindingAction) []string {
 	plain := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
 		return len(keyBindingEffectivePlainChords(action)) != 0
 	})
 	sort.SliceStable(plain, func(i, j int) bool {
 		return plain[i].PlainBindOrder < plain[j].PlainBindOrder
-	})
-
-	user := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
-		return action.UserSlot != noUserSlot
-	})
-	sort.SliceStable(user, func(i, j int) bool {
-		return user[i].UserSlot < user[j].UserSlot
 	})
 
 	prefix := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
@@ -786,14 +721,11 @@ func tmuxUnbindLines(actions []keyBindingAction) []string {
 		return prefix[i].PrefixBindOrder < prefix[j].PrefixBindOrder
 	})
 
-	lines := make([]string, 0, len(plain)+len(user)+len(prefix))
+	lines := make([]string, 0, len(plain)+len(prefix))
 	for _, action := range plain {
 		for _, chord := range keyBindingEffectivePlainChords(action) {
 			lines = append(lines, "unbind-key -q -n "+chord)
 		}
-	}
-	for _, action := range user {
-		lines = append(lines, "unbind-key -q -n "+keyBindingUserKey(action))
 	}
 	for _, action := range prefix {
 		lines = append(lines, "unbind-key -q "+action.PrefixChord)
@@ -808,19 +740,12 @@ func tmuxMergedUnbindLines(defaults, merged []keyBindingAction) []string {
 	}
 	seenNoPrefix := map[string]bool{}
 	seenPrefix := map[string]bool{}
-	var plain, user, prefix []binding
+	var plain, prefix []binding
 	add := func(action keyBindingAction) {
 		for _, chord := range keyBindingEffectivePlainChords(action) {
 			if !seenNoPrefix[chord] {
 				seenNoPrefix[chord] = true
 				plain = append(plain, binding{chord: chord, order: action.PlainBindOrder})
-			}
-		}
-		if action.UserSlot != noUserSlot {
-			chord := keyBindingUserKey(action)
-			if !seenNoPrefix[chord] {
-				seenNoPrefix[chord] = true
-				user = append(user, binding{chord: chord, order: action.UserSlot})
 			}
 		}
 		if action.PrefixChord != "" && !seenPrefix[action.PrefixChord] {
@@ -836,14 +761,10 @@ func tmuxMergedUnbindLines(defaults, merged []keyBindingAction) []string {
 	}
 
 	sort.SliceStable(plain, func(i, j int) bool { return plain[i].order < plain[j].order })
-	sort.SliceStable(user, func(i, j int) bool { return user[i].order < user[j].order })
 	sort.SliceStable(prefix, func(i, j int) bool { return prefix[i].order < prefix[j].order })
 
-	lines := make([]string, 0, len(plain)+len(user)+len(prefix))
+	lines := make([]string, 0, len(plain)+len(prefix))
 	for _, binding := range plain {
-		lines = append(lines, "unbind-key -q -n "+binding.chord)
-	}
-	for _, binding := range user {
 		lines = append(lines, "unbind-key -q -n "+binding.chord)
 	}
 	for _, binding := range prefix {
@@ -879,31 +800,12 @@ func tmuxBindLines(binaryPath string, actions []keyBindingAction) []string {
 		lines = append(lines, binding.line)
 	}
 
-	bindings = bindings[:0]
-	for _, action := range actions {
-		if action.UserSlot != noUserSlot {
-			bindings = append(bindings, struct {
-				chord string
-				line  string
-				order int
-			}{
-				chord: keyBindingUserKey(action),
-				line:  renderTmuxBindLine(binaryPath, keyBindingUserKey(action), true, action),
-				order: action.UserBindOrder,
-			})
-		}
-	}
-	sort.SliceStable(bindings, func(i, j int) bool { return bindings[i].order < bindings[j].order })
-	for _, binding := range bindings {
-		lines = append(lines, binding.line)
-	}
-
 	return lines
 }
 
 func renderTmuxBindLine(binaryPath, chord string, noPrefix bool, action keyBindingAction) string {
 	parts := []string{"bind-key"}
-	if noPrefix || strings.HasPrefix(chord, "M-") || strings.HasPrefix(chord, "C-") || strings.HasPrefix(chord, "User") {
+	if noPrefix || strings.HasPrefix(chord, "M-") || strings.HasPrefix(chord, "C-") {
 		parts = append(parts, "-n")
 	}
 	parts = append(parts, chord, renderTmuxBindingBody(binaryPath, action))
@@ -926,10 +828,6 @@ func renderTmuxBindingBody(binaryPath string, action keyBindingAction) string {
 	}
 }
 
-func keyBindingUserKey(action keyBindingAction) string {
-	return fmt.Sprintf("User%d", action.UserSlot)
-}
-
 func filterKeyBindingActions(actions []keyBindingAction, keep func(keyBindingAction) bool) []keyBindingAction {
 	out := make([]keyBindingAction, 0, len(actions))
 	for _, action := range actions {
@@ -943,7 +841,7 @@ func filterKeyBindingActions(actions []keyBindingAction, keep func(keyBindingAct
 func ghosttyBindingsFromCatalog() []ghosttyBinding {
 	var actions []keyBindingAction
 	for _, action := range defaultKeyBindingCatalog() {
-		if action.GhosttyTrigger == "" || action.CSIu == "" {
+		if action.GhosttyTrigger == "" || action.GhosttyAction == "" {
 			continue
 		}
 		actions = append(actions, action)
@@ -956,7 +854,7 @@ func ghosttyBindingsFromCatalog() []ghosttyBinding {
 	for _, action := range actions {
 		out = append(out, ghosttyBinding{
 			Trigger: action.GhosttyTrigger,
-			Action:  "csi:" + action.CSIu + "u",
+			Action:  action.GhosttyAction,
 		})
 	}
 	return out
@@ -1009,17 +907,12 @@ func probeKeysFromActions(catalog []keyBindingAction) []probeKey {
 		if csiu == "-" {
 			csiu = ""
 		}
-		userKey := ""
-		if csiu != "" && action.UserSlot != noUserSlot {
-			userKey = keyBindingUserKey(action)
-		}
 		keys = append(keys, probeKey{
 			ActionID:   action.ID,
 			Label:      action.ProbeLabel,
 			Action:     action.ProbeAction,
 			Plain:      action.ProbePlain,
 			CSIu:       csiu,
-			UserKey:    userKey,
 			PlainChord: firstNonEmptyString(keyBindingEffectivePlainChords(action)),
 		})
 	}

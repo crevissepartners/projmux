@@ -722,7 +722,7 @@ flags with the top-level `switch` UX:
   `projmux update apply`. `Settings > About > Quit projmux` routes through the
   same `projmux quit` action picker. The same About section also lists the
   keybinding diagnostic path: zero-config first, `setup` for swallowed keys,
-  `init` for supported terminal fallbacks, and `doctor` for dependencies.
+  `init` for supported terminal mappings, and `doctor` for dependencies.
 
 ## See also
 
@@ -730,5 +730,5 @@ flags with the top-level `switch` UX:
 - [statusbar.md](statusbar.md) — two-line layout and click range catalogue.
 - [notify-queue.md](notify-queue.md) — queue file format and lifecycle.
 - [usage-tracking.md](usage-tracking.md) — adapter HTTP/file behaviour.
-- [keybindings.md](keybindings.md) — terminal key delivery and CSI-u.
+- [keybindings.md](keybindings.md) — terminal key delivery and aliases.
 - [hooks.md](hooks.md) — lifecycle hooks, startup commands, and `send-noti` payload contract.
