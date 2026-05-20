@@ -54,10 +54,14 @@ Optional direct aliases can be added for actions such as:
 | `new-window` | New tmux window in the current pane directory |
 | `rename-window` | Rename the current tmux window |
 
-Pane switching is catalogued as transport-dependent. Previous/next window use
-the xterm modifier sequences for `M-S-Left` and `M-S-Right` when the terminal
-forwards them. Rename actions no longer have a built-in terminal fallback; use
-tmux's prefix rename flow or configure an explicit safe alias.
+Pane switching is catalogued as transport-dependent and the generated app tmux
+config binds `M-Left`, `M-Right`, `M-Up`, and `M-Down` to `select-pane`
+movement. Previous/next window remain transport-dependent and the generated app
+tmux config binds `M-S-Left` / `M-S-Right` to the tmux window navigation
+commands. These rows stay visible in Settings with their default chords, but
+they are view-only because delivery still depends on the terminal forwarding
+the modifier-arrow sequence. Rename actions no longer have a built-in terminal
+fallback; use tmux's prefix rename flow or configure an explicit safe alias.
 
 ## Roadmap Requirements
 

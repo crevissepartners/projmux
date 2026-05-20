@@ -2926,6 +2926,9 @@ func keybindingCanCapture(action keyBindingAction) bool {
 }
 
 func keybindingTransportChord(action keyBindingAction) string {
+	if chord := firstNonEmptyString(keyBindingEffectivePlainChords(action)); chord != "" {
+		return chord
+	}
 	label := strings.TrimSpace(action.ProbeLabel)
 	probeAction := strings.TrimSpace(action.ProbeAction)
 	if label == "" || probeAction == "" {
@@ -3070,7 +3073,7 @@ func keybindingNonEditableReason(action keyBindingAction) string {
 	case keyBindingTierNativePickerInternal:
 		return "handled inside the native picker surface, not the direct tmux alias editor"
 	case keyBindingTierTransportDependent:
-		return "depends on terminal/tmux transport or has no default plain chord"
+		return "depends on terminal/tmux transport; view-only in Settings"
 	default:
 		return "not part of the direct tmux alias editor"
 	}
