@@ -19,6 +19,11 @@ import (
 	"os/exec"
 )
 
+const (
+	popupCursorHide = "\x1b[?25l"
+	popupCursorShow = "\x1b[?25h"
+)
+
 // popupWaitKeyCommand reads one byte from the controlling terminal in raw mode
 // and exits. Used as the close path for display-only statusbar popups.
 type popupWaitKeyCommand struct {
@@ -130,10 +135,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
 // perspective, the only observable behavior is "the wait ended", and printing
 // a stack trace into the popup body on a failed terminal probe would be
 // worse than just closing.
-func (c *popupWaitKeyCommand) Run(_ []string, _ io.Writer, _ io.Writer) error {
+func (c *popupWaitKeyCommand) Run(_ []string, stdout io.Writer, _ io.Writer) error {
 	if c == nil || c.openTTY == nil {
 		return errors.New("popup-wait-key: not configured")
 	}
+	restoreCursor := popupHideCursor(stdout)
+	defer restoreCursor()
+
 	tty, err := c.openTTY()
 	if err != nil {
 		// Best effort: if we can't open /dev/tty (e.g. the popup payload was
@@ -157,6 +165,16 @@ func (c *popupWaitKeyCommand) Run(_ []string, _ io.Writer, _ io.Writer) error {
 	var buf [1]byte
 	_, _ = tty.Read(buf[:])
 	return nil
+}
+
+func popupHideCursor(w io.Writer) func() {
+	if w == nil {
+		w = io.Discard
+	}
+	_, _ = io.WriteString(w, popupCursorHide)
+	return func() {
+		_, _ = io.WriteString(w, popupCursorShow)
+	}
 }
 
 func popupWaitKeyReadStdin() error {

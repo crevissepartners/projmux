@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -255,6 +256,14 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	}
 	if !slices.Contains(popupArgs, "-B") {
 		t.Fatalf("path popup must pass tmux `-B` to suppress tmux's popup border; args = %#v", popupArgs)
+	}
+	expectedPathPopup := statusbarPathPopup(
+		"/home/es5h/source/repos/projmux",
+		statusbarPathMetadata{Project: "projmux", Git: "ship/statusbar-cwd-popup-phase2"},
+		"/usr/local/bin/projmux",
+	)
+	if got, ok := tmuxPopupArgValue(popupArgs, "-h"); !ok || got != strconv.Itoa(expectedPathPopup.Height) {
+		t.Fatalf("path popup -h = %q (ok=%v), want %d; args = %#v", got, ok, expectedPathPopup.Height, popupArgs)
 	}
 	if !sawTmuxPopupCommandContaining(runner.calls, "Current path") {
 		t.Fatalf("missing inline frame title `Current path`; calls = %#v", runner.calls)
@@ -512,10 +521,34 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !slices.Contains(popupArgs, "-B") {
 		t.Fatalf("usage popup must pass tmux `-B` to suppress tmux's popup border; args = %#v", popupArgs)
 	}
+	expectedUsageState := statusbarUsageState{
+		LastSync:       now.Add(-45 * time.Second),
+		LastSyncSource: "last collect",
+		Snapshots: []coreusage.Snapshot{
+			{
+				Model:    "claude",
+				Window:   coreusage.Window5h,
+				Tokens:   800,
+				Limit:    1000,
+				Pct:      80,
+				ResetsAt: now.Add(2 * time.Hour),
+			},
+			{
+				Model:    "codex",
+				Window:   coreusage.WindowWeekly,
+				Pct:      12,
+				ResetsAt: time.Time{},
+			},
+		},
+	}
+	expectedUsagePopup := statusbarUsagePopup(expectedUsageState, now, "/usr/local/bin/projmux")
+	if got, ok := tmuxPopupArgValue(popupArgs, "-h"); !ok || got != strconv.Itoa(expectedUsagePopup.Height) {
+		t.Fatalf("usage popup -h = %q (ok=%v), want %d; args = %#v", got, ok, expectedUsagePopup.Height, popupArgs)
+	}
 	if !sawTmuxPopupCommandContaining(runner.calls, "Usage") {
 		t.Fatalf("missing inline frame title `Usage`; calls = %#v", runner.calls)
 	}
-	if !sawTmuxPopupCommandContaining(runner.calls, "Press any key to close.") {
+	if !sawTmuxPopupCommandContaining(runner.calls, displayOnlyPopupClosePrompt) {
 		t.Fatalf("missing any-key-to-close prompt; calls = %#v", runner.calls)
 	}
 	if sawTmuxPopupCommandContaining(runner.calls, "Enter closes this popup.") {
@@ -1256,6 +1289,15 @@ func firstTmuxPopupArgs(calls []statusbarFakeCall) ([]string, bool) {
 	return nil, false
 }
 
+func tmuxPopupArgValue(args []string, flag string) (string, bool) {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
 func lastDisplayMessage(calls []statusbarFakeCall) (string, bool) {
 	for i := len(calls) - 1; i >= 0; i-- {
 		c := calls[i]
@@ -1376,14 +1418,99 @@ func TestStatusbarUsagePopupWearsFrameChrome(t *testing.T) {
 	}
 }
 
+func TestStatusbarDisplayOnlyPopupsShareCommandAndFitHeightBudget(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	binaryPath := "/usr/local/bin/projmux"
+	tests := []struct {
+		name  string
+		title string
+		view  struct {
+			payload string
+			command string
+			height  int
+		}
+	}{
+		{
+			name:  "path",
+			title: "Current path",
+			view: func() struct {
+				payload string
+				command string
+				height  int
+			} {
+				popup := statusbarPathPopup(
+					"/tmp/example",
+					statusbarPathMetadata{Project: "example", Git: "main in example"},
+					binaryPath,
+				)
+				return struct {
+					payload string
+					command string
+					height  int
+				}{payload: popup.Payload, command: popup.Command, height: popup.Height}
+			}(),
+		},
+		{
+			name:  "usage",
+			title: "Usage",
+			view: func() struct {
+				payload string
+				command string
+				height  int
+			} {
+				popup := statusbarUsagePopup(statusbarUsageState{
+					LastSync:       now.Add(-30 * time.Second),
+					LastSyncSource: "last collect",
+					Snapshots: []coreusage.Snapshot{
+						{Model: "claude", Window: coreusage.Window5h, Tokens: 800, Limit: 1000, Pct: 80, ResetsAt: now.Add(time.Hour)},
+						{Model: "claude", Window: coreusage.WindowWeekly, Tokens: 2000, Limit: 4000, Pct: 50, ResetsAt: now.Add(24 * time.Hour)},
+						{Model: "codex", Window: coreusage.Window5h, Pct: 12, ResetsAt: now.Add(2 * time.Hour)},
+						{Model: "codex", Window: coreusage.WindowWeekly, Pct: 25, ResetsAt: now.Add(7 * 24 * time.Hour)},
+					},
+				}, now, binaryPath)
+				return struct {
+					payload string
+					command string
+					height  int
+				}{payload: popup.Payload, command: popup.Command, height: popup.Height}
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if strings.HasSuffix(tt.view.payload, "\n") {
+				t.Fatalf("%s popup payload has trailing newline: %q", tt.name, tt.view.payload)
+			}
+			if got := projmuxpicker.RenderedTextLineCount(tt.view.payload); got != tt.view.height {
+				t.Fatalf("%s popup payload lines = %d, want height budget %d", tt.name, got, tt.view.height)
+			}
+			if want := statusbarPopupCommand(tt.view.payload, binaryPath); tt.view.command != want {
+				t.Fatalf("%s popup command does not use shared statusbarPopupCommand\n got: %q\nwant: %q", tt.name, tt.view.command, want)
+			}
+			if !strings.Contains(tt.view.payload, tt.title) {
+				t.Fatalf("%s popup payload missing title %q: %q", tt.name, tt.title, tt.view.payload)
+			}
+		})
+	}
+}
+
 // TestStatusbarPopupFooterReadsAsAnyKey locks in the updated footer prompt.
 // `Enter closes this popup.` was Enter-only and misled users about the new
 // any-key close behavior.
 func TestStatusbarPopupFooterReadsAsAnyKey(t *testing.T) {
 	t.Parallel()
 
-	footer := strings.Join(statusbarPopupFooterLines(60), "\n")
-	if !strings.Contains(footer, "Press any key to close.") {
+	lines := statusbarPopupFooterLines(60)
+	if got, want := len(lines), 3; got != want {
+		t.Fatalf("footer line count = %d, want %d: %#v", got, want, lines)
+	}
+	footer := strings.Join(lines, "\n")
+	if !strings.Contains(footer, displayOnlyPopupClosePrompt) {
 		t.Fatalf("footer missing any-key prompt: %q", footer)
 	}
 	if strings.Contains(footer, "Enter closes this popup.") {
@@ -1393,12 +1520,17 @@ func TestStatusbarPopupFooterReadsAsAnyKey(t *testing.T) {
 
 // TestStatusbarPopupCommandPrefersHelperSubcommand locks in that the popup
 // payload routes its close path through the hidden `popup-wait-key` helper
-// rather than `IFS= read -r _`, removing the popup shell's dependency on
-// bash/zsh-specific `read -n1` semantics.
+// without printing a newline after the payload. That keeps the helper from
+// shifting the display-only frame down while avoiding shell-specific
+// `read -n1` semantics.
 func TestStatusbarPopupCommandPrefersHelperSubcommand(t *testing.T) {
 	t.Parallel()
 
-	cmd := statusbarPopupCommand("hello", "/usr/local/bin/projmux")
+	cmd := statusbarPopupCommand("top\nbottom\n", "/usr/local/bin/projmux")
+	want := "printf %s 'top\nbottom'; '/usr/local/bin/projmux' popup-wait-key"
+	if cmd != want {
+		t.Fatalf("popup command = %q, want %q", cmd, want)
+	}
 	if strings.Contains(cmd, "IFS= read -r _") {
 		t.Fatalf("popup command must not retain Enter-only read: %q", cmd)
 	}
@@ -1408,20 +1540,37 @@ func TestStatusbarPopupCommandPrefersHelperSubcommand(t *testing.T) {
 	if !strings.Contains(cmd, "'/usr/local/bin/projmux'") {
 		t.Fatalf("popup command missing quoted binary path: %q", cmd)
 	}
+	if strings.Contains(cmd, "\n'; ") {
+		t.Fatalf("popup command leaves cursor on an extra line before wait helper: %q", cmd)
+	}
+	if strings.Contains(cmd, "read -n1") {
+		t.Fatalf("popup command must not regress to shell-specific read -n1: %q", cmd)
+	}
 }
 
 // TestStatusbarPopupCommandFallsBackWhenBinaryUnknown documents that the
 // helper invocation degrades to the legacy Enter-only read when the
-// projmux binary path could not be resolved — the popup still has *a*
-// close path even in that degraded state.
+// projmux binary path could not be resolved. That fallback still has the
+// old Enter-only behavior, but it must share the no-extra-newline payload
+// shape so it does not add another printable row to the popup.
 func TestStatusbarPopupCommandFallsBackWhenBinaryUnknown(t *testing.T) {
 	t.Parallel()
 
-	cmd := statusbarPopupCommand("hello", "")
+	cmd := statusbarPopupCommand("top\nbottom\n", "")
+	want := "printf %s 'top\nbottom'; IFS= read -r _"
+	if cmd != want {
+		t.Fatalf("fallback command = %q, want %q", cmd, want)
+	}
 	if !strings.Contains(cmd, "IFS= read -r _") {
 		t.Fatalf("popup command must retain Enter fallback when binary path is empty: %q", cmd)
 	}
 	if strings.Contains(cmd, "popup-wait-key") {
 		t.Fatalf("popup command must not reference helper when binary is unknown: %q", cmd)
+	}
+	if strings.Contains(cmd, "\n'; IFS= read -r _") {
+		t.Fatalf("fallback command leaves cursor on an extra line before read: %q", cmd)
+	}
+	if strings.Contains(cmd, "read -n1") {
+		t.Fatalf("fallback command must not use shell-specific read -n1: %q", cmd)
 	}
 }

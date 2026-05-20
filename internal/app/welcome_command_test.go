@@ -198,7 +198,7 @@ func TestWelcomePopupDisplaysWelcomePayloadInTmux(t *testing.T) {
 	for _, want := range []string{
 		"Welcome to projmux shell",
 		"shell bootstrap",
-		"Press any key to close.",
+		displayOnlyPopupClosePrompt,
 		"popup-wait-key",
 		"'/tmp/proj mux/bin/projmux'",
 	} {

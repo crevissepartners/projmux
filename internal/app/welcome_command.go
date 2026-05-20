@@ -83,7 +83,7 @@ func (c *welcomeCommand) runPopup() error {
 	if err := writeShellWelcome(&body, current, status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv)); err != nil {
 		return nil
 	}
-	body.WriteString(projmuxpicker.MutedStart + "Press any key to close." + projmuxpicker.Reset + "\n")
+	body.WriteString(displayOnlyPopupClosePromptLine() + "\n")
 
 	binaryPath := ""
 	if c.executable != nil {
