@@ -86,7 +86,7 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 	if got := options.TitleChips; !reflect.DeepEqual(got, wantChips) {
 		t.Fatalf("root settings title chips = %#v, want %#v", got, wantChips)
 	}
-	if got, want := options.Footer, "Enter: open  |  Alt-Shift-Left/Alt-Shift-Right or click chip: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := options.Footer, "Open rows or click a scope chip to switch tabs."; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
 	if got, want := options.ExpectKeys, []string{"enter", "ctrl-g", "ctrl-p", "alt-shift-left", "alt-shift-right"}; !reflect.DeepEqual(got, want) {
@@ -240,34 +240,31 @@ func TestSettingsRootAltArrowToggleInvariantWithProjectContext(t *testing.T) {
 	}
 }
 
-func TestSettingsRootAltArrowDoesNotShadowGlobalSelectPaneChords(t *testing.T) {
+func TestSettingsRootAltArrowChordsAreTransportTierNotGuaranteedDefaults(t *testing.T) {
 	t.Parallel()
 
-	// The settings popup binds Alt-Shift-Left/Alt-Shift-Right for tab
-	// navigation while global tmux next/prev-window chords keep the same
-	// physical keys. This is safe because tmux popups consume their own
-	// stdin and the popup is the active terminal client when
-	// Alt-Shift-Left/Right is pressed — the global chord only fires
-	// outside the popup. Verify the catalog still ships M-S-Left /
-	// M-S-Right (and M-Left / M-Right select-pane) so the global behaviour
-	// does not regress.
+	// Alt-arrow and Alt-Shift-arrow chords are transport-dependent. They
+	// remain catalogued, but no longer ship as guaranteed zero-config
+	// default tmux binds.
 	catalog := defaultKeyBindingCatalog()
-	wantChords := map[string]string{
-		"select-pane-left":  "M-Left",
-		"select-pane-right": "M-Right",
-		"previous-window":   "M-S-Left",
-		"next-window":       "M-S-Right",
-	}
-	for id, chord := range wantChords {
-		var got string
+	for _, id := range []string{"select-pane-left", "select-pane-right", "previous-window", "next-window"} {
+		var got keyBindingAction
+		var found bool
 		for _, action := range catalog {
 			if action.ID == id {
-				got = action.PlainChord
+				got = action
+				found = true
 				break
 			}
 		}
-		if got != chord {
-			t.Fatalf("keybinding catalog %q chord = %q, want %q", id, got, chord)
+		if !found {
+			t.Fatalf("keybinding catalog missing %q", id)
+		}
+		if got.Tier != keyBindingTierTransportDependent {
+			t.Fatalf("keybinding catalog %q tier = %q, want %q", id, got.Tier, keyBindingTierTransportDependent)
+		}
+		if got.PlainChord != "" {
+			t.Fatalf("keybinding catalog %q chord = %q, want no guaranteed default", id, got.PlainChord)
 		}
 	}
 
@@ -681,7 +678,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got := rootOptions.TitleChips; len(got) < 1 || !got[0].Active {
 		t.Fatalf("root settings chips = %#v, want Global active", got)
 	}
-	if got, want := rootOptions.Footer, "Enter: open  |  Alt-Shift-Left/Alt-Shift-Right or click chip: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := rootOptions.Footer, "Open rows or click a scope chip to switch tabs."; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
 	if got, want := entryValues(rootOptions.Entries), []string{
@@ -2561,7 +2558,7 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\nprefix = \"A\"\n")
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\nprefix = \"A\"\n")
 
 	var calls int
 	var keybindingOptions intpickercompat.Options
@@ -2590,13 +2587,16 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	if !hasEntryValue(keybindingOptions.Entries, settingsBackValue) {
 		t.Fatalf("keybindings entries = %#v, want back entry", keybindingOptions.Entries)
 	}
-	if !hasEntryLabelContaining(keybindingOptions.Entries, "Terminal fallback mappings still require rerunning projmux init") {
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "Only direct tmux plain aliases are editable here") {
 		t.Fatalf("keybindings entries = %#v, want terminal fallback note", keybindingOptions.Entries)
 	}
-	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"sessionizer-sidebar") {
-		t.Fatalf("keybindings entries = %#v, want sessionizer-sidebar action", keybindingOptions.Entries)
+	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
+		t.Fatalf("keybindings entries = %#v, want canonical ProjectSidebarToggle action", keybindingOptions.Entries)
 	}
-	if !hasEntryLabelContaining(keybindingOptions.Entries, "key M-a (custom)") {
+	if hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"Sidebar:PinProject") {
+		t.Fatalf("keybindings entries = %#v, did not want native picker internal action in Settings edit list", keybindingOptions.Entries)
+	}
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "keys M-a (custom)") {
 		t.Fatalf("keybindings entries = %#v, want custom plain value", keybindingOptions.Entries)
 	}
 	if hasEntryLabelContaining(keybindingOptions.Entries, "prefix") {
@@ -2616,7 +2616,7 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 		case 1:
 			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:capture"}, nil
 		case 4:
@@ -2649,8 +2649,8 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 		t.Fatalf("Run() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n") {
-		t.Fatalf("keymap = %q, want custom plain binding", keymap)
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"M-a\"]\n") {
+		t.Fatalf("keymap = %q, want custom keys binding", keymap)
 	}
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
 	configText := readFile(t, configPath)
@@ -2665,6 +2665,53 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 	}
 }
 
+func TestSettingsHubKeybindingsTypedFallbackWritesValidatedAlias(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:type"}, nil
+		case 4:
+			if got, want := options.UI, "settings-keybinding-type"; got != want {
+				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
+			}
+			if !options.AcceptQuery {
+				t.Fatalf("typed keybinding AcceptQuery = false, want true")
+			}
+			return intpickercompat.Result{Key: "enter", Query: "M-a"}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"M-a\"]\n") {
+		t.Fatalf("keymap = %q, want typed alias persisted through keys array", keymap)
+	}
+	if !strings.Contains(stdout.String(), "saved keymap") {
+		t.Fatalf("stdout = %q, want save message", stdout.String())
+	}
+}
+
 func TestSettingsHubKeybindingsRejectsUnsafeRawCapture(t *testing.T) {
 	t.Parallel()
 
@@ -2676,7 +2723,7 @@ func TestSettingsHubKeybindingsRejectsUnsafeRawCapture(t *testing.T) {
 		case 1:
 			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:capture"}, nil
 		case 4:
@@ -2724,7 +2771,7 @@ func TestSettingsHubKeybindingsCaptureTimeoutDoesNotSaveOrReload(t *testing.T) {
 		case 1:
 			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:capture"}, nil
 		case 4:
@@ -2785,7 +2832,7 @@ func TestSettingsHubKeybindingsDisablePlainSavesWithoutLiveTmux(t *testing.T) {
 		case 1:
 			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:disable"}, nil
 		case 4:
@@ -2809,8 +2856,8 @@ func TestSettingsHubKeybindingsDisablePlainSavesWithoutLiveTmux(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.sessionizer-sidebar]\nplain = \"\"\n") {
-		t.Fatalf("keymap = %q, want disabled plain key", keymap)
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = []\n") {
+		t.Fatalf("keymap = %q, want disabled keys list", keymap)
 	}
 	if len(tmuxCalls) != 0 {
 		t.Fatalf("tmux calls = %#v, want none outside TMUX", tmuxCalls)
@@ -2824,7 +2871,7 @@ func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n")
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\n")
 
 	var calls int
 	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
@@ -2833,7 +2880,7 @@ func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
 		case 1:
 			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:reset"}, nil
 		case 4:
@@ -2852,7 +2899,7 @@ func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if strings.Contains(keymap, "[bindings.sessionizer-sidebar]") || strings.Contains(keymap, "plain =") {
+	if strings.Contains(keymap, "[bindings.ProjectSidebarToggle]") || strings.Contains(keymap, "plain =") {
 		t.Fatalf("keymap = %q, want override removed", keymap)
 	}
 }
@@ -2861,7 +2908,7 @@ func TestSettingsHubKeybindingsInvalidKeymapShowsErrorRow(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"M-a\" # ok\nplain = \"M-b\"\n")
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.ProjectSidebarToggle]\nplain = \"M-a\" # ok\nplain = \"M-b\"\n")
 
 	var calls int
 	var keybindingOptions intpickercompat.Options
@@ -2892,7 +2939,7 @@ func TestSettingsHubKeybindingsInvalidKeymapShowsErrorRow(t *testing.T) {
 	if !hasEntryLabelContaining(keybindingOptions.Entries, "duplicate") {
 		t.Fatalf("keybindings entries = %#v, want duplicate parse error", keybindingOptions.Entries)
 	}
-	if hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"sessionizer-sidebar") {
+	if hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
 		t.Fatalf("keybindings entries = %#v, want no editable action rows when parse failed", keybindingOptions.Entries)
 	}
 }
@@ -2901,7 +2948,7 @@ func TestSettingsKeybindingsDiagnosticListsActions(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n")
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\n")
 	var calls int
 	var labsOptions, listOptions intpickercompat.Options
 	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
@@ -2948,13 +2995,13 @@ func TestSettingsKeybindingsDiagnosticListsActions(t *testing.T) {
 	if !hasEntryLabelContaining(listOptions.Entries, "Ghostty") {
 		t.Fatalf("keybinding lab entries = %#v, want detected terminal", listOptions.Entries)
 	}
-	if !hasEntryValue(listOptions.Entries, settingsActionPrefixLabKeymap+"sessionizer-sidebar") {
-		t.Fatalf("keybinding lab entries = %#v, want sessionizer-sidebar action", listOptions.Entries)
+	if !hasEntryValue(listOptions.Entries, settingsActionPrefixLabKeymap+"ProjectSidebarToggle") {
+		t.Fatalf("keybinding lab entries = %#v, want canonical ProjectSidebarToggle action", listOptions.Entries)
 	}
 	if !hasEntryLabelContaining(listOptions.Entries, "Alt-1") {
 		t.Fatalf("keybinding lab entries = %#v, want Alt-1 probe label", listOptions.Entries)
 	}
-	if !hasEntryLabelContaining(listOptions.Entries, "plain M-a (custom)") {
+	if !hasEntryLabelContaining(listOptions.Entries, "aliases M-a (custom)") {
 		t.Fatalf("keybinding lab entries = %#v, want custom plain summary", listOptions.Entries)
 	}
 }
@@ -2982,7 +3029,7 @@ func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 	}{
 		{
 			name: "plain",
-			seed: "[bindings.sessionizer-sidebar]\nplain = \"\"\n",
+			seed: "[bindings.ProjectSidebarToggle]\nplain = \"\"\n",
 			result: classifyProbeInput(
 				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
 				[]byte("\x1b1"),
@@ -3070,7 +3117,7 @@ func TestSettingsLabsUnknownProbeSaveOverrideUsesSuggestedPlainChord(t *testing.
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:probe"}, nil
 		case 5:
@@ -3118,7 +3165,7 @@ func TestSettingsLabsUnknownProbeSaveOverrideUsesSuggestedPlainChord(t *testing.
 		t.Fatalf("Run() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n") {
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\n") {
 		t.Fatalf("keymap = %q, want M-a plain override", keymap)
 	}
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
@@ -3134,7 +3181,7 @@ func TestSettingsLabsPlainProbeSaveUsesKeymapApplyPath(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.sessionizer-sidebar]\nplain = \"\"\n")
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.ProjectSidebarToggle]\nplain = \"\"\n")
 
 	var tmuxCalls [][]string
 	var calls int
@@ -3146,7 +3193,7 @@ func TestSettingsLabsPlainProbeSaveUsesKeymapApplyPath(t *testing.T) {
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
 		case 4:
 			if got, want := options.UI, "settings-lab-keybinding-detail"; got != want {
 				t.Fatalf("detail UI = %q, want %q", got, want)
@@ -3191,7 +3238,7 @@ func TestSettingsLabsPlainProbeSaveUsesKeymapApplyPath(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if strings.Contains(keymap, "[bindings.sessionizer-sidebar]") || strings.Contains(keymap, "plain =") {
+	if strings.Contains(keymap, "[bindings.ProjectSidebarToggle]") || strings.Contains(keymap, "plain =") {
 		t.Fatalf("keymap = %q, want plain override reset", keymap)
 	}
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
@@ -3262,7 +3309,7 @@ func TestSettingsLabsInitPreviewApplyDelegatesToInitEngine(t *testing.T) {
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
 		case 4:
 			if !hasEntryLabelContaining(options.Entries, "Preview terminal fallback") {
 				t.Fatalf("detail entries = %#v, want preview row", options.Entries)
@@ -3320,7 +3367,7 @@ func TestSettingsLabsWSLEnvDelegatesWindowsTerminalFallback(t *testing.T) {
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
 		case 4:
 			if !hasEntryLabelContaining(options.Entries, "Windows Terminal") {
 				t.Fatalf("detail entries = %#v, want Windows Terminal fallback", options.Entries)
@@ -3417,7 +3464,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	if got, want := aboutOptions.Prompt, "Settings > About > "; got != want {
 		t.Fatalf("settings about prompt = %q, want %q", got, want)
 	}
-	if got, want := aboutOptions.Footer, "Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := aboutOptions.Footer, "Enter: action  |  Back row: parent"; got != want {
 		t.Fatalf("settings about footer = %q, want %q", got, want)
 	}
 	if !hasEntryValue(aboutOptions.Entries, settingsBackValue) {

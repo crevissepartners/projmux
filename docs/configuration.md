@@ -87,11 +87,12 @@ language.
 ## Keymap File
 
 Settings > Keybindings is the normal in-app editor for action keys. It lists
-each action, opens a detail screen, and uses `Press new key` to capture one
-keypress through the same controlling-TTY probe path as `projmux setup`.
-Saving writes safe tmux plain chords to `~/.config/projmux/keymap.toml`,
-rewrites `~/.config/projmux/tmux.conf`, and, when Settings is running inside
-tmux, sources that app config so tmux-level chords take effect immediately.
+user-configurable direct bindings, opens a detail screen, and offers `Add
+alias`, `Replace primary`, `Disable default`, `Reset`, `Press new key`, and
+`Type key chord`. Saving writes safe tmux plain chords to
+`~/.config/projmux/keymap.toml`, rewrites `~/.config/projmux/tmux.conf`, and,
+when Settings is running inside tmux, sources that app config so tmux-level
+chords take effect immediately.
 
 Settings reports CSI-u/User-key captures as terminal fallback delivery and
 does not write a keymap entry for them. Raw sequences that cannot be safely
@@ -104,43 +105,55 @@ absent, generated tmux config stays on the built-in defaults.
 Supported schema:
 
 ```toml
-[bindings.sessionizer-sidebar]
-plain = "M-a"
+[bindings.ProjectSidebarToggle]
+keys = ["M-1", "M-a"]
 
 [bindings.new-window]
-plain = "C-t"
+keys = ["C-t"]
+
+[bindings."Sidebar:PinProject"]
+keys = ["M-p", "p"]
 ```
 
 Each table is `[bindings.<action-id>]`. Supported keys are:
 
 | Key | Meaning |
 | --- | --- |
-| `plain` | A no-prefix tmux chord such as `M-a`, `C-t`, or `M-S-Left`. |
+| `keys` | A list of no-prefix tmux plain chords such as `M-a`, `C-t`, or `M-S-Left`. |
+| `plain` | Legacy single-primary replacement. Still read, but not written by Settings. |
 
 Legacy `prefix = ...` entries still parse during migration so existing files
-do not break, but Settings no longer writes prefix keys and generated tmux
-config no longer binds the old action prefix chords.
+do not break. Settings preserves existing prefix entries when rewriting the
+file, but does not create new prefix keys, and generated tmux config no longer
+binds the old action prefix chords.
 
-Set a value to the empty string to disable that chord for the action:
+Use an empty `keys` list to disable direct plain aliases for the action:
 
 ```toml
-[bindings.sessionizer-sidebar]
-plain = ""
+[bindings.ProjectSidebarToggle]
+keys = []
 ```
 
-In Settings, `Disable` writes the empty plain override. `Reset default`
-removes that override and returns to the built-in default. The Settings writer
-is deterministic and rewrites the supported saved subset only:
-`[bindings.<action-id>]` tables with `plain` string keys. If the existing file
-has parse errors or unknown action IDs, Settings shows the keymap error row and
-refuses to overwrite it until the file is fixed.
+In Settings, `Disable default` writes `keys = []`. `Reset` removes the saved
+override and returns to the built-in default. Legacy popup IDs such as
+`sessionizer-sidebar` still read, but new writes use canonical toggle names
+such as `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
+`AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`. Internal
+popup commands use `Surface:Action` IDs and have surface-local conflict
+domains; those are manual `keymap.toml` entries, not Settings list/edit
+targets.
+
+The Settings writer is deterministic and rewrites the supported saved subset
+only. If the existing file has parse errors or unknown action IDs, Settings
+shows the keymap error row and refuses to overwrite it until the file is fixed.
 
 The file currently affects generated tmux config from `projmux tmux
 print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
 `projmux tmux install-app`, and `projmux shell`. Terminal init adapters such as
 Ghostty and Windows Terminal still install the built-in CSI-u fallback map.
-Changing those terminal-layer mappings still requires rerunning `projmux init`
-and restarting the terminal where that terminal requires it.
+`UserN` fallback keys are not aliases and are not written in `keys = [...]`.
+Changing terminal-layer mappings still requires rerunning `projmux init` and
+restarting the terminal where that terminal requires it.
 
 When a chord is overridden, projmux emits unbinds for both the stale default
 chord and the replacement before binding the merged action. Popup and floating

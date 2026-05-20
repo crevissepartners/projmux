@@ -1442,7 +1442,7 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		}
 		return false, nil
 	}
-	if plan.Action == switchKillExpectKey {
+	if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, plan.Action, "Sidebar:KillSession", switchKillExpectKey) {
 		if cleanOptionalPath(plan.Selection) == cleanOptionalPath(plan.HomeDir) {
 			return true, nil
 		}
@@ -1459,7 +1459,7 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		c.focusSession = fallbackSession
 		return true, nil
 	}
-	if plan.Action == switchPinExpectKey {
+	if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, plan.Action, "Sidebar:PinProject", switchPinExpectKey) {
 		if plan.Selection == switchSettingsSentinel {
 			return false, nil
 		}
@@ -1835,8 +1835,11 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 		Footer:       switchPickerFooter(plan.UI, plan.StatusMessage),
 		InitialQuery: plan.InitialQuery,
 		Actions: append(
-			pickerCloseActions("esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
-			intpicker.CustomActions(switchKillExpectKey, switchPinExpectKey)...,
+			pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+			intpicker.CustomActions(append(
+				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:KillSession"}, []string{switchKillExpectKey}),
+				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:PinProject"}, []string{switchPinExpectKey})...,
+			)...)...,
 		),
 	}
 	if plan.UI == switchUISidebar {
@@ -1955,6 +1958,68 @@ func pickerCloseBindings(keys ...string) []string {
 	return bindings
 }
 
+func pickerCloseActionsForToggles(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback ...string) []intpicker.Action {
+	return pickerCloseActions(effectivePickerKeysForActions(homeDir, lookupEnv, actionIDs, fallback)...)
+}
+
+func pickerCloseBindingsForToggle(homeDir func() (string, error), lookupEnv func(string) string, actionID string, fallback ...string) []string {
+	return pickerCloseBindings(effectivePickerKeysForActions(homeDir, lookupEnv, []string{actionID}, fallback)...)
+}
+
+func pickerCloseBindingsForToggles(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback ...string) []string {
+	return pickerCloseBindings(effectivePickerKeysForActions(homeDir, lookupEnv, actionIDs, fallback)...)
+}
+
+func pickerKeyMatchesAction(homeDir func() (string, error), lookupEnv func(string) string, key, actionID string, fallback ...string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	return slices.Contains(effectivePickerKeysForActions(homeDir, lookupEnv, []string{actionID}, fallback), key)
+}
+
+func effectivePickerKeysForActions(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback []string) []string {
+	keys := append([]string{}, fallback...)
+	actions := defaultKeyBindingCatalog()
+	if homeDir != nil {
+		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv}); err == nil {
+			actions = merged
+		}
+	}
+	for _, id := range actionIDs {
+		action, ok := keyBindingActionByID(actions, id)
+		if !ok {
+			continue
+		}
+		for _, chord := range keyBindingEffectivePlainChords(action) {
+			if key := pickerKeyFromTmuxChord(chord); key != "" {
+				keys = append(keys, key)
+			}
+		}
+	}
+	return uniqueNonEmptyStrings(keys)
+}
+
+func pickerKeyFromTmuxChord(chord string) string {
+	chord = strings.TrimSpace(chord)
+	switch chord {
+	case "Enter":
+		return "enter"
+	case "Left", "Right", "Up", "Down":
+		return strings.ToLower(chord)
+	}
+	if after, ok := strings.CutPrefix(chord, "M-S-"); ok {
+		return "alt-shift-" + strings.ToLower(after)
+	}
+	if after, ok := strings.CutPrefix(chord, "M-"); ok {
+		return "alt-" + strings.ToLower(after)
+	}
+	if after, ok := strings.CutPrefix(chord, "C-"); ok {
+		return "ctrl-" + strings.ToLower(after)
+	}
+	return strings.ToLower(chord)
+}
+
 func switchPreviewWindow(ui string) string {
 	switch ui {
 	case switchUISidebar:
@@ -1969,18 +2034,15 @@ func switchPreviewWindow(ui string) string {
 func switchPickerFooter(ui, status string) string {
 	status = strings.TrimSpace(status)
 	if ui == switchUISidebar {
-		footer := "C-x: kill | M-p: pin"
+		footer := "Pinned rows stay near the top."
 		if status != "" {
 			footer += " | " + status
 		}
 		return projmuxFooter(footer)
 	}
 	parts := []string{
-		"Enter: switch to previewed target",
-		"Ctrl-X: kill focused session",
-		"Alt-P: pin/unpin focused directory",
-		"Left/Right: preview window",
-		"Alt-Up/Alt-Down: preview pane",
+		"Preview follows the focused target.",
+		"Destructive actions keep the current confirmation policy.",
 	}
 	if status != "" {
 		parts = append(parts, status)

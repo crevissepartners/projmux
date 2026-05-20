@@ -125,7 +125,7 @@ func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStat
 		"Welcome to projmux shell " + current + ".",
 		"Detach: Ctrl-b d keeps sessions running; re-enter with projmux shell.",
 		"Exit: run exit in every window, or tmux -L projmux kill-server.",
-		"Keys: Alt-1 projects, Alt-3 sessions, Alt-5 Settings.",
+		"Launch surfaces are available from the generated tmux config and Settings.",
 	}
 	if hasStatus {
 		lines = append(lines, "")

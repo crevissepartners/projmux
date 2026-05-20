@@ -84,7 +84,7 @@ func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	if got, want := runner.options.UI, "ai-settings"; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
-	if got, want := runner.options.Title, "AI Settings - Default Ctrl+Shift+R/L split mode"; got != want {
+	if got, want := runner.options.Title, "AI Settings - Default split mode"; got != want {
 		t.Fatalf("runner title = %q, want %q", got, want)
 	}
 	if got, want := runner.options.Prompt, "AI Setting > "; got != want {
@@ -93,7 +93,7 @@ func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	if got := runner.options.Header; got != "" {
 		t.Fatalf("runner header = %q, want description only in title", got)
 	}
-	if got, want := runner.options.Footer, "Enter: set default  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := runner.options.Footer, "Choose the default split mode for future AI launches."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := readModeFile(t, home), "shell\n"; got != want {
@@ -128,7 +128,7 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 			t.Fatalf("runner entry %#v has empty SearchKey; want stable search-order filtering", entry)
 		}
 	}
-	if got, want := runner.options.Footer, "Enter: launch  |  Esc/Alt+4/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := runner.options.Footer, "Choose an agent or shell target to launch."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 }

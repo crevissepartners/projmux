@@ -1,8 +1,9 @@
 # Terminal Keybindings
 
-projmux is keyboard-driven. `projmux shell` writes a tmux config that owns
-every binding listed here, so the keys are live the moment the app starts —
-no extra setup in most terminals.
+projmux is keyboard-driven, but not every key belongs to the same contract.
+Fresh installs guarantee only the five no-prefix launch keys `Alt-1` through
+`Alt-5`. Other actions keep their command surfaces, and users can bind safe
+tmux plain chords to them through Settings or `keymap.toml`.
 
 The recommended path when a key does not fire:
 
@@ -21,19 +22,25 @@ The recommended path when a key does not fire:
    section.
 
 To change a user-facing key, open Settings > Keybindings, select an action,
-then choose `Press new key`. Settings captures one keypress through the same
-TTY probe path used by `projmux setup`, writes safe tmux plain chords to
+then choose `Add alias`, `Replace primary`, `Disable default`, `Reset`, or
+`Type key chord`. Settings writes safe tmux plain chords to
 `~/.config/projmux/keymap.toml`, regenerates `~/.config/projmux/tmux.conf`,
-and hot-reloads the live tmux config when Settings is running inside tmux.
-CSI-u/User-key captures are reported as terminal fallback delivery and do not
-need a keymap write. Raw sequences that cannot be represented safely as a tmux
-plain chord are not persisted; configure terminal fallback with `projmux init`
-instead.
+and hot-reloads the live tmux config when Settings is running inside tmux. A
+single action can have multiple single-key aliases, for example `M-1` and
+`M-a`; this is not a sequential key sequence model.
+
+`Press new key` and `Type key chord` use the same normalize, validate, and
+conflict path. Typed chords such as `C-r`, `M-a`, `M-S-Left`, and `C-Space`
+are accepted when tmux can bind them directly. Raw escape sequences, CSI-u
+payloads, Windows Terminal `sendInput` strings, and tmux `UserN` keys are not
+saved as aliases. CSI-u/User-key captures are reported as terminal fallback
+delivery and do not need a keymap write.
 
 The Settings surface no longer exposes plain/prefix tmux chord fields. Legacy
 `prefix = ...` entries in an existing `keymap.toml` still parse during
-migration, but Settings does not write new prefix entries and generated tmux
-config no longer binds the old action prefix chords.
+migration, and Settings preserves existing prefix entries when it rewrites the
+file. Settings does not create new prefix entries, and generated tmux config no
+longer binds the old action prefix chords.
 
 > 한국어 요약: 대부분의 터미널은 `projmux shell` 만으로 아래 키가 바로 동작합니다.
 > 동작하지 않으면 `projmux setup` 으로 어떤 키가 막혔는지 진단하고,
@@ -46,11 +53,9 @@ session, `Ctrl-b ?` lists every binding live.
 
 ## Quick start (no setup)
 
-These shortcuts are bound by projmux's generated tmux config. On terminals
-that pass `Alt-*` and `Ctrl-*` chords through to the running process
-unchanged (e.g. Linux gnome-terminal, foot, most stock Linux terminals),
-they work the moment you launch `projmux shell` — no terminal config
-required.
+These shortcuts are the guaranteed launch defaults. On stock Windows Terminal
+and terminals that pass Meta sequences through, they work the moment you
+launch `projmux shell`.
 
 If a key does nothing, jump to
 [Diagnose: `projmux setup`](#diagnose-projmux-setup) instead of guessing.
@@ -66,16 +71,18 @@ These open the projmux popups and the sidebar. No prefix needed.
 | `Alt-3` | Existing session popup |
 | `Alt-4` | AI split picker |
 | `Alt-5` | Settings |
-| `Alt-6` | Project switcher popup |
 
-### Windows, panes, AI splits
+### Optional direct bindings
 
-| Shortcut | Action |
+These actions are user-configurable direct bindings. They are not guaranteed
+zero-config defaults. Add one or more aliases in Settings > Keybindings or
+`keymap.toml`.
+
+| Canonical action | Meaning |
 | --- | --- |
-| `Ctrl-n` | New tmux window in the current pane's directory |
-| `Alt-Shift-Left` / `Alt-Shift-Right` | Previous / next window |
-| `Alt-Left` / `Right` / `Up` / `Down` | Move focus between panes |
-| `Alt-r` | Rename the current window |
+| `ProjectSwitcherToggle` | Project switcher popup |
+| `new-window` | New tmux window in the current pane's directory |
+| `rename-window` | Rename the current tmux window |
 
 When a pane closes, projmux re-spreads remaining panes so the surviving split
 does not stretch lopsided.
@@ -89,26 +96,60 @@ or launcher shortcuts that call those one-shot launches, see
 
 ### Inside the pickers
 
-| Surface | Shortcut | Action |
-| --- | --- | --- |
-| Existing session popup | `Ctrl-X` | Kill the focused session and reopen the popup |
-| Existing session popup | `Left/Right` | Preview previous/next window |
-| Existing session popup | `Alt-Up/Alt-Down` | Preview previous/next pane |
-| Project switcher | `Ctrl-X` | Kill the focused existing session and reopen the picker |
-| Project switcher | `Alt-P` | Pin or unpin the focused directory |
+Picker-internal commands are surface-scoped. The same physical key can be used
+by different surfaces, while conflicts inside one surface are rejected.
 
-### Conditional rename keys
+| Surface action | Meaning |
+| --- | --- |
+| `Sidebar:KillSession` | Kill the focused existing session |
+| `Sidebar:PinProject` | Pin or unpin the focused directory |
+| `SessionPopup:KillSession` | Kill the focused session |
+| `SessionPopup:CyclePreviewWindowPrev` / `SessionPopup:CyclePreviewWindowNext` | Preview windows |
+| `SessionPopup:CyclePreviewPanePrev` / `SessionPopup:CyclePreviewPaneNext` | Preview panes |
+| `NotifySidebar:Ack` / `NotifySidebar:ClearNonCritical` / `NotifySidebar:ClearAll` | Manage notifications |
 
-These two only fire if your terminal forwards CSI-u sequences for `Ctrl-M`
-and `Ctrl-Shift-M`. Without that wiring, plain `Ctrl-M` is just `Enter` and
-`Ctrl-Shift-M` typically does nothing. `projmux init` configures this for
-the terminals it supports; otherwise see
+Runtime picker footers avoid hardcoded key guides so custom aliases do not
+make on-screen copy stale. Internal aliases can be adjusted in `keymap.toml`;
+Settings edits only direct tmux launch aliases.
+
+### Transport fallback keys
+
+CSI-u/User fallback is terminal delivery, not a keybinding alias. For example,
+`Ctrl-M` is ambiguous as a raw terminal chord because it is also `Enter`, so
+rename actions use terminal fallback when configured. `projmux init`
+configures this for the terminals it supports; otherwise see
 [Manual fallback / advanced (CSI-u)](#manual-fallback--advanced-csi-u).
 
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl-M` | Rename the current window (terminal must send `User10`) |
 | `Ctrl-Shift-M` | Rename the current AI pane label / topic (terminal must send `User11`) |
+
+## Keymap file
+
+Settings writes the action-centered multi-alias schema:
+
+```toml
+[bindings.ProjectSidebarToggle]
+keys = ["M-1", "M-a"]
+
+[bindings.new-window]
+keys = ["C-t"]
+
+[bindings."Sidebar:PinProject"]
+keys = ["M-p", "p"]
+```
+
+Legacy files using `plain = "M-a"` still read as a single-primary replacement
+override. New writes use `keys = [...]`. `keys = []` disables the direct plain
+aliases for that action. `UserN` fallback keys are intentionally absent from
+this file.
+
+Legacy popup IDs such as `sessionizer-sidebar`, `notify-sidebar`,
+`session-popup`, `ai-split-picker-right`, `ai-split-settings`, and
+`sessionizer` still read. Settings and new docs show the canonical toggle
+names: `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
+`AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`.
 
 ## Diagnose: `projmux setup`
 
@@ -359,8 +400,9 @@ shortcuts, while the split actions can send tmux prefix sequences directly. Esca
 }
 ```
 
-This example matches the default projmux app shortcuts without depending on
-CSI-u support from Windows Terminal for the `Alt` shortcuts. `Ctrl-M` and
-`Ctrl-Shift-M` still use CSI-u so tmux can distinguish rename commands from
-plain Enter. If a key is already bound by Windows Terminal, remove or change
-the conflicting `keybindings` entry before adding the projmux binding.
+This example includes the guaranteed launch keys plus advanced transport
+candidates without depending on CSI-u support from Windows Terminal for the
+`Alt` shortcuts. `Ctrl-M` and `Ctrl-Shift-M` still use CSI-u so tmux can
+distinguish rename commands from plain Enter. If a key is already bound by
+Windows Terminal, remove or change the conflicting `keybindings` entry before
+adding the projmux binding.

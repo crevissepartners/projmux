@@ -26,6 +26,9 @@ func TestWelcomeCommandWritesShellGuide(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Welcome to projmux shell") {
 		t.Fatalf("stdout = %q, want welcome heading", stdout.String())
 	}
+	if strings.Contains(stdout.String(), "Alt-1") || strings.Contains(stdout.String(), "Alt-3") || strings.Contains(stdout.String(), "Alt-5") {
+		t.Fatalf("stdout = %q, did not want hardcoded welcome key guide", stdout.String())
+	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}

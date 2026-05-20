@@ -122,7 +122,7 @@ func (c *settingsCommand) runSessionStateToggleDetail(title, prompt string, entr
 			Entries:    entries(),
 			Title:      title,
 			Prompt:     prompt,
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -159,7 +159,7 @@ func (c *settingsCommand) runProjectSessionStateAutosaveDetail(stdout, stderr io
 			Entries:    c.projectSessionStateAutosaveDetailEntries(),
 			Title:      "Session State - Project auto-save",
 			Prompt:     "Settings > Project > Session State > Auto-save > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -192,7 +192,7 @@ func (c *settingsCommand) runProjectSessionStateActionsDetail(stdout, stderr io.
 			Entries:    c.projectSessionStateActionsDetailEntries(),
 			Title:      "Session State - Project snapshot actions",
 			Prompt:     "Settings > Project > Session State > Snapshot actions > ",
-			Footer:     projmuxFooter("Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -363,7 +363,7 @@ func (c *settingsCommand) runSessionStateAutosaveIntervalTyped(stdout, stderr io
 		InitialQuery: formatSessionStateAutosaveInterval(interval.Duration),
 		Title:        "Session State - Auto-save interval",
 		Prompt:       "Auto-save interval > ",
-		Footer:       projmuxFooter("Enter: save  |  Examples: 30s, 2m, 90  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:       projmuxFooter("Enter: save  |  Examples: 30s, 2m, 90 "),
 		ExpectKeys:   []string{"enter"},
 		Bindings:     settingsCloseBindings(),
 	})
@@ -826,7 +826,7 @@ func (c *settingsCommand) runSaveProjectNamedSessionStateSnapshot(stdout io.Writ
 		AcceptQuery: true,
 		Title:       "Save named snapshot",
 		Prompt:      "Snapshot name > ",
-		Footer:      projmuxFooter("Enter: save  |  Esc/Alt+5/Ctrl+Alt+S: cancel"),
+		Footer:      projmuxFooter("Enter: save "),
 		ExpectKeys:  []string{"enter"},
 		Bindings:    settingsCloseBindings(),
 	})
@@ -1168,7 +1168,7 @@ func (c *settingsCommand) confirmSessionStateDeleteForSession(sessionName, ui, p
 		},
 		Title:      "Delete session snapshot - confirm",
 		Prompt:     prompt,
-		Footer:     projmuxFooter("Enter: confirm  |  Esc/Alt+5/Ctrl+Alt+S: cancel"),
+		Footer:     projmuxFooter("Enter: confirm "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}

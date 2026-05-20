@@ -626,7 +626,7 @@ func (c *settingsCommand) runReadonlyHookView(ctx settingsProjectContext, scope,
 		UI:     "settings-hook-readonly",
 		Title:  "Project recipe - [hooks." + event + "]",
 		Prompt: "Read-only hook > ",
-		Footer: projmuxFooter("Press Back row, Esc, Alt+5, or Ctrl+Alt+S to close"),
+		Footer: projmuxFooter("Use the Back row or picker close action to close"),
 		Entries: []intpickercompat.Entry{
 			settingsBackEntry(),
 			{Label: settingsLabelInfo("Defined in", path, "source: "+scope), Value: settingsNoopValue},
@@ -691,7 +691,7 @@ func (c *settingsCommand) runProjectConfigStartupSection(ctx settingsProjectCont
 			Entries:    projectConfigStartupEntries(c.currentProjectConfig(ctx)),
 			Title:      "Project recipe - Startup command",
 			Prompt:     "Settings > Project > Project recipe > Startup command > ",
-			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -724,7 +724,7 @@ func (c *settingsCommand) runProjectConfigKubeSection(ctx settingsProjectContext
 			Entries:    projectConfigKubeEntries(c.currentProjectConfig(ctx)),
 			Title:      "Project recipe - Kube",
 			Prompt:     "Settings > Project > Project recipe > Kube > ",
-			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -757,7 +757,7 @@ func (c *settingsCommand) runProjectConfigEnvSection(ctx settingsProjectContext,
 			Entries:    projectConfigEnvEntries(c.currentProjectConfig(ctx)),
 			Title:      "Project recipe - Environment",
 			Prompt:     "Settings > Project > Project recipe > Environment > ",
-			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -828,7 +828,7 @@ func (c *settingsCommand) projectConfigOptions(ctx settingsProjectContext) intpi
 		Entries:    c.projectConfigEntries(ctx),
 		Title:      "Project recipe - env, kube, startup",
 		Prompt:     "Settings > Project > Project recipe > ",
-		Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Enter: edit/apply  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}
@@ -1082,7 +1082,7 @@ func (c *settingsCommand) runProjectConfigTyped(title, prompt, initial string) (
 		InitialQuery: initial,
 		Title:        title,
 		Prompt:       prompt,
-		Footer:       projmuxFooter("Enter: save  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:       projmuxFooter("Enter: save "),
 		ExpectKeys:   []string{"enter"},
 		Bindings:     settingsCloseBindings(),
 	})

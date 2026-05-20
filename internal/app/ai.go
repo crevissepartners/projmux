@@ -692,9 +692,9 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
 		UI:         "ai-settings",
 		Entries:    c.settingsRows(),
-		Title:      "AI Settings - Default Ctrl+Shift+R/L split mode",
+		Title:      "AI Settings - Default split mode",
 		Prompt:     "AI Setting > ",
-		Footer:     projmuxFooter("Enter: set default  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Choose the default split mode for future AI launches."),
 		ExpectKeys: []string{"enter"},
 		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-5", "ctrl-alt-s", "alt-4"),
 	})
@@ -719,7 +719,7 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 		Entries:    c.agentRows(),
 		Title:      "AI Launch - Split direction: " + direction,
 		Prompt:     "AI Launch > ",
-		Footer:     projmuxFooter("Enter: launch  |  Esc/Alt+4/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Choose an agent or shell target to launch."),
 		ExpectKeys: []string{"enter"},
 		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-4", "alt-5", "ctrl-alt-s"),
 	})

@@ -74,11 +74,11 @@ Inside the app:
 - `Alt-3` opens the existing-session picker.
 - `Alt-4` opens the AI split picker.
 - `Alt-5` opens settings.
-- `Alt-6` opens the project switcher popup.
 
-See [Terminal Keybindings](docs/keybindings.md) for the full key map. If a key
+Those five launch keys are the guaranteed zero-config defaults. Add more
+aliases in Settings > Keybindings or `~/.config/projmux/keymap.toml`. If a key
 does not fire, run `projmux setup` outside tmux, then use
-`projmux init [terminal] --apply` for supported terminal fallbacks.
+`projmux init [terminal] --apply` for supported terminal delivery fallbacks.
 
 ## Day-To-Day Use
 
