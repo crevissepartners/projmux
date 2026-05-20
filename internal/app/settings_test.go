@@ -2673,21 +2673,25 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 	}
 
 	cases := []struct {
-		id    string
-		wants []string
+		id             string
+		primaryLabel   string
+		wants          []string
+		wantSearchText string
 	}{
-		{settingsActionPrefixKeymap + "Sidebar:PinProject", []string{"Pin Project", "Alt-P", "M-p", "Sidebar"}},
-		{settingsActionPrefixKeymap + "Sidebar:KillSession", []string{"Kill Session", "Ctrl-X", "C-x", "Sidebar"}},
-		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewWindowPrev", []string{"Preview Previous Window", "Left", "SessionPopup"}},
-		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewPanePrev", []string{"Preview Previous Pane", "Alt-Up", "M-Up", "SessionPopup"}},
-		{settingsActionPrefixKeymap + "NotifySidebar:ClearAll", []string{"Clear All", "Ctrl-X", "C-x", "NotifySidebar"}},
-		{settingsActionPrefixKeymap + "Settings:SwitchTabNext", []string{"Next Settings Tab", "Alt-Shift-Right", "M-S-Right", "Settings"}},
-		{settingsActionPrefixKeymap + "previous-window", []string{"Previous Window", "Alt-Shift-Left", "M-S-Left", "transport-dependent"}},
-		{settingsActionPrefixKeymap + "next-window", []string{"Next Window", "Alt-Shift-Right", "M-S-Right", "transport-dependent"}},
-		{settingsActionPrefixKeymap + "select-pane-left", []string{"Select Pane Left", "Alt-Left", "M-Left", "transport-dependent"}},
-		{settingsActionPrefixKeymap + "select-pane-right", []string{"Select Pane Right", "Alt-Right", "M-Right", "transport-dependent"}},
-		{settingsActionPrefixKeymap + "select-pane-up", []string{"Select Pane Up", "Alt-Up", "M-Up", "transport-dependent"}},
-		{settingsActionPrefixKeymap + "select-pane-down", []string{"Select Pane Down", "Alt-Down", "M-Down", "transport-dependent"}},
+		{settingsActionPrefixKeymap + "Sidebar:PinProject", "Project Sidebar: Pin Project", []string{"Alt-P", "M-p", "Sidebar"}, "Project Sidebar"},
+		{settingsActionPrefixKeymap + "Sidebar:KillSession", "Project Sidebar: Kill Session", []string{"Ctrl-X", "C-x", "Sidebar"}, "Project Sidebar"},
+		{settingsActionPrefixKeymap + "SessionPopup:KillSession", "Session Popup: Kill Session", []string{"Ctrl-X", "C-x", "SessionPopup"}, "Session Popup"},
+		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewWindowPrev", "Session Popup: Preview Previous Window", []string{"Left", "SessionPopup"}, "Session Popup"},
+		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewPanePrev", "Session Popup: Preview Previous Pane", []string{"Alt-Up", "M-Up", "SessionPopup"}, "Session Popup"},
+		{settingsActionPrefixKeymap + "NotifySidebar:Ack", "Notify Sidebar: Acknowledge", []string{"A", "a", "NotifySidebar"}, "Notify Sidebar"},
+		{settingsActionPrefixKeymap + "NotifySidebar:ClearAll", "Notify Sidebar: Clear All", []string{"Ctrl-X", "C-x", "NotifySidebar"}, "Notify Sidebar"},
+		{settingsActionPrefixKeymap + "Settings:SwitchTabNext", "Next Settings Tab", []string{"Alt-Shift-Right", "M-S-Right", "Settings"}, "Next Settings Tab"},
+		{settingsActionPrefixKeymap + "previous-window", "Previous Window", []string{"Alt-Shift-Left", "M-S-Left", "transport-dependent"}, "Previous Window"},
+		{settingsActionPrefixKeymap + "next-window", "Next Window", []string{"Alt-Shift-Right", "M-S-Right", "transport-dependent"}, "Next Window"},
+		{settingsActionPrefixKeymap + "select-pane-left", "Select Pane Left", []string{"Alt-Left", "M-Left", "transport-dependent"}, "Select Pane Left"},
+		{settingsActionPrefixKeymap + "select-pane-right", "Select Pane Right", []string{"Alt-Right", "M-Right", "transport-dependent"}, "Select Pane Right"},
+		{settingsActionPrefixKeymap + "select-pane-up", "Select Pane Up", []string{"Alt-Up", "M-Up", "transport-dependent"}, "Select Pane Up"},
+		{settingsActionPrefixKeymap + "select-pane-down", "Select Pane Down", []string{"Alt-Down", "M-Down", "transport-dependent"}, "Select Pane Down"},
 	}
 	for _, tc := range cases {
 		idx := entryIndexValue(entries, tc.id)
@@ -2695,6 +2699,9 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 			t.Fatalf("keybindings entries missing %q: %#v", tc.id, entries)
 		}
 		label := entries[idx].Label
+		if !strings.Contains(label, tc.primaryLabel) {
+			t.Fatalf("entry %q label = %q, want primary label %q", tc.id, label, tc.primaryLabel)
+		}
 		for _, want := range tc.wants {
 			if !strings.Contains(label, want) {
 				t.Fatalf("entry %q label = %q, want substring %q", tc.id, label, want)
@@ -2702,6 +2709,9 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 		}
 		if strings.Contains(label, strings.TrimPrefix(tc.id, settingsActionPrefixKeymap)) {
 			t.Fatalf("entry %q label = %q, want primary label without internal action ID", tc.id, label)
+		}
+		if !strings.Contains(entries[idx].SearchKey, tc.wantSearchText) {
+			t.Fatalf("entry %q search key = %q, want searchable text %q", tc.id, entries[idx].SearchKey, tc.wantSearchText)
 		}
 	}
 }
@@ -2874,8 +2884,12 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 		"AISplitPickerToggle":       "Toggle AI Split Picker",
 		"SettingsToggle":            "Toggle Settings",
 		"ProjectSwitcherToggle":     "Toggle Project Switcher",
-		"SessionPopup:KillSession":  "Kill Session",
-		"NotifySidebar:FocusAndAck": "Focus and Acknowledge",
+		"Sidebar:PinProject":        "Project Sidebar: Pin Project",
+		"Sidebar:KillSession":       "Project Sidebar: Kill Session",
+		"SessionPopup:KillSession":  "Session Popup: Kill Session",
+		"NotifySidebar:Ack":         "Notify Sidebar: Acknowledge",
+		"NotifySidebar:ClearAll":    "Notify Sidebar: Clear All",
+		"NotifySidebar:FocusAndAck": "Notify Sidebar: Focus and Acknowledge",
 		"Settings:SwitchTabPrev":    "Previous Settings Tab",
 		"rename-window":             "Rename Window",
 		"current-project-session":   "Current Project Session",
@@ -2887,6 +2901,30 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 		}
 		if got := keyBindingDisplayName(action); got != want {
 			t.Fatalf("keyBindingDisplayName(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
+func TestKeyBindingDisplayNameKeepsLaunchToggleLabelsHumanReadable(t *testing.T) {
+	t.Parallel()
+
+	catalog := defaultKeyBindingCatalog()
+	cases := map[string]string{
+		"ProjectSidebarToggle": "Toggle Project Sidebar",
+		"NotifySidebarToggle":  "Toggle Notify Sidebar",
+		"SessionPopupToggle":   "Toggle Session Popup",
+	}
+	for id, want := range cases {
+		action, ok := keyBindingActionByID(catalog, id)
+		if !ok {
+			t.Fatalf("catalog missing %q", id)
+		}
+		got := keyBindingDisplayName(action)
+		if got != want {
+			t.Fatalf("keyBindingDisplayName(%q) = %q, want %q", id, got, want)
+		}
+		if strings.Contains(got, ":") {
+			t.Fatalf("launch toggle label %q should stay human-readable without a surface prefix", got)
 		}
 	}
 }
@@ -3400,7 +3438,7 @@ func TestSettingsKeybindingsDiagnosticSeparatesPopupLocalLabelFromInternalID(t *
 		t.Fatalf("keybinding lab entries = %#v, want popup-local action value %q", entries, value)
 	}
 	label := entries[index].Label
-	if !strings.Contains(label, "Kill Session") {
+	if !strings.Contains(label, "Session Popup: Kill Session") {
 		t.Fatalf("popup-local label = %q, want readable action label", label)
 	}
 	if strings.Contains(label, "SessionPopup:KillSession") {
@@ -3411,10 +3449,10 @@ func TestSettingsKeybindingsDiagnosticSeparatesPopupLocalLabelFromInternalID(t *
 	if err != nil {
 		t.Fatalf("labKeybindingDetailEntries() error = %v", err)
 	}
-	if got, want := title, "Keybindings - Kill Session"; got != want {
+	if got, want := title, "Keybindings - Session Popup: Kill Session"; got != want {
 		t.Fatalf("detail title = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContainingAll(detailEntries, "Action", "Kill Session") {
+	if !hasEntryLabelContainingAll(detailEntries, "Action", "Session Popup: Kill Session") {
 		t.Fatalf("detail entries = %#v, want readable action row", detailEntries)
 	}
 	if !hasEntryLabelContainingAll(detailEntries, "Action ID", "SessionPopup:KillSession") {

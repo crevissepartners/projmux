@@ -2768,10 +2768,11 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 	for _, action := range actions {
 		defaultAction, _ := keyBindingActionByID(defaults, action.ID)
 		desc := keybindingCurrentSummary(action, defaultAction)
+		displayName := keyBindingDisplayName(action)
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, keyBindingDisplayName(action), desc),
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, displayName, desc),
 			Value:     settingsActionPrefixKeymap + action.ID,
-			SearchKey: action.ID + " " + action.Surface + " " + action.Description + " " + strings.Join(keybindingVisibleChords(action), " "),
+			SearchKey: action.ID + " " + displayName + " " + action.Surface + " " + action.Description + " " + strings.Join(keybindingVisibleChords(action), " "),
 		})
 	}
 	return entries, nil

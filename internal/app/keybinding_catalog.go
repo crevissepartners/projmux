@@ -461,7 +461,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Sidebar:PinProject",
 			Description: "Pin or unpin the focused project",
-			DisplayName: "Pin Project",
+			DisplayName: "Project Sidebar: Pin Project",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Sidebar",
@@ -470,7 +470,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Sidebar:KillSession",
 			Description: "Kill the focused existing session",
-			DisplayName: "Kill Session",
+			DisplayName: "Project Sidebar: Kill Session",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Sidebar",
@@ -479,7 +479,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:KillSession",
 			Description: "Kill the focused existing session",
-			DisplayName: "Kill Session",
+			DisplayName: "Session Popup: Kill Session",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -488,7 +488,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:OpenState",
 			Description: "Open session state for the focused session",
-			DisplayName: "Open Session State",
+			DisplayName: "Session Popup: Open Session State",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -497,7 +497,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewWindowPrev",
 			Description: "Preview previous window",
-			DisplayName: "Preview Previous Window",
+			DisplayName: "Session Popup: Preview Previous Window",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -506,7 +506,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewWindowNext",
 			Description: "Preview next window",
-			DisplayName: "Preview Next Window",
+			DisplayName: "Session Popup: Preview Next Window",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -515,7 +515,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewPanePrev",
 			Description: "Preview previous pane",
-			DisplayName: "Preview Previous Pane",
+			DisplayName: "Session Popup: Preview Previous Pane",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -524,7 +524,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewPaneNext",
 			Description: "Preview next pane",
-			DisplayName: "Preview Next Pane",
+			DisplayName: "Session Popup: Preview Next Pane",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -533,7 +533,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:FocusAndAck",
 			Description: "Focus and acknowledge the selected notification",
-			DisplayName: "Focus and Acknowledge",
+			DisplayName: "Notify Sidebar: Focus and Acknowledge",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -542,7 +542,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:Ack",
 			Description: "Acknowledge the selected notification",
-			DisplayName: "Acknowledge",
+			DisplayName: "Notify Sidebar: Acknowledge",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -551,7 +551,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:ClearNonCritical",
 			Description: "Clear non-critical notifications",
-			DisplayName: "Clear Non-Critical",
+			DisplayName: "Notify Sidebar: Clear Non-Critical",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -560,7 +560,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:ClearAll",
 			Description: "Clear all notifications",
-			DisplayName: "Clear All",
+			DisplayName: "Notify Sidebar: Clear All",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
