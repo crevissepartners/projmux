@@ -240,14 +240,22 @@ func TestSettingsRootAltArrowToggleInvariantWithProjectContext(t *testing.T) {
 	}
 }
 
-func TestSettingsRootAltArrowChordsAreTransportTierNotGuaranteedDefaults(t *testing.T) {
+func TestSettingsRootAltArrowChordsAreTransportTierWithDefaultBindings(t *testing.T) {
 	t.Parallel()
 
 	// Alt-arrow and Alt-Shift-arrow chords are transport-dependent. They
-	// remain catalogued, but no longer ship as guaranteed zero-config
-	// default tmux binds.
+	// remain catalogued outside the guaranteed zero-config launch tier, but
+	// still render app-scoped tmux binds where terminals forward them.
+	wantChords := map[string]string{
+		"select-pane-left":  "M-Left",
+		"select-pane-right": "M-Right",
+		"select-pane-up":    "M-Up",
+		"select-pane-down":  "M-Down",
+		"previous-window":   "M-S-Left",
+		"next-window":       "M-S-Right",
+	}
 	catalog := defaultKeyBindingCatalog()
-	for _, id := range []string{"select-pane-left", "select-pane-right", "previous-window", "next-window"} {
+	for id, wantChord := range wantChords {
 		var got keyBindingAction
 		var found bool
 		for _, action := range catalog {
@@ -263,8 +271,8 @@ func TestSettingsRootAltArrowChordsAreTransportTierNotGuaranteedDefaults(t *test
 		if got.Tier != keyBindingTierTransportDependent {
 			t.Fatalf("keybinding catalog %q tier = %q, want %q", id, got.Tier, keyBindingTierTransportDependent)
 		}
-		if got.PlainChord != "" {
-			t.Fatalf("keybinding catalog %q chord = %q, want no guaranteed default", id, got.PlainChord)
+		if got.PlainChord != wantChord {
+			t.Fatalf("keybinding catalog %q chord = %q, want %q", id, got.PlainChord, wantChord)
 		}
 	}
 
@@ -2676,8 +2684,10 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 		{settingsActionPrefixKeymap + "Settings:SwitchTabNext", []string{"Next Settings Tab", "Alt-Shift-Right", "M-S-Right", "Settings"}},
 		{settingsActionPrefixKeymap + "previous-window", []string{"Previous Window", "Alt-Shift-Left", "M-S-Left", "transport-dependent"}},
 		{settingsActionPrefixKeymap + "next-window", []string{"Next Window", "Alt-Shift-Right", "M-S-Right", "transport-dependent"}},
-		{settingsActionPrefixKeymap + "select-pane-left", []string{"Select Pane Left", "(unbound)", "transport-dependent"}},
-		{settingsActionPrefixKeymap + "select-pane-right", []string{"Select Pane Right", "(unbound)", "transport-dependent"}},
+		{settingsActionPrefixKeymap + "select-pane-left", []string{"Select Pane Left", "Alt-Left", "M-Left", "transport-dependent"}},
+		{settingsActionPrefixKeymap + "select-pane-right", []string{"Select Pane Right", "Alt-Right", "M-Right", "transport-dependent"}},
+		{settingsActionPrefixKeymap + "select-pane-up", []string{"Select Pane Up", "Alt-Up", "M-Up", "transport-dependent"}},
+		{settingsActionPrefixKeymap + "select-pane-down", []string{"Select Pane Down", "Alt-Down", "M-Down", "transport-dependent"}},
 	}
 	for _, tc := range cases {
 		idx := entryIndexValue(entries, tc.id)
@@ -2765,6 +2775,20 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailIsVie
 	}
 	if hasEntryLabelContaining(transportDetail.Entries, "Type key chord") {
 		t.Fatalf("transport detail entries = %#v, did not want edit actions", transportDetail.Entries)
+	}
+
+	paneDetailEntries, _, err := cmd.keybindingDetailEntries("select-pane-left")
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries(select-pane-left) error = %v", err)
+	}
+	if !hasEntryLabelContainingAll(paneDetailEntries, "Keys", "Alt-Left", "M-Left") {
+		t.Fatalf("pane detail entries = %#v, want readable transport key", paneDetailEntries)
+	}
+	if !hasEntryLabelContainingAll(paneDetailEntries, "Tier", "Transport dependent", "view-only transport-dependent") {
+		t.Fatalf("pane detail entries = %#v, want transport tier reason", paneDetailEntries)
+	}
+	if hasEntryLabelContaining(paneDetailEntries, "(unbound)") {
+		t.Fatalf("pane detail entries = %#v, did not want unbound restored default", paneDetailEntries)
 	}
 }
 
