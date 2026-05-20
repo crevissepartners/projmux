@@ -718,7 +718,7 @@ func keyBindingActionAliases(action keyBindingAction) []string {
 
 func keyBindingEditable(action keyBindingAction) bool {
 	switch action.Tier {
-	case keyBindingTierGuaranteedLaunchDefault, keyBindingTierUserConfigurableDirect:
+	case keyBindingTierGuaranteedLaunchDefault, keyBindingTierUserConfigurableDirect, keyBindingTierNativePickerInternal:
 		return true
 	default:
 		return false
