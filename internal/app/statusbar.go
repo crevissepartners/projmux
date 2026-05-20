@@ -730,6 +730,7 @@ type statusbarUsageState struct {
 type statusbarUsagePopupView struct {
 	Title   string
 	Toast   string
+	Payload string
 	Command string
 	Width   int
 	Height  int
@@ -760,11 +761,12 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time, binaryPath st
 
 	var framed strings.Builder
 	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&framed, bodyContent, title, outerLayout)
-	payload := strings.TrimRight(framed.String(), "\n") + "\n"
+	payload := framed.String()
 	command := statusbarPopupCommand(payload, binaryPath)
 	return statusbarUsagePopupView{
 		Title:   title,
 		Toast:   statusbarUsageToast(state),
+		Payload: payload,
 		Command: command,
 		Width:   width,
 		Height:  height,
@@ -1035,6 +1037,7 @@ func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path strin
 type statusbarPathPopupView struct {
 	Title   string
 	Toast   string
+	Payload string
 	Command string
 	Width   int
 	Height  int
@@ -1080,11 +1083,12 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata, binaryPath 
 
 	var framed strings.Builder
 	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&framed, bodyContent, title, outerLayout)
-	payload := strings.TrimRight(framed.String(), "\n") + "\n"
+	payload := framed.String()
 	command := statusbarPopupCommand(payload, binaryPath)
 	return statusbarPathPopupView{
 		Title:   title,
 		Toast:   "path",
+		Payload: payload,
 		Command: command,
 		Width:   width,
 		Height:  height,
@@ -1098,6 +1102,7 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata, binaryPath 
 // failed) we fall back to the legacy Enter-only `IFS= read -r _` shape so
 // the popup at least remains dismissable.
 func statusbarPopupCommand(payload, binaryPath string) string {
+	payload = strings.TrimRight(payload, "\r\n")
 	prefix := "printf %s " + tmuxShellQuote(payload)
 	binaryPath = strings.TrimSpace(binaryPath)
 	if binaryPath == "" {
@@ -1106,11 +1111,17 @@ func statusbarPopupCommand(payload, binaryPath string) string {
 	return prefix + "; " + tmuxShellQuote(binaryPath) + " popup-wait-key"
 }
 
+const displayOnlyPopupClosePrompt = "Press any key to close."
+
+func displayOnlyPopupClosePromptLine() string {
+	return projmuxpicker.MutedStart + displayOnlyPopupClosePrompt + projmuxpicker.Reset
+}
+
 func statusbarPopupFooterLines(cols int) []string {
 	return []string{
 		"",
 		projmuxpicker.SeparatorLine(cols),
-		projmuxpicker.MutedStart + "Press any key to close." + projmuxpicker.Reset,
+		displayOnlyPopupClosePromptLine(),
 	}
 }
 
