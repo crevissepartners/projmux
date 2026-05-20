@@ -91,7 +91,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "ProjectSidebarToggle",
 			Description:     "Project sidebar",
-			DisplayName:     "ProjectSidebarToggle",
+			DisplayName:     "Toggle Project Sidebar",
 			LegacyIDs:       []string{"sessionizer-sidebar"},
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierGuaranteedLaunchDefault,
@@ -120,7 +120,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "NotifySidebarToggle",
 			Description:    "Notify sidebar",
-			DisplayName:    "NotifySidebarToggle",
+			DisplayName:    "Toggle Notify Sidebar",
 			LegacyIDs:      []string{"notify-sidebar"},
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
@@ -147,7 +147,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "SessionPopupToggle",
 			Description:     "Existing session popup",
-			DisplayName:     "SessionPopupToggle",
+			DisplayName:     "Toggle Session Popup",
 			LegacyIDs:       []string{"session-popup"},
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierGuaranteedLaunchDefault,
@@ -176,7 +176,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "AISplitPickerToggle",
 			Description:    "AI split picker",
-			DisplayName:    "AISplitPickerToggle",
+			DisplayName:    "Toggle AI Split Picker",
 			LegacyIDs:      []string{"ai-split-picker-right"},
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
@@ -203,7 +203,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "SettingsToggle",
 			Description:    "Settings",
-			DisplayName:    "SettingsToggle",
+			DisplayName:    "Toggle Settings",
 			LegacyIDs:      []string{"ai-split-settings"},
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
@@ -230,7 +230,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "ProjectSwitcherToggle",
 			Description:     "Project switcher popup",
-			DisplayName:     "ProjectSwitcherToggle",
+			DisplayName:     "Toggle Project Switcher",
 			LegacyIDs:       []string{"sessionizer"},
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierUserConfigurableDirect,
@@ -504,6 +504,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Sidebar:PinProject",
 			Description: "Pin or unpin the focused project",
+			DisplayName: "Pin Project",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Sidebar",
@@ -512,6 +513,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Sidebar:KillSession",
 			Description: "Kill the focused existing session",
+			DisplayName: "Kill Session",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Sidebar",
@@ -520,6 +522,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:KillSession",
 			Description: "Kill the focused existing session",
+			DisplayName: "Kill Session",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -528,6 +531,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:OpenState",
 			Description: "Open session state for the focused session",
+			DisplayName: "Open Session State",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -536,6 +540,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewWindowPrev",
 			Description: "Preview previous window",
+			DisplayName: "Preview Previous Window",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -544,6 +549,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewWindowNext",
 			Description: "Preview next window",
+			DisplayName: "Preview Next Window",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -552,6 +558,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewPanePrev",
 			Description: "Preview previous pane",
+			DisplayName: "Preview Previous Pane",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -560,6 +567,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewPaneNext",
 			Description: "Preview next pane",
+			DisplayName: "Preview Next Pane",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -568,6 +576,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:FocusAndAck",
 			Description: "Focus and acknowledge the selected notification",
+			DisplayName: "Focus and Acknowledge",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -576,6 +585,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:Ack",
 			Description: "Acknowledge the selected notification",
+			DisplayName: "Acknowledge",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -584,6 +594,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:ClearNonCritical",
 			Description: "Clear non-critical notifications",
+			DisplayName: "Clear Non-Critical",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -592,6 +603,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:ClearAll",
 			Description: "Clear all notifications",
+			DisplayName: "Clear All",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -600,6 +612,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Settings:SwitchTabPrev",
 			Description: "Switch Settings tab left",
+			DisplayName: "Previous Settings Tab",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Settings",
@@ -608,6 +621,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Settings:SwitchTabNext",
 			Description: "Switch Settings tab right",
+			DisplayName: "Next Settings Tab",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Settings",
@@ -634,7 +648,66 @@ func keyBindingDisplayName(action keyBindingAction) string {
 	if name := strings.TrimSpace(action.DisplayName); name != "" {
 		return name
 	}
-	return action.ID
+	return humanizeKeyBindingActionID(action.ID)
+}
+
+func humanizeKeyBindingActionID(id string) string {
+	if _, local, ok := strings.Cut(id, ":"); ok {
+		id = local
+	}
+	id = strings.ReplaceAll(id, "-", " ")
+	var words []string
+	var current strings.Builder
+	runes := []rune(id)
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		words = append(words, current.String())
+		current.Reset()
+	}
+	for i, r := range runes {
+		if r == ' ' || r == '_' {
+			flush()
+			continue
+		}
+		if i > 0 && current.Len() > 0 && isUpperASCII(r) {
+			prev := runes[i-1]
+			var next rune
+			if i+1 < len(runes) {
+				next = runes[i+1]
+			}
+			if isLowerASCII(prev) || isDigitASCII(prev) || (isUpperASCII(prev) && isLowerASCII(next)) {
+				flush()
+			}
+		}
+		current.WriteRune(r)
+	}
+	flush()
+	for i, word := range words {
+		words[i] = titleASCIIWord(word)
+	}
+	return strings.Join(words, " ")
+}
+
+func titleASCIIWord(word string) string {
+	if word == "" {
+		return ""
+	}
+	lower := strings.ToLower(word)
+	return strings.ToUpper(lower[:1]) + lower[1:]
+}
+
+func isUpperASCII(r rune) bool {
+	return r >= 'A' && r <= 'Z'
+}
+
+func isLowerASCII(r rune) bool {
+	return r >= 'a' && r <= 'z'
+}
+
+func isDigitASCII(r rune) bool {
+	return r >= '0' && r <= '9'
 }
 
 func keyBindingActionAliases(action keyBindingAction) []string {

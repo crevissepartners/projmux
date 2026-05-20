@@ -2856,7 +2856,44 @@ func keybindingAliasesSummary(action keyBindingAction) string {
 	if len(keys) == 0 {
 		return "(disabled)"
 	}
-	return strings.Join(keys, ", ")
+	labels := make([]string, 0, len(keys))
+	for _, key := range keys {
+		labels = append(labels, keybindingChordDisplay(key))
+	}
+	return strings.Join(labels, ", ")
+}
+
+func keybindingChordDisplay(chord string) string {
+	chord = strings.TrimSpace(chord)
+	if chord == "" {
+		return ""
+	}
+	readable := keybindingReadableChord(chord)
+	if readable == "" || readable == chord {
+		return chord
+	}
+	return readable + " (" + chord + ")"
+}
+
+func keybindingReadableChord(chord string) string {
+	parts := strings.Split(chord, "-")
+	if len(parts) < 2 {
+		return chord
+	}
+	var out []string
+	for _, part := range parts {
+		switch part {
+		case "M":
+			out = append(out, "Alt")
+		case "C":
+			out = append(out, "Ctrl")
+		case "S":
+			out = append(out, "Shift")
+		default:
+			out = append(out, part)
+		}
+	}
+	return strings.Join(out, "-")
 }
 
 func keybindingSource(current, def keyBindingAction) string {
@@ -3262,29 +3299,41 @@ func (c *settingsCommand) labKeybindingEntries() ([]intpickercompat.Entry, error
 	}
 	terminal := detectTerminal(c.lookupEnv)
 	keys := probeKeysFromActions(actions)
-	entries := make([]intpickercompat.Entry, 0, len(keys)+3)
+	keyByAction := make(map[string]probeKey, len(keys))
+	for _, key := range keys {
+		keyByAction[key.ActionID] = key
+	}
+	entries := make([]intpickercompat.Entry, 0, len(actions)+3)
 	entries = append(entries, settingsBackEntry())
 	entries = append(entries, intpickercompat.Entry{
 		Label: settingsLabelInfo("Terminal", terminal.Display(), labTerminalSupportSummary(terminal)),
 		Value: settingsNoopValue,
 	})
-	for _, key := range keys {
-		action, ok := keyBindingActionByID(actions, key.ActionID)
-		if !ok {
-			continue
-		}
+	for _, action := range actions {
 		defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
-		desc := strings.TrimSpace(action.Description + "  aliases " + keybindingAliasesSummary(action))
-		if keybindingSource(action, defaultAction) == "keymap.toml" {
-			desc += " (custom)"
+		name := keyBindingDisplayName(action)
+		var detail []string
+		if description := strings.TrimSpace(action.Description); description != "" && description != name {
+			detail = append(detail, description)
 		}
-		if key.UserKey != "" {
-			desc += "  " + key.UserKey
+		detail = append(detail, "aliases "+keybindingAliasesSummary(action))
+		if keybindingSource(action, defaultAction) == "keymap.toml" {
+			detail[len(detail)-1] += " (custom)"
+		}
+		if key, ok := keyByAction[action.ID]; ok {
+			if key.Label != "" {
+				detail = append(detail, "probe "+key.Label)
+			}
+			if key.UserKey != "" {
+				detail = append(detail, key.UserKey)
+			}
+		} else if action.Surface != "" {
+			detail = append(detail, action.Surface+" local")
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, key.Label, desc),
-			Value:     settingsActionPrefixLabKeymap + key.ActionID,
-			SearchKey: key.ActionID + " " + key.Label + " " + key.Action + " " + action.Description,
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, name, strings.Join(detail, "  ")),
+			Value:     settingsActionPrefixLabKeymap + action.ID,
+			SearchKey: action.ID + " " + name + " " + action.Description + " " + strings.Join(keyBindingEffectivePlainChords(action), " "),
 		})
 	}
 	return entries, nil
@@ -3299,21 +3348,18 @@ func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpick
 	if !ok {
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	key, err := c.labProbeKeyFromActions(actionID, actions)
-	if err != nil {
-		return nil, "", err
-	}
 	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
 	terminal := detectTerminal(c.lookupEnv)
 	prefix := settingsActionPrefixLabKeymap + actionID + ":"
+	displayName := keyBindingDisplayName(action)
 	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
-			Label: settingsLabelInfo("Action ID", action.ID, ""),
+			Label: settingsLabelInfo("Action", displayName, action.Description),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Probe key", key.Label, key.Action),
+			Label: settingsLabelInfo("Action ID", action.ID, ""),
 			Value: settingsNoopValue,
 		},
 		{
@@ -3328,10 +3374,23 @@ func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpick
 			Label: settingsLabelInfo("Aliases", keybindingAliasesSummary(action), "tmux plain"),
 			Value: settingsNoopValue,
 		},
-		{
-			Label: settingsLabel(settingsGlyphType, settingsColorType, "Press the key", "read one raw keypress from /dev/tty"),
-			Value: prefix + "probe",
-		},
+	}
+	if key, err := c.labProbeKeyFromActions(actionID, actions); err == nil {
+		entries = append(entries,
+			intpickercompat.Entry{
+				Label: settingsLabelInfo("Probe key", key.Label, key.Action),
+				Value: settingsNoopValue,
+			},
+			intpickercompat.Entry{
+				Label: settingsLabel(settingsGlyphType, settingsColorType, "Press the key", "read one raw keypress from /dev/tty"),
+				Value: prefix + "probe",
+			},
+		)
+	} else {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelInfo("Probe key", "not available", "picker-local action"),
+			Value: settingsNoopValue,
+		})
 	}
 	if terminal.InitCommand() != "" {
 		entries = append(entries,
@@ -3355,7 +3414,7 @@ func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpick
 	} else if res, ok := c.lastLabProbe[action.ID]; ok {
 		entries = append(entries, labProbeOutcomeEntries(prefix, action, defaultAction, res, terminal)...)
 	}
-	return entries, "Keybindings - " + action.Description, nil
+	return entries, "Keybindings - " + displayName, nil
 }
 
 func labProbeOutcomeEntries(prefix string, action, defaultAction keyBindingAction, res probeResult, terminal terminalInfo) []intpickercompat.Entry {

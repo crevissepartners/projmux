@@ -2596,11 +2596,84 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	if hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"Sidebar:PinProject") {
 		t.Fatalf("keybindings entries = %#v, did not want native picker internal action in Settings edit list", keybindingOptions.Entries)
 	}
-	if !hasEntryLabelContaining(keybindingOptions.Entries, "keys M-a (custom)") {
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "keys Alt-a (M-a) (custom)") {
 		t.Fatalf("keybindings entries = %#v, want custom plain value", keybindingOptions.Entries)
 	}
 	if hasEntryLabelContaining(keybindingOptions.Entries, "prefix") {
 		t.Fatalf("keybindings entries = %#v, did not want prefix value", keybindingOptions.Entries)
+	}
+}
+
+func TestSettingsHubKeybindingsUsesReadablePrimaryLabels(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{}
+	entries, err := cmd.keybindingEntries()
+	if err != nil {
+		t.Fatalf("keybindingEntries() error = %v", err)
+	}
+
+	projectIndex := entryIndexValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle")
+	if projectIndex < 0 {
+		t.Fatalf("keybindings entries = %#v, want project sidebar row", entries)
+	}
+	notifyIndex := entryIndexValue(entries, settingsActionPrefixKeymap+"NotifySidebarToggle")
+	if notifyIndex < 0 {
+		t.Fatalf("keybindings entries = %#v, want notify sidebar row", entries)
+	}
+	if projectIndex > notifyIndex {
+		t.Fatalf("project sidebar row index = %d, notify row index = %d; want project sidebar listed first", projectIndex, notifyIndex)
+	}
+	projectLabel := entries[projectIndex].Label
+	for _, want := range []string{"Toggle Project Sidebar", "Alt-1", "M-1"} {
+		if !strings.Contains(projectLabel, want) {
+			t.Fatalf("project sidebar label = %q, want %q", projectLabel, want)
+		}
+	}
+	if strings.Contains(projectLabel, "ProjectSidebarToggle") {
+		t.Fatalf("project sidebar label = %q, want primary label without internal action ID", projectLabel)
+	}
+
+	detailEntries, title, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries() error = %v", err)
+	}
+	if got, want := title, "Keybinding - Toggle Project Sidebar"; got != want {
+		t.Fatalf("detail title = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContainingAll(detailEntries, "Aliases", "Alt-1", "M-1") {
+		t.Fatalf("detail entries = %#v, want readable default alias with tmux chord", detailEntries)
+	}
+	if !hasEntryLabelContainingAll(detailEntries, "Action ID", "ProjectSidebarToggle") {
+		t.Fatalf("detail entries = %#v, want internal action ID only in detail/source context", detailEntries)
+	}
+}
+
+func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
+	t.Parallel()
+
+	catalog := defaultKeyBindingCatalog()
+	cases := map[string]string{
+		"ProjectSidebarToggle":      "Toggle Project Sidebar",
+		"NotifySidebarToggle":       "Toggle Notify Sidebar",
+		"SessionPopupToggle":        "Toggle Session Popup",
+		"AISplitPickerToggle":       "Toggle AI Split Picker",
+		"SettingsToggle":            "Toggle Settings",
+		"ProjectSwitcherToggle":     "Toggle Project Switcher",
+		"SessionPopup:KillSession":  "Kill Session",
+		"NotifySidebar:FocusAndAck": "Focus and Acknowledge",
+		"Settings:SwitchTabPrev":    "Previous Settings Tab",
+		"rename-window":             "Rename Window",
+		"current-project-session":   "Current Project Session",
+	}
+	for id, want := range cases {
+		action, ok := keyBindingActionByID(catalog, id)
+		if !ok {
+			t.Fatalf("catalog missing %q", id)
+		}
+		if got := keyBindingDisplayName(action); got != want {
+			t.Fatalf("keyBindingDisplayName(%q) = %q, want %q", id, got, want)
+		}
 	}
 }
 
@@ -3001,7 +3074,10 @@ func TestSettingsKeybindingsDiagnosticListsActions(t *testing.T) {
 	if !hasEntryLabelContaining(listOptions.Entries, "Alt-1") {
 		t.Fatalf("keybinding lab entries = %#v, want Alt-1 probe label", listOptions.Entries)
 	}
-	if !hasEntryLabelContaining(listOptions.Entries, "aliases M-a (custom)") {
+	if !hasEntryLabelContaining(listOptions.Entries, "Toggle Project Sidebar") {
+		t.Fatalf("keybinding lab entries = %#v, want readable action label", listOptions.Entries)
+	}
+	if !hasEntryLabelContaining(listOptions.Entries, "aliases Alt-a (M-a) (custom)") {
 		t.Fatalf("keybinding lab entries = %#v, want custom plain summary", listOptions.Entries)
 	}
 }
@@ -3086,8 +3162,8 @@ func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("labKeybindingDetailEntries() error = %v", err)
 			}
-			if !strings.Contains(title, "Project sidebar") {
-				t.Fatalf("title = %q, want action description", title)
+			if !strings.Contains(title, "Toggle Project Sidebar") {
+				t.Fatalf("title = %q, want readable action label", title)
 			}
 			for _, want := range tc.wantLabel {
 				if !hasEntryLabelContaining(entries, want) {
@@ -3100,6 +3176,46 @@ func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSettingsKeybindingsDiagnosticSeparatesPopupLocalLabelFromInternalID(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{}
+	entries, err := cmd.labKeybindingEntries()
+	if err != nil {
+		t.Fatalf("labKeybindingEntries() error = %v", err)
+	}
+
+	value := settingsActionPrefixLabKeymap + "SessionPopup:KillSession"
+	index := entryIndexValue(entries, value)
+	if index < 0 {
+		t.Fatalf("keybinding lab entries = %#v, want popup-local action value %q", entries, value)
+	}
+	label := entries[index].Label
+	if !strings.Contains(label, "Kill Session") {
+		t.Fatalf("popup-local label = %q, want readable action label", label)
+	}
+	if strings.Contains(label, "SessionPopup:KillSession") {
+		t.Fatalf("popup-local label = %q, want internal id out of user-facing label", label)
+	}
+
+	detailEntries, title, err := cmd.labKeybindingDetailEntries("SessionPopup:KillSession")
+	if err != nil {
+		t.Fatalf("labKeybindingDetailEntries() error = %v", err)
+	}
+	if got, want := title, "Keybindings - Kill Session"; got != want {
+		t.Fatalf("detail title = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContainingAll(detailEntries, "Action", "Kill Session") {
+		t.Fatalf("detail entries = %#v, want readable action row", detailEntries)
+	}
+	if !hasEntryLabelContainingAll(detailEntries, "Action ID", "SessionPopup:KillSession") {
+		t.Fatalf("detail entries = %#v, want internal id in detail context", detailEntries)
+	}
+	if hasEntryLabelContainingAll(detailEntries, "Kill Session", "SessionPopup:KillSession") {
+		t.Fatalf("detail entries = %#v, did not want internal id beside readable action label", detailEntries)
 	}
 }
 

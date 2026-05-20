@@ -17,6 +17,10 @@ view-first layout:
   first, then the edit actions, then the explanatory hints.
 - `Settings > Keybindings` is the single entry point for keybinding work. The
   page is split into four chips: `Bindings`, `Diagnostic`, `Probe`, and `Init`.
+- The launcher checkout policy applies in Settings: the project sidebar is a
+  first-class row, action rows use human-readable labels, internal IDs appear
+  only in detail/source/keymap contexts, and runtime footers are status hints,
+  not key discovery.
 - `Settings > Notifications` owns notification delivery IA. Desktop notification
   mode, AI desktop notification dedupe duration, delivery source diagnostics,
   AI hook quiet policy, in-app queue status, and
