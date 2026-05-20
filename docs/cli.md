@@ -71,13 +71,13 @@ selection has been retired. The native picker is always used.
 projmux setup [--timeout DURATION] [--non-interactive]
 ```
 
-Probes which projmux key sequences (`Alt-1..5`, `Ctrl-N`, `Ctrl-Shift-{R,L,M}`,
-`Ctrl-M`, `Alt-Shift-{Left,Right}`) reach this process and which the
-terminal swallows. Reports `plain`, `csi-u`, `unknown`, or `timeout` for
-each. `--non-interactive` skips the TTY probe and prints the expected key
+Probes the guaranteed launch defaults (`Alt-1..5`) plus advanced fallback and
+transport candidates such as `Ctrl-N`, `Ctrl-Shift-{R,L,M}`, `Ctrl-M`, and
+`Alt-Shift-{Left,Right}`. Reports `plain`, `csi-u`, `unknown`, or `timeout`
+for each. `--non-interactive` skips the TTY probe and prints the expected key
 map. Default `--timeout` is `5s`. Run it outside tmux after trying
-`projmux shell`; keys reported as `plain` or `csi-u` already work with zero
-terminal config.
+`projmux shell`; `Alt-1..5` are the only guaranteed zero-config defaults, while
+other probed keys are diagnostic or optional binding candidates.
 
 ## init
 

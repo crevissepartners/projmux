@@ -44,8 +44,9 @@ execution should not need network access after the image is built.
 The Docker suites do not replace checks that depend on a real host terminal,
 desktop shell, or OS integration:
 
-- terminal emulator key delivery and swallowing for `Alt-1..5`, `Ctrl-N`, and
-  CSI-u chords
+- terminal emulator key delivery and swallowing for guaranteed `Alt-1..5`
+  launch keys, optional user-configured direct aliases, and CSI-u/User
+  fallback chords
 - Windows Terminal and WSL interop
 - macOS host path, shell, and GUI behavior
 - desktop notification click callbacks

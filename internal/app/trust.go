@@ -149,7 +149,7 @@ func (c *settingsCommand) projectTrustOptions(ctx settingsProjectContext) intpic
 		Entries:    c.projectTrustEntries(ctx),
 		Title:      "Trust - Project config hash",
 		Prompt:     "Settings > Project > Trust > ",
-		Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}
@@ -295,7 +295,7 @@ func (c *settingsCommand) confirmProjectTrustUntrust(ctx settingsProjectContext)
 		},
 		Title:      "Untrust project config - confirm",
 		Prompt:     "Settings > Project > Trust > Untrust > ",
-		Footer:     projmuxFooter("Enter: confirm  |  Esc/Alt+5/Ctrl+Alt+S: cancel"),
+		Footer:     projmuxFooter("Enter: confirm "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}

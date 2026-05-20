@@ -262,8 +262,13 @@ func suggestedPlainChordForSequence(seq []byte) (string, bool) {
 	}
 	got := string(seq)
 	for _, action := range defaultKeyBindingCatalog() {
-		if action.ProbePlain != "" && action.PlainChord != "" && action.ProbePlain == got && !isAmbiguousEnterSequence([]byte(action.ProbePlain)) {
-			return action.PlainChord, true
+		if action.ProbePlain != "" && action.ProbePlain == got && !isAmbiguousEnterSequence([]byte(action.ProbePlain)) {
+			if chord := firstNonEmptyString(keyBindingEffectivePlainChords(action)); chord != "" {
+				return chord, true
+			}
+			if chord := probeLabelToTmuxChord(action.ProbeLabel); chord != "" {
+				return chord, true
+			}
 		}
 	}
 	if len(seq) == 2 && seq[0] == 0x1b && seq[1] >= 0x21 && seq[1] <= 0x7e {
@@ -273,6 +278,14 @@ func suggestedPlainChordForSequence(seq []byte) (string, bool) {
 		return fmt.Sprintf("C-%c", 'a'+seq[0]-1), true
 	}
 	return "", false
+}
+
+func probeLabelToTmuxChord(label string) string {
+	label = strings.TrimSpace(label)
+	label = strings.ReplaceAll(label, "Alt-Shift-", "M-S-")
+	label = strings.ReplaceAll(label, "Alt-", "M-")
+	label = strings.ReplaceAll(label, "Ctrl-", "C-")
+	return label
 }
 
 func isAmbiguousEnterSequence(seq []byte) bool {
@@ -308,7 +321,7 @@ func renderProbeSummary(w io.Writer, terminal terminalInfo, results []probeResul
 	fmt.Fprintln(w)
 
 	if fail == 0 {
-		fmt.Fprintln(w, "All probed keys reach this process. Alt-1..5 and the probed shortcuts should work in `projmux shell` with zero terminal config.")
+		fmt.Fprintln(w, "All probed keys reach this process. Alt-1..5 are guaranteed launch defaults; other probed keys are optional direct bindings or terminal fallback candidates.")
 		return
 	}
 

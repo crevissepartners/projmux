@@ -45,7 +45,7 @@ func (c *settingsCommand) effectiveMergeOptions(ctx settingsProjectContext) intp
 		Entries:    c.effectiveMergeEntries(ctx),
 		Title:      "Effective merge view - global + project config",
 		Prompt:     "Settings > Project > Effective merge view > ",
-		Footer:     projmuxFooter("Enter: back  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Enter: back  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}

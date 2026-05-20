@@ -156,14 +156,17 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.runner, intpickercompat.Options{
-			UI:             *ui,
-			Entries:        rowsToEntries(rows),
-			Prompt:         "› ",
-			Footer:         sessionsPickerFooter(),
-			ExpectKeys:     []string{sessionsKillExpectKey, sessionsStateExpectKey},
+			UI:      *ui,
+			Entries: rowsToEntries(rows),
+			Prompt:  "› ",
+			Footer:  sessionsPickerFooter(),
+			ExpectKeys: append(
+				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"SessionPopup:KillSession"}, []string{sessionsKillExpectKey}),
+				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"SessionPopup:OpenState"}, []string{sessionsStateExpectKey})...,
+			),
 			PreviewCommand: previewCommand,
 			PreviewWindow:  sessionsPreviewWindow(*ui),
-			Bindings: append(pickerCloseBindings("esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+			Bindings: append(pickerCloseBindingsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
 				"left:execute-silent("+cycleWindowPrev+")+refresh-preview",
 				"right:execute-silent("+cycleWindowNext+")+refresh-preview",
 				"alt-up:execute-silent("+cyclePanePrev+")+refresh-preview",
@@ -176,13 +179,13 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if result.Value == "" {
 			return nil
 		}
-		if result.Key == sessionsStateExpectKey {
+		if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "SessionPopup:OpenState", sessionsStateExpectKey) {
 			if err := c.runSessionStateOverview(result.Value, summaries); err != nil {
 				return err
 			}
 			continue
 		}
-		if result.Key == sessionsKillExpectKey {
+		if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "SessionPopup:KillSession", sessionsKillExpectKey) {
 			nextSummaries, err := c.killFocusedSession(context.Background(), summaries, result.Value)
 			if err != nil {
 				return err
@@ -216,9 +219,9 @@ func (c *sessionsCommand) runSessionStateOverview(sessionName string, summaries 
 		Entries:       entries,
 		Title:         "Projects > Sessions > State",
 		Prompt:        "Projects > Sessions > State > ",
-		Footer:        projmuxFooter("Enter: details  |  Back row: sessions  |  Esc/Alt+3: sessions"),
+		Footer:        projmuxFooter("Session state overview is read-only here."),
 		ExpectKeys:    []string{"enter"},
-		Bindings:      pickerCloseBindings("esc", "alt-3"),
+		Bindings:      pickerCloseBindingsForToggles(c.homeDir, c.lookupEnv, []string{"SessionPopupToggle"}, "esc", "alt-3"),
 		DisableSearch: true,
 	})
 	if err != nil {
@@ -469,11 +472,8 @@ func sessionsPreviewWindow(ui string) string {
 
 func sessionsPickerFooter() string {
 	return projmuxFooter(strings.Join([]string{
-		"Enter: switch to previewed target",
-		"Ctrl-S: state overview",
-		"Ctrl-X: kill focused session",
-		"Left/Right: preview window",
-		"Alt-Up/Alt-Down: preview pane",
+		"Preview follows the focused target.",
+		"Session state opens read-only; destructive actions keep the current confirmation policy.",
 	}, "\n"))
 }
 

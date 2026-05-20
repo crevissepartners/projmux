@@ -24,15 +24,41 @@ const (
 	tmuxBindingCommandPrompt tmuxBindingKind = "command-prompt"
 )
 
+type keyBindingTier string
+
+const (
+	keyBindingTierGuaranteedLaunchDefault keyBindingTier = "guaranteed-launch-default"
+	keyBindingTierUserConfigurableDirect  keyBindingTier = "user-configurable-direct-binding"
+	keyBindingTierTransportDependent      keyBindingTier = "transport-dependent-special-chord"
+	keyBindingTierCSIuFallback            keyBindingTier = "csi-u-user-fallback-transport"
+	keyBindingTierAmbiguousTerminalChord  keyBindingTier = "ambiguous-terminal-chord"
+	keyBindingTierNativePickerInternal    keyBindingTier = "native-picker-internal-command"
+	keyBindingTierPopupLaunchCloseAlias   keyBindingTier = "popup-launch-close-alias"
+)
+
+type keyBindingActionKind string
+
+const (
+	keyBindingActionTogglePopup    keyBindingActionKind = "toggle-popup"
+	keyBindingActionCommand        keyBindingActionKind = "command"
+	keyBindingActionPickerInternal keyBindingActionKind = "picker-internal"
+)
+
 // keyBindingAction is the in-app source of truth for built-in key actions.
 // Terminal init adapters and tmux config rendering derive their concrete
 // trigger/action tables from these entries.
 type keyBindingAction struct {
 	ID          string
 	Description string
+	DisplayName string
+	LegacyIDs   []string
+	Kind        keyBindingActionKind
+	Tier        keyBindingTier
+	Surface     string
 	Scope       keyBindingScope
 
 	PlainChord  string
+	PlainChords []string
 	PrefixChord string
 	UserSlot    int
 	CSIu        string
@@ -63,8 +89,12 @@ type keyBindingAction struct {
 func defaultKeyBindingCatalog() []keyBindingAction {
 	return []keyBindingAction{
 		{
-			ID:              "sessionizer-sidebar",
+			ID:              "ProjectSidebarToggle",
 			Description:     "Project sidebar",
+			DisplayName:     "ProjectSidebarToggle",
+			LegacyIDs:       []string{"sessionizer-sidebar"},
+			Kind:            keyBindingActionTogglePopup,
+			Tier:            keyBindingTierGuaranteedLaunchDefault,
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "M-1",
 			PrefixChord:     "F",
@@ -88,8 +118,12 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:      "\x1b1",
 		},
 		{
-			ID:             "notify-sidebar",
+			ID:             "NotifySidebarToggle",
 			Description:    "Notify sidebar",
+			DisplayName:    "NotifySidebarToggle",
+			LegacyIDs:      []string{"notify-sidebar"},
+			Kind:           keyBindingActionTogglePopup,
+			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "M-2",
 			UserSlot:       2,
@@ -111,8 +145,12 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:     "\x1b2",
 		},
 		{
-			ID:              "session-popup",
+			ID:              "SessionPopupToggle",
 			Description:     "Existing session popup",
+			DisplayName:     "SessionPopupToggle",
+			LegacyIDs:       []string{"session-popup"},
+			Kind:            keyBindingActionTogglePopup,
+			Tier:            keyBindingTierGuaranteedLaunchDefault,
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "M-3",
 			PrefixChord:     "b",
@@ -136,8 +174,12 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:      "\x1b3",
 		},
 		{
-			ID:             "ai-split-picker-right",
+			ID:             "AISplitPickerToggle",
 			Description:    "AI split picker",
+			DisplayName:    "AISplitPickerToggle",
+			LegacyIDs:      []string{"ai-split-picker-right"},
+			Kind:           keyBindingActionTogglePopup,
+			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "M-4",
 			UserSlot:       5,
@@ -159,8 +201,12 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:     "\x1b4",
 		},
 		{
-			ID:             "ai-split-settings",
+			ID:             "SettingsToggle",
 			Description:    "Settings",
+			DisplayName:    "SettingsToggle",
+			LegacyIDs:      []string{"ai-split-settings"},
+			Kind:           keyBindingActionTogglePopup,
+			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "M-5",
 			UserSlot:       6,
@@ -182,10 +228,14 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:     "\x1b5",
 		},
 		{
-			ID:              "sessionizer",
+			ID:              "ProjectSwitcherToggle",
 			Description:     "Project switcher popup",
+			DisplayName:     "ProjectSwitcherToggle",
+			LegacyIDs:       []string{"sessionizer"},
+			Kind:            keyBindingActionTogglePopup,
+			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
-			PlainChord:      "M-6",
+			PlainChord:      "",
 			PrefixChord:     "f",
 			UserSlot:        12,
 			CSIu:            "9013",
@@ -209,8 +259,10 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "rename-window",
 			Description:     "Rename the current tmux window",
+			Kind:            keyBindingActionCommand,
+			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
-			PlainChord:      "M-r",
+			PlainChord:      "",
 			PrefixChord:     "R",
 			UserSlot:        10,
 			CSIu:            "9011",
@@ -234,6 +286,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "rename-pane-topic",
 			Description:    "Rename the current tmux pane label",
+			Kind:           keyBindingActionCommand,
+			Tier:           keyBindingTierCSIuFallback,
 			Scope:          keyBindingScopeStandalone,
 			UserSlot:       11,
 			CSIu:           "9012",
@@ -254,6 +308,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "ai-split-right",
 			Description:     "Open AI split to the right",
+			Kind:            keyBindingActionCommand,
+			Tier:            keyBindingTierCSIuFallback,
 			Scope:           keyBindingScopeStandalone,
 			PrefixChord:     "r",
 			UserSlot:        0,
@@ -276,6 +332,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "ai-split-down",
 			Description:     "Open AI split below",
+			Kind:            keyBindingActionCommand,
+			Tier:            keyBindingTierCSIuFallback,
 			Scope:           keyBindingScopeStandalone,
 			PrefixChord:     "l",
 			UserSlot:        1,
@@ -298,6 +356,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "current-project-session",
 			Description:     "Jump to current pane project session",
+			Kind:            keyBindingActionCommand,
+			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
 			PrefixChord:     "g",
 			UserSlot:        noUserSlot,
@@ -308,8 +368,10 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "new-window",
 			Description:    "New tmux window in the current pane directory",
+			Kind:           keyBindingActionCommand,
+			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeApp,
-			PlainChord:     "C-n",
+			PlainChord:     "",
 			UserSlot:       7,
 			CSIu:           "9008",
 			TmuxKind:       tmuxBindingCommand,
@@ -338,8 +400,10 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// xterm sequence.
 			ID:             "previous-window",
 			Description:    "Previous tmux window",
+			Kind:           keyBindingActionCommand,
+			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
-			PlainChord:     "M-S-Left",
+			PlainChord:     "",
 			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "previous-window",
@@ -359,8 +423,10 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// next-window chord (xterm sequence `\x1b[1;4C`).
 			ID:             "next-window",
 			Description:    "Next tmux window",
+			Kind:           keyBindingActionCommand,
+			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
-			PlainChord:     "M-S-Right",
+			PlainChord:     "",
 			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "next-window",
@@ -378,8 +444,10 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "select-pane-left",
 			Description:    "Move focus to the left pane",
+			Kind:           keyBindingActionCommand,
+			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
-			PlainChord:     "M-Left",
+			PlainChord:     "",
 			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "select-pane -L",
@@ -388,8 +456,10 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "select-pane-right",
 			Description:    "Move focus to the right pane",
+			Kind:           keyBindingActionCommand,
+			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
-			PlainChord:     "M-Right",
+			PlainChord:     "",
 			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "select-pane -R",
@@ -398,8 +468,10 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "select-pane-up",
 			Description:    "Move focus to the pane above",
+			Kind:           keyBindingActionCommand,
+			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
-			PlainChord:     "M-Up",
+			PlainChord:     "",
 			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "select-pane -U",
@@ -408,8 +480,10 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "select-pane-down",
 			Description:    "Move focus to the pane below",
+			Kind:           keyBindingActionCommand,
+			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
-			PlainChord:     "M-Down",
+			PlainChord:     "",
 			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "select-pane -D",
@@ -418,12 +492,126 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "toggle-mouse",
 			Description:     "Toggle tmux mouse mode",
+			Kind:            keyBindingActionCommand,
+			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeApp,
 			PrefixChord:     "M",
 			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingCommand,
 			TmuxBody:        "if -F \"#{mouse}\" \"set -g mouse off \\; display-message 'tmux mouse: off'\" \"set -g mouse on \\; display-message 'tmux mouse: on'\"",
 			PrefixBindOrder: 10,
+		},
+		{
+			ID:          "Sidebar:PinProject",
+			Description: "Pin or unpin the focused project",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "Sidebar",
+			PlainChord:  "M-p",
+		},
+		{
+			ID:          "Sidebar:KillSession",
+			Description: "Kill the focused existing session",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "Sidebar",
+			PlainChord:  "C-x",
+		},
+		{
+			ID:          "SessionPopup:KillSession",
+			Description: "Kill the focused existing session",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "SessionPopup",
+			PlainChord:  "C-x",
+		},
+		{
+			ID:          "SessionPopup:OpenState",
+			Description: "Open session state for the focused session",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "SessionPopup",
+			PlainChord:  "C-s",
+		},
+		{
+			ID:          "SessionPopup:CyclePreviewWindowPrev",
+			Description: "Preview previous window",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "SessionPopup",
+			PlainChord:  "Left",
+		},
+		{
+			ID:          "SessionPopup:CyclePreviewWindowNext",
+			Description: "Preview next window",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "SessionPopup",
+			PlainChord:  "Right",
+		},
+		{
+			ID:          "SessionPopup:CyclePreviewPanePrev",
+			Description: "Preview previous pane",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "SessionPopup",
+			PlainChord:  "M-Up",
+		},
+		{
+			ID:          "SessionPopup:CyclePreviewPaneNext",
+			Description: "Preview next pane",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "SessionPopup",
+			PlainChord:  "M-Down",
+		},
+		{
+			ID:          "NotifySidebar:FocusAndAck",
+			Description: "Focus and acknowledge the selected notification",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "NotifySidebar",
+			PlainChord:  "Enter",
+		},
+		{
+			ID:          "NotifySidebar:Ack",
+			Description: "Acknowledge the selected notification",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "NotifySidebar",
+			PlainChord:  "a",
+		},
+		{
+			ID:          "NotifySidebar:ClearNonCritical",
+			Description: "Clear non-critical notifications",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "NotifySidebar",
+			PlainChord:  "x",
+		},
+		{
+			ID:          "NotifySidebar:ClearAll",
+			Description: "Clear all notifications",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "NotifySidebar",
+			PlainChord:  "C-x",
+		},
+		{
+			ID:          "Settings:SwitchTabPrev",
+			Description: "Switch Settings tab left",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "Settings",
+			PlainChord:  "M-S-Left",
+		},
+		{
+			ID:          "Settings:SwitchTabNext",
+			Description: "Switch Settings tab right",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "Settings",
+			PlainChord:  "M-S-Right",
 		},
 	}
 }
@@ -435,9 +623,55 @@ func keyBindingCatalogForScope(scope keyBindingScope) []keyBindingAction {
 func keyBindingCatalogForScopeFrom(catalog []keyBindingAction, scope keyBindingScope) []keyBindingAction {
 	var out []keyBindingAction
 	for _, action := range catalog {
-		if action.Scope == scope {
+		if action.Scope == scope && action.Kind != keyBindingActionPickerInternal {
 			out = append(out, action)
 		}
+	}
+	return out
+}
+
+func keyBindingDisplayName(action keyBindingAction) string {
+	if name := strings.TrimSpace(action.DisplayName); name != "" {
+		return name
+	}
+	return action.ID
+}
+
+func keyBindingActionAliases(action keyBindingAction) []string {
+	aliases := []string{action.ID}
+	aliases = append(aliases, action.LegacyIDs...)
+	return aliases
+}
+
+func keyBindingEditable(action keyBindingAction) bool {
+	switch action.Tier {
+	case keyBindingTierGuaranteedLaunchDefault, keyBindingTierUserConfigurableDirect:
+		return true
+	default:
+		return false
+	}
+}
+
+func keyBindingEffectivePlainChords(action keyBindingAction) []string {
+	if action.PlainChords != nil {
+		return uniqueNonEmptyStrings(action.PlainChords)
+	}
+	if strings.TrimSpace(action.PlainChord) == "" {
+		return nil
+	}
+	return []string{strings.TrimSpace(action.PlainChord)}
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
 	}
 	return out
 }
@@ -459,7 +693,7 @@ func tmuxUserKeyLines(actions []keyBindingAction) []string {
 
 func tmuxUnbindLines(actions []keyBindingAction) []string {
 	plain := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
-		return action.PlainChord != ""
+		return len(keyBindingEffectivePlainChords(action)) != 0
 	})
 	sort.SliceStable(plain, func(i, j int) bool {
 		return plain[i].PlainBindOrder < plain[j].PlainBindOrder
@@ -481,7 +715,9 @@ func tmuxUnbindLines(actions []keyBindingAction) []string {
 
 	lines := make([]string, 0, len(plain)+len(user)+len(prefix))
 	for _, action := range plain {
-		lines = append(lines, "unbind-key -q -n "+action.PlainChord)
+		for _, chord := range keyBindingEffectivePlainChords(action) {
+			lines = append(lines, "unbind-key -q -n "+chord)
+		}
 	}
 	for _, action := range user {
 		lines = append(lines, "unbind-key -q -n "+keyBindingUserKey(action))
@@ -501,9 +737,11 @@ func tmuxMergedUnbindLines(defaults, merged []keyBindingAction) []string {
 	seenPrefix := map[string]bool{}
 	var plain, user, prefix []binding
 	add := func(action keyBindingAction) {
-		if action.PlainChord != "" && !seenNoPrefix[action.PlainChord] {
-			seenNoPrefix[action.PlainChord] = true
-			plain = append(plain, binding{chord: action.PlainChord, order: action.PlainBindOrder})
+		for _, chord := range keyBindingEffectivePlainChords(action) {
+			if !seenNoPrefix[chord] {
+				seenNoPrefix[chord] = true
+				plain = append(plain, binding{chord: chord, order: action.PlainBindOrder})
+			}
 		}
 		if action.UserSlot != noUserSlot {
 			chord := keyBindingUserKey(action)
@@ -549,15 +787,15 @@ func tmuxBindLines(binaryPath string, actions []keyBindingAction) []string {
 	}
 
 	for _, action := range actions {
-		if action.PlainChord != "" {
+		for idx, chord := range keyBindingEffectivePlainChords(action) {
 			bindings = append(bindings, struct {
 				chord string
 				line  string
 				order int
 			}{
-				chord: action.PlainChord,
-				line:  renderTmuxBindLine(binaryPath, action.PlainChord, false, action),
-				order: action.PlainBindOrder,
+				chord: chord,
+				line:  renderTmuxBindLine(binaryPath, chord, false, action),
+				order: action.PlainBindOrder + idx,
 			})
 		}
 	}
@@ -709,8 +947,17 @@ func probeKeysFromActions(catalog []keyBindingAction) []probeKey {
 			Plain:      action.ProbePlain,
 			CSIu:       csiu,
 			UserKey:    userKey,
-			PlainChord: action.PlainChord,
+			PlainChord: firstNonEmptyString(keyBindingEffectivePlainChords(action)),
 		})
 	}
 	return keys
+}
+
+func firstNonEmptyString(values []string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

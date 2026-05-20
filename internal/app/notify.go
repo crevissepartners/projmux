@@ -300,7 +300,7 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		if limit > 0 && len(entries) > limit {
 			entries = entries[:limit]
 		}
-		bindings := []string{"alt-2:abort"}
+		bindings := pickerCloseBindingsForToggle(c.homeDir, c.lookupEnv, "NotifySidebarToggle", "esc", "alt-2")
 		if len(entries) == 0 {
 			nextIndex = -1
 		} else if nextIndex >= 0 {
@@ -313,13 +313,19 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		now := c.clock()
 		liveByID := c.notifyLiveByIDBestEffort()
 		compatOptions := intpickercompat.Options{
-			UI:            "notify-sidebar",
-			Read0:         true,
-			Title:         "\x1b[1;38;5;220m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
-			Prompt:        "Notify > ",
-			Header:        "Newest first",
-			Footer:        "Enter: focus + ack  |  a: ack  |  x: clear non-critical  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
-			ExpectKeys:    []string{"a", "x", "ctrl-x"},
+			UI:     "notify-sidebar",
+			Read0:  true,
+			Title:  "\x1b[1;38;5;220m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
+			Prompt: "Notify > ",
+			Header: "Newest first",
+			Footer: "Newest first. Critical notifications are kept when clearing non-critical rows.",
+			ExpectKeys: append(
+				append(
+					effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:Ack"}, []string{"a"}),
+					effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearNonCritical"}, []string{"x"})...,
+				),
+				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearAll"}, []string{"ctrl-x"})...,
+			),
 			Bindings:      bindings,
 			Entries:       notifySidebarEntriesWithLive(entries, now, liveByID),
 			DisableSearch: true,
@@ -333,21 +339,21 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 			return nil
 		}
 
-		switch result.Key {
-		case "ctrl-x":
+		switch {
+		case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearAll", "ctrl-x"):
 			removed, err := store.AckAll()
 			if err != nil {
 				return fmt.Errorf("clear all notifications: %w", err)
 			}
 			_, err = fmt.Fprintf(stdout, "cleared %d notification(s)\n", removed)
 			return err
-		case "a":
+		case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:Ack", "a"):
 			nextIndex = indexNotificationByID(entries, id)
 			if err := store.Ack(id); err != nil {
 				return fmt.Errorf("ack notification: %w", err)
 			}
 			continue
-		case "x":
+		case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearNonCritical", "x"):
 			nextIndex = indexNotificationByID(entries, id)
 			if err := ackNonCriticalNotifications(store, entries); err != nil {
 				return err

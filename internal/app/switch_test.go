@@ -115,7 +115,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotRunnerOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Footer, "Enter: switch to previewed target\nCtrl-X: kill focused session\nAlt-P: pin/unpin focused directory\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+	if got, want := gotRunnerOptions.Footer, "Preview follows the focused target.\nDestructive actions keep the current confirmation policy."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=popup' {2}"; got != want {
@@ -555,7 +555,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotRunnerOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Footer, "C-x: kill | M-p: pin"; got != want {
+	if got, want := gotRunnerOptions.Footer, "Pinned rows stay near the top."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=sidebar' {2}"; got != want {
@@ -1381,7 +1381,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got, want := fakeRunner.last.UI, switchUISidebar; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
-	if got, want := fakeRunner.last.Footer, "C-x: kill | M-p: pin"; got != want {
+	if got, want := fakeRunner.last.Footer, "Pinned rows stay near the top."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got := fakeExecutor.ensureSessionName; got != "" {

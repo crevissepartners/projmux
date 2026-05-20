@@ -100,14 +100,13 @@ does not leave terminal key state behind. The usage popup uses the same
 single-payload print and plain Enter-close pattern. It shows the authoritative
 last collect timestamp when present, falls back to the cache file mtime when
 needed, and colors that sync line amber once it is more than 60 seconds old.
-The notification HUD detail surface (`Alt-2` / `User2`) opens the right-side
-notification popup with newest-first rows and an amber title. When notification
+The notification HUD detail surface opens the right-side notification popup
+through the notify sidebar action, with newest-first rows and an amber title. When notification
 icon decoration is `symbol` or `emoji`, the bell appears before the title text.
-Selecting a row still focuses and acknowledges that notification. Pressing `x`
-bulk-clears non-critical rows without focusing, keeps the popup open, and
-refreshes the remaining rows from the queue. Pressing `a` acknowledges the
-selected row without focusing and preserves the selection position where
-possible.
+Selecting a row still focuses and acknowledges that notification. Internal
+notify commands use `NotifySidebar:*` IDs in `keymap.toml`; runtime footers
+avoid hardcoded key guides so custom aliases do not make the visible copy
+stale.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,

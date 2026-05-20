@@ -231,6 +231,7 @@ const (
 	settingsSessionStateDelete             = "sessionstate:delete"
 	settingsWelcomeShow                    = "welcome:show"
 	settingsKeymapFieldPlain               = "plain"
+	settingsKeymapFieldKeys                = "keys"
 	settingsKeymapFieldPrefix              = "prefix"
 )
 
@@ -404,7 +405,7 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 		TitleChips: settingsRootTabChips(tab, ctx.hasProject()),
 		Prompt:     settingsRootPrompt(tab),
 		Header:     settingsRootContextHeader(tab, ctx),
-		Footer:     projmuxFooter("Enter: open  |  Alt-Shift-Left/Alt-Shift-Right or click chip: switch tab  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Open rows or click a scope chip to switch tabs."),
 		ExpectKeys: []string{"enter", "ctrl-g", "ctrl-p", "alt-shift-left", "alt-shift-right"},
 		Bindings:   settingsCloseBindings(),
 	}
@@ -723,7 +724,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.aiRootEntries(),
 			Title:      "AI Settings",
 			Prompt:     "Settings > AI Settings > ",
-			Footer:     projmuxFooter("Enter: open  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -733,7 +734,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.notificationsEntries(),
 			Title:      "Notifications - Delivery, desktop, and queue surfaces",
 			Prompt:     "Settings > Notifications > ",
-			Footer:     projmuxFooter("Enter: open  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -743,7 +744,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.globalHookEntries(),
 			Title:      "Hooks - Global lifecycle hook paths",
 			Prompt:     "Settings > Hooks > ",
-			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -754,7 +755,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.projectHookEntries(ctx),
 			Title:      "Hooks - Project lifecycle hook paths",
 			Prompt:     "Settings > Project > Hooks > ",
-			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -764,7 +765,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.projectPickerEntries(),
 			Title:      "Project Picker - Project roots, workdirs, and pinned projects",
 			Prompt:     "Settings > Project Picker > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -776,7 +777,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Title:      "Appearance - Icon decoration",
 			TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, ctx.hasProject()),
 			Prompt:     "Settings > Appearance > ",
-			Footer:     projmuxFooter("Enter: open  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -786,7 +787,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.sessionStateEntries(),
 			Title:      "Session State - Restore and autosave controls",
 			Prompt:     "Settings > Session State > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -796,7 +797,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.projectSessionStateEntries(),
 			Title:      c.projectSessionStateTitle(),
 			Prompt:     "Settings > Project > Session State > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -808,7 +809,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.labsEntries(),
 			Title:      "Labs - Experimental features",
 			Prompt:     "Settings > Labs > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -818,7 +819,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.aboutEntries(),
 			Title:      "About - Version, updates, key setup",
 			Prompt:     "Settings > About > ",
-			Footer:     projmuxFooter("Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		}, nil
@@ -903,7 +904,7 @@ func (c *settingsCommand) runAddProject(stdout, stderr io.Writer) error {
 		Entries:    entries,
 		Title:      "Add Project - Choose a filesystem directory",
 		Prompt:     "Settings > Project Picker > Add Project > ",
-		Footer:     projmuxFooter("Enter: add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Enter: add  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	})
@@ -932,7 +933,7 @@ func (c *settingsCommand) runProjectRootSettings(stdout, stderr io.Writer) error
 			Entries:    entries,
 			Title:      "Project Root - Effective and saved root",
 			Prompt:     "Settings > Project Picker > Project Root > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -974,7 +975,7 @@ func (c *settingsCommand) runSetProjectRootTyped(stdout, stderr io.Writer) error
 		InitialQuery: initialQuery,
 		Title:        "Set Project Root - Type one absolute primary root path",
 		Prompt:       "Type project root path > ",
-		Footer:       projmuxFooter("Enter: save  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:       projmuxFooter("Enter: save "),
 		ExpectKeys:   []string{"enter"},
 		Bindings:     settingsCloseBindings(),
 	})
@@ -1033,7 +1034,7 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 		Entries:    entries,
 		Title:      "Add Workdir - Choose or type a directory to scan",
 		Prompt:     "Settings > Project Picker > Add Workdir > ",
-		Footer:     projmuxFooter("Enter: add  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Enter: add  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	})
@@ -1079,7 +1080,7 @@ func (c *settingsCommand) runAddWorkdirTyped(stdout, stderr io.Writer) error {
 		AcceptQuery: true,
 		Title:       "Type Workdir - Absolute path",
 		Prompt:      "Type workdir path > ",
-		Footer:      projmuxFooter("Enter: add  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:      projmuxFooter("Enter: add "),
 		ExpectKeys:  []string{"enter"},
 		Bindings:    settingsCloseBindings(),
 	})
@@ -1149,7 +1150,7 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 			Entries:    entries,
 			Title:      "Workdirs - Saved and inherited scan roots",
 			Prompt:     "Settings > Project Picker > Workdirs > ",
-			Footer:     projmuxFooter("Enter: open/add/remove  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: open/add/remove  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1238,7 +1239,7 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 			Entries:    entries,
 			Title:      "Pinned Projects - Add or remove pins",
 			Prompt:     "Settings > Project Picker > Pinned Projects > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1585,7 +1586,7 @@ func (c *settingsCommand) runNotificationsAIDedupeSection(stdout, stderr io.Writ
 			Entries:    c.aiNotifyDedupeEntries(),
 			Title:      "Notifications - AI dedupe window",
 			Prompt:     "Settings > Notifications > AI dedupe > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1628,7 +1629,7 @@ func (c *settingsCommand) runNotificationsAIDedupeCustom(stdout, stderr io.Write
 		InitialQuery: strconv.Itoa(current.Seconds),
 		Title:        "Notifications - Custom AI dedupe",
 		Prompt:       "AI dedupe seconds > ",
-		Footer:       projmuxFooter("Enter: save  |  Example: 120  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:       projmuxFooter("Enter: save  |  Example: 120 "),
 		ExpectKeys:   []string{"enter"},
 		Bindings:     settingsCloseBindings(),
 	})
@@ -1653,7 +1654,7 @@ func (c *settingsCommand) runNotificationsDesktopSection(stdout, stderr io.Write
 			Entries:    c.desktopNotifyEntries(),
 			Title:      "Notifications - Desktop notifications",
 			Prompt:     "Settings > Notifications > Desktop notifications > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1684,9 +1685,9 @@ func (c *settingsCommand) runAIDefaultModeSection(stdout, stderr io.Writer) erro
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-ai-default-mode",
 			Entries:    c.aiEntries(),
-			Title:      "AI Settings - Default Ctrl+Shift+R/L split mode",
+			Title:      "AI Settings - Default split mode",
 			Prompt:     "Settings > AI Settings > Default split mode > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1776,7 +1777,7 @@ func (c *settingsCommand) runNotificationsHookActionsSection(stdout, stderr io.W
 			Entries:    c.aiHookProviderEntries(),
 			Title:      "Notifications - Hook quiet policy",
 			Prompt:     "Settings > Notifications > Hook quiet policy > ",
-			Footer:     projmuxFooter("Enter: view hooks  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: view hooks  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1810,7 +1811,7 @@ func (c *settingsCommand) runAIHookProviderActionSection(provider string, stdout
 			Entries:    c.aiHookEventEntries(provider),
 			Title:      "Hook quiet policy - " + aiHookProviderLabel(provider),
 			Prompt:     "Settings > Notifications > Hook quiet policy > " + aiHookProviderLabel(provider) + " > ",
-			Footer:     projmuxFooter("Enter: change action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: change action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1847,7 +1848,7 @@ func (c *settingsCommand) runAIHookEventActionSection(provider, event string, st
 			Entries:    c.aiHookActionChoiceEntries(provider, event),
 			Title:      "Hook quiet policy - " + aiHookProviderLabel(provider) + " " + event,
 			Prompt:     "Settings > Notifications > Hook quiet policy > " + aiHookProviderLabel(provider) + " > " + event + " > ",
-			Footer:     projmuxFooter("Enter: save  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: save  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1891,7 +1892,7 @@ func (c *settingsCommand) runNotificationsDeliverySourcesSection(stdout, stderr 
 			Entries:    c.aiNotifyDiagnosticEntries(),
 			Title:      "Notifications - Delivery sources",
 			Prompt:     "Settings > Notifications > Delivery sources > ",
-			Footer:     projmuxFooter("Enter: view details  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: view details  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -1933,7 +1934,7 @@ func (c *settingsCommand) runAINotifyDiagnosticDetail(id string, stderr io.Write
 			Entries:    aiNotifyDiagnosticDetailEntries(diag),
 			Title:      "AI Notify - " + diag.Name,
 			Prompt:     "Settings > Notifications > Delivery sources > " + diag.Name + " > ",
-			Footer:     projmuxFooter("Enter: copy command  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: copy command  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -2296,7 +2297,7 @@ func (c *settingsCommand) statusbarDecorationTargetOptions(target statusbarDecor
 		Title:      meta.Title,
 		TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject()),
 		Prompt:     "Settings > Appearance > " + meta.Name + " > ",
-		Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}, nil
@@ -2433,7 +2434,7 @@ func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Opti
 		Entries:    entries,
 		Title:      "Keybindings",
 		Prompt:     "Settings > Keybindings > ",
-		Footer:     projmuxFooter("Enter: capture/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:     projmuxFooter("Current aliases, fallback delivery, and conflicts are shown per action."),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}
@@ -2575,7 +2576,7 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 			Entries:    entries,
 			Title:      title,
 			Prompt:     "Settings > Keybindings > Action > ",
-			Footer:     projmuxFooter("Enter: capture/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Aliases are tmux plain chords. Terminal fallback delivery is diagnostic-only."),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -2601,9 +2602,16 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 			if err := c.runKeybindingCapture(actionID, stdout); err != nil {
 				return err
 			}
+		case "type":
+			if err := c.runKeybindingTyped(actionID, false, stdout); err != nil {
+				return err
+			}
+		case "replace":
+			if err := c.runKeybindingTyped(actionID, true, stdout); err != nil {
+				return err
+			}
 		case "disable":
-			disabled := ""
-			if err := c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, &disabled, stdout); err != nil {
+			if err := c.saveKeymapKeysAndApply(actionID, nil, stdout); err != nil {
 				return err
 			}
 		case "reset":
@@ -2617,13 +2625,25 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 }
 
 func parseKeymapDetailAction(value, actionID string) (string, bool) {
-	prefix := settingsActionPrefixKeymap + actionID + ":"
-	if !strings.HasPrefix(value, prefix) {
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if !ok {
+		action = keyBindingAction{ID: actionID}
+	}
+	var matched bool
+	for _, id := range keyBindingActionAliases(action) {
+		prefix := settingsActionPrefixKeymap + id + ":"
+		if strings.HasPrefix(value, prefix) {
+			actionID = id
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return "", false
 	}
-	op := strings.TrimPrefix(value, prefix)
+	op := strings.TrimPrefix(value, settingsActionPrefixKeymap+actionID+":")
 	switch op {
-	case "capture", "disable", "reset":
+	case "capture", "type", "replace", "disable", "reset":
 		return op, true
 	}
 	return "", false
@@ -2647,7 +2667,7 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 	if c.lastLabProbe == nil {
 		c.lastLabProbe = map[string]probeResult{}
 	}
-	c.lastLabProbe[actionID] = res
+	c.lastLabProbe[action.ID] = res
 	fmt.Fprintf(stdout, "capture %s: %s\n", key.Label, renderProbeStatus(res))
 	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
 	if !ok {
@@ -2656,11 +2676,11 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 
 	switch res.Status {
 	case probeStatusPlain:
-		if defaultAction.PlainChord == "" {
+		if firstNonEmptyString(keyBindingEffectivePlainChords(defaultAction)) == "" {
 			fmt.Fprintf(stdout, "captured key is plain, but this action has no safe tmux plain chord to save\n")
 			return nil
 		}
-		return c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, nil, stdout)
+		return c.addKeymapAliasAndApply(action.ID, firstNonEmptyString(keyBindingEffectivePlainChords(defaultAction)), stdout)
 	case probeStatusCSIu:
 		fmt.Fprintf(stdout, "captured key is routed through %s; no keymap.toml change needed\n", res.Key.UserKey)
 		return nil
@@ -2670,13 +2690,56 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 			fmt.Fprintf(stdout, "captured raw sequence %s is not safe to persist; configure terminal fallback instead\n", visibleEscape(string(res.Sequence)))
 			return nil
 		}
-		return c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, &chord, stdout)
+		return c.addKeymapAliasAndApply(action.ID, chord, stdout)
 	case probeStatusTimeout:
 		fmt.Fprintf(stdout, "no key was captured; keymap.toml was not changed\n")
 		return nil
 	default:
 		return fmt.Errorf("unknown keybinding capture status: %s", res.Status)
 	}
+}
+
+func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdout io.Writer) error {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	mode := "Add alias"
+	if replace {
+		mode = "Replace aliases"
+	}
+	result, err := c.runPicker(intpickercompat.Options{
+		UI:            "settings-keybinding-type",
+		Entries:       []intpickercompat.Entry{settingsBackEntry(), {Label: settingsLabelInfo("Action", keyBindingDisplayName(action), keybindingAliasesSummary(action)), Value: settingsNoopValue}},
+		Title:         mode + " - " + keyBindingDisplayName(action),
+		Prompt:        "Type key chord > ",
+		Footer:        projmuxFooter("Use a tmux plain chord such as C-r, M-a, M-S-Left, or C-Space."),
+		ExpectKeys:    []string{"enter"},
+		Bindings:      settingsCloseBindings(),
+		AcceptQuery:   true,
+		DisableSearch: true,
+	})
+	if err != nil {
+		return err
+	}
+	if result.Key != "enter" {
+		return nil
+	}
+	chord, err := normalizeKeymapTypedChord(result.Query)
+	if err != nil {
+		return err
+	}
+	if chord == "" {
+		return nil
+	}
+	if replace {
+		return c.saveKeymapKeysAndApply(action.ID, []string{chord}, stdout)
+	}
+	return c.addKeymapAliasAndApply(action.ID, chord, stdout)
 }
 
 func captureProbeKeyForAction(action keyBindingAction) probeKey {
@@ -2708,16 +2771,19 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 	entries := make([]intpickercompat.Entry, 0, len(actions)+2)
 	entries = append(entries, settingsBackEntry())
 	entries = append(entries, intpickercompat.Entry{
-		Label: "  " + settingsColorDim + "Terminal fallback mappings still require rerunning projmux init and restarting the terminal where applicable." + settingsColorReset,
+		Label: "  " + settingsColorDim + "Only direct tmux plain aliases are editable here. User fallback transport stays diagnostic-only." + settingsColorReset,
 		Value: settingsNoopValue,
 	})
 	for _, action := range actions {
+		if !keyBindingEditable(action) {
+			continue
+		}
 		defaultAction, _ := keyBindingActionByID(defaults, action.ID)
 		desc := keybindingCurrentSummary(action, defaultAction)
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, action.Description, desc),
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, keyBindingDisplayName(action), desc),
 			Value:     settingsActionPrefixKeymap + action.ID,
-			SearchKey: action.ID + " " + action.Description + " " + action.PlainChord,
+			SearchKey: action.ID + " " + action.Description + " " + strings.Join(keyBindingEffectivePlainChords(action), " "),
 		})
 	}
 	return entries, nil
@@ -2732,6 +2798,9 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 	if !ok {
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
+	if !keyBindingEditable(action) {
+		return nil, "", fmt.Errorf("keybinding action %s is not editable in Settings", action.ID)
+	}
 	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
 	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
@@ -2740,7 +2809,7 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Current key", keybindingValueSummary(action.PlainChord, defaultAction.PlainChord), keybindingSource(action.PlainChord, defaultAction.PlainChord)),
+			Label: settingsLabelInfo("Aliases", keybindingAliasesSummary(action), keybindingSource(action, defaultAction)),
 			Value: settingsNoopValue,
 		},
 		{
@@ -2755,11 +2824,19 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphType, settingsColorType, "Press new key", "capture one keypress from /dev/tty"),
+			Label: settingsLabel(settingsGlyphType, settingsColorType, "Add alias", "press new key capture"),
 			Value: prefix + "capture",
 		},
 		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Disable", "write empty plain override"),
+			Label: settingsLabel(settingsGlyphType, settingsColorType, "Type key chord", "enter C-r, M-a, M-S-Left, or C-Space"),
+			Value: prefix + "type",
+		},
+		intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphType, settingsColorType, "Replace primary", "type one alias and replace the saved list"),
+			Value: prefix + "replace",
+		},
+		intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Disable default", "write keys = []"),
 			Value: prefix + "disable",
 		},
 		intpickercompat.Entry{
@@ -2770,29 +2847,42 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 	if res, ok := c.lastLabProbe[actionID]; ok {
 		entries = append(entries, keybindingCaptureOutcomeEntries(res)...)
 	}
-	title := "Keybinding - " + action.Description
+	title := "Keybinding - " + keyBindingDisplayName(action)
 	return entries, title, nil
 }
 
-func keybindingValueSummary(current, def string) string {
-	if current == "" {
+func keybindingAliasesSummary(action keyBindingAction) string {
+	keys := keyBindingEffectivePlainChords(action)
+	if len(keys) == 0 {
 		return "(disabled)"
 	}
-	if current != def {
-		return current + " (custom)"
-	}
-	return current
+	return strings.Join(keys, ", ")
 }
 
-func keybindingSource(current, def string) string {
-	if current != def {
+func keybindingSource(current, def keyBindingAction) string {
+	if !sameStringSlice(keyBindingEffectivePlainChords(current), keyBindingEffectivePlainChords(def)) {
 		return "keymap.toml"
 	}
 	return "default"
 }
 
+func sameStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func keybindingCurrentSummary(action, defaultAction keyBindingAction) string {
-	plain := "key " + keybindingValueSummary(action.PlainChord, defaultAction.PlainChord)
+	plain := "keys " + keybindingAliasesSummary(action)
+	if keybindingSource(action, defaultAction) == "keymap.toml" {
+		plain += " (custom)"
+	}
 	if action.UserSlot != noUserSlot && action.CSIu != "" {
 		return plain + "  fallback " + keyBindingUserKey(action)
 	}
@@ -2801,7 +2891,7 @@ func keybindingCurrentSummary(action, defaultAction keyBindingAction) string {
 
 func keybindingDeliveryPath(action keyBindingAction) string {
 	if action.UserSlot != noUserSlot && action.CSIu != "" {
-		if action.PlainChord != "" {
+		if len(keyBindingEffectivePlainChords(action)) != 0 {
 			return "plain tmux + terminal fallback"
 		}
 		return "terminal fallback"
@@ -2864,6 +2954,33 @@ func (c *settingsCommand) keymapStore() keymapStore {
 
 func (c *settingsCommand) saveKeymapAndApply(actionID, field string, value *string, stdout io.Writer) error {
 	path, err := saveKeymapOverride(c.keymapStore(), actionID, field, value)
+	return c.finishKeymapApply(path, err, stdout)
+}
+
+func (c *settingsCommand) saveKeymapKeysAndApply(actionID string, keys []string, stdout io.Writer) error {
+	path, err := saveKeymapKeys(c.keymapStore(), actionID, keys)
+	return c.finishKeymapApply(path, err, stdout)
+}
+
+func (c *settingsCommand) addKeymapAliasAndApply(actionID, chord string, stdout io.Writer) error {
+	chord, err := normalizeKeymapTypedChord(chord)
+	if err != nil {
+		return err
+	}
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	keys := append([]string{}, keyBindingEffectivePlainChords(action)...)
+	keys = append(keys, chord)
+	return c.saveKeymapKeysAndApply(action.ID, uniqueNonEmptyStrings(keys), stdout)
+}
+
+func (c *settingsCommand) finishKeymapApply(path string, err error, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
@@ -2934,7 +3051,7 @@ func (c *settingsCommand) runLabsSidebarStartupPickerSection(stdout, stderr io.W
 			Entries:    c.labsSidebarStartupPickerEntries(),
 			Title:      "Labs - Sidebar startup picker",
 			Prompt:     "Settings > Labs > Sidebar startup picker > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -2967,7 +3084,7 @@ func (c *settingsCommand) runLabsProjectHooksSection(stdout, stderr io.Writer) e
 			Entries:    c.labsProjectHooksEntries(),
 			Title:      "Labs - Project Hooks",
 			Prompt:     "Settings > Labs > Project Hooks > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -3010,7 +3127,7 @@ func (c *settingsCommand) runLabKeybindingsSection(stdout, stderr io.Writer) err
 			Entries:    entries,
 			Title:      "Keybinding Lab - Diagnose delivery",
 			Prompt:     "Settings > Labs > Keybindings > ",
-			Footer:     projmuxFooter("Enter: diagnose  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: diagnose  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -3048,7 +3165,7 @@ func (c *settingsCommand) runLabKeybindingDetail(actionID string, stdout, stderr
 			Entries:    entries,
 			Title:      title,
 			Prompt:     "Settings > Labs > Keybindings > Action > ",
-			Footer:     projmuxFooter("Enter: probe/apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: probe/apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -3110,11 +3227,23 @@ func (c *settingsCommand) runLabKeybindingDetail(actionID string, stdout, stderr
 }
 
 func parseLabKeybindingAction(value, actionID string) (string, bool) {
-	prefix := settingsActionPrefixLabKeymap + actionID + ":"
-	if !strings.HasPrefix(value, prefix) {
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if !ok {
+		action = keyBindingAction{ID: actionID}
+	}
+	var matched bool
+	for _, id := range keyBindingActionAliases(action) {
+		prefix := settingsActionPrefixLabKeymap + id + ":"
+		if strings.HasPrefix(value, prefix) {
+			actionID = id
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return "", false
 	}
-	op := strings.TrimPrefix(value, prefix)
+	op := strings.TrimPrefix(value, settingsActionPrefixLabKeymap+actionID+":")
 	switch op {
 	case "probe", "init-preview", "init-apply", "save-plain":
 		return op, true
@@ -3145,7 +3274,10 @@ func (c *settingsCommand) labKeybindingEntries() ([]intpickercompat.Entry, error
 			continue
 		}
 		defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
-		desc := strings.TrimSpace(action.Description + "  plain " + keybindingValueSummary(action.PlainChord, defaultAction.PlainChord))
+		desc := strings.TrimSpace(action.Description + "  aliases " + keybindingAliasesSummary(action))
+		if keybindingSource(action, defaultAction) == "keymap.toml" {
+			desc += " (custom)"
+		}
 		if key.UserKey != "" {
 			desc += "  " + key.UserKey
 		}
@@ -3193,7 +3325,7 @@ func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpick
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Plain chord", keybindingValueSummary(action.PlainChord, defaultAction.PlainChord), "tmux"),
+			Label: settingsLabelInfo("Aliases", keybindingAliasesSummary(action), "tmux plain"),
 			Value: settingsNoopValue,
 		},
 		{
@@ -3220,6 +3352,8 @@ func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpick
 	}
 	if res, ok := c.lastLabProbe[actionID]; ok {
 		entries = append(entries, labProbeOutcomeEntries(prefix, action, defaultAction, res, terminal)...)
+	} else if res, ok := c.lastLabProbe[action.ID]; ok {
+		entries = append(entries, labProbeOutcomeEntries(prefix, action, defaultAction, res, terminal)...)
 	}
 	return entries, "Keybindings - " + action.Description, nil
 }
@@ -3237,9 +3371,10 @@ func labProbeOutcomeEntries(prefix string, action, defaultAction keyBindingActio
 			Label: settingsLabelInfo("Plain key reached", "tmux-level binding can work immediately", res.Reason),
 			Value: settingsNoopValue,
 		})
-		if defaultAction.PlainChord != "" && action.PlainChord != defaultAction.PlainChord {
+		defaultChord := firstNonEmptyString(keyBindingEffectivePlainChords(defaultAction))
+		if defaultChord != "" && !sameStringSlice(keyBindingEffectivePlainChords(action), []string{defaultChord}) {
 			entries = append(entries, intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save plain tmux binding", "reset keymap.toml to "+defaultAction.PlainChord+" and reload app config"),
+				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save plain tmux binding", "reset keymap.toml to "+defaultChord+" and reload app config"),
 				Value: prefix + "save-plain",
 			})
 		}
@@ -3281,6 +3416,10 @@ func (c *settingsCommand) labProbeKey(actionID string) (probeKey, error) {
 }
 
 func (c *settingsCommand) labProbeKeyFromActions(actionID string, actions []keyBindingAction) (probeKey, error) {
+	action, ok := keyBindingActionByID(actions, actionID)
+	if ok {
+		actionID = action.ID
+	}
 	for _, key := range probeKeysFromActions(actions) {
 		if key.ActionID == actionID {
 			return key, nil

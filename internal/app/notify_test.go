@@ -323,7 +323,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Enter: focus + ack  |  a: ack  |  x: clear non-critical  |  Ctrl-X: clear all  |  Esc/Alt-2: close"; got != want {
+	if got, want := picker.options.Footer, "Newest first. Critical notifications are kept when clearing non-critical rows."; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
 	if got, want := picker.options.ExpectKeys, []string{"a", "x", "ctrl-x"}; !reflect.DeepEqual(got, want) {
@@ -346,7 +346,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
 	}
-	if got, want := picker.options.Bindings, []string{"alt-2:abort"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options.Bindings, []string{"esc:abort", "alt-2:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("bindings = %#v, want %#v", got, want)
 	}
 	if store.ackedID != "abc" {
@@ -632,21 +632,21 @@ func TestNotifyListSidebarAAcksSelectedRowAndRefreshes(t *testing.T) {
 	if len(first) != 3 || first[0].Value != "abc" || first[1].Value != "def" || first[2].Value != "ghi" {
 		t.Fatalf("first picker entries = %#v, want abc then def then ghi", first)
 	}
-	if got, want := picker.options[0].Bindings, []string{"alt-2:abort"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options[0].Bindings, []string{"esc:abort", "alt-2:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("first picker bindings = %#v, want %#v", got, want)
 	}
 	second := picker.options[1].Entries
 	if len(second) != 2 || second[0].Value != "abc" || second[1].Value != "ghi" {
 		t.Fatalf("second picker entries = %#v, want abc then ghi", second)
 	}
-	if got, want := picker.options[1].Bindings, []string{"alt-2:abort", "start:pos(2)"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options[1].Bindings, []string{"esc:abort", "alt-2:abort", "start:pos(2)"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("second picker bindings = %#v, want %#v", got, want)
 	}
 	third := picker.options[2].Entries
 	if len(third) != 1 || third[0].Value != "ghi" {
 		t.Fatalf("third picker entries = %#v, want ghi", third)
 	}
-	if got, want := picker.options[2].Bindings, []string{"alt-2:abort", "start:pos(1)"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options[2].Bindings, []string{"esc:abort", "alt-2:abort", "start:pos(1)"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("third picker bindings = %#v, want %#v", got, want)
 	}
 	if stdout.String() != "" {
@@ -695,7 +695,7 @@ func TestNotifyListSidebarXClearsNonCriticalAndPreservesCritical(t *testing.T) {
 	if second[0].Value == "abc" || second[0].Value == "ghi" {
 		t.Fatalf("second picker entries = %#v, want non-critical rows removed", second)
 	}
-	if got, want := picker.options[1].Bindings, []string{"alt-2:abort", "start:pos(1)"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options[1].Bindings, []string{"esc:abort", "alt-2:abort", "start:pos(1)"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("second picker bindings = %#v, want %#v", got, want)
 	}
 	if stdout.String() != "" {
@@ -742,7 +742,7 @@ func TestNotifyListSidebarXClearNonCriticalRendersEmptyState(t *testing.T) {
 	if second[0].Label != "No pending notifications" {
 		t.Fatalf("empty label = %q", second[0].Label)
 	}
-	if got, want := picker.options[1].Bindings, []string{"alt-2:abort"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options[1].Bindings, []string{"esc:abort", "alt-2:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("empty picker bindings = %#v, want %#v", got, want)
 	}
 	if stdout.String() != "" {
@@ -782,7 +782,7 @@ func TestNotifyListSidebarAAckLastRowStartsAtPreviousRow(t *testing.T) {
 	if len(second) != 1 || second[0].Value != "abc" {
 		t.Fatalf("second picker entries = %#v, want only abc", second)
 	}
-	if got, want := picker.options[1].Bindings, []string{"alt-2:abort", "start:pos(1)"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options[1].Bindings, []string{"esc:abort", "alt-2:abort", "start:pos(1)"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("second picker bindings = %#v, want %#v", got, want)
 	}
 }
