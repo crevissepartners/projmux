@@ -4,7 +4,8 @@ projmux is keyboard-driven, but the guaranteed default contract is small:
 fresh installs bind `Alt-1` through `Alt-5` as plain Meta sequences
 (`M-1`..`M-5`, bytes `\x1b1`..`\x1b5`). Other actions remain discoverable in
 Settings > Keybindings and can be assigned safe tmux plain aliases, but they
-are not installed as terminal-specific User-key fallbacks.
+are not installed as terminal-specific User-key fallbacks. `UserN` and `CSI-u`
+are legacy/removal/unsupported targets, not supported fallback guidance.
 
 The recommended path when a key does not fire:
 
@@ -57,6 +58,20 @@ Pane switching is catalogued as transport-dependent. Previous/next window use
 the xterm modifier sequences for `M-S-Left` and `M-S-Right` when the terminal
 forwards them. Rename actions no longer have a built-in terminal fallback; use
 tmux's prefix rename flow or configure an explicit safe alias.
+
+## Roadmap Requirements
+
+Follow-up Phase 2 keeps Settings > Keybindings as a discovery surface. It must
+continue to expose launch toggles, sidebar keymap actions, picker-local actions,
+pane switching, window switching, and rename actions even when a row is
+view-only. Non-editable rows should explain whether the action is
+transport-dependent, picker-local, or diagnostic-only.
+
+Follow-up Phase 3 removes the `UserN` / `CSI-u` route from the product model.
+Windows Terminal and Ghostty-centered replacements should use plain
+Meta/control chords or xterm modifier sequences where possible. If a key cannot
+be represented that way, leave it as a non-editable unsupported or diagnostic
+row instead of preserving a User-key or CSI-u fallback.
 
 ## Picker Actions
 

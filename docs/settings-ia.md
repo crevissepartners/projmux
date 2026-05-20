@@ -17,6 +17,17 @@ view-first layout:
   first, then the edit actions, then the explanatory hints.
 - `Settings > Keybindings` is the single entry point for keybinding work. The
   page is split into four chips: `Bindings`, `Diagnostic`, `Probe`, and `Init`.
+- `Settings > Keybindings > Bindings` is a keybinding discovery surface, not
+  only a launch-toggle editor. It must show `Toggle Project Sidebar` with the
+  guaranteed `Alt-1` / `M-1` default, plus sidebar-local commands, picker-local
+  commands, `Pane navigation`, `Window navigation`, and `Rename` groups or
+  equivalent searchable rows.
+- Rows that cannot safely be edited still stay visible. Mark them as
+  `transport-dependent` or `diagnostic-only` with the delivery path and reason
+  instead of hiding them or turning them into unsupported editable aliases.
+- `Alt-1..5` are the only guaranteed zero-config launch defaults. `UserN` and
+  `CSI-u` are legacy/removal/unsupported targets, not supported fallback
+  guidance for Settings, setup, init, or docs.
 - The launcher checkout policy applies in Settings: the project sidebar is a
   first-class row, action rows use human-readable labels, internal IDs appear
   only in detail/source/keymap contexts, and runtime footers are status hints,
