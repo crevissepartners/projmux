@@ -1190,7 +1190,6 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDeco
 		"set -g " + statusbarDecorationGitTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Git))),
 		"set -g " + statusbarDecorationNotifyTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Notify))),
 	}
-	lines = append(lines, tmuxUserKeyLines(standaloneKeyBindings)...)
 	lines = append(lines,
 		"set-hook -g pane-focus-out "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane}")),
 		"set-hook -g pane-focus-in "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane}")),
@@ -1303,7 +1302,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string {
 	defaultAppKeyBindings := keyBindingCatalogForScope(keyBindingScopeApp)
 	appKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeApp)
-	lines := tmuxUserKeyLines(appKeyBindings)
+	var lines []string
 	if keymapPresent {
 		lines = append(lines, tmuxMergedUnbindLines(defaultAppKeyBindings, appKeyBindings)...)
 	} else {

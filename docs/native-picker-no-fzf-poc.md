@@ -40,9 +40,10 @@ The fzf compatibility surface for the native engine is tracked in
 - Typed-query prompts support cursor-aware insertion/deletion with a visible
   prompt cursor, Left/Right, Ctrl-A/E, Delete, Backspace, Ctrl-U, and Ctrl-W
   for settings path entry.
-- The native key parser recognizes the app's CSI-u keybind-probe sequences
-  such as `ESC [ 9005 u` for `Alt-1`, plus generic modified CSI-u forms such as
-  `ESC [ 115 ; 7 u` for `Ctrl-Alt-S`.
+- The native key parser keeps legacy parser-fixture coverage for app-specific
+  modified-key escapes, plus generic modified forms such as `ESC [ 115 ; 7 u`
+  for `Ctrl-Alt-S`. This is backend parser parity, not a product fallback
+  route.
 - Native interactive picker screens use an alternate screen lifecycle to better
   match fzf fullscreen behavior and restore the tmux pane after exit. Frame
   updates and screen exit both return to column 0 before emitting terminal

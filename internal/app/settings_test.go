@@ -3297,23 +3297,15 @@ func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 			name: "plain",
 			seed: "[bindings.ProjectSidebarToggle]\nplain = \"\"\n",
 			result: classifyProbeInput(
-				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
+				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1"},
 				[]byte("\x1b1"),
 			),
 			wantLabel: []string{"Plain key reached", "Save plain tmux binding"},
 		},
 		{
-			name: "csi-u",
-			result: classifyProbeInput(
-				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
-				[]byte("\x1b[9005u"),
-			),
-			wantLabel: []string{"CSI-u reached", "already routed through terminal fallback"},
-		},
-		{
 			name: "unknown",
 			result: classifyProbeInput(
-				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
+				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1"},
 				[]byte("\x1b[A"),
 			),
 			wantLabel:  []string{"Unexpected sequence", "no keymap overwrite"},
@@ -3322,7 +3314,7 @@ func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 		{
 			name: "timeout",
 			result: classifyProbeInput(
-				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
+				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1"},
 				nil,
 			),
 			wantLabel: []string{"Timeout or swallowed", "projmux init ghostty --apply"},
@@ -3567,12 +3559,12 @@ func TestSettingsLabsTerminalReloadCapabilityRows(t *testing.T) {
 		{
 			name: "ghostty reload",
 			env:  map[string]string{"TERM_PROGRAM": "ghostty"},
-			want: []string{"After fallback apply", "ghostty reload-config", "reload Ghostty config"},
+			want: []string{"After mapping apply", "ghostty reload-config", "reload Ghostty config"},
 		},
 		{
 			name: "wsl windows terminal restart",
 			env:  map[string]string{"WSL_DISTRO_NAME": "Ubuntu"},
-			want: []string{"After fallback apply", "restart terminal", "restart Windows Terminal tabs"},
+			want: []string{"After mapping apply", "restart terminal", "restart Windows Terminal tabs"},
 		},
 	}
 
@@ -3617,10 +3609,10 @@ func TestSettingsLabsInitPreviewApplyDelegatesToInitEngine(t *testing.T) {
 		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
 		case 4:
-			if !hasEntryLabelContaining(options.Entries, "Preview terminal fallback") {
+			if !hasEntryLabelContaining(options.Entries, "Preview terminal mappings") {
 				t.Fatalf("detail entries = %#v, want preview row", options.Entries)
 			}
-			if !hasEntryLabelContaining(options.Entries, "Apply terminal fallback") {
+			if !hasEntryLabelContaining(options.Entries, "Apply terminal mappings") {
 				t.Fatalf("detail entries = %#v, want apply row", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:init-preview"}, nil
@@ -3676,7 +3668,7 @@ func TestSettingsLabsWSLEnvDelegatesWindowsTerminalFallback(t *testing.T) {
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
 		case 4:
 			if !hasEntryLabelContaining(options.Entries, "Windows Terminal") {
-				t.Fatalf("detail entries = %#v, want Windows Terminal fallback", options.Entries)
+				t.Fatalf("detail entries = %#v, want Windows Terminal mapping", options.Entries)
 			}
 			if !hasEntryLabelContaining(options.Entries, "projmux init windows-terminal") {
 				t.Fatalf("detail entries = %#v, want windows-terminal init command", options.Entries)
@@ -3802,8 +3794,8 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		"projmux setup reports swallowed shortcuts",
 		"projmux init applies supported terminal key mappings",
 		"projmux doctor checks tmux",
-		"Ctrl-M sends 9011u",
-		"bind alt/ctrl keys",
+		"configure a plain alias",
+		"Alt Meta defaults",
 		"tmux/meta sequences",
 		"docs/keybindings.md",
 	} {

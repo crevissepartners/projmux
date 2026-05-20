@@ -38,7 +38,7 @@ func (f *fakeAdapter) PlanMerge(current string, exists bool) (MergePlan, error) 
 		return f.planFn(current, exists)
 	}
 	return MergePlan{Original: current, Updated: current + "added\n", CreateNew: !exists,
-		Changes: []MergeChange{{Trigger: "alt+1", Action: "csi:9005u", Kind: "add"}}}, nil
+		Changes: []MergeChange{{Trigger: "alt+1", Action: "esc:1", Kind: "add"}}}, nil
 }
 
 func (f *fakeAdapter) ApplyMerge(plan MergePlan) error {

@@ -2434,7 +2434,7 @@ func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Opti
 		Entries:    entries,
 		Title:      "Keybindings",
 		Prompt:     "Settings > Keybindings > ",
-		Footer:     projmuxFooter("Current aliases, fallback delivery, and conflicts are shown per action."),
+		Footer:     projmuxFooter("Current aliases, terminal delivery, and conflicts are shown per action."),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}
@@ -2481,22 +2481,22 @@ func (c *settingsCommand) keybindingsTabEntries(active string) ([]intpickercompa
 		entries := []intpickercompat.Entry{
 			settingsBackEntry(),
 			{Label: settingsLabelInfo("Terminal", terminal.Display(), labTerminalSupportSummary(terminal)), Value: settingsNoopValue},
-			{Label: settingsLabelInfo("After fallback apply", terminal.ReloadCapability().Label, terminal.ReloadCapability().Summary), Value: settingsNoopValue},
+			{Label: settingsLabelInfo("After mapping apply", terminal.ReloadCapability().Label, terminal.ReloadCapability().Summary), Value: settingsNoopValue},
 		}
 		if terminal.InitCommand() != "" {
 			entries = append(entries,
 				intpickercompat.Entry{
-					Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview terminal fallback", strings.TrimSuffix(terminal.InitCommand(), " --apply")),
+					Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview terminal mappings", strings.TrimSuffix(terminal.InitCommand(), " --apply")),
 					Value: settingsKeybindingsInit + ":preview",
 				},
 				intpickercompat.Entry{
-					Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Apply terminal fallback", terminal.InitCommand()),
+					Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Apply terminal mappings", terminal.InitCommand()),
 					Value: settingsKeybindingsInit + ":apply",
 				},
 			)
 		} else if hint := terminal.RemediationHint(); hint != "" {
 			entries = append(entries, intpickercompat.Entry{
-				Label: settingsLabelInfo("Manual fallback", hint, ""),
+				Label: settingsLabelInfo("Manual setup", hint, ""),
 				Value: settingsNoopValue,
 			})
 		}
@@ -2681,13 +2681,10 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 			return nil
 		}
 		return c.addKeymapAliasAndApply(action.ID, firstNonEmptyString(keyBindingEffectivePlainChords(defaultAction)), stdout)
-	case probeStatusCSIu:
-		fmt.Fprintf(stdout, "captured key is routed through %s; no keymap.toml change needed\n", res.Key.UserKey)
-		return nil
 	case probeStatusUnknown:
 		chord, ok := suggestedPlainChordForSequence(res.Sequence)
 		if !ok {
-			fmt.Fprintf(stdout, "captured raw sequence %s is not safe to persist; configure terminal fallback instead\n", visibleEscape(string(res.Sequence)))
+			fmt.Fprintf(stdout, "captured raw sequence %s is not safe to persist; configure a plain tmux alias instead\n", visibleEscape(string(res.Sequence)))
 			return nil
 		}
 		return c.addKeymapAliasAndApply(action.ID, chord, stdout)
@@ -2752,12 +2749,6 @@ func captureProbeKeyForAction(action keyBindingAction) probeKey {
 		Action:     action.Description,
 		Plain:      action.ProbePlain,
 		PlainChord: action.PlainChord,
-	}
-	if action.CSIu != "" {
-		key.CSIu = "\x1b[" + action.CSIu + "u"
-		if action.UserSlot != noUserSlot {
-			key.UserKey = keyBindingUserKey(action)
-		}
 	}
 	return key
 }
@@ -2976,9 +2967,6 @@ func keybindingCurrentSummary(action, defaultAction keyBindingAction) string {
 	if keybindingSource(action, defaultAction) == "keymap.toml" {
 		parts[keysIndex] += " (custom)"
 	}
-	if action.UserSlot != noUserSlot && action.CSIu != "" {
-		parts = append(parts, "fallback "+keyBindingUserKey(action))
-	}
 	return strings.Join(parts, "  ")
 }
 
@@ -2988,12 +2976,6 @@ func keybindingDeliveryPath(action keyBindingAction) string {
 		return "picker-local"
 	case keyBindingTierTransportDependent:
 		return "transport-dependent tmux chord"
-	}
-	if action.UserSlot != noUserSlot && action.CSIu != "" {
-		if len(keyBindingEffectivePlainChords(action)) != 0 {
-			return "plain tmux + terminal fallback"
-		}
-		return "terminal fallback"
 	}
 	return "plain tmux"
 }
@@ -3010,9 +2992,6 @@ func keybindingDeliveryHint(action keyBindingAction) string {
 			return chord + " depends on terminal/tmux transport"
 		}
 		return "no default plain chord; configure a safe tmux alias if needed"
-	}
-	if action.UserSlot != noUserSlot && action.CSIu != "" {
-		return keyBindingUserKey(action) + " ESC[" + action.CSIu + "u"
 	}
 	return "tmux plain chord"
 }
@@ -3055,8 +3034,6 @@ func keybindingTierSummary(action keyBindingAction) string {
 		return "User configurable direct alias"
 	case keyBindingTierTransportDependent:
 		return "Transport dependent"
-	case keyBindingTierCSIuFallback:
-		return "Terminal fallback"
 	case keyBindingTierAmbiguousTerminalChord:
 		return "Ambiguous terminal chord"
 	case keyBindingTierNativePickerInternal:
@@ -3083,8 +3060,6 @@ func keybindingEditabilitySummary(action keyBindingAction) string {
 		return "view-only picker-local"
 	case keyBindingTierTransportDependent:
 		return "view-only transport-dependent"
-	case keyBindingTierCSIuFallback:
-		return "view-only terminal fallback"
 	default:
 		return "view-only"
 	}
@@ -3096,8 +3071,6 @@ func keybindingNonEditableReason(action keyBindingAction) string {
 		return "handled inside the native picker surface, not the direct tmux alias editor"
 	case keyBindingTierTransportDependent:
 		return "depends on terminal/tmux transport or has no default plain chord"
-	case keyBindingTierCSIuFallback:
-		return "delivered through terminal fallback User keys, not stored as aliases"
 	default:
 		return "not part of the direct tmux alias editor"
 	}
@@ -3107,7 +3080,7 @@ func keybindingEditNote(action keyBindingAction) string {
 	if action.Tier == keyBindingTierNativePickerInternal {
 		return "Picker-local keys are written to keymap.toml and stay scoped to their Settings surface."
 	}
-	return "Terminal fallback mappings still require rerunning projmux init and restarting the terminal where applicable."
+	return "Terminal mappings may require rerunning projmux init and restarting the terminal where applicable."
 }
 
 func keybindingCaptureOutcomeEntries(res probeResult) []intpickercompat.Entry {
@@ -3121,11 +3094,6 @@ func keybindingCaptureOutcomeEntries(res probeResult) []intpickercompat.Entry {
 	case probeStatusPlain:
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Saved path", "plain tmux binding", res.Reason),
-			Value: settingsNoopValue,
-		})
-	case probeStatusCSIu:
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Saved path", "terminal fallback", "no keymap.toml change needed"),
 			Value: settingsNoopValue,
 		})
 	case probeStatusUnknown:
@@ -3496,9 +3464,6 @@ func (c *settingsCommand) labKeybindingEntries() ([]intpickercompat.Entry, error
 			if key.Label != "" {
 				detail = append(detail, "probe "+key.Label)
 			}
-			if key.UserKey != "" {
-				detail = append(detail, key.UserKey)
-			}
 		} else if action.Surface != "" {
 			detail = append(detail, action.Surface+" local")
 		}
@@ -3539,7 +3504,7 @@ func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpick
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("After fallback apply", terminal.ReloadCapability().Label, terminal.ReloadCapability().Summary),
+			Label: settingsLabelInfo("After mapping apply", terminal.ReloadCapability().Label, terminal.ReloadCapability().Summary),
 			Value: settingsNoopValue,
 		},
 		{
@@ -3567,17 +3532,17 @@ func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpick
 	if terminal.InitCommand() != "" {
 		entries = append(entries,
 			intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview terminal fallback", strings.TrimSuffix(terminal.InitCommand(), " --apply")),
+				Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview terminal mappings", strings.TrimSuffix(terminal.InitCommand(), " --apply")),
 				Value: prefix + "init-preview",
 			},
 			intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Apply terminal fallback", terminal.InitCommand()),
+				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Apply terminal mappings", terminal.InitCommand()),
 				Value: prefix + "init-apply",
 			},
 		)
 	} else if hint := terminal.RemediationHint(); hint != "" {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Manual fallback", hint, ""),
+			Label: settingsLabelInfo("Manual setup", hint, ""),
 			Value: settingsNoopValue,
 		})
 	}
@@ -3609,11 +3574,6 @@ func labProbeOutcomeEntries(prefix string, action, defaultAction keyBindingActio
 				Value: prefix + "save-plain",
 			})
 		}
-	case probeStatusCSIu:
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("CSI-u reached", "already routed through terminal fallback", res.Key.UserKey),
-			Value: settingsNoopValue,
-		})
 	case probeStatusUnknown:
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfo("Unexpected sequence", visibleEscape(string(res.Sequence)), "no keymap overwrite"),
@@ -3626,7 +3586,7 @@ func labProbeOutcomeEntries(prefix string, action, defaultAction keyBindingActio
 			})
 		}
 	case probeStatusTimeout:
-		desc := "terminal fallback unavailable"
+		desc := "terminal mapping unavailable"
 		if cmd := terminal.InitCommand(); cmd != "" {
 			desc = cmd
 		}
@@ -3670,7 +3630,7 @@ func (c *settingsCommand) probeLabKeybinding(key probeKey, timeout time.Duration
 func (c *settingsCommand) runLabTerminalInit(apply bool, stdout, stderr io.Writer) error {
 	terminal := detectTerminal(c.lookupEnv)
 	if terminal.InitCommand() == "" {
-		return fmt.Errorf("keybinding lab: terminal fallback is not supported for %s", terminal.Display())
+		return fmt.Errorf("keybinding lab: terminal mappings are not supported for %s", terminal.Display())
 	}
 	args := []string{terminal.Slug, "--dry-run"}
 	if apply {
@@ -3687,12 +3647,12 @@ func (c *settingsCommand) runLabTerminalInit(apply bool, stdout, stderr io.Write
 func labTerminalSupportSummary(terminal terminalInfo) string {
 	activation := terminal.ReloadCapability()
 	if cmd := terminal.InitCommand(); cmd != "" {
-		return "supported fallback: " + strings.TrimSuffix(cmd, " --apply") + "; after apply: " + activation.Label
+		return "supported mappings: " + strings.TrimSuffix(cmd, " --apply") + "; after apply: " + activation.Label
 	}
 	if hint := terminal.RemediationHint(); hint != "" {
 		return hint + "; after apply: " + activation.Label
 	}
-	return "no automatic fallback adapter; after apply: " + activation.Label
+	return "no automatic terminal adapter; after apply: " + activation.Label
 }
 
 func (c *settingsCommand) writeTmuxAppConfig() (string, error) {
@@ -4279,10 +4239,10 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 		{"Tmux actions", "new window, rename window/pane, previous/next window"},
 		{"Key setup", "Alt-1..5 work zero-config when the terminal forwards Meta"},
 		{"Diagnose keys", "projmux setup reports swallowed shortcuts"},
-		{"Terminal fallback", "projmux init applies supported terminal key mappings"},
+		{"Terminal mappings", "projmux init applies supported terminal key mappings"},
 		{"Dependencies", "projmux doctor checks tmux, git, stty, kubectl"},
-		{"Rename key", "Ctrl-M sends 9011u, tmux maps User10 to rename"},
-		{"Ghostty", "bind alt/ctrl keys to csi:9001u..9012u"},
+		{"Rename key", "configure a plain alias or use tmux prefix rename"},
+		{"Ghostty", "Alt Meta defaults normally need no projmux key block"},
 		{"Windows Term.", "actions sendInput tmux/meta sequences; keybindings attach keys"},
 		{"Docs", "docs/keybindings.md has copyable terminal examples"},
 	}

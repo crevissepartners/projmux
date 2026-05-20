@@ -17,7 +17,7 @@ type ghosttyBinding struct {
 }
 
 // ghosttyDesiredBindings mirrors the "Ghostty" section of docs/keybindings.md.
-// Update the built-in keybinding catalog and docs when adjusting CSI-u routing.
+// Update the built-in keybinding catalog and docs when adjusting terminal routing.
 var ghosttyDesiredBindings = ghosttyBindingsFromCatalog()
 
 // ghosttyManagedHeader marks the projmux-managed block in the Ghostty config.
@@ -169,8 +169,16 @@ func (g *GhosttyAdapter) PlanMerge(currentConfig string, fileExists bool) (Merge
 	plan.Changes = changes
 
 	if len(toAppend) == 0 {
-		// Nothing to add. Updated == Original keeps HasEffect false.
-		plan.Updated = currentConfig
+		if len(changes) == 0 {
+			// No desired bindings remain. If an older projmux managed block
+			// exists, remove it; otherwise Updated == Original keeps HasEffect
+			// false.
+			plan.Updated = stripped
+		} else {
+			// Everything already matches. Preserve the existing managed block
+			// so re-running init is idempotent.
+			plan.Updated = currentConfig
+		}
 		return plan, nil
 	}
 
