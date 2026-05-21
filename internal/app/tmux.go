@@ -1248,6 +1248,7 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDeco
 	} else {
 		lines = append(lines, tmuxUnbindLines(standaloneKeyBindings)...)
 	}
+	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
 	lines = append(lines, tmuxBindLines(binaryPath, standaloneKeyBindings)...)
 	lines = append(lines, tmuxStatusbarKeyBindings(binaryPath)...)
 	return strings.Join(lines, "\n") + "\n"
@@ -1339,6 +1340,7 @@ func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string
 	} else {
 		lines = append(lines, tmuxUnbindLines(appKeyBindings)...)
 	}
+	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
 	lines = append(lines, tmuxBindLines("", appKeyBindings)...)
 	return lines
 }
