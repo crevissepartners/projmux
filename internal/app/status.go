@@ -545,10 +545,13 @@ func formatStatusNotifyWithLive(entries []notify.Notification, maxWidth int, now
 
 	display := classifyNotifyRowState(head, liveByID)
 	agent, text := splitAgentPrefix(head)
+	if head.Source == notify.SourceAI {
+		text = notifyAIStatusBodyText(head, text)
+	}
 	badge := assembleNotifyBadges(
 		renderNotifyProjectBadge(notifyProjectName(head.Session)),
-		renderNotifyStateBadgeFor(head, text, display),
-		renderNotifyAgentBadge(agent),
+		renderNotifyStatusMiddleBadge(head, text, display),
+		renderNotifyStatusAgentBadge(head, agent),
 	)
 	icon := renderNotifyIcon(head.Severity)
 	age := ""
@@ -670,6 +673,39 @@ func renderNotifyProjectBadge(project string) string {
 
 func renderNotifyBadge(label, severity string) string {
 	return renderNotifyBlockBadge(label, notifyBadgeOpen(severity))
+}
+
+func renderNotifyStatusMiddleBadge(n notify.Notification, text string, display notifyRowDisplayState) string {
+	if n.Source == notify.SourceAI {
+		return renderNotifyTopicBadge(n)
+	}
+	return renderNotifyStateBadgeFor(n, text, display)
+}
+
+func renderNotifyStatusAgentBadge(n notify.Notification, agent string) string {
+	if n.Source == notify.SourceAI {
+		return ""
+	}
+	return renderNotifyAgentBadge(agent)
+}
+
+func renderNotifyTopicBadge(n notify.Notification) string {
+	if n.Source != notify.SourceAI {
+		return ""
+	}
+	topic := strings.TrimSpace(n.Metadata["topic"])
+	if topic == "" {
+		return ""
+	}
+	return renderNotifyBlockBadge(topic, notifyAgentOpen)
+}
+
+func notifyAIStatusBodyText(n notify.Notification, text string) string {
+	topic := strings.TrimSpace(n.Metadata["topic"])
+	if topic != "" && topic == strings.TrimSpace(text) {
+		return "Ready"
+	}
+	return text
 }
 
 // renderNotifyStateBadgeFor renders the head-entry state badge using the
