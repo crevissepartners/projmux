@@ -18,7 +18,9 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -35,6 +37,7 @@ func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
 		settingsSectionAI:            {Name: "AI Settings", Axis: settingsAxisGlobal},
 		settingsSectionNotifications: {Name: "Notifications", Axis: settingsAxisGlobal},
 		settingsSectionStatusbar:     {Name: "Appearance", Axis: settingsAxisGlobal},
+		settingsSectionGlobalTheme:   {Name: "Theme", Axis: settingsAxisGlobal},
 		settingsSectionSessionState:  {Name: "Session State", Axis: settingsAxisGlobal},
 		settingsSectionKeybindings:   {Name: "Keybindings", Axis: settingsAxisGlobal},
 		settingsSectionLabs:          {Name: "Labs", Axis: settingsAxisGlobal},
@@ -103,6 +106,7 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 		settingsSectionNotifications,
 		settingsSectionGlobalHooks,
 		settingsSectionStatusbar,
+		settingsSectionGlobalTheme,
 		settingsSectionSessionState,
 		settingsSectionKeybindings,
 		settingsSectionLabs,
@@ -572,7 +576,7 @@ func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 			t.Fatalf("project tab entry values = %#v, want disabled/noop rows only without inline tab toggle", entryValues(options.Entries))
 		}
 	}
-	for _, label := range []string{"Trust", "Hooks (project)", "Project recipe", "Effective merge view"} {
+	for _, label := range []string{"Trust", "Hooks (project)", "Project recipe", "Theme override", "Effective theme", "Effective merge view"} {
 		if !hasEntryLabelContaining(options.Entries, label) {
 			t.Fatalf("project tab entries = %#v, want label containing %q", options.Entries, label)
 		}
@@ -846,6 +850,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 		settingsSectionNotifications,
 		settingsSectionGlobalHooks,
 		settingsSectionStatusbar,
+		settingsSectionGlobalTheme,
 		settingsSectionSessionState,
 		settingsSectionKeybindings,
 		settingsSectionLabs,
@@ -1269,6 +1274,148 @@ font_family = "JetBrains Mono"
 	}
 	if !hasEntryLabelContainingAll(entries, "Theme font", "font_family project", "font_size global") {
 		t.Fatalf("appearance entries = %#v, want font source labels", entries)
+	}
+}
+
+func TestSettingsThemeResetBoundaries(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+preset = "midnight"
+background = "#101820"
+`)
+	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
+[theme]
+preset = "rose"
+background = "#20151c"
+`)
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+	}
+
+	if err := cmd.resetThemeLayer(themeLayerProject, &bytes.Buffer{}); err != nil {
+		t.Fatalf("reset project theme error = %v", err)
+	}
+	globalCfg, err := hooks.LoadProjectConfigFile(filepath.Join(home, ".config", "projmux", "config.toml"))
+	if err != nil {
+		t.Fatalf("load global config after project reset: %v", err)
+	}
+	if globalCfg.Theme.Preset != "midnight" || globalCfg.Theme.Background != "#101820" {
+		t.Fatalf("global theme after project reset = %#v, want preserved", globalCfg.Theme)
+	}
+	projectCfg, err := hooks.LoadProjectConfigFile(filepath.Join(project, ".projmux", "config.toml"))
+	if err != nil {
+		t.Fatalf("load project config after project reset: %v", err)
+	}
+	if projectCfg.Theme.HasContent() {
+		t.Fatalf("project theme after project reset = %#v, want removed", projectCfg.Theme)
+	}
+
+	if err := cmd.setThemePreset(themeLayerProject, "forest", &bytes.Buffer{}); err != nil {
+		t.Fatalf("set project preset error = %v", err)
+	}
+	if err := cmd.setThemeColor(themeLayerProject, theme.TokenBackground, "#14201a", &bytes.Buffer{}); err != nil {
+		t.Fatalf("set project background error = %v", err)
+	}
+	if err := cmd.resetThemeLayer(themeLayerGlobal, &bytes.Buffer{}); err != nil {
+		t.Fatalf("reset global theme error = %v", err)
+	}
+	globalCfg, err = hooks.LoadProjectConfigFile(filepath.Join(home, ".config", "projmux", "config.toml"))
+	if err != nil {
+		t.Fatalf("load global config after global reset: %v", err)
+	}
+	if globalCfg.Theme.HasContent() {
+		t.Fatalf("global theme after global reset = %#v, want removed", globalCfg.Theme)
+	}
+	projectCfg, err = hooks.LoadProjectConfigFile(filepath.Join(project, ".projmux", "config.toml"))
+	if err != nil {
+		t.Fatalf("load project config after global reset: %v", err)
+	}
+	if projectCfg.Theme.Preset != "forest" || projectCfg.Theme.Background != "#14201a" {
+		t.Fatalf("project theme after global reset = %#v, want preserved", projectCfg.Theme)
+	}
+}
+
+func TestSettingsEffectiveThemeShowsSourceLabels(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+foreground = "#eeeeee"
+`)
+	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
+[theme]
+background = "#010203"
+`)
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+	}
+
+	entries := cmd.effectiveThemeEntries()
+	if !hasEntryLabelContainingAll(entries, "background", "#010203", "project") {
+		t.Fatalf("effective theme entries = %#v, want project background source", entries)
+	}
+	if !hasEntryLabelContainingAll(entries, "foreground", "#eeeeee", "global") {
+		t.Fatalf("effective theme entries = %#v, want global foreground source", entries)
+	}
+	if !hasEntryLabelContainingAll(entries, "accent", "fallback") {
+		t.Fatalf("effective theme entries = %#v, want fallback accent source", entries)
+	}
+}
+
+func TestSettingsProjectThemeDistinguishesInheritAndOverride(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
+[theme]
+preset = "inherit"
+background = "inherit"
+accent = "#9bcf8f"
+`)
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+	}
+
+	entries, err := cmd.themeLayerEntries(themeLayerProject)
+	if err != nil {
+		t.Fatalf("themeLayerEntries(project) error = %v", err)
+	}
+	if !hasEntryLabelContainingAll(entries, "Preset selector", "inherit global") {
+		t.Fatalf("project theme entries = %#v, want preset inherit state", entries)
+	}
+	if !hasEntryLabelContainingAll(entries, "background", "inherit global") {
+		t.Fatalf("project theme entries = %#v, want background inherit state", entries)
+	}
+	if !hasEntryLabelContainingAll(entries, "accent", "#9bcf8f", "set override") {
+		t.Fatalf("project theme entries = %#v, want accent set override state", entries)
 	}
 }
 

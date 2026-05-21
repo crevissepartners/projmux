@@ -168,15 +168,17 @@ declarative hooks and project recipe fields:
 ~/.config/projmux/config.toml
 ```
 
-This foundation exposes the resolver over in-memory structs. Renderer adapters
-can apply an already resolved `EffectiveTheme` to native picker frame
-background/foreground SGR and tmux status/window `colourN` background tokens.
-App render entrypoints share one effective-theme source, but color rendering
-still resolves to the built-in fallback until editor/runtime loading for
-`[theme]` lands in a later phase. The config parser and resolver can store and
-resolve `[theme]` values for read-only surfaces. The effective theme resolves
-as project > global > built-in fallback, and each field carries a source label:
-`project`, `global`, or `fallback`.
+Settings can edit the global `[theme]` in `~/.config/projmux/config.toml` and
+the current project override in `<project>/.projmux/config.toml`. The Effective
+theme view shows the final project > global > built-in fallback value for each
+field with source labels: `project`, `global`, or `fallback`.
+
+Renderer adapters can apply an already resolved `EffectiveTheme` to native
+picker frame background/foreground SGR and tmux status/window `colourN`
+background tokens. Settings and native project picker surfaces load global and
+project `[theme]` values through the shared effective-theme source. Fallback
+renderer output intentionally keeps the existing palette constants byte for
+byte.
 
 Resolver schema shape:
 
@@ -202,13 +204,13 @@ through to the next layer.
 
 Unknown presets and invalid color/font values invalidate only their own theme
 layer and produce resolver warnings; the next source still resolves normally.
-Colors are `#RRGGBB`. Truecolor renderers use exact RGB SGR tokens, and tmux
-surfaces use the stored or nearest xterm 256-color `colourN` mapping. Fallback
-renderer output intentionally keeps the existing palette constants byte for
-byte. Font values are desired terminal profile hints, not universal tmux or
-ANSI renderer tokens. Without a supported terminal font adapter, Settings
-reports the effective desired font as `not applied`; projmux does not create or
-modify terminal profiles in this phase.
+Colors are `#RRGGBB`. Settings edits colors through a preset selector, swatch
+rows, and a hex input page. Truecolor renderers use exact RGB SGR tokens, and
+tmux surfaces use the stored or nearest xterm 256-color `colourN` mapping. Font
+values are desired terminal profile hints, not universal tmux or ANSI renderer
+tokens. Without a supported terminal font adapter, Settings reports the
+effective desired font as `not applied`; projmux does not create or modify
+terminal profiles in this phase.
 
 ## Environment Variables
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -81,5 +82,54 @@ func TestRenderThemeSourceFallbackMatchesCurrentProductionOutput(t *testing.T) {
 	want := tmuxStandaloneConfigWithKeymapTheme("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{}))
 	if got != want {
 		t.Fatalf("fallback render source standalone config changed\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestConfigRenderThemeSourceFeedsProjectPopupThemePath(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#ff0000"
+foreground = "#00ff00"
+`)
+	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
+[theme]
+preset = "forest"
+background = "#010203"
+foreground = "#aabbcc"
+`)
+
+	source, err := configRenderThemeSource(
+		func() (string, error) { return home, nil },
+		func(string) string { return "" },
+		filepath.Join(project, "subdir"),
+	)
+	if err != nil {
+		t.Fatalf("configRenderThemeSource() error = %v", err)
+	}
+	options := source.pickerOptions(intpicker.Options{Title: "Projects"})
+	if options.Theme == nil {
+		t.Fatal("picker options Theme = nil")
+	}
+	if got, want := options.Theme.Background.Value.Hex, "#010203"; got != want {
+		t.Fatalf("picker theme background = %q, want %q", got, want)
+	}
+	if got, want := options.Theme.Background.Source, theme.SourceProject; got != want {
+		t.Fatalf("picker theme background source = %q, want %q", got, want)
+	}
+
+	var frame bytes.Buffer
+	projmuxpicker.NewRenderer(projmuxpicker.ThemeFromEffective(*options.Theme)).
+		RenderFrameWithTitle(&frame, "api", options.Title, projmuxpicker.Layout{Rows: 5, Cols: 20})
+	rendered := frame.String()
+	if !strings.Contains(rendered, "\x1b[48;2;1;2;3m") || !strings.Contains(rendered, "\x1b[38;2;170;187;204m") {
+		t.Fatalf("project popup frame = %q, want project theme background/foreground SGR", rendered)
+	}
+	if strings.Contains(rendered, "\x1b[48;2;255;0;0m") || strings.Contains(rendered, "\x1b[38;2;0;255;0m") {
+		t.Fatalf("project popup frame = %q, leaked global theme", rendered)
 	}
 }

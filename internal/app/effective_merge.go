@@ -234,5 +234,8 @@ func configHasContent(cfg hooks.ProjectConfig) bool {
 	if len(cfg.Hooks) > 0 {
 		return true
 	}
+	if cfg.Theme.HasContent() {
+		return true
+	}
 	return false
 }
