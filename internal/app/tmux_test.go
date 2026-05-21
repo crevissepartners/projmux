@@ -1949,6 +1949,40 @@ func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing
 	}
 }
 
+func TestTmuxPrintAppConfigAddsPlainAliasForTransportAction(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte("[bindings.previous-window]\nkeys = [\"M-[\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"bind-key -n M-S-Left previous-window",
+		"bind-key -n M-[ previous-window",
+		"bind-key -n M-S-Right next-window",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
+		}
+	}
+}
+
 func TestTmuxInstallWritesSnippetAndIncludesIt(t *testing.T) {
 	t.Parallel()
 

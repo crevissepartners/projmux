@@ -22,9 +22,11 @@ view-first layout:
   guaranteed `Alt-1` / `M-1` default, plus sidebar-local commands, picker-local
   commands, `Pane navigation`, `Window navigation`, and `Rename` groups or
   equivalent searchable rows.
-- Rows that cannot safely be edited still stay visible. Mark them as
-  `transport-dependent` or `diagnostic-only` with the delivery path and reason
-  instead of hiding them or turning them into unsupported editable aliases.
+- Rows that cannot safely be edited still stay visible. Mark diagnostic-only
+  rows with the delivery path and reason instead of hiding them or turning them
+  into unsupported editable aliases. Transport-dependent rows stay visible with
+  a separate default transport key and additive plain-alias entry; replacing or
+  disabling the transport default is not exposed.
 - `Alt-1..5` are the only guaranteed zero-config launch defaults. `UserN` and
   `CSI-u` are legacy/removal/unsupported targets, not supported fallback
   guidance for Settings, setup, init, or docs.

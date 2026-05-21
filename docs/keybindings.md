@@ -1,11 +1,13 @@
 # Terminal Keybindings
 
-projmux is keyboard-driven, but the guaranteed default contract is small:
+projmux is keyboard-driven, but the guaranteed launch contract is small:
 fresh installs bind `Alt-1` through `Alt-5` as plain Meta sequences
 (`M-1`..`M-5`, bytes `\x1b1`..`\x1b5`). Other actions remain discoverable in
-Settings > Keybindings and can be assigned safe tmux plain aliases, but they
-are not installed as terminal-specific User-key fallbacks. `UserN` and `CSI-u`
-are legacy/removal/unsupported targets, not supported fallback guidance.
+Settings > Keybindings. Transport-dependent actions keep their built-in
+transport default key, and Settings can add separate safe tmux plain aliases to
+the same action. They are not installed as terminal-specific User-key
+fallbacks. `UserN` and `CSI-u` are legacy/removal/unsupported targets, not
+supported fallback guidance.
 
 The recommended path when a key does not fire:
 
@@ -40,11 +42,10 @@ session, `Ctrl-b ?` lists the live tmux bindings.
 
 ## Discoverable Actions
 
-Settings > Keybindings lists the full action catalogue, including actions that
-are view-only because they depend on terminal transport or picker-local
-handling. In particular, sidebar keymap actions, pane switching, window
-switching, and rename actions remain visible even when they are not directly
-editable from the alias editor.
+Settings > Keybindings lists the full action catalogue. In particular, sidebar
+keymap actions, pane switching, window switching, and rename actions remain
+visible. Transport-dependent rows show the default transport key separately
+from editable plain aliases.
 
 Optional direct aliases can be added for actions such as:
 
@@ -58,18 +59,21 @@ Pane switching is catalogued as transport-dependent and the generated app tmux
 config binds `M-Left`, `M-Right`, `M-Up`, and `M-Down` to `select-pane`
 movement. Previous/next window remain transport-dependent and the generated app
 tmux config binds `M-S-Left` / `M-S-Right` to the tmux window navigation
-commands. These rows stay visible in Settings with their default chords, but
-they are view-only because delivery still depends on the terminal forwarding
-the modifier-arrow sequence. Rename actions no longer have a built-in terminal
-fallback; use tmux's prefix rename flow or configure an explicit safe alias.
+commands. These default transport keys are always rendered by projmux, because
+delivery still depends on the terminal forwarding the modifier-arrow sequence.
+Settings can add extra safe plain aliases, such as `M-[` for
+`previous-window`; those aliases are saved to `keymap.toml` as `keys = [...]`
+without storing or replacing the transport default. Rename actions no longer
+have a built-in terminal fallback; use tmux's prefix rename flow or configure
+an explicit safe alias where the action is editable.
 
 ## Roadmap Requirements
 
 Follow-up Phase 2 keeps Settings > Keybindings as a discovery surface. It must
 continue to expose launch toggles, sidebar keymap actions, picker-local actions,
-pane switching, window switching, and rename actions even when a row is
-view-only. Non-editable rows should explain whether the action is
-transport-dependent, picker-local, or diagnostic-only.
+pane switching, window switching, and rename actions. Transport-dependent rows
+should explain the default transport key and offer only additive safe plain
+aliases; diagnostic-only rows should explain why they are not editable.
 
 Follow-up Phase 3 removes the `UserN` / `CSI-u` route from the product model.
 Windows Terminal and Ghostty-centered replacements should use plain
@@ -104,6 +108,9 @@ keys = ["M-1", "M-a"]
 
 [bindings.new-window]
 keys = ["C-t"]
+
+[bindings.previous-window]
+keys = ["M-["] # additive alias; default M-S-Left is not stored here
 
 [bindings."Sidebar:PinProject"]
 keys = ["M-p", "p"]

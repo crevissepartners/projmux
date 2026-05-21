@@ -65,6 +65,48 @@ keys = ["M-1", "M-a"]
 	}
 }
 
+func TestKeymapTransportAliasesKeepDefaultTransportChord(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := parseKeymapFile("/tmp/keymap.toml", `[bindings.previous-window]
+keys = ["M-["]
+`)
+	if err != nil {
+		t.Fatalf("parseKeymapFile() error = %v", err)
+	}
+	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	if err != nil {
+		t.Fatalf("mergeKeymapOverrides() error = %v", err)
+	}
+	action, ok := keyBindingActionByID(merged, "previous-window")
+	if !ok {
+		t.Fatalf("missing previous-window")
+	}
+	if got, want := keyBindingEffectivePlainChords(action), []string{"M-S-Left", "M-["}; !equalStrings(got, want) {
+		t.Fatalf("previous-window keys = %#v, want %#v", got, want)
+	}
+	lines := strings.Join(tmuxBindLines("/bin/projmux", keyBindingCatalogForScopeFrom(merged, keyBindingScopeApp)), "\n")
+	for _, want := range []string{"bind-key -n M-S-Left previous-window", "bind-key -n M-[ previous-window"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("tmux bind lines =\n%s\nwant %q", lines, want)
+		}
+	}
+}
+
+func TestKeymapTransportAliasesRejectDefaultTransportChord(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := parseKeymapFile("/tmp/keymap.toml", `[bindings.previous-window]
+keys = ["M-S-Left"]
+`)
+	if err != nil {
+		t.Fatalf("parseKeymapFile() error = %v", err)
+	}
+	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed); err == nil {
+		t.Fatalf("mergeKeymapOverrides() = nil, want transport default rejected as plain alias")
+	}
+}
+
 func TestKeymapLegacyActionIDAndQuotedInternalIDMergeToCanonicalActions(t *testing.T) {
 	t.Parallel()
 
@@ -182,7 +224,7 @@ func TestKeymapConflictDomains(t *testing.T) {
 func TestNormalizeKeymapTypedChordRejectsTransportPayloads(t *testing.T) {
 	t.Parallel()
 
-	for _, input := range []string{"\x1b[9005u", "[9005u", `\u001b[9005u`, `\x1b[9005u`, `sendInput("\u001b1")`, "User4"} {
+	for _, input := range []string{"\x1b[9005u", "[9005u", "csi:9005u", `\u001b[9005u`, `\x1b[9005u`, `sendInput("\u001b1")`, "User4"} {
 		if got, err := normalizeKeymapTypedChord(input); err == nil {
 			t.Fatalf("normalizeKeymapTypedChord(%q) = %q, nil; want rejection", input, got)
 		}
