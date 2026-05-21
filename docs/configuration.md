@@ -158,6 +158,51 @@ chord and the replacement before binding the merged action. Popup and floating
 UI actions still route through `tmux popup-toggle`, so pressing the same
 configured key opens and closes the popup.
 
+## Theme Resolver Foundation
+
+Theme settings are resolved against the same project/global axes as
+declarative hooks and project recipe fields:
+
+```text
+<project>/.projmux/config.toml
+~/.config/projmux/config.toml
+```
+
+This foundation exposes the resolver over in-memory structs; parser/editor
+integration for `[theme]` is a later phase. The effective theme resolves as
+project > global > built-in fallback, and each field carries a source label:
+`project`, `global`, or `fallback`.
+
+Resolver schema shape:
+
+```toml
+[theme]
+preset = "projmux-dark"
+background = "#182226"
+surface = "#182226"
+surface_active = "#2c383d"
+foreground = "#d8e0e4"
+muted = "#75848c"
+accent = "#7ac7ad"
+critical = "#ff6b6b"
+warning = "#ffcc66"
+font_family = "Cascadia Mono"
+font_size = 12
+```
+
+Supported presets are `projmux-dark`, `midnight`, `forest`, `rose`, and
+`high-contrast`. A preset fills missing color tokens in its own layer, and
+explicit color tokens override preset values. Missing or `inherit` values fall
+through to the next layer.
+
+When parser support lands, the `[theme]` section will use the shape above.
+Unknown presets and invalid color/font values invalidate only their own theme
+layer and produce resolver warnings; the next source still resolves normally.
+Colors are `#RRGGBB`. Truecolor renderers use exact RGB SGR tokens, and tmux
+surfaces use the stored or nearest xterm 256-color `colourN` mapping. Font
+values are desired terminal profile hints, not universal tmux or ANSI renderer
+tokens.
+
 ## Environment Variables
 
 | Variable | Purpose |
