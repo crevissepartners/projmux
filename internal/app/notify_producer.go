@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -119,6 +120,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	if severity == "" {
 		severity = notify.SeverityInfo
 	}
+	metadata := mergeAttentionNotifyMetadata(in.Metadata, agent, severity)
 	id := strings.TrimSpace(in.ID)
 	if id == "" {
 		id = buildAttentionNotifyID(session, resolvedPane)
@@ -134,7 +136,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 		Text:     text,
 		Severity: severity,
 		Source:   notify.SourceAI,
-		Metadata: in.Metadata,
+		Metadata: metadata,
 		TTL:      ttl,
 		Target: notify.Target{
 			Socket:  socket,
@@ -173,19 +175,31 @@ func buildAttentionNotifyID(session, paneID string) string {
 	return fmt.Sprintf("ai:%s:%s", strings.TrimSpace(session), strings.TrimSpace(paneID))
 }
 
-// composeAttentionReplyText renders the queue-row text. The agent label is
-// lower-cased to match the existing AI desktop notification convention
-// (`claude:` / `codex:`), and the optional topic is appended after a
-// middle-dot separator. The store truncates to 80 runes; we let it do that
-// rather than duplicating the rule here.
+// composeAttentionReplyText renders the queue-row body text. Agent/category
+// information is carried in metadata so rendered notification bodies stay
+// focused on actionable context.
 func composeAttentionReplyText(agent, topic string) string {
-	label := strings.ToLower(strings.TrimSpace(agent))
-	if label == "" {
-		label = "agent"
-	}
-	text := label + ": reply ready"
 	if t := strings.TrimSpace(topic); t != "" {
-		text += " · " + t
+		return t
 	}
-	return text
+	return "Ready"
+}
+
+func mergeAttentionNotifyMetadata(metadata map[string]string, agent, severity string) map[string]string {
+	merged := make(map[string]string, len(metadata)+2)
+	maps.Copy(merged, metadata)
+	if strings.TrimSpace(merged["agent"]) == "" {
+		merged["agent"] = strings.ToLower(strings.TrimSpace(agent))
+	}
+	if strings.TrimSpace(merged["category"]) == "" {
+		if severity == notify.SeverityCritical {
+			merged["category"] = "approval_required"
+		} else {
+			merged["category"] = "response_complete"
+		}
+	}
+	if strings.TrimSpace(merged["state"]) == "" {
+		merged["state"] = "need"
+	}
+	return merged
 }

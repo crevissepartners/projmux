@@ -79,8 +79,8 @@ func TestStatusNotifyExternalEntryRendersInfoBadge(t *testing.T) {
 	}
 }
 
-// AI-source entry whose text begins with `claude:` strips the prefix and
-// renders project, reply-needed state, and agent badges.
+// AI-source entry renders project, reply-needed state, and agent badges from
+// metadata without requiring an agent prefix in the body.
 func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	t.Parallel()
 
@@ -88,9 +88,10 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	store := &stubNotifyStore{listEntries: []notify.Notification{
 		{
 			ID:        "a",
-			Text:      "claude: reply ready · review",
+			Text:      "review needed before shipping",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
 			Session:   "s",
 			Window:    "1",
 			Pane:      "0",
@@ -113,11 +114,11 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 			t.Fatalf("stdout = %q, want badge %q", got, want)
 		}
 	}
-	if strings.Contains(got, "claude:") {
-		t.Fatalf("stdout = %q, agent prefix should have been stripped from text", got)
+	if strings.Contains(got, "claude:") || strings.Contains(got, "reply ready") {
+		t.Fatalf("stdout = %q, body should not include agent/category prefix", got)
 	}
-	if !strings.Contains(got, "reply ready · review") {
-		t.Fatalf("stdout = %q, want body 'reply ready · review'", got)
+	if !strings.Contains(got, "review") {
+		t.Fatalf("stdout = %q, want body 'review'", got)
 	}
 	if strings.Contains(got, "w1.p0") {
 		t.Fatalf("stdout = %q, must not include pane target", got)
@@ -133,9 +134,10 @@ func TestStatusNotifyPaletteSeparatesAttentionAndAI(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify([]notify.Notification{{
 		ID:        "a",
-		Text:      "codex: reply ready · review",
+		Text:      "review needed before shipping",
 		Severity:  notify.SeverityInfo,
 		Source:    notify.SourceAI,
+		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 		Session:   "s",
 		CreatedAt: now,
 	}}, 80, now)
@@ -273,9 +275,10 @@ func fixtureAIEntry(now time.Time) []notify.Notification {
 	return []notify.Notification{
 		{
 			ID:        "a",
-			Text:      "claude: reply ready · review",
+			Text:      "review needed before shipping",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
 			Session:   "s",
 			Window:    "1",
 			Pane:      "0",
@@ -283,9 +286,10 @@ func fixtureAIEntry(now time.Time) []notify.Notification {
 		},
 		{
 			ID:        "b",
-			Text:      "claude: another",
+			Text:      "another",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
 			Session:   "s",
 			Window:    "1",
 			Pane:      "0",
@@ -301,9 +305,10 @@ func TestStatusNotifyLongBodyClipsBeforeDroppingAge(t *testing.T) {
 	entries := []notify.Notification{
 		{
 			ID:        "a",
-			Text:      "claude: reply ready with a very long body that should clip before metadata disappears",
+			Text:      "reply ready with a very long body that should clip before metadata disappears",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
 			Session:   "project",
 			CreatedAt: now,
 		},
@@ -340,7 +345,7 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 		notifyLineOpen + renderNotifyProjectBadge("s"),
 		renderNotifyBadge("NEED", notify.SeverityInfo),
 		renderNotifyAgentBadge("claude"),
-		"reply ready",
+		"review needed before shipping",
 		"2m",
 		"+1",
 	} {
@@ -364,7 +369,7 @@ func TestStatusNotifyWidthTier2ClipsTextBeforeAge(t *testing.T) {
 		notifyLineOpen + renderNotifyProjectBadge("s"),
 		renderNotifyBadge("NEED", notify.SeverityInfo),
 		renderNotifyAgentBadge("claude"),
-		"reply ready",
+		"review",
 		"2m",
 		"+1",
 		"…",

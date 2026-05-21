@@ -376,7 +376,8 @@ precedence over catalog `action` during ingest, including known events such as
 `install` field used by `projmux ai integrate codex`. A runtime `notify`
 override for a known Codex event without a specialized handler, such as
 `PreToolUse` or `PostToolUse`, pushes a short generic in-app row like
-`Codex · PreToolUse · Bash`. Generic rows are queue/sidebar/statusbar only and
+`PreToolUse · Bash` with agent/category metadata. Generic rows are
+queue/sidebar/statusbar only and
 do not dispatch OS desktop notifications, `PROJMUX_NOTIFY_HOOK`, or
 `[hooks.send-noti]`.
 

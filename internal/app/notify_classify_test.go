@@ -21,13 +21,13 @@ func TestClassifyNotifyRowStateMatchesLiveReport(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{
 		{
-			ID: "ai:main:%2", Text: "codex: reply ready",
+			ID: "ai:main:%2", Text: "Ready", Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 			Severity: notify.SeverityInfo, Source: notify.SourceAI,
 			Session: "main", Window: "@1", Pane: "%2",
 			CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 		},
 		{
-			ID: "ai:gone:%9", Text: "claude: reply ready",
+			ID: "ai:gone:%9", Text: "Ready", Metadata: map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
 			Severity: notify.SeverityInfo, Source: notify.SourceAI,
 			Session: "gone", Pane: "%9",
 			CreatedAt: now, ExpiresAt: now.Add(time.Hour),
@@ -110,7 +110,7 @@ func TestClassifyNotifyRowStateFallsBackToLiveWhenLiveUnavailable(t *testing.T) 
 	entry := notify.Notification{
 		ID: "ai:main:%2", Session: "main", Pane: "%2",
 		Source: notify.SourceAI, Severity: notify.SeverityInfo,
-		Text: "codex: reply ready",
+		Text: "Ready", Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 	}
 	if got := classifyNotifyRowState(entry, nil); got != notifyDisplayLive {
 		t.Fatalf("classify with nil live map = %v, want live", got)
@@ -175,7 +175,8 @@ func TestNotifySidebarLabelDimsStaleAndGoneText(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entry := notify.Notification{
 		ID:        "ai:gone:%2",
-		Text:      "codex: reply ready",
+		Text:      "Ready",
+		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 		Severity:  notify.SeverityInfo,
 		Source:    notify.SourceAI,
 		Session:   "main",
@@ -191,7 +192,7 @@ func TestNotifySidebarLabelDimsStaleAndGoneText(t *testing.T) {
 	if !strings.Contains(live, " NEED ") {
 		t.Fatalf("live label = %q, want NEED badge", live)
 	}
-	if strings.Contains(live, notifySidebarDimOpen+"reply ready") {
+	if strings.Contains(live, notifySidebarDimOpen+"Ready") {
 		t.Fatalf("live label = %q, must not dim its text", live)
 	}
 	if !strings.Contains(stale, " STALE ") || !strings.Contains(stale, notifySidebarDimOpen) {
@@ -210,8 +211,8 @@ func TestNotifySidebarEntriesWithLivePassesClassification(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{
-		{ID: "ai:live:%1", Text: "claude: reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "live", Pane: "%1", CreatedAt: now},
-		{ID: "ai:stale:%2", Text: "codex: reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "stale", Pane: "%2", CreatedAt: now},
+		{ID: "ai:live:%1", Text: "Ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "claude", "category": "response_complete", "state": "need"}, Session: "live", Pane: "%1", CreatedAt: now},
+		{ID: "ai:stale:%2", Text: "Ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"}, Session: "stale", Pane: "%2", CreatedAt: now},
 	}
 	liveByID := map[string]notifyLivePane{
 		"ai:live:%1": {ID: "ai:live:%1", Session: "live", Pane: "%1", ShouldQueue: true},
@@ -238,7 +239,8 @@ func TestFormatStatusNotifyWithLiveSubstitutesStaleBadge(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{{
 		ID:        "ai:gone:%9",
-		Text:      "codex: reply ready",
+		Text:      "Ready",
+		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 		Severity:  notify.SeverityInfo,
 		Source:    notify.SourceAI,
 		Session:   "gone",
@@ -289,7 +291,8 @@ func TestFormatStatusNotifyLiveEntryKeepsExistingNeedBadge(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{{
 		ID:        "ai:s:%1",
-		Text:      "claude: reply ready",
+		Text:      "Ready",
+		Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
 		Severity:  notify.SeverityInfo,
 		Source:    notify.SourceAI,
 		Session:   "s",
@@ -339,7 +342,8 @@ func TestStatusbarClickNotifyStaleHeadSkipsFocus(t *testing.T) {
 	store := &stubNotifyStore{listEntries: []notify.Notification{
 		{
 			ID:        "ai:main:%2",
-			Text:      "codex: reply ready",
+			Text:      "Ready",
+			Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 			Severity:  notify.SeverityCritical,
 			Source:    notify.SourceAI,
 			Session:   "main",
@@ -445,11 +449,12 @@ func TestStatusbarClickNotifyEmptyLiveResultFallsBackToFocus(t *testing.T) {
 		},
 	}
 	store := &stubNotifyStore{listEntries: []notify.Notification{{
-		ID:      "ai:e2e-alpha:%0",
-		Text:    "codex: reply ready · docker e2e",
-		Source:  notify.SourceAI,
-		Session: "e2e-alpha",
-		Pane:    "%0",
+		ID:       "ai:e2e-alpha:%0",
+		Text:     "docker e2e",
+		Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
+		Source:   notify.SourceAI,
+		Session:  "e2e-alpha",
+		Pane:     "%0",
 	}}}
 	cmd := newStatusbarTestCommand(runner, store)
 

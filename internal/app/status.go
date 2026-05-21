@@ -761,7 +761,11 @@ func notifyStateLabelFor(n notify.Notification, text string, display notifyRowDi
 		return "CRIT"
 	}
 	normalized := strings.ToLower(strings.TrimSpace(text))
-	if n.Source == notify.SourceAI && (strings.Contains(normalized, "reply ready") ||
+	category := strings.ToLower(strings.TrimSpace(n.Metadata["category"]))
+	state := strings.ToLower(strings.TrimSpace(n.Metadata["state"]))
+	if n.Source == notify.SourceAI && (state == "need" ||
+		category == "approval_required" || category == "input_required" ||
+		strings.Contains(normalized, "reply ready") ||
 		strings.Contains(normalized, "needs reply") ||
 		strings.Contains(normalized, "approval needed") ||
 		strings.Contains(normalized, "waiting for input")) {
@@ -822,6 +826,16 @@ func splitAgentPrefix(n notify.Notification) (string, string) {
 	text := strings.TrimSpace(n.Text)
 	if n.Source != notify.SourceAI {
 		return "", text
+	}
+	if parts := parseAITextNotificationParts(text); parts.Agent != "" {
+		agent := strings.ToLower(parts.Agent)
+		if parts.Detail == "" {
+			return agent, ""
+		}
+		return agent, parts.Detail
+	}
+	if agent := strings.ToLower(strings.TrimSpace(n.Metadata["agent"])); isKnownAgent(agent) {
+		return agent, text
 	}
 	idx := strings.Index(text, ":")
 	if idx <= 0 {

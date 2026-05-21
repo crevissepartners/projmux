@@ -169,9 +169,11 @@ stdin receives one JSON object:
   "topic": "worker loop",
   "pane": "%9",
   "session": "main",
-  "message": "claude: reply ready · worker loop",
+  "message": "worker loop",
   "metadata": {
-    "agent": "claude"
+    "agent": "claude",
+    "category": "response_complete",
+    "state": "need"
   },
   "created_at": "2026-05-12T02:03:04Z"
 }
@@ -346,9 +348,9 @@ events, so `Stop` or `PermissionRequest` can be made state-only or quiet
 without changing which hook commands are installed. When a known Codex event
 without a specialized handler, such as `PreToolUse` or `PostToolUse`, is set to
 runtime `notify`, projmux pushes a generic in-app notify row such as
-`Codex · PreToolUse · Bash`. That generic path is queue/sidebar/statusbar only:
-it does not dispatch `[hooks.send-noti]`, `PROJMUX_NOTIFY_HOOK`, `notify-send`,
-or Windows toast.
+`PreToolUse · Bash` with agent/category metadata. That generic path is
+queue/sidebar/statusbar only: it does not dispatch `[hooks.send-noti]`,
+`PROJMUX_NOTIFY_HOOK`, `notify-send`, or Windows toast.
 Generic metadata is limited to safe summary fields such as provider, event,
 tool, cwd, thread, session, turn, and model; raw payloads and tool input are
 not stored.

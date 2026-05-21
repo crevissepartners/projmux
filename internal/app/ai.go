@@ -302,10 +302,14 @@ func (c *aiCommand) notifyAIWithInput(paneID string, in attentionNotifyInput) er
 	if strings.TrimSpace(in.Text) == "" {
 		return c.notifyAI(paneID)
 	}
-	return c.notifyAIText(paneID, in.Text, in.Severity, in.Force)
+	return c.notifyAITextWithMetadata(paneID, in.Text, in.Severity, in.Force, in.Metadata)
 }
 
 func (c *aiCommand) notifyAIText(paneID, text, severity string, force bool) error {
+	return c.notifyAITextWithMetadata(paneID, text, severity, force, nil)
+}
+
+func (c *aiCommand) notifyAITextWithMetadata(paneID, text, severity string, force bool, metadata map[string]string) error {
 	paneID = strings.TrimSpace(paneID)
 	text = strings.TrimSpace(text)
 	if paneID == "" || text == "" {
@@ -316,7 +320,7 @@ func (c *aiCommand) notifyAIText(paneID, text, severity string, force bool) erro
 		c.recordAINotification(paneID, key)
 		return nil
 	}
-	notification := c.aiTextNotification(paneID, text, severity)
+	notification := c.aiTextNotificationWithMetadata(paneID, text, severity, metadata)
 	if err := c.notificationNotifier().Notify(notification); err != nil {
 		return nil
 	}
@@ -325,13 +329,26 @@ func (c *aiCommand) notifyAIText(paneID, text, severity string, force bool) erro
 }
 
 func (c *aiCommand) aiTextNotification(paneID, text, severity string) aiNotification {
+	return c.aiTextNotificationWithMetadata(paneID, text, severity, nil)
+}
+
+func (c *aiCommand) aiTextNotificationWithMetadata(paneID, text, severity string, metadata map[string]string) aiNotification {
 	sessionName := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#S")
 	windowName := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#W")
 	panePath := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_current_path}")
-	agent := aiNotificationTextAgent(text)
+	agent := aiNotificationTextAgentWithMetadata(text, metadata)
+	summary := strings.TrimSpace(text)
+	bodyTitle := ""
+	if parts := parseAITextNotificationParts(text); parts.Category != "" {
+		summary = joinAINotifyText(parts.Agent, titleCaseAINotifyCategory(parts.Category))
+		bodyTitle = parts.Detail
+	} else if category := aiNotificationMetadataCategory(metadata); category != "" {
+		summary = joinAINotifyText(defaultString(agent, "AI"), titleCaseAINotifyCategory(category))
+		bodyTitle = text
+	}
 	return aiNotification{
-		Summary:  strings.TrimSpace(text),
-		Body:     aiNotificationBody("", aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
+		Summary:  summary,
+		Body:     aiNotificationBody(bodyTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
 		Urgency:  aiOSNotificationUrgency(severity),
 		ExpireMS: c.notificationExpireMS(),
 		AppName:  desktopAppID,
@@ -2174,10 +2191,7 @@ func aiSummaryForKind(kind, agentName, topic string) string {
 		summary = "Input required"
 	}
 	if strings.TrimSpace(agentName) != "" {
-		summary = strings.TrimSpace(agentName) + " " + summary
-	}
-	if strings.TrimSpace(topic) != "" {
-		summary += " · " + topic
+		summary = joinAINotifyText(strings.TrimSpace(agentName), titleCaseAINotifyCategory(summary))
 	}
 	return summary
 }
@@ -2187,6 +2201,16 @@ func aiOSNotificationUrgency(string) string {
 }
 
 func aiNotificationTextAgent(text string) string {
+	return aiNotificationTextAgentWithMetadata(text, nil)
+}
+
+func aiNotificationTextAgentWithMetadata(text string, metadata map[string]string) string {
+	if agent := aiNotificationMetadataAgent(metadata); agent != "" {
+		return agent
+	}
+	if parts := parseAITextNotificationParts(text); parts.Agent != "" {
+		return parts.Agent
+	}
 	switch {
 	case strings.HasPrefix(strings.TrimSpace(text), "Codex"):
 		return "Codex"
@@ -2195,6 +2219,68 @@ func aiNotificationTextAgent(text string) string {
 	default:
 		return "AI"
 	}
+}
+
+func aiNotificationMetadataAgent(metadata map[string]string) string {
+	switch strings.ToLower(strings.TrimSpace(metadata["agent"])) {
+	case "codex":
+		return "Codex"
+	case "claude":
+		return "Claude"
+	default:
+		return ""
+	}
+}
+
+func aiNotificationMetadataCategory(metadata map[string]string) string {
+	category := strings.TrimSpace(metadata["category"])
+	if category == "" {
+		return ""
+	}
+	return strings.ReplaceAll(category, "_", " ")
+}
+
+type aiTextNotificationParts struct {
+	Agent    string
+	Category string
+	Detail   string
+}
+
+func parseAITextNotificationParts(text string) aiTextNotificationParts {
+	fields := strings.Split(strings.TrimSpace(text), " · ")
+	if len(fields) < 2 {
+		return aiTextNotificationParts{}
+	}
+	agent := strings.TrimSpace(fields[0])
+	if !isKnownAgent(strings.ToLower(agent)) {
+		return aiTextNotificationParts{}
+	}
+	category := strings.TrimSpace(fields[1])
+	if !isFixedAINotificationCategory(category) {
+		return aiTextNotificationParts{}
+	}
+	return aiTextNotificationParts{
+		Agent:    agent,
+		Category: category,
+		Detail:   strings.TrimSpace(strings.Join(fields[2:], " · ")),
+	}
+}
+
+func isFixedAINotificationCategory(category string) bool {
+	switch strings.ToLower(strings.TrimSpace(category)) {
+	case "approval required", "response complete", "input required":
+		return true
+	default:
+		return false
+	}
+}
+
+func titleCaseAINotifyCategory(category string) string {
+	words := strings.Fields(strings.ToLower(strings.TrimSpace(category)))
+	for i, word := range words {
+		words[i] = strings.ToUpper(word[:1]) + word[1:]
+	}
+	return strings.Join(words, " ")
 }
 
 func aiProjectName(path string) string {
@@ -2207,7 +2293,7 @@ func aiProjectName(path string) string {
 
 func aiNotificationBody(title, project, branch, sessionName, windowName string) string {
 	context := displayAITopic(title)
-	if isGenericAITopic(context) {
+	if isGenericAITopic(context) || aiReplyKindForTitle(context) != "response_ready" {
 		context = ""
 	}
 	projectPart := ""
@@ -2219,23 +2305,14 @@ func aiNotificationBody(title, project, branch, sessionName, windowName string) 
 	case branch != "":
 		projectPart = branch
 	}
-	location := ""
-	if sessionName != "" || windowName != "" {
-		location = sessionName + ":" + windowName
-	}
 	switch {
 	case context != "" && projectPart != "":
-		return "Review pending: " + context + " · " + projectPart
+		return context + " · " + projectPart
 	case context != "":
-		return "Review pending: " + context
-	case projectPart != "" && location != "":
-		return "Review pending: " + projectPart + " · " + location
+		return context
 	case projectPart != "":
-		return "Review pending: " + projectPart
+		return projectPart
 	default:
-		if location != "" {
-			return "Review pending: " + location
-		}
 		return ""
 	}
 }

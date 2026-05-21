@@ -282,9 +282,10 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 		listEntries: []notify.Notification{
 			{
 				ID:        "abc",
-				Text:      "codex: reply ready",
+				Text:      "Ready",
 				Severity:  notify.SeverityWarn,
 				Source:    notify.SourceAI,
+				Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 				Socket:    "projmux",
 				Session:   "main",
 				Window:    "1",
@@ -337,7 +338,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(labelLines) != 2 {
 		t.Fatalf("sidebar label = %q, want two-line card", entry.Label)
 	}
-	if labelLines[0] != "reply ready" {
+	if labelLines[0] != "Ready" {
 		t.Fatalf("sidebar first line = %q, want notification text", labelLines[0])
 	}
 	if meta := labelLines[1]; !strings.Contains(meta, " age 30s ") || !strings.Contains(meta, " main ") || !strings.Contains(meta, " codex ") || !strings.Contains(meta, " WARN ") || !strings.Contains(meta, "window 1") || !strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
@@ -443,9 +444,10 @@ func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{{
 			ID:        "abc",
-			Text:      "codex: deploy ok",
+			Text:      "deploy ok",
 			Severity:  notify.SeverityWarn,
 			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "codex"},
 			Socket:    "projmux",
 			Session:   "main",
 			Window:    "1",
@@ -793,8 +795,8 @@ func TestNotifyListSidebarAAckRefreshesLiveStateEachLoop(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{
-			{ID: "ai:main:%2", Text: "codex: first", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%2", CreatedAt: now},
-			{ID: "ai:main:%3", Text: "codex: second", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%3", CreatedAt: now},
+			{ID: "ai:main:%2", Text: "first", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex"}, Session: "main", Window: "@1", Pane: "%2", CreatedAt: now},
+			{ID: "ai:main:%3", Text: "second", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex"}, Session: "main", Window: "@1", Pane: "%3", CreatedAt: now},
 		},
 	}
 	picker := &recordingNotifyPicker{
@@ -951,9 +953,10 @@ func TestNotifyListLiveJSONExplainsQueueAndLiveStates(t *testing.T) {
 		listEntries: []notify.Notification{
 			{
 				ID:        "ai:main:%2",
-				Text:      "codex: reply ready · topic",
+				Text:      "topic",
 				Severity:  notify.SeverityInfo,
 				Source:    notify.SourceAI,
+				Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 				Session:   "main",
 				Window:    "@1",
 				Pane:      "%2",
