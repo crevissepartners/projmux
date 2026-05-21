@@ -286,6 +286,24 @@ func PresetNames() []string {
 	return names
 }
 
+// PresetColorHex returns the truecolor hex value for a built-in preset token.
+func PresetColorHex(name string, token ColorToken) (string, bool) {
+	p, ok := builtinPresets[strings.ToLower(strings.TrimSpace(name))]
+	if !ok {
+		return "", false
+	}
+	color, ok := p.Colors[token]
+	if !ok {
+		return "", false
+	}
+	return color.Hex, true
+}
+
+// NormalizeHexColor trims and normalizes a #RRGGBB value for storage.
+func NormalizeHexColor(value string) (string, bool) {
+	return normalizeHexColor(value)
+}
+
 // ResolveTheme computes project > global > fallback effective theme values.
 func ResolveTheme(global, project ThemeConfig) EffectiveTheme {
 	layers := []layerInput{

@@ -82,6 +82,9 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsSectionProjectConfig:       {Name: "Project recipe", Axis: settingsAxisProject},
 	settingsSectionProjectTrust:        {Name: "Trust", Axis: settingsAxisProject},
 	settingsSectionEffectiveMerge:      {Name: "Effective merge view", Axis: settingsAxisProject},
+	settingsSectionGlobalTheme:         {Name: "Theme", Axis: settingsAxisGlobal},
+	settingsSectionProjectTheme:        {Name: "Theme override", Axis: settingsAxisProject},
+	settingsSectionEffectiveTheme:      {Name: "Effective theme", Axis: settingsAxisProject},
 	settingsSectionProjectSessionState: {Name: "Session State", Axis: settingsAxisProject},
 	settingsSectionAI:                  {Name: "AI Settings", Axis: settingsAxisGlobal},
 	settingsSectionNotifications:       {Name: "Notifications", Axis: settingsAxisGlobal},
@@ -146,6 +149,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixSessionState, settingsEntryMeta{Name: "Session State", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixStatusbar, settingsEntryMeta{Name: "Appearance", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixSwitch, settingsEntryMeta{Name: "Pinned Projects", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixTheme, settingsEntryMeta{Name: "Theme", Axis: settingsAxisBoth}},
 	{settingsActionPrefixUpdate, settingsEntryMeta{Name: "About", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixWorkdir, settingsEntryMeta{Name: "Workdirs", Axis: settingsAxisGlobal}},
 }
@@ -173,6 +177,9 @@ const (
 	settingsSectionProjectConfig           = "section:project-config"
 	settingsSectionProjectTrust            = "section:project-trust"
 	settingsSectionEffectiveMerge          = "section:effective-merge"
+	settingsSectionGlobalTheme             = "section:theme-global"
+	settingsSectionProjectTheme            = "section:theme-project"
+	settingsSectionEffectiveTheme          = "section:theme-effective"
 	settingsSectionProjectSessionState     = "section:project-sessionstate"
 	settingsSectionKeybindings             = "section:keybindings"
 	settingsSectionProject                 = "section:project-picker"
@@ -200,6 +207,7 @@ const (
 	settingsActionPrefixSessionState       = "sessionstate:"
 	settingsActionPrefixStatusbar          = "statusbar-decoration:"
 	settingsActionPrefixSwitch             = "switch:"
+	settingsActionPrefixTheme              = "theme:"
 	settingsActionPrefixUpdate             = "update:"
 	settingsActionPrefixWorkdir            = "workdir:"
 	settingsActionPrefixQuit               = "quit:"
@@ -323,6 +331,15 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	if section == settingsSectionEffectiveMerge {
 		return c.runEffectiveMergeSection(stdout, stderr)
 	}
+	if section == settingsSectionGlobalTheme {
+		return c.runThemeLayerSection(themeLayerGlobal, stdout, stderr)
+	}
+	if section == settingsSectionProjectTheme {
+		return c.runThemeLayerSection(themeLayerProject, stdout, stderr)
+	}
+	if section == settingsSectionEffectiveTheme {
+		return c.runEffectiveThemeSection(stdout, stderr)
+	}
 	if section == settingsSectionProjectSessionState {
 		return c.runProjectSessionStateSection(stdout, stderr)
 	}
@@ -374,6 +391,11 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
 	options = c.localizeSettingsOptions(options)
 	options = c.withSettingsScopeTabs(options)
+	if options.Theme == nil {
+		if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, c.resolveSettingsProjectContext().Path); err == nil {
+			options = source.pickerCompatOptions(options)
+		}
+	}
 	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, options)
 	if err != nil {
 		if isNoSelectionExit(err) {
@@ -563,6 +585,10 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 			Value: settingsSectionStatusbar,
 		},
 		{
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Theme", "global preset, color tokens, and font hints"),
+			Value: settingsSectionGlobalTheme,
+		},
+		{
 			Label: c.sessionStateSettingsRootLabelLocale(locale),
 			Value: settingsSectionSessionState,
 		},
@@ -688,6 +714,14 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 				Label: settingsRootLabelDim("Effective merge view", "disabled - no project context"),
 				Value: settingsNoopValue,
 			},
+			{
+				Label: settingsRootLabelDim("Theme override", "disabled - no project context"),
+				Value: settingsNoopValue,
+			},
+			{
+				Label: settingsRootLabelDim("Effective theme", "disabled - no project context"),
+				Value: settingsNoopValue,
+			},
 		}
 	}
 
@@ -707,6 +741,14 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 			Label:     settingsRootLabel(settingsGlyphOpen, "Project recipe", "declare env, kube, startup"),
 			Value:     settingsSectionProjectConfig,
 			SearchKey: "Project recipe config.toml project config env kube startup",
+		},
+		{
+			Label: settingsRootLabel(settingsGlyphOpen, "Theme override", "project preset, colors, and inherit global fields"),
+			Value: settingsSectionProjectTheme,
+		},
+		{
+			Label: settingsRootLabel(settingsGlyphOpen, "Effective theme", "final resolved values with source labels"),
+			Value: settingsSectionEffectiveTheme,
 		},
 		{
 			Label: settingsRootLabel(settingsGlyphOpen, "Effective merge view", "global + project merge with source labels"),

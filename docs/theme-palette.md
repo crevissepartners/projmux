@@ -15,14 +15,14 @@ back to the built-in values from `internal/theme/palette.go`.
 - Tmux statusbar and generated-config color tokens.
 - Settings/action/state/trust/attention helper tokens.
 
-Phase 2 applies resolver-backed background/foreground colors to the native
+Renderer adapters apply resolver-backed background/foreground colors to native
 picker frame chrome and to tmux status/window background tokens when an
 `EffectiveTheme` is supplied by the caller. Fallback-sourced fields still
 render through the historical constants so built-in default output remains
-byte-identical. The app render wrappers now share one effective-theme source,
-but runtime config files still do not populate it because `[theme]` parser and
-loader support has not landed. This phase does not add a Settings editor,
-import/export themes, or reselect the Visual palette baseline colors.
+byte-identical. Settings and native project picker surfaces load `[theme]`
+values from global and project config through the shared effective-theme source.
+Theme marketplace/import/export and Visual palette reselection remain out of
+scope.
 
 ## Resolver Token Inventory
 
