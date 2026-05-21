@@ -626,10 +626,13 @@ func TestStatusbarUsagePopupColorsThresholdsAndStaleSync(t *testing.T) {
 	}, now, "/usr/local/bin/projmux")
 
 	if !strings.Contains(popup.Command, "\x1b[38;5;214m") {
-		t.Fatalf("popup missing amber ANSI for stale sync / >=80%% usage: %q", popup.Command)
+		t.Fatalf("popup missing amber ANSI for >=80%% usage: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, "\x1b[38;5;196m") {
+	if !strings.Contains(popup.Command, "\x1b[38;5;160m") {
 		t.Fatalf("popup missing red ANSI for >=95%% usage: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, projmuxpicker.MutedStart) || !strings.Contains(popup.Command, "2m ago") {
+		t.Fatalf("popup missing muted stale sync: %q", popup.Command)
 	}
 	if !strings.Contains(popup.Command, "2m ago") {
 		t.Fatalf("popup missing sync age: %q", popup.Command)

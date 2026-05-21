@@ -84,14 +84,14 @@ func TestBarColorForPctRamp(t *testing.T) {
 		pct  float64
 		want string
 	}{
-		{0, "green"},
-		{49, "green"},
-		{50, "yellow"},
-		{79, "yellow"},
-		{80, "red"},
-		{100, "red"},
-		{101, "red,bold"},
-		{300, "red,bold"},
+		{0, "colour72"},
+		{79, "colour72"},
+		{80, "colour214"},
+		{94.9, "colour214"},
+		{95, "colour160"},
+		{100, "colour160"},
+		{101, "colour160,bold"},
+		{300, "colour160,bold"},
 	}
 	for _, tc := range cases {
 		if got := BarColorForPct(tc.pct); got != tc.want {
@@ -104,8 +104,8 @@ func TestRenderColoredBarHasEscapes(t *testing.T) {
 	t.Parallel()
 
 	// 50% → 5 filled + 5 empty + brackets + 2 color escapes.
-	out := RenderColoredBar(50, "yellow", BarEmptyColor)
-	if !strings.HasPrefix(out, "[#[fg=yellow]") {
+	out := RenderColoredBar(50, "colour72", BarEmptyColor)
+	if !strings.HasPrefix(out, "[#[fg=colour72]") {
 		t.Fatalf("missing fill color prefix: %q", out)
 	}
 	if !strings.Contains(out, "#[fg="+BarEmptyColor+"]") {

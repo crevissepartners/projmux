@@ -127,7 +127,36 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	}
 }
 
-func TestStatusNotifyWarnEntryRendersYellowBadge(t *testing.T) {
+func TestStatusNotifyPaletteSeparatesAttentionAndAI(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	out := formatStatusNotify([]notify.Notification{{
+		ID:        "a",
+		Text:      "codex: reply ready · review",
+		Severity:  notify.SeverityInfo,
+		Source:    notify.SourceAI,
+		Session:   "s",
+		CreatedAt: now,
+	}}, 80, now)
+
+	for _, want := range []string{
+		"#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionFg + "]",
+		"#[bg=" + tmuxAccentAttentionStrongBg + ",fg=colour16,bold] NEED ",
+		"#[bg=" + tmuxAccentAIBg + ",fg=colour16,bold] codex ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status notify palette output = %q, want %q", out, want)
+		}
+	}
+	for _, notWant := range []string{"brightcyan", "bg=colour45", "bg=colour29", "bg=colour51"} {
+		if strings.Contains(out, notWant) {
+			t.Fatalf("status notify palette output = %q, must not use action/legacy color %q", out, notWant)
+		}
+	}
+}
+
+func TestStatusNotifyWarnEntryRendersAmberBadge(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{listEntries: []notify.Notification{
@@ -140,7 +169,7 @@ func TestStatusNotifyWarnEntryRendersYellowBadge(t *testing.T) {
 	}
 	got := stdout.String()
 	if !strings.HasPrefix(got, notifyLineOpen+renderNotifyProjectBadge("ops")) || !strings.Contains(got, renderNotifyBadge("WARN", notify.SeverityWarn)) {
-		t.Fatalf("stdout = %q, want project + yellow WARN badges", got)
+		t.Fatalf("stdout = %q, want project + amber WARN badges", got)
 	}
 }
 

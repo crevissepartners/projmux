@@ -91,8 +91,8 @@ not inherit notification styling.
 `usage` opens a native-framed detail HUD for the compact usage bar. It reads
 the cached usage state in-process, keeps the existing `projmux usage` CLI
 output shape unchanged for external consumers, aligns model/window rows with
-right-aligned numeric values, dims unavailable values, and colors rows at the
-same alert thresholds as the popup: amber at 80% and red at 95%.
+right-aligned numeric values, dims unavailable values, keeps stale sync/age
+metadata muted, and colors only threshold values: amber at 80% and red at 95%.
 Session State inspection lives under `Projects > Sessions > State`; global
 Settings > Session State is settings-only and the statusbar no longer exposes a
 duplicate State button.
@@ -105,10 +105,12 @@ popup command prints one quoted payload and waits for a plain Enter read so it
 does not leave terminal key state behind. The usage popup uses the same
 single-payload print and plain Enter-close pattern. It shows the authoritative
 last collect timestamp when present, falls back to the cache file mtime when
-needed, and colors that sync line amber once it is more than 60 seconds old.
+needed, and keeps stale sync metadata muted instead of escalating it to a
+warning color.
 The notification HUD detail surface opens the right-side notification popup
-through the notify sidebar action, with newest-first rows and an amber title. When notification
-icon decoration is `symbol` or `emoji`, the bell appears before the title text.
+through the notify sidebar action, with newest-first rows and an
+attention-tinted title. When notification icon decoration is `symbol` or
+`emoji`, the bell appears before the title text.
 Selecting a row still focuses and acknowledges that notification. Internal
 notify commands use `NotifySidebar:*` IDs in `keymap.toml`; runtime footers
 avoid hardcoded key guides so custom aliases do not make the visible copy

@@ -317,7 +317,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Prompt, "Notify > "; got != want {
 		t.Fatalf("picker prompt = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Title, "\x1b[1;38;5;220mPending Notifications\x1b[0m"; got != want {
+	if got, want := picker.options.Title, "\x1b[1;38;5;204mPending Notifications\x1b[0m"; got != want {
 		t.Fatalf("picker title = %q, want %q", got, want)
 	}
 	if got, want := picker.options.Header, "Newest first"; got != want {
@@ -370,9 +370,9 @@ func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 		decoration string
 		wantTitle  string
 	}{
-		{name: "off", decoration: "off", wantTitle: "\x1b[1;38;5;220mPending Notifications\x1b[0m"},
-		{name: "symbol", decoration: "symbol", wantTitle: "\x1b[1;38;5;220m Pending Notifications\x1b[0m"},
-		{name: "emoji", decoration: "emoji", wantTitle: "\x1b[1;38;5;220m🔔 Pending Notifications\x1b[0m"},
+		{name: "off", decoration: "off", wantTitle: "\x1b[1;38;5;204mPending Notifications\x1b[0m"},
+		{name: "symbol", decoration: "symbol", wantTitle: "\x1b[1;38;5;204m Pending Notifications\x1b[0m"},
+		{name: "emoji", decoration: "emoji", wantTitle: "\x1b[1;38;5;204m🔔 Pending Notifications\x1b[0m"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

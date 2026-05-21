@@ -315,7 +315,7 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		compatOptions := intpickercompat.Options{
 			UI:     "notify-sidebar",
 			Read0:  true,
-			Title:  "\x1b[1;38;5;220m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
+			Title:  "\x1b[1;38;5;204m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
 			Prompt: "Notify > ",
 			Header: "Newest first",
 			Footer: "Newest first. Critical notifications are kept when clearing non-critical rows.",
@@ -486,8 +486,8 @@ const (
 	notifySidebarReset   = "\x1b[0m"
 	notifySidebarDimOpen = "\x1b[38;5;245m"
 	notifySidebarProject = "\x1b[1;38;5;231;48;5;90m"
-	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;45m"
-	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;220m"
+	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;204m"
+	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;214m"
 	notifySidebarCrit    = "\x1b[1;38;5;231;48;5;160m"
 	// Stale/gone badges share a muted grey palette so the ack-only state is
 	// visually distinct from active rows without competing for attention.
@@ -503,7 +503,7 @@ func notifySidebarAge(age string) string {
 	if age == "" {
 		age = "0s"
 	}
-	return "\x1b[1;38;5;45m age " + age + " " + notifySidebarReset
+	return "\x1b[1;38;5;204m age " + age + " " + notifySidebarReset
 }
 
 func notifySidebarProjectBadge(project string) string {
@@ -557,11 +557,11 @@ func notifySidebarAgentBadge(agent string) string {
 func notifySidebarAgentOpen(agent string) string {
 	switch strings.ToLower(strings.TrimSpace(agent)) {
 	case "claude":
-		return "\x1b[1;38;5;16;48;5;208m"
+		return "\x1b[1;38;5;16;48;5;37m"
 	case "codex":
-		return "\x1b[1;38;5;231;48;5;33m"
+		return "\x1b[1;38;5;16;48;5;37m"
 	default:
-		return "\x1b[1;38;5;16;48;5;51m"
+		return "\x1b[1;38;5;16;48;5;37m"
 	}
 }
 

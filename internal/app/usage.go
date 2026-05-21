@@ -391,16 +391,14 @@ const (
 	statusDefaultReset   = "#[default]"
 )
 
-// Age-indicator colour thresholds for the Claude HUD block. The age
-// indicator carries the staleness signal (it replaces the legacy `~` /
-// `~~` markers) so its colour ramps with the staleness level:
+// Age-indicator colour threshold for the Claude HUD block. The age indicator
+// carries the staleness signal (it replaces the legacy `~` / `~~` markers)
+// and stays muted so usage threshold warning/critical colors remain reserved:
 //
-//   - age <  ageWarnAfter (1h)   → dim grey, informational
-//   - age >= ageWarnAfter (1h)   → dim yellow, attention
-//   - age >= ageAlertAfter (6h)  → bold red, alert
+//   - age <  ageWarnAfter (1h) → dim grey
+//   - age >= ageWarnAfter (1h) → muted grey
 const (
-	ageWarnAfter  = 1 * time.Hour
-	ageAlertAfter = 6 * time.Hour
+	ageWarnAfter = 1 * time.Hour
 )
 
 // modelDisplay is the in-memory representation of a single model's
@@ -502,7 +500,7 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 			continue
 		}
 		var b strings.Builder
-		b.WriteString("#[fg=cyan,bold]")
+		b.WriteString("#[fg=" + tmuxAccentAIFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		if withAge {
@@ -543,7 +541,7 @@ func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
 			continue
 		}
 		var b strings.Builder
-		b.WriteString("#[fg=cyan,bold]")
+		b.WriteString("#[fg=" + tmuxAccentAIFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		b.WriteByte(' ')
@@ -642,12 +640,11 @@ func formatLastSyncAge(d time.Duration) string {
 // renderAgeIndicator returns the colored `(<age>)` block injected
 // between the model label and the 5h bar. Returns "" when the age is
 // fresh (<1m), the model opted out (Codex), or the now/lastSync clock
-// is missing. Colours ramp with staleness so the user can spot a
-// stagnant cache at a glance:
+// is missing. Staleness stays muted here so warning/critical colors are
+// reserved for usage thresholds:
 //
-//   - <1h:  dim grey  (#[fg=colour245])
-//   - 1-6h: dim yellow (#[fg=yellow])
-//   - >=6h: bold red   (#[fg=red,bold])
+//   - <1h:  dim grey (#[fg=colour245])
+//   - >=1h: muted grey (#[fg=colour244])
 func renderAgeIndicator(m modelDisplay, now time.Time) string {
 	if !m.showAge || now.IsZero() || m.lastSync.IsZero() {
 		return ""
@@ -658,11 +655,8 @@ func renderAgeIndicator(m modelDisplay, now time.Time) string {
 		return ""
 	}
 	color := "colour245"
-	switch {
-	case age >= ageAlertAfter:
-		color = "red,bold"
-	case age >= ageWarnAfter:
-		color = "yellow"
+	if age >= ageWarnAfter {
+		color = "colour244"
 	}
 	return fmt.Sprintf("#[fg=%s](%s)%s", color, text, statusDefaultReset)
 }
