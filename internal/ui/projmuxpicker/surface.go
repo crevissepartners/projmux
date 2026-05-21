@@ -82,10 +82,22 @@ func PromptLineWithCursor(prompt, query string, cursor, matches, total, cols int
 	return PromptLineWithRenderedQuery(prompt, query, QueryWithCursor(query, cursor), matches, total, cols)
 }
 
+func PromptLineWithCursorLabel(searchLabel, prompt, query string, cursor, matches, total, cols int) string {
+	return PromptLineWithRenderedQueryLabel(searchLabel, prompt, query, QueryWithCursor(query, cursor), matches, total, cols)
+}
+
 func PromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
+	return PromptLineWithRenderedQueryLabel("Search", prompt, query, renderedQuery, matches, total, cols)
+}
+
+func PromptLineWithRenderedQueryLabel(searchLabel, prompt, query, renderedQuery string, matches, total, cols int) string {
 	prompt = strings.TrimRight(prompt, " ")
 	input := strings.TrimRight(prompt+" "+renderedQuery, " ")
-	line := MutedStart + "Search" + Reset + " " + input
+	searchLabel = strings.TrimSpace(searchLabel)
+	if searchLabel == "" {
+		searchLabel = "Search"
+	}
+	line := MutedStart + searchLabel + Reset + " " + input
 	info := strconv.Itoa(matches)
 	if query != "" || matches != total {
 		info = fmt.Sprintf("%d/%d", matches, total)

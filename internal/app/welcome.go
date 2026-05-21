@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -29,11 +30,12 @@ func (c *shellCommand) promptWelcome(stdout, stderr io.Writer) (bool, error) {
 	status, hasStatus := c.welcomeUpdateStatus()
 	skipped := hasStatus && c.updatePromptSkipped(status)
 	updateAvailable := hasStatus && shouldPromptShellUpdate(status)
-	if err := writeShellWelcome(stdout, current, status, hasStatus, updateAvailable, skipped, c.welcomeWidth()); err != nil {
+	locale := appLocale(c.env)
+	if err := writeShellWelcome(stdout, current, status, hasStatus, updateAvailable, skipped, c.welcomeWidth(), locale); err != nil {
 		return hasStatus, err
 	}
 
-	action, err := c.readWelcomeAction(stdout, updateAvailable, skipped)
+	action, err := c.readWelcomeAction(stdout, updateAvailable, skipped, locale)
 	if err != nil {
 		return true, nil
 	}
@@ -71,12 +73,12 @@ func (c *shellCommand) welcomeUpdateStatus() (updateStatus, bool) {
 	return resolveWelcomeUpdateStatus(c.update)
 }
 
-func (c *shellCommand) readWelcomeAction(stdout io.Writer, updateAvailable, updateSkipped bool) (string, error) {
-	prompt := "Continue? [Enter, s=skip welcome] "
+func (c *shellCommand) readWelcomeAction(stdout io.Writer, updateAvailable, updateSkipped bool, locale i18n.Locale) (string, error) {
+	prompt := localizeText(locale, i18n.KeyWelcomeShellPromptDefault, "Continue? [Enter, s=skip welcome] ")
 	if updateAvailable {
-		prompt = "Continue? [Enter, u=update, s=skip welcome, d=skip update prompts] "
+		prompt = localizeText(locale, i18n.KeyWelcomeShellPromptUpdate, "Continue? [Enter, u=update, s=skip welcome, d=skip update prompts] ")
 		if updateSkipped {
-			prompt = "Continue? [Enter, u=update, s=skip welcome] "
+			prompt = localizeText(locale, i18n.KeyWelcomeShellPromptUpdateSkip, "Continue? [Enter, u=update, s=skip welcome] ")
 		}
 	}
 	if _, err := fmt.Fprint(stdout, prompt); err != nil {
@@ -132,7 +134,7 @@ func resolveWelcomeUpdateStatus(update *updateCommand) (updateStatus, bool) {
 	}
 }
 
-func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStatus, updateAvailable, skipped bool, width int) error {
+func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStatus, updateAvailable, skipped bool, width int, locale i18n.Locale) error {
 	if w == nil {
 		return nil
 	}
@@ -140,21 +142,21 @@ func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStat
 		width = 24
 	}
 	lines := []string{
-		"Welcome to projmux shell " + current + ".",
-		"Detach: Ctrl-b d keeps sessions running; re-enter with projmux shell.",
-		"Exit: run exit in every window, or tmux -L projmux kill-server.",
-		"Launch surfaces are available from the generated tmux config and Settings.",
+		localizeText(locale, i18n.KeyWelcomeShellTitle, "Welcome to projmux") + " shell " + current + ".",
+		localizeText(locale, i18n.KeyWelcomeShellDetach, "Detach: Ctrl-b d keeps sessions running; re-enter with projmux shell."),
+		localizeText(locale, i18n.KeyWelcomeShellExit, "Exit: run exit in every window, or tmux -L projmux kill-server."),
+		localizeText(locale, i18n.KeyWelcomeShellSurfaces, "Launch surfaces are available from the generated tmux config and Settings."),
 	}
 	if hasStatus {
 		lines = append(lines, "")
 		lines = append(lines, shellWelcomeUpdateLines(status, updateAvailable, skipped)...)
 	}
 	lines = append(lines, "")
-	lines = append(lines, "Enter continues for this run. Press s to skip this welcome for the current version.")
+	lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellContinue, "Enter continues for this run. Press s to skip this welcome for the current version."))
 	if updateAvailable && skipped {
-		lines = append(lines, "Press u to update now. Daily update prompts are already skipped for this release.")
+		lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellUpdateSkipped, "Press u to update now. Daily update prompts are already skipped for this release."))
 	} else if updateAvailable {
-		lines = append(lines, "Press u to update now. Press d to skip daily update prompts for this release.")
+		lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellUpdateNow, "Press u to update now. Press d to skip daily update prompts for this release."))
 	}
 
 	inner := width - 4

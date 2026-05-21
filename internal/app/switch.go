@@ -2055,7 +2055,7 @@ func switchPickerFooter(ui, status string, homeDir func() (string, error), looku
 }
 
 func projmuxFooter(text string) string {
-	return strings.TrimSpace(text)
+	return strings.TrimSpace(settingsCatalogText(text))
 }
 
 type pickerActionKeyGuideItem struct {

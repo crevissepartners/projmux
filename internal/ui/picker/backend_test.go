@@ -906,6 +906,29 @@ func TestNativeInteractiveSeparatesSearchHeaderFromList(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveKoreanSearchEmptyAndFooterFitWidth(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:     "settings",
+		Title:  "설정",
+		Footer: "Enter: 열기  |  Esc: 닫기",
+	}, nil, "", 0, 0, nativeLayout{Rows: 10, Cols: 42})
+
+	rendered := out.String()
+	for _, want := range []string{"검색", "일치하는 항목 없음", "Enter: 열기", "Esc: 닫기"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native output = %q, want localized %q", rendered, want)
+		}
+	}
+	for line := range strings.SplitSeq(rendered, "\r\n") {
+		if got := projmuxpicker.VisibleLen(line); got > 44 {
+			t.Fatalf("native localized line width = %d, want <= frame width 44: %q", got, line)
+		}
+	}
+}
+
 func TestNativeInteractiveFrameUsesCRLFRowsForRawTTY(t *testing.T) {
 	t.Parallel()
 

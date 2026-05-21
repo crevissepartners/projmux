@@ -322,9 +322,9 @@ func shellUpdatePromptOptions(status updateStatus) intpickercompat.Options {
 	current := strings.TrimSpace(status.CurrentVersion)
 	return intpickercompat.Options{
 		UI:     "shell-update",
-		Prompt: "Update > ",
+		Prompt: settingsCatalogText("Update > "),
 		Header: fmt.Sprintf("projmux %s is available (current %s)", latest, current),
-		Footer: "Enter: choose  |  Esc: continue shell",
+		Footer: projmuxFooter("Enter: choose  |  Esc: continue shell"),
 		Entries: []intpickercompat.Entry{
 			{
 				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Update Now", "run projmux update apply"),

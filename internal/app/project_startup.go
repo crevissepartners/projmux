@@ -221,9 +221,9 @@ func projectStartupPickerOptions(candidates []projectStartupCandidate) intpicker
 	}
 	return intpickercompat.Options{
 		UI:            "project-startup",
-		Prompt:        "Start project > ",
-		Header:        "Start project",
-		Footer:        "Enter: start  |  Back row: projects  |  Esc: empty session",
+		Prompt:        settingsCatalogText("Start project > "),
+		Header:        settingsCatalogText("Start project"),
+		Footer:        projmuxFooter("Enter: start  |  Back row: projects  |  Esc: empty session"),
 		Entries:       entries,
 		Bindings:      settingsCloseBindings(),
 		DisableSearch: true,

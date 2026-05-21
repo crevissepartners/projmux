@@ -322,3 +322,30 @@ Literal preservation and parity rules:
   literal payload body.
 - The response-complete fallback body `Ready` is treated as provider state and
   suppressed in display detail; it is not translated or persisted differently.
+
+## Phase 4 Settings And Popup Guidance
+
+Runtime surfaces migrated:
+
+- Settings root title, scope chips, root row labels/descriptions, common row
+  labels/previews/disabled reasons, and shared Settings footer guidance.
+- Native picker search label, empty-list row, and line-mode close prompt.
+- Shell welcome/update guide text and Settings > About > Welcome viewer body.
+
+Literal preservation:
+
+- Key names such as `Enter`, `Esc`, `Ctrl-b d`, and `s` remain literal inside
+  localized guide sentences.
+- Commands, env/config names, and paths such as `projmux shell`,
+  `tmux -L projmux kill-server`, `PROJMUX_PROJDIR`, and
+  `~/.config/projmux/projdir` remain literal payload text.
+- Project names, paths, provider payloads, enum values, and hook/action IDs are
+  not translated.
+
+Width policy:
+
+- Settings row padding now uses terminal cell width instead of byte length so
+  Korean labels align with the existing ANSI row chrome.
+- Native picker prompt, empty row, and footer render through existing frame
+  truncation/padding helpers; focused tests cover `en-US`/`ko-KR` output and
+  long Korean styled guidance.
