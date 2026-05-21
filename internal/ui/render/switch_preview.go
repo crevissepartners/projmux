@@ -172,16 +172,16 @@ func formatSidebarPaneTitle(pane corepreview.Pane) string {
 	case strings.HasPrefix(title, "✳"), strings.HasPrefix(title, "✔"):
 		return ansiGreen + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
 	case hasBraillePrefix(title):
-		return ansiYellow + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
+		return ansiProgress + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
 	default:
-		return title
+		return styleLeadTopicPrefix(title)
 	}
 }
 
 func sidebarPaneLabel(pane corepreview.Pane) string {
 	if strings.TrimSpace(pane.AIAgent) != "" {
 		if topic := sanitizeCell(pane.AITopic); topic != "" {
-			return topic
+			return styleLeadTopicPrefix(topic)
 		}
 	}
 	return sanitizeCell(pane.Title)
@@ -190,7 +190,7 @@ func sidebarPaneLabel(pane corepreview.Pane) string {
 func sidebarPaneBadge(pane corepreview.Pane) string {
 	switch paneAttentionRank(pane) {
 	case 2:
-		return ansiYellow + "●" + ansiReset
+		return ansiProgress + "●" + ansiReset
 	case 1:
 		return ansiGreen + "●" + ansiReset
 	default:

@@ -59,6 +59,7 @@ Accents and state:
 | `accent.action` | `141;205;142`, strong `122;199;173` | `colour29` bg / `colour230` fg |
 | `accent.attention` | notify sidebar `colour204` family | `colour53`, `colour225`, `colour204`, project `colour90` |
 | `accent.ai` | notify agent `colour37` family | `colour37` bg / `colour121` fg |
+| `state.progress` | `255;204;102`; switch attention/busy dot `colour220` | `colour220` |
 | `state.warning` | usage/status popup ANSI 256 wrapper | `colour214` |
 | `state.danger` | `255;107;107` | `colour160` |
 | `state.success` | settings/trust green families | `colour72`, `colour151` |
@@ -73,7 +74,7 @@ Surface-specific tokens:
 | Notify HUD/sidebar | line bg/fg, project badge, info/warn/crit/stale/gone badges, AI agent badge, count/age text |
 | Usage HUD/popup | OK/warning/critical/over-limit bars and numbers, empty cells, muted sync age |
 | Settings | add/type/open action, destructive remove/quit, back/cancel, info/read-only, dim description, root action/dim rows, trust trusted/stale/untrusted |
-| Switch picker cards | path metadata, active/inactive git branch badges, statusbar-like window tabs, inline attention dots |
+| Switch picker cards | path metadata, active/inactive git branch badges, statusbar-like window tabs, inline attention/progress dots |
 
 ## Current Literal Inventory
 
@@ -99,3 +100,5 @@ The converted implementation paths include:
 - `internal/app/usage.go`
 - `internal/core/usage/hud.go`
 - `internal/ui/render/switch.go`
+- `internal/ui/render/popup.go`
+- `internal/ui/render/switch_preview.go`

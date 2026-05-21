@@ -654,7 +654,7 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := gotRunnerOptions.Entries[0].Label, "\x1b[1m\x1b[32mapp\x1b[0m \x1b[33m●\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
+	if got, want := gotRunnerOptions.Entries[0].Label, "\x1b[1m\x1b[32mapp\x1b[0m \x1b[38;2;255;204;102m●\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
 		t.Fatalf("runner entry = %q, want %q", got, want)
 	}
 }

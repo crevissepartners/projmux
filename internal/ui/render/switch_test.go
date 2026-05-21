@@ -162,12 +162,30 @@ func TestBuildSwitchRowsSidebarShowsAttentionBadge(t *testing.T) {
 		AttentionRank: 2,
 	}})
 
-	const want = "\x1b[33m●\x1b[0m \x1b[1m\x1b[32mapp\x1b[0m \x1b[2m~rp/app\x1b[0m"
+	const want = "\x1b[38;2;255;204;102m●\x1b[0m \x1b[1m\x1b[32mapp\x1b[0m \x1b[2m~rp/app\x1b[0m"
 	if got := rows[0].Label; got != want {
 		t.Fatalf("label = %q, want %q", got, want)
 	}
 	if got, want := rows[0].Item.Badges, []string{"needs review"}; !equalStringSlices(got, want) {
 		t.Fatalf("item badges = %q, want %q", got, want)
+	}
+}
+
+func TestFormatSwitchCardLabelUsesProgressForBusyBadge(t *testing.T) {
+	t.Parallel()
+
+	rows := BuildSwitchRows([]SwitchCandidate{{
+		Path:          "/home/tester/source/repos/app",
+		DisplayName:   "app",
+		ModeLabel:     "existing",
+		UI:            "popup",
+		AttentionRank: 2,
+	}})
+
+	got := FormatSwitchCardLabel(rows[0].Item)
+	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[38;2;255;204;102m●\x1b[0m\n  \x1b[38;5;242m/home/tester/source/repos/app\x1b[0m"
+	if got != want {
+		t.Fatalf("card label = %q, want %q", got, want)
 	}
 }
 

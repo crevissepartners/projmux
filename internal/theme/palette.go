@@ -35,6 +35,7 @@ const (
 	ANSIAccentHighlightStart    = "\x1b[38;2;255;204;102m"
 	ANSIAccentSettingsStart     = "\x1b[36m"
 
+	ANSIStateProgressStart = "\x1b[38;2;255;204;102m"
 	ANSIStateDangerStart   = "\x1b[38;2;255;107;107m"
 	ANSIStateExistingStart = "\x1b[32m"
 	ANSIStateTaggedStart   = "\x1b[31m"
@@ -97,6 +98,7 @@ const (
 	TmuxAccentAIBg              = "colour37"
 	TmuxAccentAIFg              = "colour121"
 
+	TmuxStateProgressFg = "colour220"
 	TmuxStateWarningFg  = "colour214"
 	TmuxStateCriticalFg = "colour160"
 	TmuxStateSuccessFg  = "colour72"

@@ -1475,7 +1475,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g pane-active-border-style \"fg=colour51,bold\"",
 		"set -g pane-border-status top",
 		"set -g pane-border-format \"#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > ",
-		"#[bold#,fg=" + tmuxAccentAIFg + "] ● ",
+		"#[bold#,fg=" + tmuxStateProgressFg + "] ● ",
 		"#[bold#,fg=" + tmuxAccentAttentionStrongBg + "] ● ",
 		"#[fg=colour244] ",
 		"#{@projmux_ai_topic}",
@@ -1554,6 +1554,7 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	t.Parallel()
 
 	visibleLabel := tmuxVisiblePaneLabelFormat()
+	styledVisibleLabel := tmuxStyledVisiblePaneLabelFormat()
 	shellLabel := tmuxShellPaneLabelFormat()
 	paneBorder := tmuxPaneBorderFormat()
 	configText := tmuxAppConfig("/tmp/projmux", "/bin/sh", config.StatusbarDecorationOff)
@@ -1573,8 +1574,14 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	if topicIndex, shellIndex := strings.Index(visibleLabel, "#{@projmux_ai_topic}"), strings.Index(visibleLabel, shellLabel); topicIndex < 0 || shellIndex < 0 || topicIndex > shellIndex {
 		t.Fatalf("visible pane label format = %q, want @projmux_ai_topic before shell/current-command fallback", visibleLabel)
 	}
-	if !strings.Contains(paneBorder, visibleLabel) {
-		t.Fatalf("pane border format = %q, want visible label %q", paneBorder, visibleLabel)
+	if !strings.Contains(paneBorder, styledVisibleLabel) {
+		t.Fatalf("pane border format = %q, want styled visible label %q", paneBorder, styledVisibleLabel)
+	}
+	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxStateProgressFg+"] ● ") {
+		t.Fatalf("pane border format = %q, want busy marker to use state.progress", paneBorder)
+	}
+	if !strings.Contains(styledVisibleLabel, "#[bold#,fg="+tmuxStateProgressFg+"]#{@projmux_ai_topic}#[pop-default]") {
+		t.Fatalf("styled visible label format = %q, want renderer-level lead topic styling", styledVisibleLabel)
 	}
 
 	wantPaneBorderLine := "set -g pane-border-format " + tmuxConfigQuote(paneBorder)

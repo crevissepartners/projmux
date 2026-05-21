@@ -9,14 +9,15 @@ import (
 )
 
 const (
-	ansiReset  = theme.ANSIReset
-	ansiBold   = theme.ANSIBold
-	ansiDim    = theme.ANSIDim
-	ansiRed    = theme.ANSIStateTaggedStart
-	ansiBlue   = theme.ANSIStateInfoStart
-	ansiGreen  = theme.ANSIStateExistingStart
-	ansiYellow = theme.ANSIStatePinnedStart
-	ansiCyan   = theme.ANSIAccentSettingsStart
+	ansiReset    = theme.ANSIReset
+	ansiBold     = theme.ANSIBold
+	ansiDim      = theme.ANSIDim
+	ansiRed      = theme.ANSIStateTaggedStart
+	ansiBlue     = theme.ANSIStateInfoStart
+	ansiGreen    = theme.ANSIStateExistingStart
+	ansiYellow   = theme.ANSIStatePinnedStart
+	ansiProgress = theme.ANSIStateProgressStart
+	ansiCyan     = theme.ANSIAccentSettingsStart
 )
 
 const (
@@ -280,7 +281,7 @@ func formatSwitchCardStatusBadge(badges []string) string {
 	for _, badge := range badges {
 		switch sanitizeCell(badge) {
 		case "needs review":
-			parts = append(parts, ansiYellow+"●"+ansiReset)
+			parts = append(parts, ansiProgress+"●"+ansiReset)
 		case "ready":
 			parts = append(parts, ansiGreen+"●"+ansiReset)
 		case "tagged":
@@ -410,7 +411,7 @@ func formatSidebarSwitchLabel(candidate SwitchCandidate) string {
 func formatAttentionBadge(rank int) string {
 	switch rank {
 	case 2:
-		return ansiYellow + "●" + ansiReset
+		return ansiProgress + "●" + ansiReset
 	case 1:
 		return ansiGreen + "●" + ansiReset
 	default:

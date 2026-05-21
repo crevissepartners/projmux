@@ -9,6 +9,8 @@ func TestFallbackPalettePreservesPhaseBaselineTokens(t *testing.T) {
 		"action truecolor":         ANSIAccentActionStart,
 		"attention tmux bg":        TmuxAccentAttentionBg,
 		"ai tmux bg":               TmuxAccentAIBg,
+		"progress truecolor":       ANSIStateProgressStart,
+		"progress tmux fg":         TmuxStateProgressFg,
 		"warning tmux fg":          TmuxStateWarningFg,
 		"critical tmux fg":         TmuxStateCriticalFg,
 		"window active tmux bg":    TmuxWindowActiveBg,
@@ -24,6 +26,9 @@ func TestFallbackPalettePreservesPhaseBaselineTokens(t *testing.T) {
 	}
 	if ANSIStateDangerStart == ANSIAccentActionStart || ANSIStateDangerStart == ANSITextDimStart {
 		t.Fatalf("danger truecolor token must not alias action or dim text")
+	}
+	if TmuxStateProgressFg == TmuxAccentAIFg || TmuxStateProgressFg == TmuxStateCriticalFg {
+		t.Fatalf("progress tmux token must not alias AI or danger tokens")
 	}
 }
 
