@@ -45,8 +45,8 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
   and inside the chip background. The compact app chip renders `` with
   the extra right-side icon padding painted by the same background, while
   the standalone ` projmux` label keeps symmetric one-cell label padding.
-  The single space after `#[default]` is outside the clickable range and is
-  only the margin before the terminal edge or next segment.
+  The chip does not append an extra default-styled trailing space after
+  `#[default]`, so the painted button reaches the status row's right edge.
 - Both HUD segments degrade gracefully when the cell budget is tight; see
   [notify-queue.md](notify-queue.md) and [usage-tracking.md](usage-tracking.md)
   for the per-segment tier ladder.

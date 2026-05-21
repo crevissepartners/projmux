@@ -1127,7 +1127,7 @@ func TestStatusbarSettingsButtonPaintsCompactPaddingInsideRange(t *testing.T) {
 	t.Parallel()
 
 	got := statusbarSettingsButton(statusbarSettingsIcon)
-	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]   #[norange]#[default] "
+	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]   #[norange]#[default]"
 	if got != want {
 		t.Fatalf("statusbarSettingsButton() = %q, want %q", got, want)
 	}
@@ -1137,7 +1137,7 @@ func TestStatusbarSettingsButtonPaintsStandalonePaddingInsideRange(t *testing.T)
 	t.Parallel()
 
 	got := statusbarSettingsButton(statusbarSettingsIcon + " projmux")
-	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]  projmux #[norange]#[default] "
+	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]  projmux #[norange]#[default]"
 	if got != want {
 		t.Fatalf("statusbarSettingsButton() = %q, want %q", got, want)
 	}
