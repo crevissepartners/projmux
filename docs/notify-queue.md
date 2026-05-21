@@ -98,8 +98,9 @@ pane and acks the row after focus succeeds. The surface actions
 `NotifySidebar:Ack`, `NotifySidebar:ClearNonCritical`, and
 `NotifySidebar:ClearAll` are internal picker actions; direct launch aliases
 are edited in Settings, while internal picker aliases are adjusted in
-`keymap.toml` when needed. Runtime footer copy stays status-oriented instead
-of listing literal keys, so custom aliases do not make the UI stale. Rows are intentionally compact: the visible label keeps
+`keymap.toml` when needed. Runtime footer key guides read the merged keymap
+and show the default alias when present, otherwise the first configured alias,
+so custom aliases do not make the UI stale. Rows are intentionally compact: the visible label keeps
 notification text first, then age, project, window, and pane metadata; hidden
 queue ids remain action values but the sidebar has no search input and
 intentionally does not expose a separate metadata detail view.

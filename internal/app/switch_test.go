@@ -555,7 +555,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotRunnerOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Footer, "Pinned rows stay near the top."; got != want {
+	if got, want := gotRunnerOptions.Footer, "Alt-P: pin project  |  Ctrl-X: kill session"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=sidebar' {2}"; got != want {
@@ -578,6 +578,30 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		{Label: "\x1b[1m\x1b[32mapp\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m", Value: "/tmp/app"},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
+	}
+}
+
+func TestSwitchSidebarFooterReadsKeymapGuide(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(keymapPath, []byte(`[bindings."Sidebar:PinProject"]
+keys = ["p", "M-p"]
+
+[bindings."Sidebar:KillSession"]
+keys = ["K"]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got := switchPickerFooter(switchUISidebar, "", func() (string, error) { return home, nil }, func(string) string { return "" })
+	want := "Alt-P: pin project  |  K: kill session"
+	if got != want {
+		t.Fatalf("switchPickerFooter() = %q, want %q", got, want)
 	}
 }
 
@@ -1427,7 +1451,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got, want := fakeRunner.last.UI, switchUISidebar; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
-	if got, want := fakeRunner.last.Footer, "Pinned rows stay near the top."; got != want {
+	if got, want := fakeRunner.last.Footer, "Alt-P: pin project  |  Ctrl-X: kill session"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got := fakeExecutor.ensureSessionName; got != "" {

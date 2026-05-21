@@ -1832,7 +1832,7 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 		Items:        plan.Items,
 		MultiLine:    true,
 		Prompt:       "› ",
-		Footer:       switchPickerFooter(plan.UI, plan.StatusMessage),
+		Footer:       switchPickerFooter(plan.UI, plan.StatusMessage, c.homeDir, c.lookupEnv),
 		InitialQuery: plan.InitialQuery,
 		Actions: append(
 			pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
@@ -2031,10 +2031,13 @@ func switchPreviewWindow(ui string) string {
 	}
 }
 
-func switchPickerFooter(ui, status string) string {
+func switchPickerFooter(ui, status string, homeDir func() (string, error), lookupEnv func(string) string) string {
 	status = strings.TrimSpace(status)
 	if ui == switchUISidebar {
-		footer := "Pinned rows stay near the top."
+		footer := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
+			{ActionID: "Sidebar:PinProject", Label: "pin project"},
+			{ActionID: "Sidebar:KillSession", Label: "kill session"},
+		})
 		if status != "" {
 			footer += " | " + status
 		}
@@ -2052,6 +2055,49 @@ func switchPickerFooter(ui, status string) string {
 
 func projmuxFooter(text string) string {
 	return strings.TrimSpace(text)
+}
+
+type pickerActionKeyGuideItem struct {
+	ActionID string
+	Label    string
+}
+
+func pickerActionKeyGuide(homeDir func() (string, error), lookupEnv func(string) string, items []pickerActionKeyGuideItem) string {
+	actions := defaultKeyBindingCatalog()
+	if homeDir != nil {
+		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv}); err == nil {
+			actions = merged
+		}
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		chord := pickerActionGuideChord(actions, item.ActionID)
+		if chord == "" {
+			continue
+		}
+		label := strings.TrimSpace(item.Label)
+		if label == "" {
+			label = item.ActionID
+		}
+		parts = append(parts, keybindingReadableChord(chord)+": "+label)
+	}
+	return strings.Join(parts, "  |  ")
+}
+
+func pickerActionGuideChord(actions []keyBindingAction, actionID string) string {
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return ""
+	}
+	chords := keyBindingEffectivePlainChords(action)
+	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if ok {
+		defaultChord := firstNonEmptyString(keyBindingEffectivePlainChords(defaultAction))
+		if defaultChord != "" && slices.Contains(chords, defaultChord) {
+			return defaultChord
+		}
+	}
+	return firstNonEmptyString(chords)
 }
 
 func switchSidebarInitialPos(plan switchPlan) int {
