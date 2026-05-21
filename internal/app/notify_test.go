@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -272,7 +273,7 @@ func TestNotifyListTable(t *testing.T) {
 	if !strings.Contains(out, "ID\tAGE\tSEV\tSRC\tTARGET\tTEXT") {
 		t.Fatalf("missing header: %q", out)
 	}
-	if !strings.Contains(out, "abc\t30s\twarn\tai\tmain:1.0\tdeploy ok") {
+	if !strings.Contains(out, "abc\t30s ago\twarn\tai\tmain:1.0\tdeploy ok") {
 		t.Fatalf("missing row: %q", out)
 	}
 }
@@ -341,22 +342,21 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(labelLines) != 2 {
 		t.Fatalf("sidebar label = %q, want two-line card", entry.Label)
 	}
-	if got := stripANSI(labelLines[0]); got != " main  Ready" {
+	if got := stripANSI(labelLines[0]); got != " main  Codex · Response complete" {
 		t.Fatalf("sidebar first line = %q, want project badge before notification text", labelLines[0])
 	}
 	if !strings.Contains(labelLines[1], theme.ANSIChipActiveStart+" worker loop ") {
 		t.Fatalf("sidebar metadata = %q, want prominent topic badge", labelLines[1])
 	}
 	metaText := stripANSI(labelLines[1])
-	ageIndex := strings.Index(metaText, "age 30s")
+	ageIndex := strings.Index(metaText, "30s ago")
 	topicIndex := strings.Index(metaText, "worker loop")
 	statusIndex := strings.Index(metaText, "WARN")
-	agentIndex := strings.Index(metaText, "codex")
-	if !(ageIndex >= 0 && ageIndex < topicIndex && topicIndex < statusIndex && statusIndex < agentIndex) {
-		t.Fatalf("sidebar metadata = %q, want age/topic/status/agent order", labelLines[1])
+	if !(ageIndex >= 0 && ageIndex < topicIndex && topicIndex < statusIndex) {
+		t.Fatalf("sidebar metadata = %q, want age/topic/status order", labelLines[1])
 	}
-	if meta := labelLines[1]; !strings.Contains(meta, " age 30s ") || strings.Contains(meta, " main ") || !strings.Contains(meta, " codex ") || !strings.Contains(meta, " WARN ") || strings.Contains(meta, "window 1") || strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
-		t.Fatalf("sidebar metadata = %q, want age/topic/status/agent without project/target/source", meta)
+	if meta := labelLines[1]; !strings.Contains(meta, " 30s ago ") || strings.Contains(meta, " main ") || strings.Contains(meta, " codex ") || !strings.Contains(meta, " WARN ") || strings.Contains(meta, "window 1") || strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
+		t.Fatalf("sidebar metadata = %q, want age/topic/status without project/target/source", meta)
 	}
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
@@ -509,8 +509,31 @@ func TestNotifySidebarLabelDoesNotExposeRawPaneID(t *testing.T) {
 	if strings.Contains(label, "%42") {
 		t.Fatalf("sidebar label = %q, want raw pane id hidden", label)
 	}
-	if !strings.Contains(lines[1], "window 1") || !strings.Contains(lines[1], "pane 42") {
+	if !strings.Contains(lines[1], "win 1") || !strings.Contains(lines[1], "pane 42") {
 		t.Fatalf("metadata = %q, want readable window/pane labels", lines[1])
+	}
+}
+
+func TestNotifySidebarLabelUsesKoreanFormatterOutput(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	label := notifySidebarLabelForLocale(notify.Notification{
+		ID:        "stale",
+		Text:      "deploy ok",
+		Severity:  notify.SeverityInfo,
+		Source:    notify.SourceExternal,
+		Session:   "main",
+		Window:    "1",
+		Pane:      "%42",
+		CreatedAt: now.Add(-36 * time.Second),
+	}, now, notifyDisplayStale, i18n.Locale("ko-KR"))
+
+	stripped := stripANSI(label)
+	for _, want := range []string{"36초 전", "오래됨", "창 1", "페인 42"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("label = %q, want localized formatter output %q", stripped, want)
+		}
 	}
 }
 

@@ -50,12 +50,12 @@ func formatCodexGenericHookNotifyBody(p codexHookPayload) aiNotifyBody {
 }
 
 func formatClaudeNotificationNotifyBody(p claudeHookPayload) aiNotifyBody {
-	label, severity := claudeNotificationLabelSeverity(p.NotificationType)
+	category, severity := claudeNotificationCategorySeverity(p.NotificationType)
 	return aiNotifyBody{
 		Text:     defaultString(strings.TrimSpace(p.Message), "Ready"),
 		Severity: severity,
 		Agent:    "claude",
-		Category: aiNotifyCategoryKey(label),
+		Category: category,
 	}
 }
 
@@ -128,21 +128,17 @@ func joinAINotifyText(agent, category string, values ...string) string {
 	return strings.Join(parts, " · ")
 }
 
-func claudeNotificationLabelSeverity(notificationType string) (string, string) {
+func claudeNotificationCategorySeverity(notificationType string) (string, string) {
 	switch strings.TrimSpace(notificationType) {
 	case "permission_prompt":
-		return "Approval required", notify.SeverityCritical
+		return "approval_required", notify.SeverityCritical
 	case "elicitation_dialog":
-		return "Input required", notify.SeverityCritical
+		return "input_required", notify.SeverityCritical
 	case "idle_prompt":
-		return "Response complete", notify.SeverityInfo
+		return "response_complete", notify.SeverityInfo
 	default:
-		return "Response complete", notify.SeverityInfo
+		return "response_complete", notify.SeverityInfo
 	}
-}
-
-func aiNotifyCategoryKey(label string) string {
-	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(label)), " ", "_")
 }
 
 func mergeAINotifyBodyMetadata(metadata map[string]string, body aiNotifyBody) map[string]string {

@@ -86,6 +86,11 @@ The notify segment renders the newest queued item as a single notification
 block: project, state (`NEED`/`INFO`/`WARN`/`CRIT`), optional agent, text,
 age, and `+N` for older pending entries. Window/pane ids are not shown in the
 compact status segment.
+The compact age text is locale-formatted through `internal/i18n` (`2m ago` in
+`en-US`, `36초 전` in `ko-KR`). AI notify body text uses catalog-owned category
+labels while preserving agent names, commands, paths, URLs, and provider
+payload excerpts. The `+N` older-entry count remains a numeric compact badge so
+it does not expand the status segment.
 When the notify block is wider than its cell budget, clipping shrinks the body
 text first and appends an ellipsis while preserving project, state, agent, age,
 and count metadata. If the segment is still too wide, the age is dropped next

@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -337,14 +338,11 @@ func (c *aiCommand) aiTextNotificationWithMetadata(paneID, text, severity string
 	windowName := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#W")
 	panePath := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, "#{pane_current_path}")
 	agent := aiNotificationTextAgentWithMetadata(text, metadata)
-	summary := strings.TrimSpace(text)
-	bodyTitle := ""
-	if parts := parseAITextNotificationParts(text); parts.Category != "" {
-		summary = joinAINotifyText(parts.Agent, titleCaseAINotifyCategory(parts.Category))
-		bodyTitle = parts.Detail
-	} else if category := aiNotificationMetadataCategory(metadata); category != "" {
-		summary = joinAINotifyText(defaultString(agent, "AI"), titleCaseAINotifyCategory(category))
-		bodyTitle = text
+	rendered := renderAINotifyText(text, metadata, c.locale())
+	summary := rendered.Summary
+	bodyTitle := rendered.Detail
+	if summary == "" {
+		summary = strings.TrimSpace(text)
 	}
 	return aiNotification{
 		Summary:  summary,
@@ -384,7 +382,7 @@ func (c *aiCommand) notifyAIWithMode(paneID string, force bool) error {
 	}
 
 	notification := aiNotification{
-		Summary:  aiSummaryForKind(replyKind, agentName, cleanTitle),
+		Summary:  aiSummaryForKindLocale(replyKind, agentName, cleanTitle, c.locale()),
 		Body:     aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
 		Urgency:  aiOSNotificationUrgency(replyKind),
 		ExpireMS: c.notificationExpireMS(),
@@ -1535,6 +1533,13 @@ func (c *aiCommand) env(name string) string {
 	return c.lookupEnv(name)
 }
 
+func (c *aiCommand) locale() i18n.Locale {
+	if c == nil {
+		return i18n.FallbackLocale
+	}
+	return appLocale(c.lookupEnv)
+}
+
 func (c *aiCommand) run(name string, args ...string) error {
 	if c.runCommand == nil {
 		return errors.New("ai command runner is not configured")
@@ -2179,19 +2184,24 @@ func aiAgentDisplayName(title string) string {
 }
 
 func aiSummaryForKind(kind, agentName, topic string) string {
-	summary := "Response complete"
+	return aiSummaryForKindLocale(kind, agentName, topic, i18n.FallbackLocale)
+}
+
+func aiSummaryForKindLocale(kind, agentName, topic string, locale i18n.Locale) string {
+	category := "response_complete"
 	switch kind {
 	case "approval_required":
-		summary = "Approval required"
+		category = "approval_required"
 	case "selection_required":
-		summary = "Selection required"
+		category = "selection_required"
 	case "confirmation_required":
-		summary = "Confirmation required"
+		category = "confirmation_required"
 	case "input_required":
-		summary = "Input required"
+		category = "input_required"
 	}
+	summary := aiNotifyCategoryLabel(category, locale)
 	if strings.TrimSpace(agentName) != "" {
-		summary = joinAINotifyText(strings.TrimSpace(agentName), titleCaseAINotifyCategory(summary))
+		summary = joinAINotifyText(strings.TrimSpace(agentName), summary)
 	}
 	return summary
 }
@@ -2232,12 +2242,12 @@ func aiNotificationMetadataAgent(metadata map[string]string) string {
 	}
 }
 
-func aiNotificationMetadataCategory(metadata map[string]string) string {
+func aiNotificationMetadataCategoryID(metadata map[string]string) string {
 	category := strings.TrimSpace(metadata["category"])
 	if category == "" {
 		return ""
 	}
-	return strings.ReplaceAll(category, "_", " ")
+	return category
 }
 
 type aiTextNotificationParts struct {
@@ -2267,11 +2277,138 @@ func parseAITextNotificationParts(text string) aiTextNotificationParts {
 }
 
 func isFixedAINotificationCategory(category string) bool {
-	switch strings.ToLower(strings.TrimSpace(category)) {
-	case "approval required", "response complete", "input required":
-		return true
+	_, _, ok := aiNotifyCategoryMessageKey(aiNotifyCategoryFromLabel(category))
+	return ok
+}
+
+type renderedAINotifyText struct {
+	Agent    string
+	Category string
+	Summary  string
+	Detail   string
+	Full     string
+}
+
+func renderAINotifyText(text string, metadata map[string]string, locale i18n.Locale) renderedAINotifyText {
+	text = strings.TrimSpace(text)
+	parts := parseAITextNotificationParts(text)
+
+	agent := strings.TrimSpace(parts.Agent)
+	if agent == "" {
+		agent = aiNotificationMetadataAgent(metadata)
+	}
+	category := ""
+	if parts.Category != "" {
+		category = aiNotifyCategoryFromLabel(parts.Category)
+	} else {
+		category = aiNotificationMetadataCategoryID(metadata)
+	}
+	detail := strings.TrimSpace(parts.Detail)
+	if parts.Category == "" {
+		detail = text
+	}
+
+	if category == "" {
+		return renderedAINotifyText{
+			Agent:   agent,
+			Summary: text,
+			Detail:  detail,
+			Full:    text,
+		}
+	}
+	if agent == "" {
+		agent = "AI"
+	}
+	categoryLabel := aiNotifyCategoryLabel(category, locale)
+	summary := joinAINotifyDisplayText(agent, categoryLabel)
+	displayDetail := detail
+	if aiNotifySuppressDetail(category, displayDetail) {
+		displayDetail = ""
+	}
+	full := summary
+	if displayDetail != "" {
+		full = joinAINotifyDisplayText(summary, displayDetail)
+	}
+	return renderedAINotifyText{
+		Agent:    agent,
+		Category: category,
+		Summary:  summary,
+		Detail:   displayDetail,
+		Full:     full,
+	}
+}
+
+func joinAINotifyDisplayText(values ...string) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+func aiNotifySuppressDetail(category, detail string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(category))
+	return (normalized == "response_complete" || normalized == "response_ready") && strings.EqualFold(strings.TrimSpace(detail), "Ready")
+}
+
+func aiNotifyCategoryFromLabel(label string) string {
+	normalized := strings.ToLower(strings.TrimSpace(label))
+	normalized = strings.ReplaceAll(normalized, "_", " ")
+	switch normalized {
+	case "approval required":
+		return "approval_required"
+	case "response complete", "response ready":
+		return "response_complete"
+	case "input required":
+		return "input_required"
+	case "selection required":
+		return "selection_required"
+	case "confirmation required":
+		return "confirmation_required"
+	case "error":
+		return "error"
+	case "subagent stopped":
+		return "subagent_stopped"
+	case "teammate waiting":
+		return "teammate_waiting"
+	case "review pending":
+		return "review_pending"
 	default:
-		return false
+		return strings.ReplaceAll(normalized, " ", "_")
+	}
+}
+
+func aiNotifyCategoryLabel(category string, locale i18n.Locale) string {
+	key, fallback, ok := aiNotifyCategoryMessageKey(category)
+	if !ok {
+		return titleCaseAINotifyCategory(strings.ReplaceAll(strings.TrimSpace(category), "_", " "))
+	}
+	return localizeText(locale, key, fallback)
+}
+
+func aiNotifyCategoryMessageKey(category string) (i18n.Key, string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(category))
+	switch normalized {
+	case "approval_required":
+		return i18n.KeyNotifyAIApprovalRequired, "Approval required", true
+	case "input_required":
+		return i18n.KeyNotifyAIInputRequired, "Input required", true
+	case "selection_required":
+		return i18n.KeyNotifyAISelectionRequired, "Selection required", true
+	case "confirmation_required":
+		return i18n.KeyNotifyAIConfirmationRequired, "Confirmation required", true
+	case "error":
+		return i18n.KeyNotifyAIError, "Error", true
+	case "subagent_stopped":
+		return i18n.KeyNotifyAISubagentStopped, "Subagent stopped", true
+	case "teammate_waiting":
+		return i18n.KeyNotifyAITeammateWaiting, "Teammate waiting", true
+	case "review_pending":
+		return i18n.KeyNotifyAIReviewPending, "Review pending:", true
+	default:
+		return i18n.KeyNotifyAIResponseComplete, "Response complete", normalized == "" || normalized == "response_complete" || normalized == "response_ready"
 	}
 }
 

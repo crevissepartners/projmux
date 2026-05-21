@@ -12,10 +12,20 @@ const (
 	KeyNotifyAIResponseComplete      Key = "notify.ai.response_complete"
 	KeyNotifyAIApprovalRequired      Key = "notify.ai.approval_required"
 	KeyNotifyAIInputRequired         Key = "notify.ai.input_required"
+	KeyNotifyAISelectionRequired     Key = "notify.ai.selection_required"
+	KeyNotifyAIConfirmationRequired  Key = "notify.ai.confirmation_required"
 	KeyNotifyAIError                 Key = "notify.ai.error"
 	KeyNotifyAISubagentStopped       Key = "notify.ai.subagent_stopped"
 	KeyNotifyAITeammateWaiting       Key = "notify.ai.teammate_waiting"
 	KeyNotifyAIReviewPending         Key = "notify.ai.review_pending"
+	KeyNotifyLiveUnavailable         Key = "notify.live.explanation.live_unavailable"
+	KeyNotifyLiveTitleAttention      Key = "notify.live.explanation.title_attention"
+	KeyNotifyLiveManualReply         Key = "notify.live.explanation.manual_reply"
+	KeyNotifyLiveAIReplyQueued       Key = "notify.live.explanation.ai_reply_queued"
+	KeyNotifyLiveAIReplyMissingQueue Key = "notify.live.explanation.ai_reply_missing_queue"
+	KeyNotifyLiveQueuePending        Key = "notify.live.explanation.queue_pending"
+	KeyNotifyLiveQueueStale          Key = "notify.live.explanation.queue_stale"
+	KeyNotifyLiveQueueGone           Key = "notify.live.explanation.queue_gone"
 	KeyNotifyQueueRowAgeCompact      Key = "notify.queue.row.age_compact"
 	KeyNotifyQueueActionAck          Key = "notify.queue.action.ack"
 	KeyStatusNotifyCount             Key = "status.notify.count"
@@ -40,10 +50,20 @@ var foundationKeys = []Key{
 	KeyNotifyAIResponseComplete,
 	KeyNotifyAIApprovalRequired,
 	KeyNotifyAIInputRequired,
+	KeyNotifyAISelectionRequired,
+	KeyNotifyAIConfirmationRequired,
 	KeyNotifyAIError,
 	KeyNotifyAISubagentStopped,
 	KeyNotifyAITeammateWaiting,
 	KeyNotifyAIReviewPending,
+	KeyNotifyLiveUnavailable,
+	KeyNotifyLiveTitleAttention,
+	KeyNotifyLiveManualReply,
+	KeyNotifyLiveAIReplyQueued,
+	KeyNotifyLiveAIReplyMissingQueue,
+	KeyNotifyLiveQueuePending,
+	KeyNotifyLiveQueueStale,
+	KeyNotifyLiveQueueGone,
 	KeyNotifyQueueRowAgeCompact,
 	KeyNotifyQueueActionAck,
 	KeyStatusNotifyCount,
