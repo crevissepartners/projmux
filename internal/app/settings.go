@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -371,6 +372,7 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 }
 
 func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
+	options = c.localizeSettingsOptions(options)
 	options = c.withSettingsScopeTabs(options)
 	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, options)
 	if err != nil {
@@ -380,6 +382,18 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 		return intpickercompat.Result{}, fmt.Errorf("run settings picker: %w", err)
 	}
 	return result, nil
+}
+
+func (c *settingsCommand) localizeSettingsOptions(options intpickercompat.Options) intpickercompat.Options {
+	locale := appLocale(c.lookupEnv)
+	options.Title = settingsCatalogTextLocale(locale, options.Title)
+	options.Prompt = settingsCatalogTextLocale(locale, options.Prompt)
+	options.Header = settingsCatalogTextLocale(locale, options.Header)
+	options.Footer = settingsCatalogTextLocale(locale, options.Footer)
+	for i := range options.TitleChips {
+		options.TitleChips[i].Label = settingsCatalogTextLocale(locale, options.TitleChips[i].Label)
+	}
+	return options
 }
 
 func (c *settingsCommand) withSettingsScopeTabs(options intpickercompat.Options) intpickercompat.Options {
@@ -399,14 +413,15 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 		tab = settingsRootTabGlobal
 	}
 	ctx := c.resolveSettingsProjectContext()
+	locale := appLocale(c.lookupEnv)
 	return intpickercompat.Options{
 		UI:         "settings",
-		Entries:    c.rootEntriesForTab(tab),
-		Title:      "Settings",
-		TitleChips: settingsRootTabChips(tab, ctx.hasProject()),
-		Prompt:     settingsRootPrompt(tab),
+		Entries:    c.rootEntriesForTabLocale(tab, locale),
+		Title:      localizeText(locale, i18n.KeySettingsRootTitle, "Settings"),
+		TitleChips: settingsRootTabChipsLocale(tab, ctx.hasProject(), locale),
+		Prompt:     settingsRootPromptLocale(tab, locale),
 		Header:     settingsRootContextHeader(tab, ctx),
-		Footer:     projmuxFooter("Open rows or click a scope chip to switch tabs."),
+		Footer:     localizeText(locale, i18n.KeySettingsRootFooter, "Open rows or click a scope chip to switch tabs."),
 		ExpectKeys: []string{"enter", "ctrl-g", "ctrl-p", "alt-shift-left", "alt-shift-right"},
 		Bindings:   settingsCloseBindings(),
 	}
@@ -420,14 +435,18 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 // handling so a primary-button click on the chip resolves through the
 // same tab-resolution path as the keyboard chord.
 func settingsRootTabChips(active settingsRootTab, hasProject bool) []projmuxpicker.Chip {
+	return settingsRootTabChipsLocale(active, hasProject, settingsLocaleFromEnv())
+}
+
+func settingsRootTabChipsLocale(active settingsRootTab, hasProject bool, locale i18n.Locale) []projmuxpicker.Chip {
 	return []projmuxpicker.Chip{
 		{
-			Label:      "Global",
+			Label:      settingsCatalogTextLocale(locale, "Global"),
 			Active:     active == settingsRootTabGlobal,
 			ClickValue: settingsRootTabGlobalValue,
 		},
 		{
-			Label:      "Project",
+			Label:      settingsCatalogTextLocale(locale, "Project"),
 			Active:     active == settingsRootTabProject,
 			Disabled:   !hasProject,
 			ClickValue: settingsRootTabProjectValue,
@@ -457,10 +476,14 @@ func settingsRootContextHeader(tab settingsRootTab, ctx settingsProjectContext) 
 }
 
 func settingsRootPrompt(tab settingsRootTab) string {
+	return settingsRootPromptLocale(tab, settingsLocaleFromEnv())
+}
+
+func settingsRootPromptLocale(tab settingsRootTab, locale i18n.Locale) string {
 	if tab == settingsRootTabProject {
-		return "Settings > Project > "
+		return localizeText(locale, i18n.KeySettingsRootPromptProject, "Settings > Project > ")
 	}
-	return "Settings > "
+	return localizeText(locale, i18n.KeySettingsRootPromptGlobal, "Settings > ")
 }
 
 func settingsRootTabFromResult(result intpickercompat.Result) (settingsRootTab, bool) {
@@ -503,48 +526,56 @@ func (c *settingsCommand) rootEntries() []intpickercompat.Entry {
 }
 
 func (c *settingsCommand) rootEntriesForTab(tab settingsRootTab) []intpickercompat.Entry {
+	return c.rootEntriesForTabLocale(tab, settingsLocaleFromEnv())
+}
+
+func (c *settingsCommand) rootEntriesForTabLocale(tab settingsRootTab, locale i18n.Locale) []intpickercompat.Entry {
 	if tab == settingsRootTabProject {
 		return c.projectTabEntries()
 	}
-	return c.rootEntriesForAxis(settingsAxisGlobal)
+	return c.rootEntriesForAxisLocale(settingsAxisGlobal, locale)
 }
 
 func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompat.Entry {
+	return c.rootEntriesForAxisLocale(axis, settingsLocaleFromEnv())
+}
+
+func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18n.Locale) []intpickercompat.Entry {
 	all := []intpickercompat.Entry{
 		{
-			Label: settingsRootLabel(settingsGlyphOpen, "Project Picker", "project roots, workdirs, and pins"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Project Picker", "project roots, workdirs, and pins"),
 			Value: settingsSectionProject,
 		},
 		{
-			Label: settingsRootLabel(settingsGlyphOpen, "AI Settings", "default split mode"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "AI Settings", "default split mode"),
 			Value: settingsSectionAI,
 		},
 		{
-			Label: settingsRootLabel(settingsGlyphOpen, "Notifications", "desktop mode, delivery sources, queue surfaces"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Notifications", "desktop mode, delivery sources, queue surfaces"),
 			Value: settingsSectionNotifications,
 		},
 		{
-			Label: settingsRootLabel(settingsGlyphOpen, "Hooks", "global lifecycle hook paths"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Hooks", "global lifecycle hook paths"),
 			Value: settingsSectionGlobalHooks,
 		},
 		{
-			Label: settingsRootLabel(settingsGlyphOpen, "Appearance", "theme font status and icon decoration"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Appearance", "theme font status and icon decoration"),
 			Value: settingsSectionStatusbar,
 		},
 		{
-			Label: c.sessionStateSettingsRootLabel(),
+			Label: c.sessionStateSettingsRootLabelLocale(locale),
 			Value: settingsSectionSessionState,
 		},
 		{
-			Label: settingsRootLabel(settingsGlyphOpen, "Keybindings", "edit tmux plain and prefix chords"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Keybindings", "edit tmux plain and prefix chords"),
 			Value: settingsSectionKeybindings,
 		},
 		{
-			Label: settingsRootLabel(settingsGlyphOpen, "Labs", "experimental picker engine"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Labs", "experimental picker engine"),
 			Value: settingsSectionLabs,
 		},
 		{
-			Label: settingsRootLabel(settingsGlyphOpen, "About", "version, updates, key setup"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "About", "version, updates, key setup"),
 			Value: settingsSectionAbout,
 		},
 	}
@@ -565,14 +596,24 @@ const (
 )
 
 func settingsRootLabel(glyph, name, description string) string {
-	return settingsRootLabelWithColor(glyph, settingsRootColorOpen, name, description)
+	return settingsRootLabelLocale(settingsLocaleFromEnv(), glyph, name, description)
+}
+
+func settingsRootLabelLocale(locale i18n.Locale, glyph, name, description string) string {
+	return settingsRootLabelWithColorLocale(locale, glyph, settingsRootColorOpen, name, description)
 }
 
 func settingsRootLabelDim(name, description string) string {
-	return settingsRootLabelWithColor(settingsGlyphInfo, settingsRootColorDim, name, description)
+	return settingsRootLabelWithColorLocale(settingsLocaleFromEnv(), settingsGlyphInfo, settingsRootColorDim, name, description)
 }
 
 func settingsRootLabelWithColor(glyph, color, name, description string) string {
+	return settingsRootLabelWithColorLocale(settingsLocaleFromEnv(), glyph, color, name, description)
+}
+
+func settingsRootLabelWithColorLocale(locale i18n.Locale, glyph, color, name, description string) string {
+	name = settingsCatalogTextLocale(locale, name)
+	description = settingsCatalogTextLocale(locale, description)
 	var b strings.Builder
 	if glyph == "" {
 		b.WriteString(" ")
@@ -593,10 +634,14 @@ func settingsRootLabelWithColor(glyph, color, name, description string) string {
 }
 
 func (c *settingsCommand) sessionStateSettingsRootLabel() string {
+	return c.sessionStateSettingsRootLabelLocale(settingsLocaleFromEnv())
+}
+
+func (c *settingsCommand) sessionStateSettingsRootLabelLocale(locale i18n.Locale) string {
 	autosave := c.currentSessionStateAutosave()
 	interval := c.currentSessionStateAutosaveInterval()
 	desc := fmt.Sprintf("autosave %s, interval %s", autosave.Mode, formatSessionStateAutosaveInterval(interval.Duration))
-	return settingsRootLabel(settingsGlyphOpen, "Session State", desc)
+	return settingsRootLabelLocale(locale, settingsGlyphOpen, "Session State", desc)
 }
 
 func (c *settingsCommand) projectSessionStateSettingsRootLabel(ctx settingsProjectContext) string {
@@ -4587,7 +4632,8 @@ func (c *settingsCommand) runWelcomeSettingsViewer() error {
 func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options {
 	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
 	var body strings.Builder
-	_ = writeShellWelcome(&body, welcomeCurrentVersion(), status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv))
+	locale := appLocale(c.lookupEnv)
+	_ = writeShellWelcome(&body, welcomeCurrentVersion(), status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv), locale)
 	entries := []intpickercompat.Entry{settingsBackEntry()}
 	for line := range strings.SplitSeq(strings.Trim(body.String(), "\n"), "\n") {
 		entries = append(entries, intpickercompat.Entry{
@@ -4599,8 +4645,8 @@ func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options
 	return intpickercompat.Options{
 		UI:            "settings-about-welcome",
 		Entries:       entries,
-		Title:         "About - Welcome",
-		Prompt:        "Settings > About > Welcome > ",
+		Title:         settingsCatalogTextLocale(locale, "About") + " - " + settingsCatalogTextLocale(locale, "Welcome"),
+		Prompt:        settingsCatalogTextLocale(locale, "Settings") + " > " + settingsCatalogTextLocale(locale, "About") + " > " + settingsCatalogTextLocale(locale, "Welcome") + " > ",
 		Footer:        projmuxFooter("Back row: About  |  Esc: close settings"),
 		DisableSearch: true,
 		Bindings:      settingsCloseBindings(),

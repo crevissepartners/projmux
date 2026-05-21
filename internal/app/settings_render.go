@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 )
 
@@ -45,6 +46,8 @@ const settingsLabelNameWidth = 24
 // without a glyph align with rows that use a single-cell glyph (followed by
 // the standard two-space gap before the name column).
 func settingsLabel(glyph, color, name, description string) string {
+	name = settingsCatalogText(name)
+	description = settingsCatalogText(description)
 	var b strings.Builder
 
 	if glyph == "" {
@@ -76,6 +79,8 @@ func settingsLabel(glyph, color, name, description string) string {
 // is wrapped in the dim color so it visually recedes, and no action color
 // is applied to the name column.
 func settingsLabelDim(name, description string) string {
+	name = settingsCatalogText(name)
+	description = settingsCatalogText(description)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
 	b.WriteString("  ")
@@ -99,6 +104,9 @@ func settingsLabelDim(name, description string) string {
 // name is a static label, the value is the resolved data, and the source
 // annotation explains where the value came from.
 func settingsLabelInfo(name, value, source string) string {
+	name = settingsCatalogText(name)
+	value = settingsCatalogText(value)
+	source = settingsCatalogText(source)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
 	b.WriteString("  ")
@@ -120,12 +128,10 @@ func settingsLabelInfo(name, value, source string) string {
 	return b.String()
 }
 
-// padRight right-pads s with spaces so its byte length is at least width.
-// settings labels are ASCII, so byte-len matches display columns closely
-// enough for our purposes.
+// padRight right-pads s with spaces so its visible terminal width is at least width.
 func padRight(s string, width int) string {
-	if len(s) >= width {
+	if i18n.TerminalCellWidth(s) >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-i18n.TerminalCellWidth(s))
 }

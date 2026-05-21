@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -107,6 +109,119 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 		settingsSectionAbout,
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings entry order = %#v, want %#v", got, want)
+	}
+}
+
+func TestSettingsRootOptionsKoreanCatalogDoesNotOverflow(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	cmd := &settingsCommand{lookupEnv: os.Getenv}
+	options := cmd.rootOptions(settingsRootTabGlobal)
+
+	if got, want := options.Title, "설정"; got != want {
+		t.Fatalf("root settings title = %q, want %q", got, want)
+	}
+	if got, want := options.Prompt, "설정 > "; got != want {
+		t.Fatalf("root settings prompt = %q, want %q", got, want)
+	}
+	wantChips := []projmuxpicker.Chip{
+		{Label: "전체", Active: true, ClickValue: settingsRootTabGlobalValue},
+		{Label: "프로젝트", Disabled: true, ClickValue: settingsRootTabProjectValue},
+	}
+	if got := options.TitleChips; !reflect.DeepEqual(got, wantChips) {
+		t.Fatalf("root settings title chips = %#v, want %#v", got, wantChips)
+	}
+	if got, want := options.Footer, "행을 열거나 범위 칩을 클릭해 탭을 전환합니다."; got != want {
+		t.Fatalf("root settings footer = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContaining(options.Entries, "프로젝트 선택기") {
+		t.Fatalf("root settings entries = %#v, want Korean Project Picker row", options.Entries)
+	}
+	for _, entry := range options.Entries {
+		if width := i18n.TerminalCellWidth(entry.Label); width > 96 {
+			t.Fatalf("Korean root row width = %d, want <= 96: %q", width, entry.Label)
+		}
+	}
+}
+
+func TestSettingsRootOptionsUsesCommandLookupEnvLocale(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+
+	cmd := &settingsCommand{lookupEnv: func(name string) string {
+		if name == "LANG" {
+			return "ko_KR.UTF-8"
+		}
+		return ""
+	}}
+	options := cmd.rootOptions(settingsRootTabGlobal)
+
+	if got, want := options.Title, "설정"; got != want {
+		t.Fatalf("root settings title = %q, want command lookup locale %q", got, want)
+	}
+	if got, want := options.Prompt, "설정 > "; got != want {
+		t.Fatalf("root settings prompt = %q, want command lookup locale %q", got, want)
+	}
+	wantChips := []projmuxpicker.Chip{
+		{Label: "전체", Active: true, ClickValue: settingsRootTabGlobalValue},
+		{Label: "프로젝트", Disabled: true, ClickValue: settingsRootTabProjectValue},
+	}
+	if got := options.TitleChips; !reflect.DeepEqual(got, wantChips) {
+		t.Fatalf("root settings title chips = %#v, want %#v", got, wantChips)
+	}
+	if got, want := options.Footer, "행을 열거나 범위 칩을 클릭해 탭을 전환합니다."; got != want {
+		t.Fatalf("root settings footer = %q, want command lookup locale %q", got, want)
+	}
+	if !hasEntryLabelContaining(options.Entries, "프로젝트 선택기") {
+		t.Fatalf("root settings entries = %#v, want command lookup locale Korean labels", options.Entries)
+	}
+}
+
+func TestSettingsTextKeysHaveFallbackCatalogEntries(t *testing.T) {
+	t.Parallel()
+
+	keys := make([]i18n.Key, 0, len(settingsTextKeys))
+	seen := map[i18n.Key]bool{}
+	for _, key := range settingsTextKeys {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	if missing := i18n.DefaultCatalog().MissingFallbackKeys(keys); len(missing) > 0 {
+		t.Fatalf("settingsTextKeys missing en-US fallback entries: %#v", missing)
+	}
+}
+
+func TestLiteralProjmuxFootersHaveCatalogMappings(t *testing.T) {
+	t.Parallel()
+
+	re := regexp.MustCompile(`projmuxFooter\("([^"]+)"\)`)
+	var missing []string
+	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, match := range re.FindAllSubmatch(data, -1) {
+			footer := strings.TrimSpace(string(match[1]))
+			if _, ok := settingsTextKeys[footer]; !ok {
+				missing = append(missing, path+": "+footer)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) > 0 {
+		t.Fatalf("literal projmuxFooter strings missing settingsTextKeys mappings: %#v", missing)
 	}
 }
 

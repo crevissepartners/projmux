@@ -1,6 +1,7 @@
 package i18n
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -195,5 +196,19 @@ func TestTruncateTerminalCellsClipsByCellsAndPreservesStyles(t *testing.T) {
 				t.Fatalf("truncated width = %d, max %d", got, tt.width)
 			}
 		})
+	}
+}
+
+func TestTruncateTerminalCellsKeepsLongKoreanGuideStyleSafe(t *testing.T) {
+	value := "\x1b[90m긴 한국어 안내 문장은 좁은 팝업 footer에서도 안전하게 잘려야 합니다\x1b[0m #[fg=green]Enter#[default]"
+	got := TruncateTerminalCells(value, 24)
+	if width := TerminalCellWidth(got); width > 24 {
+		t.Fatalf("truncated width = %d, want <= 24: %q", width, got)
+	}
+	if !strings.Contains(got, "\x1b[0m") {
+		t.Fatalf("truncated guide = %q, want ANSI reset preserved", got)
+	}
+	if !strings.Contains(TruncateTerminalCells(value, 0), "#[fg=green]#[default]") {
+		t.Fatalf("zero-width truncation should keep tmux wrappers: %q", TruncateTerminalCells(value, 0))
 	}
 }

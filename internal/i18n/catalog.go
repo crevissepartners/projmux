@@ -33,15 +33,31 @@ const (
 	KeySettingsRootNotifications     Key = "settings.root.notifications"
 	KeySettingsRootProject           Key = "settings.root.project"
 	KeySettingsRootAppearance        Key = "settings.root.appearance"
+	KeySettingsRootTitle             Key = "settings.root.title"
+	KeySettingsRootGlobalTab         Key = "settings.root.tab.global"
+	KeySettingsRootProjectTab        Key = "settings.root.tab.project"
+	KeySettingsRootPromptGlobal      Key = "settings.root.prompt.global"
+	KeySettingsRootPromptProject     Key = "settings.root.prompt.project"
+	KeySettingsRootFooter            Key = "settings.root.footer"
 	KeySettingsNotificationsDesktop  Key = "settings.notifications.desktop"
 	KeySettingsNotificationsDelivery Key = "settings.notifications.delivery_sources"
 	KeySettingsAboutWelcome          Key = "settings.about.welcome"
+	KeyPickerLinePrompt              Key = "picker.line.prompt"
 	KeyPickerPromptSearch            Key = "picker.prompt.search"
 	KeyPickerFooterOpenRows          Key = "picker.footer.open_rows"
 	KeyPickerFooterBack              Key = "picker.footer.back"
 	KeyPickerFooterClose             Key = "picker.footer.close"
 	KeyPickerEmptyNoMatches          Key = "picker.empty.no_matches"
 	KeyWelcomeShellTitle             Key = "welcome.shell.title"
+	KeyWelcomeShellDetach            Key = "welcome.shell.detach"
+	KeyWelcomeShellExit              Key = "welcome.shell.exit"
+	KeyWelcomeShellSurfaces          Key = "welcome.shell.surfaces"
+	KeyWelcomeShellContinue          Key = "welcome.shell.continue"
+	KeyWelcomeShellUpdateNow         Key = "welcome.shell.update_now"
+	KeyWelcomeShellUpdateSkipped     Key = "welcome.shell.update_skipped"
+	KeyWelcomeShellPromptDefault     Key = "welcome.shell.prompt.default"
+	KeyWelcomeShellPromptUpdate      Key = "welcome.shell.prompt.update"
+	KeyWelcomeShellPromptUpdateSkip  Key = "welcome.shell.prompt.update_skip"
 	KeyUpdateStatusAvailable         Key = "update.status.available"
 	KeyHelpUsageCommand              Key = "help.usage.command"
 )
@@ -71,15 +87,31 @@ var foundationKeys = []Key{
 	KeySettingsRootNotifications,
 	KeySettingsRootProject,
 	KeySettingsRootAppearance,
+	KeySettingsRootTitle,
+	KeySettingsRootGlobalTab,
+	KeySettingsRootProjectTab,
+	KeySettingsRootPromptGlobal,
+	KeySettingsRootPromptProject,
+	KeySettingsRootFooter,
 	KeySettingsNotificationsDesktop,
 	KeySettingsNotificationsDelivery,
 	KeySettingsAboutWelcome,
+	KeyPickerLinePrompt,
 	KeyPickerPromptSearch,
 	KeyPickerFooterOpenRows,
 	KeyPickerFooterBack,
 	KeyPickerFooterClose,
 	KeyPickerEmptyNoMatches,
 	KeyWelcomeShellTitle,
+	KeyWelcomeShellDetach,
+	KeyWelcomeShellExit,
+	KeyWelcomeShellSurfaces,
+	KeyWelcomeShellContinue,
+	KeyWelcomeShellUpdateNow,
+	KeyWelcomeShellUpdateSkipped,
+	KeyWelcomeShellPromptDefault,
+	KeyWelcomeShellPromptUpdate,
+	KeyWelcomeShellPromptUpdateSkip,
 	KeyUpdateStatusAvailable,
 	KeyHelpUsageCommand,
 }

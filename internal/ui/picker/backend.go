@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
@@ -86,6 +87,23 @@ func ResolveBackend(lookup func(string) string) Backend {
 		_ = lookup(BackendEnv)
 	}
 	return BackendNative
+}
+
+func nativeLocalizedText(key i18n.Key, fallback string) string {
+	text, err := i18n.NewLocalizer(nativeLocale()).Text(key)
+	if err != nil {
+		return fallback
+	}
+	return text.String()
+}
+
+func nativeLocale() i18n.Locale {
+	return i18n.ResolveLocale(i18n.LocaleOptions{
+		LookupEnv: func(name string) (string, bool) {
+			value, ok := os.LookupEnv(name)
+			return value, ok && strings.TrimSpace(value) != ""
+		},
+	}).Locale
 }
 
 func CloseActions(keys ...string) []Action {
@@ -1388,7 +1406,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	}
 	var main strings.Builder
 	if len(items) == 0 {
-		fmt.Fprintln(&main, "  no matches")
+		fmt.Fprintln(&main, "  "+nativeLocalizedText(i18n.KeyPickerEmptyNoMatches, "no matches"))
 		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
@@ -1573,11 +1591,11 @@ func nativePromptLine(prompt, query string, matches, total, cols int) string {
 }
 
 func nativePromptLineWithCursor(prompt, query string, cursor, matches, total, cols int) string {
-	return projmuxpicker.PromptLineWithCursor(prompt, query, cursor, matches, total, cols)
+	return projmuxpicker.PromptLineWithCursorLabel(nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, cursor, matches, total, cols)
 }
 
 func nativePromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
-	return projmuxpicker.PromptLineWithRenderedQuery(prompt, query, renderedQuery, matches, total, cols)
+	return projmuxpicker.PromptLineWithRenderedQueryLabel(nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, renderedQuery, matches, total, cols)
 }
 
 func nativeQueryWithCursor(query string, cursor int) string {
@@ -1971,7 +1989,7 @@ func renderNative(w io.Writer, options Options, items []Item, query string) {
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		fmt.Fprintln(w, footer)
 	}
-	fmt.Fprint(w, "number, search, or empty to close: ")
+	fmt.Fprint(w, nativeLocalizedText(i18n.KeyPickerLinePrompt, "number, search, or empty to close: "))
 }
 
 func findAction(actions []Action, key string) (Action, bool) {
