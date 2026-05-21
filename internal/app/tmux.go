@@ -44,6 +44,7 @@ const (
 	tmuxAccentAIBg              = theme.TmuxAccentAIBg
 	tmuxAccentAIFg              = theme.TmuxAccentAIFg
 	tmuxStateProgressFg         = theme.TmuxStateProgressFg
+	tmuxStateSuccessFg          = theme.TmuxStateSuccessFg
 	tmuxStateWarningFg          = theme.TmuxStateWarningFg
 	tmuxStateCriticalFg         = theme.TmuxStateCriticalFg
 )
@@ -1234,7 +1235,7 @@ func tmuxPaneBorderFormat() string {
 	paneLabelFormat := tmuxStyledVisiblePaneLabelFormat()
 	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
 	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxStateProgressFg + "] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxAccentAttentionStrongBg + "] ● " + paneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + paneLabelFormat + " #[default]}}"
+	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxStateProgressFg + "] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "] ● " + paneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + paneLabelFormat + " #[default]}}"
 	return "#{?pane_active,#[bold#,fg=" + theme.TmuxPaneActiveFg + "#,bg=" + theme.TmuxPaneActiveBg + "] > " + paneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
 }
 

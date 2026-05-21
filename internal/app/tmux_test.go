@@ -1476,7 +1476,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g pane-border-status top",
 		"set -g pane-border-format \"#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > ",
 		"#[bold#,fg=" + tmuxStateProgressFg + "] ● ",
-		"#[bold#,fg=" + tmuxAccentAttentionStrongBg + "] ● ",
+		"#[bold#,fg=" + tmuxStateSuccessFg + "] ● ",
 		"#[fg=colour244] ",
 		"#{@projmux_ai_topic}",
 		"#{pane_current_command},#{pane_title}",
@@ -1579,6 +1579,9 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	}
 	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxStateProgressFg+"] ● ") {
 		t.Fatalf("pane border format = %q, want busy marker to use state.progress", paneBorder)
+	}
+	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxStateSuccessFg+"] ● ") {
+		t.Fatalf("pane border format = %q, want reply/ready marker to use state.success", paneBorder)
 	}
 	if !strings.Contains(styledVisibleLabel, "#[bold#,fg="+tmuxStateProgressFg+"]#{@projmux_ai_topic}#[pop-default]") {
 		t.Fatalf("styled visible label format = %q, want renderer-level lead topic styling", styledVisibleLabel)
