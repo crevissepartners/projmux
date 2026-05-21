@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.6.4](https://github.com/crevissepartners/projmux/compare/v0.6.3...v0.6.4) (2026-05-21)
+
+
+### Features
+
+* add mux inventory read API ([#300](https://github.com/crevissepartners/projmux/issues/300)) ([8577bbd](https://github.com/crevissepartners/projmux/commit/8577bbd967ebfcc187112e5516b44710ffcb00dd))
+* add mux runner wrapper ([#297](https://github.com/crevissepartners/projmux/issues/297)) ([3bc6a71](https://github.com/crevissepartners/projmux/commit/3bc6a718172e54ebdc08d19b16854c8a0cba5779))
+* add native psmux shell entry smoke ([#308](https://github.com/crevissepartners/projmux/issues/308)) ([f4f48d3](https://github.com/crevissepartners/projmux/commit/f4f48d30d063f6dfa4b2d2904ca821817d86c083))
+* add psmux ai split mvp ([#311](https://github.com/crevissepartners/projmux/issues/311)) ([92b1bb8](https://github.com/crevissepartners/projmux/commit/92b1bb81f7d94117e9383c0831cd22242713a1a1))
+* add psmux app session foundation ([#310](https://github.com/crevissepartners/projmux/issues/310)) ([928ba75](https://github.com/crevissepartners/projmux/commit/928ba75415359ba7ccd4a8c084dec08cfba2099c))
+* add psmux project switch entrypoint ([#312](https://github.com/crevissepartners/projmux/issues/312)) ([83a3130](https://github.com/crevissepartners/projmux/commit/83a3130c61115d66053ed06f068f0ce107e4a844))
+* add semantic mux pane option API ([#299](https://github.com/crevissepartners/projmux/issues/299)) ([5264d41](https://github.com/crevissepartners/projmux/commit/5264d417c88cd5ec057e6b2a190b719239ee7b4c))
+* add semantic palette foundation ([#334](https://github.com/crevissepartners/projmux/issues/334)) ([701d606](https://github.com/crevissepartners/projmux/commit/701d6062ef327944336f821eeba5b9c2bf0a846f))
+* complete visual palette state slice ([#333](https://github.com/crevissepartners/projmux/issues/333)) ([af31f2b](https://github.com/crevissepartners/projmux/commit/af31f2b5187b7e71291d600a80ba5a773bbd056d))
+* complete visual palette theme handoff ([#335](https://github.com/crevissepartners/projmux/issues/335)) ([bb6f81f](https://github.com/crevissepartners/projmux/commit/bb6f81f052dd3f172bc0402eba9f1fd97eef602d))
+* define psmux command rendering policy ([#307](https://github.com/crevissepartners/projmux/issues/307)) ([4288410](https://github.com/crevissepartners/projmux/commit/4288410033ffa1ef70637bd789a430450b68e775))
+* extract interactive mux API ([#302](https://github.com/crevissepartners/projmux/issues/302)) ([fd7d23f](https://github.com/crevissepartners/projmux/commit/fd7d23f4166abc2b35053ce039dd4f11be5f3a3d))
+* extract mux lifecycle split hook APIs ([#303](https://github.com/crevissepartners/projmux/issues/303)) ([5e1a0ba](https://github.com/crevissepartners/projmux/commit/5e1a0baf87ff45a9728c6d1430895ba86c0c19ef))
+* **globalization:** add phase 1 catalog foundation ([#344](https://github.com/crevissepartners/projmux/issues/344)) ([7243f80](https://github.com/crevissepartners/projmux/commit/7243f8097f222fad6ef30c9277ff764d957dd224))
+* **globalization:** complete phase 0 inventory contract ([29f2129](https://github.com/crevissepartners/projmux/commit/29f21294880fa0f174de3e9101b99f0cef67aa09))
+* **keybindings:** reorganize keybinding surface ([#316](https://github.com/crevissepartners/projmux/issues/316)) ([d4e4af0](https://github.com/crevissepartners/projmux/commit/d4e4af098fd1a3eb82c039eb3cfd90710ab8af9b))
+
+
+### Bug Fixes
+
+* align pane border and git badge colors ([2649f6b](https://github.com/crevissepartners/projmux/commit/2649f6b98994b018e978c8082f4809db6ffd51cf))
+* align tmux window naming metadata ([#301](https://github.com/crevissepartners/projmux/issues/301)) ([0af72b6](https://github.com/crevissepartners/projmux/commit/0af72b665e5053a3407262b0c0f81edbfba5add8))
+* hide AI notify target labels ([#342](https://github.com/crevissepartners/projmux/issues/342)) ([7b8e393](https://github.com/crevissepartners/projmux/commit/7b8e39328b0f50bfa9566e700cfa23694d9aec8e))
+* improve AI notify sidebar layout ([#343](https://github.com/crevissepartners/projmux/issues/343)) ([e2f27ad](https://github.com/crevissepartners/projmux/commit/e2f27adb0839bfe53fe67a4c30c05151a42c96ff))
+* isolate trust gate popup from sidebar ([#314](https://github.com/crevissepartners/projmux/issues/314)) ([54dbf1d](https://github.com/crevissepartners/projmux/commit/54dbf1d7bf22127f0762ff7094e9ad63a9e179fe))
+* **keybindings:** allow plain aliases for transport actions ([#324](https://github.com/crevissepartners/projmux/issues/324)) ([a46a2ad](https://github.com/crevissepartners/projmux/commit/a46a2ad026ac829d33a9123b93e3b5374424ce57))
+* **keybindings:** prefix sidebar action labels ([#322](https://github.com/crevissepartners/projmux/issues/322)) ([272130d](https://github.com/crevissepartners/projmux/commit/272130dd14f0a4ae5f4eb23b44c31b98e93d9a3e))
+* **keybindings:** remove UserKey CSI-u route ([#319](https://github.com/crevissepartners/projmux/issues/319)) ([31e1f6e](https://github.com/crevissepartners/projmux/commit/31e1f6e65acfc0da486886a3f9f6f9d0ce2294a5))
+* **keybindings:** restore transport-dependent arrow binds ([#321](https://github.com/crevissepartners/projmux/issues/321)) ([769bf48](https://github.com/crevissepartners/projmux/commit/769bf486b0b19140dcd1bb9e3257e77c592d80a0))
+* **keybindings:** show readable settings labels ([#317](https://github.com/crevissepartners/projmux/issues/317)) ([3097b0f](https://github.com/crevissepartners/projmux/commit/3097b0fa43a41a26b06bfa8ee823eb9a86a7f920))
+* **keybindings:** surface picker and movement actions ([#318](https://github.com/crevissepartners/projmux/issues/318)) ([b7ffe1b](https://github.com/crevissepartners/projmux/commit/b7ffe1b617358581d39c4e5005429649690298ac))
+* **keybindings:** unbind retired key routes ([#326](https://github.com/crevissepartners/projmux/issues/326)) ([d04427c](https://github.com/crevissepartners/projmux/commit/d04427cb9ac3b6c278654ca226c56fc02adf1001))
+* prefer show-options for mux option reads ([#305](https://github.com/crevissepartners/projmux/issues/305)) ([f363f80](https://github.com/crevissepartners/projmux/commit/f363f8022791bfc3785ba7e81afad2746f0b49c2))
+* preserve lead topic pane color ([#337](https://github.com/crevissepartners/projmux/issues/337)) ([b8bbf6f](https://github.com/crevissepartners/projmux/commit/b8bbf6f7646a24fbe3a5224b31fe8bbaf989456b))
+* remove user-key csi-u route ([31e1f6e](https://github.com/crevissepartners/projmux/commit/31e1f6e65acfc0da486886a3f9f6f9d0ce2294a5))
+* render ready pane border green ([#338](https://github.com/crevissepartners/projmux/issues/338)) ([d69d98c](https://github.com/crevissepartners/projmux/commit/d69d98cd87eb54993b498127e4a0f3f8d7e4472e))
+* render sidebar footer key guides from keymap ([#341](https://github.com/crevissepartners/projmux/issues/341)) ([d0b2e52](https://github.com/crevissepartners/projmux/commit/d0b2e52cfbab1c7c36786a37850f057a95b03f45))
+* separate AI notification body labels ([#340](https://github.com/crevissepartners/projmux/issues/340)) ([b994b61](https://github.com/crevissepartners/projmux/commit/b994b613ad444ac6380be2f5e333c52a8d2f60f6))
+* separate attention palette from AI state ([#330](https://github.com/crevissepartners/projmux/issues/330)) ([6302ad4](https://github.com/crevissepartners/projmux/commit/6302ad4dbb9f0ab743a2a140ec3b9a29e8cb1d0d))
+* **settings:** show welcome in native viewer ([#331](https://github.com/crevissepartners/projmux/issues/331)) ([4f2a656](https://github.com/crevissepartners/projmux/commit/4f2a65617e8cb8fc6f4bbe90375df0d01156c34e))
+* stabilize psmux project switch and agent lookup ([#313](https://github.com/crevissepartners/projmux/issues/313)) ([d0270ae](https://github.com/crevissepartners/projmux/commit/d0270ae58251e0b7b5206ec0710bf99a9cdffcb6))
+* **statusbar:** prevent popup wait-key layout shift ([#315](https://github.com/crevissepartners/projmux/issues/315)) ([4c347f4](https://github.com/crevissepartners/projmux/commit/4c347f4d222060ee3e40158ca658774a27d4c4a5))
+* **tmux:** recover stale popup markers ([#323](https://github.com/crevissepartners/projmux/issues/323)) ([1c075da](https://github.com/crevissepartners/projmux/commit/1c075da082d28f7a737c2142a48c110781bed0f2))
+* **ui:** align picker and statusbar chrome ([#325](https://github.com/crevissepartners/projmux/issues/325)) ([8ba09f5](https://github.com/crevissepartners/projmux/commit/8ba09f5595fd4fddc35ea3af534b012f1b6ec270))
+* **ui:** align visual palette chrome ([#327](https://github.com/crevissepartners/projmux/issues/327)) ([c40b77e](https://github.com/crevissepartners/projmux/commit/c40b77ecc610bda63891937e9753de581d81e532))
+* **ui:** remove statusbar settings edge gap ([#332](https://github.com/crevissepartners/projmux/issues/332)) ([5ba58fc](https://github.com/crevissepartners/projmux/commit/5ba58fc6860dd18b244e14634798eddbf9f9d839))
+* **ui:** style settings chip row right edge ([#328](https://github.com/crevissepartners/projmux/issues/328)) ([ac873b1](https://github.com/crevissepartners/projmux/commit/ac873b13df33678c7e4fa7fe242cb9125f6eaa3a))
+* unblock native windows build ([#304](https://github.com/crevissepartners/projmux/issues/304)) ([ea44b0b](https://github.com/crevissepartners/projmux/commit/ea44b0b9f25c050687908343b52b41d4c8e2bde1))
+* update windows native doctor policy ([#306](https://github.com/crevissepartners/projmux/issues/306)) ([5bb9e55](https://github.com/crevissepartners/projmux/commit/5bb9e552038577d8e8b71f703f5954d4efb587f9))
+* **welcome:** revisit until version skip ([#329](https://github.com/crevissepartners/projmux/issues/329)) ([fcece33](https://github.com/crevissepartners/projmux/commit/fcece338a4e4cfcc9e3bc4a7deeb3db00847f95c))
+
 ## [0.6.3](https://github.com/crevissepartners/projmux/compare/v0.6.2...v0.6.3) (2026-05-14)
 
 
