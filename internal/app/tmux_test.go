@@ -1583,6 +1583,9 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	if !strings.Contains(styledVisibleLabel, "#[bold#,fg="+tmuxStateProgressFg+"]#{@projmux_ai_topic}#[pop-default]") {
 		t.Fatalf("styled visible label format = %q, want renderer-level lead topic styling", styledVisibleLabel)
 	}
+	if !strings.Contains(styledVisibleLabel, `^\\[[Ll]ead:[Ss]hip\\]`) {
+		t.Fatalf("styled visible label format = %q, want literal bracket escapes to survive tmux config parsing", styledVisibleLabel)
+	}
 
 	wantPaneBorderLine := "set -g pane-border-format " + tmuxConfigQuote(paneBorder)
 	if !strings.Contains(configText, wantPaneBorderLine+"\n") {
