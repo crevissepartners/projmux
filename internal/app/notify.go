@@ -504,7 +504,7 @@ func notifySidebarAge(age string) string {
 	if age == "" {
 		age = "0s"
 	}
-	return theme.ANSINotifyTitleStart + " age " + age + " " + notifySidebarReset
+	return theme.ANSINotifyAgeStart + " age " + age + " " + notifySidebarReset
 }
 
 func notifySidebarProjectBadge(project string) string {

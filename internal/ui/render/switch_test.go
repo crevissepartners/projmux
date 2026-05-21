@@ -29,7 +29,7 @@ func TestBuildSwitchRowsFormatsSessionModeAndPath(t *testing.T) {
 	if got, want := rows[0].Item.EffectiveSearchText(), "workspace"; got != want {
 		t.Fatalf("item search text = %q, want %q", got, want)
 	}
-	if got, want := rows[0].Item.MetaLines, []string{"\x1b[38;5;242m~/workspace\x1b[0m \x1b[1;38;5;16;48;5;45m main \x1b[0m"}; !equalStringSlices(got, want) {
+	if got, want := rows[0].Item.MetaLines, []string{"\x1b[38;5;242m~/workspace\x1b[0m \x1b[1;38;5;231;48;5;30m main \x1b[0m"}; !equalStringSlices(got, want) {
 		t.Fatalf("item meta lines = %q, want %q", got, want)
 	}
 }
@@ -46,7 +46,7 @@ func TestBuildSwitchRowsMutesInactiveGitBranch(t *testing.T) {
 		UI:          "popup",
 	}})
 
-	if got, want := rows[0].Item.MetaLines, []string{"\x1b[38;5;242m~/workspace\x1b[0m \x1b[38;5;245;48;5;238m topic \x1b[0m"}; !equalStringSlices(got, want) {
+	if got, want := rows[0].Item.MetaLines, []string{"\x1b[38;5;242m~/workspace\x1b[0m \x1b[38;5;231;48;5;30m topic \x1b[0m"}; !equalStringSlices(got, want) {
 		t.Fatalf("item meta lines = %q, want %q", got, want)
 	}
 }
@@ -63,7 +63,7 @@ func TestBuildSwitchRowsTruncatesLongGitBranchBadge(t *testing.T) {
 		UI:          "popup",
 	}})
 
-	const want = "\x1b[38;5;242m~/workspace\x1b[0m \x1b[38;5;245;48;5;238m feature/nativ... \x1b[0m"
+	const want = "\x1b[38;5;242m~/workspace\x1b[0m \x1b[38;5;231;48;5;30m feature/nativ... \x1b[0m"
 	if got := rows[0].Item.MetaLines[0]; got != want {
 		t.Fatalf("item meta line = %q, want truncated branch badge %q", got, want)
 	}
@@ -234,7 +234,7 @@ func TestBuildSwitchPickerItemsReturnsBackendNeutralRows(t *testing.T) {
 	if got, want := item.Value, "/home/tester/source/repos/app"; got != want {
 		t.Fatalf("value = %q, want %q", got, want)
 	}
-	if got, want := item.MetaLines, []string{"\x1b[38;5;242m~rp/app\x1b[0m \x1b[38;5;245;48;5;238m topic \x1b[0m"}; !equalStringSlices(got, want) {
+	if got, want := item.MetaLines, []string{"\x1b[38;5;242m~rp/app\x1b[0m \x1b[38;5;231;48;5;30m topic \x1b[0m"}; !equalStringSlices(got, want) {
 		t.Fatalf("meta lines = %q, want %q", got, want)
 	}
 	if got, want := item.Badges, []string{"tagged", "pinned"}; !equalStringSlices(got, want) {
@@ -262,7 +262,7 @@ func TestFormatSwitchCardLabelShowsMultilineContext(t *testing.T) {
 	}})
 
 	got := FormatSwitchCardLabel(rows[0].Item)
-	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[32m●\x1b[0m \x1b[33m*\x1b[0m\n  \x1b[38;5;242m~rp/app\x1b[0m \x1b[1;38;5;16;48;5;45m main \x1b[0m\n  \x1b[1;38;5;231;48;5;238m  shell   \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;220m● \x1b[0m\x1b[38;5;245;48;5;235m server  \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;82m● \x1b[0m\x1b[38;5;245;48;5;235m tests   \x1b[0m"
+	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[32m●\x1b[0m \x1b[33m*\x1b[0m\n  \x1b[38;5;242m~rp/app\x1b[0m \x1b[1;38;5;231;48;5;30m main \x1b[0m\n  \x1b[1;38;5;231;48;5;238m  shell   \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;220m● \x1b[0m\x1b[38;5;245;48;5;235m server  \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;82m● \x1b[0m\x1b[38;5;245;48;5;235m tests   \x1b[0m"
 	if got != want {
 		t.Fatalf("card label = %q, want %q", got, want)
 	}

@@ -1574,8 +1574,15 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	if topicIndex, shellIndex := strings.Index(visibleLabel, "#{@projmux_ai_topic}"), strings.Index(visibleLabel, shellLabel); topicIndex < 0 || shellIndex < 0 || topicIndex > shellIndex {
 		t.Fatalf("visible pane label format = %q, want @projmux_ai_topic before shell/current-command fallback", visibleLabel)
 	}
-	if !strings.Contains(paneBorder, styledVisibleLabel) {
-		t.Fatalf("pane border format = %q, want styled visible label %q", paneBorder, styledVisibleLabel)
+	if !strings.Contains(paneBorder, tmuxStyledVisiblePaneLabelFormatFor(tmuxStateProgressFg)) {
+		t.Fatalf("pane border format = %q, want progress-styled visible label", paneBorder)
+	}
+	if !strings.Contains(paneBorder, tmuxStyledVisiblePaneLabelFormatFor(tmuxStateSuccessFg)) {
+		t.Fatalf("pane border format = %q, want ready-styled visible label", paneBorder)
+	}
+	activePaneBorderPrefix := "#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > " + visibleLabel
+	if !strings.Contains(paneBorder, activePaneBorderPrefix) {
+		t.Fatalf("pane border format = %q, want active pane label to keep unstyled focus surface %q", paneBorder, activePaneBorderPrefix)
 	}
 	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxStateProgressFg+"] ● ") {
 		t.Fatalf("pane border format = %q, want busy marker to use state.progress", paneBorder)
@@ -1585,6 +1592,10 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	}
 	if !strings.Contains(styledVisibleLabel, "#[bold#,fg="+tmuxStateProgressFg+"]#{@projmux_ai_topic}#[pop-default]") {
 		t.Fatalf("styled visible label format = %q, want renderer-level lead topic styling", styledVisibleLabel)
+	}
+	readyStyledVisibleLabel := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateSuccessFg)
+	if !strings.Contains(readyStyledVisibleLabel, "#[bold#,fg="+tmuxStateSuccessFg+"]#{@projmux_ai_topic}#[pop-default]") {
+		t.Fatalf("ready styled visible label format = %q, want renderer-level lead topic styling to match ready marker", readyStyledVisibleLabel)
 	}
 	if !strings.Contains(styledVisibleLabel, `^\\[[Ll]ead:[Ss]hip\\]`) {
 		t.Fatalf("styled visible label format = %q, want literal bracket escapes to survive tmux config parsing", styledVisibleLabel)

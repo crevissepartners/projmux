@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 func newStatusNotifyCommand(store notifyStore) *statusCommand {
@@ -141,8 +142,8 @@ func TestStatusNotifyPaletteSeparatesAttentionAndAI(t *testing.T) {
 	}}, 80, now)
 
 	for _, want := range []string{
-		"#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionFg + "]",
-		"#[bg=" + tmuxAccentAttentionStrongBg + ",fg=colour16,bold] NEED ",
+		"#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateProgressFg + "]",
+		"#[bg=" + tmuxStateProgressFg + ",fg=colour16,bold] NEED ",
 		"#[bg=" + tmuxAccentAIBg + ",fg=colour16,bold] codex ",
 	} {
 		if !strings.Contains(out, want) {
@@ -153,6 +154,9 @@ func TestStatusNotifyPaletteSeparatesAttentionAndAI(t *testing.T) {
 		if strings.Contains(out, notWant) {
 			t.Fatalf("status notify palette output = %q, must not use action/legacy color %q", out, notWant)
 		}
+	}
+	if !strings.Contains(out, "#[bg="+tmuxAccentAttentionBg+",fg="+theme.TmuxStateAheadFg+"]") {
+		t.Fatalf("status notify palette output = %q, want blue age foreground", out)
 	}
 }
 
