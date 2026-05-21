@@ -95,8 +95,8 @@ by different picker surfaces, while conflicts inside one surface are rejected.
 | `SessionPopup:CyclePreviewPanePrev` / `SessionPopup:CyclePreviewPaneNext` | Preview panes |
 | `NotifySidebar:Ack` / `NotifySidebar:ClearNonCritical` / `NotifySidebar:ClearAll` | Manage notifications |
 
-Runtime picker footers avoid hardcoded key guides so custom aliases do not make
-on-screen copy stale.
+Runtime picker footers render key guides from the merged keymap, preferring the
+default alias when it is present and otherwise using the first configured alias.
 
 ## Keymap File
 

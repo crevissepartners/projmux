@@ -319,7 +319,12 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 			Title:  theme.ANSINotifyTitleStart + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications" + theme.ANSIReset,
 			Prompt: "Notify > ",
 			Header: "Newest first",
-			Footer: "Newest first. Critical notifications are kept when clearing non-critical rows.",
+			Footer: pickerActionKeyGuide(c.homeDir, c.lookupEnv, []pickerActionKeyGuideItem{
+				{ActionID: "NotifySidebar:FocusAndAck", Label: "focus/ack"},
+				{ActionID: "NotifySidebar:Ack", Label: "ack"},
+				{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
+				{ActionID: "NotifySidebar:ClearAll", Label: "clear all"},
+			}),
 			ExpectKeys: append(
 				append(
 					effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:Ack"}, []string{"a"}),

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -324,7 +326,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Newest first. Critical notifications are kept when clearing non-critical rows."; got != want {
+	if got, want := picker.options.Footer, "Enter: focus/ack  |  A: ack  |  X: clear non-critical  |  Ctrl-X: clear all"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
 	if got, want := picker.options.ExpectKeys, []string{"a", "x", "ctrl-x"}; !reflect.DeepEqual(got, want) {
@@ -360,6 +362,48 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux", "--client", "/dev/pts/7"}
 	if !equalStringSlices(focusCalls[0].args, wantArgs) {
 		t.Fatalf("focus args = %#v, want %#v", focusCalls[0].args, wantArgs)
+	}
+}
+
+func TestNotifyListSidebarFooterReadsKeymapGuide(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(keymapPath, []byte(`[bindings."NotifySidebar:FocusAndAck"]
+keys = ["o", "Enter"]
+
+[bindings."NotifySidebar:Ack"]
+keys = ["b", "a"]
+
+[bindings."NotifySidebar:ClearNonCritical"]
+keys = ["c"]
+
+[bindings."NotifySidebar:ClearAll"]
+keys = ["C-y"]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
+	}
+	picker := &stubNotifyPicker{result: intpickercompat.Result{}}
+	cmd := newCmd(store)
+	cmd.homeDir = func() (string, error) { return home, nil }
+	cmd.lookupEnv = func(string) string { return "" }
+	cmd.picker = picker
+	cmd.native = nativePickerFromCompatRunner(picker)
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	want := "Enter: focus/ack  |  A: ack  |  C: clear non-critical  |  Ctrl-Y: clear all"
+	if got := picker.options.Footer; got != want {
+		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
 }
 

@@ -118,8 +118,8 @@ attention-tinted title. When notification icon decoration is `symbol` or
 `emoji`, the bell appears before the title text.
 Selecting a row still focuses and acknowledges that notification. Internal
 notify commands use `NotifySidebar:*` IDs in `keymap.toml`; runtime footers
-avoid hardcoded key guides so custom aliases do not make the visible copy
-stale.
+render key guides from the merged keymap and prefer the default alias when it
+is still configured.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,
