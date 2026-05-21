@@ -341,11 +341,22 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(labelLines) != 2 {
 		t.Fatalf("sidebar label = %q, want two-line card", entry.Label)
 	}
-	if got := stripANSI(labelLines[0]); got != " worker loop  Ready" {
-		t.Fatalf("sidebar first line = %q, want topic badge before notification text", labelLines[0])
+	if got := stripANSI(labelLines[0]); got != " main  Ready" {
+		t.Fatalf("sidebar first line = %q, want project badge before notification text", labelLines[0])
 	}
-	if meta := labelLines[1]; !strings.Contains(meta, " age 30s ") || !strings.Contains(meta, " main ") || !strings.Contains(meta, " codex ") || !strings.Contains(meta, " WARN ") || strings.Contains(meta, "window 1") || strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
-		t.Fatalf("sidebar metadata = %q, want age/project/agent/status without target/source", meta)
+	if !strings.Contains(labelLines[1], theme.ANSIChipActiveStart+" worker loop ") {
+		t.Fatalf("sidebar metadata = %q, want prominent topic badge", labelLines[1])
+	}
+	metaText := stripANSI(labelLines[1])
+	ageIndex := strings.Index(metaText, "age 30s")
+	topicIndex := strings.Index(metaText, "worker loop")
+	statusIndex := strings.Index(metaText, "WARN")
+	agentIndex := strings.Index(metaText, "codex")
+	if !(ageIndex >= 0 && ageIndex < topicIndex && topicIndex < statusIndex && statusIndex < agentIndex) {
+		t.Fatalf("sidebar metadata = %q, want age/topic/status/agent order", labelLines[1])
+	}
+	if meta := labelLines[1]; !strings.Contains(meta, " age 30s ") || strings.Contains(meta, " main ") || !strings.Contains(meta, " codex ") || !strings.Contains(meta, " WARN ") || strings.Contains(meta, "window 1") || strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
+		t.Fatalf("sidebar metadata = %q, want age/topic/status/agent without project/target/source", meta)
 	}
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)

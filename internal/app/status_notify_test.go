@@ -80,9 +80,9 @@ func TestStatusNotifyExternalEntryRendersInfoBadge(t *testing.T) {
 	}
 }
 
-// AI-source entry renders project, reply-needed state, and agent badges from
-// metadata without requiring an agent prefix in the body.
-func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
+// AI-source entry renders project and topic badges from metadata without
+// repeating state or agent badges in the statusbar body.
+func TestStatusNotifyAIEntryRendersTopicBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -92,7 +92,7 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 			Text:      "review needed before shipping",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
-			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "shipping"},
 			Session:   "s",
 			Window:    "1",
 			Pane:      "0",
@@ -108,8 +108,7 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	got := stdout.String()
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want badge %q", got, want)
@@ -120,6 +119,9 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	}
 	if !strings.Contains(got, "review") {
 		t.Fatalf("stdout = %q, want body 'review'", got)
+	}
+	if strings.Contains(got, " NEED ") || strings.Contains(got, " claude ") {
+		t.Fatalf("stdout = %q, must not include state/agent badges for AI statusbar", got)
 	}
 	if strings.Contains(got, "w1.p0") {
 		t.Fatalf("stdout = %q, must not include pane target", got)
@@ -138,15 +140,14 @@ func TestStatusNotifyPaletteSeparatesAttentionAndAI(t *testing.T) {
 		Text:      "review needed before shipping",
 		Severity:  notify.SeverityInfo,
 		Source:    notify.SourceAI,
-		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
+		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need", "topic": "review"},
 		Session:   "s",
 		CreatedAt: now,
 	}}, 80, now)
 
 	for _, want := range []string{
 		"#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateProgressFg + "]",
-		"#[bg=" + tmuxStateProgressFg + ",fg=colour16,bold] NEED ",
-		"#[bg=" + tmuxAccentAIBg + ",fg=colour16,bold] codex ",
+		"#[bg=" + tmuxAccentAIBg + ",fg=colour16,bold] review ",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status notify palette output = %q, want %q", out, want)
@@ -282,7 +283,7 @@ func fixtureAIEntry(now time.Time) []notify.Notification {
 			Text:      "review needed before shipping",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
-			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "shipping"},
 			Session:   "s",
 			Window:    "1",
 			Pane:      "0",
@@ -293,7 +294,7 @@ func fixtureAIEntry(now time.Time) []notify.Notification {
 			Text:      "another",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
-			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "shipping"},
 			Session:   "s",
 			Window:    "1",
 			Pane:      "0",
@@ -312,7 +313,7 @@ func TestStatusNotifyLongBodyClipsBeforeDroppingAge(t *testing.T) {
 			Text:      "reply ready with a very long body that should clip before metadata disappears",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
-			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "long"},
 			Session:   "project",
 			CreatedAt: now,
 		},
@@ -325,8 +326,7 @@ func TestStatusNotifyLongBodyClipsBeforeDroppingAge(t *testing.T) {
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("project"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "long"}}),
 		"just now",
 		"+2",
 		"…",
@@ -347,8 +347,7 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
 		"review needed before shipping",
 		"2m",
 		"+1",
@@ -371,8 +370,7 @@ func TestStatusNotifyWidthTier2ClipsTextBeforeAge(t *testing.T) {
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
 		"review",
 		"2m",
 		"+1",
@@ -388,14 +386,13 @@ func TestStatusNotifyWidthTier3DropsAgeAfterClippingText(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	out := formatStatusNotify(fixtureAIEntry(now), 28, now)
-	if visualLen(out) > 28 {
-		t.Fatalf("tier3 visualLen=%d > 28: %q", visualLen(out), out)
+	out := formatStatusNotify(fixtureAIEntry(now), 24, now)
+	if visualLen(out) > 24 {
+		t.Fatalf("tier3 visualLen=%d > 24: %q", visualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
 		"+1",
 		"…",
 	} {
@@ -472,17 +469,15 @@ func TestStatusNotifyAgentPrefixGracefulFallback(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		name      string
-		text      string
-		wantAgent string // "" means INFO label badge
-		wantState string
+		name string
+		text string
 	}{
-		{name: "no colon", text: "reply ready", wantAgent: "", wantState: "NEED"},
-		{name: "unknown agent", text: "gpt: reply ready", wantAgent: "", wantState: "NEED"},
-		{name: "empty body after colon", text: "claude:", wantAgent: "", wantState: "INFO"},
-		{name: "leading colon", text: ":hello", wantAgent: "", wantState: "INFO"},
-		{name: "codex prefix", text: "codex: thought", wantAgent: "codex", wantState: "INFO"},
-		{name: "claude prefix uppercase", text: "Claude: ready", wantAgent: "claude", wantState: "INFO"},
+		{name: "no colon", text: "reply ready"},
+		{name: "unknown agent", text: "gpt: reply ready"},
+		{name: "empty body after colon", text: "claude:"},
+		{name: "leading colon", text: ":hello"},
+		{name: "codex prefix", text: "codex: thought"},
+		{name: "claude prefix uppercase", text: "Claude: ready"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -494,16 +489,8 @@ func TestStatusNotifyAgentPrefixGracefulFallback(t *testing.T) {
 			if !strings.HasPrefix(out, notifyLineOpen+renderNotifyProjectBadge("s")) {
 				t.Fatalf("expected project badge at start of %q", out)
 			}
-			wantStateBadge := renderNotifyBadge(tc.wantState, notify.SeverityInfo)
-			if !strings.Contains(out, wantStateBadge) {
-				t.Fatalf("expected state badge %q in %q", wantStateBadge, out)
-			}
-			wantAgentBadge := renderNotifyAgentBadge(tc.wantAgent)
-			if tc.wantAgent != "" && !strings.Contains(out, wantAgentBadge) {
-				t.Fatalf("expected agent badge %q in %q", wantAgentBadge, out)
-			}
-			if tc.wantAgent == "" && (strings.Contains(out, notifyAgentOpen) || strings.Contains(out, notifyAgentClaude) || strings.Contains(out, notifyAgentCodex)) {
-				t.Fatalf("did not expect agent badge in %q", out)
+			if strings.Contains(out, " NEED ") || strings.Contains(out, " INFO ") || strings.Contains(out, " codex ") || strings.Contains(out, " claude ") {
+				t.Fatalf("did not expect state/agent badge in AI statusbar output %q", out)
 			}
 		})
 	}

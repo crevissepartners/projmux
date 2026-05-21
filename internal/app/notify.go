@@ -441,14 +441,14 @@ func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyR
 	if display != notifyDisplayLive {
 		text = notifySidebarDimText(text)
 	}
-	if topic := notifySidebarTopicBadge(e); topic != "" {
+	if e.Source == notify.SourceAI {
 		if notifySidebarLabelCell(e.Metadata["topic"]) == notifySidebarLabelCell(e.Text) {
 			text = "Ready"
 			if display != notifyDisplayLive {
 				text = notifySidebarDimText(text)
 			}
 		}
-		text = topic + " " + text
+		return notifySidebarAILabel(e, age, agent, text, display)
 	}
 	metaParts := []string{
 		notifySidebarAge(age),
@@ -467,6 +467,24 @@ func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyR
 		}
 	}
 	return text + "\n  " + strings.Join(metaParts, " ")
+}
+
+func notifySidebarAILabel(e notify.Notification, age, agent, text string, display notifyRowDisplayState) string {
+	firstLineParts := []string{notifySidebarProjectBadge(notifyProjectName(e.Session))}
+	if text != "" {
+		firstLineParts = append(firstLineParts, text)
+	}
+	firstLine := strings.Join(firstLineParts, " ")
+
+	metaParts := []string{notifySidebarAge(age)}
+	if topic := notifySidebarTopicBadge(e); topic != "" {
+		metaParts = append(metaParts, topic)
+	}
+	metaParts = append(metaParts, notifySidebarStateBadge(notifyStateLabelFor(e, text, display)))
+	if agent != "" {
+		metaParts = append(metaParts, notifySidebarAgentBadge(agent))
+	}
+	return firstLine + "\n  " + strings.Join(metaParts, " ")
 }
 
 func notifySidebarShowTargetParts(e notify.Notification) bool {
@@ -543,7 +561,7 @@ func notifySidebarTopicBadge(e notify.Notification) string {
 	if topic == "" {
 		return ""
 	}
-	return theme.ANSIChipInactiveStart + " " + topic + " " + notifySidebarReset
+	return theme.ANSIChipActiveStart + " " + topic + " " + notifySidebarReset
 }
 
 func notifySidebarTargetPart(label, value string) string {

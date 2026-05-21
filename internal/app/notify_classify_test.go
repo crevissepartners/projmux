@@ -239,17 +239,17 @@ func TestNotifySidebarEntriesWithLivePassesClassification(t *testing.T) {
 	}
 }
 
-// TestFormatStatusNotifyWithLiveSubstitutesStaleBadge pins that the
-// statusbar segment swaps NEED → STL and uses the muted palette when the
-// head entry has no matching live pane.
-func TestFormatStatusNotifyWithLiveSubstitutesStaleBadge(t *testing.T) {
+// TestFormatStatusNotifyWithLiveHidesAIStaleBadge pins that the statusbar
+// keeps AI rows to project/topic/body metadata instead of adding STL/NEED
+// state badges.
+func TestFormatStatusNotifyWithLiveHidesAIStaleBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{{
 		ID:        "ai:gone:%9",
 		Text:      "Ready",
-		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
+		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need", "topic": "docker e2e"},
 		Severity:  notify.SeverityInfo,
 		Source:    notify.SourceAI,
 		Session:   "gone",
@@ -257,14 +257,11 @@ func TestFormatStatusNotifyWithLiveSubstitutesStaleBadge(t *testing.T) {
 		CreatedAt: now.Add(-30 * time.Second),
 	}}
 	out := formatStatusNotifyWithLive(entries, 80, now, map[string]notifyLivePane{})
-	if !strings.Contains(out, " STL ") {
-		t.Fatalf("stale status segment = %q, want STL abbreviation", out)
+	if !strings.Contains(out, renderNotifyTopicBadge(entries[0])) {
+		t.Fatalf("stale status segment = %q, want topic badge", out)
 	}
-	if !strings.Contains(out, notifyBadgeStaleOpen) {
-		t.Fatalf("stale status segment = %q, want stale palette", out)
-	}
-	if strings.Contains(out, " NEED ") {
-		t.Fatalf("stale status segment must not still carry the live NEED label: %q", out)
+	if strings.Contains(out, " STL ") || strings.Contains(out, " NEED ") || strings.Contains(out, " codex ") {
+		t.Fatalf("stale AI status segment must not carry state/agent badges: %q", out)
 	}
 }
 
@@ -291,17 +288,16 @@ func TestFormatStatusNotifyWithLiveSubstitutesGoneBadge(t *testing.T) {
 	}
 }
 
-// TestFormatStatusNotifyLiveEntryKeepsExistingNeedBadge guards the
-// regression contract: live entries keep their original NEED/INFO/WARN/CRIT
-// labels.
-func TestFormatStatusNotifyLiveEntryKeepsExistingNeedBadge(t *testing.T) {
+// TestFormatStatusNotifyLiveAIEntryUsesTopicBadge guards the AI statusbar
+// contract: project/topic/body replace state and agent badges.
+func TestFormatStatusNotifyLiveAIEntryUsesTopicBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{{
 		ID:        "ai:s:%1",
 		Text:      "Ready",
-		Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
+		Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "review"},
 		Severity:  notify.SeverityInfo,
 		Source:    notify.SourceAI,
 		Session:   "s",
@@ -312,11 +308,11 @@ func TestFormatStatusNotifyLiveEntryKeepsExistingNeedBadge(t *testing.T) {
 		"ai:s:%1": {ID: "ai:s:%1", Session: "s", Pane: "%1", ShouldQueue: true},
 	}
 	out := formatStatusNotifyWithLive(entries, 80, now, liveByID)
-	if !strings.Contains(out, " NEED ") {
-		t.Fatalf("live status segment = %q, want NEED badge", out)
+	if !strings.Contains(out, renderNotifyTopicBadge(entries[0])) {
+		t.Fatalf("live status segment = %q, want topic badge", out)
 	}
-	if strings.Contains(out, " STL ") || strings.Contains(out, " GON ") {
-		t.Fatalf("live status segment must not carry stale/gone abbreviations: %q", out)
+	if strings.Contains(out, " NEED ") || strings.Contains(out, " STL ") || strings.Contains(out, " GON ") || strings.Contains(out, " claude ") {
+		t.Fatalf("live AI status segment must not carry state/agent abbreviations: %q", out)
 	}
 }
 
