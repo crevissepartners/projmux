@@ -147,8 +147,8 @@ func TestNotifySidebarPaletteSeparatesAttentionAndAI(t *testing.T) {
 	t.Parallel()
 
 	need := notifySidebarStateBadge("NEED")
-	if !strings.HasPrefix(need, "\x1b[1;38;5;16;48;5;204m") {
-		t.Fatalf("NEED badge = %q, want attention palette", need)
+	if !strings.HasPrefix(need, "\x1b[1;38;5;16;48;5;220m") {
+		t.Fatalf("NEED badge = %q, want amber pending palette", need)
 	}
 	warn := notifySidebarStateBadge("WARN")
 	if !strings.HasPrefix(warn, "\x1b[1;38;5;16;48;5;214m") {
@@ -164,6 +164,15 @@ func TestNotifySidebarPaletteSeparatesAttentionAndAI(t *testing.T) {
 				t.Fatalf("sidebar label = %q, must not use action/legacy color %q", label, notWant)
 			}
 		}
+	}
+}
+
+func TestNotifySidebarAgeUsesBluePalette(t *testing.T) {
+	t.Parallel()
+
+	age := notifySidebarAge("11s")
+	if !strings.HasPrefix(age, "\x1b[38;5;153m") || !strings.Contains(age, " age 11s ") {
+		t.Fatalf("age = %q, want blue age palette", age)
 	}
 }
 

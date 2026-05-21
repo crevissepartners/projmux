@@ -1211,12 +1211,16 @@ func tmuxVisiblePaneLabelFormat() string {
 }
 
 func tmuxStyledVisiblePaneLabelFormat() string {
-	topic := "#{@projmux_ai_topic}"
-	return "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:" + topic + ",}}," + tmuxStyledAITopicFormat(topic) + "," + tmuxShellPaneLabelFormat() + "}"
+	return tmuxStyledVisiblePaneLabelFormatFor(tmuxStateProgressFg)
 }
 
-func tmuxStyledAITopicFormat(topic string) string {
-	return "#{?" + tmuxLeadModeTopicMatchFormat(topic) + ",#[push-default]#[bold#,fg=" + tmuxStateProgressFg + "]" + topic + "#[pop-default]," + topic + "}"
+func tmuxStyledVisiblePaneLabelFormatFor(styleFg string) string {
+	topic := "#{@projmux_ai_topic}"
+	return "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:" + topic + ",}}," + tmuxStyledAITopicFormat(topic, styleFg) + "," + tmuxShellPaneLabelFormat() + "}"
+}
+
+func tmuxStyledAITopicFormat(topic, styleFg string) string {
+	return "#{?" + tmuxLeadModeTopicMatchFormat(topic) + ",#[push-default]#[bold#,fg=" + styleFg + "]" + topic + "#[pop-default]," + topic + "}"
 }
 
 func tmuxLeadModeTopicMatchFormat(topic string) string {
@@ -1232,11 +1236,14 @@ func tmuxShellPaneLabelFormat() string {
 }
 
 func tmuxPaneBorderFormat() string {
-	paneLabelFormat := tmuxStyledVisiblePaneLabelFormat()
+	activePaneLabelFormat := tmuxVisiblePaneLabelFormat()
+	busyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateProgressFg)
+	replyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateSuccessFg)
+	mutedPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(theme.TmuxMutedFg)
 	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
 	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxStateProgressFg + "] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "] ● " + paneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + paneLabelFormat + " #[default]}}"
-	return "#{?pane_active,#[bold#,fg=" + theme.TmuxPaneActiveFg + "#,bg=" + theme.TmuxPaneActiveBg + "] > " + paneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
+	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxStateProgressFg + "] ● " + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "] ● " + replyPaneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}"
+	return "#{?pane_active,#[bold#,fg=" + theme.TmuxPaneActiveFg + "#,bg=" + theme.TmuxPaneActiveBg + "] > " + activePaneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
 }
 
 func tmuxCenteredWindowNameFormat(width int) string {

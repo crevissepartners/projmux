@@ -479,11 +479,11 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 // carries a notification-colored background; badges are stronger blocks on top
 // of that same line instead of separate outline glyphs.
 const (
-	notifyLineOpen      = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionFg + "]"
-	notifyLineDimOpen   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + theme.TmuxAccentAttentionDimFg + "]"
-	notifyLineCountOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionFg + ",bold]"
+	notifyLineOpen      = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateProgressFg + "]"
+	notifyLineDimOpen   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + theme.TmuxStateAheadFg + "]"
+	notifyLineCountOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateProgressFg + ",bold]"
 	notifyProjectOpen   = "#[bg=" + theme.TmuxAttentionProjectBg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
-	notifyBadgeInfoOpen = "#[bg=" + tmuxAccentAttentionStrongBg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
+	notifyBadgeInfoOpen = "#[bg=" + tmuxStateProgressFg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
 	notifyBadgeWarnOpen = "#[bg=" + tmuxStateWarningFg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
 	notifyBadgeCritOpen = "#[bg=" + tmuxStateCriticalFg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
 	// Stale/gone badges share a muted palette so the ack-only state is
@@ -495,7 +495,7 @@ const (
 	notifyAgentOpen      = "#[bg=" + tmuxAccentAIBg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
 	notifyAgentClaude    = notifyAgentOpen
 	notifyAgentCodex     = notifyAgentOpen
-	notifySeverityInfo   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionStrongBg + "]"
+	notifySeverityInfo   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateProgressFg + "]"
 	notifySeverityWarn   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateWarningFg + "]"
 	notifySeverityCrit   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateCriticalFg + ",bold]"
 	notifyIcon           = "●"
