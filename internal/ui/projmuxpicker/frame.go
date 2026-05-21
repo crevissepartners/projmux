@@ -321,6 +321,8 @@ func frameTitlebarChipsLine(theme Theme, innerWidth int, chips []Chip) string {
 }
 
 func frameTitlebarStyledLine(theme Theme, body string) string {
+	// Keep both border cells and the interior padding explicitly styled so
+	// terminal defaults cannot leak through titlebar, chip-strip, or divider gaps.
 	return TitlebarRule + theme.Vertical + TitlebarStart + body + TitlebarRule + theme.Vertical + Reset
 }
 

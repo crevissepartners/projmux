@@ -1886,7 +1886,7 @@ func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
 	}}, "", 0, 0, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "▌") || !strings.Contains(rendered, "48;2;38;50;56") {
+	if !strings.Contains(rendered, "▌") || !strings.Contains(rendered, "48;2;44;56;61") {
 		t.Fatalf("native output = %q, want fzf-like pointer and current-row color", rendered)
 	}
 	if strings.Contains(rendered, "> api") {

@@ -443,7 +443,7 @@ func TestChipANSIGoldenMatchesTmuxWindowStatusPalette(t *testing.T) {
 	if got, want := TmuxWindowInactiveFg, "colour245"; got != want {
 		t.Fatalf("inactive fg palette = %q, want %q", got, want)
 	}
-	if got, want := TmuxWindowActiveBg, "colour238"; got != want {
+	if got, want := TmuxWindowActiveBg, "colour240"; got != want {
 		t.Fatalf("active bg palette = %q, want %q", got, want)
 	}
 	if got, want := TmuxWindowActiveFg, "colour231"; got != want {
@@ -452,7 +452,7 @@ func TestChipANSIGoldenMatchesTmuxWindowStatusPalette(t *testing.T) {
 	if got, want := ChipInactiveStart, "\x1b[48;5;235m\x1b[38;5;245m"; got != want {
 		t.Fatalf("inactive chip ANSI = %q, want %q", got, want)
 	}
-	if got, want := ChipActiveStart, "\x1b[1m\x1b[48;5;238m\x1b[38;5;231m"; got != want {
+	if got, want := ChipActiveStart, "\x1b[1m\x1b[48;5;240m\x1b[38;5;231m"; got != want {
 		t.Fatalf("active chip ANSI = %q, want %q", got, want)
 	}
 	if got, want := ChipDisabledStart, "\x1b[2m\x1b[48;5;235m\x1b[38;5;245m"; got != want {

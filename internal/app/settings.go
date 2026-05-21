@@ -511,39 +511,39 @@ func (c *settingsCommand) rootEntriesForTab(tab settingsRootTab) []intpickercomp
 func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompat.Entry {
 	all := []intpickercompat.Entry{
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Project Picker", "project roots, workdirs, and pins"),
+			Label: settingsRootLabel(settingsGlyphOpen, "Project Picker", "project roots, workdirs, and pins"),
 			Value: settingsSectionProject,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "AI Settings", "default split mode"),
+			Label: settingsRootLabel(settingsGlyphOpen, "AI Settings", "default split mode"),
 			Value: settingsSectionAI,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Notifications", "desktop mode, delivery sources, queue surfaces"),
+			Label: settingsRootLabel(settingsGlyphOpen, "Notifications", "desktop mode, delivery sources, queue surfaces"),
 			Value: settingsSectionNotifications,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Hooks", "global lifecycle hook paths"),
+			Label: settingsRootLabel(settingsGlyphOpen, "Hooks", "global lifecycle hook paths"),
 			Value: settingsSectionGlobalHooks,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Appearance", "per-surface icon decoration"),
+			Label: settingsRootLabel(settingsGlyphOpen, "Appearance", "per-surface icon decoration"),
 			Value: settingsSectionStatusbar,
 		},
 		{
-			Label: c.sessionStateRootLabel(),
+			Label: c.sessionStateSettingsRootLabel(),
 			Value: settingsSectionSessionState,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Keybindings", "edit tmux plain and prefix chords"),
+			Label: settingsRootLabel(settingsGlyphOpen, "Keybindings", "edit tmux plain and prefix chords"),
 			Value: settingsSectionKeybindings,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Labs", "experimental picker engine"),
+			Label: settingsRootLabel(settingsGlyphOpen, "Labs", "experimental picker engine"),
 			Value: settingsSectionLabs,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "About", "version, updates, key setup"),
+			Label: settingsRootLabel(settingsGlyphOpen, "About", "version, updates, key setup"),
 			Value: settingsSectionAbout,
 		},
 	}
@@ -556,6 +556,55 @@ func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompa
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+const (
+	settingsRootColorOpen = "\x1b[38;2;122;199;173m"
+	settingsRootColorDim  = "\x1b[38;2;117;132;140m"
+)
+
+func settingsRootLabel(glyph, name, description string) string {
+	return settingsRootLabelWithColor(glyph, settingsRootColorOpen, name, description)
+}
+
+func settingsRootLabelDim(name, description string) string {
+	return settingsRootLabelWithColor(settingsGlyphInfo, settingsRootColorDim, name, description)
+}
+
+func settingsRootLabelWithColor(glyph, color, name, description string) string {
+	var b strings.Builder
+	if glyph == "" {
+		b.WriteString(" ")
+	} else {
+		b.WriteString(glyph)
+	}
+	b.WriteString("  ")
+	b.WriteString(color)
+	b.WriteString(padRight(name, settingsLabelNameWidth))
+	b.WriteString(settingsColorReset)
+	if description != "" {
+		b.WriteString("  ")
+		b.WriteString(settingsRootColorDim)
+		b.WriteString(description)
+		b.WriteString(settingsColorReset)
+	}
+	return b.String()
+}
+
+func (c *settingsCommand) sessionStateSettingsRootLabel() string {
+	autosave := c.currentSessionStateAutosave()
+	interval := c.currentSessionStateAutosaveInterval()
+	desc := fmt.Sprintf("autosave %s, interval %s", autosave.Mode, formatSessionStateAutosaveInterval(interval.Duration))
+	return settingsRootLabel(settingsGlyphOpen, "Session State", desc)
+}
+
+func (c *settingsCommand) projectSessionStateSettingsRootLabel(ctx settingsProjectContext) string {
+	identity := c.projectSessionStateIdentity(ctx)
+	desc := "disabled - no project context"
+	if identity.Err == nil {
+		desc = identity.Session
+	}
+	return settingsRootLabel(settingsGlyphOpen, "Session State", desc)
 }
 
 type settingsProjectContext struct {
@@ -577,20 +626,20 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 		// placeholder row that lived above the search bar in Phase 1/2.
 		return []intpickercompat.Entry{
 			{
-				Label: settingsLabelDim("Trust", "disabled - no project context"),
+				Label: settingsRootLabelDim("Trust", "disabled - no project context"),
 				Value: settingsNoopValue,
 			},
 			{
-				Label: settingsLabelDim("Hooks (project)", "disabled - no project context"),
+				Label: settingsRootLabelDim("Hooks (project)", "disabled - no project context"),
 				Value: settingsNoopValue,
 			},
 			{
-				Label:     settingsLabelDim("Project recipe", "disabled - no project context"),
+				Label:     settingsRootLabelDim("Project recipe", "disabled - no project context"),
 				Value:     settingsNoopValue,
 				SearchKey: "Project recipe config.toml",
 			},
 			{
-				Label: settingsLabelDim("Effective merge view", "disabled - no project context"),
+				Label: settingsRootLabelDim("Effective merge view", "disabled - no project context"),
 				Value: settingsNoopValue,
 			},
 		}
@@ -605,20 +654,20 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 	return []intpickercompat.Entry{
 		c.projectTrustEntry(ctx),
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Hooks (project)", filepath.Join(ctx.Path, ".projmux")),
+			Label: settingsRootLabel(settingsGlyphOpen, "Hooks (project)", filepath.Join(ctx.Path, ".projmux")),
 			Value: settingsSectionProjectHooks,
 		},
 		{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Project recipe", "declare env, kube, startup"),
+			Label:     settingsRootLabel(settingsGlyphOpen, "Project recipe", "declare env, kube, startup"),
 			Value:     settingsSectionProjectConfig,
 			SearchKey: "Project recipe config.toml project config env kube startup",
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Effective merge view", "global + project merge with source labels"),
+			Label: settingsRootLabel(settingsGlyphOpen, "Effective merge view", "global + project merge with source labels"),
 			Value: settingsSectionEffectiveMerge,
 		},
 		{
-			Label: c.projectSessionStateRootLabel(ctx),
+			Label: c.projectSessionStateSettingsRootLabel(ctx),
 			Value: settingsSectionProjectSessionState,
 		},
 	}

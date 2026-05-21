@@ -86,6 +86,30 @@ func TestFrameChromeANSIGoldenLines(t *testing.T) {
 	}
 }
 
+func TestChromePalettePhase0GoldenTokens(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"current":      "\x1b[48;2;44;56;61m\x1b[38;2;255;255;255m",
+		"titlebar":     "\x1b[48;2;24;34;38m\x1b[38;2;216;224;228m",
+		"titlebarRule": "\x1b[48;2;24;34;38m\x1b[38;2;117;132;140m",
+		"muted":        "\x1b[38;2;117;132;140m",
+		"pointer":      CurrentStart + "\x1b[38;2;122;199;173m▌" + CurrentStart + " ",
+	}
+	got := map[string]string{
+		"current":      CurrentStart,
+		"titlebar":     TitlebarStart,
+		"titlebarRule": TitlebarRule,
+		"muted":        MutedStart,
+		"pointer":      Pointer,
+	}
+	for name, want := range cases {
+		if got[name] != want {
+			t.Fatalf("%s token = %q, want %q", name, got[name], want)
+		}
+	}
+}
+
 func TestSeparatorLineUsesMutedChromeAtFullWidth(t *testing.T) {
 	t.Parallel()
 
