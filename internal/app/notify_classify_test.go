@@ -170,8 +170,8 @@ func TestNotifySidebarPaletteSeparatesAttentionAndAI(t *testing.T) {
 func TestNotifySidebarAgeUsesBluePalette(t *testing.T) {
 	t.Parallel()
 
-	age := notifySidebarAge("11s")
-	if !strings.HasPrefix(age, "\x1b[38;5;153m") || !strings.Contains(age, " age 11s ") {
+	age := notifySidebarAge("11s ago")
+	if !strings.HasPrefix(age, "\x1b[38;5;153m") || !strings.Contains(age, " 11s ago ") {
 		t.Fatalf("age = %q, want blue age palette", age)
 	}
 }

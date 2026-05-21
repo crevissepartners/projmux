@@ -14,6 +14,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 )
 
@@ -357,6 +358,13 @@ func (c *statusCommand) env(name string) string {
 	return c.lookupEnv(name)
 }
 
+func (c *statusCommand) locale() i18n.Locale {
+	if c == nil {
+		return i18n.FallbackLocale
+	}
+	return appLocale(c.lookupEnv)
+}
+
 func (c *statusCommand) read(name string, args ...string) ([]byte, error) {
 	if c.readCommand == nil {
 		return nil, errors.New("status command reader is not configured")
@@ -430,7 +438,7 @@ func (c *statusCommand) runNotify(args []string, stdout, stderr io.Writer) error
 		now = c.now()
 	}
 	liveByID := c.notifyLiveByIDBestEffort()
-	out := formatStatusNotifyWithLive(entries, *maxWidth, now, liveByID)
+	out := formatStatusNotifyWithLiveLocale(entries, *maxWidth, now, liveByID, c.locale())
 	if out == "" {
 		return nil
 	}
@@ -537,6 +545,10 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 // the caller could not read live tmux pane state; in that case the segment
 // degrades to the legacy NEED/INFO/WARN/CRIT badge set.
 func formatStatusNotifyWithLive(entries []notify.Notification, maxWidth int, now time.Time, liveByID map[string]notifyLivePane) string {
+	return formatStatusNotifyWithLiveLocale(entries, maxWidth, now, liveByID, i18n.FallbackLocale)
+}
+
+func formatStatusNotifyWithLiveLocale(entries []notify.Notification, maxWidth int, now time.Time, liveByID map[string]notifyLivePane, locale i18n.Locale) string {
 	if len(entries) == 0 {
 		return ""
 	}
@@ -546,7 +558,7 @@ func formatStatusNotifyWithLive(entries []notify.Notification, maxWidth int, now
 	display := classifyNotifyRowState(head, liveByID)
 	agent, text := splitAgentPrefix(head)
 	if head.Source == notify.SourceAI {
-		text = notifyAIStatusBodyText(head, text)
+		text = notifyAIStatusBodyTextLocale(head, text, locale)
 	}
 	badge := assembleNotifyBadges(
 		renderNotifyProjectBadge(notifyProjectName(head.Session)),
@@ -556,7 +568,7 @@ func formatStatusNotifyWithLive(entries []notify.Notification, maxWidth int, now
 	icon := renderNotifyIcon(head.Severity)
 	age := ""
 	if !now.IsZero() && !head.CreatedAt.IsZero() {
-		age = formatRelativeAge(now.Sub(head.CreatedAt))
+		age = formatRelativeAgeLocale(now.Sub(head.CreatedAt), locale)
 	}
 	plus := ""
 	if extras > 0 {
@@ -594,7 +606,7 @@ func formatStatusNotifyWithLive(entries []notify.Notification, maxWidth int, now
 		if out == "" {
 			continue
 		}
-		if maxWidth <= 0 || visualLen(out) <= maxWidth {
+		if maxWidth <= 0 || notifyVisualLen(out) <= maxWidth {
 			return notifyLineOpen + out + notifyReset
 		}
 	}
@@ -603,7 +615,7 @@ func formatStatusNotifyWithLive(entries []notify.Notification, maxWidth int, now
 	// in between. The reset directive is appended unconditionally so we
 	// never leak color into the next segment.
 	short := icon + "  " + text + plus
-	return notifyLineOpen + truncateWithEllipsis(short, maxWidth) + notifyReset
+	return notifyLineOpen + truncateNotifyWithEllipsis(short, maxWidth) + notifyReset
 }
 
 // assembleNotify glues the long-form parts together. Empty parts are
@@ -645,7 +657,7 @@ func tierBudget(maxWidth int, badge, age, plus string) int {
 	if maxWidth <= 0 {
 		return 0
 	}
-	overhead := visualLen(assembleNotify(badge, "", age, plus))
+	overhead := notifyVisualLen(assembleNotify(badge, "", age, plus))
 	textGap := 1
 	room := max(maxWidth-overhead-textGap, 1)
 	return room
@@ -701,6 +713,13 @@ func renderNotifyTopicBadge(n notify.Notification) string {
 }
 
 func notifyAIStatusBodyText(n notify.Notification, text string) string {
+	return notifyAIStatusBodyTextLocale(n, text, i18n.FallbackLocale)
+}
+
+func notifyAIStatusBodyTextLocale(n notify.Notification, text string, locale i18n.Locale) string {
+	if rendered := renderAINotifyText(n.Text, n.Metadata, locale); rendered.Full != "" {
+		return rendered.Full
+	}
 	topic := strings.TrimSpace(n.Metadata["topic"])
 	if topic != "" && topic == strings.TrimSpace(text) {
 		return "Ready"
@@ -810,6 +829,17 @@ func notifyStateLabelFor(n notify.Notification, text string, display notifyRowDi
 	return "INFO"
 }
 
+func notifyStateLabelForLocale(n notify.Notification, text string, display notifyRowDisplayState, locale i18n.Locale) string {
+	switch display {
+	case notifyDisplayStale:
+		return i18n.FormatStatusToken(i18n.StatusTokenStale, locale, i18n.FormatCompact)
+	case notifyDisplayGone:
+		return i18n.FormatStatusToken(i18n.StatusTokenGone, locale, i18n.FormatCompact)
+	default:
+		return notifyStateLabelFor(n, text, display)
+	}
+}
+
 // notifyStateShortLabel returns the statusbar abbreviation (3 runes) for the
 // resolved label. STALE/GONE collapse to `STL` / `GON` so the segment stays
 // inside its width budget.
@@ -827,14 +857,31 @@ func shrinkText(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return s
 	}
-	rs := []rune(s)
-	if len(rs) <= maxRunes {
+	if notifyVisualLen(s) <= maxRunes {
 		return s
 	}
 	if maxRunes == 1 {
 		return notifyEllipsis
 	}
-	return string(rs[:maxRunes-1]) + notifyEllipsis
+	return i18n.TruncateTerminalCells(s, maxRunes-1) + notifyEllipsis
+}
+
+func notifyVisualLen(s string) int {
+	return i18n.TerminalCellWidth(s)
+}
+
+func truncateNotifyWithEllipsis(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	plain := stripTmuxEscapes(s)
+	if notifyVisualLen(plain) <= maxWidth {
+		return plain
+	}
+	if maxWidth == 1 {
+		return i18n.TruncateTerminalCells(plain, 1)
+	}
+	return i18n.TruncateTerminalCells(plain, maxWidth-1) + notifyEllipsis
 }
 
 // renderNotifyIcon returns the severity-tinted bullet that opens the
@@ -904,18 +951,14 @@ func notifyProjectName(session string) string {
 	return session
 }
 
-// formatRelativeAge renders a duration as `just now`, `<N>s` (only via the
-// "just now" branch), `<N>m`, `<N>h`, or `<N>d`. Negative durations (clock
-// skew) are clamped to "just now".
+// formatRelativeAge renders a compact English relative age.
 func formatRelativeAge(d time.Duration) string {
-	if d < 60*time.Second {
-		return "just now"
+	return formatRelativeAgeLocale(d, i18n.FallbackLocale)
+}
+
+func formatRelativeAgeLocale(d time.Duration, locale i18n.Locale) string {
+	if d < 0 {
+		d = 0
 	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d/time.Minute))
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%dh", int(d/time.Hour))
-	}
-	return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
+	return i18n.FormatRelativeAge(d, locale, i18n.FormatCompact)
 }

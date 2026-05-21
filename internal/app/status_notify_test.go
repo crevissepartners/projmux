@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 )
 
@@ -341,20 +342,60 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	out := formatStatusNotify(fixtureAIEntry(now), 80, now)
-	if visualLen(out) > 80 {
-		t.Fatalf("tier1 visualLen=%d > 80: %q", visualLen(out), out)
+	out := formatStatusNotify(fixtureAIEntry(now), 96, now)
+	if visualLen(out) > 96 {
+		t.Fatalf("tier1 visualLen=%d > 96: %q", visualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
 		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
-		"review needed before shipping",
-		"2m",
+		"Claude · Response complete · review needed before shipping",
+		"2m ago",
 		"+1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tier1 missing %q in %q", want, out)
 		}
+	}
+}
+
+func TestStatusNotifyLocaleFormatsAgeAITextAndCount(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	out := formatStatusNotifyWithLiveLocale([]notify.Notification{
+		{
+			ID:        "a",
+			Text:      "Ready",
+			Severity:  notify.SeverityInfo,
+			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "topic": "shipping"},
+			Session:   "s",
+			CreatedAt: now.Add(-36 * time.Second),
+		},
+		{
+			ID:        "b",
+			Text:      "older",
+			Severity:  notify.SeverityInfo,
+			Source:    notify.SourceAI,
+			Session:   "s",
+			CreatedAt: now.Add(-2 * time.Minute),
+		},
+	}, 80, now, nil, i18n.Locale("ko-KR"))
+
+	for _, want := range []string{
+		renderNotifyProjectBadge("s"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
+		"Codex · 응답 완료",
+		"36초 전",
+		"+1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("localized status notify missing %q in %q", want, out)
+		}
+	}
+	if strings.Contains(out, "Ready") {
+		t.Fatalf("localized status notify = %q, response-complete Ready detail should be suppressed", out)
 	}
 }
 
@@ -371,8 +412,8 @@ func TestStatusNotifyWidthTier2ClipsTextBeforeAge(t *testing.T) {
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
 		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
-		"review",
-		"2m",
+		"Claude",
+		"2m ago",
 		"+1",
 		"…",
 	} {
@@ -504,17 +545,17 @@ func TestFormatRelativeAgeBuckets(t *testing.T) {
 		want string
 	}{
 		{0, "just now"},
-		{30 * time.Second, "just now"},
-		{59 * time.Second, "just now"},
-		{60 * time.Second, "1m"},
-		{2 * time.Minute, "2m"},
-		{45 * time.Minute, "45m"},
-		{59*time.Minute + 59*time.Second, "59m"},
-		{time.Hour, "1h"},
-		{3 * time.Hour, "3h"},
-		{23*time.Hour + 59*time.Minute, "23h"},
-		{24 * time.Hour, "1d"},
-		{73 * time.Hour, "3d"},
+		{30 * time.Second, "30s ago"},
+		{59 * time.Second, "59s ago"},
+		{60 * time.Second, "1m ago"},
+		{2 * time.Minute, "2m ago"},
+		{45 * time.Minute, "45m ago"},
+		{59*time.Minute + 59*time.Second, "59m ago"},
+		{time.Hour, "1h ago"},
+		{3 * time.Hour, "3h ago"},
+		{23*time.Hour + 59*time.Minute, "23h ago"},
+		{24 * time.Hour, "1d ago"},
+		{73 * time.Hour, "3d ago"},
 		{-time.Minute, "just now"},
 	}
 	for _, tc := range cases {

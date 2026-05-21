@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -100,6 +101,13 @@ func (c *notifyCommand) clock() time.Time {
 		return c.now()
 	}
 	return time.Now()
+}
+
+func (c *notifyCommand) locale() i18n.Locale {
+	if c == nil {
+		return i18n.FallbackLocale
+	}
+	return appLocale(c.lookupEnv)
 }
 
 // --- push --------------------------------------------------------------------
@@ -249,8 +257,9 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	locale := c.locale()
 	if *ui == "sidebar" {
-		return c.runSidebar(store, severities, sources, *limit, stdout, stderr, c.notifyOriginClient(*clientTTY))
+		return c.runSidebar(store, severities, sources, *limit, stdout, stderr, c.notifyOriginClient(*clientTTY), locale)
 	}
 
 	entries, err := store.List()
@@ -268,7 +277,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 			entries = []notify.Notification{}
 		}
 		if *live {
-			report, err := c.buildNotifyLiveReport(entries)
+			report, err := c.buildNotifyLiveReportLocale(entries, locale)
 			if err != nil {
 				return err
 			}
@@ -277,16 +286,16 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return writeJSON(stdout, entries)
 	}
 	if *live {
-		report, err := c.buildNotifyLiveReport(entries)
+		report, err := c.buildNotifyLiveReportLocale(entries, locale)
 		if err != nil {
 			return err
 		}
-		return writeNotifyLiveTable(stdout, report, c.clock())
+		return writeNotifyLiveTable(stdout, report, c.clock(), locale)
 	}
-	return writeNotifyTable(stdout, entries, c.clock())
+	return writeNotifyTable(stdout, entries, c.clock(), locale)
 }
 
-func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []string, limit int, stdout, stderr io.Writer, clientTTY string) error {
+func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []string, limit int, stdout, stderr io.Writer, clientTTY string, locale i18n.Locale) error {
 	if c.native == nil {
 		return errors.New("native picker is not configured")
 	}
@@ -333,7 +342,7 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearAll"}, []string{"ctrl-x"})...,
 			),
 			Bindings:      bindings,
-			Entries:       notifySidebarEntriesWithLive(entries, now, liveByID),
+			Entries:       notifySidebarEntriesWithLiveLocale(entries, now, liveByID, locale),
 			DisableSearch: true,
 		}
 		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.picker, compatOptions)
@@ -351,7 +360,7 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 			if err != nil {
 				return fmt.Errorf("clear all notifications: %w", err)
 			}
-			_, err = fmt.Fprintf(stdout, "cleared %d notification(s)\n", removed)
+			_, err = fmt.Fprintf(stdout, "cleared %s\n", i18n.FormatCount(removed, i18n.CountNotifications, locale, i18n.FormatFull))
 			return err
 		case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:Ack", "a"):
 			nextIndex = indexNotificationByID(entries, id)
@@ -405,11 +414,7 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpic
 	return notifySidebarEntriesWithLive(entries, now, nil)
 }
 
-// notifySidebarEntriesWithLive renders sidebar rows with awareness of
-// stale/gone display state. `liveByID` may be nil when live data is
-// unavailable; in that case rows fall back to the live-row palette so a
-// missing tmux server does not falsely dim every entry.
-func notifySidebarEntriesWithLive(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane) []intpickercompat.Entry {
+func notifySidebarEntriesWithLiveLocale(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, locale i18n.Locale) []intpickercompat.Entry {
 	if len(entries) == 0 {
 		return []intpickercompat.Entry{{
 			Label: "No pending notifications",
@@ -418,7 +423,7 @@ func notifySidebarEntriesWithLive(entries []notify.Notification, now time.Time, 
 	}
 	out := make([]intpickercompat.Entry, 0, len(entries))
 	for _, e := range entries {
-		label := notifySidebarLabelFor(e, now, classifyNotifyRowState(e, liveByID))
+		label := notifySidebarLabelForLocale(e, now, classifyNotifyRowState(e, liveByID), locale)
 		out = append(out, intpickercompat.Entry{
 			Label: label,
 			Value: e.ID,
@@ -427,13 +432,32 @@ func notifySidebarEntriesWithLive(entries []notify.Notification, now time.Time, 
 	return out
 }
 
+// notifySidebarEntriesWithLive renders sidebar rows with awareness of
+// stale/gone display state. `liveByID` may be nil when live data is
+// unavailable; in that case rows fall back to the live-row palette so a
+// missing tmux server does not falsely dim every entry.
+func notifySidebarEntriesWithLive(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane) []intpickercompat.Entry {
+	return notifySidebarEntriesWithLiveLocale(entries, now, liveByID, i18n.FallbackLocale)
+}
+
 func notifySidebarLabel(e notify.Notification, now time.Time) string {
 	return notifySidebarLabelFor(e, now, notifyDisplayLive)
 }
 
 func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyRowDisplayState) string {
-	age := formatAge(now.Sub(e.CreatedAt))
+	return notifySidebarLabelForLocale(e, now, display, i18n.FallbackLocale)
+}
+
+func notifySidebarLabelForLocale(e notify.Notification, now time.Time, display notifyRowDisplayState, locale i18n.Locale) string {
+	age := formatAgeLocale(now.Sub(e.CreatedAt), locale)
 	agent, text := splitAgentPrefix(e)
+	if e.Source == notify.SourceAI {
+		text = renderAINotifyText(e.Text, e.Metadata, locale).Full
+		if text == "" {
+			text = e.Text
+		}
+		agent = ""
+	}
 	text = notifySidebarLabelCell(text)
 	if text == "" {
 		text = "(empty notification)"
@@ -448,7 +472,7 @@ func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyR
 				text = notifySidebarDimText(text)
 			}
 		}
-		return notifySidebarAILabel(e, age, agent, text, display)
+		return notifySidebarAILabel(e, age, agent, text, display, locale)
 	}
 	metaParts := []string{
 		notifySidebarAge(age),
@@ -457,19 +481,19 @@ func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyR
 	if agent != "" {
 		metaParts = append(metaParts, notifySidebarAgentBadge(agent))
 	}
-	metaParts = append(metaParts, notifySidebarStateBadge(notifyStateLabelFor(e, text, display)))
+	metaParts = append(metaParts, notifySidebarStateBadgeForDisplay(notifyStateLabelForLocale(e, text, display, locale), display))
 	if notifySidebarShowTargetParts(e) {
-		if window := notifySidebarTargetPart("window", e.Window); window != "" {
+		if window := notifySidebarTargetPart("window", e.Window, locale); window != "" {
 			metaParts = append(metaParts, window)
 		}
-		if pane := notifySidebarTargetPart("pane", e.Pane); pane != "" {
+		if pane := notifySidebarTargetPart("pane", e.Pane, locale); pane != "" {
 			metaParts = append(metaParts, pane)
 		}
 	}
 	return text + "\n  " + strings.Join(metaParts, " ")
 }
 
-func notifySidebarAILabel(e notify.Notification, age, agent, text string, display notifyRowDisplayState) string {
+func notifySidebarAILabel(e notify.Notification, age, agent, text string, display notifyRowDisplayState, locale i18n.Locale) string {
 	firstLineParts := []string{notifySidebarProjectBadge(notifyProjectName(e.Session))}
 	if text != "" {
 		firstLineParts = append(firstLineParts, text)
@@ -480,7 +504,7 @@ func notifySidebarAILabel(e notify.Notification, age, agent, text string, displa
 	if topic := notifySidebarTopicBadge(e); topic != "" {
 		metaParts = append(metaParts, topic)
 	}
-	metaParts = append(metaParts, notifySidebarStateBadge(notifyStateLabelFor(e, text, display)))
+	metaParts = append(metaParts, notifySidebarStateBadgeForDisplay(notifyStateLabelForLocale(e, text, display, locale), display))
 	if agent != "" {
 		metaParts = append(metaParts, notifySidebarAgentBadge(agent))
 	}
@@ -540,9 +564,9 @@ const (
 func notifySidebarAge(age string) string {
 	age = strings.TrimSpace(age)
 	if age == "" {
-		age = "0s"
+		age = "just now"
 	}
-	return theme.ANSINotifyAgeStart + " age " + age + " " + notifySidebarReset
+	return theme.ANSINotifyAgeStart + " " + age + " " + notifySidebarReset
 }
 
 func notifySidebarProjectBadge(project string) string {
@@ -564,7 +588,7 @@ func notifySidebarTopicBadge(e notify.Notification) string {
 	return theme.ANSIChipActiveStart + " " + topic + " " + notifySidebarReset
 }
 
-func notifySidebarTargetPart(label, value string) string {
+func notifySidebarTargetPart(label, value string, locale i18n.Locale) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
@@ -574,24 +598,41 @@ func notifySidebarTargetPart(label, value string) string {
 	if value == "" {
 		return ""
 	}
+	number := parsePositiveInt(value)
+	if number > 0 {
+		switch label {
+		case "window":
+			return notifySidebarDim(i18n.FormatTargetLabel(i18n.TargetWindow, number, locale, i18n.FormatCompact))
+		case "pane":
+			return notifySidebarDim(i18n.FormatTargetLabel(i18n.TargetPane, number, locale, i18n.FormatCompact))
+		}
+	}
 	return notifySidebarDim(label + " " + value)
 }
 
 func notifySidebarStateBadge(label string) string {
+	return notifySidebarStateBadgeForDisplay(label, notifyDisplayLive)
+}
+
+func notifySidebarStateBadgeForDisplay(label string, display notifyRowDisplayState) string {
 	label = strings.ToUpper(strings.TrimSpace(label))
 	if label == "" {
 		label = "INFO"
 	}
 	open := notifySidebarInfo
-	switch label {
-	case "WARN":
-		open = notifySidebarWarn
-	case "CRIT":
-		open = notifySidebarCrit
-	case "STALE":
+	switch {
+	case display == notifyDisplayStale:
 		open = notifySidebarStale
-	case "GONE":
+	case display == notifyDisplayGone:
 		open = notifySidebarGone
+	case label == "STALE":
+		open = notifySidebarStale
+	case label == "GONE":
+		open = notifySidebarGone
+	case label == "WARN":
+		open = notifySidebarWarn
+	case label == "CRIT":
+		open = notifySidebarCrit
 	}
 	return open + " " + label + " " + notifySidebarReset
 }
@@ -785,7 +826,7 @@ func toSet(values []string) map[string]struct{} {
 }
 
 // writeNotifyTable renders a tab-aligned table: ID  AGE  SEV  SRC  TARGET  TEXT.
-func writeNotifyTable(w io.Writer, entries []notify.Notification, now time.Time) error {
+func writeNotifyTable(w io.Writer, entries []notify.Notification, now time.Time, locale i18n.Locale) error {
 	if _, err := fmt.Fprintln(w, "ID\tAGE\tSEV\tSRC\tTARGET\tTEXT"); err != nil {
 		return err
 	}
@@ -800,16 +841,27 @@ func writeNotifyTable(w io.Writer, entries []notify.Notification, now time.Time)
 			w,
 			"%s\t%s\t%s\t%s\t%s\t%s\n",
 			e.ID,
-			formatAge(now.Sub(e.CreatedAt)),
+			formatAgeLocale(now.Sub(e.CreatedAt), locale),
 			e.Severity,
 			e.Source,
 			target,
-			e.Text,
+			notifyQueueDisplayText(e, locale),
 		); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func notifyQueueDisplayText(e notify.Notification, locale i18n.Locale) string {
+	if e.Source != notify.SourceAI {
+		return e.Text
+	}
+	rendered := renderAINotifyText(e.Text, e.Metadata, locale)
+	if rendered.Full != "" {
+		return rendered.Full
+	}
+	return e.Text
 }
 
 type notifyLiveReport struct {
@@ -845,6 +897,10 @@ type notifyLiveRow struct {
 }
 
 func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (notifyLiveReport, error) {
+	return c.buildNotifyLiveReportLocale(entries, i18n.FallbackLocale)
+}
+
+func (c *notifyCommand) buildNotifyLiveReportLocale(entries []notify.Notification, locale i18n.Locale) (notifyLiveReport, error) {
 	report := notifyLiveReport{
 		Queue:  nonNilNotifications(entries),
 		Live:   []notifyLivePane{},
@@ -856,7 +912,7 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
 		for _, entry := range entries {
-			report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, "live-unavailable", "live tmux pane state could not be read; queue entry remains pending"))
+			report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, "live-unavailable", notifyLiveExplanation("live-unavailable", locale)))
 		}
 		return report, nil
 	}
@@ -878,16 +934,14 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 		liveCopy := live
 		if !live.ShouldQueue {
 			state := "live-title-attention"
-			explanation := "live title attention badge exists but pane is not reply+agent state; title-only/manual attention does not create notify queue entries"
 			if live.AttentionState == attentionStateReply {
 				state = "live-manual-reply"
-				explanation = "live reply badge exists but no AI agent metadata is set; manual attention panes do not create notify queue entries"
 			}
 			report.Rows = append(report.Rows, notifyLiveRow{
 				State:       state,
 				ID:          live.ID,
 				Target:      live.Target,
-				Explanation: explanation,
+				Explanation: notifyLiveExplanation(state, locale),
 				Live:        &liveCopy,
 			})
 			continue
@@ -898,8 +952,8 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 				State:       "live-ai-reply-queued",
 				ID:          live.ID,
 				Target:      live.Target,
-				Text:        entry.Text,
-				Explanation: "live AI reply pane has a matching actionable notify queue entry",
+				Text:        notifyQueueDisplayText(entry, locale),
+				Explanation: notifyLiveExplanation("live-ai-reply-queued", locale),
 				Queue:       &entryCopy,
 				Live:        &liveCopy,
 			})
@@ -909,7 +963,7 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 			State:       "live-ai-reply-missing-queue",
 			ID:          live.ID,
 			Target:      live.Target,
-			Explanation: "live AI reply pane has no matching queue entry; run `projmux notify reconcile` to back-fill it",
+			Explanation: notifyLiveExplanation("live-ai-reply-missing-queue", locale),
 			Live:        &liveCopy,
 		})
 	}
@@ -919,19 +973,42 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 			continue
 		}
 		state := "queue-only"
-		explanation := "queue entry is pending; no matching live AI reply pane was found"
 		switch classifyNotifyRowState(entry, liveByID) {
 		case notifyDisplayStale:
 			state = "queue-stale"
-			explanation = "queue entry exists but live pane no longer matches reply+agent state; it remains pending until explicit ack"
 		case notifyDisplayGone:
 			state = "queue-gone"
-			explanation = "queue entry has no routable target; it can only be ack'd"
 		}
-		report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, state, explanation))
+		report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, state, notifyLiveExplanation(state, locale)))
 	}
 
 	return report, nil
+}
+
+func notifyLiveExplanation(state string, locale i18n.Locale) string {
+	key, fallback := notifyLiveExplanationKey(state)
+	return localizeText(locale, key, fallback)
+}
+
+func notifyLiveExplanationKey(state string) (i18n.Key, string) {
+	switch strings.TrimSpace(state) {
+	case "live-unavailable":
+		return i18n.KeyNotifyLiveUnavailable, "live tmux pane state could not be read; queue entry remains pending"
+	case "live-title-attention":
+		return i18n.KeyNotifyLiveTitleAttention, "live title attention badge exists but pane is not reply+agent state; title-only/manual attention does not create notify queue entries"
+	case "live-manual-reply":
+		return i18n.KeyNotifyLiveManualReply, "live reply badge exists but no AI agent metadata is set; manual attention panes do not create notify queue entries"
+	case "live-ai-reply-queued":
+		return i18n.KeyNotifyLiveAIReplyQueued, "live AI reply pane has a matching actionable notify queue entry"
+	case "live-ai-reply-missing-queue":
+		return i18n.KeyNotifyLiveAIReplyMissingQueue, "live AI reply pane has no matching queue entry; run `projmux notify reconcile` to back-fill it"
+	case "queue-stale":
+		return i18n.KeyNotifyLiveQueueStale, "queue entry exists but live pane no longer matches reply+agent state; it remains pending until explicit ack"
+	case "queue-gone":
+		return i18n.KeyNotifyLiveQueueGone, "queue entry has no routable target; it can only be ack'd"
+	default:
+		return i18n.KeyNotifyLiveQueuePending, "queue entry is pending; no matching live AI reply pane was found"
+	}
 }
 
 // notifyLiveByIDBestEffort returns the map of live AI reply-state panes keyed
@@ -1020,8 +1097,8 @@ func notifyLiveQueueOnlyRow(entry notify.Notification, state, explanation string
 	}
 }
 
-func writeNotifyLiveTable(w io.Writer, report notifyLiveReport, now time.Time) error {
-	if err := writeNotifyTable(w, report.Queue, now); err != nil {
+func writeNotifyLiveTable(w io.Writer, report notifyLiveReport, now time.Time, locale i18n.Locale) error {
+	if err := writeNotifyTable(w, report.Queue, now, locale); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w, ""); err != nil {
@@ -1060,21 +1137,16 @@ func notifyTableCell(value string) string {
 	return value
 }
 
-// formatAge renders a duration as a short age string (e.g. "12s", "5m").
+// formatAge renders a duration as a compact English relative age string.
 func formatAge(d time.Duration) string {
+	return formatAgeLocale(d, i18n.FallbackLocale)
+}
+
+func formatAgeLocale(d time.Duration, locale i18n.Locale) string {
 	if d < 0 {
 		d = 0
 	}
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	}
+	return i18n.FormatRelativeAge(d, locale, i18n.FormatCompact)
 }
 
 // writeJSON encodes payload as a single newline-terminated json document.

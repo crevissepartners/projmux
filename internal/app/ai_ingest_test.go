@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
 )
 
 func TestParseCodexHookPayload(t *testing.T) {
@@ -811,6 +812,98 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 	}
 }
 
+func TestAIHookRenderedNotifyTextLocalizesCategoryAndPreservesLiterals(t *testing.T) {
+	t.Parallel()
+
+	stop := formatCodexHookStopNotifyBody(codexHookPayload{})
+	stopMetadata := mergeAINotifyBodyMetadata(nil, stop)
+	if got, want := renderAINotifyText(stop.Text, stopMetadata, i18n.FallbackLocale).Summary, "Codex · Response complete"; got != want {
+		t.Fatalf("en-US stop summary = %q, want %q", got, want)
+	}
+	if got, want := renderAINotifyText(stop.Text, stopMetadata, i18n.Locale("ko-KR")).Summary, "Codex · 응답 완료"; got != want {
+		t.Fatalf("ko-KR stop summary = %q, want %q", got, want)
+	}
+
+	permission := formatCodexHookPermissionNotifyBody(codexHookPayload{
+		ToolName:  "Bash",
+		ToolInput: map[string]any{"command": "go test ./internal/app"},
+	})
+	rendered := renderAINotifyText(permission.Text, mergeAINotifyBodyMetadata(nil, permission), i18n.Locale("ko-KR"))
+	for _, want := range []string{"Codex", "승인 필요", "Bash", "go test ./internal/app"} {
+		if !strings.Contains(rendered.Full, want) {
+			t.Fatalf("rendered permission = %q, want literal/category %q", rendered.Full, want)
+		}
+	}
+}
+
+func TestClaudeHookRenderedNotifyTextCatalogCoveragePreservesPayloads(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body aiNotifyBody
+		want []string
+	}{
+		{
+			name: "permission notification message",
+			body: formatClaudeNotificationNotifyBody(claudeHookPayload{
+				NotificationType: "permission_prompt",
+				Message:          "Approve Bash?",
+			}),
+			want: []string{"Claude", "승인 필요", "Approve Bash?"},
+		},
+		{
+			name: "idle notification message",
+			body: formatClaudeNotificationNotifyBody(claudeHookPayload{
+				NotificationType: "idle_prompt",
+				Message:          "Waiting for your next request",
+			}),
+			want: []string{"Claude", "응답 완료", "Waiting for your next request"},
+		},
+		{
+			name: "stop transcript body",
+			body: formatClaudeStopNotifyBody("implemented and verified"),
+			want: []string{"Claude", "응답 완료", "implemented and verified"},
+		},
+		{
+			name: "stop failure error",
+			body: formatClaudeStopFailureNotifyBody(claudeHookPayload{
+				ErrorType:    "timeout",
+				ErrorMessage: "tool call exceeded deadline",
+			}),
+			want: []string{"Claude", "오류", "timeout", "tool call exceeded deadline"},
+		},
+		{
+			name: "subagent stopped",
+			body: formatClaudeSubagentStopNotifyBody(claudeHookPayload{
+				SubagentType: "reviewer",
+				SubagentID:   "sub-7",
+			}),
+			want: []string{"Claude", "서브에이전트 종료", "reviewer", "sub-7"},
+		},
+		{
+			name: "teammate waiting",
+			body: formatClaudeTeammateIdleNotifyBody(claudeHookPayload{
+				TeammateName:    "sam",
+				TeammateID:      "team-3",
+				TeammateContext: "waiting for review",
+			}),
+			want: []string{"Claude", "팀메이트 대기", "sam", "team-3", "waiting for review"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := renderAINotifyText(tc.body.Text, mergeAINotifyBodyMetadata(nil, tc.body), i18n.Locale("ko-KR"))
+			for _, want := range tc.want {
+				if !strings.Contains(rendered.Full, want) {
+					t.Fatalf("rendered = %q, want %q", rendered.Full, want)
+				}
+			}
+		})
+	}
+}
+
 func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
@@ -846,7 +939,7 @@ func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
 	text := "Bash: go test ./internal/app"
 	metadata := map[string]string{"agent": "codex", "category": "approval_required"}
 	notification := cmd.aiTextNotificationWithMetadata("%7", text, notify.SeverityCritical, metadata)
-	if notification.Summary != "Codex · Approval Required" {
+	if notification.Summary != "Codex · Approval required" {
 		t.Fatalf("Summary = %q", notification.Summary)
 	}
 	if notification.Urgency != "normal" {
@@ -854,6 +947,10 @@ func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
 	}
 	if !strings.Contains(notification.Body, text) || !strings.Contains(notification.Body, "projmux/feat/hooks") || strings.Contains(notification.Body, "workspace:editor") {
 		t.Fatalf("Body = %q, want actionable text and project context only", notification.Body)
+	}
+	queueText := notifyQueueDisplayText(notify.Notification{Text: text, Source: notify.SourceAI, Metadata: metadata}, i18n.FallbackLocale)
+	if queueText != "Codex · Approval required · Bash: go test ./internal/app" || !strings.Contains(queueText, text) {
+		t.Fatalf("queue text = %q, want shared rendered category + literal body", queueText)
 	}
 
 	if err := cmd.notifyAITextWithMetadata("%7", text, notify.SeverityCritical, true, metadata); err != nil {

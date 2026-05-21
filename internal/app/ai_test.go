@@ -1161,7 +1161,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 		"--app-name=" + desktopAppID,
 		desktopAppID,
 		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
-		"Codex · Approval Required",
+		"Codex · Approval required",
 		"projmux/main",
 	} {
 		if !containsAICommandArgSubstring(commands, want) {
@@ -1232,7 +1232,7 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 
 	commands := cmdRecorder(cmd).commands
 	if !containsAICommandArgs(commands, hook, []string{
-		"Codex · Input Required",
+		"Codex · Input required",
 		"projmux/main",
 		"normal",
 		desktopAppID,
@@ -1379,7 +1379,7 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		"$toast.Group = 'repo'",
 		`<toast duration="short">`,
 		"$toast.ExpirationTime = [DateTimeOffset]::Now.AddMilliseconds(5000)",
-		"Codex · Approval Required",
+		"Codex · Approval required",
 		"projmux/main",
 		iconWin,
 		"appLogoOverride",
@@ -1694,7 +1694,7 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 	for _, want := range []string{
 		desktopAppID,
 		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
-		"Claude · Approval Required",
+		"Claude · Approval required",
 	} {
 		if !containsAICommandArgSubstring(commands, want) {
 			t.Fatalf("commands = %#v, want metadata-derived Claude notification containing %q", commands, want)
@@ -2068,7 +2068,7 @@ func TestAINotificationMessageLabelsClaudeAndAvoidsRootProject(t *testing.T) {
 	if got := aiProjectName("/"); got != "" {
 		t.Fatalf("aiProjectName(/) = %q, want empty", got)
 	}
-	if got, want := aiSummaryForKind("input_required", "Claude", "waiting for input"), "Claude · Input Required"; got != want {
+	if got, want := aiSummaryForKind("input_required", "Claude", "waiting for input"), "Claude · Input required"; got != want {
 		t.Fatalf("aiSummaryForKind = %q, want %q", got, want)
 	}
 	if got, want := aiNotificationBody("waiting for input", "", "", "home", "dev"), ""; got != want {

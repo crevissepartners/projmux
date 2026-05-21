@@ -288,3 +288,37 @@ Width-safe rendering:
   in the returned string while clipping only visible content.
 - Width clipping is a rendering concern. Keep translated format strings and
   caller-owned payload arguments separate until the final render step.
+
+## Phase 3 Notify Runtime Migration
+
+Runtime surfaces migrated:
+
+- AI desktop notification summaries for Codex and Claude hook payloads.
+- In-app notify queue table/sidebar/statusbar display text for AI entries.
+- Notify live explanation text for `projmux notify list --live`.
+- Sidebar/table/statusbar age formatting and sidebar stale/gone/target labels.
+
+Storage and dispatch policy:
+
+- Queue storage remains schema-compatible. Stored `notify.Notification.Text`,
+  metadata keys, severity/source enum values, targets, and timestamps are not
+  localized before persistence.
+- OS notification click/focus routing is unchanged. Locale formatting only
+  changes the summary/body strings sent to the configured notifier.
+- JSON queue payloads keep raw queue entries. Localized live-row explanation
+  and row display text may appear in `notify list --live` row fields because
+  those fields are render/report output, not stored queue schema.
+
+Literal preservation and parity rules:
+
+- Translate only catalog-owned category labels such as `Response complete`,
+  `Approval required`, `Input required`, `Error`, `Subagent stopped`, and
+  `Teammate waiting`.
+- Preserve provider-owned payloads verbatim: `Codex`, `Claude`, tool names,
+  commands, paths, URLs, query strings, transcript excerpts, teammate IDs, and
+  subagent IDs.
+- Desktop notification summaries and in-app queue display text must use the
+  same rendered category labels for the same locale while preserving the same
+  literal payload body.
+- The response-complete fallback body `Ready` is treated as provider state and
+  suppressed in display detail; it is not translated or persisted differently.
