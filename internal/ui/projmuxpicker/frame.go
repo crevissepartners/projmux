@@ -23,6 +23,8 @@ type Theme struct {
 	BottomRight string
 	Horizontal  string
 	Vertical    string
+	Background  string
+	Foreground  string
 }
 
 type Renderer struct {
@@ -255,7 +257,7 @@ func (r Renderer) renderFrame(w io.Writer, content string, layout Layout, header
 
 	theme := r.Theme
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	fmt.Fprintf(w, "%s%s%s\r\n", theme.TopLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.TopRight)
+	fmt.Fprintf(w, "%s\r\n", frameBackgroundLine(theme, theme.TopLeft+strings.Repeat(theme.Horizontal, innerWidth)+theme.TopRight))
 	if titlebarRows > 0 {
 		fmt.Fprint(w, header.titlebarLine(theme, innerWidth))
 		fmt.Fprint(w, "\r\n")
@@ -267,9 +269,9 @@ func (r Renderer) renderFrame(w io.Writer, content string, layout Layout, header
 		if i < len(lines) {
 			line = TruncateANSI(strings.TrimRight(lines[i], "\r"), innerWidth)
 		}
-		fmt.Fprintf(w, "%s%s%s\r\n", theme.Vertical, PadStyledLine(line, innerWidth), theme.Vertical)
+		fmt.Fprintf(w, "%s\r\n", frameBackgroundLine(theme, theme.Vertical+PadStyledLine(line, innerWidth)+theme.Vertical))
 	}
-	fmt.Fprintf(w, "%s%s%s", theme.BottomLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.BottomRight)
+	fmt.Fprint(w, frameBackgroundLine(theme, theme.BottomLeft+strings.Repeat(theme.Horizontal, innerWidth)+theme.BottomRight))
 }
 
 func TitlebarRows(title string) int {
@@ -324,6 +326,14 @@ func frameTitlebarStyledLine(theme Theme, body string) string {
 	// Keep both border cells and the interior padding explicitly styled so
 	// terminal defaults cannot leak through titlebar, chip-strip, or divider gaps.
 	return TitlebarRule + theme.Vertical + TitlebarStart + body + TitlebarRule + theme.Vertical + Reset
+}
+
+func frameBackgroundLine(theme Theme, line string) string {
+	style := theme.Background + theme.Foreground
+	if style == "" {
+		return line
+	}
+	return style + strings.ReplaceAll(line, Reset, Reset+style) + Reset
 }
 
 // renderChipStrip lays out the chip slice into a single visible-width-bound

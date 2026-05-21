@@ -42,6 +42,24 @@ const (
 	ChipDisabledStart = theme.ANSIChipDisabledStart
 )
 
+// ThemeFromEffective adapts resolver-backed colors to the native picker frame.
+// Fallback-sourced fields deliberately leave DefaultTheme unchanged so existing
+// default render output stays byte-identical.
+func ThemeFromEffective(effective theme.EffectiveTheme) Theme {
+	out := DefaultTheme
+	if effective.Background.Source != theme.SourceFallback {
+		if bg := effective.Background.Value.TruecolorBG(); bg != "" {
+			out.Background = "\x1b[" + bg + "m"
+		}
+	}
+	if effective.Foreground.Source != theme.SourceFallback {
+		if fg := effective.Foreground.Value.TruecolorFG(); fg != "" {
+			out.Foreground = "\x1b[" + fg + "m"
+		}
+	}
+	return out
+}
+
 func PadRight(value string, width int) string {
 	length := VisibleLen(value)
 	if length >= width {

@@ -1262,7 +1262,12 @@ func tmuxCenteredWindowNameFormat(width int) string {
 }
 
 func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
+	return fallbackRenderThemeSource().tmuxStandaloneConfig(binaryPath, decorations, catalog, keymapPresent)
+}
+
+func tmuxStandaloneConfigWithKeymapTheme(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
+	tokens := theme.TmuxRenderTokensFromEffective(effective)
 	defaultStandaloneKeyBindings := keyBindingCatalogForScope(keyBindingScopeStandalone)
 	standaloneKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeStandalone)
 	lines := []string{
@@ -1278,8 +1283,8 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDeco
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
 		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
 		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
-		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tmuxWindowInactiveFg+",bg="+tmuxWindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowInactiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
-		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tmuxWindowActiveFg+",bg="+tmuxWindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowActiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
+		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tokens.WindowInactiveFg+",bg="+tokens.WindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tokens.WindowInactiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
+		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tokens.WindowActiveFg+",bg="+tokens.WindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tokens.WindowActiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
 		"set -g status 2",
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
@@ -1310,7 +1315,12 @@ func tmuxAppConfig(binaryPath, defaultShell string, decoration config.StatusbarD
 }
 
 func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
+	return fallbackRenderThemeSource().tmuxAppConfig(binaryPath, defaultShell, decorations, catalog, keymapPresent)
+}
+
+func tmuxAppConfigWithKeymapTheme(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
+	tokens := theme.TmuxRenderTokensFromEffective(effective)
 	shell := tmuxConfigQuote(nonEmpty(strings.TrimSpace(defaultShell), fallbackInteractiveShell))
 	paneLabelFormat := tmuxVisiblePaneLabelFormat()
 	paneBorderFormat := tmuxPaneBorderFormat()
@@ -1347,7 +1357,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 		"set -g automatic-rename-format " + tmuxConfigQuote(paneLabelFormat),
 		"set -g mode-keys vi",
 		"set -sg escape-time 100",
-		"set -g status-style \"bg=" + tmuxWindowInactiveBg + ",fg=" + tmuxWindowInactiveFg + "\"",
+		"set -g status-style \"bg=" + tokens.StatusBg + ",fg=" + tokens.StatusFg + "\"",
 		"set -g message-style \"bg=" + theme.TmuxMessageBg + ",fg=" + theme.TmuxMessageFg + ",bold\"",
 		"set -g message-command-style \"bg=" + theme.TmuxMessageBg + ",fg=" + theme.TmuxMessageFg + ",bold\"",
 		"set -g pane-border-style \"fg=" + theme.TmuxPaneBorderFg + "\"",
@@ -1355,7 +1365,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 		"set -g pane-border-status top",
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}
-	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymap(binaryPath, decorations, catalog, keymapPresent)), "\n")[1:]...)
+	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapTheme(binaryPath, decorations, catalog, keymapPresent, effective)), "\n")[1:]...)
 	lines = append(lines,
 		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
 	)

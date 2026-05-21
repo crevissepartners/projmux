@@ -15,9 +15,14 @@ back to the built-in values from `internal/theme/palette.go`.
 - Tmux statusbar and generated-config color tokens.
 - Settings/action/state/trust/attention helper tokens.
 
-This phase adds config resolution and presets only. It does not apply
-project-specific colors to renderers yet, add a Settings editor, import/export
-themes, or reselect the Visual palette baseline colors.
+Phase 2 applies resolver-backed background/foreground colors to the native
+picker frame chrome and to tmux status/window background tokens when an
+`EffectiveTheme` is supplied by the caller. Fallback-sourced fields still
+render through the historical constants so built-in default output remains
+byte-identical. The app render wrappers now share one effective-theme source,
+but runtime config files still do not populate it because `[theme]` parser and
+loader support has not landed. This phase does not add a Settings editor,
+import/export themes, or reselect the Visual palette baseline colors.
 
 ## Resolver Token Inventory
 
@@ -59,8 +64,8 @@ Rules:
 - Truecolor tokens keep exact `#RRGGBB` values and can be converted to
   foreground/background SGR fragments such as `38;2;R;G;B` or `48;2;R;G;B`.
 - Tmux tokens keep `colourN` strings where tmux owns rendering.
-- The built-in `projmux-dark` fallback uses the established tmux tokens from
-  `internal/theme/palette.go` to preserve current output.
+- The built-in `projmux-dark` fallback uses the established ANSI and tmux
+  tokens from `internal/theme/palette.go` to preserve current output.
 - Explicit `#RRGGBB` overrides keep exact truecolor and derive the closest
   xterm 256-color `colourN` token for tmux surfaces.
 - Native chip/sidebar badge tokens use 256-color SGR when they intentionally
@@ -151,6 +156,7 @@ After the Phase 3 token pass, raw color values intentionally remain in:
 The converted implementation paths include:
 
 - `internal/ui/projmuxpicker/ansi.go`
+- `internal/ui/projmuxpicker/frame.go`
 - `internal/app/tmux.go`
 - `internal/app/status.go`
 - `internal/app/statusbar.go`

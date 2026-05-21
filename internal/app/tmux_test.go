@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
@@ -1161,6 +1162,61 @@ func TestTmuxPrintConfigMissingKeymapKeepsDefaultOutput(t *testing.T) {
 	want := tmuxStandaloneConfig("/tmp/projmux", loadStatusbarDecoration(cmd.homeDir, cmd.lookupEnv))
 	if got := stdout.String(); got != want {
 		t.Fatalf("print-config output changed without keymap\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestTmuxConfigWithFallbackEffectiveThemeMatchesDefaultOutput(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	got := tmuxStandaloneConfigWithKeymapTheme("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+	want := tmuxStandaloneConfigWithKeymap("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
+	if got != want {
+		t.Fatalf("fallback themed standalone config changed\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+
+	gotApp := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+	wantApp := tmuxAppConfigWithKeymap("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
+	if gotApp != wantApp {
+		t.Fatalf("fallback themed app config changed\n--- got ---\n%s\n--- want ---\n%s", gotApp, wantApp)
+	}
+}
+
+func TestTmuxConfigThemeUsesProject256ColorBackgroundWithoutGlobalLeak(t *testing.T) {
+	t.Parallel()
+
+	globalCfg := theme.ThemeConfig{
+		Background:    "#ff0000",
+		SurfaceActive: "#0000ff",
+		Foreground:    "#00ff00",
+	}
+	projectCfg := theme.ThemeConfig{
+		Background:    "#010203",
+		SurfaceActive: "#040506",
+		Foreground:    "#aabbcc",
+	}
+	effective := theme.ResolveTheme(globalCfg, projectCfg)
+	tokens := theme.TmuxRenderTokensFromEffective(effective)
+	globalTokens := theme.TmuxRenderTokensFromEffective(theme.ResolveTheme(theme.ThemeConfig{}, globalCfg))
+
+	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+	for _, want := range []string{
+		"set -g status-style \"bg=" + tokens.StatusBg + ",fg=" + tokens.StatusFg + "\"",
+		"#[fg=" + tokens.WindowInactiveFg + ",bg=" + tokens.WindowInactiveBg + "] #('/tmp/projmux' attention window #{window_id})",
+		"#[bold,fg=" + tokens.WindowActiveFg + ",bg=" + tokens.WindowActiveBg + "] #('/tmp/projmux' attention window #{window_id})",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("themed app config missing %q\n%s", want, output)
+		}
+	}
+	for _, banned := range []string{
+		"bg=" + globalTokens.StatusBg + ",fg=" + globalTokens.StatusFg,
+		"fg=" + globalTokens.WindowInactiveFg + ",bg=" + globalTokens.WindowInactiveBg,
+		"fg=" + globalTokens.WindowActiveFg + ",bg=" + globalTokens.WindowActiveBg,
+	} {
+		if strings.Contains(output, banned) {
+			t.Fatalf("themed app config leaked global token %q\n%s", banned, output)
+		}
 	}
 }
 

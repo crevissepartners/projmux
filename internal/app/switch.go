@@ -1842,6 +1842,7 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 			)...)...,
 		),
 	}
+	options = fallbackRenderThemeSource().pickerOptions(options)
 	if plan.UI == switchUISidebar {
 		options.Title = "Projects"
 	}
