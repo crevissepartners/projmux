@@ -402,10 +402,16 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 			targetClient = popupCtx.TargetClient
 		}
 		if err := c.closePopup(ctx, targetPane, targetClient); err != nil {
-			return err
+			if !isRecoverablePopupCloseError(err) {
+				return err
+			}
+			if removeErr := os.Remove(marker); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				return fmt.Errorf("remove stale tmux popup marker: %w", removeErr)
+			}
+		} else {
+			_ = os.Remove(marker)
+			return nil
 		}
-		_ = os.Remove(marker)
-		return nil
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat tmux popup marker: %w", err)
 	}
@@ -850,6 +856,31 @@ func (c *tmuxCommand) closePopup(ctx context.Context, targetPane, targetClient s
 		return fmt.Errorf("close tmux popup: %w", err)
 	}
 	return nil
+}
+
+func isRecoverablePopupCloseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "display-popup") {
+		return false
+	}
+	if strings.Contains(msg, "exit status 1") {
+		return true
+	}
+	for _, fragment := range []string{
+		"can't find pane",
+		"can't find client",
+		"can't find session",
+		"can't find window",
+		"target not found",
+	} {
+		if strings.Contains(msg, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext) (string, inttmux.PopupOptions, error) {
