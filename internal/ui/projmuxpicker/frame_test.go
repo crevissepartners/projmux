@@ -139,6 +139,28 @@ func TestFrameTitlebarChipsLineResetsAroundBordersAndPadsBody(t *testing.T) {
 	}
 }
 
+func TestFrameTitlebarChipsLineKeepsRightPadStyledWhenStripFills(t *testing.T) {
+	t.Parallel()
+
+	const innerWidth = 10
+	line := frameTitlebarChipsLine(DefaultTheme, innerWidth, []Chip{
+		{Label: "Project Settings", Active: true},
+	})
+
+	if got, want := VisibleLen(line), innerWidth+2; got != want {
+		t.Fatalf("VisibleLen(chip titlebar line) = %d, want %d: %q", got, want, line)
+	}
+	if !strings.Contains(line, ChipActiveStart+" Projec "+Reset) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want truncated chip before right pad", line)
+	}
+	if !strings.HasSuffix(line, TitlebarStart+" "+TitlebarRule+"│"+Reset) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want styled right padding cell before right border", line)
+	}
+	if strings.Contains(line, Reset+TitlebarRule+"│") {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want no reset/default background before right border", line)
+	}
+}
+
 func TestRendererContentLayoutWithTitleReservesTitlebarRow(t *testing.T) {
 	t.Parallel()
 
