@@ -133,7 +133,7 @@ func ChipsHitRegions(chips []Chip, innerWidth int) []ChipHit {
 	// Column 1 is the left border, column 2 is the chip-strip leading
 	// padding cell, so the first chip body starts at column 3.
 	cursor := 3
-	maxBody := innerWidth - 1
+	maxBody := innerWidth - 2
 	used := 0
 	first := true
 	for index, chip := range chips {
@@ -310,7 +310,7 @@ func frameTitlebarChipsLine(theme Theme, innerWidth int, chips []Chip) string {
 	if innerWidth < 4 {
 		return frameTitlebarStyledLine(theme, strings.Repeat(" ", innerWidth))
 	}
-	rendered, used := renderChipStrip(chips, innerWidth-1)
+	rendered, used := renderChipStrip(chips, innerWidth-2)
 	if used == 0 {
 		return frameTitlebarStyledLine(theme, strings.Repeat(" ", innerWidth))
 	}
