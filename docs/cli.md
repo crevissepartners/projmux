@@ -662,9 +662,8 @@ walkthrough at any time.
 
 `--popup` is the tmux attach-helper form. It shows the popup only when a
 pending attach welcome marker exists. `--popup --force` opens the popup without
-consulting pending or skip state; Settings > About > Welcome uses that forced
-viewer path so the guide is always visible from Settings. Passing positional
-arguments prints usage and returns a usage error.
+consulting pending or skip state. Passing positional arguments prints usage and
+returns a usage error.
 
 ## sessions / session-popup / preview / pin / kill / prune / tag
 
@@ -722,7 +721,7 @@ flags with the top-level `switch` UX:
   available for experimental settings. The About section reads the cached
   update status without network access;
   selecting Check Updates runs `projmux update check`, Update Now runs
-  `projmux update apply`, and Welcome opens the forced welcome popup
+  `projmux update apply`, and Welcome opens a Settings-native viewer
   independent of shell skip state. `Settings > About > Quit projmux` routes
   through the same `projmux quit` action picker. The same About section also
   lists the keybinding diagnostic path: zero-config first, `setup` for swallowed keys,

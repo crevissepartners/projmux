@@ -4009,14 +4009,21 @@ func TestSettingsAboutQuitRowRoutesThroughQuitPicker(t *testing.T) {
 	}
 }
 
-func TestSettingsAboutWelcomeOpensForcedPopup(t *testing.T) {
+func TestSettingsAboutWelcomeOpensVisibleViewer(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
 	tmuxRunner := &recordingTmuxRunner{}
+	var welcomeOptions intpickercompat.Options
 	runner, native := scriptedPicker(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAbout}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWelcomeShow}},
+		{observe: func(o intpickercompat.Options) { welcomeOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsNoopValue}},
+		{observe: func(o intpickercompat.Options) {
+			if got, want := o.UI, "settings-about-welcome"; got != want {
+				t.Fatalf("welcome viewer UI after noop = %q, want %q", got, want)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		{reply: intpickercompat.Result{}},
 	})
@@ -4026,7 +4033,6 @@ func TestSettingsAboutWelcomeOpensForcedPopup(t *testing.T) {
 		update:       nil,
 		runner:       runner,
 		nativePicker: native,
-		homeDir:      func() (string, error) { return home, nil },
 		lookupEnv:    func(string) string { return "" },
 		tmuxRunner:   tmuxRunner,
 	}
@@ -4034,16 +4040,29 @@ func TestSettingsAboutWelcomeOpensForcedPopup(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if len(tmuxRunner.calls) != 1 {
-		t.Fatalf("tmux calls = %#v, want forced welcome popup", tmuxRunner.calls)
+	if got, want := welcomeOptions.UI, "settings-about-welcome"; got != want {
+		t.Fatalf("welcome viewer UI = %q, want %q", got, want)
 	}
-	call := tmuxRunner.calls[0]
-	if call.name != "tmux" || len(call.args) == 0 || call.args[0] != "display-popup" {
-		t.Fatalf("tmux call = %#v, want display-popup", call)
+	if got, want := welcomeOptions.Title, "About - Welcome"; got != want {
+		t.Fatalf("welcome viewer title = %q, want %q", got, want)
 	}
-	command := call.args[len(call.args)-1]
-	if !strings.Contains(command, "Welcome to projmux shell") {
-		t.Fatalf("popup command = %q, want welcome payload", command)
+	if got, want := welcomeOptions.Prompt, "Settings > About > Welcome > "; got != want {
+		t.Fatalf("welcome viewer prompt = %q, want %q", got, want)
+	}
+	if !welcomeOptions.DisableSearch {
+		t.Fatalf("welcome viewer DisableSearch = false, want navigation-only viewer")
+	}
+	if !hasEntryValue(welcomeOptions.Entries, settingsBackValue) {
+		t.Fatalf("welcome viewer entries = %#v, want back row", welcomeOptions.Entries)
+	}
+	if !hasEntryLabelContaining(welcomeOptions.Entries, "Welcome to projmux shell") {
+		t.Fatalf("welcome viewer entries = %#v, want welcome payload", welcomeOptions.Entries)
+	}
+	if !hasEntryLabelContaining(welcomeOptions.Entries, "Enter continues for this run") {
+		t.Fatalf("welcome viewer entries = %#v, want shell prompt guidance", welcomeOptions.Entries)
+	}
+	if len(tmuxRunner.calls) != 0 {
+		t.Fatalf("tmux calls = %#v, want Settings-native welcome viewer without nested popup", tmuxRunner.calls)
 	}
 }
 
