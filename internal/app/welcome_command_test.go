@@ -133,6 +133,26 @@ func TestWelcomePopupHonorsEnvSuppression(t *testing.T) {
 	}
 }
 
+func TestWelcomePopupForceShowsWithoutPendingState(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := testWelcomePopupCommand(t, home)
+	cmd.lookupEnv = func(name string) string {
+		if name == "PROJMUX_WELCOME" {
+			return "off"
+		}
+		return ""
+	}
+
+	if err := cmd.Run([]string{"--popup", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(--popup --force) error = %v", err)
+	}
+	if calls := cmd.runner.(*recordingTmuxRunner).calls; len(calls) != 1 {
+		t.Fatalf("calls = %#v, want forced popup without pending state", calls)
+	}
+}
+
 func TestWelcomePopupSkipsMissingCorruptAndNonPendingStateQuietly(t *testing.T) {
 	t.Parallel()
 

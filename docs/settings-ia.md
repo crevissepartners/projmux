@@ -85,8 +85,8 @@ Hooks remain the reference pattern for this IA:
 
 Shell bootstrap UX is phase-split:
 
-- Phase 1 is complete in this branch: `projmux welcome`, the About-screen
-  Welcome entry, and `pending_attach_welcome` state make the guide revisit-able.
-- Phase 2 is complete in this branch: the generated projmux shell tmux config
-  runs the low-noise `projmux welcome --popup` attach hook, which claims the
-  pending marker once and displays the welcome guide after attach.
+- `projmux welcome` remains the stdout revisit command.
+- `Settings > About > Welcome` opens a forced visible popup independent of
+  shell skip state.
+- Shell `skip_version` state applies only to the automatic `projmux shell`
+  prompt; it does not hide manual revisit surfaces.

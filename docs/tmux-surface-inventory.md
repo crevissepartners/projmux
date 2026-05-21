@@ -409,7 +409,7 @@ locking, stale-record cleanup, and pane-id reuse protection.
 | `set-hook -g pane-focus-in run-shell -b ...` | `hooks/status` | generated standalone/app config | Clears attention state when pane receives focus. Uses `#{hook_pane}`. |
 | `set-hook -g after-select-pane run-shell -b ...` | `hooks/status` | generated standalone/app config | Clears attention on selected pane. Uses `#{pane_id}`. |
 | `set-hook -g pane-exited` / `after-kill-pane` | `hooks/status` | generated standalone/app config | Calls `projmux tmux rebalance-panes` after pane removal. |
-| `set-hook -g client-attached` | `hooks/status` | generated app config | Opens the welcome popup once after client attach. |
+| `set-hook -g client-attached` | `hooks/status` | generated app config | Runs the legacy welcome popup helper; with the current shell prompt policy it normally no-ops unless a pending marker exists. |
 | `set-hook -ag alert-bell ...` | `hooks/status` | `projmux ai integrate tmux-bell` | Installs bell fallback to `projmux ai ingest bell --pane "#{pane_id}"`. Phase 2D mux API: `SetHook`. |
 | `set-hook -gu alert-bell[...]` | `legacy/cleanup candidate`, `hooks/status` | `projmux ai integrate tmux-bell --remove` | Removes projmux-managed alert-bell entries. Phase 2D mux API: `SetHook`. |
 | `show-hooks -g alert-bell` | `hooks/status` | tmux bell integration planning | Detects existing managed bell fallback. |
@@ -577,7 +577,7 @@ for options that affect visible product behavior:
 | `after-select-pane` | `hooks/status` | generated config | `run-shell -b '<bin> attention clear #{pane_id}'` |
 | `pane-exited` | `hooks/status` | generated config | `run-shell -b 'sleep 0.05; <bin> tmux rebalance-panes'` |
 | `after-kill-pane` | `hooks/status` | generated config | `run-shell -b 'sleep 0.05; <bin> tmux rebalance-panes'` |
-| `client-attached` | `hooks/status` | app generated config | `run-shell -b '<bin> welcome --popup >/dev/null 2>&1'` |
+| `client-attached` | `hooks/status` | app generated config | `run-shell -b '<bin> welcome --popup >/dev/null 2>&1'` (legacy pending-marker fallback; normally no-op after shell prompt) |
 | `alert-bell` | `hooks/status` | `projmux ai integrate tmux-bell` | `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" ...'` |
 
 ## Surface-Specific Command Sets

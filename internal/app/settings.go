@@ -4536,8 +4536,14 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		switch strings.TrimPrefix(value, settingsActionPrefixWelcome) {
 		case "show":
 			welcome := newWelcomeCommand(c.update)
+			if c.homeDir != nil {
+				welcome.homeDir = c.homeDir
+			}
 			welcome.lookupEnv = c.lookupEnv
-			return welcome.Run(nil, stdout, stderr)
+			if c.tmuxRunner != nil {
+				welcome.runner = c.tmuxRunner
+			}
+			return welcome.Run([]string{"--popup", "--force"}, stdout, stderr)
 		default:
 			return fmt.Errorf("unknown welcome settings action: %s", value)
 		}

@@ -180,6 +180,33 @@ configured key opens and closes the popup.
 | `PROJMUX_PICKER_BACKEND` | Legacy picker backend override. Any value, including old `fzf` settings, now resolves to the native picker. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
 
+## Welcome State
+
+`projmux shell` stores per-version welcome state under the projmux state
+directory, normally:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/projmux/welcomed-v<version>.json
+```
+
+The current schema is:
+
+```json
+{
+  "version": 1,
+  "last_welcomed_version": "0.6.3",
+  "welcomed_at": "2026-05-21T00:00:00Z",
+  "skip_version": "0.6.3",
+  "skipped_at": "2026-05-21T00:00:00Z"
+}
+```
+
+`skip_version` is the only field that suppresses the shell welcome. When it
+matches the current projmux version, `projmux shell` skips the welcome. When it
+is absent or names a different version, the welcome is shown again. Older state
+files that contain only `last_welcomed_version` remain readable, but that field
+does not count as a skip.
+
 Example:
 
 ```sh
@@ -411,31 +438,6 @@ ${PROJMUX_USAGE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/projmux/usage}/
 
 See [Usage tracking](usage-tracking.md) for adapter behavior, throttling, and
 failure handling.
-
-## Shell Welcome State
-
-`projmux shell` stores its once-per-version welcome marker under:
-
-```text
-${XDG_STATE_HOME:-$HOME/.local/state}/projmux/welcomed-v<version>.json
-```
-
-If the marker is missing, the next shell launch shows the welcome again. If the
-marker is corrupt or cannot be written, shell startup continues without the
-welcome.
-
-The same guide is also available on demand through `projmux welcome`, and it is
-linked from Settings > About as `Welcome`.
-
-When `pending_attach_welcome` is true, the generated projmux shell tmux config
-runs `projmux welcome --popup` asynchronously from the `client-attached` hook.
-That helper atomically claims the pending marker, flips it off, and shows the
-welcome guide in a tmux popup once for that version. Missing, corrupt, or
-already-consumed state is a quiet no-op.
-
-Set `PROJMUX_WELCOME=off` before launching or attaching to `projmux shell` to
-suppress the automatic attach popup. The manual `projmux welcome` command still
-prints the guide.
 
 ## Session State
 
