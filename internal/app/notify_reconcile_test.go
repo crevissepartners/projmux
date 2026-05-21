@@ -117,8 +117,11 @@ func TestNotifyReconcilePushesMissingEntryForReplyPane(t *testing.T) {
 	if in.ID != "ai:main:%16" {
 		t.Fatalf("ID = %q, want ai:main:%%16", in.ID)
 	}
-	if in.Text != "claude: reply ready · notify wiring" {
+	if in.Text != "notify wiring" {
 		t.Fatalf("Text = %q", in.Text)
+	}
+	if in.Metadata["agent"] != "claude" || in.Metadata["category"] != "response_complete" {
+		t.Fatalf("Metadata = %#v", in.Metadata)
 	}
 	if in.Source != notify.SourceAI || in.Severity != notify.SeverityInfo {
 		t.Fatalf("Source/Severity = %q/%q", in.Source, in.Severity)
@@ -168,7 +171,7 @@ func TestNotifyReconcileReportsStaleEntryWhenPaneNoLongerReply(t *testing.T) {
 		entries: []notify.Notification{
 			{
 				ID:        "ai:main:%16",
-				Text:      "claude: reply ready",
+				Text:      "Ready",
 				Severity:  notify.SeverityInfo,
 				Source:    notify.SourceAI,
 				Session:   "main",
@@ -205,7 +208,7 @@ func TestNotifyReconcileReportsStaleEntryWhenPaneGone(t *testing.T) {
 		entries: []notify.Notification{
 			{
 				ID:        "ai:main:%99",
-				Text:      "codex: reply ready",
+				Text:      "Ready",
 				Severity:  notify.SeverityInfo,
 				Source:    notify.SourceAI,
 				Session:   "main",
@@ -240,7 +243,7 @@ func TestNotifyReconcileKeepsMatchingEntryWithoutDuplicatePush(t *testing.T) {
 		entries: []notify.Notification{
 			{
 				ID:        "ai:main:%16",
-				Text:      "claude: reply ready · notify wiring",
+				Text:      "notify wiring",
 				Severity:  notify.SeverityInfo,
 				Source:    notify.SourceAI,
 				Session:   "main",
@@ -279,7 +282,7 @@ func TestNotifyReconcileRefreshesEntryWithStaleText(t *testing.T) {
 		entries: []notify.Notification{
 			{
 				ID:        "ai:main:%16",
-				Text:      "claude: reply ready · old topic",
+				Text:      "old topic",
 				Severity:  notify.SeverityInfo,
 				Source:    notify.SourceAI,
 				Session:   "main",
@@ -298,7 +301,7 @@ func TestNotifyReconcileRefreshesEntryWithStaleText(t *testing.T) {
 	if len(store.pushed) != 1 {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
-	if got := store.pushed[0].Text; got != "claude: reply ready · new topic" {
+	if got := store.pushed[0].Text; got != "new topic" {
 		t.Fatalf("Text = %q", got)
 	}
 	if got := stdout.String(); got != "reconcile: pushed 1, acked 0, kept 0, stale 0\n" {

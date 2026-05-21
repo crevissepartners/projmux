@@ -153,6 +153,7 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 			Text:     want,
 			Severity: notify.SeverityInfo,
 			Source:   notify.SourceAI,
+			Metadata: mergeAttentionNotifyMetadata(nil, pane.Agent, notify.SeverityInfo),
 			TTL:      attentionNotifyTTL,
 			Target: notify.Target{
 				Socket:  pane.Socket,

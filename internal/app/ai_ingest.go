@@ -411,7 +411,7 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 				ID:       codexHookNotifyID(payload, "stop"),
 				Text:     body.Text,
 				Severity: body.Severity,
-				Metadata: metadata,
+				Metadata: mergeAINotifyBodyMetadata(metadata, body),
 				Force:    true,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
@@ -424,7 +424,7 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 			ID:       codexHookNotifyID(payload, "stop"),
 			Text:     body.Text,
 			Severity: body.Severity,
-			Metadata: metadata,
+			Metadata: mergeAINotifyBodyMetadata(metadata, body),
 			Force:    true,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
@@ -444,7 +444,7 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 				ID:       codexHookNotifyID(payload, "permission"),
 				Text:     body.Text,
 				Severity: body.Severity,
-				Metadata: metadata,
+				Metadata: mergeAINotifyBodyMetadata(metadata, body),
 				Force:    true,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
@@ -457,7 +457,7 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 			ID:       codexHookNotifyID(payload, "permission"),
 			Text:     body.Text,
 			Severity: body.Severity,
-			Metadata: metadata,
+			Metadata: mergeAINotifyBodyMetadata(metadata, body),
 			Force:    true,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
@@ -527,7 +527,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 				ID:       claudeNotifyID(payload),
 				Text:     body.Text,
 				Severity: body.Severity,
-				Metadata: metadata,
+				Metadata: mergeAINotifyBodyMetadata(metadata, body),
 				Force:    true,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -540,7 +540,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			ID:       claudeNotifyID(payload),
 			Text:     body.Text,
 			Severity: body.Severity,
-			Metadata: metadata,
+			Metadata: mergeAINotifyBodyMetadata(metadata, body),
 			Force:    true,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -559,7 +559,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 				ID:       claudePermissionNotifyID(payload),
 				Text:     body.Text,
 				Severity: body.Severity,
-				Metadata: metadata,
+				Metadata: mergeAINotifyBodyMetadata(metadata, body),
 				Force:    true,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -572,7 +572,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			ID:       claudePermissionNotifyID(payload),
 			Text:     body.Text,
 			Severity: body.Severity,
-			Metadata: metadata,
+			Metadata: mergeAINotifyBodyMetadata(metadata, body),
 			Force:    true,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -592,7 +592,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 				ID:       claudeStopNotifyID(payload),
 				Text:     body.Text,
 				Severity: body.Severity,
-				Metadata: metadata,
+				Metadata: mergeAINotifyBodyMetadata(metadata, body),
 				Force:    true,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -605,7 +605,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			ID:       claudeStopNotifyID(payload),
 			Text:     body.Text,
 			Severity: body.Severity,
-			Metadata: metadata,
+			Metadata: mergeAINotifyBodyMetadata(metadata, body),
 			Force:    true,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -624,7 +624,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 				ID:       claudeExtraNotifyID(payload, "stop-failure", payload.ErrorType, payload.ErrorMessage),
 				Text:     body.Text,
 				Severity: body.Severity,
-				Metadata: metadata,
+				Metadata: mergeAINotifyBodyMetadata(metadata, body),
 				Force:    true,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -637,7 +637,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			ID:       claudeExtraNotifyID(payload, "stop-failure", payload.ErrorType, payload.ErrorMessage),
 			Text:     body.Text,
 			Severity: body.Severity,
-			Metadata: metadata,
+			Metadata: mergeAINotifyBodyMetadata(metadata, body),
 			Force:    true,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -652,7 +652,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 				ID:       claudeExtraNotifyID(payload, "subagent-stop", payload.SubagentType, payload.SubagentID),
 				Text:     body.Text,
 				Severity: body.Severity,
-				Metadata: metadata,
+				Metadata: mergeAINotifyBodyMetadata(metadata, body),
 				Force:    true,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -666,7 +666,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 				ID:       claudeExtraNotifyID(payload, "subagent-stop", payload.SubagentType, payload.SubagentID),
 				Text:     formatClaudeSubagentStopNotifyBody(payload).Text,
 				Severity: notify.SeverityInfo,
-				Metadata: metadata,
+				Metadata: mergeAINotifyBodyMetadata(metadata, formatClaudeSubagentStopNotifyBody(payload)),
 				Force:    true,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -691,7 +691,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 				ID:       claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
 				Text:     body.Text,
 				Severity: body.Severity,
-				Metadata: metadata,
+				Metadata: mergeAINotifyBodyMetadata(metadata, body),
 				Force:    true,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -704,7 +704,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			ID:       claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
 			Text:     body.Text,
 			Severity: body.Severity,
-			Metadata: metadata,
+			Metadata: mergeAINotifyBodyMetadata(metadata, body),
 			Force:    true,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
@@ -734,7 +734,7 @@ func (c *aiCommand) pushGenericCodexHookNotify(paneID string, payload codexHookP
 		ID:            codexHookNotifyID(payload, "generic"),
 		Text:          body.Text,
 		Severity:      body.Severity,
-		Metadata:      payload.codexGenericHookMetadata(),
+		Metadata:      mergeAINotifyBodyMetadata(payload.codexGenericHookMetadata(), body),
 		Force:         true,
 		SuppressHooks: true,
 	})
