@@ -150,18 +150,18 @@ func statusbarGitDecorator(mode config.StatusbarDecoration, remoteURL string) st
 	case config.StatusbarDecorationSymbol:
 		switch provider {
 		case gitRemoteProviderGitLab:
-			return "#[fg=colour208] #[fg=colour16]"
+			return "#[fg=colour215] #[fg=" + tmuxGitSegmentFg + "]"
 		default:
-			return "#[fg=colour17] #[fg=colour16]"
+			return "#[fg=colour153] #[fg=" + tmuxGitSegmentFg + "]"
 		}
 	case config.StatusbarDecorationEmoji:
 		switch provider {
 		case gitRemoteProviderGitHub:
-			return "#[fg=colour17]🐱 #[fg=colour16]"
+			return "#[fg=colour153]🐱 #[fg=" + tmuxGitSegmentFg + "]"
 		case gitRemoteProviderGitLab:
-			return "#[fg=colour208]🦊 #[fg=colour16]"
+			return "#[fg=colour215]🦊 #[fg=" + tmuxGitSegmentFg + "]"
 		default:
-			return "#[fg=colour28]🌿 #[fg=colour16]"
+			return "#[fg=colour151]🌿 #[fg=" + tmuxGitSegmentFg + "]"
 		}
 	default:
 		return ""

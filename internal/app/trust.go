@@ -59,11 +59,11 @@ func (c *settingsCommand) projectTrustEntry(ctx settingsProjectContext) intpicke
 func trustBadgeAppearance(state hooks.ProjectConfigTrustState) (string, string, string) {
 	switch state {
 	case hooks.ProjectConfigTrustTrusted:
-		return settingsGlyphToggle, settingsColorActive, "trusted - hash matches stored entry"
+		return settingsGlyphToggle, settingsColorTrustTrusted, "trusted - hash matches stored entry"
 	case hooks.ProjectConfigTrustStale:
 		return settingsGlyphInactive, settingsColorTrustStale, "stale - file changed since trust"
 	case hooks.ProjectConfigTrustUntrusted:
-		return settingsGlyphInfo, settingsColorRemove, "untrusted - registration required"
+		return settingsGlyphInfo, settingsColorTrustUntrusted, "untrusted - registration required"
 	case hooks.ProjectConfigTrustAbsent:
 		return settingsGlyphInfo, settingsColorDim, "no .projmux/config.toml on disk"
 	default:
@@ -71,11 +71,13 @@ func trustBadgeAppearance(state hooks.ProjectConfigTrustState) (string, string, 
 	}
 }
 
-// settingsColorTrustStale is amber-ish so the stale state reads as a
-// warning without colliding with the destructive red used for the
-// untrusted state. Kept here (rather than settings_render.go) because it
-// is the only colour that is trust-specific.
-const settingsColorTrustStale = "\x1b[33m"
+// Trust states use their own small palette so stale/untrusted/trusted rows do
+// not borrow warning, danger, action, or muted tones.
+const (
+	settingsColorTrustTrusted   = "\x1b[38;2;154;191;136m"
+	settingsColorTrustStale     = "\x1b[38;2;177;139;212m"
+	settingsColorTrustUntrusted = "\x1b[38;2;210;139;88m"
+)
 
 // inspectProjectTrust resolves the trust store path and asks the hooks
 // package to inspect the project config trust standing.

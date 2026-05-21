@@ -19,6 +19,13 @@ import (
 const (
 	defaultKubeCacheTTL     = 5 * time.Second
 	defaultKubeCommandLimit = 400 * time.Millisecond
+
+	tmuxGitSegmentBg = "colour30"
+	tmuxGitSegmentFg = "colour231"
+	tmuxGitDirtyFg   = "colour222"
+	tmuxGitStagedFg  = "colour151"
+	tmuxGitAheadFg   = "colour153"
+	tmuxGitBehindFg  = "colour181"
 )
 
 type statusCommand struct {
@@ -108,7 +115,7 @@ func (c *statusCommand) runGit(args []string, stdout, stderr io.Writer) error {
 		segment += " " + state
 	}
 	remoteURL := c.readTrimmed("git", "-C", path, "config", "--get", "remote.origin.url")
-	_, err := fmt.Fprintf(stdout, " #[bold,fg=colour16,bg=colour45] %s%s #[default]", statusbarGitDecorator(c.statusbarDecoration(), remoteURL), segment)
+	_, err := fmt.Fprintf(stdout, " #[bold,fg=%s,bg=%s] %s%s #[default]", tmuxGitSegmentFg, tmuxGitSegmentBg, statusbarGitDecorator(c.statusbarDecoration(), remoteURL), segment)
 	return err
 }
 
@@ -134,22 +141,22 @@ func parseGitPorcelainStatus(raw string) string {
 	}
 	parts := []string{}
 	if hasWorktree {
-		parts = append(parts, gitStateToken("colour88", "*"))
+		parts = append(parts, gitStateToken(tmuxGitDirtyFg, "*"))
 	}
 	if staged > 0 {
-		parts = append(parts, gitStateToken("colour22", fmt.Sprintf("+%d", staged)))
+		parts = append(parts, gitStateToken(tmuxGitStagedFg, fmt.Sprintf("+%d", staged)))
 	}
 	if ahead > 0 {
-		parts = append(parts, gitStateToken("colour17", fmt.Sprintf("↑%d", ahead)))
+		parts = append(parts, gitStateToken(tmuxGitAheadFg, fmt.Sprintf("↑%d", ahead)))
 	}
 	if behind > 0 {
-		parts = append(parts, gitStateToken("colour94", fmt.Sprintf("↓%d", behind)))
+		parts = append(parts, gitStateToken(tmuxGitBehindFg, fmt.Sprintf("↓%d", behind)))
 	}
 	return strings.Join(parts, " ")
 }
 
 func gitStateToken(color, label string) string {
-	return fmt.Sprintf("#[fg=%s]%s#[fg=colour16]", color, label)
+	return fmt.Sprintf("#[nobold,fg=%s]%s#[bold,fg=%s]", color, label, tmuxGitSegmentFg)
 }
 
 func parseGitAheadBehind(line string) (int, int) {

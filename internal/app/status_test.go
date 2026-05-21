@@ -32,7 +32,7 @@ func TestStatusGitPrintsBranchForPath(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), " #[bold,fg=colour16,bg=colour45] main #[default]"; got != want {
+	if got, want := stdout.String(), " #[bold,fg=colour231,bg=colour30] main #[default]"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -66,7 +66,7 @@ func TestStatusGitUsesCurrentPanePathInsideTmux(t *testing.T) {
 	if err := cmd.Run([]string{"git"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), " #[bold,fg=colour16,bg=colour45] abc1234 #[default]"; got != want {
+	if got, want := stdout.String(), " #[bold,fg=colour231,bg=colour30] abc1234 #[default]"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -102,7 +102,7 @@ func TestStatusGitPrintsConfiguredSymbolDecorator(t *testing.T) {
 	if err := cmd.Run([]string{"git"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour208] #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour231,bg=colour30] #[fg=colour215] #[fg=colour231]main #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
@@ -137,7 +137,7 @@ func TestStatusGitPrintsConfiguredEmojiDecoratorFromConfig(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour17]🐱 #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour231,bg=colour30] #[fg=colour153]🐱 #[fg=colour231]main #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
@@ -172,7 +172,7 @@ func TestStatusGitPrintsConfiguredEmojiDecoratorForGitLabRemote(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour208]🦊 #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour231,bg=colour30] #[fg=colour215]🦊 #[fg=colour231]main #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
@@ -199,9 +199,24 @@ func TestStatusGitPrintsStateIndicators(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] main #[fg=colour88]*#[fg=colour16] #[fg=colour22]+2#[fg=colour16] #[fg=colour17]↑2#[fg=colour16] #[fg=colour94]↓1#[fg=colour16] #[default]"
+	want := " #[bold,fg=colour231,bg=colour30] main #[nobold,fg=colour222]*#[bold,fg=colour231] #[nobold,fg=colour151]+2#[bold,fg=colour231] #[nobold,fg=colour153]↑2#[bold,fg=colour231] #[nobold,fg=colour181]↓1#[bold,fg=colour231] #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestStatusGitStatePaletteIsCompactAndNonDominant(t *testing.T) {
+	t.Parallel()
+
+	got := parseGitPorcelainStatus("## main...origin/main [ahead 12, behind 3]\n M dirty.go\nA  staged.go\n?? new.go\n")
+	want := "#[nobold,fg=colour222]*#[bold,fg=colour231] #[nobold,fg=colour151]+1#[bold,fg=colour231] #[nobold,fg=colour153]↑12#[bold,fg=colour231] #[nobold,fg=colour181]↓3#[bold,fg=colour231]"
+	if got != want {
+		t.Fatalf("parseGitPorcelainStatus() = %q, want %q", got, want)
+	}
+	for _, disallowed := range []string{"fg=colour88]", "fg=colour22]", "fg=colour17]", "fg=colour94]", "bg=colour45"} {
+		if strings.Contains(got, disallowed) {
+			t.Fatalf("git state = %q, still contains old dominant color %q", got, disallowed)
+		}
 	}
 }
 
