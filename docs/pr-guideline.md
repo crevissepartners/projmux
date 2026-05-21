@@ -69,6 +69,11 @@ Use this template:
 - [ ] make fmt-check
 - [ ] make test
 - [ ] manual verification step (if relevant)
+
+## Globalization
+- [ ] No user-facing string changes.
+- [ ] User-facing strings are behind `internal/i18n` catalog keys with tests.
+- [ ] Non-translated strings are classified as literal/data/debug-only.
 ```
 
 Notes:
@@ -76,6 +81,11 @@ Notes:
 - **Why** matters more than **what**. Diff already shows the what.
 - Reference issues with `Closes #<n>` so they auto-close on merge.
 - Mention follow-ups explicitly when scope was deliberately deferred.
+- For any new or changed user-facing text, check exactly one Globalization
+  item. Normal UX copy needs a catalog key and test coverage. Commands, paths,
+  config keys, env vars, provider payloads, locale enum values, product names,
+  debug logs, and internal diagnostics may stay out of the catalog only when
+  explicitly classified in the PR body.
 
 ## Branch protection in effect
 
