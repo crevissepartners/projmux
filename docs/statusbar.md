@@ -191,6 +191,9 @@ updates the matching live tmux option
 (`@projmux_statusbar_decoration_cwd`, `_git`, or `_notify`) when run inside
 tmux. The legacy `~/.config/projmux/statusbar-decoration` and
 `@projmux_statusbar_decoration` remain fallback defaults for older configs.
+Appearance also shows the effective desired theme font. This is a status row,
+not a font editor: tmux status strings and ANSI output cannot force terminal
+font family or size, so unsupported environments report `not applied`.
 
 To add a new clickable segment:
 

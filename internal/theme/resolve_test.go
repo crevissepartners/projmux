@@ -70,6 +70,22 @@ func TestResolveThemeExplicitColorOverridesPreset(t *testing.T) {
 	}
 }
 
+func TestResolveThemeFontDesiredValuesUseProjectGlobalFallback(t *testing.T) {
+	t.Parallel()
+
+	got := ResolveTheme(
+		ThemeConfig{FontFamily: "Cascadia Mono", FontSize: "12"},
+		ThemeConfig{FontFamily: "JetBrains Mono"},
+	)
+
+	if got.FontFamily.Value != "JetBrains Mono" || got.FontFamily.Source != SourceProject {
+		t.Fatalf("font family = %#v, want project JetBrains Mono", got.FontFamily)
+	}
+	if got.FontSize.Value != 12 || got.FontSize.Source != SourceGlobal {
+		t.Fatalf("font size = %#v, want global 12", got.FontSize)
+	}
+}
+
 func TestTmuxRenderTokensFallbackPreservesBuiltInPalette(t *testing.T) {
 	t.Parallel()
 

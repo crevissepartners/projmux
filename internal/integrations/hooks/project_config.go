@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const projectConfigRelativePath = ".projmux/config.toml"
@@ -20,6 +22,7 @@ type ProjectConfig struct {
 	Hooks      map[Event]string
 	Env        map[string]string
 	Kube       KubeConfig
+	Theme      theme.ThemeConfig
 }
 
 type KubeConfig struct {
@@ -95,7 +98,7 @@ func ParseProjectConfig(content string) (ProjectConfig, error) {
 		if key == "" {
 			return ProjectConfig{}, fmt.Errorf("line %d: empty key", lineNo+1)
 		}
-		decoded, err := parseQuotedConfigString(value)
+		decoded, err := parseProjectConfigValue(section, key, value)
 		if err != nil {
 			return ProjectConfig{}, fmt.Errorf("line %d: %w", lineNo+1, err)
 		}
@@ -170,7 +173,7 @@ func loadProjectConfig(path string) (ProjectConfig, error) {
 
 func isSupportedProjectConfigSection(section string) bool {
 	switch section {
-	case "startup", "env", "kube":
+	case "startup", "env", "kube", "theme":
 		return true
 	}
 	if eventName, ok := strings.CutPrefix(section, "hooks."); ok {
@@ -200,6 +203,10 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 		default:
 			return fmt.Errorf("line %d: unsupported kube key %q", lineNo, key)
 		}
+	case "theme":
+		if err := applyProjectThemeConfigValue(&cfg.Theme, key, value, lineNo); err != nil {
+			return err
+		}
 	default:
 		eventName, ok := strings.CutPrefix(section, "hooks.")
 		if !ok || key != "run" {
@@ -212,6 +219,50 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 		cfg.Hooks[event] = value
 	}
 	return nil
+}
+
+func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lineNo int) error {
+	switch key {
+	case "preset":
+		cfg.Preset = value
+	case "background":
+		cfg.Background = value
+	case "surface":
+		cfg.Surface = value
+	case "surface_active":
+		cfg.SurfaceActive = value
+	case "foreground":
+		cfg.Foreground = value
+	case "muted":
+		cfg.Muted = value
+	case "accent":
+		cfg.Accent = value
+	case "critical":
+		cfg.Critical = value
+	case "warning":
+		cfg.Warning = value
+	case "font_family":
+		cfg.FontFamily = value
+	case "font_size":
+		cfg.FontSize = value
+	default:
+		return fmt.Errorf("line %d: unsupported theme key %q", lineNo, key)
+	}
+	return nil
+}
+
+func parseProjectConfigValue(section, key, value string) (string, error) {
+	if section == "theme" && key == "font_size" && !strings.HasPrefix(strings.TrimSpace(value), "\"") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", fmt.Errorf("value must be a quoted string or integer")
+		}
+		if _, err := strconv.Atoi(value); err != nil {
+			return "", fmt.Errorf("invalid integer value: %w", err)
+		}
+		return value, nil
+	}
+	return parseQuotedConfigString(value)
 }
 
 func parseQuotedConfigString(value string) (string, error) {
@@ -277,6 +328,7 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 	}
 	cfg.Kube.Context = strings.TrimSpace(cfg.Kube.Context)
 	cfg.Kube.Namespace = strings.TrimSpace(cfg.Kube.Namespace)
+	cfg.Theme.Normalize()
 }
 
 func validateProjectConfig(cfg ProjectConfig) error {
@@ -361,10 +413,52 @@ func renderProjectConfig(cfg ProjectConfig) string {
 		}
 		sections = append(sections, b.String())
 	}
+	if cfg.Theme.HasContent() {
+		sections = append(sections, renderThemeConfigSection(cfg.Theme))
+	}
 	if len(sections) == 0 {
 		return ""
 	}
 	return strings.Join(sections, "\n")
+}
+
+func renderThemeConfigSection(cfg theme.ThemeConfig) string {
+	cfg.Normalize()
+	var b strings.Builder
+	b.WriteString("[theme]\n")
+	for _, field := range []struct {
+		key   string
+		value string
+	}{
+		{"preset", cfg.Preset},
+		{"background", cfg.Background},
+		{"surface", cfg.Surface},
+		{"surface_active", cfg.SurfaceActive},
+		{"foreground", cfg.Foreground},
+		{"muted", cfg.Muted},
+		{"accent", cfg.Accent},
+		{"critical", cfg.Critical},
+		{"warning", cfg.Warning},
+		{"font_family", cfg.FontFamily},
+	} {
+		if field.value == "" {
+			continue
+		}
+		b.WriteString(field.key)
+		b.WriteString(" = ")
+		b.WriteString(strconv.Quote(field.value))
+		b.WriteString("\n")
+	}
+	if cfg.FontSize != "" {
+		b.WriteString("font_size = ")
+		if _, err := strconv.Atoi(cfg.FontSize); err == nil {
+			b.WriteString(cfg.FontSize)
+		} else {
+			b.WriteString(strconv.Quote(cfg.FontSize))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 type projectConfigFile struct {

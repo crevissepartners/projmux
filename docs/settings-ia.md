@@ -71,6 +71,10 @@ view-first layout:
   and `Notify icon` details. Each detail shows the current mode plus
   immediately selectable off/symbol/emoji preview rows. There is no separate
   `Change` page for icon decoration.
+- `Settings > Appearance` also shows a read-only `Theme font` status row.
+  `font_family` and `font_size` are desired values from the effective
+  project/global theme, and unsupported terminal paths must say `not applied`
+  instead of implying tmux changed the font.
 
 Hooks remain the reference pattern for this IA:
 

@@ -36,6 +36,10 @@ QUOTED = "a \"quoted\" value"
 [kube]
 context = "dev-cluster"
 namespace = "tools"
+
+[theme]
+font_family = "Cascadia Mono"
+font_size = 12
 `)
 	if err != nil {
 		t.Fatalf("ParseProjectConfig() error = %v", err)
@@ -59,6 +63,9 @@ namespace = "tools"
 		if sessionEnv[key] != "tools" {
 			t.Fatalf("SessionEnv[%s] = %q", key, sessionEnv[key])
 		}
+	}
+	if cfg.Theme.FontFamily != "Cascadia Mono" || cfg.Theme.FontSize != "12" {
+		t.Fatalf("Theme = %#v, want parsed desired font values", cfg.Theme)
 	}
 }
 
@@ -120,6 +127,40 @@ namespace = "tools"
 `
 	if string(got) != want {
 		t.Fatalf("config.toml =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestUpdateProjectConfigStoresThemeFontValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".projmux", "config.toml")
+	_, err := UpdateProjectConfig(path, func(cfg *ProjectConfig) error {
+		cfg.Theme.FontFamily = "JetBrains Mono"
+		cfg.Theme.FontSize = "14"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateProjectConfig() error = %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[theme]
+font_family = "JetBrains Mono"
+font_size = 14
+`
+	if string(got) != want {
+		t.Fatalf("config.toml =\n%s\nwant:\n%s", got, want)
+	}
+
+	parsed, err := LoadProjectConfigFile(path)
+	if err != nil {
+		t.Fatalf("LoadProjectConfigFile() error = %v", err)
+	}
+	if parsed.Theme.FontFamily != "JetBrains Mono" || parsed.Theme.FontSize != "14" {
+		t.Fatalf("parsed theme = %#v, want saved desired font values", parsed.Theme)
 	}
 }
 
