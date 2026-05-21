@@ -36,6 +36,14 @@ const (
 	tmuxActionBg         = "colour29"
 	tmuxActionFg         = "colour230"
 	tmuxSecondaryFg      = "colour245"
+
+	tmuxAccentAttentionBg       = "colour53"
+	tmuxAccentAttentionFg       = "colour225"
+	tmuxAccentAttentionStrongBg = "colour204"
+	tmuxAccentAIBg              = "colour37"
+	tmuxAccentAIFg              = "colour121"
+	tmuxStateWarningFg          = "colour214"
+	tmuxStateCriticalFg         = "colour160"
 )
 
 type tmuxPopupClient interface {
@@ -1207,7 +1215,7 @@ func tmuxPaneBorderFormat() string {
 	paneLabelFormat := tmuxVisiblePaneLabelFormat()
 	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
 	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=colour220] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=colour46] ● " + paneLabelFormat + " #[default],#[fg=colour244] " + paneLabelFormat + " #[default]}}"
+	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxAccentAIFg + "] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxAccentAttentionStrongBg + "] ● " + paneLabelFormat + " #[default],#[fg=colour244] " + paneLabelFormat + " #[default]}}"
 	return "#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > " + paneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
 }
 

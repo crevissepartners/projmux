@@ -832,7 +832,7 @@ func statusbarUsageSyncLine(state statusbarUsageState, now time.Time) string {
 		value += " cache"
 	}
 	if usageSyncStale(state.LastSync, now) {
-		return label + amberANSI(value)
+		return label + dimANSI(value)
 	}
 	return label + value
 }
@@ -971,7 +971,7 @@ func statusbarUsagePctANSI(text string, pct float64, width int) string {
 	case pct >= 80:
 		return amberANSI(padded)
 	default:
-		return greenANSI(padded)
+		return tealANSI(padded)
 	}
 }
 
@@ -998,11 +998,11 @@ func amberANSI(value string) string {
 }
 
 func redANSI(value string) string {
-	return "\x1b[38;5;196m" + value + projmuxpicker.Reset
+	return "\x1b[38;5;160m" + value + projmuxpicker.Reset
 }
 
-func greenANSI(value string) string {
-	return "\x1b[38;5;82m" + value + projmuxpicker.Reset
+func tealANSI(value string) string {
+	return "\x1b[38;5;72m" + value + projmuxpicker.Reset
 }
 
 func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path string) statusbarPathMetadata {

@@ -87,20 +87,20 @@ func RenderColoredBar(pct float64, fillColor, emptyColor string) string {
 // BarColorForPct returns the tmux color spec for the bar fill at the
 // supplied percentage. Ramps:
 //
-//	<50%   → green
-//	50-80% → yellow
-//	80-100%→ red
+//	<80%   → muted teal
+//	80-95% → amber warning
+//	95%+   → red critical
 //	>100%  → red,bold (over-limit)
 func BarColorForPct(pct float64) string {
 	switch {
 	case pct > 100:
-		return "red,bold"
+		return "colour160,bold"
+	case pct >= 95:
+		return "colour160"
 	case pct >= 80:
-		return "red"
-	case pct >= 50:
-		return "yellow"
+		return "colour214"
 	default:
-		return "green"
+		return "colour72"
 	}
 }
 

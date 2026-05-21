@@ -37,8 +37,8 @@ func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
 			t.Fatalf("missing %q in %q", want, got)
 		}
 	}
-	if !strings.Contains(got, "#[fg=cyan,bold]") {
-		t.Fatalf("missing cyan label color: %q", got)
+	if !strings.Contains(got, "#[fg="+tmuxAccentAIFg+",bold]") {
+		t.Fatalf("missing AI label color: %q", got)
 	}
 	if !strings.HasSuffix(got, "#[default]") {
 		t.Fatalf("must end with #[default]: %q", got)
@@ -183,8 +183,8 @@ func TestFormatStatusUsageOverLimitShowsActualPercent(t *testing.T) {
 	if !strings.Contains(got, "319%") {
 		t.Fatalf("missing actual over-limit percent: %q", got)
 	}
-	if !strings.Contains(got, "red,bold") {
-		t.Fatalf("over-limit must use red,bold color: %q", got)
+	if !strings.Contains(got, tmuxStateCriticalFg+",bold") {
+		t.Fatalf("over-limit must use critical color: %q", got)
 	}
 }
 
@@ -198,7 +198,7 @@ func TestVisualLenIgnoresTmuxEscapes(t *testing.T) {
 		{"", 0},
 		{"abc", 3},
 		{"#[fg=red]abc#[default]", 3},
-		{"#[fg=cyan,bold]Claude#[default] 5h", 9},
+		{"#[fg=" + tmuxAccentAIFg + ",bold]Claude#[default] 5h", 9},
 		{"a#[fg=red]b#[default]c", 3},
 		{"abc#[broken", 11},
 		{"hash#tag", 8},
@@ -785,9 +785,9 @@ func TestFormatStatusUsageAgeMinutesGrey(t *testing.T) {
 	}
 }
 
-// TestFormatStatusUsageAgeWarnYellow covers the 1h..6h band — the
-// indicator switches to dim yellow to flag attention.
-func TestFormatStatusUsageAgeWarnYellow(t *testing.T) {
+// TestFormatStatusUsageAgeWarnMuted covers the >=1h band — the indicator
+// stays muted so warning colors remain reserved for usage thresholds.
+func TestFormatStatusUsageAgeWarnMuted(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
@@ -796,15 +796,15 @@ func TestFormatStatusUsageAgeWarnYellow(t *testing.T) {
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-90 * time.Minute)},
 	}
 	got := formatStatusUsage(snaps, 0, now)
-	if !strings.Contains(got, "#[fg=yellow](1h)#[default]") {
-		t.Fatalf("missing dim-yellow (1h) age indicator: %q", got)
+	if !strings.Contains(got, "#[fg=colour244](1h)#[default]") {
+		t.Fatalf("missing muted (1h) age indicator: %q", got)
 	}
 }
 
-// TestFormatStatusUsageAgeAlertRedBold covers the >=6h band — the
-// indicator switches to bold red. The unit stays the actual hours
-// value (e.g. `8h`) so the user knows exactly how stale the cache is.
-func TestFormatStatusUsageAgeAlertRedBold(t *testing.T) {
+// TestFormatStatusUsageAgeVeryStaleStaysMuted covers the >=6h band. The unit
+// stays the actual hours value, but the color remains muted rather than
+// escalating to critical red.
+func TestFormatStatusUsageAgeVeryStaleStaysMuted(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
@@ -813,8 +813,8 @@ func TestFormatStatusUsageAgeAlertRedBold(t *testing.T) {
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-8 * time.Hour)},
 	}
 	got := formatStatusUsage(snaps, 0, now)
-	if !strings.Contains(got, "#[fg=red,bold](8h)#[default]") {
-		t.Fatalf("missing bold-red (8h) age indicator: %q", got)
+	if !strings.Contains(got, "#[fg=colour244](8h)#[default]") {
+		t.Fatalf("missing muted (8h) age indicator: %q", got)
 	}
 }
 

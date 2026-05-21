@@ -233,7 +233,7 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 	seenReply := false
 	for _, row := range rows {
 		if row.State == attentionStateBusy || hasBraillePrefix(row.Title) {
-			_, err := fmt.Fprint(stdout, "#[fg=colour220]●")
+			_, err := fmt.Fprint(stdout, "#[fg="+tmuxAccentAIFg+"]●")
 			return err
 		}
 		if row.State == attentionStateReply || hasAttentionPrefix(row.Title) {
@@ -242,7 +242,7 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 	}
 
 	if seenReply {
-		_, err := fmt.Fprint(stdout, "#[fg=colour82]●")
+		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAccentAttentionStrongBg+"]●")
 		return err
 	}
 	_, err = fmt.Fprint(stdout, " ")

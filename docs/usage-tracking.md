@@ -124,10 +124,10 @@ Output degrades through six tiers as `--max-width` shrinks:
 5. Single-letter labels (`C 5h:80% weekly:30%`).
 6. Hard rune-truncate with trailing `…`.
 
-The age indicator's colour ramps with staleness: dim grey
-(<1h), yellow (1–6h), bold red (≥6h). Codex opts out of the indicator
-because the rollout file is always near-current (no throttle gap to
-report).
+The age indicator stays muted as data gets older: dim grey below 1h, then
+muted grey at 1h and beyond. Warning and critical colors are reserved for
+usage thresholds rather than cache age. Codex opts out of the indicator
+because the rollout file is always near-current (no throttle gap to report).
 
 ### Statusbar usage popup
 

@@ -471,25 +471,25 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 // carries a notification-colored background; badges are stronger blocks on top
 // of that same line instead of separate outline glyphs.
 const (
-	notifyLineOpen      = "#[bg=colour24,fg=colour231]"
-	notifyLineDimOpen   = "#[bg=colour24,fg=colour117]"
-	notifyLineCountOpen = "#[bg=colour24,fg=colour153,bold]"
-	notifyProjectOpen   = "#[bg=colour31,fg=colour231,bold]"
-	notifyBadgeInfoOpen = "#[bg=brightcyan,fg=black,bold]"
-	notifyBadgeWarnOpen = "#[bg=yellow,fg=black,bold]"
-	notifyBadgeCritOpen = "#[bg=red,fg=white,bold]"
+	notifyLineOpen      = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionFg + "]"
+	notifyLineDimOpen   = "#[bg=" + tmuxAccentAttentionBg + ",fg=colour183]"
+	notifyLineCountOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionFg + ",bold]"
+	notifyProjectOpen   = "#[bg=colour90,fg=colour231,bold]"
+	notifyBadgeInfoOpen = "#[bg=" + tmuxAccentAttentionStrongBg + ",fg=colour16,bold]"
+	notifyBadgeWarnOpen = "#[bg=" + tmuxStateWarningFg + ",fg=colour16,bold]"
+	notifyBadgeCritOpen = "#[bg=" + tmuxStateCriticalFg + ",fg=colour231,bold]"
 	// Stale/gone badges share a muted palette so the ack-only state is
 	// visually distinct from the active NEED/INFO/WARN/CRIT badges without
 	// stealing focus. The colours land in the same neutral grey family the
 	// sidebar uses so users learn a single ack-only affordance.
 	notifyBadgeStaleOpen = "#[bg=colour240,fg=colour231,bold]"
 	notifyBadgeGoneOpen  = "#[bg=colour238,fg=colour231,dim]"
-	notifyAgentOpen      = "#[bg=colour51,fg=black,bold]"
-	notifyAgentClaude    = "#[bg=colour208,fg=black,bold]"
-	notifyAgentCodex     = "#[bg=colour33,fg=colour231,bold]"
-	notifySeverityInfo   = "#[bg=colour24,fg=brightcyan]"
-	notifySeverityWarn   = "#[bg=colour24,fg=yellow]"
-	notifySeverityCrit   = "#[bg=colour24,fg=red,bold]"
+	notifyAgentOpen      = "#[bg=" + tmuxAccentAIBg + ",fg=colour16,bold]"
+	notifyAgentClaude    = notifyAgentOpen
+	notifyAgentCodex     = notifyAgentOpen
+	notifySeverityInfo   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionStrongBg + "]"
+	notifySeverityWarn   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateWarningFg + "]"
+	notifySeverityCrit   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateCriticalFg + ",bold]"
 	notifyIcon           = "●"
 	notifyMidDot         = "·"
 	notifyEllipsis       = "…"
