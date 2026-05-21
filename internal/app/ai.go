@@ -2162,16 +2162,16 @@ func aiAgentDisplayName(title string) string {
 }
 
 func aiSummaryForKind(kind, agentName, topic string) string {
-	summary := "응답 완료"
+	summary := "Response complete"
 	switch kind {
 	case "approval_required":
-		summary = "승인 필요"
+		summary = "Approval required"
 	case "selection_required":
-		summary = "선택 필요"
+		summary = "Selection required"
 	case "confirmation_required":
-		summary = "확인 필요"
+		summary = "Confirmation required"
 	case "input_required":
-		summary = "입력 필요"
+		summary = "Input required"
 	}
 	if strings.TrimSpace(agentName) != "" {
 		summary = strings.TrimSpace(agentName) + " " + summary
@@ -2225,16 +2225,16 @@ func aiNotificationBody(title, project, branch, sessionName, windowName string) 
 	}
 	switch {
 	case context != "" && projectPart != "":
-		return "검토 대기: " + context + " · " + projectPart
+		return "Review pending: " + context + " · " + projectPart
 	case context != "":
-		return "검토 대기: " + context
+		return "Review pending: " + context
 	case projectPart != "" && location != "":
-		return "검토 대기: " + projectPart + " · " + location
+		return "Review pending: " + projectPart + " · " + location
 	case projectPart != "":
-		return "검토 대기: " + projectPart
+		return "Review pending: " + projectPart
 	default:
 		if location != "" {
-			return "검토 대기: " + location
+			return "Review pending: " + location
 		}
 		return ""
 	}

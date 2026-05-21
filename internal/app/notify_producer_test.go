@@ -116,7 +116,7 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithOverrides(t *testing.T) {
 		PaneID: "%2",
 		Lookup: lookup,
 		ID:     "ai:codex:thread:turn",
-		Text:   "Codex · 응답 완료 · done",
+		Text:   "Codex · Response complete · done",
 		Metadata: map[string]string{
 			"agent":     "codex",
 			"thread_id": "thread",
@@ -127,7 +127,7 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithOverrides(t *testing.T) {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 	got := store.pushed[0]
-	if got.ID != "ai:codex:thread:turn" || got.Text != "Codex · 응답 완료 · done" {
+	if got.ID != "ai:codex:thread:turn" || got.Text != "Codex · Response complete · done" {
 		t.Fatalf("PushInput = %+v", got)
 	}
 	if got.Metadata["agent"] != "codex" || got.Metadata["thread_id"] != "thread" {

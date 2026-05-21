@@ -16,7 +16,7 @@ func formatCodexHookPermissionNotifyBody(p codexHookPayload) aiNotifyBody {
 	if toolName == "" {
 		toolName = "Tool"
 	}
-	text := joinAINotifyText("Codex", "승인 필요", toolName)
+	text := joinAINotifyText("Codex", "Approval required", toolName)
 	if summary := formatCodexToolInputSummary(toolName, p.ToolInput); summary != "" {
 		text += ": " + summary
 	}
@@ -28,7 +28,7 @@ func formatCodexHookPermissionNotifyBody(p codexHookPayload) aiNotifyBody {
 
 func formatCodexHookStopNotifyBody(codexHookPayload) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Codex", "응답 완료"),
+		Text:     joinAINotifyText("Codex", "Response complete"),
 		Severity: notify.SeverityInfo,
 	}
 }
@@ -53,7 +53,7 @@ func formatClaudePermissionNotifyBody(p claudeHookPayload) aiNotifyBody {
 	if toolName == "" {
 		toolName = "Tool"
 	}
-	text := joinAINotifyText("Claude", "승인 필요", toolName)
+	text := joinAINotifyText("Claude", "Approval required", toolName)
 	if summary := formatClaudeToolInputSummary(toolName, p.ToolInput, p.ToolUseID); summary != "" {
 		text += ": " + summary
 	}
@@ -65,28 +65,28 @@ func formatClaudePermissionNotifyBody(p claudeHookPayload) aiNotifyBody {
 
 func formatClaudeStopNotifyBody(message string) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Claude", "응답 완료", message),
+		Text:     joinAINotifyText("Claude", "Response complete", message),
 		Severity: notify.SeverityInfo,
 	}
 }
 
 func formatClaudeStopFailureNotifyBody(p claudeHookPayload) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Claude", "오류", p.ErrorType, p.ErrorMessage),
+		Text:     joinAINotifyText("Claude", "Error", p.ErrorType, p.ErrorMessage),
 		Severity: notify.SeverityCritical,
 	}
 }
 
 func formatClaudeSubagentStopNotifyBody(p claudeHookPayload) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Claude", "서브에이전트 종료", p.SubagentType, p.SubagentID),
+		Text:     joinAINotifyText("Claude", "Subagent stopped", p.SubagentType, p.SubagentID),
 		Severity: notify.SeverityInfo,
 	}
 }
 
 func formatClaudeTeammateIdleNotifyBody(p claudeHookPayload) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Claude", "팀메이트 대기", p.TeammateName, p.TeammateID, p.TeammateContext),
+		Text:     joinAINotifyText("Claude", "Teammate waiting", p.TeammateName, p.TeammateID, p.TeammateContext),
 		Severity: notify.SeverityInfo,
 	}
 }
@@ -104,13 +104,13 @@ func joinAINotifyText(agent, category string, values ...string) string {
 func claudeNotificationLabelSeverity(notificationType string) (string, string) {
 	switch strings.TrimSpace(notificationType) {
 	case "permission_prompt":
-		return "승인 필요", notify.SeverityCritical
+		return "Approval required", notify.SeverityCritical
 	case "elicitation_dialog":
-		return "입력 필요", notify.SeverityCritical
+		return "Input required", notify.SeverityCritical
 	case "idle_prompt":
-		return "응답 완료", notify.SeverityInfo
+		return "Response complete", notify.SeverityInfo
 	default:
-		return "응답 완료", notify.SeverityInfo
+		return "Response complete", notify.SeverityInfo
 	}
 }
 

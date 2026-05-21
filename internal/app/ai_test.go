@@ -1161,8 +1161,8 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 		"--app-name=" + desktopAppID,
 		desktopAppID,
 		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
-		"Codex 승인 필요 · approval needed",
-		"검토 대기: approval needed · projmux/main",
+		"Codex Approval required · approval needed",
+		"Review pending: approval needed · projmux/main",
 	} {
 		if !containsAICommandArgSubstring(commands, want) {
 			t.Fatalf("commands = %#v, want notification shell containing %q", commands, want)
@@ -1232,8 +1232,8 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 
 	commands := cmdRecorder(cmd).commands
 	if !containsAICommandArgs(commands, hook, []string{
-		"Codex 입력 필요 · answer ready",
-		"검토 대기: answer ready · projmux/main",
+		"Codex Input required · answer ready",
+		"Review pending: answer ready · projmux/main",
 		"normal",
 		desktopAppID,
 		"%9",
@@ -1379,8 +1379,8 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		"$toast.Group = 'repo'",
 		`<toast duration="short">`,
 		"$toast.ExpirationTime = [DateTimeOffset]::Now.AddMilliseconds(5000)",
-		"Codex 승인 필요 · approval needed",
-		"검토 대기: approval needed · projmux/main",
+		"Codex Approval required · approval needed",
+		"Review pending: approval needed · projmux/main",
 		iconWin,
 		"appLogoOverride",
 	} {
@@ -1693,7 +1693,7 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 	for _, want := range []string{
 		desktopAppID,
 		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
-		"Claude 승인 필요 · approval needed",
+		"Claude Approval required · approval needed",
 	} {
 		if !containsAICommandArgSubstring(commands, want) {
 			t.Fatalf("commands = %#v, want metadata-derived Claude notification containing %q", commands, want)
@@ -2067,16 +2067,16 @@ func TestAINotificationMessageLabelsClaudeAndAvoidsRootProject(t *testing.T) {
 	if got := aiProjectName("/"); got != "" {
 		t.Fatalf("aiProjectName(/) = %q, want empty", got)
 	}
-	if got, want := aiSummaryForKind("input_required", "Claude", "waiting for input"), "Claude 입력 필요 · waiting for input"; got != want {
+	if got, want := aiSummaryForKind("input_required", "Claude", "waiting for input"), "Claude Input required · waiting for input"; got != want {
 		t.Fatalf("aiSummaryForKind = %q, want %q", got, want)
 	}
-	if got, want := aiNotificationBody("waiting for input", "", "", "home", "dev"), "검토 대기: waiting for input"; got != want {
+	if got, want := aiNotificationBody("waiting for input", "", "", "home", "dev"), "Review pending: waiting for input"; got != want {
 		t.Fatalf("aiNotificationBody = %q, want %q", got, want)
 	}
-	if got, want := aiNotificationBody("", "projmux", "main", "home", "dev"), "검토 대기: projmux/main · home:dev"; got != want {
+	if got, want := aiNotificationBody("", "projmux", "main", "home", "dev"), "Review pending: projmux/main · home:dev"; got != want {
 		t.Fatalf("aiNotificationBody = %q, want %q", got, want)
 	}
-	if got, want := aiNotificationBody("Codex", "projmux", "main", "", ""), "검토 대기: projmux/main"; got != want {
+	if got, want := aiNotificationBody("Codex", "projmux", "main", "", ""), "Review pending: projmux/main"; got != want {
 		t.Fatalf("aiNotificationBody = %q, want %q", got, want)
 	}
 }
