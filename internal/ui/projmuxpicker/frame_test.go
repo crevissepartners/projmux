@@ -88,7 +88,7 @@ func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	if got, want := VisibleLen(lines[1]), 24; got != want {
 		t.Fatalf("titlebar row width = %d, want %d: %q", got, want, lines[1])
 	}
-	if !strings.HasPrefix(lines[2], "├") || !strings.HasSuffix(lines[2], "┤") || !strings.Contains(lines[2], TitlebarRule+"─") {
+	if !strings.HasPrefix(lines[2], TitlebarRule+"├") || !strings.HasSuffix(lines[2], "┤"+Reset) {
 		t.Fatalf("titlebar divider row = %q, want full-width divider below titlebar", lines[2])
 	}
 	if !strings.Contains(lines[3], "hello") {
@@ -102,7 +102,7 @@ func TestFrameTitlebarLineResetsAroundBordersAndPadsBody(t *testing.T) {
 	const innerWidth = 18
 	line := frameTitlebarLine(DefaultTheme, innerWidth, "Projects")
 
-	if got, want := line, Reset+"│"+TitlebarStart+" Projects "+strings.Repeat(" ", 8)+Reset+"│"+Reset; got != want {
+	if got, want := line, TitlebarRule+"│"+TitlebarStart+" Projects "+strings.Repeat(" ", 8)+TitlebarRule+"│"+Reset; got != want {
 		t.Fatalf("frameTitlebarLine() = %q, want %q", got, want)
 	}
 	if got, want := VisibleLen(line), innerWidth+2; got != want {
@@ -128,7 +128,7 @@ func TestFrameTitlebarChipsLineResetsAroundBordersAndPadsBody(t *testing.T) {
 		ChipInactiveStart + " B " + Reset +
 		TitlebarStart +
 		strings.Repeat(" ", 10)
-	if got, want := line, Reset+"│"+TitlebarStart+wantBody+Reset+"│"+Reset; got != want {
+	if got, want := line, TitlebarRule+"│"+TitlebarStart+wantBody+TitlebarRule+"│"+Reset; got != want {
 		t.Fatalf("frameTitlebarChipsLine() = %q, want %q", got, want)
 	}
 	if got, want := VisibleLen(line), innerWidth+2; got != want {
@@ -326,7 +326,7 @@ func TestRendererRenderFrameWithChipsUsesTmuxToneTokens(t *testing.T) {
 	if got, want := VisibleLen(chipRow), 40; got != want {
 		t.Fatalf("chip row width = %d, want %d: %q", got, want, chipRow)
 	}
-	if !strings.HasPrefix(lines[2], "├") || !strings.HasSuffix(lines[2], "┤") {
+	if !strings.HasPrefix(lines[2], TitlebarRule+"├") || !strings.HasSuffix(lines[2], "┤"+Reset) {
 		t.Fatalf("titlebar divider = %q, want full-width divider below chip row", lines[2])
 	}
 	if !strings.Contains(lines[3], "hello") {

@@ -843,7 +843,7 @@ func TestNativeInteractiveRendersOptionalTitlebar(t *testing.T) {
 	if strings.Contains(lines[1], projmuxpicker.TitlebarRule+"─") || strings.Contains(lines[1], strings.Repeat("─", 2)) {
 		t.Fatalf("native titlebar row = %q, want no rule fill after title", lines[1])
 	}
-	if !strings.HasPrefix(lines[2], "├") || !strings.Contains(lines[2], projmuxpicker.TitlebarRule+"─") {
+	if !strings.HasPrefix(lines[2], projmuxpicker.TitlebarRule+"├") || !strings.HasSuffix(lines[2], "┤"+projmuxpicker.Reset) {
 		t.Fatalf("native titlebar divider row = %q, want divider between title and search", lines[2])
 	}
 	if !strings.Contains(lines[3], "Search") {

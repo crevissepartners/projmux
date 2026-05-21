@@ -1142,7 +1142,7 @@ func tmuxStandaloneConfig(binaryPath string, decoration config.StatusbarDecorati
 const statusbarSettingsIcon = ""
 
 func statusbarSettingsButton(label string) string {
-	return "#[bold,fg=colour230,bg=colour31]#[range=user|settings] " + label + " #[norange]#[default]"
+	return "#[bold,fg=colour230,bg=colour31]#[range=user|settings] " + label + " #[norange]#[default] "
 }
 
 func statusbarStandaloneSessionLeftFormat() string {
