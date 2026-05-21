@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithTopic(t *testing.T) {
 
 	lookup := newFakeAttentionLookup(map[string]string{
 		"%2|@projmux_ai_agent": "Codex",
-		"%2|@projmux_ai_topic": "wire-producer",
+		"%2|@projmux_ai_topic": "[Lead:QA] wire-producer",
 		"%2|#S":                "feat-notify-producer-attention",
 		"%2|#{window_id}":      "@1",
 		"%2|#{pane_id}":        "%2",
@@ -90,9 +91,12 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithTopic(t *testing.T) {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 	got := store.pushed[0]
-	wantText := "codex: reply ready · wire-producer"
+	wantText := "codex: reply ready · [Lead:QA] wire-producer"
 	if got.Text != wantText {
 		t.Fatalf("Text = %q, want %q", got.Text, wantText)
+	}
+	if strings.Contains(got.Text, "\x1b[") || strings.Contains(got.Text, "#[") {
+		t.Fatalf("Text = %q, want plain notification text", got.Text)
 	}
 	if got.ID != "ai:feat-notify-producer-attention:%2" {
 		t.Fatalf("ID = %q", got.ID)

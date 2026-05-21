@@ -261,7 +261,7 @@ func TestAttentionWindowPrefersBusyBadge(t *testing.T) {
 	if err := cmd.Run([]string{"window", "@1"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), "#[fg="+tmuxAccentAIFg+"]●"; got != want {
+	if got, want := stdout.String(), "#[fg="+tmuxStateProgressFg+"]●"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }

@@ -43,6 +43,7 @@ const (
 	tmuxAccentAttentionStrongBg = theme.TmuxAccentAttentionStrongBg
 	tmuxAccentAIBg              = theme.TmuxAccentAIBg
 	tmuxAccentAIFg              = theme.TmuxAccentAIFg
+	tmuxStateProgressFg         = theme.TmuxStateProgressFg
 	tmuxStateWarningFg          = theme.TmuxStateWarningFg
 	tmuxStateCriticalFg         = theme.TmuxStateCriticalFg
 )
@@ -1208,15 +1209,32 @@ func tmuxVisiblePaneLabelFormat() string {
 	return "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + tmuxShellPaneLabelFormat() + "}"
 }
 
+func tmuxStyledVisiblePaneLabelFormat() string {
+	topic := "#{@projmux_ai_topic}"
+	return "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:" + topic + ",}}," + tmuxStyledAITopicFormat(topic) + "," + tmuxShellPaneLabelFormat() + "}"
+}
+
+func tmuxStyledAITopicFormat(topic string) string {
+	return "#{?" + tmuxLeadModeTopicMatchFormat(topic) + ",#[push-default]#[bold#,fg=" + tmuxStateProgressFg + "]" + topic + "#[pop-default]," + topic + "}"
+}
+
+func tmuxLeadModeTopicMatchFormat(topic string) string {
+	qa := "#{m/r:^\\[[Ll]ead:[Qq][Aa]\\]," + topic + "}"
+	poc := "#{m/r:^\\[[Ll]ead:[Pp][Oo][Cc]\\]," + topic + "}"
+	ship := "#{m/r:^\\[[Ll]ead:[Ss]hip\\]," + topic + "}"
+	roadmap := "#{m/r:^\\[[Ll]ead:[Rr]oadmap\\]," + topic + "}"
+	return "#{||:#{||:" + qa + "," + poc + "},#{||:" + ship + "," + roadmap + "}}"
+}
+
 func tmuxShellPaneLabelFormat() string {
 	return "#{?#{||:#{||:#{||:#{==:#{pane_current_command},zsh},#{==:#{pane_current_command},bash}},#{||:#{==:#{pane_current_command},fish},#{==:#{pane_current_command},sh}}},#{||:#{==:#{pane_current_command},nu},#{==:#{pane_current_command},xonsh}}},#{pane_current_command},#{pane_title}}"
 }
 
 func tmuxPaneBorderFormat() string {
-	paneLabelFormat := tmuxVisiblePaneLabelFormat()
+	paneLabelFormat := tmuxStyledVisiblePaneLabelFormat()
 	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
 	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxAccentAIFg + "] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxAccentAttentionStrongBg + "] ● " + paneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + paneLabelFormat + " #[default]}}"
+	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxStateProgressFg + "] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxAccentAttentionStrongBg + "] ● " + paneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + paneLabelFormat + " #[default]}}"
 	return "#{?pane_active,#[bold#,fg=" + theme.TmuxPaneActiveFg + "#,bg=" + theme.TmuxPaneActiveBg + "] > " + paneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
 }
 

@@ -146,7 +146,7 @@ func formatWindowSummary(window preview.Window, panes []preview.Pane) string {
 }
 
 func formatPaneSummary(pane preview.Pane) string {
-	title := displayPaneTitle(pane)
+	title := displayPaneTitlePlain(pane)
 	if title == "" {
 		title = "-"
 	}
@@ -154,14 +154,23 @@ func formatPaneSummary(pane preview.Pane) string {
 	if command == "" {
 		command = "-"
 	}
-	line := "[" + sanitizeCell(pane.WindowIndex) + "." + sanitizeCell(pane.Index) + "] " + padRight(truncateText(title, 18), 18) + " " + truncateText(command, 10)
+	titleCell := styleLeadTopicPrefix(padRight(truncateText(title, 18), 18))
+	line := "[" + sanitizeCell(pane.WindowIndex) + "." + sanitizeCell(pane.Index) + "] " + titleCell + " " + truncateText(command, 10)
 	if status := formatPaneStatus(pane); status != "" {
-		line += "  " + ansiDim + status + ansiReset
+		if strings.Contains(status, "\x1b[") {
+			line += "  " + status
+		} else {
+			line += "  " + ansiDim + status + ansiReset
+		}
 	}
 	return line
 }
 
 func displayPaneTitle(pane preview.Pane) string {
+	return styleLeadTopicPrefix(displayPaneTitlePlain(pane))
+}
+
+func displayPaneTitlePlain(pane preview.Pane) string {
 	if strings.TrimSpace(pane.AIAgent) != "" {
 		if topic := sanitizeCell(pane.AITopic); topic != "" {
 			return topic
@@ -197,16 +206,16 @@ func isShellCommand(command string) bool {
 func formatPaneStatus(pane preview.Pane) string {
 	parts := make([]string, 0, 6)
 	if state := sanitizeCell(pane.AttentionState); state != "" {
-		parts = append(parts, "badge="+humanAttentionState(state))
+		parts = append(parts, formatPaneStatusPart("badge", humanAttentionState(state), state == "busy"))
 	}
 	if state := sanitizeCell(pane.AIState); state != "" {
-		parts = append(parts, "state="+humanAIState(state))
+		parts = append(parts, formatPaneStatusPart("state", humanAIState(state), state == "thinking"))
 	}
 	if agent := sanitizeCell(pane.AIAgent); agent != "" {
 		parts = append(parts, "assistant="+agent)
 	}
 	if topic := truncateText(pane.AITopic, 24); topic != "" {
-		parts = append(parts, "topic="+topic)
+		parts = append(parts, "topic="+styleLeadTopicPrefix(topic))
 	}
 	if ack := sanitizeCell(pane.AttentionAck); ack != "" {
 		parts = append(parts, "seen="+humanBoolOption(ack))
@@ -215,6 +224,13 @@ func formatPaneStatus(pane preview.Pane) string {
 		parts = append(parts, "clears-on-focus="+humanBoolOption(armed))
 	}
 	return strings.Join(parts, " ")
+}
+
+func formatPaneStatusPart(key, value string, progress bool) string {
+	if !progress {
+		return key + "=" + value
+	}
+	return key + "=" + ansiProgress + value + ansiReset
 }
 
 func windowAttentionRank(windowIndex string, panes []preview.Pane) int {
@@ -236,7 +252,7 @@ func windowAttentionRank(windowIndex string, panes []preview.Pane) int {
 func formatWindowAttentionPrefix(rank int) string {
 	switch rank {
 	case 2:
-		return ansiYellow + "●" + ansiReset
+		return ansiProgress + "●" + ansiReset
 	case 1:
 		return ansiGreen + "●" + ansiReset
 	default:

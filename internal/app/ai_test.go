@@ -2360,7 +2360,7 @@ func TestAITopicGetPrintsPaneOptionValue(t *testing.T) {
 	cmd := testAICommand(home)
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%5", "#{@projmux_ai_topic}"}) {
-			return []byte("ship the feature\n"), nil
+			return []byte("[Lead:Roadmap] ship the feature\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -2370,8 +2370,11 @@ func TestAITopicGetPrintsPaneOptionValue(t *testing.T) {
 		t.Fatalf("Run topic get error = %v", err)
 	}
 
-	if got, want := stdout.String(), "ship the feature\n"; got != want {
+	if got, want := stdout.String(), "[Lead:Roadmap] ship the feature\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if strings.Contains(stdout.String(), "\x1b[") || strings.Contains(stdout.String(), "#[") {
+		t.Fatalf("stdout = %q, want plain topic text", stdout.String())
 	}
 }
 
