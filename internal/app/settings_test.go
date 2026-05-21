@@ -113,7 +113,7 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 func TestSettingsRootRowsUsePhase0ChromePalette(t *testing.T) {
 	t.Parallel()
 
-	if settingsColorType != "\x1b[36m" || settingsColorDim != "\x1b[90m" || settingsColorInfo != "\x1b[37m" {
+	if settingsColorType != "\x1b[38;2;141;205;142m" || settingsColorDim != "\x1b[90m" || settingsColorInfo != "\x1b[38;2;216;224;228m" {
 		t.Fatalf("shared settings colors changed: type=%q dim=%q info=%q", settingsColorType, settingsColorDim, settingsColorInfo)
 	}
 	options := (&settingsCommand{}).rootOptions(settingsRootTabGlobal)

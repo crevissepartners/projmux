@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 func TestQuitCommandPickerShowsQuitAndCancel(t *testing.T) {
@@ -39,6 +40,26 @@ func TestQuitCommandPickerShowsQuitAndCancel(t *testing.T) {
 	}
 	if got, want := entryValues(got.Entries), []string{quitActionQuit, quitActionCancel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("quit picker entry values = %#v, want %#v", got, want)
+	}
+}
+
+func TestQuitCommandDestructiveRowKeepsDangerColorWhenSelected(t *testing.T) {
+	t.Parallel()
+
+	options := quitActionOptions()
+	if len(options.Entries) == 0 {
+		t.Fatal("quit picker has no entries")
+	}
+	quitLabel := options.Entries[0].Label
+	if !strings.Contains(quitLabel, settingsColorRemove+"Quit projmux") {
+		t.Fatalf("quit label = %q, want danger-colored action name", quitLabel)
+	}
+	selected := projmuxpicker.SelectedLine(projmuxpicker.Pointer, quitLabel)
+	if !strings.Contains(selected, settingsColorRemove+"Quit projmux") {
+		t.Fatalf("selected quit label = %q, destructive action lost danger color", selected)
+	}
+	if !strings.Contains(selected, settingsColorReset+projmuxpicker.CurrentStart) {
+		t.Fatalf("selected quit label = %q, want current-row style restored after embedded color resets", selected)
 	}
 }
 

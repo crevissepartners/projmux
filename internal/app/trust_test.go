@@ -56,9 +56,11 @@ run = "echo ready"
 	if !strings.Contains(entry.Label, "untrusted") || !strings.Contains(entry.Label, "registration required") {
 		t.Fatalf("entry.Label = %q, want untrusted summary", entry.Label)
 	}
-	// Red tone for untrusted so users notice the registration gap.
-	if !strings.Contains(entry.Label, settingsColorRemove) {
-		t.Fatalf("entry.Label = %q, want red tone (%q) for untrusted", entry.Label, settingsColorRemove)
+	if !strings.Contains(entry.Label, settingsColorTrustUntrusted) {
+		t.Fatalf("entry.Label = %q, want trust-untrusted tone (%q)", entry.Label, settingsColorTrustUntrusted)
+	}
+	if strings.Contains(entry.Label, settingsColorRemove) {
+		t.Fatalf("entry.Label = %q, untrusted state must not reuse destructive color %q", entry.Label, settingsColorRemove)
 	}
 }
 
@@ -91,8 +93,11 @@ run = "echo ready"
 	if !strings.Contains(entry.Label, "trusted") || !strings.Contains(entry.Label, "hash matches") {
 		t.Fatalf("entry.Label = %q, want trusted summary", entry.Label)
 	}
-	if !strings.Contains(entry.Label, settingsColorActive) {
-		t.Fatalf("entry.Label = %q, want active tone (%q) for trusted", entry.Label, settingsColorActive)
+	if !strings.Contains(entry.Label, settingsColorTrustTrusted) {
+		t.Fatalf("entry.Label = %q, want trust-trusted tone (%q)", entry.Label, settingsColorTrustTrusted)
+	}
+	if strings.Contains(entry.Label, settingsColorAdd) {
+		t.Fatalf("entry.Label = %q, trusted state must not reuse action color %q", entry.Label, settingsColorAdd)
 	}
 }
 
@@ -132,6 +137,12 @@ run = "echo updated"
 	}
 	if !strings.Contains(entry.Label, settingsColorTrustStale) {
 		t.Fatalf("entry.Label = %q, want stale tone (%q)", entry.Label, settingsColorTrustStale)
+	}
+	if strings.Contains(entry.Label, settingsColorRemove) || strings.Contains(entry.Label, settingsColorAdd) {
+		t.Fatalf("entry.Label = %q, stale trust state must not reuse danger/action colors", entry.Label)
+	}
+	if settingsColorTrustStale == settingsColorDim {
+		t.Fatalf("stale trust color must not alias muted text color")
 	}
 }
 

@@ -22,13 +22,13 @@ const (
 
 // ANSI color sequences mapped per the design system.
 const (
-	settingsColorAdd    = "\x1b[32m" // green: positive / additive action
-	settingsColorType   = "\x1b[36m" // cyan: typed / edit / navigate
-	settingsColorRemove = "\x1b[31m" // red: destructive
-	settingsColorBack   = "\x1b[90m" // dim: back / cancel
-	settingsColorActive = "\x1b[1m"  // bold: active / current value
-	settingsColorDim    = "\x1b[90m" // dim: descriptions, secondary text
-	settingsColorInfo   = "\x1b[37m" // muted white: info / read-only label
+	settingsColorAdd    = "\x1b[38;2;141;205;142m" // green: additive / primary action
+	settingsColorType   = "\x1b[38;2;141;205;142m" // green: edit / navigate action
+	settingsColorRemove = "\x1b[38;2;255;107;107m" // red: destructive
+	settingsColorBack   = "\x1b[38;2;164;176;182m" // secondary: back / cancel
+	settingsColorActive = "\x1b[1m"                // bold: active / current value
+	settingsColorDim    = "\x1b[90m"               // dim: descriptions, secondary text
+	settingsColorInfo   = "\x1b[38;2;216;224;228m" // soft foreground: info / read-only label
 	settingsColorReset  = "\x1b[0m"
 )
 

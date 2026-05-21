@@ -37,8 +37,9 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
   branch or detached commit,
   then compact state indicators when available: `*` for local changes,
   `+N` for staged entries, and `↑N`/`↓N` for ahead/behind counts. Each
-  state token gets its own compact foreground color while preserving the
-  existing branch block background. Window tab indexes stay left of each tab,
+  state token gets its own compact foreground color on the same muted branch
+  block; the indicators drop bold styling so git state remains readable
+  without dominating the status row. Window tab indexes stay left of each tab,
   and tab titles are centered in a fixed-width trim so long active pane names
   do not resize the status row.
 - The settings chip keeps its label padding inside the `settings` range

@@ -891,6 +891,52 @@ func TestSwitchSidebarProjectOpenShowsStartupStepWithoutDisplayPopupHandoff(t *t
 	}
 }
 
+func TestProjectStartupPickerLabelStateColors(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		candidate projectStartupCandidate
+		wantColor string
+	}{
+		{
+			name:      "latest snapshot action",
+			candidate: projectStartupCandidate{Kind: projectStartupKindLatest, Description: "saved"},
+			wantColor: settingsColorType,
+		},
+		{
+			name:      "named snapshot action",
+			candidate: projectStartupCandidate{Kind: projectStartupKindNamed, Name: "team", Description: "manual"},
+			wantColor: settingsColorType,
+		},
+		{
+			name:      "empty session back tone",
+			candidate: projectStartupCandidate{Kind: projectStartupKindEmpty, Description: "start without restoring"},
+			wantColor: settingsColorBack,
+		},
+		{
+			name:      "back row secondary tone",
+			candidate: projectStartupCandidate{Kind: projectStartupKindBack, Description: "return"},
+			wantColor: settingsColorBack,
+		},
+		{
+			name:      "unknown info tone",
+			candidate: projectStartupCandidate{Kind: "other", Label: "Other", Description: "metadata"},
+			wantColor: settingsColorInfo,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			label := projectStartupPickerLabel(tc.candidate)
+			if !strings.Contains(label, tc.wantColor) {
+				t.Fatalf("projectStartupPickerLabel(%s) = %q, want color %q", tc.name, label, tc.wantColor)
+			}
+		})
+	}
+}
+
 func TestAppRunLayoutCommandRemovedFromPublicSurface(t *testing.T) {
 	t.Parallel()
 
