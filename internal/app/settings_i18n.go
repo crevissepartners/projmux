@@ -175,6 +175,7 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Korean UI":                                     "settings.text.korean_ui",
 	"detect from LC_ALL, LC_MESSAGES, LANG":         "settings.text.detect_locale_env",
 	"unsupported":                                   "settings.text.unsupported",
+	"Unsupported locale {locale} from {source}; using {fallback}.":                         "settings.text.unsupported_locale_warning",
 	"Choose the default split mode for future AI launches.":                                "settings.footer.choose_default_ai_split",
 	"Choose an agent or shell target to launch.":                                           "settings.footer.choose_agent_or_shell",
 	"Session state overview is read-only here.":                                            "settings.footer.session_state_read_only",

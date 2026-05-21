@@ -203,10 +203,13 @@ func localeUnsupportedWarning(locale i18n.Locale, resolution i18n.LocaleResoluti
 	if raw == "" {
 		raw = strings.TrimSpace(resolution.Raw)
 	}
-	if locale == i18n.Locale("ko-KR") {
-		return fmt.Sprintf("지원되지 않는 locale %s (%s); %s를 사용합니다.", raw, localeResolutionSourceLabel(resolution), i18n.FallbackLocale)
-	}
-	return fmt.Sprintf("Unsupported locale %s from %s; using %s.", raw, localeResolutionSourceLabel(resolution), i18n.FallbackLocale)
+	template := settingsCatalogTextLocale(locale, "Unsupported locale {locale} from {source}; using {fallback}.")
+	replacer := strings.NewReplacer(
+		"{locale}", raw,
+		"{source}", localeResolutionSourceLabel(resolution),
+		"{fallback}", string(i18n.FallbackLocale),
+	)
+	return replacer.Replace(template)
 }
 
 func localeChoiceDescription(choice string) string {
