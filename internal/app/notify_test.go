@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -287,7 +288,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 				Text:      "Ready",
 				Severity:  notify.SeverityWarn,
 				Source:    notify.SourceAI,
-				Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
+				Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need", "topic": "worker loop"},
 				Socket:    "projmux",
 				Session:   "main",
 				Window:    "1",
@@ -340,11 +341,11 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(labelLines) != 2 {
 		t.Fatalf("sidebar label = %q, want two-line card", entry.Label)
 	}
-	if labelLines[0] != "Ready" {
-		t.Fatalf("sidebar first line = %q, want notification text", labelLines[0])
+	if got := stripANSI(labelLines[0]); got != " worker loop  Ready" {
+		t.Fatalf("sidebar first line = %q, want topic badge before notification text", labelLines[0])
 	}
-	if meta := labelLines[1]; !strings.Contains(meta, " age 30s ") || !strings.Contains(meta, " main ") || !strings.Contains(meta, " codex ") || !strings.Contains(meta, " WARN ") || !strings.Contains(meta, "window 1") || !strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
-		t.Fatalf("sidebar metadata = %q, want age/project/agent/status/window/pane without queued/source", meta)
+	if meta := labelLines[1]; !strings.Contains(meta, " age 30s ") || !strings.Contains(meta, " main ") || !strings.Contains(meta, " codex ") || !strings.Contains(meta, " WARN ") || strings.Contains(meta, "window 1") || strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
+		t.Fatalf("sidebar metadata = %q, want age/project/agent/status without target/source", meta)
 	}
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
@@ -404,6 +405,24 @@ keys = ["C-y"]
 	want := "Enter: focus/ack  |  A: ack  |  C: clear non-critical  |  Ctrl-Y: clear all"
 	if got := picker.options.Footer; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
+	}
+}
+
+func TestNotifySidebarProjectBadgeMatchesStatusbarProjectPalette(t *testing.T) {
+	t.Parallel()
+
+	sidebar := notifySidebarProjectBadge("main")
+	for _, want := range []string{"\x1b[1;", "38;5;231", "48;5;90"} {
+		if !strings.Contains(sidebar, want) {
+			t.Fatalf("sidebar project badge = %q, want ANSI token %q", sidebar, want)
+		}
+	}
+
+	statusbar := renderNotifyProjectBadge("main")
+	for _, want := range []string{"bg=" + theme.TmuxAttentionProjectBg, "fg=" + theme.TmuxPrimaryFg, "bold"} {
+		if !strings.Contains(statusbar, want) {
+			t.Fatalf("statusbar project badge = %q, want tmux token %q", statusbar, want)
+		}
 	}
 }
 

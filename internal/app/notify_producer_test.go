@@ -98,7 +98,7 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithTopic(t *testing.T) {
 	if got.Text != wantText {
 		t.Fatalf("Text = %q, want %q", got.Text, wantText)
 	}
-	if got.Metadata["agent"] != "codex" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" {
+	if got.Metadata["agent"] != "codex" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" || got.Metadata["topic"] != "[Lead:QA] wire-producer" {
 		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
 	if strings.Contains(got.Text, "\x1b[") || strings.Contains(got.Text, "#[") {
@@ -325,7 +325,7 @@ func TestAttentionToggleNotifiesQueueOnReply(t *testing.T) {
 	if got.Text != wantText {
 		t.Fatalf("Text = %q, want %q", got.Text, wantText)
 	}
-	if got.Metadata["agent"] != "claude" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" {
+	if got.Metadata["agent"] != "claude" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" || got.Metadata["topic"] != "worker loop" {
 		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
 	if got.Source != notify.SourceAI {
@@ -481,7 +481,7 @@ func TestAIStatusSetWaitingPushesQueueWhenInactive(t *testing.T) {
 	if got.Text != wantText {
 		t.Fatalf("Text = %q, want %q", got.Text, wantText)
 	}
-	if got.Metadata["agent"] != "claude" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" {
+	if got.Metadata["agent"] != "claude" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" || got.Metadata["topic"] != "notify wiring" {
 		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
 	if got.Source != notify.SourceAI {

@@ -441,6 +441,15 @@ func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyR
 	if display != notifyDisplayLive {
 		text = notifySidebarDimText(text)
 	}
+	if topic := notifySidebarTopicBadge(e); topic != "" {
+		if notifySidebarLabelCell(e.Metadata["topic"]) == notifySidebarLabelCell(e.Text) {
+			text = "Ready"
+			if display != notifyDisplayLive {
+				text = notifySidebarDimText(text)
+			}
+		}
+		text = topic + " " + text
+	}
 	metaParts := []string{
 		notifySidebarAge(age),
 		notifySidebarProjectBadge(notifyProjectName(e.Session)),
@@ -449,13 +458,19 @@ func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyR
 		metaParts = append(metaParts, notifySidebarAgentBadge(agent))
 	}
 	metaParts = append(metaParts, notifySidebarStateBadge(notifyStateLabelFor(e, text, display)))
-	if window := notifySidebarTargetPart("window", e.Window); window != "" {
-		metaParts = append(metaParts, window)
-	}
-	if pane := notifySidebarTargetPart("pane", e.Pane); pane != "" {
-		metaParts = append(metaParts, pane)
+	if notifySidebarShowTargetParts(e) {
+		if window := notifySidebarTargetPart("window", e.Window); window != "" {
+			metaParts = append(metaParts, window)
+		}
+		if pane := notifySidebarTargetPart("pane", e.Pane); pane != "" {
+			metaParts = append(metaParts, pane)
+		}
 	}
 	return text + "\n  " + strings.Join(metaParts, " ")
+}
+
+func notifySidebarShowTargetParts(e notify.Notification) bool {
+	return e.Source != notify.SourceAI
 }
 
 // notifySidebarDimText wraps the row's body text in the dim foreground so
@@ -518,6 +533,17 @@ func notifySidebarProjectBadge(project string) string {
 		project = "project"
 	}
 	return notifySidebarProject + " " + project + " " + notifySidebarReset
+}
+
+func notifySidebarTopicBadge(e notify.Notification) string {
+	if e.Source != notify.SourceAI {
+		return ""
+	}
+	topic := notifySidebarLabelCell(e.Metadata["topic"])
+	if topic == "" {
+		return ""
+	}
+	return theme.ANSIChipInactiveStart + " " + topic + " " + notifySidebarReset
 }
 
 func notifySidebarTargetPart(label, value string) string {

@@ -120,7 +120,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	if severity == "" {
 		severity = notify.SeverityInfo
 	}
-	metadata := mergeAttentionNotifyMetadata(in.Metadata, agent, severity)
+	metadata := mergeAttentionNotifyMetadata(in.Metadata, agent, topic, severity)
 	id := strings.TrimSpace(in.ID)
 	if id == "" {
 		id = buildAttentionNotifyID(session, resolvedPane)
@@ -185,11 +185,14 @@ func composeAttentionReplyText(agent, topic string) string {
 	return "Ready"
 }
 
-func mergeAttentionNotifyMetadata(metadata map[string]string, agent, severity string) map[string]string {
-	merged := make(map[string]string, len(metadata)+2)
+func mergeAttentionNotifyMetadata(metadata map[string]string, agent, topic, severity string) map[string]string {
+	merged := make(map[string]string, len(metadata)+3)
 	maps.Copy(merged, metadata)
 	if strings.TrimSpace(merged["agent"]) == "" {
 		merged["agent"] = strings.ToLower(strings.TrimSpace(agent))
+	}
+	if strings.TrimSpace(merged["topic"]) == "" {
+		merged["topic"] = strings.TrimSpace(topic)
 	}
 	if strings.TrimSpace(merged["category"]) == "" {
 		if severity == notify.SeverityCritical {
