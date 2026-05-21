@@ -1096,6 +1096,10 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
+		"unbind-key -q -n M-6",
+		"unbind-key -q -n C-n",
+		"unbind-key -q -n M-r",
+		"unbind-key -q -n User11",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
@@ -1499,6 +1503,10 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
+		"unbind-key -q -n M-6",
+		"unbind-key -q -n C-n",
+		"unbind-key -q -n M-r",
+		"unbind-key -q -n User11",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-app-config output = %q, want substring %q", output, want)

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -769,6 +770,21 @@ func tmuxMergedUnbindLines(defaults, merged []keyBindingAction) []string {
 	}
 	for _, binding := range prefix {
 		lines = append(lines, "unbind-key -q "+binding.chord)
+	}
+	return lines
+}
+
+func tmuxRetiredKeyUnbindLines() []string {
+	lines := []string{
+		// Historical direct defaults removed during the keybinding surface
+		// cleanup. Keep unbinding them so a live tmux server sourced from an
+		// older projmux build does not retain stale behavior after reload.
+		"unbind-key -q -n M-6",
+		"unbind-key -q -n C-n",
+		"unbind-key -q -n M-r",
+	}
+	for slot := 0; slot <= 12; slot++ {
+		lines = append(lines, fmt.Sprintf("unbind-key -q -n User%d", slot))
 	}
 	return lines
 }
