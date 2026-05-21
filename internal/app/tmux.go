@@ -1219,10 +1219,10 @@ func tmuxStyledAITopicFormat(topic string) string {
 }
 
 func tmuxLeadModeTopicMatchFormat(topic string) string {
-	qa := "#{m/r:^\\[[Ll]ead:[Qq][Aa]\\]," + topic + "}"
-	poc := "#{m/r:^\\[[Ll]ead:[Pp][Oo][Cc]\\]," + topic + "}"
-	ship := "#{m/r:^\\[[Ll]ead:[Ss]hip\\]," + topic + "}"
-	roadmap := "#{m/r:^\\[[Ll]ead:[Rr]oadmap\\]," + topic + "}"
+	qa := "#{m/r:^\\\\[[Ll]ead:[Qq][Aa]\\\\]," + topic + "}"
+	poc := "#{m/r:^\\\\[[Ll]ead:[Pp][Oo][Cc]\\\\]," + topic + "}"
+	ship := "#{m/r:^\\\\[[Ll]ead:[Ss]hip\\\\]," + topic + "}"
+	roadmap := "#{m/r:^\\\\[[Ll]ead:[Rr]oadmap\\\\]," + topic + "}"
 	return "#{||:#{||:" + qa + "," + poc + "},#{||:" + ship + "," + roadmap + "}}"
 }
 
