@@ -144,7 +144,8 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 	// Push pass: for every pane that should be in the queue, add or refresh.
 	for id, pane := range wantByID {
 		want := pane.text()
-		if cur, ok := existingByID[id]; ok && cur.Text == want {
+		metadata := mergeAttentionNotifyMetadata(nil, pane.Agent, pane.Topic, notify.SeverityInfo)
+		if cur, ok := existingByID[id]; ok && cur.Text == want && attentionNotifyMetadataMatches(cur.Metadata, metadata) {
 			result.Kept++
 			continue
 		}
@@ -153,7 +154,7 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 			Text:     want,
 			Severity: notify.SeverityInfo,
 			Source:   notify.SourceAI,
-			Metadata: mergeAttentionNotifyMetadata(nil, pane.Agent, notify.SeverityInfo),
+			Metadata: metadata,
 			TTL:      attentionNotifyTTL,
 			Target: notify.Target{
 				Socket:  pane.Socket,
@@ -183,6 +184,15 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 	}
 
 	return writeReconcileSummary(stdout, result, *asJSON)
+}
+
+func attentionNotifyMetadataMatches(got, want map[string]string) bool {
+	for _, key := range []string{"agent", "category", "state", "topic"} {
+		if strings.TrimSpace(got[key]) != strings.TrimSpace(want[key]) {
+			return false
+		}
+	}
+	return true
 }
 
 // listReconcilePanes shells out to `tmux list-panes -a -F ...` and parses

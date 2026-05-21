@@ -48,6 +48,7 @@ func (s *memNotifyStore) Push(in notify.PushInput) (notify.Notification, notify.
 		Text:      in.Text,
 		Severity:  in.Severity,
 		Source:    in.Source,
+		Metadata:  in.Metadata,
 		Socket:    in.Target.Socket,
 		Session:   in.Target.Session,
 		Window:    in.Target.Window,
@@ -120,7 +121,7 @@ func TestNotifyReconcilePushesMissingEntryForReplyPane(t *testing.T) {
 	if in.Text != "notify wiring" {
 		t.Fatalf("Text = %q", in.Text)
 	}
-	if in.Metadata["agent"] != "claude" || in.Metadata["category"] != "response_complete" {
+	if in.Metadata["agent"] != "claude" || in.Metadata["category"] != "response_complete" || in.Metadata["topic"] != "notify wiring" {
 		t.Fatalf("Metadata = %#v", in.Metadata)
 	}
 	if in.Source != notify.SourceAI || in.Severity != notify.SeverityInfo {
@@ -171,7 +172,7 @@ func TestNotifyReconcileReportsStaleEntryWhenPaneNoLongerReply(t *testing.T) {
 		entries: []notify.Notification{
 			{
 				ID:        "ai:main:%16",
-				Text:      "Ready",
+				Text:      "notify wiring",
 				Severity:  notify.SeverityInfo,
 				Source:    notify.SourceAI,
 				Session:   "main",
@@ -208,7 +209,7 @@ func TestNotifyReconcileReportsStaleEntryWhenPaneGone(t *testing.T) {
 		entries: []notify.Notification{
 			{
 				ID:        "ai:main:%99",
-				Text:      "Ready",
+				Text:      "notify wiring",
 				Severity:  notify.SeverityInfo,
 				Source:    notify.SourceAI,
 				Session:   "main",
@@ -246,6 +247,7 @@ func TestNotifyReconcileKeepsMatchingEntryWithoutDuplicatePush(t *testing.T) {
 				Text:      "notify wiring",
 				Severity:  notify.SeverityInfo,
 				Source:    notify.SourceAI,
+				Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "notify wiring"},
 				Session:   "main",
 				Pane:      "%16",
 				CreatedAt: now,
@@ -303,6 +305,9 @@ func TestNotifyReconcileRefreshesEntryWithStaleText(t *testing.T) {
 	}
 	if got := store.pushed[0].Text; got != "new topic" {
 		t.Fatalf("Text = %q", got)
+	}
+	if got := store.pushed[0].Metadata["topic"]; got != "new topic" {
+		t.Fatalf("topic metadata = %q", got)
 	}
 	if got := stdout.String(); got != "reconcile: pushed 1, acked 0, kept 0, stale 0\n" {
 		t.Fatalf("stdout = %q", got)
