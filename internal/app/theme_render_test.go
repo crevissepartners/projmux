@@ -73,6 +73,10 @@ func TestRenderThemeSourceFallbackMatchesCurrentProductionOutput(t *testing.T) {
 	t.Parallel()
 
 	source := fallbackRenderThemeSource()
+	fontApplication := theme.EvaluateFontApplication(source.effective, theme.NoFontCapability())
+	if fontApplication.Status != theme.FontApplyNotRequested {
+		t.Fatalf("fallback font application = %#v, want not requested", fontApplication)
+	}
 	got := source.tmuxStandaloneConfig("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
 	want := tmuxStandaloneConfigWithKeymapTheme("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{}))
 	if got != want {

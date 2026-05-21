@@ -171,11 +171,12 @@ declarative hooks and project recipe fields:
 This foundation exposes the resolver over in-memory structs. Renderer adapters
 can apply an already resolved `EffectiveTheme` to native picker frame
 background/foreground SGR and tmux status/window `colourN` background tokens.
-App render entrypoints share one effective-theme source, but that source still
-resolves to the built-in fallback until parser/editor integration for `[theme]`
-lands in a later phase. The effective theme resolves as project > global >
-built-in fallback, and each field carries a source label: `project`, `global`,
-or `fallback`.
+App render entrypoints share one effective-theme source, but color rendering
+still resolves to the built-in fallback until editor/runtime loading for
+`[theme]` lands in a later phase. The config parser and resolver can store and
+resolve `[theme]` values for read-only surfaces. The effective theme resolves
+as project > global > built-in fallback, and each field carries a source label:
+`project`, `global`, or `fallback`.
 
 Resolver schema shape:
 
@@ -199,14 +200,15 @@ Supported presets are `projmux-dark`, `midnight`, `forest`, `rose`, and
 explicit color tokens override preset values. Missing or `inherit` values fall
 through to the next layer.
 
-When parser support lands, the `[theme]` section will use the shape above.
 Unknown presets and invalid color/font values invalidate only their own theme
 layer and produce resolver warnings; the next source still resolves normally.
 Colors are `#RRGGBB`. Truecolor renderers use exact RGB SGR tokens, and tmux
 surfaces use the stored or nearest xterm 256-color `colourN` mapping. Fallback
 renderer output intentionally keeps the existing palette constants byte for
 byte. Font values are desired terminal profile hints, not universal tmux or
-ANSI renderer tokens.
+ANSI renderer tokens. Without a supported terminal font adapter, Settings
+reports the effective desired font as `not applied`; projmux does not create or
+modify terminal profiles in this phase.
 
 ## Environment Variables
 

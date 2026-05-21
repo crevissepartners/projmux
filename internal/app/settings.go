@@ -528,7 +528,7 @@ func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompa
 			Value: settingsSectionGlobalHooks,
 		},
 		{
-			Label: settingsRootLabel(settingsGlyphOpen, "Appearance", "per-surface icon decoration"),
+			Label: settingsRootLabel(settingsGlyphOpen, "Appearance", "theme font status and icon decoration"),
 			Value: settingsSectionStatusbar,
 		},
 		{
@@ -824,7 +824,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 		return intpickercompat.Options{
 			UI:         "settings-statusbar",
 			Entries:    c.statusbarEntries(),
-			Title:      "Appearance - Icon decoration",
+			Title:      "Appearance - Theme font and icon decoration",
 			TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, ctx.hasProject()),
 			Prompt:     "Settings > Appearance > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
@@ -2208,8 +2208,9 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 		statusbarDecorationTargetNotify,
 	}
 
-	entries := make([]intpickercompat.Entry, 0, len(targets)+1)
+	entries := make([]intpickercompat.Entry, 0, len(targets)+2)
 	entries = append(entries, settingsBackEntry())
+	entries = append(entries, c.themeFontStatusEntry())
 	for _, target := range targets {
 		meta, ok := statusbarDecorationTargetMeta(target)
 		if !ok {

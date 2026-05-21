@@ -51,7 +51,9 @@ choosing colors.
 Font is not part of this universal token inventory. `font_family` and
 `font_size` are resolved as terminal capability/profile hints: projmux can
 store and display the desired value, but tmux/ANSI rendering cannot force a
-font family or size across terminal emulators.
+font family or size across terminal emulators. In environments without a
+supported terminal font adapter, projmux reports the desired font as
+`not applied` instead of treating storage as a successful font change.
 
 ## Mapping Policy
 
