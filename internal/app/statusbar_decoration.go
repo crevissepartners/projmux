@@ -130,7 +130,7 @@ func statusbarDecorationTmuxOptionForTarget(target statusbarDecorationTarget) st
 }
 
 func statusbarCwdSegmentFormat() string {
-	return "#[range=user|pwd]" + statusbarCwdDecoratorFormat() + "#[fg=colour250]#{=-28/...:pane_current_path}#[norange]"
+	return "#[range=user|pwd]" + statusbarCwdDecoratorFormat() + "#[fg=" + tmuxSecondaryFg + "]#{=-28/...:pane_current_path}#[norange]"
 }
 
 func statusbarCwdDecoratorFormat() string {

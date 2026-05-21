@@ -1071,7 +1071,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"sleep 0.05; '/tmp/proj mux/bin/projmux' tmux rebalance-panes",
 		"set-hook -g after-kill-pane",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
-		"#[bold,fg=colour230,bg=colour31]#[range=user|settings]  projmux #[norange]#[default]",
+		"#[bold,fg=colour230,bg=colour29]#[range=user|settings]  projmux #[norange]#[default]",
 		"'/tmp/proj mux/bin/projmux' status kube",
 		"'/tmp/proj mux/bin/projmux' status git",
 		"set -g @projmux_statusbar_decoration off",
@@ -1080,14 +1080,14 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set -g @projmux_statusbar_decoration_notify off",
 		"set -g status 2",
 		"set -g status-left-length 20",
-		"#[range=user|session][#S] #[norange] ",
+		"#[range=user|session]#[bold,fg=colour254,bg=colour60] [#S] #[default]#[norange] ",
 		"#{n:window_name}",
 		"#{=/7/...:window_name}",
 		"@projmux_statusbar_decoration_cwd",
 		"#[fg=colour220] ",
 		"#[fg=colour220]📁 ",
-		"#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
-		" %Y-%m-%d %H:%M",
+		"#[fg=colour245]#{=-28/...:pane_current_path}#[norange]",
+		"#[fg=colour245]   %Y-%m-%d %H:%M",
 		"range=user|notify",
 		"range=user|usage",
 		"set -g status-format[0]",
@@ -1123,11 +1123,21 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	}
 }
 
-func TestStatusbarSettingsButtonKeepsTrailingOutsidePad(t *testing.T) {
+func TestStatusbarSettingsButtonPaintsCompactPaddingInsideRange(t *testing.T) {
 	t.Parallel()
 
 	got := statusbarSettingsButton(statusbarSettingsIcon)
-	want := "#[bold,fg=colour230,bg=colour31]#[range=user|settings]  #[norange]#[default] "
+	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]   #[norange]#[default] "
+	if got != want {
+		t.Fatalf("statusbarSettingsButton() = %q, want %q", got, want)
+	}
+}
+
+func TestStatusbarSettingsButtonPaintsStandalonePaddingInsideRange(t *testing.T) {
+	t.Parallel()
+
+	got := statusbarSettingsButton(statusbarSettingsIcon + " projmux")
+	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]  projmux #[norange]#[default] "
 	if got != want {
 		t.Fatalf("statusbarSettingsButton() = %q, want %q", got, want)
 	}
@@ -1479,8 +1489,8 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"bind-key -n M-S-Left previous-window",
 		"bind-key -n M-S-Right next-window",
 		"set -g status-left-length 20",
-		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] \"",
-		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
+		"set -g status-left \"#[range=user|session]#[bold,fg=colour254,bg=colour60] #{s|^[^-]*-||:session_name} #[default]#[norange] \"",
+		"#[bold,fg=colour254,bg=colour60] #{s|^[^-]*-||:session_name} #[default]",
 		"#{n:window_name}",
 		"#{=/7/...:window_name}",
 		"set -g @projmux_statusbar_decoration off",
@@ -1490,9 +1500,9 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"@projmux_statusbar_decoration_cwd",
 		"#[fg=colour220] ",
 		"#[fg=colour220]📁 ",
-		"#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
+		"#[fg=colour245]#{=-28/...:pane_current_path}#[norange]",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
-		" %Y-%m-%d %H:%M #[bold,fg=colour230,bg=colour31]#[range=user|settings]  #[norange]#[default]",
+		"#[fg=colour245]   %Y-%m-%d %H:%M #[bold,fg=colour230,bg=colour29]#[range=user|settings]   #[norange]#[default]",
 		"set -g status 2",
 		"range=user|notify",
 		"range=user|usage",

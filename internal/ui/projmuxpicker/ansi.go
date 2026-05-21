@@ -9,13 +9,13 @@ import (
 
 // ANSI/style tokens used by the projmux native picker surface.
 const (
-	CurrentStart   = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
+	CurrentStart   = "\x1b[48;2;44;56;61m\x1b[38;2;255;255;255m"
 	HighlightStart = "\x1b[38;2;255;204;102m"
 	MutedStart     = "\x1b[38;2;117;132;140m"
-	TitlebarStart  = "\x1b[48;2;24;34;38m\x1b[38;2;238;242;244m"
+	TitlebarStart  = "\x1b[48;2;24;34;38m\x1b[38;2;216;224;228m"
 	TitlebarRule   = "\x1b[48;2;24;34;38m\x1b[38;2;117;132;140m"
-	Pointer        = CurrentStart + "\x1b[38;2;225;38;114m▌" + CurrentStart + " "
-	Continuation   = CurrentStart + "\x1b[38;2;225;38;114m▌" + CurrentStart + " "
+	Pointer        = CurrentStart + "\x1b[38;2;122;199;173m▌" + CurrentStart + " "
+	Continuation   = CurrentStart + "\x1b[38;2;122;199;173m▌" + CurrentStart + " "
 	Reset          = "\x1b[0m"
 	InverseStart   = "\x1b[7m"
 	CursorStart    = "\x1b[7m"
@@ -28,16 +28,16 @@ const (
 	// visually congruent without re-declaring colour codes.
 	TmuxWindowInactiveBg = "colour235"
 	TmuxWindowInactiveFg = "colour245"
-	TmuxWindowActiveBg   = "colour238"
+	TmuxWindowActiveBg   = "colour240"
 	TmuxWindowActiveFg   = "colour231"
 
 	// Chip ANSI segments (terminal SGR escapes). They mirror the tmux
-	// window-status tone above (colour235/245 inactive, colour238/231 bold
+	// window-status tone above (colour235/245 inactive, colour240/231 bold
 	// active). Disabled reuses inactive bg with a dimmer foreground to read
 	// as "tab present but not actionable" rather than introducing a third
 	// hue.
 	ChipInactiveStart = "\x1b[48;5;235m\x1b[38;5;245m"
-	ChipActiveStart   = "\x1b[1m\x1b[48;5;238m\x1b[38;5;231m"
+	ChipActiveStart   = "\x1b[1m\x1b[48;5;240m\x1b[38;5;231m"
 	ChipDisabledStart = "\x1b[2m\x1b[48;5;235m\x1b[38;5;245m"
 )
 

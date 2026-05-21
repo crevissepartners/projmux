@@ -31,6 +31,11 @@ const (
 	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
 	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
 	tmuxWindowTitleWidth = 10
+	tmuxIdentityBg       = "colour60"
+	tmuxIdentityFg       = "colour254"
+	tmuxActionBg         = "colour29"
+	tmuxActionFg         = "colour230"
+	tmuxSecondaryFg      = "colour245"
 )
 
 type tmuxPopupClient interface {
@@ -1142,15 +1147,26 @@ func tmuxStandaloneConfig(binaryPath string, decoration config.StatusbarDecorati
 const statusbarSettingsIcon = ""
 
 func statusbarSettingsButton(label string) string {
-	return "#[bold,fg=colour230,bg=colour31]#[range=user|settings] " + label + " #[norange]#[default] "
+	return "#[bold,fg=" + tmuxActionFg + ",bg=" + tmuxActionBg + "]#[range=user|settings]" + statusbarSettingsButtonBody(label) + "#[norange]#[default] "
+}
+
+func statusbarSettingsButtonBody(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = statusbarSettingsIcon
+	}
+	if label == statusbarSettingsIcon {
+		return " " + label + "  "
+	}
+	return " " + label + " "
 }
 
 func statusbarStandaloneSessionLeftFormat() string {
-	return "#[range=user|session][#S] #[norange] "
+	return "#[range=user|session]#[bold,fg=" + tmuxIdentityFg + ",bg=" + tmuxIdentityBg + "] [#S] #[default]#[norange] "
 }
 
 func statusbarAppSessionLeftFormat() string {
-	return "#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] "
+	return "#[range=user|session]#[bold,fg=" + tmuxIdentityFg + ",bg=" + tmuxIdentityBg + "] #{s|^[^-]*-||:session_name} #[default]#[norange] "
 }
 
 func statusbarAuxLineFormat(bin string, autosave bool) string {
@@ -1233,7 +1249,7 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDeco
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
 		"set -g status-left "+tmuxConfigQuote(statusbarStandaloneSessionLeftFormat()),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
 		// Two-line status bar: line 0 is the notify/HUD control row; line 1 is
 		// tmux's native session/window/path row. Setting both rows explicitly is
 		// required because tmux's built-in row otherwise stays at index 0.
@@ -1323,7 +1339,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 	lines = append(lines,
 		"set -g status 2",
 		"set -g status-left "+tmuxConfigQuote(statusbarAppSessionLeftFormat()),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
 		"set -g status-format[0] "+tmuxConfigQuote(statusbarAuxLineFormat(bin, true)),
 		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[2]",

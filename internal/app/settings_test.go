@@ -110,6 +110,42 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 	}
 }
 
+func TestSettingsRootRowsUsePhase0ChromePalette(t *testing.T) {
+	t.Parallel()
+
+	if settingsColorType != "\x1b[36m" || settingsColorDim != "\x1b[90m" || settingsColorInfo != "\x1b[37m" {
+		t.Fatalf("shared settings colors changed: type=%q dim=%q info=%q", settingsColorType, settingsColorDim, settingsColorInfo)
+	}
+	options := (&settingsCommand{}).rootOptions(settingsRootTabGlobal)
+	if got := options.TitleChips; len(got) != 2 || !got[0].Active || !got[1].Disabled {
+		t.Fatalf("root settings title chips = %#v, want active Global and disabled Project chrome", got)
+	}
+	if got, want := options.Footer, "Open rows or click a scope chip to switch tabs."; got != want {
+		t.Fatalf("root settings footer = %q, want %q", got, want)
+	}
+	for _, entry := range options.Entries {
+		if !strings.Contains(entry.Label, settingsRootColorOpen) {
+			t.Fatalf("root settings row label = %q, want root action color %q", entry.Label, settingsRootColorOpen)
+		}
+		if !strings.Contains(entry.Label, settingsRootColorDim) {
+			t.Fatalf("root settings row label = %q, want root secondary color %q", entry.Label, settingsRootColorDim)
+		}
+		if strings.Contains(entry.Label, settingsColorType) {
+			t.Fatalf("root settings row label = %q, want root-only color instead of shared type color", entry.Label)
+		}
+	}
+
+	projectOptions := (&settingsCommand{}).rootOptions(settingsRootTabProject)
+	for _, entry := range projectOptions.Entries {
+		if !strings.Contains(entry.Label, settingsRootColorDim) {
+			t.Fatalf("project root disabled row label = %q, want root secondary color %q", entry.Label, settingsRootColorDim)
+		}
+		if strings.Contains(entry.Label, settingsColorDim) {
+			t.Fatalf("project root disabled row label = %q, want root-only dim color instead of shared dim color", entry.Label)
+		}
+	}
+}
+
 func TestSettingsRootSwitchesToProjectTab(t *testing.T) {
 	t.Parallel()
 
