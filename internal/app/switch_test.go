@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -507,6 +508,9 @@ func TestAppRunSwitchDeprecatedBackendValueUsesNativeRunner(t *testing.T) {
 	}
 	if len(gotNativeOptions.Items) != 1 || gotNativeOptions.Items[0].Value != "/home/tester/workspace" {
 		t.Fatalf("native items = %#v, want switch picker item", gotNativeOptions.Items)
+	}
+	if gotNativeOptions.Theme == nil || gotNativeOptions.Theme.Background.Source != theme.SourceFallback {
+		t.Fatalf("native theme = %#v, want fallback effective theme populated", gotNativeOptions.Theme)
 	}
 	if got := gotNativeOptions.Items[0].MetaLines; len(got) != 0 {
 		t.Fatalf("native item meta lines = %#v, want merged into Label to avoid duplicate card metadata", got)

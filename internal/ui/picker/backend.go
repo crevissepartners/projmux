@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -66,6 +67,7 @@ type Options struct {
 	DisableSearch   bool
 	AcceptQuery     bool
 	MultiLine       bool
+	Theme           *theme.EffectiveTheme
 }
 
 type Result struct {
@@ -1328,9 +1330,9 @@ func nativeInteractiveFrame(options Options, items []Item, query string, queryCu
 	renderNativeInteractiveContent(&body, options, items, query, queryCursor, selected, previewOffset, contentLayout)
 	var frame strings.Builder
 	if len(options.TitleChips) > 0 {
-		renderNativeFrameWithChips(&frame, body.String(), options.TitleChips, layout)
+		renderNativeFrameWithChips(&frame, body.String(), options.TitleChips, layout, options)
 	} else {
-		renderNativeFrameWithTitle(&frame, body.String(), options.Title, layout)
+		renderNativeFrameWithTitle(&frame, body.String(), options.Title, layout, options)
 	}
 	return frame.String()
 }
@@ -1532,12 +1534,19 @@ func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 	projmuxpicker.DefaultRenderer().RenderFrame(w, content, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
-func renderNativeFrameWithTitle(w io.Writer, content, title string, layout nativeLayout) {
-	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(w, content, title, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+func renderNativeFrameWithTitle(w io.Writer, content, title string, layout nativeLayout, options Options) {
+	nativeRenderer(options).RenderFrameWithTitle(w, content, title, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
-func renderNativeFrameWithChips(w io.Writer, content string, chips []projmuxpicker.Chip, layout nativeLayout) {
-	projmuxpicker.DefaultRenderer().RenderFrameWithChips(w, content, chips, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+func renderNativeFrameWithChips(w io.Writer, content string, chips []projmuxpicker.Chip, layout nativeLayout, options Options) {
+	nativeRenderer(options).RenderFrameWithChips(w, content, chips, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+}
+
+func nativeRenderer(options Options) projmuxpicker.Renderer {
+	if options.Theme == nil {
+		return projmuxpicker.DefaultRenderer()
+	}
+	return projmuxpicker.NewRenderer(projmuxpicker.ThemeFromEffective(*options.Theme))
 }
 
 func nativeTitlebarRowsForOptions(options Options) int {

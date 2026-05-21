@@ -13,6 +13,9 @@ func runPickerOptionBackend(lookupEnv func(string) string, native intpicker.Runn
 	if native == nil {
 		return intpickercompat.Result{}, fmt.Errorf("native picker is not configured")
 	}
+	if options.Theme == nil {
+		options = fallbackRenderThemeSource().pickerCompatOptions(options)
+	}
 	result, err := native.Run(intpickercompat.PickerOptions(options))
 	return intpickercompat.ResultFromPicker(result), err
 }

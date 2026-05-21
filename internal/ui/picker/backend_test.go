@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -621,6 +622,33 @@ func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "^[[") {
 		t.Fatalf("native output leaked escape input: %q", out.String())
+	}
+}
+
+func TestNativeInteractiveUsesOptionsThemeForFrame(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{
+		Background: "#010203",
+		Foreground: "#aabbcc",
+	})
+	var out bytes.Buffer
+	_, err := runNativeInteractive(strings.NewReader("\r"), &out, Options{
+		UI:    "switch",
+		Title: "Projects",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+		},
+		Theme: &effective,
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	rendered := out.String()
+	for _, want := range []string{"\x1b[48;2;1;2;3m", "\x1b[38;2;170;187;204m"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native interactive output = %q, want themed frame SGR %q", rendered, want)
+		}
 	}
 }
 

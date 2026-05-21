@@ -174,6 +174,31 @@ type EffectiveTheme struct {
 	Warnings      []Warning
 }
 
+// TmuxRenderTokens adapts the resolver's semantic colors to the tmux 256-color
+// roles currently used by generated status/window chrome.
+type TmuxRenderTokens struct {
+	WindowInactiveBg string
+	WindowInactiveFg string
+	WindowActiveBg   string
+	WindowActiveFg   string
+	StatusBg         string
+	StatusFg         string
+}
+
+// TmuxRenderTokensFromEffective maps an EffectiveTheme into tmux colourN
+// tokens. Fallback-sourced fields deliberately keep the historical palette
+// constants so generated fallback config remains byte-identical.
+func TmuxRenderTokensFromEffective(effective EffectiveTheme) TmuxRenderTokens {
+	return TmuxRenderTokens{
+		WindowInactiveBg: tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
+		WindowInactiveFg: tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
+		WindowActiveBg:   tmuxColorOrFallback(effective.SurfaceActive, TmuxWindowActiveBg),
+		WindowActiveFg:   tmuxColorOrFallback(effective.Foreground, TmuxWindowActiveFg),
+		StatusBg:         tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
+		StatusFg:         tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
+	}
+}
+
 // Fields returns every effective field with its source label in stable order.
 func (t EffectiveTheme) Fields() []EffectiveField {
 	return []EffectiveField{
@@ -189,6 +214,13 @@ func (t EffectiveTheme) Fields() []EffectiveField {
 		{Name: "font_family", Value: t.FontFamily.Value, Source: t.FontFamily.Source},
 		{Name: "font_size", Value: formatOptionalInt(t.FontSize.Value), Source: t.FontSize.Source},
 	}
+}
+
+func tmuxColorOrFallback(field ColorField, fallback string) string {
+	if field.Source == SourceFallback || strings.TrimSpace(field.Value.Tmux) == "" {
+		return fallback
+	}
+	return field.Value.Tmux
 }
 
 type preset struct {

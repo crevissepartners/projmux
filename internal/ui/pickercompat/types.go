@@ -1,6 +1,9 @@
 package pickercompat
 
-import "github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
+import (
+	"github.com/crevissepartners/projmux/internal/theme"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
+)
 
 type Options struct {
 	UI             string
@@ -15,6 +18,7 @@ type Options struct {
 	ExpectKeys     []string
 	PreviewCommand string
 	PreviewWindow  string
+	Theme          *theme.EffectiveTheme
 	Bindings       []string
 	InitialQuery   string
 	// DisableSearch makes the legacy option shape a navigation-only list.

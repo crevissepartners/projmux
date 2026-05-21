@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 func TestRendererRenderFrameUsesCRLFRowsForRawTTY(t *testing.T) {
@@ -57,6 +59,78 @@ func TestRendererRenderFrameWithTitleKeepsDefaultWhenTitleEmpty(t *testing.T) {
 
 	if got, want := titled.String(), plain.String(); got != want {
 		t.Fatalf("RenderFrameWithTitle(empty) = %q, want default frame %q", got, want)
+	}
+}
+
+func TestThemeFromEffectiveFallbackRendersLikeDefault(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	themed := NewRenderer(ThemeFromEffective(effective))
+	layout := Layout{Rows: 8, Cols: 32}
+	listRow := RenderableListLine(InteractiveRowLines(Row{
+		Label: "\x1b[36mapi\x1b[0m",
+	}, true, false)[0], 30)
+	content := strings.Join([]string{
+		HeaderLine("\x1b[36mPinned", 30),
+		listRow,
+		PromptLineWithCursor("› ", "api", 3, 2, 9, 30),
+		strings.Join(FooterBlockLines("\x1b[32mEnter: open\x1b[0m", 30), "\n"),
+	}, "\n")
+
+	var defaultFrame bytes.Buffer
+	var themedFrame bytes.Buffer
+	DefaultRenderer().RenderFrame(&defaultFrame, content, layout)
+	themed.RenderFrame(&themedFrame, content, layout)
+	if got, want := themedFrame.String(), defaultFrame.String(); got != want {
+		t.Fatalf("fallback themed frame = %q, want default frame %q", got, want)
+	}
+
+	var defaultTitle bytes.Buffer
+	var themedTitle bytes.Buffer
+	DefaultRenderer().RenderFrameWithTitle(&defaultTitle, content, "Projects", layout)
+	themed.RenderFrameWithTitle(&themedTitle, content, "Projects", layout)
+	if got, want := themedTitle.String(), defaultTitle.String(); got != want {
+		t.Fatalf("fallback themed title frame = %q, want default frame %q", got, want)
+	}
+
+	chips := []Chip{{Label: "Projects", Active: true}, {Label: "Settings"}}
+	var defaultChips bytes.Buffer
+	var themedChips bytes.Buffer
+	DefaultRenderer().RenderFrameWithChips(&defaultChips, content, chips, layout)
+	themed.RenderFrameWithChips(&themedChips, content, chips, layout)
+	if got, want := themedChips.String(), defaultChips.String(); got != want {
+		t.Fatalf("fallback themed chip frame = %q, want default frame %q", got, want)
+	}
+}
+
+func TestThemeFromEffectiveProjectDoesNotLeakGlobalBackgroundForeground(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(
+		theme.ThemeConfig{
+			Background: "#112233",
+			Foreground: "#445566",
+		},
+		theme.ThemeConfig{
+			Background: "#010203",
+			Foreground: "#aabbcc",
+		},
+	)
+	renderer := NewRenderer(ThemeFromEffective(effective))
+	var out bytes.Buffer
+	renderer.RenderFrameWithTitle(&out, "api", "Projects", Layout{Rows: 5, Cols: 18})
+	rendered := out.String()
+
+	for _, want := range []string{"\x1b[48;2;1;2;3m", "\x1b[38;2;170;187;204m"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered frame = %q, want project SGR %q", rendered, want)
+		}
+	}
+	for _, banned := range []string{"\x1b[48;2;17;34;51m", "\x1b[38;2;68;85;102m"} {
+		if strings.Contains(rendered, banned) {
+			t.Fatalf("rendered frame = %q, must not contain global SGR %q", rendered, banned)
+		}
 	}
 }
 

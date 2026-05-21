@@ -70,6 +70,58 @@ func TestResolveThemeExplicitColorOverridesPreset(t *testing.T) {
 	}
 }
 
+func TestTmuxRenderTokensFallbackPreservesBuiltInPalette(t *testing.T) {
+	t.Parallel()
+
+	got := TmuxRenderTokensFromEffective(ResolveTheme(ThemeConfig{}, ThemeConfig{}))
+	want := TmuxRenderTokens{
+		WindowInactiveBg: TmuxWindowInactiveBg,
+		WindowInactiveFg: TmuxWindowInactiveFg,
+		WindowActiveBg:   TmuxWindowActiveBg,
+		WindowActiveFg:   TmuxWindowActiveFg,
+		StatusBg:         TmuxWindowInactiveBg,
+		StatusFg:         TmuxWindowInactiveFg,
+	}
+	if got != want {
+		t.Fatalf("fallback tmux render tokens = %#v, want %#v", got, want)
+	}
+}
+
+func TestTmuxRenderTokensUseProjectNearest256ColorsWithoutGlobalLeak(t *testing.T) {
+	t.Parallel()
+
+	got := TmuxRenderTokensFromEffective(ResolveTheme(
+		ThemeConfig{
+			Background:    "#ff0000",
+			SurfaceActive: "#0000ff",
+			Foreground:    "#00ff00",
+		},
+		ThemeConfig{
+			Background:    "#010203",
+			SurfaceActive: "#040506",
+			Foreground:    "#aabbcc",
+		},
+	))
+	global := TmuxRenderTokensFromEffective(ResolveTheme(
+		ThemeConfig{},
+		ThemeConfig{
+			Background:    "#ff0000",
+			SurfaceActive: "#0000ff",
+			Foreground:    "#00ff00",
+		},
+	))
+
+	if got.WindowInactiveBg == "" || got.WindowInactiveFg == "" || got.WindowActiveBg == "" || got.WindowActiveFg == "" {
+		t.Fatalf("project tmux render tokens = %#v, want populated colourN tokens", got)
+	}
+	if got.WindowInactiveBg == global.WindowInactiveBg || got.WindowInactiveFg == global.WindowInactiveFg || got.WindowActiveBg == global.WindowActiveBg || got.WindowActiveFg == global.WindowActiveFg {
+		t.Fatalf("project tmux render tokens = %#v, must not reuse global tokens %#v", got, global)
+	}
+	if got.StatusBg != got.WindowInactiveBg || got.StatusFg != got.WindowInactiveFg {
+		t.Fatalf("status tokens = bg %q fg %q, want inactive window bg/fg %#v", got.StatusBg, got.StatusFg, got)
+	}
+}
+
 func TestResolveThemeUnknownPresetIgnoresLayerAndWarns(t *testing.T) {
 	t.Parallel()
 

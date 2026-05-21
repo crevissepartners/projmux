@@ -31,6 +31,7 @@ func OptionsFromPicker(options picker.Options) Options {
 		AcceptQuery:    options.AcceptQuery,
 		PreviewCommand: options.Preview.Command,
 		PreviewWindow:  options.Preview.Window,
+		Theme:          options.Theme,
 	}
 	for _, action := range options.Actions {
 		key := strings.TrimSpace(action.Key)
@@ -79,6 +80,7 @@ func PickerOptions(options Options) picker.Options {
 		Footer:          options.Footer,
 		Actions:         pickerActions(options),
 		Preview:         picker.Preview{Command: options.PreviewCommand, Window: options.PreviewWindow},
+		Theme:           options.Theme,
 		InitialQuery:    options.InitialQuery,
 		InitialIndex:    initialIndex,
 		InitialIndexSet: initialIndexSet,
