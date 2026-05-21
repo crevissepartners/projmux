@@ -321,7 +321,7 @@ func frameTitlebarChipsLine(theme Theme, innerWidth int, chips []Chip) string {
 }
 
 func frameTitlebarStyledLine(theme Theme, body string) string {
-	return Reset + theme.Vertical + TitlebarStart + body + Reset + theme.Vertical + Reset
+	return TitlebarRule + theme.Vertical + TitlebarStart + body + TitlebarRule + theme.Vertical + Reset
 }
 
 // renderChipStrip lays out the chip slice into a single visible-width-bound
@@ -385,7 +385,7 @@ func chipGapSegment() string {
 }
 
 func frameTitlebarDivider(theme Theme, innerWidth int) string {
-	return "├" + TitlebarRule + strings.Repeat(theme.Horizontal, innerWidth) + Reset + "┤"
+	return TitlebarRule + "├" + strings.Repeat(theme.Horizontal, innerWidth) + "┤" + Reset
 }
 
 func writeFrameDiff(w io.Writer, previous, next string) {

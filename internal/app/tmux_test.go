@@ -1119,6 +1119,16 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	}
 }
 
+func TestStatusbarSettingsButtonKeepsTrailingOutsidePad(t *testing.T) {
+	t.Parallel()
+
+	got := statusbarSettingsButton(statusbarSettingsIcon)
+	want := "#[bold,fg=colour230,bg=colour31]#[range=user|settings]  #[norange]#[default] "
+	if got != want {
+		t.Fatalf("statusbarSettingsButton() = %q, want %q", got, want)
+	}
+}
+
 func TestTmuxPrintConfigMissingKeymapKeepsDefaultOutput(t *testing.T) {
 	t.Parallel()
 

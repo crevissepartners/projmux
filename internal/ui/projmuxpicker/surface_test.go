@@ -39,7 +39,7 @@ func TestFrameChromeANSIGoldenLines(t *testing.T) {
 		{
 			name:      "title",
 			line:      frameTitlebarLine(DefaultTheme, 18, "\x1b[31mProjects\x1b[0m"),
-			want:      Reset + "│" + TitlebarStart + " \x1b[31mProjects" + Reset + TitlebarStart + strings.Repeat(" ", 9) + Reset + "│" + Reset,
+			want:      TitlebarRule + "│" + TitlebarStart + " \x1b[31mProjects" + Reset + TitlebarStart + strings.Repeat(" ", 9) + TitlebarRule + "│" + Reset,
 			wantWidth: 20,
 		},
 		{
