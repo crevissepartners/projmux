@@ -86,7 +86,7 @@ Hooks remain the reference pattern for this IA:
 Shell bootstrap UX is phase-split:
 
 - `projmux welcome` remains the stdout revisit command.
-- `Settings > About > Welcome` opens a forced visible popup independent of
+- `Settings > About > Welcome` opens a visible native viewer independent of
   shell skip state.
 - Shell `skip_version` state applies only to the automatic `projmux shell`
   prompt; it does not hide manual revisit surfaces.

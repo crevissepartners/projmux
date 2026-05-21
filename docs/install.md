@@ -38,7 +38,7 @@ actions separate from welcome skip: press `u` to run `projmux update apply`,
 that release.
 
 To revisit the guide later, run `projmux welcome`, or use Settings > About >
-Welcome inside the app to open it in a popup. Set `PROJMUX_WELCOME=off` before
+Welcome inside the app to open it in a visible viewer. Set `PROJMUX_WELCOME=off` before
 launching `projmux shell` to suppress legacy automatic attach popups without
 disabling the shell prompt or manual command.
 

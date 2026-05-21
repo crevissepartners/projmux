@@ -4535,15 +4535,7 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 	case strings.HasPrefix(value, settingsActionPrefixWelcome):
 		switch strings.TrimPrefix(value, settingsActionPrefixWelcome) {
 		case "show":
-			welcome := newWelcomeCommand(c.update)
-			if c.homeDir != nil {
-				welcome.homeDir = c.homeDir
-			}
-			welcome.lookupEnv = c.lookupEnv
-			if c.tmuxRunner != nil {
-				welcome.runner = c.tmuxRunner
-			}
-			return welcome.Run([]string{"--popup", "--force"}, stdout, stderr)
+			return c.runWelcomeSettingsViewer()
 		default:
 			return fmt.Errorf("unknown welcome settings action: %s", value)
 		}
@@ -4566,6 +4558,50 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 	default:
 		printSettingsUsage(stderr)
 		return fmt.Errorf("unknown settings action: %s", value)
+	}
+}
+
+func (c *settingsCommand) runWelcomeSettingsViewer() error {
+	for {
+		result, err := c.runPicker(c.welcomeSettingsViewerOptions())
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch action {
+		case settingsBackValue:
+			return nil
+		case settingsNoopValue:
+			continue
+		default:
+			return fmt.Errorf("unknown welcome viewer action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options {
+	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
+	var body strings.Builder
+	_ = writeShellWelcome(&body, welcomeCurrentVersion(), status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv))
+	entries := []intpickercompat.Entry{settingsBackEntry()}
+	for line := range strings.SplitSeq(strings.Trim(body.String(), "\n"), "\n") {
+		entries = append(entries, intpickercompat.Entry{
+			Label:     line,
+			Value:     settingsNoopValue,
+			SearchKey: "welcome shell bootstrap update skip",
+		})
+	}
+	return intpickercompat.Options{
+		UI:            "settings-about-welcome",
+		Entries:       entries,
+		Title:         "About - Welcome",
+		Prompt:        "Settings > About > Welcome > ",
+		Footer:        projmuxFooter("Back row: About  |  Esc: close settings"),
+		DisableSearch: true,
+		Bindings:      settingsCloseBindings(),
 	}
 }
 
