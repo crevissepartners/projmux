@@ -717,6 +717,112 @@ func TestAppRunTmuxPopupToggleClosesExistingMarkerWithClientOverride(t *testing.
 	}
 }
 
+func TestAppRunTmuxPopupToggleRecoversStaleSettingsMarkerAndReopens(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "exit status one", err: errors.New("tmux display-popup -t %20 -C: exit status 1")},
+		{name: "target not found", err: errors.New("tmux display-popup -t %20 -C: can't find pane: %20")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			clientKey := "/dev/pts/projmux-test-stale-settings-" + sanitizePopupKey(tt.name)
+			marker := popupMarkerPath(sanitizePopupKey(clientKey), "ai-split-settings")
+			_ = os.Remove(marker)
+			defer os.Remove(marker)
+			if err := os.WriteFile(marker, []byte("%20\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runner := &recordingTmuxRunner{
+				formats: map[string]string{
+					"#{client_tty}":    clientKey,
+					"#{pane_id}":       "%active",
+					"#{client_width}":  "200",
+					"#{client_height}": "50",
+				},
+				errors: map[string]error{
+					recordedTmuxCallKey("tmux", "display-popup", "-t", "%20", "-C"): tt.err,
+				},
+			}
+			cmd := &tmuxCommand{
+				runner:     runner,
+				executable: func() (string, error) { return "/tmp/projmux", nil },
+			}
+
+			if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "ai-split-settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v, want nil", err)
+			}
+
+			closeIdx := -1
+			openIdx := -1
+			for i, call := range runner.calls {
+				if reflect.DeepEqual(call, recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-t", "%20", "-C"}}) {
+					closeIdx = i
+					continue
+				}
+				if call.name == "tmux" && len(call.args) > 0 && call.args[0] == "display-popup" && !slices.Contains(call.args, "-C") {
+					openIdx = i
+				}
+			}
+			if closeIdx < 0 {
+				t.Fatalf("tmux calls = %#v, want stale close attempt", runner.calls)
+			}
+			if openIdx <= closeIdx {
+				t.Fatalf("tmux calls = %#v, want open display-popup after stale close recovery", runner.calls)
+			}
+			content, err := os.ReadFile(marker)
+			if err != nil {
+				t.Fatalf("read marker error = %v", err)
+			}
+			if got, want := string(content), "%active\n"; got != want {
+				t.Fatalf("marker content = %q, want recovered current pane marker %q", got, want)
+			}
+		})
+	}
+}
+
+func TestAppRunTmuxPopupToggleKeepsGenuineCloseFailure(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-settings-close-failure"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "ai-split-settings")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%20\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{
+		formats: map[string]string{
+			"#{client_tty}": clientKey,
+			"#{pane_id}":    "%active",
+		},
+		errors: map[string]error{
+			recordedTmuxCallKey("tmux", "display-popup", "-t", "%20", "-C"): errors.New("tmux display-popup -t %20 -C: exit status 2: bad command"),
+		},
+	}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "ai-split-settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("Run() error = nil, want close failure")
+	}
+	for _, call := range runner.calls {
+		if call.name == "tmux" && len(call.args) > 0 && call.args[0] == "display-popup" && !slices.Contains(call.args, "-C") {
+			t.Fatalf("tmux calls = %#v, want no reopen for genuine close failure", runner.calls)
+		}
+	}
+	if content, err := os.ReadFile(marker); err != nil || string(content) != "%20\n" {
+		t.Fatalf("marker content = %q, err = %v; want stale marker preserved on genuine close failure", string(content), err)
+	}
+}
+
 func TestAppRunTmuxPopupToggleTreatsClosedPopupAsNoOp(t *testing.T) {
 	t.Parallel()
 
@@ -2163,6 +2269,7 @@ func (s *stubTmuxPopupClient) DisplayPopupWithOptions(_ context.Context, command
 type recordingTmuxRunner struct {
 	formats map[string]string
 	outputs map[string]string
+	errors  map[string]error
 	calls   []recordedTmuxCall
 	err     error
 }
@@ -2177,13 +2284,21 @@ func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string
 	if name == "tmux" && len(args) == 4 && reflect.DeepEqual(args[:3], []string{"display-message", "-p", "-F"}) {
 		return []byte(r.formats[args[3]] + "\n"), nil
 	}
-	if output, ok := r.outputs[strings.Join(append([]string{name}, args...), "\x00")]; ok {
+	key := recordedTmuxCallKey(name, args...)
+	if err, ok := r.errors[key]; ok {
+		return nil, err
+	}
+	if output, ok := r.outputs[key]; ok {
 		return []byte(output), nil
 	}
 	if r.err != nil {
 		return nil, r.err
 	}
 	return nil, nil
+}
+
+func recordedTmuxCallKey(name string, args ...string) string {
+	return strings.Join(append([]string{name}, args...), "\x00")
 }
 
 func containsTmuxArgPair(args []string, key, value string) bool {
