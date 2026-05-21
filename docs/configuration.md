@@ -212,6 +212,42 @@ tokens. Without a supported terminal font adapter, Settings reports the
 effective desired font as `not applied`; projmux does not create or modify
 terminal profiles in this phase.
 
+## UI Locale
+
+The UI locale can be pinned globally or left on automatic detection.
+
+Preferred interactive path:
+
+- `Settings > Appearance > Language / Locale`
+
+Global config path:
+
+```text
+~/.config/projmux/config.toml
+```
+
+Schema:
+
+```toml
+[ui]
+locale = "auto" # auto | en-US | ko-KR
+```
+
+Resolution priority is:
+
+1. `PROJMUX_LOCALE`
+2. global/user `[ui] locale`
+3. auto-detected environment: `LC_ALL`, then `LC_MESSAGES`, then `LANG`
+4. built-in fallback `en-US`
+
+`auto` means detect from the environment. In Settings, the `auto` detail shows
+the currently detected locale and source. Supported UI locales are `en-US` and
+`ko-KR`; unsupported tags fall back to `en-US` and the Settings detail shows a
+warning with the unsupported value and source.
+
+Project-local locale override is not part of the runtime policy. Locale is a
+user/global preference in this release.
+
 ## Environment Variables
 
 | Variable | Purpose |
@@ -219,6 +255,7 @@ terminal profiles in this phase.
 | `PROJMUX_PROJDIR` | Explicit primary project root. Accepts an OS-native PATH-style multi-value: the first non-empty entry is the primary root and later entries are prepended to managed-root discovery. The primary value is memoized to `~/.config/projmux/projdir`. |
 | `PROJMUX_MANAGED_ROOTS` | Search-root override. Uses the OS-native path-list separator and takes priority over the saved workdirs file and default weak probes. |
 | `TMUX_SESSIONIZER_ROOTS` | Legacy alias still honored at runtime for managed roots. |
+| `PROJMUX_LOCALE` | UI locale override. `auto` resumes detection; `en-US` and `ko-KR` pin supported locales. Unsupported tags fall back to `en-US` and surface a Settings warning. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in Linux/WSL sender. Separate from declarative `[hooks.send-noti]`. |
 | `PROJMUX_NOTIFY_HOOK_DEPTH` | Internal recursion guard for `send-noti` hooks. Depth `>= 1` suppresses nested hook dispatch while still allowing the queue write itself. |
 | `PROJMUX_NOTIFY_EXPIRE_MS` | AI desktop notification expiration in milliseconds. Defaults to `5000`; unset, zero, negative, and non-numeric values fall back to the default. |

@@ -40,6 +40,9 @@ namespace = "tools"
 [theme]
 font_family = "Cascadia Mono"
 font_size = 12
+
+[ui]
+locale = "ko-KR"
 `)
 	if err != nil {
 		t.Fatalf("ParseProjectConfig() error = %v", err)
@@ -66,6 +69,9 @@ font_size = 12
 	}
 	if cfg.Theme.FontFamily != "Cascadia Mono" || cfg.Theme.FontSize != "12" {
 		t.Fatalf("Theme = %#v, want parsed desired font values", cfg.Theme)
+	}
+	if cfg.UI.Locale != "ko-KR" {
+		t.Fatalf("UI.Locale = %q, want ko-KR", cfg.UI.Locale)
 	}
 }
 

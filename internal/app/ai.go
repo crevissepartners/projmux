@@ -1537,7 +1537,7 @@ func (c *aiCommand) locale() i18n.Locale {
 	if c == nil {
 		return i18n.FallbackLocale
 	}
-	return appLocale(c.lookupEnv)
+	return appLocale(c.homeDir, c.lookupEnv)
 }
 
 func (c *aiCommand) run(name string, args ...string) error {

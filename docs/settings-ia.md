@@ -75,6 +75,13 @@ view-first layout:
   `font_family` and `font_size` are desired values from the effective
   project/global theme, and unsupported terminal paths must say `not applied`
   instead of implying tmux changed the font.
+- `Settings > Appearance > Language / Locale` is the global/user language
+  detail. The root row shows the saved `[ui].locale` value and the currently
+  effective locale. The detail shows `Current`, `[ui].locale`, optional
+  `PROJMUX_LOCALE` env override, and direct choices for `auto`, `en-US`, and
+  `ko-KR`. When `auto` is active it must show the detected source (`LC_ALL`,
+  `LC_MESSAGES`, `LANG`, or fallback). Unsupported locale tags must remain
+  visible as warnings and fall back to `en-US`.
 
 Hooks remain the reference pattern for this IA:
 

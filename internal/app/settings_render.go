@@ -46,8 +46,12 @@ const settingsLabelNameWidth = 24
 // without a glyph align with rows that use a single-cell glyph (followed by
 // the standard two-space gap before the name column).
 func settingsLabel(glyph, color, name, description string) string {
-	name = settingsCatalogText(name)
-	description = settingsCatalogText(description)
+	return settingsLabelLocale(settingsLocaleFromEnv(), glyph, color, name, description)
+}
+
+func settingsLabelLocale(locale i18n.Locale, glyph, color, name, description string) string {
+	name = settingsCatalogTextLocale(locale, name)
+	description = settingsCatalogTextLocale(locale, description)
 	var b strings.Builder
 
 	if glyph == "" {
@@ -79,8 +83,12 @@ func settingsLabel(glyph, color, name, description string) string {
 // is wrapped in the dim color so it visually recedes, and no action color
 // is applied to the name column.
 func settingsLabelDim(name, description string) string {
-	name = settingsCatalogText(name)
-	description = settingsCatalogText(description)
+	return settingsLabelDimLocale(settingsLocaleFromEnv(), name, description)
+}
+
+func settingsLabelDimLocale(locale i18n.Locale, name, description string) string {
+	name = settingsCatalogTextLocale(locale, name)
+	description = settingsCatalogTextLocale(locale, description)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
 	b.WriteString("  ")
@@ -104,9 +112,13 @@ func settingsLabelDim(name, description string) string {
 // name is a static label, the value is the resolved data, and the source
 // annotation explains where the value came from.
 func settingsLabelInfo(name, value, source string) string {
-	name = settingsCatalogText(name)
-	value = settingsCatalogText(value)
-	source = settingsCatalogText(source)
+	return settingsLabelInfoLocale(settingsLocaleFromEnv(), name, value, source)
+}
+
+func settingsLabelInfoLocale(locale i18n.Locale, name, value, source string) string {
+	name = settingsCatalogTextLocale(locale, name)
+	value = settingsCatalogTextLocale(locale, value)
+	source = settingsCatalogTextLocale(locale, source)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
 	b.WriteString("  ")

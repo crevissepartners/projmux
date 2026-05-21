@@ -1,9 +1,9 @@
 # Globalization Contract
 
 This document is the inventory and contract for globalization. Phase 0 defined
-the user-facing text boundary and literal preservation rules. Phase 1 adds the
-message catalog foundation, locale resolver, fallback policy, and contribution
-rules for future runtime surface migrations.
+the user-facing text boundary and literal preservation rules. Later phases add
+the message catalog, locale formatters, runtime surface migration, and the
+Phase 5 user locale override surface.
 
 ## Phase 0 Scope
 
@@ -210,13 +210,16 @@ Catalog policy:
 
 Locale resolution:
 
-- Precedence is explicit override/API, then `LC_ALL`, then `LC_MESSAGES`, then
-  `LANG`, then `en-US`.
+- Precedence is explicit override/API, then `PROJMUX_LOCALE`, then global
+  `[ui] locale`, then `LC_ALL`, then `LC_MESSAGES`, then `LANG`, then `en-US`.
 - Common POSIX forms normalize into catalog tags: `ko`, `ko_KR.UTF-8`, and
   `ko-KR` become `ko-KR`; `en` and `en_US` become `en-US`.
 - `C` and `POSIX` locales are skipped as non-user-language values.
-- Phase 1 does not add Settings language UI, persisted config/env locale
-  schema, or runtime surface migration.
+- Supported UI locales are currently `en-US` and `ko-KR`. Unsupported locale
+  tags fall back to `en-US` and keep their source attached so Settings can show
+  a warning.
+- `auto` is a setting value, not a catalog locale. It means "use the
+  auto-detected environment rung".
 
 API convention:
 
@@ -349,3 +352,49 @@ Width policy:
 - Native picker prompt, empty row, and footer render through existing frame
   truncation/padding helpers; focused tests cover `en-US`/`ko-KR` output and
   long Korean styled guidance.
+
+## Phase 5 Locale Settings And Docs
+
+User override surface:
+
+- Environment override: `PROJMUX_LOCALE=auto|en-US|ko-KR`.
+- Global config override: `~/.config/projmux/config.toml`:
+
+  ```toml
+  [ui]
+  locale = "auto" # auto | en-US | ko-KR
+  ```
+
+- Settings surface: `Settings > Appearance > Language / Locale`.
+
+Resolution policy:
+
+1. API/explicit override used by tests and internal callers.
+2. `PROJMUX_LOCALE` when set to a non-empty value other than `auto`.
+3. Global/user `[ui] locale` when set to a non-empty value other than `auto`.
+4. Auto-detected environment, in order: `LC_ALL`, `LC_MESSAGES`, `LANG`.
+5. Built-in fallback `en-US`.
+
+`auto` in either `PROJMUX_LOCALE` or `[ui] locale` does not pin the UI to a
+literal `auto` locale. It re-enters the auto-detection path and Settings shows
+the currently detected locale and source, such as `ko-KR from LC_MESSAGES env`.
+
+Fallback and warning policy:
+
+- `en-US` and `ko-KR` are the only supported UI locales in Phase 5.
+- Unsupported locale tags such as `ja-JP` or `fr-FR` fall back to `en-US`.
+- Settings displays the unsupported tag, its source (`PROJMUX_LOCALE`,
+  `~/.config/projmux/config.toml`, `LC_ALL`, `LC_MESSAGES`, or `LANG`), and
+  the effective `en-US` fallback.
+- Project-local locale override is intentionally out of scope. Any parser
+  support for `[ui] locale` exists only because global and project config share
+  the same TOML implementation; runtime locale resolution consumes only the
+  global/user config path.
+
+Literal preservation remains unchanged:
+
+- Config keys and env vars such as `[ui].locale`, `PROJMUX_LOCALE`,
+  `LC_MESSAGES`, and `~/.config/projmux/config.toml` remain literal.
+- Locale enum values such as `auto`, `en-US`, and `ko-KR` remain literal.
+- Commands, paths, provider payloads, tmux format strings, and key names remain
+  caller-owned payload text and are not translated.

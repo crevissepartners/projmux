@@ -89,6 +89,30 @@ func TestUpdateGlobalConfigWritesAndReadsBack(t *testing.T) {
 	}
 }
 
+func TestUpdateGlobalConfigStoresUILocale(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "projmux", "config.toml")
+	_, err := UpdateGlobalConfig(path, func(cfg *ProjectConfig) error {
+		cfg.UI.Locale = "auto"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateGlobalConfig() error = %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[ui]
+locale = "auto"
+`
+	if string(got) != want {
+		t.Fatalf("config.toml =\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestUpdateGlobalConfigEmptyPathErrors(t *testing.T) {
 	t.Parallel()
 
