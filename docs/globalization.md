@@ -1,8 +1,9 @@
 # Globalization Contract
 
-This document is the Phase 0 inventory and contract for globalization. It is a
-boundary document only: Phase 0 does not add a message catalog, locale resolver,
-formatter, runtime replacement layer, settings override, or translation pipeline.
+This document is the inventory and contract for globalization. Phase 0 defined
+the user-facing text boundary and literal preservation rules. Phase 1 adds the
+message catalog foundation, locale resolver, fallback policy, and contribution
+rules for future runtime surface migrations.
 
 ## Phase 0 Scope
 
@@ -188,3 +189,56 @@ large surfaces. Phase 2 should add locale-aware formatting for relative age,
 duration, counts, list joins, and terminal cell-width-safe rendering. Later
 phases can then move notify, Settings, picker, welcome, update, and help copy
 behind catalog keys without changing source payload values.
+
+## Phase 1 Catalog Foundation
+
+Package:
+
+- `internal/i18n`
+
+Catalog policy:
+
+- Catalog data is embedded Go data. Do not download catalog content at runtime
+  and do not add a translation service dependency.
+- `en-US` is the fallback locale. Every Phase 0 foundation key must have a
+  non-empty `en-US` entry.
+- `ko-KR` is intentionally partial in Phase 1 so fallback behavior is covered
+  before broad runtime migration.
+- Missing preferred-locale keys fall back to `en-US`.
+- Missing fallback-locale keys are errors and must also be caught by the
+  catalog completeness unit test.
+
+Locale resolution:
+
+- Precedence is explicit override/API, then `LC_ALL`, then `LC_MESSAGES`, then
+  `LANG`, then `en-US`.
+- Common POSIX forms normalize into catalog tags: `ko`, `ko_KR.UTF-8`, and
+  `ko-KR` become `ko-KR`; `en` and `en_US` become `en-US`.
+- `C` and `POSIX` locales are skipped as non-user-language values.
+- Phase 1 does not add Settings language UI, persisted config/env locale
+  schema, or runtime surface migration.
+
+API convention:
+
+- Use `i18n.ResolveLocale` to pick the preferred locale.
+- Use `i18n.NewLocalizer(locale).Text(key)` for plain user-facing text.
+- Use `i18n.NewLocalizer(locale).Styled(key)` only for messages that contain
+  ANSI or tmux style syntax.
+- Do not pass styled terminal fragments through the plain text API. The lookup
+  API returns a kind mismatch error when a caller requests the wrong shape.
+- Future formatter phases should keep payload data, command strings, paths,
+  key names, enum/source values, and tmux/ANSI syntax outside translated text
+  unless they are inserted as preserved literal values.
+
+Contribution convention:
+
+- Add new translatable user-facing strings as stable `i18n.Key` constants.
+- Add the `en-US` entry in the same change as the key.
+- Add `ko-KR` when the translation is known; otherwise rely on fallback while
+  keeping the missing key intentional in review notes.
+- Do not translate product names (`projmux`, `tmux`, `Codex`, `Claude`),
+  commands, paths, config keys, environment variables, provider payloads, or
+  source enum values.
+- Runtime migrations should be narrow by surface. Move a string family behind
+  the catalog only when its tests can show literal preservation and fallback
+  behavior for that surface.
