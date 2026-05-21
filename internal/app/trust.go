@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -74,9 +75,9 @@ func trustBadgeAppearance(state hooks.ProjectConfigTrustState) (string, string, 
 // Trust states use their own small palette so stale/untrusted/trusted rows do
 // not borrow warning, danger, action, or muted tones.
 const (
-	settingsColorTrustTrusted   = "\x1b[38;2;154;191;136m"
-	settingsColorTrustStale     = "\x1b[38;2;177;139;212m"
-	settingsColorTrustUntrusted = "\x1b[38;2;210;139;88m"
+	settingsColorTrustTrusted   = theme.ANSITrustTrustedStart
+	settingsColorTrustStale     = theme.ANSITrustStaleStart
+	settingsColorTrustUntrusted = theme.ANSITrustUntrustedStart
 )
 
 // inspectProjectTrust resolves the trust store path and asks the hooks

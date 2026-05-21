@@ -28,6 +28,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -994,15 +995,15 @@ func dimANSI(value string) string {
 }
 
 func amberANSI(value string) string {
-	return "\x1b[38;5;214m" + value + projmuxpicker.Reset
+	return theme.ANSI256FgStart(theme.TmuxStateWarningFg) + value + projmuxpicker.Reset
 }
 
 func redANSI(value string) string {
-	return "\x1b[38;5;160m" + value + projmuxpicker.Reset
+	return theme.ANSI256FgStart(theme.TmuxStateCriticalFg) + value + projmuxpicker.Reset
 }
 
 func tealANSI(value string) string {
-	return "\x1b[38;5;72m" + value + projmuxpicker.Reset
+	return theme.ANSI256FgStart(theme.TmuxStateSuccessFg) + value + projmuxpicker.Reset
 }
 
 func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path string) statusbarPathMetadata {

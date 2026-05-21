@@ -18,6 +18,7 @@ import (
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
@@ -31,19 +32,19 @@ const (
 	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
 	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
 	tmuxWindowTitleWidth = 10
-	tmuxIdentityBg       = "colour60"
-	tmuxIdentityFg       = "colour254"
-	tmuxActionBg         = "colour29"
-	tmuxActionFg         = "colour230"
-	tmuxSecondaryFg      = "colour245"
+	tmuxIdentityBg       = theme.TmuxIdentityBg
+	tmuxIdentityFg       = theme.TmuxIdentityFg
+	tmuxActionBg         = theme.TmuxActionBg
+	tmuxActionFg         = theme.TmuxActionFg
+	tmuxSecondaryFg      = theme.TmuxSecondaryFg
 
-	tmuxAccentAttentionBg       = "colour53"
-	tmuxAccentAttentionFg       = "colour225"
-	tmuxAccentAttentionStrongBg = "colour204"
-	tmuxAccentAIBg              = "colour37"
-	tmuxAccentAIFg              = "colour121"
-	tmuxStateWarningFg          = "colour214"
-	tmuxStateCriticalFg         = "colour160"
+	tmuxAccentAttentionBg       = theme.TmuxAccentAttentionBg
+	tmuxAccentAttentionFg       = theme.TmuxAccentAttentionFg
+	tmuxAccentAttentionStrongBg = theme.TmuxAccentAttentionStrongBg
+	tmuxAccentAIBg              = theme.TmuxAccentAIBg
+	tmuxAccentAIFg              = theme.TmuxAccentAIFg
+	tmuxStateWarningFg          = theme.TmuxStateWarningFg
+	tmuxStateCriticalFg         = theme.TmuxStateCriticalFg
 )
 
 type tmuxPopupClient interface {
@@ -1215,8 +1216,8 @@ func tmuxPaneBorderFormat() string {
 	paneLabelFormat := tmuxVisiblePaneLabelFormat()
 	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
 	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxAccentAIFg + "] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxAccentAttentionStrongBg + "] ● " + paneLabelFormat + " #[default],#[fg=colour244] " + paneLabelFormat + " #[default]}}"
-	return "#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > " + paneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
+	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxAccentAIFg + "] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxAccentAttentionStrongBg + "] ● " + paneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + paneLabelFormat + " #[default]}}"
+	return "#{?pane_active,#[bold#,fg=" + theme.TmuxPaneActiveFg + "#,bg=" + theme.TmuxPaneActiveBg + "] > " + paneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
 }
 
 func tmuxCenteredWindowNameFormat(width int) string {
@@ -1257,7 +1258,7 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDeco
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
 		"set -g status-left "+tmuxConfigQuote(statusbarStandaloneSessionLeftFormat()),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+theme.TmuxDividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
 		// Two-line status bar: line 0 is the notify/HUD control row; line 1 is
 		// tmux's native session/window/path row. Setting both rows explicitly is
 		// required because tmux's built-in row otherwise stays at index 0.
@@ -1321,10 +1322,10 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 		"set -g mode-keys vi",
 		"set -sg escape-time 100",
 		"set -g status-style \"bg=" + tmuxWindowInactiveBg + ",fg=" + tmuxWindowInactiveFg + "\"",
-		"set -g message-style \"bg=colour208,fg=colour16,bold\"",
-		"set -g message-command-style \"bg=colour208,fg=colour16,bold\"",
-		"set -g pane-border-style \"fg=colour236\"",
-		"set -g pane-active-border-style \"fg=colour51,bold\"",
+		"set -g message-style \"bg=" + theme.TmuxMessageBg + ",fg=" + theme.TmuxMessageFg + ",bold\"",
+		"set -g message-command-style \"bg=" + theme.TmuxMessageBg + ",fg=" + theme.TmuxMessageFg + ",bold\"",
+		"set -g pane-border-style \"fg=" + theme.TmuxPaneBorderFg + "\"",
+		"set -g pane-active-border-style \"fg=" + theme.TmuxPaneActiveBorderFg + ",bold\"",
 		"set -g pane-border-status top",
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}
@@ -1347,7 +1348,7 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 	lines = append(lines,
 		"set -g status 2",
 		"set -g status-left "+tmuxConfigQuote(statusbarAppSessionLeftFormat()),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+theme.TmuxDividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
 		"set -g status-format[0] "+tmuxConfigQuote(statusbarAuxLineFormat(bin, true)),
 		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[2]",

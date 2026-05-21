@@ -50,6 +50,7 @@
 - `make test` also covers `projmux ai ingest log` tail/path rendering and bounded JSONL log trimming for ingest diagnostics.
 - `make test` also covers welcome revisit policy: shell `skip_version` gating, `s` skip vs Enter one-run continue, Settings > About > Welcome native viewer, and attach-popup no-duplicate/no-op behavior.
 - `make test` also covers `projmux quit` action-picker rows, cancel/close no-op behavior, explicit quit of only app-owned mux runtimes marked by `@projmux_app=1` on the selected `tmux`/`psmux -L projmux` backend, missing/default runtime no-ops, dispatcher wiring, and `Settings > About > Quit projmux` routing through the same picker before any shutdown side effect.
+- `make test` also covers the built-in semantic palette foundation: non-empty fallback truecolor/tmux tokens, distinct action/attention/AI/danger roles, native picker chip/current/titlebar render strings, statusbar git/notify/usage/settings palette regressions, and settings/trust/destructive row color guards.
 - Current focused unit coverage also includes strict notify SOT behavior
   (TTL does not remove rows, focus success and target-gone clicks ack,
   reconcile reports stale rows), `notify list --live` queue/live explanations, notify sidebar

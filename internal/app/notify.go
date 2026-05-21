@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -315,7 +316,7 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		compatOptions := intpickercompat.Options{
 			UI:     "notify-sidebar",
 			Read0:  true,
-			Title:  "\x1b[1;38;5;204m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
+			Title:  theme.ANSINotifyTitleStart + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications" + theme.ANSIReset,
 			Prompt: "Notify > ",
 			Header: "Newest first",
 			Footer: "Newest first. Critical notifications are kept when clearing non-critical rows.",
@@ -483,19 +484,19 @@ func notifySidebarTarget(e notify.Notification) string {
 }
 
 const (
-	notifySidebarReset   = "\x1b[0m"
-	notifySidebarDimOpen = "\x1b[38;5;245m"
-	notifySidebarProject = "\x1b[1;38;5;231;48;5;90m"
-	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;204m"
-	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;214m"
-	notifySidebarCrit    = "\x1b[1;38;5;231;48;5;160m"
+	notifySidebarReset   = theme.ANSIReset
+	notifySidebarDimOpen = theme.ANSINotifyDimStart
+	notifySidebarProject = theme.ANSINotifyProjectStart
+	notifySidebarInfo    = theme.ANSINotifyInfoStart
+	notifySidebarWarn    = theme.ANSINotifyWarnStart
+	notifySidebarCrit    = theme.ANSINotifyCritStart
 	// Stale/gone badges share a muted grey palette so the ack-only state is
 	// visually distinct from active rows without competing for attention.
 	// STALE keeps the dim italic-equivalent (no italic SGR is universally
 	// supported on tmux palettes, so we lean on the dim attribute), while
 	// GONE adds strikethrough to telegraph "the target no longer exists".
-	notifySidebarStale = "\x1b[2;38;5;231;48;5;240m"
-	notifySidebarGone  = "\x1b[2;9;38;5;231;48;5;238m"
+	notifySidebarStale = theme.ANSINotifyStaleStart
+	notifySidebarGone  = theme.ANSINotifyGoneStart
 )
 
 func notifySidebarAge(age string) string {
@@ -503,7 +504,7 @@ func notifySidebarAge(age string) string {
 	if age == "" {
 		age = "0s"
 	}
-	return "\x1b[1;38;5;204m age " + age + " " + notifySidebarReset
+	return theme.ANSINotifyTitleStart + " age " + age + " " + notifySidebarReset
 }
 
 func notifySidebarProjectBadge(project string) string {
@@ -557,11 +558,11 @@ func notifySidebarAgentBadge(agent string) string {
 func notifySidebarAgentOpen(agent string) string {
 	switch strings.ToLower(strings.TrimSpace(agent)) {
 	case "claude":
-		return "\x1b[1;38;5;16;48;5;37m"
+		return theme.ANSINotifyAgentStart
 	case "codex":
-		return "\x1b[1;38;5;16;48;5;37m"
+		return theme.ANSINotifyAgentStart
 	default:
-		return "\x1b[1;38;5;16;48;5;37m"
+		return theme.ANSINotifyAgentStart
 	}
 }
 

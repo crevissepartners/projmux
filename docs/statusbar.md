@@ -5,6 +5,10 @@ clickable status bar. The same dispatcher (`projmux statusbar click`)
 handles both mouse clicks and the keyboard chord, so adding a new
 segment only requires one wiring point.
 
+The built-in fallback colors used by the statusbar are semantic tokens in
+`internal/theme/palette.go`; see [theme-palette.md](theme-palette.md) for the
+truecolor to tmux 256-color mapping policy and palette inventory.
+
 ## Layout
 
 ```

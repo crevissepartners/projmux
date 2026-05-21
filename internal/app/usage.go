@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/usage"
 	claudeadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/claude"
 	codexadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/codex"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 // usageCommand exposes the `projmux usage` and `projmux status usage`
@@ -643,8 +644,8 @@ func formatLastSyncAge(d time.Duration) string {
 // is missing. Staleness stays muted here so warning/critical colors are
 // reserved for usage thresholds:
 //
-//   - <1h:  dim grey (#[fg=colour245])
-//   - >=1h: muted grey (#[fg=colour244])
+//   - <1h:  secondary text
+//   - >=1h: muted text
 func renderAgeIndicator(m modelDisplay, now time.Time) string {
 	if !m.showAge || now.IsZero() || m.lastSync.IsZero() {
 		return ""
@@ -654,9 +655,9 @@ func renderAgeIndicator(m modelDisplay, now time.Time) string {
 	if text == "" {
 		return ""
 	}
-	color := "colour245"
+	color := theme.TmuxSecondaryFg
 	if age >= ageWarnAfter {
-		color = "colour244"
+		color = theme.TmuxMutedFg
 	}
 	return fmt.Sprintf("#[fg=%s](%s)%s", color, text, statusDefaultReset)
 }

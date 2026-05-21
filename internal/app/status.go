@@ -14,18 +14,19 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const (
 	defaultKubeCacheTTL     = 5 * time.Second
 	defaultKubeCommandLimit = 400 * time.Millisecond
 
-	tmuxGitSegmentBg = "colour30"
-	tmuxGitSegmentFg = "colour231"
-	tmuxGitDirtyFg   = "colour222"
-	tmuxGitStagedFg  = "colour151"
-	tmuxGitAheadFg   = "colour153"
-	tmuxGitBehindFg  = "colour181"
+	tmuxGitSegmentBg = theme.TmuxGitSegmentBg
+	tmuxGitSegmentFg = theme.TmuxGitSegmentFg
+	tmuxGitDirtyFg   = theme.TmuxStateDirtyFg
+	tmuxGitStagedFg  = theme.TmuxStateStagedFg
+	tmuxGitAheadFg   = theme.TmuxStateAheadFg
+	tmuxGitBehindFg  = theme.TmuxStateBehindFg
 )
 
 type statusCommand struct {
@@ -241,7 +242,7 @@ func (c *statusCommand) kubeSegment(sessionName string) string {
 	if ns == "" {
 		ns = "default"
 	}
-	segment := fmt.Sprintf("⎈ #[fg=red]%s#[default]/#[fg=blue]%s#[default]", ctx, ns)
+	segment := fmt.Sprintf("⎈ #[fg=%s]%s#[default]/#[fg=%s]%s#[default]", theme.TmuxKubeContextFg, ctx, theme.TmuxKubeNamespaceFg, ns)
 	_ = os.MkdirAll(filepath.Dir(cacheFile), 0o755)
 	_ = os.WriteFile(cacheFile, []byte(segment), 0o644)
 	return segment
@@ -479,19 +480,19 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 // of that same line instead of separate outline glyphs.
 const (
 	notifyLineOpen      = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionFg + "]"
-	notifyLineDimOpen   = "#[bg=" + tmuxAccentAttentionBg + ",fg=colour183]"
+	notifyLineDimOpen   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + theme.TmuxAccentAttentionDimFg + "]"
 	notifyLineCountOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionFg + ",bold]"
-	notifyProjectOpen   = "#[bg=colour90,fg=colour231,bold]"
-	notifyBadgeInfoOpen = "#[bg=" + tmuxAccentAttentionStrongBg + ",fg=colour16,bold]"
-	notifyBadgeWarnOpen = "#[bg=" + tmuxStateWarningFg + ",fg=colour16,bold]"
-	notifyBadgeCritOpen = "#[bg=" + tmuxStateCriticalFg + ",fg=colour231,bold]"
+	notifyProjectOpen   = "#[bg=" + theme.TmuxAttentionProjectBg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
+	notifyBadgeInfoOpen = "#[bg=" + tmuxAccentAttentionStrongBg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
+	notifyBadgeWarnOpen = "#[bg=" + tmuxStateWarningFg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
+	notifyBadgeCritOpen = "#[bg=" + tmuxStateCriticalFg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
 	// Stale/gone badges share a muted palette so the ack-only state is
 	// visually distinct from the active NEED/INFO/WARN/CRIT badges without
 	// stealing focus. The colours land in the same neutral grey family the
 	// sidebar uses so users learn a single ack-only affordance.
-	notifyBadgeStaleOpen = "#[bg=colour240,fg=colour231,bold]"
-	notifyBadgeGoneOpen  = "#[bg=colour238,fg=colour231,dim]"
-	notifyAgentOpen      = "#[bg=" + tmuxAccentAIBg + ",fg=colour16,bold]"
+	notifyBadgeStaleOpen = "#[bg=" + theme.TmuxMutedBg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
+	notifyBadgeGoneOpen  = "#[bg=" + theme.TmuxGoneBg + ",fg=" + theme.TmuxPrimaryFg + ",dim]"
+	notifyAgentOpen      = "#[bg=" + tmuxAccentAIBg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
 	notifyAgentClaude    = notifyAgentOpen
 	notifyAgentCodex     = notifyAgentOpen
 	notifySeverityInfo   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxAccentAttentionStrongBg + "]"

@@ -4,26 +4,27 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 const (
-	ansiReset  = "\x1b[0m"
-	ansiBold   = "\x1b[1m"
-	ansiDim    = "\x1b[2m"
-	ansiRed    = "\x1b[31m"
-	ansiBlue   = "\x1b[34m"
-	ansiGreen  = "\x1b[32m"
-	ansiYellow = "\x1b[33m"
-	ansiCyan   = "\x1b[36m"
+	ansiReset  = theme.ANSIReset
+	ansiBold   = theme.ANSIBold
+	ansiDim    = theme.ANSIDim
+	ansiRed    = theme.ANSIStateTaggedStart
+	ansiBlue   = theme.ANSIStateInfoStart
+	ansiGreen  = theme.ANSIStateExistingStart
+	ansiYellow = theme.ANSIStatePinnedStart
+	ansiCyan   = theme.ANSIAccentSettingsStart
 )
 
 const (
-	ansiStatusPath        = "\x1b[38;5;242m"
-	ansiStatusGitActive   = "\x1b[1;38;5;16;48;5;45m"
-	ansiStatusGitInactive = "\x1b[38;5;245;48;5;238m"
-	ansiTabActive         = "\x1b[1;38;5;231;48;5;238m"
-	ansiTabInactive       = "\x1b[38;5;245;48;5;235m"
+	ansiStatusPath        = theme.ANSISwitchPathStart
+	ansiStatusGitActive   = theme.ANSISwitchGitActiveStart
+	ansiStatusGitInactive = theme.ANSISwitchGitInactiveStart
+	ansiTabActive         = theme.ANSISwitchWindowTabActiveStart
+	ansiTabInactive       = theme.ANSISwitchWindowTabStart
 )
 
 const (
@@ -294,9 +295,9 @@ func formatSwitchCardStatusBadge(badges []string) string {
 func formatInlineAttentionBadge(rank int) string {
 	switch rank {
 	case 2:
-		return "\x1b[38;5;220m● " + ansiReset
+		return theme.ANSISwitchAttentionNeedsStart + "● " + ansiReset
 	case 1:
-		return "\x1b[38;5;82m● " + ansiReset
+		return theme.ANSISwitchAttentionReadyStart + "● " + ansiReset
 	default:
 		return ""
 	}
