@@ -2598,6 +2598,12 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	if !hasEntryLabelContaining(keybindingOptions.Entries, "All catalog actions are listed") {
 		t.Fatalf("keybindings entries = %#v, want catalog-complete note", keybindingOptions.Entries)
 	}
+	if !hasEntryLabelContainingAll(keybindingOptions.Entries, "transport-dependent defaults stay active", "additive plain aliases") {
+		t.Fatalf("keybindings entries = %#v, want transport alias note", keybindingOptions.Entries)
+	}
+	if hasEntryLabelContaining(keybindingOptions.Entries, "transport-dependent rows are view-only") {
+		t.Fatalf("keybindings entries = %#v, did not want stale transport view-only note", keybindingOptions.Entries)
+	}
 	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
 		t.Fatalf("keybindings entries = %#v, want canonical ProjectSidebarToggle action", keybindingOptions.Entries)
 	}
@@ -2716,7 +2722,7 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 	}
 }
 
-func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailIsViewOnly(t *testing.T) {
+func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllowsPlainAliases(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -2780,11 +2786,22 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailIsVie
 	if !hasEntryLabelContainingAll(transportDetail.Entries, "Keys", "Alt-Shift-Left", "M-S-Left") {
 		t.Fatalf("transport detail entries = %#v, want readable transport keys", transportDetail.Entries)
 	}
-	if !hasEntryLabelContainingAll(transportDetail.Entries, "Editing", "view only", "transport") {
-		t.Fatalf("transport detail entries = %#v, want transport view-only explanation", transportDetail.Entries)
+	if !hasEntryLabelContainingAll(transportDetail.Entries, "Default transport key", "Alt-Shift-Left", "M-S-Left") {
+		t.Fatalf("transport detail entries = %#v, want separate transport default row", transportDetail.Entries)
 	}
-	if hasEntryLabelContaining(transportDetail.Entries, "Type key chord") {
-		t.Fatalf("transport detail entries = %#v, did not want edit actions", transportDetail.Entries)
+	if !hasEntryLabelContainingAll(transportDetail.Entries, "Plain aliases", "(none)") {
+		t.Fatalf("transport detail entries = %#v, want separate plain aliases row", transportDetail.Entries)
+	}
+	if !hasEntryLabelContainingAll(transportDetail.Entries, "Tier", "Transport dependent", "additive plain aliases") {
+		t.Fatalf("transport detail entries = %#v, want additive transport alias tier", transportDetail.Entries)
+	}
+	if !hasEntryLabelContaining(transportDetail.Entries, "Add plain alias") {
+		t.Fatalf("transport detail entries = %#v, want additive alias action", transportDetail.Entries)
+	}
+	for _, absent := range []string{"Replace primary", "Disable default"} {
+		if hasEntryLabelContaining(transportDetail.Entries, absent) {
+			t.Fatalf("transport detail entries = %#v, did not want %q", transportDetail.Entries, absent)
+		}
 	}
 
 	paneDetailEntries, _, err := cmd.keybindingDetailEntries("select-pane-left")
@@ -2794,11 +2811,60 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailIsVie
 	if !hasEntryLabelContainingAll(paneDetailEntries, "Keys", "Alt-Left", "M-Left") {
 		t.Fatalf("pane detail entries = %#v, want readable transport key", paneDetailEntries)
 	}
-	if !hasEntryLabelContainingAll(paneDetailEntries, "Tier", "Transport dependent", "view-only transport-dependent") {
-		t.Fatalf("pane detail entries = %#v, want transport tier reason", paneDetailEntries)
+	if !hasEntryLabelContainingAll(paneDetailEntries, "Tier", "Transport dependent", "additive plain aliases") {
+		t.Fatalf("pane detail entries = %#v, want transport additive alias tier", paneDetailEntries)
+	}
+	if !hasEntryLabelContaining(paneDetailEntries, "Add plain alias") {
+		t.Fatalf("pane detail entries = %#v, want safe plain alias entry", paneDetailEntries)
 	}
 	if hasEntryLabelContaining(paneDetailEntries, "(unbound)") {
 		t.Fatalf("pane detail entries = %#v, did not want unbound restored default", paneDetailEntries)
+	}
+}
+
+func TestSettingsHubKeybindingsTypedTransportAliasWritesOnlyAlias(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window"}, nil
+		case 3:
+			if !hasEntryLabelContaining(options.Entries, "Add plain alias") {
+				t.Fatalf("transport detail entries = %#v, want Add plain alias", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:type"}, nil
+		case 4:
+			if got, want := options.UI, "settings-keybinding-type"; got != want {
+				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Query: "M-["}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.previous-window]\nkeys = [\"M-[\"]\n") {
+		t.Fatalf("keymap = %q, want transport alias only", keymap)
+	}
+	if strings.Contains(keymap, "M-S-Left") {
+		t.Fatalf("keymap = %q, did not want transport default stored as alias", keymap)
 	}
 }
 

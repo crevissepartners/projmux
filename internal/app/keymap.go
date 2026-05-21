@@ -140,6 +140,12 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 			}
 			keys[i] = chord
 		}
+		if action.Tier == keyBindingTierTransportDependent {
+			keys, err = transportPlainAliasChords(action, keys)
+			if err != nil {
+				return path, err
+			}
+		}
 		override.Plain = nil
 		override.KeysSet = true
 		override.Keys = uniqueNonEmptyStrings(keys)
@@ -530,14 +536,32 @@ func mergeKeymapOverrides(actions []keyBindingAction, keymap keymapFile) ([]keyB
 			return nil, fmt.Errorf("keymap binding %q: unknown action id", id)
 		}
 		if override.KeysSet {
-			actions[idx].PlainChords = uniqueNonEmptyStrings(override.Keys)
-			actions[idx].PlainChord = firstNonEmptyString(actions[idx].PlainChords)
+			keys := override.Keys
+			if actions[idx].Tier == keyBindingTierTransportDependent {
+				aliases, err := transportPlainAliasChords(actions[idx], keys)
+				if err != nil {
+					return nil, fmt.Errorf("keymap binding %q: %w", id, err)
+				}
+				keys = append([]string{actions[idx].PlainChord}, aliases...)
+			}
+			actions[idx].PlainChords = uniqueNonEmptyStrings(keys)
+			if actions[idx].Tier != keyBindingTierTransportDependent {
+				actions[idx].PlainChord = firstNonEmptyString(actions[idx].PlainChords)
+			}
 		} else if override.Plain != nil {
-			actions[idx].PlainChord = *override.Plain
-			if *override.Plain == "" {
-				actions[idx].PlainChords = []string{}
+			if actions[idx].Tier == keyBindingTierTransportDependent {
+				aliases, err := transportPlainAliasChords(actions[idx], []string{*override.Plain})
+				if err != nil {
+					return nil, fmt.Errorf("keymap binding %q: %w", id, err)
+				}
+				actions[idx].PlainChords = uniqueNonEmptyStrings(append([]string{actions[idx].PlainChord}, aliases...))
 			} else {
-				actions[idx].PlainChords = nil
+				actions[idx].PlainChord = *override.Plain
+				if *override.Plain == "" {
+					actions[idx].PlainChords = []string{}
+				} else {
+					actions[idx].PlainChords = nil
+				}
 			}
 		}
 		if override.Prefix != nil {
@@ -548,6 +572,21 @@ func mergeKeymapOverrides(actions []keyBindingAction, keymap keymapFile) ([]keyB
 		return nil, err
 	}
 	return actions, nil
+}
+
+func transportPlainAliasChords(action keyBindingAction, keys []string) ([]string, error) {
+	if action.Tier != keyBindingTierTransportDependent {
+		return uniqueNonEmptyStrings(keys), nil
+	}
+	transportDefault := strings.TrimSpace(action.PlainChord)
+	var aliases []string
+	for _, key := range uniqueNonEmptyStrings(keys) {
+		if key == transportDefault {
+			return nil, fmt.Errorf("key %q is the transport-dependent default for %s; omit it from plain aliases", key, action.ID)
+		}
+		aliases = append(aliases, key)
+	}
+	return aliases, nil
 }
 
 func validateKeymapChord(value string) error {
@@ -573,7 +612,7 @@ func normalizeKeymapAliasChord(value string) (string, error) {
 		return "", nil
 	}
 	lower := strings.ToLower(value)
-	rejected := []string{"sendinput", "\\u001b", "\\x1b", "\x1b", "esc[", "esc ["}
+	rejected := []string{"sendinput", "csi:", "\\u001b", "\\x1b", "\x1b", "esc[", "esc ["}
 	for _, marker := range rejected {
 		if strings.Contains(lower, marker) {
 			return "", fmt.Errorf("key alias must be a tmux plain chord, not an escape/sendInput payload")
