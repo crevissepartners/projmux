@@ -398,3 +398,52 @@ Literal preservation remains unchanged:
 - Locale enum values such as `auto`, `en-US`, and `ko-KR` remain literal.
 - Commands, paths, provider payloads, tmux format strings, and key names remain
   caller-owned payload text and are not translated.
+
+## Phase 6 Governance
+
+Phase 6 prevents new user-facing strings from bypassing the catalog while
+keeping the existing literal/data/debug boundary explicit.
+
+Governance checks:
+
+- `internal/i18n` owns the Go string-literal audit helper.
+- `go test ./internal/i18n` includes synthetic audit coverage for Korean
+  candidates, English user-facing candidates, and ignored literal/data/debug
+  examples.
+- The current repo guard scans runtime Go files for new Korean string literals
+  outside the catalog, formatter locale fragments, tests, `testdata`, and
+  comments.
+- The catalog completeness tests require `en-US` fallback coverage for every
+  embedded default catalog key and required `ko-KR` coverage for migrated
+  `notify.ai.`, `notify.live.`, `settings.`, `picker.`, `welcome.`, `update.`,
+  and `help.` surfaces.
+
+Contributor rule:
+
+- New normal UX copy must be added as a stable catalog key with an `en-US`
+  fallback entry and focused test coverage.
+- If the string is intentionally not translated, classify it in review notes as
+  `literal`, `data`, or `debug-only` and preserve it verbatim.
+- Korean product UI strings must not be hardcoded in runtime Go. Add or extend
+  the catalog entry instead.
+- Do not translate provider payloads, commands, config keys, paths, env vars,
+  locale enum values, product names, or tmux/ANSI syntax.
+
+Debug/log/internal error classification:
+
+- Catalog text when it is normal UX, shown in a picker/sidebar/statusbar,
+  desktop notification, user-actionable CLI output, or other expected product
+  surface.
+- Do not catalog debug logs, trace strings, diagnostics, or wrapped internal Go
+  errors unless that exact text is promoted into normal UX.
+- If a diagnostic is surfaced as normal UX, split it: catalog the user-facing
+  explanation or action hint, and keep raw error details, paths, commands, and
+  provider payload as preserved data.
+
+Audit operation:
+
+- Run `GOCACHE=/tmp/projmux-go-cache go test ./internal/i18n` after changing
+  i18n helpers, catalog data, migrated UI strings, or locale policy.
+- For broader validation, continue to run the standard repo gates in order:
+  `make fmt`, `make fix`, `make test`, `make test-integration`, and
+  `make test-e2e` where applicable.

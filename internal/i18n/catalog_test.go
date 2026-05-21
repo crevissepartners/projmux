@@ -2,6 +2,7 @@ package i18n
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -47,6 +48,30 @@ func TestDefaultCatalogEnUSCompletesFoundationKeys(t *testing.T) {
 	}
 }
 
+func TestDefaultCatalogEnUSCompletesAllDefaultCatalogKeys(t *testing.T) {
+	required := DefaultCatalog().Keys()
+	missing := DefaultCatalog().MissingLocaleKeys(FallbackLocale, required)
+	if len(missing) > 0 {
+		t.Fatalf("en-US catalog missing default catalog keys: %v", missing)
+	}
+}
+
+func TestDefaultCatalogKoKRCompletesRequiredMigratedSurfaces(t *testing.T) {
+	required := requiredDefaultCatalogKeysByPrefix(DefaultCatalog(), []string{
+		"notify.ai.",
+		"notify.live.",
+		"settings.",
+		"picker.",
+		"welcome.",
+		"update.",
+		"help.",
+	})
+	missing := DefaultCatalog().MissingLocaleKeys(Locale("ko-KR"), required)
+	if len(missing) > 0 {
+		t.Fatalf("ko-KR catalog missing required migrated surface keys: %v", missing)
+	}
+}
+
 func TestTextRejectsStyledFragment(t *testing.T) {
 	key := Key("test.styled")
 	catalog := NewCatalog(map[Locale]map[Key]Entry{
@@ -81,4 +106,17 @@ func TestStyledRejectsPlainText(t *testing.T) {
 	if mismatch.Want != "ansi/tmux styled fragment" {
 		t.Fatalf("mismatch.Want = %q, want styled fragment description", mismatch.Want)
 	}
+}
+
+func requiredDefaultCatalogKeysByPrefix(catalog Catalog, prefixes []string) []Key {
+	var keys []Key
+	for _, key := range catalog.LocaleKeys(FallbackLocale) {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(string(key), prefix) {
+				keys = append(keys, key)
+				break
+			}
+		}
+	}
+	return keys
 }

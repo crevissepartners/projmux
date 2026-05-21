@@ -3,6 +3,7 @@ package i18n
 import (
 	"fmt"
 	"maps"
+	"slices"
 )
 
 // Key identifies one user-facing message in the catalog.
@@ -187,7 +188,12 @@ func DefaultCatalog() Catalog {
 
 // MissingFallbackKeys reports required keys absent from the fallback locale.
 func (c Catalog) MissingFallbackKeys(required []Key) []Key {
-	entries := c.locales[FallbackLocale]
+	return c.MissingLocaleKeys(FallbackLocale, required)
+}
+
+// MissingLocaleKeys reports required keys absent from locale.
+func (c Catalog) MissingLocaleKeys(locale Locale, required []Key) []Key {
+	entries := c.locales[locale]
 	var missing []Key
 	for _, key := range required {
 		entry, ok := entries[key]
@@ -196,6 +202,37 @@ func (c Catalog) MissingFallbackKeys(required []Key) []Key {
 		}
 	}
 	return missing
+}
+
+// Keys returns every non-empty key currently defined by any locale.
+func (c Catalog) Keys() []Key {
+	seen := map[Key]bool{}
+	for _, entries := range c.locales {
+		for key, entry := range entries {
+			if entry.Value != "" {
+				seen[key] = true
+			}
+		}
+	}
+	keys := make([]Key, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// LocaleKeys returns the non-empty keys currently defined for locale.
+func (c Catalog) LocaleKeys(locale Locale) []Key {
+	entries := c.locales[locale]
+	keys := make([]Key, 0, len(entries))
+	for key, entry := range entries {
+		if entry.Value != "" {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 // Localizer resolves keys for one preferred locale with en-US fallback.
