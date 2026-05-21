@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.5](https://github.com/crevissepartners/projmux/compare/v0.6.4...v0.6.5) (2026-05-21)
+
+
+### Features
+
+* add locale formatter primitives ([9c9ed25](https://github.com/crevissepartners/projmux/commit/9c9ed2593a234ddf86ba6747191598bfcf0df096))
+* add theme resolver foundation ([074eee8](https://github.com/crevissepartners/projmux/commit/074eee8b1944e8975c00b02faf97d12d303fca95))
+* **globalization:** add locale settings override ([#353](https://github.com/crevissepartners/projmux/issues/353)) ([eb363d3](https://github.com/crevissepartners/projmux/commit/eb363d33383666ca069624c54b69082474c72436))
+* **globalization:** add phase 2 locale format primitives ([#345](https://github.com/crevissepartners/projmux/issues/345)) ([9c9ed25](https://github.com/crevissepartners/projmux/commit/9c9ed2593a234ddf86ba6747191598bfcf0df096))
+* **globalization:** localize settings guidance ([#351](https://github.com/crevissepartners/projmux/issues/351)) ([18b84af](https://github.com/crevissepartners/projmux/commit/18b84af9f4bb55b8224f80173c913843670bcee1))
+* localize notify AI messages ([#348](https://github.com/crevissepartners/projmux/issues/348)) ([a141743](https://github.com/crevissepartners/projmux/commit/a14174359500d420f2d720082ea2189f34dcc055))
+* **theme:** add resolver foundation ([#347](https://github.com/crevissepartners/projmux/issues/347)) ([074eee8](https://github.com/crevissepartners/projmux/commit/074eee8b1944e8975c00b02faf97d12d303fca95))
+* **theme:** add settings editor ([#352](https://github.com/crevissepartners/projmux/issues/352)) ([db5678e](https://github.com/crevissepartners/projmux/commit/db5678e3c31f0db8d81c0b5b63ae0d840930eb85))
+* **theme:** apply background render tokens ([#349](https://github.com/crevissepartners/projmux/issues/349)) ([eb83444](https://github.com/crevissepartners/projmux/commit/eb83444a365f7488595c3cca71fa5585756276a4))
+* **theme:** surface desired font status ([#350](https://github.com/crevissepartners/projmux/issues/350)) ([a10ec9b](https://github.com/crevissepartners/projmux/commit/a10ec9b5c5399ba992762e1ff4dcfd9cae8aaa2c))
+
 ## [0.6.4](https://github.com/crevissepartners/projmux/compare/v0.6.3...v0.6.4) (2026-05-21)
 
 
