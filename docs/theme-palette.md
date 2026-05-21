@@ -6,31 +6,63 @@ truth in code is `internal/theme/palette.go`.
 
 ## Scope
 
-The fallback palette is a semantic token layer, not a user configuration
-schema. It gives current renderers shared names for the colors stabilized by
-the Visual palette baseline work:
+The fallback palette is a semantic token layer. Theme settings resolve project
+and global config into the resolver-facing token inventory below, then fall
+back to the built-in values from `internal/theme/palette.go`.
 
 - Native picker truecolor SGR tokens.
 - Native sidebar and chip-strip 256-color SGR tokens.
 - Tmux statusbar and generated-config color tokens.
 - Settings/action/state/trust/attention helper tokens.
 
-Future Theme settings should resolve project/global values into this token
-shape, then keep the built-in values as the final fallback. This phase does not
-add `config.toml` fields, a resolver, a Settings editor, presets, import, or
-export.
+This phase adds config resolution and presets only. It does not apply
+project-specific colors to renderers yet, add a Settings editor, import/export
+themes, or reselect the Visual palette baseline colors.
+
+## Resolver Token Inventory
+
+The public resolver inventory is intentionally smaller than the current
+renderer literal inventory. Surface-specific renderers map their detailed roles
+onto these stable names:
+
+| Token | Meaning | Shared surfaces |
+| --- | --- | --- |
+| `background` | base popup/sidebar/status surface background | native picker, frame titlebar, notify sidebar, settings popup, statusbar |
+| `surface` | raised or inactive chrome surface | frame titlebar, chips, switch cards, settings popup |
+| `surface_active` | selected/current row or active chip surface | native picker current row, frame chips, statusbar active window |
+| `foreground` | primary readable text | native picker, titlebar, statusbar, notify sidebar, settings popup |
+| `muted` | secondary text, divider, disabled or stale details | picker metadata, titlebar rule, notify age/stale, settings descriptions |
+| `accent` | pointer, primary action, highlight, active affordance | native picker pointer/highlight, settings actions, chips |
+| `critical` | destructive/error/critical state | settings remove/quit, notify critical badge, statusbar critical usage |
+| `warning` | progress, pending, warning, busy state | AI busy/thinking indicators, notify pending title, usage warning |
+
+Renderer-only role names such as `accent.ai`, `state.progress`, `git.branch`,
+and trust colors remain in `internal/theme/palette.go` until Phase 2+ maps each
+surface to the resolver tokens. The key product contract for this phase is that
+native picker, frame titlebar, chips, statusbar, notify sidebar, and settings
+popup all consume a shared effective token set instead of independently
+choosing colors.
+
+Font is not part of this universal token inventory. `font_family` and
+`font_size` are resolved as terminal capability/profile hints: projmux can
+store and display the desired value, but tmux/ANSI rendering cannot force a
+font family or size across terminal emulators.
 
 ## Mapping Policy
 
 Native picker rows can emit truecolor SGR, while tmux statusbar/config strings
-must use tmux color specs. The fallback therefore stores both forms when a
-role crosses surfaces.
+must use tmux color specs. The resolver therefore carries both forms for each
+color token.
 
 Rules:
 
-- Truecolor tokens keep exact SGR strings for native picker chrome and
-  Settings rows.
+- Truecolor tokens keep exact `#RRGGBB` values and can be converted to
+  foreground/background SGR fragments such as `38;2;R;G;B` or `48;2;R;G;B`.
 - Tmux tokens keep `colourN` strings where tmux owns rendering.
+- The built-in `projmux-dark` fallback uses the established tmux tokens from
+  `internal/theme/palette.go` to preserve current output.
+- Explicit `#RRGGBB` overrides keep exact truecolor and derive the closest
+  xterm 256-color `colourN` token for tmux surfaces.
 - Native chip/sidebar badge tokens use 256-color SGR when they intentionally
   mirror tmux colors.
 - Output compatibility wins inside this baseline. For example, the kube
@@ -38,6 +70,35 @@ Rules:
   segment gets a separate redesign.
 - Renderers should reference semantic names instead of spelling color literals
   directly. Test fixtures may still pin rendered escape strings.
+
+## Resolver Contract
+
+Theme resolution is field-by-field after validating each layer:
+
+1. Project `.projmux/config.toml`
+2. Global `~/.config/projmux/config.toml`
+3. Built-in fallback preset `projmux-dark`
+
+Rules:
+
+- Project values override global values for the same field.
+- Missing or `inherit` project values fall back to global values.
+- Missing global values fall back to built-in values.
+- A preset fills missing color tokens in its own layer.
+- Explicit color tokens in the same layer override preset colors.
+- An unknown preset invalidates only that layer and emits a warning.
+- An invalid color, `font_family`, or `font_size` invalidates only that layer
+  and emits a warning.
+- Every effective field reports `project`, `global`, or `fallback` as its
+  source label.
+
+Built-in preset config values are:
+
+- `projmux-dark`
+- `midnight`
+- `forest`
+- `rose`
+- `high-contrast`
 
 ## Fallback Inventory
 
