@@ -562,18 +562,19 @@ func TestShellTmuxExecRunnerStripsNestedTmuxEnv(t *testing.T) {
 	}
 }
 
-func TestShellWelcomeShowsOncePerVersion(t *testing.T) {
+func TestShellWelcomeShowsUntilSkippedForVersion(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, _ := testUpdateCommand(t, now)
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 	}
 
 	var first bytes.Buffer
@@ -598,20 +599,24 @@ func TestShellWelcomeShowsOncePerVersion(t *testing.T) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatalf("json.Unmarshal(welcome state) error = %v", err)
 	}
-	if !state.PendingAttachWelcome {
-		t.Fatalf("welcome state = %+v, want pending_attach_welcome=true", state)
+	if state.PendingAttachWelcome {
+		t.Fatalf("welcome state = %+v, did not want pending attach popup after shell prompt", state)
+	}
+	if state.SkipVersion != "" {
+		t.Fatalf("welcome state = %+v, did not want skip_version after Enter", state)
 	}
 
+	cmd.welcomeInput = strings.NewReader("\n")
 	var second bytes.Buffer
 	if err := cmd.Run([]string{"--no-install"}, &second, &bytes.Buffer{}); err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
-	if strings.Contains(second.String(), "Welcome to projmux shell") {
-		t.Fatalf("second stdout = %q, did not expect repeated welcome", second.String())
+	if !strings.Contains(second.String(), "Welcome to projmux shell "+version.String()) {
+		t.Fatalf("second stdout = %q, want repeated welcome until skipped", second.String())
 	}
 }
 
-func TestShellWelcomeShowsAfterVersionChange(t *testing.T) {
+func TestShellWelcomeSkipsWhenSkipVersionMatchesCurrent(t *testing.T) {
 	home := t.TempDir()
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -620,32 +625,140 @@ func TestShellWelcomeShowsAfterVersionChange(t *testing.T) {
 		writeFile:  os.WriteFile,
 		runCommand: (&recordingShellRunner{}).run,
 	}
-	path, err := cmd.welcomeStatePath(version.String())
-	if err != nil {
-		t.Fatal(err)
+	writeShellWelcomeState(t, cmd, shellWelcomeState{
+		Version:             welcomeStateVersion,
+		LastWelcomedVersion: version.String(),
+		WelcomedAt:          time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		SkipVersion:         version.String(),
+		SkippedAt:           testTimePtr(time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)),
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+	if strings.Contains(stdout.String(), "Welcome to projmux shell") {
+		t.Fatalf("stdout = %q, did not expect skipped welcome", stdout.String())
 	}
-	state := shellWelcomeState{
-		Version:             1,
+}
+
+func TestShellWelcomeShowsWhenSkipVersionDiffers(t *testing.T) {
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+	}
+	writeShellWelcomeState(t, cmd, shellWelcomeState{
+		Version:             welcomeStateVersion,
 		LastWelcomedVersion: "0.0.1",
 		WelcomedAt:          time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
+		SkipVersion:         "0.0.1",
+		SkippedAt:           testTimePtr(time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)),
+	})
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Welcome to projmux shell "+version.String()) {
-		t.Fatalf("stdout = %q, want version-bump welcome", stdout.String())
+		t.Fatalf("stdout = %q, want welcome when skip_version differs", stdout.String())
+	}
+}
+
+func TestShellWelcomeLegacyLastWelcomedVersionIsNotSkip(t *testing.T) {
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+	}
+	writeShellWelcomeState(t, cmd, shellWelcomeState{
+		Version:             welcomeStateVersion,
+		LastWelcomedVersion: version.String(),
+		WelcomedAt:          time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Welcome to projmux shell "+version.String()) {
+		t.Fatalf("stdout = %q, want legacy last_welcomed_version-only state to show", stdout.String())
+	}
+}
+
+func TestShellWelcomeSkipInputStoresCurrentVersion(t *testing.T) {
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("s\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	state := readShellWelcomeState(t, cmd)
+	if got, want := state.SkipVersion, version.String(); got != want {
+		t.Fatalf("skip_version = %q, want %q", got, want)
+	}
+	if !strings.Contains(stdout.String(), "Skipped welcome for projmux "+version.String()) {
+		t.Fatalf("stdout = %q, want welcome skip confirmation", stdout.String())
+	}
+}
+
+func TestShellWelcomeEnterInputDoesNotStoreSkip(t *testing.T) {
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	state := readShellWelcomeState(t, cmd)
+	if state.SkipVersion != "" {
+		t.Fatalf("state = %+v, did not want skip_version after Enter", state)
+	}
+}
+
+func TestShellWelcomeDoesNotScheduleRedundantAttachPopup(t *testing.T) {
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	welcome := testWelcomePopupCommand(t, home)
+	if err := welcome.Run([]string{"--popup"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(--popup) error = %v", err)
+	}
+	if calls := welcome.runner.(*recordingTmuxRunner).calls; len(calls) != 0 {
+		t.Fatalf("attach popup calls = %#v, want none after shell prompt", calls)
 	}
 }
 
@@ -709,7 +822,7 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:    func(string) string { return "" },
 		homeDir:      func() (string, error) { return home, nil },
-		welcomeInput: strings.NewReader("\n"),
+		welcomeInput: strings.NewReader("u\n"),
 		writeFile:    os.WriteFile,
 		runCommand:   (&recordingShellRunner{}).run,
 		update:       update,
@@ -731,7 +844,7 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 	if !reflect.DeepEqual(updateCommands, wantCommands) {
 		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
 	}
-	if !strings.Contains(stdout.String(), "Update now? [Y/n") {
+	if !strings.Contains(stdout.String(), "Continue? [Enter, u=update, s=skip welcome, d=skip update prompts]") {
 		t.Fatalf("stdout = %q, want inline prompt", stdout.String())
 	}
 }
@@ -784,7 +897,7 @@ func TestShellWelcomeDeclinePrintsUpdateCommand(t *testing.T) {
 	}
 }
 
-func TestShellWelcomeSkipWritesUpdateSkipState(t *testing.T) {
+func TestShellWelcomeDailySkipWritesUpdateSkipState(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
@@ -806,7 +919,7 @@ func TestShellWelcomeSkipWritesUpdateSkipState(t *testing.T) {
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:    func(string) string { return "" },
 		homeDir:      func() (string, error) { return home, nil },
-		welcomeInput: strings.NewReader("s\n"),
+		welcomeInput: strings.NewReader("d\n"),
 		writeFile:    os.WriteFile,
 		runCommand:   (&recordingShellRunner{}).run,
 		update:       update,
@@ -1230,8 +1343,50 @@ func (f shellUpdateRunnerFunc) Run(options intpickercompat.Options) (intpickerco
 
 func markShellWelcomed(t *testing.T, cmd *shellCommand) {
 	t.Helper()
-	_, ok := cmd.prepareWelcomeState()
-	if !ok {
-		t.Fatal("prepareWelcomeState did not write welcome state")
+	writeShellWelcomeState(t, cmd, shellWelcomeState{
+		Version:             welcomeStateVersion,
+		LastWelcomedVersion: version.String(),
+		WelcomedAt:          time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		SkipVersion:         version.String(),
+		SkippedAt:           testTimePtr(time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)),
+	})
+}
+
+func testTimePtr(value time.Time) *time.Time {
+	return &value
+}
+
+func writeShellWelcomeState(t *testing.T, cmd *shellCommand, state shellWelcomeState) {
+	t.Helper()
+	path, err := cmd.welcomeStatePath(version.String())
+	if err != nil {
+		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readShellWelcomeState(t *testing.T, cmd *shellCommand) shellWelcomeState {
+	t.Helper()
+	path, err := cmd.welcomeStatePath(version.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state shellWelcomeState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	return state
 }

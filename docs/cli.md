@@ -653,15 +653,18 @@ installs.
 ## welcome
 
 ```
-projmux welcome
+projmux welcome [--popup [--force]]
 ```
 
 Prints the onboarding shell guide (`projmux shell` welcome view) without
 starting tmux. This is useful when you want to revisit the key/shortcut/update
 walkthrough at any time.
 
-Usage is argument-free. Passing positional arguments prints usage and returns a
-usage error.
+`--popup` is the tmux attach-helper form. It shows the popup only when a
+pending attach welcome marker exists. `--popup --force` opens the popup without
+consulting pending or skip state; Settings > About > Welcome uses that forced
+viewer path so the guide is always visible from Settings. Passing positional
+arguments prints usage and returns a usage error.
 
 ## sessions / session-popup / preview / pin / kill / prune / tag
 
@@ -718,10 +721,11 @@ flags with the top-level `switch` UX:
   updates the matching live tmux option when available. Labs remains
   available for experimental settings. The About section reads the cached
   update status without network access;
-  selecting Check Updates runs `projmux update check`, and Update Now runs
-  `projmux update apply`. `Settings > About > Quit projmux` routes through the
-  same `projmux quit` action picker. The same About section also lists the
-  keybinding diagnostic path: zero-config first, `setup` for swallowed keys,
+  selecting Check Updates runs `projmux update check`, Update Now runs
+  `projmux update apply`, and Welcome opens the forced welcome popup
+  independent of shell skip state. `Settings > About > Quit projmux` routes
+  through the same `projmux quit` action picker. The same About section also
+  lists the keybinding diagnostic path: zero-config first, `setup` for swallowed keys,
   `init` for supported terminal mappings, and `doctor` for dependencies.
 
 ## See also

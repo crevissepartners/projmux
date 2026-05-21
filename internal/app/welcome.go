@@ -28,30 +28,41 @@ func (c *shellCommand) promptWelcome(stdout, stderr io.Writer) (bool, error) {
 
 	status, hasStatus := c.welcomeUpdateStatus()
 	skipped := hasStatus && c.updatePromptSkipped(status)
-	promptUpdate := hasStatus && shouldPromptShellUpdate(status) && !skipped
-	if err := writeShellWelcome(stdout, current, status, hasStatus, promptUpdate, skipped, c.welcomeWidth()); err != nil {
+	updateAvailable := hasStatus && shouldPromptShellUpdate(status)
+	if err := writeShellWelcome(stdout, current, status, hasStatus, updateAvailable, skipped, c.welcomeWidth()); err != nil {
 		return hasStatus, err
 	}
-	if !promptUpdate {
-		return hasStatus, nil
-	}
 
-	action, err := c.readWelcomeUpdateAction(stdout)
+	action, err := c.readWelcomeAction(stdout, updateAvailable, skipped)
 	if err != nil {
 		return true, nil
 	}
 	switch action {
-	case "", "y", "yes":
+	case "s", "skip":
+		if err := c.skipWelcomeVersion(current); err != nil {
+			return true, err
+		}
+		_, _ = fmt.Fprintf(stdout, "Skipped welcome for projmux %s.\n", current)
+	case "u", "update":
+		if !updateAvailable {
+			return true, nil
+		}
 		if err := c.update.Run([]string{"apply"}, stdout, stderr); err != nil {
 			return true, fmt.Errorf("run shell welcome update: %w", err)
 		}
-	case "s", "skip":
+	case "d", "daily-skip", "skip-update":
+		if !updateAvailable || skipped {
+			return true, nil
+		}
 		if err := c.writeUpdateSkip(status); err != nil {
 			return true, err
 		}
 		_, _ = fmt.Fprintf(stdout, "Skipped %s for daily update prompts.\n", strings.TrimSpace(status.LatestVersion))
+	case "n", "no":
+		if updateAvailable {
+			_, _ = fmt.Fprintf(stdout, "Run `%s` to upgrade.\n", shellWelcomeApplyCommand)
+		}
 	default:
-		_, _ = fmt.Fprintf(stdout, "Run `%s` to upgrade.\n", shellWelcomeApplyCommand)
 	}
 	return true, nil
 }
@@ -60,17 +71,24 @@ func (c *shellCommand) welcomeUpdateStatus() (updateStatus, bool) {
 	return resolveWelcomeUpdateStatus(c.update)
 }
 
-func (c *shellCommand) readWelcomeUpdateAction(stdout io.Writer) (string, error) {
-	if _, err := fmt.Fprint(stdout, "Update now? [Y/n, s=skip] "); err != nil {
+func (c *shellCommand) readWelcomeAction(stdout io.Writer, updateAvailable, updateSkipped bool) (string, error) {
+	prompt := "Continue? [Enter, s=skip welcome] "
+	if updateAvailable {
+		prompt = "Continue? [Enter, u=update, s=skip welcome, d=skip update prompts] "
+		if updateSkipped {
+			prompt = "Continue? [Enter, u=update, s=skip welcome] "
+		}
+	}
+	if _, err := fmt.Fprint(stdout, prompt); err != nil {
 		return "", err
 	}
 	input := c.welcomeInput
 	if input == nil {
-		return "n", nil
+		return "", nil
 	}
 	line, err := bufio.NewReader(input).ReadString('\n')
 	if err != nil && !(errors.Is(err, io.EOF) && strings.TrimSpace(line) != "") {
-		return "n", err
+		return "", err
 	}
 	return strings.ToLower(strings.TrimSpace(line)), nil
 }
@@ -114,7 +132,7 @@ func resolveWelcomeUpdateStatus(update *updateCommand) (updateStatus, bool) {
 	}
 }
 
-func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStatus, promptUpdate, skipped bool, width int) error {
+func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStatus, updateAvailable, skipped bool, width int) error {
 	if w == nil {
 		return nil
 	}
@@ -129,7 +147,14 @@ func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStat
 	}
 	if hasStatus {
 		lines = append(lines, "")
-		lines = append(lines, shellWelcomeUpdateLines(status, promptUpdate, skipped)...)
+		lines = append(lines, shellWelcomeUpdateLines(status, updateAvailable, skipped)...)
+	}
+	lines = append(lines, "")
+	lines = append(lines, "Enter continues for this run. Press s to skip this welcome for the current version.")
+	if updateAvailable && skipped {
+		lines = append(lines, "Press u to update now. Daily update prompts are already skipped for this release.")
+	} else if updateAvailable {
+		lines = append(lines, "Press u to update now. Press d to skip daily update prompts for this release.")
 	}
 
 	inner := width - 4
@@ -165,7 +190,7 @@ func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStat
 	return err
 }
 
-func shellWelcomeUpdateLines(status updateStatus, promptUpdate, skipped bool) []string {
+func shellWelcomeUpdateLines(status updateStatus, updateAvailable, skipped bool) []string {
 	latest := strings.TrimSpace(status.LatestVersion)
 	current := strings.TrimSpace(status.CurrentVersion)
 	switch status.UpdateState {
@@ -175,11 +200,10 @@ func shellWelcomeUpdateLines(status updateStatus, promptUpdate, skipped bool) []
 		if skipped {
 			return []string{"Update: " + latest + " is available; daily prompts are skipped for this version."}
 		}
-		if promptUpdate {
+		if updateAvailable {
 			return []string{
 				"Update: " + latest + " is available (current " + current + ").",
 				"Run `" + shellWelcomeApplyCommand + "` to upgrade manually.",
-				"Press Enter/Y to update now, n to print the command, or s to skip this version.",
 			}
 		}
 		return []string{

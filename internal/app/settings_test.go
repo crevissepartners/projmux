@@ -4009,6 +4009,44 @@ func TestSettingsAboutQuitRowRoutesThroughQuitPicker(t *testing.T) {
 	}
 }
 
+func TestSettingsAboutWelcomeOpensForcedPopup(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	tmuxRunner := &recordingTmuxRunner{}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAbout}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsWelcomeShow}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+		{reply: intpickercompat.Result{}},
+	})
+	cmd := &settingsCommand{
+		ai:           testAICommand(t.TempDir()),
+		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		update:       nil,
+		runner:       runner,
+		nativePicker: native,
+		homeDir:      func() (string, error) { return home, nil },
+		lookupEnv:    func(string) string { return "" },
+		tmuxRunner:   tmuxRunner,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(tmuxRunner.calls) != 1 {
+		t.Fatalf("tmux calls = %#v, want forced welcome popup", tmuxRunner.calls)
+	}
+	call := tmuxRunner.calls[0]
+	if call.name != "tmux" || len(call.args) == 0 || call.args[0] != "display-popup" {
+		t.Fatalf("tmux call = %#v, want display-popup", call)
+	}
+	command := call.args[len(call.args)-1]
+	if !strings.Contains(command, "Welcome to projmux shell") {
+		t.Fatalf("popup command = %q, want welcome payload", command)
+	}
+}
+
 func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 	t.Parallel()
 

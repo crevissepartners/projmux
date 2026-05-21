@@ -27,17 +27,20 @@ Start the tmux app with:
 projmux shell
 ```
 
-The first launch for each projmux version prints a short welcome with the
-current version, detach/exit keys, core app shortcuts, and cached update status
-when available. If an installer-supported update is available, pressing Enter
-at the inline prompt runs `projmux update apply`; answering `n` prints that
-manual command and continues into the shell.
+Each `projmux shell` launch prints a short welcome with the current version,
+detach/exit keys, core app shortcuts, and cached update status when available.
+Press Enter to continue for this run, or press `s` to skip the welcome for the
+current projmux version. The next projmux version shows the welcome again.
 
-After the shell tmux client attaches, projmux consumes the pending welcome
-marker once and shows the same guide in a dismissable popup. If you want to
-revisit that guide later, run `projmux welcome`. Set `PROJMUX_WELCOME=off`
-before launching `projmux shell` to suppress the automatic attach popup without
-disabling the manual command.
+If an installer-supported update is available, the same prompt keeps update
+actions separate from welcome skip: press `u` to run `projmux update apply`,
+`n` to print the manual update command, or `d` to skip daily update prompts for
+that release.
+
+To revisit the guide later, run `projmux welcome`, or use Settings > About >
+Welcome inside the app to open it in a popup. Set `PROJMUX_WELCOME=off` before
+launching `projmux shell` to suppress legacy automatic attach popups without
+disabling the shell prompt or manual command.
 
 ## Runtime Tools
 
