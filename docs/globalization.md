@@ -242,3 +242,49 @@ Contribution convention:
 - Runtime migrations should be narrow by surface. Move a string family behind
   the catalog only when its tests can show literal preservation and fallback
   behavior for that surface.
+
+## Phase 2 Formatter Foundation
+
+Package:
+
+- `internal/i18n`
+
+Formatter policy:
+
+- Formatter functions localize grammar, units, and labels. They do not translate
+  caller-owned payload values such as product names, commands, paths, provider
+  text, tmux targets, or enum/source data inserted as arguments.
+- Formatter functions accept a `FormatVariant`. `i18n.FormatFull` is for
+  prose-friendly labels and `i18n.FormatCompact` is for dense terminal surfaces.
+- Unsupported or empty locales fall back to `en-US`. Korean locale forms
+  normalized by `ResolveLocale` use the Korean formatter rules.
+- Relative age has a pinned just-now window of less than five seconds:
+  `just now` for `en-US`, `방금 전` for `ko-KR`.
+
+Formatter API:
+
+- `i18n.FormatRelativeAge(age, locale, variant)` renders elapsed age, for
+  example `3m ago` in compact `en-US` and `36초 전` in compact `ko-KR`.
+- `i18n.FormatDuration(duration, locale, variant)` renders the largest whole
+  unit in seconds, minutes, hours, or days.
+- `i18n.FormatCount(count, subject, locale, variant)` applies locale-specific
+  count grammar for owned subjects such as `i18n.CountNotifications` while
+  preserving the numeric value.
+- `i18n.FormatList(items, locale, variant)` joins caller-owned item strings
+  using locale-specific separators without translating item payloads.
+- `i18n.FormatStatusToken(token, locale, variant)` renders shared terminal
+  status labels for known `i18n.StatusToken` values.
+- `i18n.FormatTargetLabel(kind, number, locale, variant)` localizes the target
+  label, such as window or pane, while preserving the target number.
+
+Width-safe rendering:
+
+- Use `i18n.TerminalCellWidth(value)` when terminal layout depends on visible
+  width. It measures terminal cells, not bytes or runes.
+- Use `i18n.TruncateTerminalCells(value, maxCells)` before placing
+  locale-specific output into fixed-width terminal columns.
+- ANSI escape sequences and tmux style wrappers such as `#[fg=red]` are
+  zero-width for measurement and truncation. Truncation preserves those wrappers
+  in the returned string while clipping only visible content.
+- Width clipping is a rendering concern. Keep translated format strings and
+  caller-owned payload arguments separate until the final render step.
