@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const (
@@ -134,7 +135,7 @@ func statusbarCwdSegmentFormat() string {
 }
 
 func statusbarCwdDecoratorFormat() string {
-	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=colour220] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=colour220]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=colour220] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=colour220]📁 ,}}}"
+	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=" + theme.TmuxDecorationCwdFg + "] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=" + theme.TmuxDecorationCwdFg + "]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=" + theme.TmuxDecorationCwdFg + "] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=" + theme.TmuxDecorationCwdFg + "]📁 ,}}}"
 }
 
 type gitRemoteProvider string
@@ -150,18 +151,18 @@ func statusbarGitDecorator(mode config.StatusbarDecoration, remoteURL string) st
 	case config.StatusbarDecorationSymbol:
 		switch provider {
 		case gitRemoteProviderGitLab:
-			return "#[fg=colour215] #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + theme.TmuxDecorationGitLabFg + "] #[fg=" + tmuxGitSegmentFg + "]"
 		default:
-			return "#[fg=colour153] #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + theme.TmuxDecorationGitHubFg + "] #[fg=" + tmuxGitSegmentFg + "]"
 		}
 	case config.StatusbarDecorationEmoji:
 		switch provider {
 		case gitRemoteProviderGitHub:
-			return "#[fg=colour153]🐱 #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + theme.TmuxDecorationGitHubFg + "]🐱 #[fg=" + tmuxGitSegmentFg + "]"
 		case gitRemoteProviderGitLab:
-			return "#[fg=colour215]🦊 #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + theme.TmuxDecorationGitLabFg + "]🦊 #[fg=" + tmuxGitSegmentFg + "]"
 		default:
-			return "#[fg=colour151]🌿 #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + theme.TmuxDecorationGenericGitFg + "]🌿 #[fg=" + tmuxGitSegmentFg + "]"
 		}
 	default:
 		return ""

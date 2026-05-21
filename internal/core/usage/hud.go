@@ -6,6 +6,8 @@ package usage
 
 import (
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 // BarCells is the fixed width of the HUD bar widget in cells. The bar is
@@ -94,15 +96,15 @@ func RenderColoredBar(pct float64, fillColor, emptyColor string) string {
 func BarColorForPct(pct float64) string {
 	switch {
 	case pct > 100:
-		return "colour160,bold"
+		return theme.TmuxUsageCriticalBoldFg
 	case pct >= 95:
-		return "colour160"
+		return theme.TmuxUsageCriticalFg
 	case pct >= 80:
-		return "colour214"
+		return theme.TmuxUsageWarningFg
 	default:
-		return "colour72"
+		return theme.TmuxUsageOKFg
 	}
 }
 
 // BarEmptyColor is the tmux color used for empty bar cells across the HUD.
-const BarEmptyColor = "colour238"
+const BarEmptyColor = theme.TmuxUsageEmptyFg

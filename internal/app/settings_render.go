@@ -1,6 +1,10 @@
 package app
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/crevissepartners/projmux/internal/theme"
+)
 
 // settings_render.go centralizes the picker-row formatting used by every
 // settings entry builder. Keeping the glyph + color + padding in one place
@@ -22,14 +26,14 @@ const (
 
 // ANSI color sequences mapped per the design system.
 const (
-	settingsColorAdd    = "\x1b[38;2;141;205;142m" // green: additive / primary action
-	settingsColorType   = "\x1b[38;2;141;205;142m" // green: edit / navigate action
-	settingsColorRemove = "\x1b[38;2;255;107;107m" // red: destructive
-	settingsColorBack   = "\x1b[38;2;164;176;182m" // secondary: back / cancel
-	settingsColorActive = "\x1b[1m"                // bold: active / current value
-	settingsColorDim    = "\x1b[90m"               // dim: descriptions, secondary text
-	settingsColorInfo   = "\x1b[38;2;216;224;228m" // soft foreground: info / read-only label
-	settingsColorReset  = "\x1b[0m"
+	settingsColorAdd    = theme.ANSIAccentActionStart  // additive / primary action
+	settingsColorType   = theme.ANSIAccentActionStart  // edit / navigate action
+	settingsColorRemove = theme.ANSIStateDangerStart   // destructive
+	settingsColorBack   = theme.ANSITextSecondaryStart // back / cancel
+	settingsColorActive = theme.ANSIBold               // active / current value
+	settingsColorDim    = theme.ANSITextDimStart       // descriptions, secondary text
+	settingsColorInfo   = theme.ANSITextPrimaryStart   // info / read-only label
+	settingsColorReset  = theme.ANSIReset
 )
 
 // settingsLabelNameWidth is the byte width the name column is padded to.

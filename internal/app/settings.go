@@ -15,6 +15,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -559,8 +560,8 @@ func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompa
 }
 
 const (
-	settingsRootColorOpen = "\x1b[38;2;122;199;173m"
-	settingsRootColorDim  = "\x1b[38;2;117;132;140m"
+	settingsRootColorOpen = theme.ANSIAccentActionStrongStart
+	settingsRootColorDim  = theme.ANSITextMutedStart
 )
 
 func settingsRootLabel(glyph, name, description string) string {

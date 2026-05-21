@@ -16,6 +16,9 @@ The fzf compatibility surface for the native engine is tracked in
   execution, and result contracts, while moving visual composition into
   `projmuxpicker` so projmux can evolve a native picker design without coupling
   every visual tweak to the compatibility option/result shape.
+  Built-in fallback colors are centralized as semantic tokens in
+  `internal/theme/palette.go`; see [theme-palette.md](theme-palette.md) for the
+  current inventory and truecolor to tmux 256-color mapping policy.
 - `internal/ui/pickercompat` remains an internal compatibility mapper between
   the old option/result shape and the backend-neutral `picker.Options`
   contract. It is not a runtime backend. App code should
