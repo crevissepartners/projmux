@@ -180,6 +180,33 @@ func TestSettingsRootOptionsUsesCommandLookupEnvLocale(t *testing.T) {
 	}
 }
 
+func TestSettingsRootOptionsUsesGlobalConfigLocale(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[ui]
+locale = "ko-KR"
+`)
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "LC_ALL" {
+				return "en_US.UTF-8"
+			}
+			return ""
+		},
+	}
+
+	options := cmd.rootOptions(settingsRootTabGlobal)
+	if got, want := options.Title, "설정"; got != want {
+		t.Fatalf("root settings title = %q, want global config locale %q", got, want)
+	}
+	if !hasEntryLabelContaining(options.Entries, "프로젝트 선택기") {
+		t.Fatalf("root settings entries = %#v, want Korean labels from global config locale", options.Entries)
+	}
+}
+
 func TestSettingsTextKeysHaveFallbackCatalogEntries(t *testing.T) {
 	t.Parallel()
 
@@ -1416,6 +1443,201 @@ accent = "#9bcf8f"
 	}
 	if !hasEntryLabelContainingAll(entries, "accent", "#9bcf8f", "set override") {
 		t.Fatalf("project theme entries = %#v, want accent set override state", entries)
+	}
+}
+
+func TestSettingsAppearanceShowsLanguageLocaleDetail(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[ui]
+locale = "auto"
+`)
+	cmd := &settingsCommand{
+		ai:       testAICommand(home),
+		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "LC_MESSAGES" {
+				return "ko_KR.UTF-8"
+			}
+			return ""
+		},
+		runCommand: func(string, ...string) error { return nil },
+	}
+
+	appearance := cmd.statusbarEntries()
+	if !hasEntryValue(appearance, settingsAppearanceLanguage) {
+		t.Fatalf("appearance entries = %#v, want language/locale row", appearance)
+	}
+	if !hasEntryLabelContainingAll(appearance, "언어 / Locale", "auto", "ko-KR", "LC_MESSAGES env") {
+		t.Fatalf("appearance entries = %#v, want auto detected locale/source preview", appearance)
+	}
+
+	detail := cmd.localeEntries()
+	for _, want := range []string{
+		settingsActionPrefixLocale + "auto",
+		settingsActionPrefixLocale + "en-US",
+		settingsActionPrefixLocale + "ko-KR",
+	} {
+		if !hasEntryValue(detail, want) {
+			t.Fatalf("locale detail entries = %#v, want row %q", detail, want)
+		}
+	}
+	if !hasEntryLabelContainingAll(detail, "현재", "ko-KR", "LC_MESSAGES env") {
+		t.Fatalf("locale detail entries = %#v, want detected current locale/source", detail)
+	}
+	if !hasEntryLabelContainingAll(detail, "[ui].locale", "auto", "config.toml") {
+		t.Fatalf("locale detail entries = %#v, want global config setting row", detail)
+	}
+}
+
+func TestSettingsAppearanceLocaleEnvAutoBypassesGlobalConfig(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[ui]
+locale = "ko-KR"
+`)
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			switch name {
+			case "PROJMUX_LOCALE":
+				return "auto"
+			case "LC_ALL":
+				return "en_US.UTF-8"
+			case "LC_MESSAGES":
+				return "ko_KR.UTF-8"
+			default:
+				return ""
+			}
+		},
+	}
+
+	detail := cmd.localeEntries()
+	if !hasEntryLabelContainingAll(detail, "Current", "en-US", "LC_ALL env") {
+		t.Fatalf("locale detail entries = %#v, want PROJMUX_LOCALE=auto to bypass global config and use LC_ALL", detail)
+	}
+	if !hasEntryLabelContainingAll(detail, "PROJMUX_LOCALE", "auto", "env override") {
+		t.Fatalf("locale detail entries = %#v, want env auto override row", detail)
+	}
+	if !hasEntryLabelContainingAll(detail, "[ui].locale", "ko-KR", "config.toml") {
+		t.Fatalf("locale detail entries = %#v, want global config pin shown but not effective", detail)
+	}
+}
+
+func TestSettingsAppearanceLocaleDetailUsesCatalog(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[ui]
+locale = "ko-KR"
+`)
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+
+	options := cmd.localeOptions()
+	if got, want := options.Title, "모양 - 언어 / Locale"; got != want {
+		t.Fatalf("locale title = %q, want %q", got, want)
+	}
+	if got, want := options.Prompt, "설정 > 모양 > 언어 / Locale > "; got != want {
+		t.Fatalf("locale prompt = %q, want %q", got, want)
+	}
+	if got, want := options.Footer, "Enter: 적용  |  뒤로 행: 상위"; got != want {
+		t.Fatalf("locale footer = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContainingAll(options.Entries, "현재", "ko-KR", "config.toml") {
+		t.Fatalf("locale entries = %#v, want Korean Current row with preserved config.toml literal", options.Entries)
+	}
+	if !hasEntryLabelContainingAll(options.Entries, "한국어 UI", "현재") {
+		t.Fatalf("locale entries = %#v, want localized Korean UI/current description", options.Entries)
+	}
+}
+
+func TestSettingsAppearanceLocaleUnsupportedWarning(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[ui]
+locale = "ja-JP"
+`)
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "LC_MESSAGES" {
+				return "ko_KR.UTF-8"
+			}
+			return ""
+		},
+	}
+
+	detail := cmd.localeEntries()
+	if !hasEntryLabelContainingAll(detail, "Current", "en-US", "config.toml") {
+		t.Fatalf("locale detail entries = %#v, want fallback current locale from config source", detail)
+	}
+	if !hasEntryLabelContainingAll(detail, "Warning", "Unsupported locale ja-JP", "using en-US") {
+		t.Fatalf("locale detail entries = %#v, want unsupported locale fallback warning", detail)
+	}
+}
+
+func TestSettingsAppearanceLocaleEnvOverrideWinsAndLiteralsRemain(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[ui]
+locale = "ko-KR"
+`)
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_LOCALE" {
+				return "en-US"
+			}
+			if name == "LC_ALL" {
+				return "ko_KR.UTF-8"
+			}
+			return ""
+		},
+	}
+
+	detail := cmd.localeEntries()
+	if !hasEntryLabelContainingAll(detail, "Current", "en-US", "PROJMUX_LOCALE env") {
+		t.Fatalf("locale detail entries = %#v, want env override to win", detail)
+	}
+	for _, literal := range []string{"PROJMUX_LOCALE", "[ui].locale", "config.toml"} {
+		if !hasEntryLabelContaining(detail, literal) {
+			t.Fatalf("locale detail entries = %#v, want literal %q preserved", detail, literal)
+		}
+	}
+}
+
+func TestSettingsSetGlobalLocaleWritesUIConfig(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		runCommand: func(string, ...string) error { return nil },
+	}
+
+	if err := cmd.setGlobalLocale("ko-KR"); err != nil {
+		t.Fatalf("setGlobalLocale() error = %v", err)
+	}
+	got, err := hooks.LoadGlobalConfig(filepath.Join(home, ".config", "projmux", "config.toml"))
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig() error = %v", err)
+	}
+	if got.UI.Locale != "ko-KR" {
+		t.Fatalf("global UI locale = %q, want ko-KR", got.UI.Locale)
 	}
 }
 

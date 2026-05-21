@@ -8,6 +8,10 @@ import (
 const (
 	// FallbackLocale is the catalog locale every translated key must define.
 	FallbackLocale Locale = "en-US"
+	// LocaleSettingAuto means "detect from LC_ALL, LC_MESSAGES, LANG, then fallback".
+	LocaleSettingAuto = "auto"
+	// LocaleEnvName is the process-level locale override.
+	LocaleEnvName = "PROJMUX_LOCALE"
 )
 
 // Locale is a normalized BCP-47-ish locale tag used by the message catalog.
@@ -18,6 +22,8 @@ type LocaleSource string
 
 const (
 	LocaleSourceOverride   LocaleSource = "override"
+	LocaleSourceEnv        LocaleSource = "PROJMUX_LOCALE"
+	LocaleSourceConfig     LocaleSource = "global config"
 	LocaleSourceLCAll      LocaleSource = "LC_ALL"
 	LocaleSourceLCMessages LocaleSource = "LC_MESSAGES"
 	LocaleSourceLANG       LocaleSource = "LANG"
@@ -26,25 +32,54 @@ const (
 
 // LocaleResolution is the result of applying projmux locale precedence.
 type LocaleResolution struct {
-	Locale Locale
-	Source LocaleSource
+	Locale            Locale
+	Source            LocaleSource
+	Raw               string
+	UnsupportedLocale Locale
+	UnsupportedRaw    string
 }
 
-// LocaleOptions controls locale resolution for tests and future explicit APIs.
+func (r LocaleResolution) HasUnsupportedLocale() bool {
+	return r.UnsupportedLocale != "" || strings.TrimSpace(r.UnsupportedRaw) != ""
+}
+
+// LocaleOptions controls locale resolution for tests and explicit APIs.
 type LocaleOptions struct {
-	Override  string
-	LookupEnv func(string) (string, bool)
+	Override       string
+	EnvOverride    string
+	ConfigOverride string
+	LookupEnv      func(string) (string, bool)
 }
 
 // ResolveLocale applies projmux locale precedence:
-// explicit override/API > LC_ALL > LC_MESSAGES > LANG > en-US.
+// explicit override/API > PROJMUX_LOCALE > global config > LC_ALL >
+// LC_MESSAGES > LANG > en-US.
 func ResolveLocale(opts LocaleOptions) LocaleResolution {
-	if locale, ok := NormalizeLocale(opts.Override); ok {
-		return LocaleResolution{Locale: locale, Source: LocaleSourceOverride}
+	if resolution, ok := resolveLocaleCandidate(opts.Override, LocaleSourceOverride, true); ok {
+		return resolution
 	}
 	lookupEnv := opts.LookupEnv
 	if lookupEnv == nil {
 		lookupEnv = os.LookupEnv
+	}
+	envOverride := opts.EnvOverride
+	envOverrideSet := strings.TrimSpace(envOverride) != ""
+	if strings.TrimSpace(envOverride) == "" {
+		if raw, ok := lookupEnv(LocaleEnvName); ok {
+			envOverride = raw
+			envOverrideSet = true
+		}
+	}
+	envAuto := envOverrideSet && isAutoLocaleSetting(envOverride)
+	if !envAuto {
+		if resolution, ok := resolveLocaleCandidate(envOverride, LocaleSourceEnv, true); ok {
+			return resolution
+		}
+	}
+	if !envAuto && !isAutoLocaleSetting(opts.ConfigOverride) {
+		if resolution, ok := resolveLocaleCandidate(opts.ConfigOverride, LocaleSourceConfig, true); ok {
+			return resolution
+		}
 	}
 	for _, candidate := range []struct {
 		name   string
@@ -58,11 +93,53 @@ func ResolveLocale(opts LocaleOptions) LocaleResolution {
 		if !ok {
 			continue
 		}
-		if locale, ok := NormalizeLocale(raw); ok {
-			return LocaleResolution{Locale: locale, Source: candidate.source}
+		if resolution, ok := resolveLocaleCandidate(raw, candidate.source, false); ok {
+			return resolution
 		}
 	}
 	return LocaleResolution{Locale: FallbackLocale, Source: LocaleSourceFallback}
+}
+
+func resolveLocaleCandidate(raw string, source LocaleSource, explicit bool) (LocaleResolution, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || isAutoLocaleSetting(raw) {
+		return LocaleResolution{}, false
+	}
+	locale, ok := NormalizeLocale(raw)
+	if !ok {
+		if explicit {
+			return LocaleResolution{
+				Locale:         FallbackLocale,
+				Source:         source,
+				Raw:            raw,
+				UnsupportedRaw: raw,
+			}, true
+		}
+		return LocaleResolution{}, false
+	}
+	if IsSupportedLocale(locale) {
+		return LocaleResolution{Locale: locale, Source: source, Raw: raw}, true
+	}
+	return LocaleResolution{
+		Locale:            FallbackLocale,
+		Source:            source,
+		Raw:               raw,
+		UnsupportedLocale: locale,
+		UnsupportedRaw:    raw,
+	}, true
+}
+
+func isAutoLocaleSetting(raw string) bool {
+	return strings.EqualFold(strings.TrimSpace(raw), LocaleSettingAuto)
+}
+
+func IsSupportedLocale(locale Locale) bool {
+	switch locale {
+	case FallbackLocale, Locale("ko-KR"):
+		return true
+	default:
+		return false
+	}
 }
 
 // NormalizeLocale converts common POSIX and underscore forms into catalog tags.

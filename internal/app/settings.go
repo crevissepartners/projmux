@@ -113,6 +113,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsNotificationsHookActions:   {Name: "Hook quiet policy", Axis: settingsAxisGlobal},
 	settingsNotificationsQueue:         {Name: "In-app queue", Axis: settingsAxisGlobal},
 	settingsNotificationsHookOverride:  {Name: "Notification hook override", Axis: settingsAxisGlobal},
+	settingsAppearanceLanguage:         {Name: "Language / Locale", Axis: settingsAxisGlobal},
 	settingsLabsProjectHooks:           {Name: "Project Hooks", Axis: settingsAxisGlobal},
 	settingsLabsSidebarStartupPicker:   {Name: "Sidebar startup picker", Axis: settingsAxisGlobal},
 	settingsSessionStateDelete:         {Name: "Delete session snapshot", Axis: settingsAxisGlobal},
@@ -141,6 +142,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixHookView, settingsEntryMeta{Name: "Hook maker - view", Axis: settingsAxisBoth}},
 	{settingsActionPrefixKeymap, settingsEntryMeta{Name: "Keybindings", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixLabKeymap, settingsEntryMeta{Name: "Keybindings diagnostics", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixLocale, settingsEntryMeta{Name: "Language / Locale", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixPicker, settingsEntryMeta{Name: "Picker backend", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixProjectConfig, settingsEntryMeta{Name: "Project recipe", Axis: settingsAxisProject}},
 	{settingsActionPrefixWelcome, settingsEntryMeta{Name: "Welcome", Axis: settingsAxisGlobal}},
@@ -199,6 +201,7 @@ const (
 	settingsActionPrefixHooks              = "project-hooks:"
 	settingsActionPrefixKeymap             = "keymap:"
 	settingsActionPrefixLabKeymap          = "lab-keymap:"
+	settingsActionPrefixLocale             = "locale:"
 	settingsActionPrefixPicker             = "picker-backend:"
 	settingsActionPrefixProjectConfig      = "project-config:"
 	settingsActionPrefixWelcome            = "welcome:"
@@ -235,6 +238,7 @@ const (
 	settingsNotificationsHookActions       = "notifications:hook-actions"
 	settingsNotificationsQueue             = "notifications:queue"
 	settingsNotificationsHookOverride      = "notifications:hook-override"
+	settingsAppearanceLanguage             = "appearance:language"
 	settingsLabsProjectHooks               = "labs:project-hooks"
 	settingsLabsSidebarStartupPicker       = "labs:sidebar-startup-picker"
 	settingsLabKeybindings                 = "labs:keybindings"
@@ -407,7 +411,7 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 }
 
 func (c *settingsCommand) localizeSettingsOptions(options intpickercompat.Options) intpickercompat.Options {
-	locale := appLocale(c.lookupEnv)
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	options.Title = settingsCatalogTextLocale(locale, options.Title)
 	options.Prompt = settingsCatalogTextLocale(locale, options.Prompt)
 	options.Header = settingsCatalogTextLocale(locale, options.Header)
@@ -435,7 +439,7 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 		tab = settingsRootTabGlobal
 	}
 	ctx := c.resolveSettingsProjectContext()
-	locale := appLocale(c.lookupEnv)
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	return intpickercompat.Options{
 		UI:         "settings",
 		Entries:    c.rootEntriesForTabLocale(tab, locale),
@@ -477,7 +481,12 @@ func settingsRootTabChipsLocale(active settingsRootTab, hasProject bool, locale 
 }
 
 func settingsPassiveRootTabChips(active settingsRootTab, hasProject bool) []projmuxpicker.Chip {
-	chips := settingsRootTabChips(active, hasProject)
+	chips := settingsPassiveRootTabChipsLocale(active, hasProject, settingsLocaleFromEnv())
+	return chips
+}
+
+func settingsPassiveRootTabChipsLocale(active settingsRootTab, hasProject bool, locale i18n.Locale) []projmuxpicker.Chip {
+	chips := settingsRootTabChipsLocale(active, hasProject, locale)
 	for i := range chips {
 		chips[i].ClickValue = ""
 	}
@@ -2295,8 +2304,9 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 		statusbarDecorationTargetNotify,
 	}
 
-	entries := make([]intpickercompat.Entry, 0, len(targets)+2)
+	entries := make([]intpickercompat.Entry, 0, len(targets)+3)
 	entries = append(entries, settingsBackEntry())
+	entries = append(entries, c.localeSettingsEntry())
 	entries = append(entries, c.themeFontStatusEntry())
 	for _, target := range targets {
 		meta, ok := statusbarDecorationTargetMeta(target)
@@ -2376,6 +2386,10 @@ func (c *settingsCommand) runAppearanceSection(stdout, stderr io.Writer) error {
 			return nil
 		case action == settingsNoopValue:
 			continue
+		case action == settingsAppearanceLanguage:
+			if err := c.runLocaleSection(stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, settingsActionPrefixStatusbar):
 			target, ok := parseStatusbarDecorationTarget(strings.TrimPrefix(action, settingsActionPrefixStatusbar))
 			if !ok {
@@ -4674,7 +4688,7 @@ func (c *settingsCommand) runWelcomeSettingsViewer() error {
 func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options {
 	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
 	var body strings.Builder
-	locale := appLocale(c.lookupEnv)
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	_ = writeShellWelcome(&body, welcomeCurrentVersion(), status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv), locale)
 	entries := []intpickercompat.Entry{settingsBackEntry()}
 	for line := range strings.SplitSeq(strings.Trim(body.String(), "\n"), "\n") {

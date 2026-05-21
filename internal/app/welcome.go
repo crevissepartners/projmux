@@ -30,7 +30,7 @@ func (c *shellCommand) promptWelcome(stdout, stderr io.Writer) (bool, error) {
 	status, hasStatus := c.welcomeUpdateStatus()
 	skipped := hasStatus && c.updatePromptSkipped(status)
 	updateAvailable := hasStatus && shouldPromptShellUpdate(status)
-	locale := appLocale(c.env)
+	locale := appLocale(c.homeDir, c.env)
 	if err := writeShellWelcome(stdout, current, status, hasStatus, updateAvailable, skipped, c.welcomeWidth(), locale); err != nil {
 		return hasStatus, err
 	}

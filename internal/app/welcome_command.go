@@ -59,7 +59,7 @@ func (c *welcomeCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runPopup(*force)
 	}
 	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
-	return writeShellWelcome(stdout, strings.TrimSpace(version.String()), status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv), appLocale(c.lookupEnv))
+	return writeShellWelcome(stdout, strings.TrimSpace(version.String()), status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv), appLocale(c.homeDir, c.lookupEnv))
 }
 
 func printWelcomeUsage(w io.Writer) {
@@ -83,7 +83,7 @@ func (c *welcomeCommand) runPopup(force bool) error {
 
 	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
 	var body bytes.Buffer
-	if err := writeShellWelcome(&body, current, status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv), appLocale(c.lookupEnv)); err != nil {
+	if err := writeShellWelcome(&body, current, status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv), appLocale(c.homeDir, c.lookupEnv)); err != nil {
 		return nil
 	}
 	body.WriteString(displayOnlyPopupClosePromptLine() + "\n")

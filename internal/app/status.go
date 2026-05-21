@@ -362,7 +362,7 @@ func (c *statusCommand) locale() i18n.Locale {
 	if c == nil {
 		return i18n.FallbackLocale
 	}
-	return appLocale(c.lookupEnv)
+	return appLocale(c.homeDir, c.lookupEnv)
 }
 
 func (c *statusCommand) read(name string, args ...string) ([]byte, error) {

@@ -23,11 +23,16 @@ type ProjectConfig struct {
 	Env        map[string]string
 	Kube       KubeConfig
 	Theme      theme.ThemeConfig
+	UI         UIConfig
 }
 
 type KubeConfig struct {
 	Context   string
 	Namespace string
+}
+
+type UIConfig struct {
+	Locale string
 }
 
 func (c ProjectConfig) SessionEnv() map[string]string {
@@ -173,7 +178,7 @@ func loadProjectConfig(path string) (ProjectConfig, error) {
 
 func isSupportedProjectConfigSection(section string) bool {
 	switch section {
-	case "startup", "env", "kube", "theme":
+	case "startup", "env", "kube", "theme", "ui":
 		return true
 	}
 	if eventName, ok := strings.CutPrefix(section, "hooks."); ok {
@@ -206,6 +211,13 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 	case "theme":
 		if err := applyProjectThemeConfigValue(&cfg.Theme, key, value, lineNo); err != nil {
 			return err
+		}
+	case "ui":
+		switch key {
+		case "locale":
+			cfg.UI.Locale = value
+		default:
+			return fmt.Errorf("line %d: unsupported ui key %q", lineNo, key)
 		}
 	default:
 		eventName, ok := strings.CutPrefix(section, "hooks.")
@@ -329,6 +341,7 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 	cfg.Kube.Context = strings.TrimSpace(cfg.Kube.Context)
 	cfg.Kube.Namespace = strings.TrimSpace(cfg.Kube.Namespace)
 	cfg.Theme.Normalize()
+	cfg.UI.Locale = strings.TrimSpace(cfg.UI.Locale)
 }
 
 func validateProjectConfig(cfg ProjectConfig) error {
@@ -415,6 +428,9 @@ func renderProjectConfig(cfg ProjectConfig) string {
 	}
 	if cfg.Theme.HasContent() {
 		sections = append(sections, renderThemeConfigSection(cfg.Theme))
+	}
+	if cfg.UI.Locale != "" {
+		sections = append(sections, fmt.Sprintf("[ui]\nlocale = %s\n", strconv.Quote(strings.TrimSpace(cfg.UI.Locale))))
 	}
 	if len(sections) == 0 {
 		return ""

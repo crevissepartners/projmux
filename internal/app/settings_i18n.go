@@ -51,6 +51,7 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Appearance - Path icon":                                        "settings.title.appearance_path_icon",
 	"Appearance - Git icon":                                         "settings.title.appearance_git_icon",
 	"Appearance - Notify icon":                                      "settings.title.appearance_notify_icon",
+	"Appearance - Language / Locale":                                "settings.title.appearance_language_locale",
 	"Keybinding Lab - Diagnose delivery":                            "settings.title.keybinding_lab_diagnose_delivery",
 	"Labs - Sidebar startup picker":                                 "settings.title.labs_sidebar_startup_picker",
 	"Labs - Project Hooks":                                          "settings.title.labs_project_hooks",
@@ -87,6 +88,7 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Settings > Labs > Project Hooks > ":                  "settings.prompt.settings_labs_project_hooks",
 	"Settings > Labs > Keybindings > ":                    "settings.prompt.settings_labs_keybindings",
 	"Settings > Labs > Keybindings > Action > ":           "settings.prompt.settings_labs_keybindings_action",
+	"Settings > Appearance > Language / Locale > ":        "settings.prompt.settings_appearance_language_locale",
 
 	"Project Picker":       "settings.text.project_picker",
 	"AI Settings":          "settings.text.ai_settings",
@@ -102,6 +104,9 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Hooks (project)":      "settings.text.hooks_project",
 	"Project recipe":       "settings.text.project_recipe",
 	"Effective merge view": "settings.text.effective_merge_view",
+	"Language / Locale":    "settings.text.language_locale",
+	"Warning":              "settings.text.warning",
+	"Current":              "settings.text.current",
 
 	"project roots, workdirs, and pins":              "settings.text.project_roots_workdirs_pins",
 	"default split mode":                             "settings.text.default_split_mode",
@@ -159,6 +164,17 @@ var settingsTextKeys = map[string]i18n.Key{
 	"run installer-specific update command":         "settings.text.run_installer_update",
 	"refresh cached GitHub release metadata":        "settings.text.refresh_github_release_metadata",
 	"status unavailable":                            "settings.text.status_unavailable",
+	"unreadable":                                    "settings.text.unreadable",
+	"global config unreadable":                      "settings.text.global_config_unreadable",
+	"warning":                                       "settings.text.warning_lower",
+	"current":                                       "settings.text.current_lower",
+	"env override":                                  "settings.text.env_override",
+	"built-in fallback":                             "settings.text.built_in_fallback",
+	"explicit override":                             "settings.text.explicit_override",
+	"English UI":                                    "settings.text.english_ui",
+	"Korean UI":                                     "settings.text.korean_ui",
+	"detect from LC_ALL, LC_MESSAGES, LANG":         "settings.text.detect_locale_env",
+	"unsupported":                                   "settings.text.unsupported",
 	"Choose the default split mode for future AI launches.":                                "settings.footer.choose_default_ai_split",
 	"Choose an agent or shell target to launch.":                                           "settings.footer.choose_agent_or_shell",
 	"Session state overview is read-only here.":                                            "settings.footer.session_state_read_only",
@@ -199,7 +215,7 @@ var settingsTextKeys = map[string]i18n.Key{
 }
 
 func settingsLocaleFromEnv() i18n.Locale {
-	return appLocale(os.Getenv)
+	return appLocale(nil, os.Getenv)
 }
 
 func settingsCatalogText(fallback string) string {
@@ -207,7 +223,10 @@ func settingsCatalogText(fallback string) string {
 }
 
 func settingsCatalogTextLocale(locale i18n.Locale, fallback string) string {
-	key, ok := settingsTextKeys[strings.TrimSpace(fallback)]
+	key, ok := settingsTextKeys[fallback]
+	if !ok {
+		key, ok = settingsTextKeys[strings.TrimSpace(fallback)]
+	}
 	if !ok {
 		return fallback
 	}
