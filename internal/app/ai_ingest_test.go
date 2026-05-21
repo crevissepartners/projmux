@@ -133,7 +133,7 @@ func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing
 	if got.ID != "ai:codex:permission:codex-session:turn-456:Bash:go test ./internal/app" {
 		t.Fatalf("ID = %q", got.ID)
 	}
-	if got.Text != "Codex · 승인 필요 · Bash: go test ./internal/app" {
+	if got.Text != "Codex · Approval required · Bash: go test ./internal/app" {
 		t.Fatalf("Text = %q", got.Text)
 	}
 	if got.Severity != notify.SeverityCritical {
@@ -165,7 +165,7 @@ func TestIngestCodexHookStopPushesInfoQueueEntry(t *testing.T) {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 	got := store.pushed[0]
-	if got.ID != "ai:codex:stop:codex-session:turn-456" || got.Text != "Codex · 응답 완료" || got.Severity != notify.SeverityInfo {
+	if got.ID != "ai:codex:stop:codex-session:turn-456" || got.Text != "Codex · Response complete" || got.Severity != notify.SeverityInfo {
 		t.Fatalf("pushed = %#v", got)
 	}
 }
@@ -738,12 +738,12 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				ToolName:  "Bash",
 				ToolInput: map[string]any{"command": "go test ./internal/app"},
 			}),
-			want: aiNotifyBody{Text: "Codex · 승인 필요 · Bash: go test ./internal/app", Severity: notify.SeverityCritical},
+			want: aiNotifyBody{Text: "Codex · Approval required · Bash: go test ./internal/app", Severity: notify.SeverityCritical},
 		},
 		{
 			name: "codex hook stop",
 			body: formatCodexHookStopNotifyBody(codexHookPayload{}),
-			want: aiNotifyBody{Text: "Codex · 응답 완료", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "Codex · Response complete", Severity: notify.SeverityInfo},
 		},
 		{
 			name: "claude notification permission prompt",
@@ -751,7 +751,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				NotificationType: "permission_prompt",
 				Message:          "Approve Bash?",
 			}),
-			want: aiNotifyBody{Text: "Claude · 승인 필요 · Approve Bash?", Severity: notify.SeverityCritical},
+			want: aiNotifyBody{Text: "Claude · Approval required · Approve Bash?", Severity: notify.SeverityCritical},
 		},
 		{
 			name: "claude notification idle",
@@ -759,7 +759,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				NotificationType: "idle_prompt",
 				Message:          "Waiting for your next request",
 			}),
-			want: aiNotifyBody{Text: "Claude · 응답 완료 · Waiting for your next request", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "Claude · Response complete · Waiting for your next request", Severity: notify.SeverityInfo},
 		},
 		{
 			name: "claude permission request bash command",
@@ -768,12 +768,12 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				ToolUseID: "tool-123",
 				ToolInput: map[string]any{"command": "rm -rf /tmp/old-cache"},
 			}),
-			want: aiNotifyBody{Text: "Claude · 승인 필요 · Bash: rm -rf /tmp/old-cache", Severity: notify.SeverityCritical},
+			want: aiNotifyBody{Text: "Claude · Approval required · Bash: rm -rf /tmp/old-cache", Severity: notify.SeverityCritical},
 		},
 		{
 			name: "claude stop transcript summary",
 			body: formatClaudeStopNotifyBody("implemented and verified"),
-			want: aiNotifyBody{Text: "Claude · 응답 완료 · implemented and verified", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "Claude · Response complete · implemented and verified", Severity: notify.SeverityInfo},
 		},
 		{
 			name: "claude stop failure error labels",
@@ -781,7 +781,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				ErrorType:    "timeout",
 				ErrorMessage: "tool call exceeded deadline",
 			}),
-			want: aiNotifyBody{Text: "Claude · 오류 · timeout · tool call exceeded deadline", Severity: notify.SeverityCritical},
+			want: aiNotifyBody{Text: "Claude · Error · timeout · tool call exceeded deadline", Severity: notify.SeverityCritical},
 		},
 		{
 			name: "claude subagent stop labels",
@@ -789,7 +789,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				SubagentType: "reviewer",
 				SubagentID:   "sub-7",
 			}),
-			want: aiNotifyBody{Text: "Claude · 서브에이전트 종료 · reviewer · sub-7", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "Claude · Subagent stopped · reviewer · sub-7", Severity: notify.SeverityInfo},
 		},
 		{
 			name: "claude teammate idle labels",
@@ -798,7 +798,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				TeammateID:      "team-3",
 				TeammateContext: "waiting for review",
 			}),
-			want: aiNotifyBody{Text: "Claude · 팀메이트 대기 · sam · team-3 · waiting for review", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "Claude · Teammate waiting · sam · team-3 · waiting for review", Severity: notify.SeverityInfo},
 		},
 	}
 
@@ -843,7 +843,7 @@ func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
 		}
 	}
 
-	text := "Codex · 승인 필요 · Bash: go test ./internal/app"
+	text := "Codex · Approval required · Bash: go test ./internal/app"
 	notification := cmd.aiTextNotification("%7", text, notify.SeverityCritical)
 	if notification.Summary != text {
 		t.Fatalf("Summary = %q, want queue text %q", notification.Summary, text)
@@ -961,7 +961,7 @@ func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.
 	if got.ID != "ai:claude:permission:claude-session:tool-123" {
 		t.Fatalf("ID = %q", got.ID)
 	}
-	if got.Text != "Claude · 승인 필요 · Bash: go test ./internal/app" {
+	if got.Text != "Claude · Approval required · Bash: go test ./internal/app" {
 		t.Fatalf("Text = %q", got.Text)
 	}
 	if got.Severity != notify.SeverityCritical {
@@ -993,7 +993,7 @@ func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook Stop error = %v", err)
 	}
-	if len(store.pushed) != 1 || store.pushed[0].Text != "Claude · 응답 완료 · implemented and verified" {
+	if len(store.pushed) != 1 || store.pushed[0].Text != "Claude · Response complete · implemented and verified" {
 		t.Fatalf("pushed = %#v", store.pushed)
 	}
 
@@ -1009,7 +1009,7 @@ func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook Stop without transcript error = %v", err)
 	}
-	if len(store.pushed) != 1 || store.pushed[0].Text != "Claude · 응답 완료" {
+	if len(store.pushed) != 1 || store.pushed[0].Text != "Claude · Response complete" {
 		t.Fatalf("fallback pushed = %#v", store.pushed)
 	}
 }
@@ -1035,7 +1035,7 @@ func TestIngestClaudeNotificationMapsInputReady(t *testing.T) {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 	got := store.pushed[0]
-	if got.Text != "Claude · 입력 필요 · Need deployment target" || got.Severity != notify.SeverityCritical {
+	if got.Text != "Claude · Input required · Need deployment target" || got.Severity != notify.SeverityCritical {
 		t.Fatalf("pushed = %#v", got)
 	}
 }
@@ -1060,7 +1060,7 @@ func TestIngestClaudeExtraEvents(t *testing.T) {
 				"error_message": "tool call exceeded deadline"
 			}`,
 			wantID:       "ai:claude:stop-failure:claude-session:timeout:tool call exceeded deadline",
-			wantText:     "Claude · 오류 · timeout · tool call exceeded deadline",
+			wantText:     "Claude · Error · timeout · tool call exceeded deadline",
 			wantSeverity: notify.SeverityCritical,
 			wantPush:     true,
 			wantMetadata: map[string]string{
@@ -1088,7 +1088,7 @@ func TestIngestClaudeExtraEvents(t *testing.T) {
 				"teammate": {"name": "sam", "id": "team-3", "context": "waiting for review"}
 			}`,
 			wantID:       "ai:claude:teammate-idle:claude-session:sam:team-3:waiting for review",
-			wantText:     "Claude · 팀메이트 대기 · sam · team-3 · waiting for review",
+			wantText:     "Claude · Teammate waiting · sam · team-3 · waiting for review",
 			wantSeverity: notify.SeverityInfo,
 			wantPush:     true,
 			wantMetadata: map[string]string{
@@ -1197,7 +1197,7 @@ func TestIngestClaudeRuntimeNotifyAppliesToKnownQuietEvent(t *testing.T) {
 	if len(store.pushed) != 1 {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
-	if got := store.pushed[0].Text; got != "Claude · 서브에이전트 종료 · reviewer · sub-7" {
+	if got := store.pushed[0].Text; got != "Claude · Subagent stopped · reviewer · sub-7" {
 		t.Fatalf("Text = %q", got)
 	}
 }
