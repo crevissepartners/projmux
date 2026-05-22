@@ -23,6 +23,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
@@ -581,7 +582,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Entries, []intpickercompat.Entry{
-		{Label: "\x1b[1m\x1b[32mapp\x1b[0m      \n\x1b[2m/tmp/app\x1b[0m \x1b[1;38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m", Value: "/tmp/app", SearchKey: "app"},
+		expectedSidebarEntry("app", "/tmp/app", "/tmp/app", "existing", false),
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -690,12 +691,12 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 	}
 
 	initialLabel := gotNativeOptions.Items[0].EffectiveLabel()
-	if got, want := len(strings.Split(initialLabel, "\n")), 3; got != want {
-		t.Fatalf("initial row line count = %d, want %d: %q", got, want, initialLabel)
+	if strings.Contains(initialLabel, "\n") {
+		t.Fatalf("initial row = %q, want compact single-line sidebar row", initialLabel)
 	}
 	deferredLabel := gotDeferred.Items[0].EffectiveLabel()
-	if got, want := len(strings.Split(deferredLabel, "\n")), 3; got != want {
-		t.Fatalf("deferred row line count = %d, want %d: %q", got, want, deferredLabel)
+	if strings.Contains(deferredLabel, "\n") {
+		t.Fatalf("deferred row = %q, want compact single-line sidebar row", deferredLabel)
 	}
 	if !strings.Contains(deferredLabel, "●") {
 		t.Fatalf("deferred entry = %q, want attention marker", deferredLabel)
@@ -811,8 +812,8 @@ func TestSwitchCommandNativeSidebarDefersGitWindowsAttentionAndPreview(t *testin
 				t.Fatalf("preview command before first paint = %q, want deferred", options.Preview.Command)
 			}
 			initialLabel := options.Items[0].EffectiveLabel()
-			if got, want := len(strings.Split(initialLabel, "\n")), 3; got != want {
-				t.Fatalf("initial row line count = %d, want %d: %q", got, want, initialLabel)
+			if strings.Contains(initialLabel, "\n") {
+				t.Fatalf("initial row = %q, want compact single-line sidebar row", initialLabel)
 			}
 			if strings.Contains(initialLabel, "branch-main") || strings.Contains(initialLabel, " server ") || strings.Contains(initialLabel, "●") {
 				t.Fatalf("initial item = %q, want reserved lanes without metadata", initialLabel)
@@ -3182,12 +3183,21 @@ func pickerItemSearchTexts(items []intpicker.Item) []string {
 }
 
 func expectedCheapSidebarEntry(name, displayPath, value string, pinned bool) intpickercompat.Entry {
-	statusLane := "     "
-	if pinned {
-		statusLane = "    \x1b[33m*\x1b[0m"
-	}
+	return expectedSidebarEntry(name, displayPath, value, "new", pinned)
+}
+
+func expectedSidebarEntry(name, displayPath, value, modeLabel string, pinned bool) intpickercompat.Entry {
+	row := intrender.BuildSwitchRows([]intrender.SwitchCandidate{{
+		Path:        value,
+		DisplayPath: displayPath,
+		DisplayName: name,
+		SessionName: name,
+		ModeLabel:   modeLabel,
+		UI:          "sidebar",
+		Pinned:      pinned,
+	}})[0]
 	return intpickercompat.Entry{
-		Label:     name + " " + statusLane + "\n\x1b[2m" + displayPath + "\x1b[0m \x1b[38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m",
+		Label:     row.Item.EffectiveLabel(),
 		Value:     value,
 		SearchKey: name,
 	}
