@@ -107,7 +107,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsKeybindingsInit:            {Name: "Keybinding Init", Axis: settingsAxisGlobal},
 	settingsAIDefaultMode:              {Name: "Default split mode", Axis: settingsAxisGlobal},
 	settingsAINotifyDiagnostics:        {Name: "AI notify diagnostics", Axis: settingsAxisGlobal},
-	settingsNotificationsDesktop:       {Name: "Desktop notifications", Axis: settingsAxisGlobal},
+	settingsNotificationsDesktop:       {Name: "Desktop notification settings", Axis: settingsAxisGlobal},
 	settingsNotificationsAIDedupe:      {Name: "AI notification dedupe", Axis: settingsAxisGlobal},
 	settingsNotificationsDelivery:      {Name: "Delivery sources", Axis: settingsAxisGlobal},
 	settingsNotificationsHookActions:   {Name: "Hook quiet policy", Axis: settingsAxisGlobal},
@@ -130,7 +130,7 @@ var settingsEntryPrefixCatalog = []struct {
 }{
 	{settingsActionPrefixAI, settingsEntryMeta{Name: "AI Settings", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAINotifyDiagnostic, settingsEntryMeta{Name: "AI notify diagnostics", Axis: settingsAxisGlobal}},
-	{settingsActionPrefixDesktopNotifyMode, settingsEntryMeta{Name: "Desktop notifications", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixDesktopNotifyMode, settingsEntryMeta{Name: "Desktop notification mode", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAINotifyDedupe, settingsEntryMeta{Name: "AI notification dedupe", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAIHookProvider, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAIHookEvent, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
@@ -1794,12 +1794,13 @@ func (c *settingsCommand) runNotificationsAIDedupeCustom(stdout, stderr io.Write
 }
 
 func (c *settingsCommand) runNotificationsDesktopSection(stdout, stderr io.Writer) error {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-notifications-desktop",
 			Entries:    c.desktopNotifyEntries(),
-			Title:      "Notifications - Desktop notifications",
-			Prompt:     "Settings > Notifications > Desktop notifications > ",
+			Title:      settingsNotificationsDesktopTitle(locale),
+			Prompt:     settingsNotificationsDesktopPrompt(locale),
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -1873,6 +1874,7 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 }
 
 func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
 	dedupe := c.currentAINotifyDedupeSeconds()
 	hookSummary := "not set"
@@ -1884,36 +1886,48 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 	return []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Desktop notifications", string(notifyMode)+" - "+string(notifySource)),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNotificationsDesktopLabel(locale), string(notifyMode)+" - "+string(notifySource)),
 			Value:     settingsNotificationsDesktop,
 			SearchKey: "desktop notifications none notify raise toast osfocus",
 		},
 		{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "AI notification dedupe", fmt.Sprintf("%ds - %s", dedupe.Seconds, dedupe.Source)),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "AI notification dedupe", fmt.Sprintf("%ds - %s", dedupe.Seconds, dedupe.Source)),
 			Value:     settingsNotificationsAIDedupe,
 			SearchKey: "AI notification dedupe seconds duration duplicate collapse desktop",
 		},
 		{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Delivery sources", c.aiNotifyDiagnosticsSummary()),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Delivery sources", c.aiNotifyDiagnosticsSummary()),
 			Value:     settingsNotificationsDelivery,
 			SearchKey: "delivery sources producer setup doctor codex claude tmux bell hooks diagnostics",
 		},
 		{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Hook quiet policy", c.aiHookActionsSummary()),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Hook quiet policy", c.aiHookActionsSummary()),
 			Value:     settingsNotificationsHookActions,
 			SearchKey: "hook quiet policy runtime action codex claude notify state quiet",
 		},
 		{
-			Label:     settingsLabelInfo("In-app queue", "statusbar/sidebar", "consume pending notify rows"),
+			Label:     settingsLabelInfoLocale(locale, "In-app queue", "statusbar/sidebar", "consume pending notify rows"),
 			Value:     settingsNotificationsQueue,
 			SearchKey: "in app queue notify sidebar statusbar pending",
 		},
 		{
-			Label:     settingsLabelInfo("Notification hook override", hookSummary, "PROJMUX_NOTIFY_HOOK env"),
+			Label:     settingsLabelInfoLocale(locale, "Notification hook override", hookSummary, "PROJMUX_NOTIFY_HOOK env"),
 			Value:     settingsNotificationsHookOverride,
 			SearchKey: "PROJMUX_NOTIFY_HOOK notification hook override env",
 		},
 	}
+}
+
+func settingsNotificationsDesktopLabel(locale i18n.Locale) string {
+	return localizeText(locale, i18n.KeySettingsNotificationsDesktop, string(i18n.KeySettingsNotificationsDesktop))
+}
+
+func settingsNotificationsDesktopTitle(locale i18n.Locale) string {
+	return localizeText(locale, i18n.Key("settings.title.notifications_desktop"), "settings.title.notifications_desktop")
+}
+
+func settingsNotificationsDesktopPrompt(locale i18n.Locale) string {
+	return localizeText(locale, i18n.Key("settings.prompt.settings_desktop_notifications"), "settings.prompt.settings_desktop_notifications")
 }
 
 func (c *settingsCommand) runNotificationsHookActionsSection(stdout, stderr io.Writer) error {
@@ -4137,11 +4151,12 @@ func (c *settingsCommand) labsProjectHooksEntries() []intpickercompat.Entry {
 }
 
 func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
 	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
-			Label: settingsLabelInfo("Desktop notifications", string(notifyMode), string(notifySource)),
+			Label: settingsLabelInfoLocale(locale, settingsNotificationsDesktopLabel(locale), string(notifyMode), string(notifySource)),
 			Value: settingsNoopValue,
 		},
 	}
