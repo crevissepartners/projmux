@@ -999,6 +999,30 @@ func TestClientSessionExistsReturnsFalseWhenSessionIsMissing(t *testing.T) {
 	}
 }
 
+func TestClientExistingSessionsReturnsSessionNameSet(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t:     t,
+		steps: []scriptedStep{{output: []byte("workspace\nother\n")}},
+	}
+	client := NewClient(runner)
+
+	sessions, err := client.ExistingSessions(context.Background())
+	if err != nil {
+		t.Fatalf("ExistingSessions() error = %v", err)
+	}
+	if got, want := sessions, map[string]bool{"workspace": true, "other": true}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ExistingSessions() = %#v, want %#v", got, want)
+	}
+	if got, want := runner.calls, []commandCall{{
+		name: "tmux",
+		args: []string{"list-sessions", "-F", "#{session_name}"},
+	}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls = %#v, want %#v", got, want)
+	}
+}
+
 func TestClientOpenSessionSwitchesInsideTmux(t *testing.T) {
 	t.Parallel()
 

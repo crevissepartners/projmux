@@ -177,6 +177,27 @@ func TestExecRunnerTreatsSocketPrefixedAttachAsInteractive(t *testing.T) {
 	}
 }
 
+func TestClientExistingSessionsReturnsSessionNameSet(t *testing.T) {
+	runner := &recordingRunner{
+		outputs: map[string]string{
+			callKey(recordedCall{name: "psmux", args: []string{"-L", "projmux", "list-sessions", "-F", "#{session_name}"}}): "home\nwork\n",
+		},
+	}
+	client := NewClient(runner, WithSocketName("projmux"))
+
+	sessions, err := client.ExistingSessions(context.Background())
+	if err != nil {
+		t.Fatalf("ExistingSessions() error = %v", err)
+	}
+	if got, want := sessions, map[string]bool{"home": true, "work": true}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ExistingSessions() = %#v, want %#v", got, want)
+	}
+	wantCalls := []recordedCall{{name: "psmux", args: []string{"-L", "projmux", "list-sessions", "-F", "#{session_name}"}}}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+}
+
 func callKey(call recordedCall) string {
 	return strings.Join(append([]string{call.name}, call.args...), "\x00")
 }

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -562,11 +564,11 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotRunnerOptions.Footer, "Alt-P: pin project  |  Ctrl-X: kill session"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=sidebar' {2}"; got != want {
-		t.Fatalf("runner preview command = %q, want %q", got, want)
+	if got, want := gotRunnerOptions.PreviewCommand, ""; got != want {
+		t.Fatalf("runner preview command = %q, want deferred preview", got)
 	}
-	if got, want := gotRunnerOptions.PreviewWindow, "down,25%,border-top"; got != want {
-		t.Fatalf("runner preview window = %q, want %q", got, want)
+	if got, want := gotRunnerOptions.PreviewWindow, ""; got != want {
+		t.Fatalf("runner preview window = %q, want deferred preview", got)
 	}
 	if got, want := gotRunnerOptions.Bindings, []string{
 		"esc:abort",
@@ -654,18 +656,23 @@ func TestSwitchCommandNativeSidebarSetsTitle(t *testing.T) {
 func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 	t.Parallel()
 
-	var gotRunnerOptions intpickercompat.Options
-	runner, native := scriptedPicker(t, []pickerStep{
-		{observe: func(o intpickercompat.Options) { gotRunnerOptions = o }},
-	})
+	var gotNativeOptions intpicker.Options
+	var gotDeferred intpicker.DeferredUpdate
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       runner,
-		nativePicker: native,
-		sessions:     &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			gotNativeOptions = options
+			var err error
+			gotDeferred, err = options.DeferredUpdate()
+			if err != nil {
+				t.Fatalf("DeferredUpdate() error = %v", err)
+			}
+			return intpicker.Result{}, nil
+		}),
+		sessions: &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
 		inventory: &stubPreviewInventory{panes: []corepreview.Pane{{
 			SessionName:    "tmp-app",
 			Title:          "server",
@@ -682,8 +689,221 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := gotRunnerOptions.Entries[0].Label, "\x1b[1m\x1b[32mapp\x1b[0m \x1b[38;2;255;204;102m●\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
-		t.Fatalf("runner entry = %q, want %q", got, want)
+	if got, want := gotNativeOptions.Items[0].EffectiveLabel(), "\x1b[1m\x1b[32mapp\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
+		t.Fatalf("initial entry = %q, want cheap row %q", got, want)
+	}
+	if got, want := gotDeferred.Items[0].EffectiveLabel(), "\x1b[1m\x1b[32mapp\x1b[0m \x1b[38;2;255;204;102m●\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
+		t.Fatalf("deferred entry = %q, want enriched row %q", got, want)
+	}
+	if got, want := gotDeferred.Preview.Window, "down,25%,border-top"; got != want {
+		t.Fatalf("deferred preview window = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandSidebarUsesBulkExistingSessionMap(t *testing.T) {
+	t.Parallel()
+
+	executor := &bulkSwitchSessionExecutor{existing: map[string]bool{"tmp-live": true}}
+	cmd := &switchCommand{
+		sessions: executor,
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			switch path {
+			case "/tmp/live":
+				return "tmp-live", nil
+			case "/tmp/new":
+				return "tmp-new", nil
+			default:
+				return "", errors.New("unexpected path")
+			}
+		}),
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		homeDir:  func() (string, error) { return "/home/tester", nil },
+	}
+
+	rows, _, _, err := cmd.renderRows(context.Background(), switchUISidebar, []string{"/tmp/live", "/tmp/new"})
+	if err != nil {
+		t.Fatalf("renderRows() error = %v", err)
+	}
+	if executor.bulkCalls != 1 {
+		t.Fatalf("ExistingSessions calls = %d, want 1", executor.bulkCalls)
+	}
+	if len(executor.existsCalls) != 0 {
+		t.Fatalf("SessionExists calls = %q, want none", executor.existsCalls)
+	}
+	if got, want := rows[0].Value, "/tmp/live"; got != want {
+		t.Fatalf("first row value = %q, want existing session first", got)
+	}
+	if !strings.Contains(rows[0].Label, "\x1b[32mlive\x1b[0m") {
+		t.Fatalf("existing row label = %q, want existing styling", rows[0].Label)
+	}
+	if !strings.Contains(rows[1].Label, "\x1b[1mnew\x1b[0m") {
+		t.Fatalf("new row label = %q, want new styling", rows[1].Label)
+	}
+}
+
+func TestSwitchCommandBulkExistingSessionFailureFallsBackPerCandidate(t *testing.T) {
+	t.Parallel()
+
+	executor := &bulkSwitchSessionExecutor{
+		existing: map[string]bool{"tmp-live": true},
+		bulkErr:  errors.New("list failed"),
+	}
+	cmd := &switchCommand{
+		sessions: executor,
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			switch path {
+			case "/tmp/live":
+				return "tmp-live", nil
+			case "/tmp/live-copy":
+				return "tmp-live", nil
+			case "/tmp/new":
+				return "tmp-new", nil
+			default:
+				return "", errors.New("unexpected path")
+			}
+		}),
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		homeDir:  func() (string, error) { return "/home/tester", nil },
+	}
+
+	if _, _, _, err := cmd.renderRows(context.Background(), switchUISidebar, []string{"/tmp/live", "/tmp/live-copy", "/tmp/new"}); err != nil {
+		t.Fatalf("renderRows() error = %v", err)
+	}
+	if executor.bulkCalls != 1 {
+		t.Fatalf("ExistingSessions calls = %d, want 1", executor.bulkCalls)
+	}
+	if got, want := sortedStrings(executor.existsCalls), []string{"tmp-live", "tmp-new"}; !equalStrings(got, want) {
+		t.Fatalf("SessionExists calls = %q, want unique fallback calls %q", got, want)
+	}
+}
+
+func TestSwitchCommandNativeSidebarDefersGitWindowsAttentionAndPreview(t *testing.T) {
+	t.Parallel()
+
+	var gitCalls []string
+	inventory := &stubPreviewInventory{
+		windows: []corepreview.Window{{Index: "0", Name: "main", Active: true}},
+		panes: []corepreview.Pane{{
+			SessionName:    "tmp-app",
+			WindowIndex:    "0",
+			Title:          "server",
+			AttentionState: attentionStateBusy,
+		}},
+	}
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			if len(gitCalls) != 0 {
+				t.Fatalf("git calls before first paint = %q, want none", gitCalls)
+			}
+			if len(inventory.sessionWindowsSessions) != 0 || len(inventory.sessionPanesSessions) != 0 {
+				t.Fatalf("inventory before first paint = windows %q panes %q, want none", inventory.sessionWindowsSessions, inventory.sessionPanesSessions)
+			}
+			if options.Preview.Command != "" {
+				t.Fatalf("preview command before first paint = %q, want deferred", options.Preview.Command)
+			}
+			if got, want := options.Items[0].EffectiveLabel(), "\x1b[1m\x1b[32mapp\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
+				t.Fatalf("initial item = %q, want cheap row %q", got, want)
+			}
+			update, err := options.DeferredUpdate()
+			if err != nil {
+				t.Fatalf("DeferredUpdate() error = %v", err)
+			}
+			if update.Preview.Command == "" || update.Preview.Window != "down,25%,border-top" {
+				t.Fatalf("deferred preview = %#v, want sidebar preview command", update.Preview)
+			}
+			label := update.Items[0].EffectiveLabel()
+			for _, want := range []string{"branch-main", " main ", "●"} {
+				if !strings.Contains(label, want) {
+					t.Fatalf("deferred label = %q, want metadata %q", label, want)
+				}
+			}
+			return intpicker.Result{}, nil
+		}),
+		sessions:   &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		inventory:  inventory,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		gitBranch: func(path string) string {
+			gitCalls = append(gitCalls, path)
+			return "branch-main"
+		},
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := gitCalls, []string{"/tmp/app"}; !equalStrings(got, want) {
+		t.Fatalf("git calls after deferred update = %q, want %q", got, want)
+	}
+	if got, want := inventory.sessionWindowsSessions, []string{"tmp-app"}; !equalStrings(got, want) {
+		t.Fatalf("SessionWindows calls = %q, want %q", got, want)
+	}
+	if got, want := inventory.sessionPanesSessions, []string{"", "tmp-app"}; !equalStrings(got, want) {
+		t.Fatalf("SessionPanes calls = %q, want all-session attention plus row tabs %q", got, want)
+	}
+}
+
+func TestSwitchCommandDeferredSidebarEnrichmentUpdatesAllRowsWithoutChangingValues(t *testing.T) {
+	t.Parallel()
+
+	inventory := &stubPreviewInventory{
+		windows: []corepreview.Window{{Index: "0", Name: "main", Active: true}},
+		panes: []corepreview.Pane{
+			{SessionName: "tmp-api", WindowIndex: "0", Title: "api", AttentionState: attentionStateReply},
+			{SessionName: "tmp-web", WindowIndex: "0", Title: "web", AttentionState: attentionStateBusy},
+		},
+	}
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/api", "/tmp/web"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			initialValues := pickerItemValues(options.Items)
+			update, err := options.DeferredUpdate()
+			if err != nil {
+				t.Fatalf("DeferredUpdate() error = %v", err)
+			}
+			if got := pickerItemValues(update.Items); !equalStrings(got, initialValues) {
+				t.Fatalf("deferred values = %q, want unchanged %q", got, initialValues)
+			}
+			if got := pickerItemSearchTexts(update.Items); !equalStrings(got, pickerItemSearchTexts(options.Items)) {
+				t.Fatalf("deferred search texts = %q, want unchanged", got)
+			}
+			labels := strings.Join([]string{update.Items[0].EffectiveLabel(), update.Items[1].EffectiveLabel()}, "\n")
+			for _, want := range []string{"api-branch", "web-branch", " main ", "●"} {
+				if !strings.Contains(labels, want) {
+					t.Fatalf("deferred labels = %q, want metadata %q", labels, want)
+				}
+			}
+			return intpicker.Result{Value: "/tmp/web"}, nil
+		}),
+		sessions: &capturingSwitchSessionExecutor{exists: map[string]bool{
+			"tmp-api": true,
+			"tmp-web": true,
+		}},
+		inventory:  inventory,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		gitBranch: func(path string) string {
+			return strings.TrimPrefix(path, "/tmp/") + "-branch"
+		},
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			return "tmp-" + strings.TrimPrefix(path, "/tmp/"), nil
+		}),
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
 }
 
@@ -1435,11 +1655,11 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
 	}
-	if got, want := fakeRunner.last.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=sidebar' {2}"; got != want {
-		t.Fatalf("runner preview command = %q, want %q", got, want)
+	if got, want := fakeRunner.last.PreviewCommand, ""; got != want {
+		t.Fatalf("runner preview command = %q, want deferred preview", got)
 	}
-	if got, want := fakeRunner.last.PreviewWindow, "down,25%,border-top"; got != want {
-		t.Fatalf("runner preview window = %q, want %q", got, want)
+	if got, want := fakeRunner.last.PreviewWindow, ""; got != want {
+		t.Fatalf("runner preview window = %q, want deferred preview", got)
 	}
 	if got, want := fakeRunner.last.Bindings, []string{
 		"esc:abort",
@@ -2811,11 +3031,41 @@ type capturingSwitchSessionExecutor struct {
 	recentErr          error
 }
 
+type bulkSwitchSessionExecutor struct {
+	existing    map[string]bool
+	bulkErr     error
+	bulkCalls   int
+	existsCalls []string
+}
+
 type sidebarOpenTrustPopupExecutor struct {
 	lookupEnv   func(string) string
 	executable  func() (string, error)
 	popupRunner tmuxRunner
 	calls       []string
+}
+
+func (e *bulkSwitchSessionExecutor) EnsureSession(context.Context, string, string) error {
+	return nil
+}
+
+func (e *bulkSwitchSessionExecutor) OpenSession(context.Context, string) error {
+	return nil
+}
+
+func (e *bulkSwitchSessionExecutor) ExistingSessions(context.Context) (map[string]bool, error) {
+	e.bulkCalls++
+	if e.bulkErr != nil {
+		return nil, e.bulkErr
+	}
+	existing := make(map[string]bool, len(e.existing))
+	maps.Copy(existing, e.existing)
+	return existing, nil
+}
+
+func (e *bulkSwitchSessionExecutor) SessionExists(_ context.Context, sessionName string) (bool, error) {
+	e.existsCalls = append(e.existsCalls, sessionName)
+	return e.existing[sessionName], nil
 }
 
 func (e *sidebarOpenTrustPopupExecutor) EnsureSession(_ context.Context, sessionName, _ string) error {
@@ -2898,6 +3148,28 @@ func (e *capturingSwitchSessionExecutor) RecentSessions(context.Context) ([]stri
 		return nil, e.recentErr
 	}
 	return e.recentSessions, nil
+}
+
+func sortedStrings(values []string) []string {
+	values = append([]string(nil), values...)
+	slices.Sort(values)
+	return values
+}
+
+func pickerItemValues(items []intpicker.Item) []string {
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, item.Value)
+	}
+	return values
+}
+
+func pickerItemSearchTexts(items []intpicker.Item) []string {
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, item.SearchText)
+	}
+	return values
 }
 
 func saveSwitchProjectStartupSnapshot(t *testing.T, store sessionstate.Store, sessionName string) {

@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -622,6 +624,120 @@ func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "^[[") {
 		t.Fatalf("native output leaked escape input: %q", out.String())
+	}
+}
+
+func TestNativeInteractiveDeferredUpdatePreservesMutatedFilterAndSelection(t *testing.T) {
+	t.Parallel()
+
+	reader, writer := io.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	var out lockedBuffer
+	deferredStarted := make(chan struct{})
+	releaseDeferred := make(chan struct{})
+	resultCh := make(chan struct {
+		result Result
+		err    error
+	}, 1)
+
+	go func() {
+		result, err := runNativeInteractive(reader, &out, Options{
+			UI:        "switch",
+			MultiLine: true,
+			Items: []Item{
+				{Title: "api", Value: "/repo/api", SearchText: "svc api"},
+				{Title: "web", Value: "/repo/web", SearchText: "svc web"},
+				{Title: "worker", Value: "/repo/worker", SearchText: "svc worker"},
+			},
+			DeferredUpdate: func() (DeferredUpdate, error) {
+				close(deferredStarted)
+				<-releaseDeferred
+				return DeferredUpdate{Items: []Item{
+					{Title: "api", Value: "/repo/api", SearchText: "svc api", MetaLines: []string{"branch main"}},
+					{Title: "web", Value: "/repo/web", SearchText: "svc web", MetaLines: []string{"branch feature"}},
+					{Title: "worker", Value: "/repo/worker", SearchText: "svc worker", MetaLines: []string{"branch jobs"}},
+				}}, nil
+			},
+		})
+		resultCh <- struct {
+			result Result
+			err    error
+		}{result: result, err: err}
+	}()
+
+	select {
+	case <-deferredStarted:
+	case <-time.After(time.Second):
+		t.Fatal("deferred update did not start after first render")
+	}
+	if _, err := writer.Write([]byte("svc\x1b[6~")); err != nil {
+		t.Fatalf("write query/page-down input: %v", err)
+	}
+	close(releaseDeferred)
+	waitForNativeOutput(t, &out, "branch main", "branch feature", "branch jobs")
+	if _, err := writer.Write([]byte("\r")); err != nil {
+		t.Fatalf("write enter input: %v", err)
+	}
+
+	var got struct {
+		result Result
+		err    error
+	}
+	select {
+	case got = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("runNativeInteractive did not return after enter")
+	}
+	if got.err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", got.err)
+	}
+	if got.result.Key != "enter" || got.result.Value != "/repo/worker" || got.result.Query != "svc" {
+		t.Fatalf("result = %#v, want filtered selection to stay on worker", got.result)
+	}
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func waitForNativeOutput(t *testing.T, out *lockedBuffer, wants ...string) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		rendered := out.String()
+		all := true
+		for _, want := range wants {
+			if !strings.Contains(rendered, want) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("native output = %q, want metadata %q", rendered, wants)
+		case <-tick.C:
+		}
 	}
 }
 

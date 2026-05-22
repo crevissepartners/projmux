@@ -83,6 +83,10 @@ type switchSessionInspector interface {
 	SessionExists(ctx context.Context, sessionName string) (bool, error)
 }
 
+type switchBulkSessionInspector interface {
+	ExistingSessions(ctx context.Context) (map[string]bool, error)
+}
+
 type switchSessionKiller interface {
 	KillSession(ctx context.Context, sessionName string) error
 }
@@ -132,20 +136,21 @@ type switchKubeInfo struct {
 }
 
 type switchPlan struct {
-	UI            string
-	Candidates    []string
-	Rows          []intpickercompat.Entry
-	Items         []intpicker.Item
-	SessionNames  map[string]string
-	Action        string
-	Selection     string
-	SessionName   string
-	HomeDir       string
-	CurrentPath   string
-	OriginSession string
-	Query         string
-	InitialQuery  string
-	StatusMessage string
+	UI             string
+	Candidates     []string
+	Rows           []intpickercompat.Entry
+	Items          []intpicker.Item
+	SessionNames   map[string]string
+	Action         string
+	Selection      string
+	SessionName    string
+	HomeDir        string
+	CurrentPath    string
+	OriginSession  string
+	Query          string
+	InitialQuery   string
+	StatusMessage  string
+	DeferredUpdate func() (intpicker.DeferredUpdate, error)
 }
 
 type switchSidebarResume struct {
@@ -1399,6 +1404,24 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 	plan.Rows = rows
 	plan.Items = items
 	plan.SessionNames = sessionNames
+	if plan.UI == switchUISidebar {
+		candidates := append([]string(nil), plan.Candidates...)
+		plan.DeferredUpdate = func() (intpicker.DeferredUpdate, error) {
+			_, fullItems, _, err := c.renderFullRows(context.Background(), switchUISidebar, candidates)
+			if err != nil {
+				return intpicker.DeferredUpdate{}, err
+			}
+			surface, err := c.switchPickerSurface(plan, true)
+			if err != nil {
+				return intpicker.DeferredUpdate{}, err
+			}
+			update := intpicker.DeferredUpdate{Items: fullItems}
+			if surface.PreviewCommand != "" {
+				update.Preview = intpicker.Preview{Command: surface.PreviewCommand, Window: switchPreviewWindow(plan.UI)}
+			}
+			return update, nil
+		}
+	}
 
 	result, err := c.runPicker(plan)
 	if err != nil {
@@ -1828,12 +1851,13 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 	}
 
 	options := intpicker.Options{
-		UI:           plan.UI,
-		Items:        plan.Items,
-		MultiLine:    true,
-		Prompt:       "› ",
-		Footer:       switchPickerFooter(plan.UI, plan.StatusMessage, c.homeDir, c.lookupEnv),
-		InitialQuery: plan.InitialQuery,
+		UI:             plan.UI,
+		Items:          plan.Items,
+		MultiLine:      true,
+		Prompt:         "› ",
+		Footer:         switchPickerFooter(plan.UI, plan.StatusMessage, c.homeDir, c.lookupEnv),
+		InitialQuery:   plan.InitialQuery,
+		DeferredUpdate: plan.DeferredUpdate,
 		Actions: append(
 			pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
 			intpicker.CustomActions(append(
@@ -1850,16 +1874,15 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 	if plan.UI == switchUISidebar {
 		options.Title = "Projects"
 	}
-	if surface, err := c.switchPickerSurface(plan); err != nil {
+	surface, err := c.switchPickerSurface(plan, !(plan.UI == switchUISidebar && plan.DeferredUpdate != nil))
+	if err != nil {
 		return intpicker.Result{}, err
-	} else if surface.PreviewCommand != "" {
+	}
+	options.Actions = append(options.Actions, surface.Actions...)
+	options.InitialIndex = surface.InitialIndex
+	options.InitialIndexSet = surface.InitialIndexSet
+	if surface.PreviewCommand != "" {
 		options.Preview = intpicker.Preview{Command: surface.PreviewCommand, Window: switchPreviewWindow(plan.UI)}
-		options.Actions = append(options.Actions, surface.Actions...)
-		options.InitialIndex = surface.InitialIndex
-		options.InitialIndexSet = surface.InitialIndexSet
-		compatOptions := intpickercompat.OptionsFromPicker(options)
-		compatOptions.Candidates = plan.Candidates
-		return c.runPickerBackend(compatOptions, options)
 	}
 
 	compatOptions := intpickercompat.OptionsFromPicker(options)
@@ -1887,7 +1910,7 @@ type switchPickerSurface struct {
 	InitialIndexSet bool
 }
 
-func (c *switchCommand) switchPickerSurface(plan switchPlan) (switchPickerSurface, error) {
+func (c *switchCommand) switchPickerSurface(plan switchPlan, includePreview bool) (switchPickerSurface, error) {
 	if c.executable == nil {
 		return switchPickerSurface{}, nil
 	}
@@ -1897,29 +1920,15 @@ func (c *switchCommand) switchPickerSurface(plan switchPlan) (switchPickerSurfac
 		return switchPickerSurface{}, fmt.Errorf("resolve switch preview executable: %w", err)
 	}
 
-	previewCommand, err := inttmux.BuildSwitchPreviewCommand(binaryPath, plan.UI)
-	if err != nil {
-		return switchPickerSurface{}, fmt.Errorf("build switch preview command: %w", err)
+	surface := switchPickerSurface{}
+	if includePreview {
+		previewCommand, err := inttmux.BuildSwitchPreviewCommand(binaryPath, plan.UI)
+		if err != nil {
+			return switchPickerSurface{}, fmt.Errorf("build switch preview command: %w", err)
+		}
+		surface.PreviewCommand = previewCommand
 	}
 
-	windowPrev, err := inttmux.BuildSwitchCycleWindowCommand(binaryPath, string(corepreview.DirectionPrev))
-	if err != nil {
-		return switchPickerSurface{}, fmt.Errorf("build switch window-prev command: %w", err)
-	}
-	windowNext, err := inttmux.BuildSwitchCycleWindowCommand(binaryPath, string(corepreview.DirectionNext))
-	if err != nil {
-		return switchPickerSurface{}, fmt.Errorf("build switch window-next command: %w", err)
-	}
-	panePrev, err := inttmux.BuildSwitchCyclePaneCommand(binaryPath, string(corepreview.DirectionPrev))
-	if err != nil {
-		return switchPickerSurface{}, fmt.Errorf("build switch pane-prev command: %w", err)
-	}
-	paneNext, err := inttmux.BuildSwitchCyclePaneCommand(binaryPath, string(corepreview.DirectionNext))
-	if err != nil {
-		return switchPickerSurface{}, fmt.Errorf("build switch pane-next command: %w", err)
-	}
-
-	surface := switchPickerSurface{PreviewCommand: previewCommand}
 	if plan.UI == switchUISidebar {
 		sidebarFocus, err := inttmux.BuildSwitchSidebarFocusCommand(binaryPath)
 		if err != nil {
@@ -1939,6 +1948,23 @@ func (c *switchCommand) switchPickerSurface(plan switchPlan) (switchPickerSurfac
 			surface.InitialIndexSet = true
 		}
 		return surface, nil
+	}
+
+	windowPrev, err := inttmux.BuildSwitchCycleWindowCommand(binaryPath, string(corepreview.DirectionPrev))
+	if err != nil {
+		return switchPickerSurface{}, fmt.Errorf("build switch window-prev command: %w", err)
+	}
+	windowNext, err := inttmux.BuildSwitchCycleWindowCommand(binaryPath, string(corepreview.DirectionNext))
+	if err != nil {
+		return switchPickerSurface{}, fmt.Errorf("build switch window-next command: %w", err)
+	}
+	panePrev, err := inttmux.BuildSwitchCyclePaneCommand(binaryPath, string(corepreview.DirectionPrev))
+	if err != nil {
+		return switchPickerSurface{}, fmt.Errorf("build switch pane-prev command: %w", err)
+	}
+	paneNext, err := inttmux.BuildSwitchCyclePaneCommand(binaryPath, string(corepreview.DirectionNext))
+	if err != nil {
+		return switchPickerSurface{}, fmt.Errorf("build switch pane-next command: %w", err)
 	}
 
 	surface.Actions = append(surface.Actions,
@@ -2290,7 +2316,26 @@ func (c *switchCommand) addPin(target string, stdout io.Writer) error {
 	return err
 }
 
+type switchRowRenderMode int
+
+const (
+	switchRowRenderCheap switchRowRenderMode = iota
+	switchRowRenderFull
+)
+
 func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePaths []string) ([]intpickercompat.Entry, []intpicker.Item, map[string]string, error) {
+	mode := switchRowRenderFull
+	if ui == switchUISidebar {
+		mode = switchRowRenderCheap
+	}
+	return c.renderRowsWithMode(ctx, ui, candidatePaths, mode)
+}
+
+func (c *switchCommand) renderFullRows(ctx context.Context, ui string, candidatePaths []string) ([]intpickercompat.Entry, []intpicker.Item, map[string]string, error) {
+	return c.renderRowsWithMode(ctx, ui, candidatePaths, switchRowRenderFull)
+}
+
+func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candidatePaths []string, mode switchRowRenderMode) ([]intpickercompat.Entry, []intpicker.Item, map[string]string, error) {
 	renderCandidates := make([]intrender.SwitchCandidate, 0, len(candidatePaths))
 	existingBySession, err := c.lookupExistingSessions(ctx, candidatePaths)
 	if err != nil {
@@ -2307,7 +2352,7 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 	}
 	sessionNames := make(map[string]string, len(candidatePaths))
 	attentionRanks := map[string]int(nil)
-	if ui == switchUISidebar {
+	if ui == switchUISidebar && mode == switchRowRenderFull {
 		attentionRanks = c.switchAttentionRanks(ctx)
 	}
 
@@ -2339,14 +2384,20 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 			continue
 		}
 
+		gitBranch := ""
+		var windowTabs []intrender.SwitchWindowTab
+		if mode == switchRowRenderFull {
+			gitBranch = c.resolveGitBranch(candidatePath)
+			windowTabs = c.switchCardWindowTabs(ctx, sessionName, modeLabel)
+		}
 		renderCandidates = append(renderCandidates, intrender.SwitchCandidate{
 			Path:          candidatePath,
 			DisplayPath:   intrender.PrettyPath(candidatePath, homeDir, repoRoot),
 			DisplayName:   switchProjectName(candidatePath),
 			SessionName:   sessionName,
 			ModeLabel:     modeLabel,
-			GitBranch:     c.resolveGitBranch(candidatePath),
-			WindowTabs:    c.switchCardWindowTabs(ctx, sessionName, modeLabel),
+			GitBranch:     gitBranch,
+			WindowTabs:    windowTabs,
 			UI:            ui,
 			AttentionRank: attentionRanks[sessionName],
 			Pinned:        pinnedSet[cleanOptionalPath(candidatePath)],
@@ -2556,12 +2607,7 @@ func (c *switchCommand) loadTaggedSet() (map[string]bool, error) {
 }
 
 func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePaths []string) (map[string]bool, error) {
-	inspector, ok := c.sessions.(switchSessionInspector)
-	if !ok || inspector == nil {
-		return nil, nil
-	}
-
-	existingBySession := make(map[string]bool)
+	sessionNames := make(map[string]struct{}, len(candidatePaths))
 	for _, candidatePath := range candidatePaths {
 		if candidatePath == switchSettingsSentinel {
 			continue
@@ -2570,10 +2616,33 @@ func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePat
 		if err != nil {
 			return nil, fmt.Errorf("check existing switch sessions: resolve session identity for %q: %w", candidatePath, err)
 		}
-		if _, seen := existingBySession[sessionName]; seen {
+		if strings.TrimSpace(sessionName) == "" {
 			continue
 		}
+		sessionNames[sessionName] = struct{}{}
+	}
+	if len(sessionNames) == 0 {
+		return nil, nil
+	}
 
+	if bulk, ok := c.sessions.(switchBulkSessionInspector); ok && bulk != nil {
+		existing, err := bulk.ExistingSessions(ctx)
+		if err == nil {
+			existingBySession := make(map[string]bool, len(sessionNames))
+			for sessionName := range sessionNames {
+				existingBySession[sessionName] = existing[sessionName]
+			}
+			return existingBySession, nil
+		}
+	}
+
+	inspector, ok := c.sessions.(switchSessionInspector)
+	if !ok || inspector == nil {
+		return nil, nil
+	}
+
+	existingBySession := make(map[string]bool, len(sessionNames))
+	for sessionName := range sessionNames {
 		exists, err := inspector.SessionExists(ctx, sessionName)
 		if err != nil {
 			return nil, fmt.Errorf("check existing switch sessions for %q: %w", sessionName, err)
