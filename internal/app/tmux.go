@@ -38,15 +38,14 @@ const (
 	tmuxActionFg         = theme.TmuxActionFg
 	tmuxSecondaryFg      = theme.TmuxSecondaryFg
 
-	tmuxAccentAttentionBg       = theme.TmuxAccentAttentionBg
-	tmuxAccentAttentionFg       = theme.TmuxAccentAttentionFg
-	tmuxAccentAttentionStrongBg = theme.TmuxAccentAttentionStrongBg
-	tmuxAccentAIBg              = theme.TmuxAccentAIBg
-	tmuxAccentAIFg              = theme.TmuxAccentAIFg
-	tmuxStateProgressFg         = theme.TmuxStateProgressFg
-	tmuxStateSuccessFg          = theme.TmuxStateSuccessFg
-	tmuxStateWarningFg          = theme.TmuxStateWarningFg
-	tmuxStateCriticalFg         = theme.TmuxStateCriticalFg
+	tmuxAccentAttentionBg = theme.TmuxAccentAttentionBg
+	tmuxAccentAttentionFg = theme.TmuxAccentAttentionFg
+	tmuxAccentAIBg        = theme.TmuxAccentAIBg
+	tmuxAccentAIFg        = theme.TmuxAccentAIFg
+	tmuxStateProgressFg   = theme.TmuxStateProgressFg
+	tmuxStateSuccessFg    = theme.TmuxStateSuccessFg
+	tmuxStateWarningFg    = theme.TmuxStateWarningFg
+	tmuxStateCriticalFg   = theme.TmuxStateCriticalFg
 )
 
 type tmuxPopupClient interface {
