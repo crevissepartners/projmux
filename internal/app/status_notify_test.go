@@ -181,6 +181,36 @@ func TestStatusNotifyWarnEntryRendersAmberBadge(t *testing.T) {
 	}
 }
 
+func TestCriticalNotifySeverityDoesNotDriveAIStatusBadgePalette(t *testing.T) {
+	t.Parallel()
+
+	entry := notify.Notification{
+		ID:        "ai:main:%7",
+		Text:      "codex: PermissionRequest · Bash",
+		Severity:  notify.SeverityCritical,
+		Source:    notify.SourceAI,
+		Session:   "main",
+		Metadata:  map[string]string{"agent": "codex", "category": aiBadgeKindApprovalRequired, "state": "need"},
+		CreatedAt: time.Date(2026, time.May, 22, 12, 0, 0, 0, time.UTC),
+	}
+
+	if got := notifyBadgeOpen(entry.Severity); got != notifyBadgeCritOpen {
+		t.Fatalf("notify severity palette = %q, want critical queue palette %q", got, notifyBadgeCritOpen)
+	}
+	if got := tmuxAIBadgeKindFg(aiBadgeKindApprovalRequired); got != theme.TmuxAIBadgeActionRequiredFg {
+		t.Fatalf("approval-required status badge fg = %q, want action-required %q", got, theme.TmuxAIBadgeActionRequiredFg)
+	}
+	if got := tmuxAIBadgeKindFg(aiBadgeKindApprovalRequired); got == tmuxStateCriticalFg {
+		t.Fatalf("approval-required status badge fg = %q, must not follow critical notify severity", got)
+	}
+	if got := tmuxAIBadgeKindFg(aiBadgeKindResponseComplete); got != theme.TmuxAIBadgeSuccessFg {
+		t.Fatalf("response-complete status badge fg = %q, want success %q", got, theme.TmuxAIBadgeSuccessFg)
+	}
+	if got := tmuxAIBadgeKindFg(aiBadgeKindInProgress); got != theme.TmuxAIBadgeProgressFg {
+		t.Fatalf("in-progress status badge fg = %q, want progress %q", got, theme.TmuxAIBadgeProgressFg)
+	}
+}
+
 func TestStatusNotifyCriticalEntryRendersRedBadge(t *testing.T) {
 	t.Parallel()
 

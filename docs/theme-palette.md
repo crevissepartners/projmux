@@ -41,6 +41,14 @@ onto these stable names:
 | `critical` | destructive/error/critical state | settings remove/quit, notify critical badge, statusbar critical usage |
 | `warning` | progress, pending, warning, busy state | AI busy/thinking indicators, notify pending title, usage warning |
 
+AI semantic status badges use renderer-only state roles layered on top of that
+inventory: `progress`, `success`, and `action_required`. The fallback contract
+is progress yellow, success green, action-required amber-orange. These roles are
+separate from notify queue severity and desktop notification urgency; an AI
+approval row can be `critical` in the notify queue while the live status badge
+uses `action_required`, not red. `critical` remains reserved for error, failure,
+destructive, over-limit, or risk states.
+
 Renderer-only role names such as `accent.ai`, `state.progress`, `git.branch`,
 and trust colors remain in `internal/theme/palette.go` until Phase 2+ maps each
 surface to the resolver tokens. The key product contract for this phase is that
@@ -128,7 +136,8 @@ Accents and state:
 | `accent.attention` | notify HUD background/project family | `colour53`, project `colour90` |
 | `accent.ai` | notify agent `colour37` family | `colour37` bg / `colour121` fg |
 | `state.progress` | `255;204;102`; switch attention/busy dot, pane-border in-progress badge, and pending notify title/bell/badge `colour220` | `colour220` |
-| `state.warning` | usage/status popup ANSI 256 wrapper; pane-border approval/input-required badge | `colour214` |
+| `state.action_required` | AI approval/input-required status badge amber-orange; currently aliases the established warning token | `colour214` |
+| `state.warning` | usage/status popup warning ANSI 256 wrapper; non-AI warning chrome | `colour214` |
 | `state.danger` | `255;107;107` | `colour160` |
 | `state.success` | settings/trust green families; pane-border response-complete badge | `colour72`, `colour151` |
 | `state.ahead` | switch/git metadata and notify age ANSI 256 wrapper | `colour153` |
@@ -140,7 +149,7 @@ Surface-specific tokens:
 | --- | --- |
 | Native picker | current row, titlebar, rule, pointer, highlight, muted text, chip active/inactive/disabled |
 | Statusbar row 1 | session identity, cwd secondary text, divider, git branch block, git dirty/staged/ahead/behind, settings action chip, clock |
-| App pane borders | semantic AI badge marker style (`dot`, `emoji`, or spacing-preserving `off`) plus warning/success/progress state color |
+| App pane borders | semantic AI badge marker style (`dot`, `emoji`, or spacing-preserving `off`) plus action-required/success/progress state color |
 | Notify HUD/sidebar | line bg/fg, project badge, info/warn/crit/stale/gone badges, AI agent badge, count/age text |
 | Usage HUD/popup | OK/warning/critical/over-limit bars and numbers, empty cells, muted sync age |
 | Settings | add/type/open action, destructive remove/quit, back/cancel, info/read-only, dim description, root action/dim rows, trust trusted/stale/untrusted |

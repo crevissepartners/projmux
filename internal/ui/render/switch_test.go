@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -233,11 +234,14 @@ func TestSwitchBadgeDotUsesSemanticPriorityColor(t *testing.T) {
 	}})
 
 	got := rows[0].Label
-	if !strings.Contains(got, "\x1b[32m●\x1b[0m") {
+	if !strings.Contains(got, theme.ANSIAIBadgeSuccessStart+"●"+theme.ANSIReset) {
 		t.Fatalf("label = %q, want semantic response-complete dot to outrank legacy busy attention", got)
 	}
 	if strings.Contains(got, "\x1b[38;2;255;204;102m●\x1b[0m") {
 		t.Fatalf("label = %q, legacy busy attention dot must not override semantic response-complete", got)
+	}
+	if strings.Contains(got, theme.ANSIStateDangerStart+"●"+theme.ANSIReset) {
+		t.Fatalf("label = %q, response-complete status badge must not use critical/danger color", got)
 	}
 }
 
@@ -409,7 +413,7 @@ func TestFormatSwitchCardLabelShowsMultilineContext(t *testing.T) {
 	}})
 
 	got := FormatSwitchCardLabel(rows[0].Item)
-	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[32m●\x1b[0m \x1b[33m*\x1b[0m\n  \x1b[38;5;242m~rp/app\x1b[0m \x1b[1;38;5;231;48;5;30m main \x1b[0m\n  \x1b[1;38;5;231;48;5;238m  shell   \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;220m● \x1b[0m\x1b[38;5;245;48;5;235m server  \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;82m● \x1b[0m\x1b[38;5;245;48;5;235m tests   \x1b[0m"
+	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[38;5;72m●\x1b[0m \x1b[33m*\x1b[0m\n  \x1b[38;5;242m~rp/app\x1b[0m \x1b[1;38;5;231;48;5;30m main \x1b[0m\n  \x1b[1;38;5;231;48;5;238m  shell   \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;220m● \x1b[0m\x1b[38;5;245;48;5;235m server  \x1b[0m \x1b[38;5;245;48;5;235m \x1b[38;5;82m● \x1b[0m\x1b[38;5;245;48;5;235m tests   \x1b[0m"
 	if got != want {
 		t.Fatalf("card label = %q, want %q", got, want)
 	}

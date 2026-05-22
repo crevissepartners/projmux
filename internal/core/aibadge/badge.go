@@ -15,6 +15,12 @@ const (
 	StyleOff   = "off"
 )
 
+const (
+	RoleProgress       = "progress"
+	RoleSuccess        = "success"
+	RoleActionRequired = "action_required"
+)
+
 func Normalize(kind string) string {
 	switch strings.TrimSpace(kind) {
 	case InProgress:
@@ -86,4 +92,17 @@ func Aggregate(current, next string) string {
 		return next
 	}
 	return current
+}
+
+func ThemeRole(kind string) string {
+	switch Normalize(kind) {
+	case ApprovalRequired, InputRequired:
+		return RoleActionRequired
+	case ResponseComplete:
+		return RoleSuccess
+	case InProgress:
+		return RoleProgress
+	default:
+		return ""
+	}
 }

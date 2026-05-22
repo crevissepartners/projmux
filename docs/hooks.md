@@ -206,7 +206,11 @@ desktop sender and receives positional arguments
 `summary body urgency app-name tag group icon-path`. That `urgency` value is
 the OS notification urgency, not the notify-queue severity. AI approval,
 input, selection, and confirmation rows can stay critical in the queue and UI
-while the desktop notification hook receives `normal`.
+while the desktop notification hook receives `normal`. Live AI status badges
+are a third surface: permission/input-required panes use the action-required
+amber-orange status role, response-complete panes use success green, and
+in-progress panes use progress yellow. They do not inherit the critical queue
+severity, and permission/input status badges do not use red.
 
 ## Codex Hooks Engine
 

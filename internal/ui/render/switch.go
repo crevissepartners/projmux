@@ -21,7 +21,7 @@ const (
 	ansiCyan     = theme.ANSIAccentSettingsStart
 )
 
-var ansiWarning = theme.ANSI256FgStart(theme.TmuxStateWarningFg)
+var ansiWarning = theme.ANSIAIBadgeActionRequiredStart
 
 const (
 	ansiStatusPath        = theme.ANSISwitchPathStart
@@ -337,7 +337,7 @@ func formatSwitchCardStatusBadge(badges []string) string {
 		case "needs review":
 			parts = append(parts, ansiProgress+"●"+ansiReset)
 		case "ready":
-			parts = append(parts, ansiGreen+"●"+ansiReset)
+			parts = append(parts, theme.ANSIAIBadgeSuccessStart+"●"+ansiReset)
 		case "tagged":
 			parts = append(parts, ansiRed+"x"+ansiReset)
 		case "pinned":
@@ -516,13 +516,13 @@ func switchAttentionBadgeName(kind string, rank int) string {
 }
 
 func ansiAIBadgeKindStart(kind string) string {
-	switch aibadge.Normalize(kind) {
-	case aibadge.ApprovalRequired, aibadge.InputRequired:
-		return ansiWarning
-	case aibadge.ResponseComplete:
-		return ansiGreen
-	case aibadge.InProgress:
-		return ansiProgress
+	switch aibadge.ThemeRole(kind) {
+	case aibadge.RoleActionRequired:
+		return theme.ANSIAIBadgeActionRequiredStart
+	case aibadge.RoleSuccess:
+		return theme.ANSIAIBadgeSuccessStart
+	case aibadge.RoleProgress:
+		return theme.ANSIAIBadgeProgressStart
 	default:
 		return ""
 	}

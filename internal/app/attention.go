@@ -411,15 +411,15 @@ func attentionWindowBadgeKind(row attentionWindowRow) string {
 }
 
 func tmuxAIBadgeKindFg(kind string) string {
-	switch normalizeAIBadgeKind(kind) {
-	case aiBadgeKindApprovalRequired, aiBadgeKindInputRequired:
-		return tmuxStateWarningFg
-	case aiBadgeKindResponseComplete:
-		return tmuxStateSuccessFg
-	case aiBadgeKindInProgress:
-		return tmuxStateProgressFg
+	switch aibadge.ThemeRole(kind) {
+	case aibadge.RoleActionRequired:
+		return tmuxAIBadgeActionRequiredFg
+	case aibadge.RoleSuccess:
+		return tmuxAIBadgeSuccessFg
+	case aibadge.RoleProgress:
+		return tmuxAIBadgeProgressFg
 	default:
-		return tmuxStateProgressFg
+		return tmuxAIBadgeProgressFg
 	}
 }
 

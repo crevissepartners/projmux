@@ -340,6 +340,13 @@ the `attention` badge, the `notify` queue producer, and the desktop
 notifier. `status set waiting` is the trigger that flips a pane to the
 reply-ready state — that transition pushes an `ai:<session>:<pane>`
 entry into the notify queue.
+The durable semantic status badge is stored separately in
+`@projmux_ai_badge_kind` as `approval_required`, `input_required`,
+`response_complete`, `in_progress`, or unset. The live status surfaces color
+those values with action-required amber-orange, success green, and progress
+yellow respectively. That palette is independent from notify queue
+`--severity` and from OS desktop notification urgency; a critical approval row
+can still render a non-red action-required status badge.
 
 `ai split right|down` uses the configured default split mode. Add
 `--agent claude`, `--agent codex`, `--agent shell`, or `--agent selective` for

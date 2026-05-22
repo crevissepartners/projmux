@@ -47,6 +47,10 @@ const (
 	tmuxStateSuccessFg    = theme.TmuxStateSuccessFg
 	tmuxStateWarningFg    = theme.TmuxStateWarningFg
 	tmuxStateCriticalFg   = theme.TmuxStateCriticalFg
+
+	tmuxAIBadgeProgressFg       = theme.TmuxAIBadgeProgressFg
+	tmuxAIBadgeSuccessFg        = theme.TmuxAIBadgeSuccessFg
+	tmuxAIBadgeActionRequiredFg = theme.TmuxAIBadgeActionRequiredFg
 )
 
 type tmuxPopupClient interface {
@@ -1242,16 +1246,16 @@ func tmuxPaneBorderFormat() string {
 func tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle config.AIBadgeStyle) string {
 	badgeStyle = config.NormalizeAIBadgeStyle(string(badgeStyle))
 	activePaneLabelFormat := tmuxVisiblePaneLabelFormat()
-	promptPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateWarningFg)
-	busyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateProgressFg)
-	replyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateSuccessFg)
+	promptPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxAIBadgeActionRequiredFg)
+	busyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxAIBadgeProgressFg)
+	replyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxAIBadgeSuccessFg)
 	mutedPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(theme.TmuxMutedFg)
 	panePromptFormat := "#{||:#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindApprovalRequired + "},#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindInputRequired + "}}"
 	paneCompleteFormat := "#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindResponseComplete + "}"
 	paneProgressFormat := "#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindInProgress + "}"
 	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
 	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + panePromptFormat + ",#[bold#,fg=" + tmuxStateWarningFg + "]" + tmuxAIBadgeMarker(aiBadgeKindApprovalRequired, badgeStyle) + promptPaneLabelFormat + " #[default],#{?" + paneCompleteFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#{?#{||:" + paneProgressFormat + "," + paneBusyFormat + "},#[bold#,fg=" + tmuxStateProgressFg + "]" + tmuxAIBadgeMarker(aiBadgeKindInProgress, badgeStyle) + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}}}"
+	inactivePaneBorderFormat := "#{?" + panePromptFormat + ",#[bold#,fg=" + tmuxAIBadgeActionRequiredFg + "]" + tmuxAIBadgeMarker(aiBadgeKindApprovalRequired, badgeStyle) + promptPaneLabelFormat + " #[default],#{?" + paneCompleteFormat + ",#[bold#,fg=" + tmuxAIBadgeSuccessFg + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#{?#{||:" + paneProgressFormat + "," + paneBusyFormat + "},#[bold#,fg=" + tmuxAIBadgeProgressFg + "]" + tmuxAIBadgeMarker(aiBadgeKindInProgress, badgeStyle) + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxAIBadgeSuccessFg + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}}}"
 	return "#{?pane_active,#[bold#,fg=" + theme.TmuxPaneActiveFg + "#,bg=" + theme.TmuxPaneActiveBg + "] > " + activePaneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
 }
 
