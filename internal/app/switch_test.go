@@ -967,6 +967,35 @@ func TestSwitchCommandSidebarAggregatesSemanticBadgePriority(t *testing.T) {
 	}
 }
 
+func TestSwitchCommandPopupRowsUseSemanticSessionBadge(t *testing.T) {
+	t.Parallel()
+
+	cmd := &switchCommand{
+		sessions: &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		inventory: &stubPreviewInventory{
+			windows: []corepreview.Window{{Index: "0", Name: "main", Active: true}},
+			panes: []corepreview.Pane{
+				{SessionName: "tmp-app", WindowIndex: "0", Title: "work", AIBadgeKind: aiBadgeKindInProgress},
+				{SessionName: "tmp-app", WindowIndex: "0", Title: "approve", AIBadgeKind: aiBadgeKindInputRequired},
+			},
+		},
+		identity: stubSwitchIdentityResolver{name: "tmp-app"},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		homeDir:  func() (string, error) { return "/home/tester", nil },
+	}
+
+	rows, _, _, err := cmd.renderRows(context.Background(), switchUIPopup, []string{"/tmp/app"})
+	if err != nil {
+		t.Fatalf("renderRows() error = %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %#v, want one existing popup row", rows)
+	}
+	if !strings.Contains(rows[0].Label, "\x1b[38;5;214m●\x1b[0m") {
+		t.Fatalf("popup label = %q, want semantic prompt warning badge", rows[0].Label)
+	}
+}
+
 func TestSwitchCommandSidebarUsesContextSessionForInitialPosition(t *testing.T) {
 	t.Parallel()
 
