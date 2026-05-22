@@ -920,6 +920,53 @@ func TestSwitchCommandDeferredSidebarEnrichmentUpdatesAllRowsWithoutChangingValu
 	}
 }
 
+func TestSwitchCommandSidebarAggregatesSemanticBadgePriority(t *testing.T) {
+	t.Parallel()
+
+	inventory := &stubPreviewInventory{
+		windows: []corepreview.Window{
+			{Index: "0", Name: "main", Active: true},
+			{Index: "1", Name: "worker"},
+		},
+		panes: []corepreview.Pane{
+			{SessionName: "tmp-app", WindowIndex: "0", Title: "running", AIState: "thinking", AIBadgeKind: aiBadgeKindInProgress},
+			{SessionName: "tmp-app", WindowIndex: "0", Title: "done", AIState: "waiting", AIBadgeKind: aiBadgeKindResponseComplete},
+			{SessionName: "tmp-app", WindowIndex: "1", Title: "approve", AIState: "waiting", AIBadgeKind: aiBadgeKindApprovalRequired},
+		},
+	}
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			update, err := options.DeferredUpdate()
+			if err != nil {
+				t.Fatalf("DeferredUpdate() error = %v", err)
+			}
+			label := update.Items[0].EffectiveLabel()
+			if !strings.Contains(label, "\x1b[38;5;214m●\x1b[0m") {
+				t.Fatalf("deferred label = %q, want prompt-required warning badge", label)
+			}
+			if !strings.Contains(label, " main ") || !strings.Contains(label, " worker ") {
+				t.Fatalf("deferred label = %q, want both semantic window tabs", label)
+			}
+			return intpicker.Result{}, nil
+		}),
+		sessions:   &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		inventory:  inventory,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func TestSwitchCommandSidebarUsesContextSessionForInitialPosition(t *testing.T) {
 	t.Parallel()
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
@@ -2354,8 +2355,9 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 	}
 	sessionNames := make(map[string]string, len(candidatePaths))
 	attentionRanks := map[string]int(nil)
-	if ui == switchUISidebar && mode == switchRowRenderFull {
-		attentionRanks = c.switchAttentionRanks(ctx)
+	aiBadgeKinds := map[string]string(nil)
+	if mode == switchRowRenderFull {
+		attentionRanks, aiBadgeKinds = c.switchAttentionBadges(ctx)
 	}
 
 	for _, candidatePath := range candidatePaths {
@@ -2402,6 +2404,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 			WindowTabs:    windowTabs,
 			UI:            ui,
 			AttentionRank: attentionRanks[sessionName],
+			AIBadgeKind:   aiBadgeKinds[sessionName],
 			Pinned:        pinnedSet[cleanOptionalPath(candidatePath)],
 		})
 	}
@@ -2443,7 +2446,7 @@ func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, m
 	if err != nil {
 		panes = nil
 	}
-	attentionRanks := switchWindowAttentionRanks(panes)
+	attentionRanks, aiBadgeKinds := switchWindowAttentionBadges(panes)
 	tabs := make([]intrender.SwitchWindowTab, 0, len(windows))
 	for _, window := range windows {
 		name := strings.TrimSpace(window.Name)
@@ -2456,6 +2459,7 @@ func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, m
 		tabs = append(tabs, intrender.SwitchWindowTab{
 			Name:          name,
 			AttentionRank: attentionRanks[strings.TrimSpace(window.Index)],
+			AIBadgeKind:   aiBadgeKinds[strings.TrimSpace(window.Index)],
 			Active:        window.Active,
 		})
 	}
@@ -2463,51 +2467,80 @@ func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, m
 }
 
 func switchWindowAttentionRanks(panes []corepreview.Pane) map[string]int {
+	ranks, _ := switchWindowAttentionBadges(panes)
+	return ranks
+}
+
+func switchWindowAttentionBadges(panes []corepreview.Pane) (map[string]int, map[string]string) {
 	ranks := make(map[string]int)
+	kinds := make(map[string]string)
 	for _, pane := range panes {
 		windowIndex := strings.TrimSpace(pane.WindowIndex)
 		if windowIndex == "" {
 			continue
 		}
-		rank := ranks[windowIndex]
-		if pane.AttentionState == attentionStateBusy || hasBraillePrefix(pane.Title) {
-			ranks[windowIndex] = 2
-			continue
-		}
-		if rank < 1 && (pane.AttentionState == attentionStateReply || hasAttentionPrefix(pane.Title)) {
-			ranks[windowIndex] = 1
-		}
+		kinds[windowIndex] = aggregateAIBadgeKind(kinds[windowIndex], semanticBadgeKindForPreviewPane(pane))
+		ranks[windowIndex] = attentionRankForBadgeKind(kinds[windowIndex])
 	}
-	return ranks
+	return ranks, kinds
 }
 
 func (c *switchCommand) switchAttentionRanks(ctx context.Context) map[string]int {
+	ranks, _ := c.switchAttentionBadges(ctx)
+	return ranks
+}
+
+func (c *switchCommand) switchAttentionBadges(ctx context.Context) (map[string]int, map[string]string) {
 	inventory, err := c.requireSwitchPreviewInventory()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
 	panes, err := inventory.SessionPanes(ctx, "")
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
 	ranks := make(map[string]int)
+	kinds := make(map[string]string)
 	for _, pane := range panes {
 		sessionName := strings.TrimSpace(pane.SessionName)
 		if sessionName == "" {
 			continue
 		}
-		rank := ranks[sessionName]
-		if pane.AttentionState == attentionStateBusy || hasBraillePrefix(pane.Title) {
-			ranks[sessionName] = 2
-			continue
-		}
-		if rank < 1 && (pane.AttentionState == attentionStateReply || hasAttentionPrefix(pane.Title)) {
-			ranks[sessionName] = 1
-		}
+		kinds[sessionName] = aggregateAIBadgeKind(kinds[sessionName], semanticBadgeKindForPreviewPane(pane))
+		ranks[sessionName] = attentionRankForBadgeKind(kinds[sessionName])
 	}
-	return ranks
+	return ranks, kinds
+}
+
+func semanticBadgeKindForPreviewPane(pane corepreview.Pane) string {
+	if kind := normalizeAIBadgeKind(pane.AIBadgeKind); kind != "" {
+		return kind
+	}
+	switch {
+	case pane.AttentionState == attentionStateBusy || strings.TrimSpace(pane.AIState) == "thinking" || hasBraillePrefix(pane.Title):
+		return aiBadgeKindInProgress
+	case pane.AttentionState == attentionStateReply || strings.TrimSpace(pane.AIState) == "waiting" || hasAttentionPrefix(pane.Title):
+		return aiBadgeKindResponseComplete
+	default:
+		return ""
+	}
+}
+
+func aggregateAIBadgeKind(current, next string) string {
+	return aibadge.Aggregate(current, next)
+}
+
+func attentionRankForBadgeKind(kind string) int {
+	switch normalizeAIBadgeKind(kind) {
+	case aiBadgeKindApprovalRequired, aiBadgeKindInputRequired, aiBadgeKindResponseComplete:
+		return 1
+	case aiBadgeKindInProgress:
+		return 2
+	default:
+		return 0
+	}
 }
 
 func sortSwitchCandidates(candidates []intrender.SwitchCandidate, homeDir string) {

@@ -188,6 +188,9 @@ func sidebarPaneLabel(pane corepreview.Pane) string {
 }
 
 func sidebarPaneBadge(pane corepreview.Pane) string {
+	if style := ansiAIBadgeKindStart(pane.AIBadgeKind); style != "" {
+		return style + "●" + ansiReset
+	}
 	switch paneAttentionRank(pane) {
 	case 2:
 		return ansiProgress + "●" + ansiReset

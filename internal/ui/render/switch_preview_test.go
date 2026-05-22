@@ -113,6 +113,24 @@ func TestRenderSwitchPreviewForSidebarMatchesLegacySections(t *testing.T) {
 	}
 }
 
+func TestRenderSwitchPreviewForSidebarUsesSemanticPromptBadge(t *testing.T) {
+	t.Parallel()
+
+	got := RenderSwitchPreview(corepreview.SwitchReadModel{
+		SessionMode: "existing",
+		Windows: []corepreview.Window{
+			{Index: "1", Name: "app"},
+		},
+		Panes: []corepreview.Pane{
+			{WindowIndex: "1", Index: "0", Title: "agent", AIState: "waiting", AIAgent: "codex", AITopic: "approval needed", AIBadgeKind: "approval_required"},
+		},
+	}, "sidebar")
+
+	if !strings.Contains(got, "\x1b[38;5;214m●\x1b[0m approval needed") {
+		t.Fatalf("RenderSwitchPreview() = %q, want semantic prompt warning badge", got)
+	}
+}
+
 func TestRenderSwitchPreviewStylesLeadTopicPrefixOnlyInRenderer(t *testing.T) {
 	t.Parallel()
 

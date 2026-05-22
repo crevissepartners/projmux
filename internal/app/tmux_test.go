@@ -1533,6 +1533,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g pane-border-format \"#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > ",
 		"#[bold#,fg=" + tmuxStateProgressFg + "] ● ",
 		"#[bold#,fg=" + tmuxStateSuccessFg + "] ● ",
+		"#[bold#,fg=" + tmuxStateWarningFg + "] ● ",
 		"#[fg=colour244] ",
 		"#{@projmux_ai_topic}",
 		"#{pane_current_command},#{pane_title}",
@@ -1636,6 +1637,9 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	if !strings.Contains(paneBorder, tmuxStyledVisiblePaneLabelFormatFor(tmuxStateSuccessFg)) {
 		t.Fatalf("pane border format = %q, want ready-styled visible label", paneBorder)
 	}
+	if !strings.Contains(paneBorder, tmuxStyledVisiblePaneLabelFormatFor(tmuxStateWarningFg)) {
+		t.Fatalf("pane border format = %q, want prompt-styled visible label", paneBorder)
+	}
 	activePaneBorderPrefix := "#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > " + visibleLabel
 	if !strings.Contains(paneBorder, activePaneBorderPrefix) {
 		t.Fatalf("pane border format = %q, want active pane label to keep unstyled focus surface %q", paneBorder, activePaneBorderPrefix)
@@ -1645,6 +1649,14 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	}
 	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxStateSuccessFg+"] ● ") {
 		t.Fatalf("pane border format = %q, want reply/ready marker to use state.success", paneBorder)
+	}
+	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxStateWarningFg+"] ● ") {
+		t.Fatalf("pane border format = %q, want prompt marker to use state.warning", paneBorder)
+	}
+	for _, want := range []string{aiBadgeKindApprovalRequired, aiBadgeKindInputRequired, aiBadgeKindResponseComplete, aiBadgeKindInProgress} {
+		if !strings.Contains(paneBorder, "@projmux_ai_badge_kind},"+want) {
+			t.Fatalf("pane border format = %q, want semantic badge kind %q", paneBorder, want)
+		}
 	}
 	if !strings.Contains(styledVisibleLabel, "#[bold#,fg="+tmuxStateProgressFg+"]#{@projmux_ai_topic}#[pop-default]") {
 		t.Fatalf("styled visible label format = %q, want renderer-level lead topic styling", styledVisibleLabel)

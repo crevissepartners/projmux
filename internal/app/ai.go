@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
@@ -46,10 +47,10 @@ const (
 	aiPaneTranscriptPathOption  = "@projmux_ai_transcript_path"
 	aiPaneResumeUpdatedAtOption = "@projmux_ai_resume_updated_at"
 
-	aiBadgeKindInProgress       = "in_progress"
-	aiBadgeKindApprovalRequired = "approval_required"
-	aiBadgeKindInputRequired    = "input_required"
-	aiBadgeKindResponseComplete = "response_complete"
+	aiBadgeKindInProgress       = aibadge.InProgress
+	aiBadgeKindApprovalRequired = aibadge.ApprovalRequired
+	aiBadgeKindInputRequired    = aibadge.InputRequired
+	aiBadgeKindResponseComplete = aibadge.ResponseComplete
 )
 
 type aiCommandRunner interface {
@@ -2539,18 +2540,7 @@ func isAIBusyTitle(title string) bool {
 }
 
 func normalizeAIBadgeKind(kind string) string {
-	switch strings.TrimSpace(kind) {
-	case aiBadgeKindInProgress:
-		return aiBadgeKindInProgress
-	case aiBadgeKindApprovalRequired:
-		return aiBadgeKindApprovalRequired
-	case aiBadgeKindInputRequired:
-		return aiBadgeKindInputRequired
-	case aiBadgeKindResponseComplete:
-		return aiBadgeKindResponseComplete
-	default:
-		return ""
-	}
+	return aibadge.Normalize(kind)
 }
 
 func aiBadgeKindForStatus(state, explicit string) string {

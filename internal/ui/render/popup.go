@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/preview"
 )
 
@@ -205,7 +206,9 @@ func isShellCommand(command string) bool {
 
 func formatPaneStatus(pane preview.Pane) string {
 	parts := make([]string, 0, 6)
-	if state := sanitizeCell(pane.AttentionState); state != "" {
+	if kind := aibadge.Normalize(pane.AIBadgeKind); kind != "" {
+		parts = append(parts, formatPaneAIBadgeStatusPart(kind))
+	} else if state := sanitizeCell(pane.AttentionState); state != "" {
 		parts = append(parts, formatPaneStatusPart("badge", humanAttentionState(state), state == "busy"))
 	}
 	if state := sanitizeCell(pane.AIState); state != "" {
@@ -231,6 +234,18 @@ func formatPaneStatusPart(key, value string, progress bool) string {
 		return key + "=" + value
 	}
 	return key + "=" + ansiProgress + value + ansiReset
+}
+
+func formatPaneAIBadgeStatusPart(kind string) string {
+	value := humanAIBadgeKind(kind)
+	switch aibadge.Normalize(kind) {
+	case aibadge.ApprovalRequired, aibadge.InputRequired:
+		return "badge=" + ansiWarning + value + ansiReset
+	case aibadge.InProgress:
+		return "badge=" + ansiProgress + value + ansiReset
+	default:
+		return "badge=" + value
+	}
 }
 
 func windowAttentionRank(windowIndex string, panes []preview.Pane) int {
@@ -261,6 +276,12 @@ func formatWindowAttentionPrefix(rank int) string {
 }
 
 func paneAttentionRank(pane preview.Pane) int {
+	switch aibadge.Normalize(pane.AIBadgeKind) {
+	case aibadge.ApprovalRequired, aibadge.InputRequired, aibadge.ResponseComplete:
+		return 1
+	case aibadge.InProgress:
+		return 2
+	}
 	if strings.TrimSpace(pane.AttentionState) == "busy" || strings.TrimSpace(pane.AIState) == "thinking" || hasBraillePrefix(pane.Title) {
 		return 2
 	}
@@ -268,6 +289,21 @@ func paneAttentionRank(pane preview.Pane) int {
 		return 1
 	}
 	return 0
+}
+
+func humanAIBadgeKind(kind string) string {
+	switch aibadge.Normalize(kind) {
+	case aibadge.ApprovalRequired:
+		return "approval-required"
+	case aibadge.InputRequired:
+		return "input-required"
+	case aibadge.ResponseComplete:
+		return "response-complete"
+	case aibadge.InProgress:
+		return "working"
+	default:
+		return kind
+	}
 }
 
 func hasAttentionTitlePrefix(title string) bool {

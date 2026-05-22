@@ -41,6 +41,7 @@ type Pane struct {
 	Title               string
 	AttentionState      string
 	AIState             string
+	AIBadgeKind         string
 	AIAgent             string
 	AITopic             string
 	AttentionAck        string
@@ -211,6 +212,7 @@ func normalizedPanes(panes []Pane) []Pane {
 			Title:               strings.TrimSpace(pane.Title),
 			AttentionState:      strings.TrimSpace(pane.AttentionState),
 			AIState:             strings.TrimSpace(pane.AIState),
+			AIBadgeKind:         strings.TrimSpace(pane.AIBadgeKind),
 			AIAgent:             strings.TrimSpace(pane.AIAgent),
 			AITopic:             strings.TrimSpace(pane.AITopic),
 			AttentionAck:        strings.TrimSpace(pane.AttentionAck),
