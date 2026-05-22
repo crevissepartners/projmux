@@ -1,6 +1,11 @@
 package render
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
+)
 
 func TestBuildSwitchRowsFormatsSessionModeAndPath(t *testing.T) {
 	t.Parallel()
@@ -127,9 +132,12 @@ func TestBuildSwitchRowsSidebarUsesAnsiStylingForModeAndToggles(t *testing.T) {
 		Tagged:      true,
 	}})
 
-	const want = "  \x1b[31mx\x1b[0m \x1b[33m*\x1b[0m \x1b[1m\x1b[32mapp\x1b[0m \x1b[2m~rp/app\x1b[0m"
+	const want = "\x1b[1m\x1b[32mapp\x1b[0m   \x1b[31mx\x1b[0m \x1b[33m*\x1b[0m\n\x1b[2m~rp/app\x1b[0m \x1b[1;38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m"
 	if got := rows[0].Label; got != want {
 		t.Fatalf("label = %q, want %q", got, want)
+	}
+	if got := rows[0].Item.EffectiveLabel(); got != want {
+		t.Fatalf("item label = %q, want %q", got, want)
 	}
 }
 
@@ -144,7 +152,7 @@ func TestBuildSwitchRowsSidebarLeavesNewSessionNameUncolored(t *testing.T) {
 		UI:          "sidebar",
 	}})
 
-	const want = "  app \x1b[2m~rp/app\x1b[0m"
+	const want = "app      \n\x1b[2m~rp/app\x1b[0m \x1b[38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m"
 	if got := rows[0].Label; got != want {
 		t.Fatalf("label = %q, want %q", got, want)
 	}
@@ -162,12 +170,58 @@ func TestBuildSwitchRowsSidebarShowsAttentionBadge(t *testing.T) {
 		AttentionRank: 2,
 	}})
 
-	const want = "\x1b[38;2;255;204;102m●\x1b[0m \x1b[1m\x1b[32mapp\x1b[0m \x1b[2m~rp/app\x1b[0m"
+	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[38;2;255;204;102m●\x1b[0m    \n\x1b[2m~rp/app\x1b[0m \x1b[1;38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m"
 	if got := rows[0].Label; got != want {
 		t.Fatalf("label = %q, want %q", got, want)
 	}
 	if got, want := rows[0].Item.Badges, []string{"needs review"}; !equalStringSlices(got, want) {
 		t.Fatalf("item badges = %q, want %q", got, want)
+	}
+}
+
+func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
+	t.Parallel()
+
+	cheap := BuildSwitchRows([]SwitchCandidate{{
+		Path:        "/home/tester/source/repos/app",
+		DisplayPath: "~rp/app",
+		DisplayName: "app",
+		SessionName: "repos-app",
+		ModeLabel:   "existing",
+		UI:          "sidebar",
+	}})[0]
+	enriched := BuildSwitchRows([]SwitchCandidate{{
+		Path:        "/home/tester/source/repos/app",
+		DisplayPath: "~rp/app",
+		DisplayName: "app",
+		SessionName: "repos-app",
+		ModeLabel:   "existing",
+		GitBranch:   "feature/long-sidebar-branch-name",
+		WindowTabs: []SwitchWindowTab{
+			{Name: "shell", Active: true},
+			{Name: "server", AttentionRank: 2},
+			{Name: "tests", AttentionRank: 1},
+			{Name: "extra"},
+		},
+		UI:            "sidebar",
+		AttentionRank: 2,
+	}})[0]
+
+	cheapLines := strings.Split(cheap.Item.EffectiveLabel(), "\n")
+	enrichedLines := strings.Split(enriched.Item.EffectiveLabel(), "\n")
+	if len(cheapLines) != 3 || len(enrichedLines) != 3 {
+		t.Fatalf("line count cheap/enriched = %d/%d, want fixed 3-line sidebar rows", len(cheapLines), len(enrichedLines))
+	}
+	for idx := range cheapLines {
+		if got, want := projmuxpicker.VisibleLen(enrichedLines[idx]), projmuxpicker.VisibleLen(cheapLines[idx]); got != want {
+			t.Fatalf("line %d width changed from %d to %d\ncheap:    %q\nenriched: %q", idx, want, got, cheapLines[idx], enrichedLines[idx])
+		}
+	}
+	if !strings.Contains(enrichedLines[1], "feature/long-...") {
+		t.Fatalf("enriched path/git lane = %q, want truncated branch in fixed lane", enrichedLines[1])
+	}
+	if strings.Contains(enrichedLines[2], "extra") {
+		t.Fatalf("enriched tabs lane = %q, want fixed sidebar tab slots", enrichedLines[2])
 	}
 }
 

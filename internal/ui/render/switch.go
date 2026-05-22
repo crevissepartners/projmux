@@ -31,6 +31,7 @@ const (
 const (
 	switchBranchBadgeMax     = 16
 	switchWindowTabNameWidth = 8
+	switchSidebarTabSlots    = 3
 )
 
 type SwitchRow struct {
@@ -93,10 +94,15 @@ func PrettyPath(path, homeDir, repoRoot string) string {
 func BuildSwitchRows(candidates []SwitchCandidate) []SwitchRow {
 	rows := make([]SwitchRow, 0, len(candidates))
 	for _, candidate := range candidates {
+		label := formatSwitchLabel(candidate)
+		item := switchPickerItem(candidate)
+		if candidate.UI == "sidebar" {
+			item.Label = label
+		}
 		rows = append(rows, SwitchRow{
-			Label: formatSwitchLabel(candidate),
+			Label: label,
 			Value: candidate.Path,
-			Item:  switchPickerItem(candidate),
+			Item:  item,
 		})
 	}
 	return rows
@@ -242,6 +248,42 @@ func formatSwitchWindowTab(name string, attentionRank int, active bool) string {
 	return style + " " + badge + centerSwitchTabName(name, switchWindowTabNameWidth) + " " + ansiReset
 }
 
+func formatSidebarSwitchWindowTabs(windows []SwitchWindowTab) string {
+	tabs := make([]string, 0, switchSidebarTabSlots)
+	for _, window := range windows {
+		if len(tabs) >= switchSidebarTabSlots {
+			break
+		}
+		name := sanitizeCell(window.Name)
+		if name == "" {
+			continue
+		}
+		tabs = append(tabs, formatSidebarSwitchWindowTab(name, window.AttentionRank, window.Active))
+	}
+	for len(tabs) < switchSidebarTabSlots {
+		tabs = append(tabs, ansiTabInactive+strings.Repeat(" ", sidebarSwitchWindowTabWidth())+ansiReset)
+	}
+	return strings.Join(tabs, " ")
+}
+
+func formatSidebarSwitchWindowTab(name string, attentionRank int, active bool) string {
+	style := ansiTabInactive
+	if active {
+		style = ansiTabActive
+	}
+	badge := formatInlineAttentionBadge(attentionRank)
+	if badge == "" {
+		badge = "  "
+	} else {
+		badge += style
+	}
+	return style + " " + badge + centerSwitchTabName(name, switchWindowTabNameWidth) + " " + ansiReset
+}
+
+func sidebarSwitchWindowTabWidth() int {
+	return 1 + 2 + switchWindowTabNameWidth + 1
+}
+
 func centerSwitchTabName(name string, width int) string {
 	name = truncateSwitchBadge(name, width)
 	runes := []rune(name)
@@ -380,32 +422,25 @@ func formatPopupModeLabel(mode string) string {
 }
 
 func formatSidebarSwitchLabel(candidate SwitchCandidate) string {
-	parts := make([]string, 0, 5)
-	parts = append(parts, formatAttentionBadge(candidate.AttentionRank))
-	if candidate.Tagged {
-		parts = append(parts, formatTagBadge(candidate.Tagged))
-	}
-	if candidate.Pinned {
-		parts = append(parts, formatPinBadge(candidate.Pinned))
-	}
-
 	displayName := sanitizeCell(candidate.DisplayName)
 	if displayName == "" {
 		displayName = sanitizeCell(candidate.SessionName)
 	}
-	if displayName != "" {
-		parts = append(parts, formatSidebarSessionName(displayName, candidate.ModeLabel))
+	title := formatSidebarSessionName(displayName, candidate.ModeLabel)
+	if title == "" {
+		title = formatSidebarSessionName(sanitizeCell(candidate.Path), candidate.ModeLabel)
 	}
 
 	path := sanitizeCell(candidate.DisplayPath)
 	if path == "" {
 		path = sanitizeCell(candidate.Path)
 	}
-	if path != "" {
-		parts = append(parts, ansiDim+path+ansiReset)
+	lines := []string{
+		title + " " + formatSidebarStatusLane(candidate),
+		ansiDim + path + ansiReset + " " + formatSidebarBranchLane(candidate),
+		formatSidebarSwitchWindowTabs(candidate.WindowTabs),
 	}
-
-	return strings.Join(parts, " ")
+	return strings.Join(lines, "\n")
 }
 
 func formatAttentionBadge(rank int) string {
@@ -429,6 +464,26 @@ func formatSidebarSessionName(sessionName, mode string) string {
 	default:
 		return sessionName
 	}
+}
+
+func formatSidebarStatusLane(candidate SwitchCandidate) string {
+	return strings.Join([]string{
+		formatAttentionBadge(candidate.AttentionRank),
+		formatTagBadge(candidate.Tagged),
+		formatPinBadge(candidate.Pinned),
+	}, " ")
+}
+
+func formatSidebarBranchLane(candidate SwitchCandidate) string {
+	branch := truncateSwitchBadge(sanitizeCell(candidate.GitBranch), switchBranchBadgeMax)
+	style := ansiStatusGitInactive
+	if candidate.ModeLabel == "existing" {
+		style = ansiStatusGitActive
+	}
+	if branch == "" {
+		return style + strings.Repeat(" ", switchBranchBadgeMax+2) + ansiReset
+	}
+	return style + " " + padRight(branch, switchBranchBadgeMax) + " " + ansiReset
 }
 
 func formatTagBadge(tagged bool) string {

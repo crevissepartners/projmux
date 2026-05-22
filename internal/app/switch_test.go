@@ -581,7 +581,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Entries, []intpickercompat.Entry{
-		{Label: "\x1b[1m\x1b[32mapp\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m", Value: "/tmp/app"},
+		{Label: "\x1b[1m\x1b[32mapp\x1b[0m      \n\x1b[2m/tmp/app\x1b[0m \x1b[1;38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m", Value: "/tmp/app", SearchKey: "app"},
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
@@ -689,11 +689,16 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := gotNativeOptions.Items[0].EffectiveLabel(), "\x1b[1m\x1b[32mapp\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
-		t.Fatalf("initial entry = %q, want cheap row %q", got, want)
+	initialLabel := gotNativeOptions.Items[0].EffectiveLabel()
+	if got, want := len(strings.Split(initialLabel, "\n")), 3; got != want {
+		t.Fatalf("initial row line count = %d, want %d: %q", got, want, initialLabel)
 	}
-	if got, want := gotDeferred.Items[0].EffectiveLabel(), "\x1b[1m\x1b[32mapp\x1b[0m \x1b[38;2;255;204;102m●\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
-		t.Fatalf("deferred entry = %q, want enriched row %q", got, want)
+	deferredLabel := gotDeferred.Items[0].EffectiveLabel()
+	if got, want := len(strings.Split(deferredLabel, "\n")), 3; got != want {
+		t.Fatalf("deferred row line count = %d, want %d: %q", got, want, deferredLabel)
+	}
+	if !strings.Contains(deferredLabel, "●") {
+		t.Fatalf("deferred entry = %q, want attention marker", deferredLabel)
 	}
 	if got, want := gotDeferred.Preview.Window, "down,25%,border-top"; got != want {
 		t.Fatalf("deferred preview window = %q, want %q", got, want)
@@ -736,7 +741,7 @@ func TestSwitchCommandSidebarUsesBulkExistingSessionMap(t *testing.T) {
 	if !strings.Contains(rows[0].Label, "\x1b[32mlive\x1b[0m") {
 		t.Fatalf("existing row label = %q, want existing styling", rows[0].Label)
 	}
-	if !strings.Contains(rows[1].Label, "\x1b[1mnew\x1b[0m") {
+	if !strings.Contains(rows[1].Label, "new") || strings.Contains(rows[1].Label, "\x1b[32mnew") {
 		t.Fatalf("new row label = %q, want new styling", rows[1].Label)
 	}
 }
@@ -805,8 +810,12 @@ func TestSwitchCommandNativeSidebarDefersGitWindowsAttentionAndPreview(t *testin
 			if options.Preview.Command != "" {
 				t.Fatalf("preview command before first paint = %q, want deferred", options.Preview.Command)
 			}
-			if got, want := options.Items[0].EffectiveLabel(), "\x1b[1m\x1b[32mapp\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
-				t.Fatalf("initial item = %q, want cheap row %q", got, want)
+			initialLabel := options.Items[0].EffectiveLabel()
+			if got, want := len(strings.Split(initialLabel, "\n")), 3; got != want {
+				t.Fatalf("initial row line count = %d, want %d: %q", got, want, initialLabel)
+			}
+			if strings.Contains(initialLabel, "branch-main") || strings.Contains(initialLabel, " server ") || strings.Contains(initialLabel, "●") {
+				t.Fatalf("initial item = %q, want reserved lanes without metadata", initialLabel)
 			}
 			update, err := options.DeferredUpdate()
 			if err != nil {
@@ -1646,11 +1655,11 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	wantEntries := []intpickercompat.Entry{
-		{Label: "\x1b[1mhome\x1b[0m\n  \x1b[38;5;242m~\x1b[0m", Value: fixture.path("home")},
-		{Label: "\x1b[1mapp\x1b[0m \x1b[33m*\x1b[0m\n  \x1b[38;5;242m" + fixture.path("pins/app") + "\x1b[0m", Value: fixture.path("pins/app")},
-		{Label: "\x1b[1mrepo-a\x1b[0m\n  \x1b[38;5;242m~rp/repo-a\x1b[0m", Value: fixture.path("rp/repo-a")},
-		{Label: "\x1b[1mwork-a\x1b[0m\n  \x1b[38;5;242m" + fixture.path("managed/work-a") + "\x1b[0m", Value: fixture.path("managed/work-a")},
-		{Label: "\x1b[1mwork-b\x1b[0m\n  \x1b[38;5;242m" + fixture.path("managed/work-b") + "\x1b[0m", Value: fixture.path("managed/work-b")},
+		expectedCheapSidebarEntry("home", "~", fixture.path("home"), false),
+		expectedCheapSidebarEntry("app", fixture.path("pins/app"), fixture.path("pins/app"), true),
+		expectedCheapSidebarEntry("repo-a", "~rp/repo-a", fixture.path("rp/repo-a"), false),
+		expectedCheapSidebarEntry("work-a", fixture.path("managed/work-a"), fixture.path("managed/work-a"), false),
+		expectedCheapSidebarEntry("work-b", fixture.path("managed/work-b"), fixture.path("managed/work-b"), false),
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
@@ -1715,8 +1724,8 @@ func TestNewSwitchCommandDoesNotInferRepoRootFromHomeSourceRepos(t *testing.T) {
 	}
 
 	wantEntries := []intpickercompat.Entry{
-		{Label: "\x1b[1mhome\x1b[0m\n  \x1b[38;5;242m~\x1b[0m", Value: fixture.path("home")},
-		{Label: "\x1b[1mrepos\x1b[0m\n  \x1b[38;5;242m~/source/repos\x1b[0m", Value: fixture.path("home/source/repos")},
+		expectedCheapSidebarEntry("home", "~", fixture.path("home"), false),
+		expectedCheapSidebarEntry("repos", "~/source/repos", fixture.path("home/source/repos"), false),
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
@@ -3170,6 +3179,18 @@ func pickerItemSearchTexts(items []intpicker.Item) []string {
 		values = append(values, item.SearchText)
 	}
 	return values
+}
+
+func expectedCheapSidebarEntry(name, displayPath, value string, pinned bool) intpickercompat.Entry {
+	statusLane := "     "
+	if pinned {
+		statusLane = "    \x1b[33m*\x1b[0m"
+	}
+	return intpickercompat.Entry{
+		Label:     name + " " + statusLane + "\n\x1b[2m" + displayPath + "\x1b[0m \x1b[38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m",
+		Value:     value,
+		SearchKey: name,
+	}
 }
 
 func saveSwitchProjectStartupSnapshot(t *testing.T, store sessionstate.Store, sessionName string) {
