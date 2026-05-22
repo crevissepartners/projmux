@@ -37,6 +37,7 @@ type attentionNotifyInput struct {
 	Metadata      map[string]string
 	Force         bool
 	SuppressHooks bool
+	BadgeKind     string
 }
 
 // attentionNotifyLookup is the minimal tmux read surface the producer needs.

@@ -392,7 +392,8 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		}
 		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 		if err := c.applyAIStatusWithNotify("thinking", paneID, attentionNotifyInput{
-			Metadata: metadata,
+			Metadata:  metadata,
+			BadgeKind: aiBadgeKindInProgress,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return err
@@ -408,11 +409,12 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		body := formatCodexHookStopNotifyBody(payload)
 		if action.Action == aiHookActionState {
 			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       codexHookNotifyID(payload, "stop"),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: mergeAINotifyBodyMetadata(metadata, body),
-				Force:    true,
+				ID:        codexHookNotifyID(payload, "stop"),
+				Text:      body.Text,
+				Severity:  body.Severity,
+				Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+				Force:     true,
+				BadgeKind: aiBadgeKindResponseComplete,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 				return err
@@ -421,11 +423,12 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 			return nil
 		}
 		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       codexHookNotifyID(payload, "stop"),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: mergeAINotifyBodyMetadata(metadata, body),
-			Force:    true,
+			ID:        codexHookNotifyID(payload, "stop"),
+			Text:      body.Text,
+			Severity:  body.Severity,
+			Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+			Force:     true,
+			BadgeKind: aiBadgeKindResponseComplete,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return err
@@ -441,11 +444,12 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		body := formatCodexHookPermissionNotifyBody(payload)
 		if action.Action == aiHookActionState {
 			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       codexHookNotifyID(payload, "permission"),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: mergeAINotifyBodyMetadata(metadata, body),
-				Force:    true,
+				ID:        codexHookNotifyID(payload, "permission"),
+				Text:      body.Text,
+				Severity:  body.Severity,
+				Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+				Force:     true,
+				BadgeKind: aiBadgeKindApprovalRequired,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 				return err
@@ -454,11 +458,12 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 			return nil
 		}
 		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       codexHookNotifyID(payload, "permission"),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: mergeAINotifyBodyMetadata(metadata, body),
-			Force:    true,
+			ID:        codexHookNotifyID(payload, "permission"),
+			Text:      body.Text,
+			Severity:  body.Severity,
+			Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+			Force:     true,
+			BadgeKind: aiBadgeKindApprovalRequired,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return err
@@ -509,7 +514,8 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			return nil
 		}
 		if err := c.applyAIStatusWithNotify("thinking", paneID, attentionNotifyInput{
-			Metadata: metadata,
+			Metadata:  metadata,
+			BadgeKind: aiBadgeKindInProgress,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 			return err
@@ -522,13 +528,15 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			return nil
 		}
 		body := formatClaudeNotificationNotifyBody(payload)
+		badgeKind := aiBadgeKindForNotifyCategory(body.Category)
 		if action.Action == aiHookActionState {
 			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudeNotifyID(payload),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: mergeAINotifyBodyMetadata(metadata, body),
-				Force:    true,
+				ID:        claudeNotifyID(payload),
+				Text:      body.Text,
+				Severity:  body.Severity,
+				Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+				Force:     true,
+				BadgeKind: badgeKind,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 				return err
@@ -537,11 +545,12 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			return nil
 		}
 		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       claudeNotifyID(payload),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: mergeAINotifyBodyMetadata(metadata, body),
-			Force:    true,
+			ID:        claudeNotifyID(payload),
+			Text:      body.Text,
+			Severity:  body.Severity,
+			Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+			Force:     true,
+			BadgeKind: badgeKind,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 			return err
@@ -556,11 +565,12 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 		body := formatClaudePermissionNotifyBody(payload)
 		if action.Action == aiHookActionState {
 			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudePermissionNotifyID(payload),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: mergeAINotifyBodyMetadata(metadata, body),
-				Force:    true,
+				ID:        claudePermissionNotifyID(payload),
+				Text:      body.Text,
+				Severity:  body.Severity,
+				Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+				Force:     true,
+				BadgeKind: aiBadgeKindApprovalRequired,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 				return err
@@ -569,11 +579,12 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			return nil
 		}
 		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       claudePermissionNotifyID(payload),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: mergeAINotifyBodyMetadata(metadata, body),
-			Force:    true,
+			ID:        claudePermissionNotifyID(payload),
+			Text:      body.Text,
+			Severity:  body.Severity,
+			Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+			Force:     true,
+			BadgeKind: aiBadgeKindApprovalRequired,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 			return err
@@ -589,11 +600,12 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 		body := formatClaudeStopNotifyBody(message)
 		if action.Action == aiHookActionState {
 			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudeStopNotifyID(payload),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: mergeAINotifyBodyMetadata(metadata, body),
-				Force:    true,
+				ID:        claudeStopNotifyID(payload),
+				Text:      body.Text,
+				Severity:  body.Severity,
+				Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+				Force:     true,
+				BadgeKind: aiBadgeKindResponseComplete,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 				return err
@@ -602,11 +614,12 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			return nil
 		}
 		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       claudeStopNotifyID(payload),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: mergeAINotifyBodyMetadata(metadata, body),
-			Force:    true,
+			ID:        claudeStopNotifyID(payload),
+			Text:      body.Text,
+			Severity:  body.Severity,
+			Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+			Force:     true,
+			BadgeKind: aiBadgeKindResponseComplete,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 			return err
@@ -688,11 +701,12 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 		body := formatClaudeTeammateIdleNotifyBody(payload)
 		if action.Action == aiHookActionState {
 			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: mergeAINotifyBodyMetadata(metadata, body),
-				Force:    true,
+				ID:        claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
+				Text:      body.Text,
+				Severity:  body.Severity,
+				Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+				Force:     true,
+				BadgeKind: aiBadgeKindResponseComplete,
 			}); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 				return err
@@ -701,11 +715,12 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 			return nil
 		}
 		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: mergeAINotifyBodyMetadata(metadata, body),
-			Force:    true,
+			ID:        claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
+			Text:      body.Text,
+			Severity:  body.Severity,
+			Metadata:  mergeAINotifyBodyMetadata(metadata, body),
+			Force:     true,
+			BadgeKind: aiBadgeKindResponseComplete,
 		}); err != nil {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
 			return err
