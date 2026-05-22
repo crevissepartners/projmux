@@ -1236,12 +1236,16 @@ func tmuxShellPaneLabelFormat() string {
 
 func tmuxPaneBorderFormat() string {
 	activePaneLabelFormat := tmuxVisiblePaneLabelFormat()
+	promptPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateWarningFg)
 	busyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateProgressFg)
 	replyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateSuccessFg)
 	mutedPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(theme.TmuxMutedFg)
+	panePromptFormat := "#{||:#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindApprovalRequired + "},#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindInputRequired + "}}"
+	paneCompleteFormat := "#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindResponseComplete + "}"
+	paneProgressFormat := "#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindInProgress + "}"
 	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
 	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=" + tmuxStateProgressFg + "] ● " + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "] ● " + replyPaneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}"
+	inactivePaneBorderFormat := "#{?" + panePromptFormat + ",#[bold#,fg=" + tmuxStateWarningFg + "] ● " + promptPaneLabelFormat + " #[default],#{?" + paneCompleteFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "] ● " + replyPaneLabelFormat + " #[default],#{?#{||:" + paneProgressFormat + "," + paneBusyFormat + "},#[bold#,fg=" + tmuxStateProgressFg + "] ● " + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "] ● " + replyPaneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}}}"
 	return "#{?pane_active,#[bold#,fg=" + theme.TmuxPaneActiveFg + "#,bg=" + theme.TmuxPaneActiveBg + "] > " + activePaneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
 }
 

@@ -249,12 +249,12 @@ func TestAttentionArmMarksReplyForNextFocusClear(t *testing.T) {
 	}
 }
 
-func TestAttentionWindowPrefersBusyBadge(t *testing.T) {
+func TestAttentionWindowAggregatesResponseAboveProgress(t *testing.T) {
 	t.Parallel()
 
 	runner := &recordingAttentionRunner{
 		outputs: map[string][]byte{
-			"tmux list-panes -t @1 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}": []byte("plain\treply" + attentionListSeparator + "reply\n⠋ working" + attentionListSeparator + "\n"),
+			"tmux list-panes -t @1 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}" + attentionListSeparator + "#{@projmux_ai_state}" + attentionListSeparator + "#{@projmux_ai_badge_kind}": []byte("plain\treply" + attentionListSeparator + "reply" + attentionListSeparator + "" + attentionListSeparator + "\n⠋ working" + attentionListSeparator + "" + attentionListSeparator + "" + attentionListSeparator + "\n"),
 		},
 	}
 	cmd := &attentionCommand{runner: runner}
@@ -263,7 +263,7 @@ func TestAttentionWindowPrefersBusyBadge(t *testing.T) {
 	if err := cmd.Run([]string{"window", "@1"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), "#[fg="+tmuxStateProgressFg+"]●"; got != want {
+	if got, want := stdout.String(), "#[fg="+tmuxStateSuccessFg+"]●"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -273,7 +273,7 @@ func TestAttentionWindowShowsReplyBadge(t *testing.T) {
 
 	runner := &recordingAttentionRunner{
 		outputs: map[string][]byte{
-			"tmux list-panes -t @2 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}": []byte("plain" + attentionListSeparator + "\n✳ ready" + attentionListSeparator + "\n"),
+			"tmux list-panes -t @2 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}" + attentionListSeparator + "#{@projmux_ai_state}" + attentionListSeparator + "#{@projmux_ai_badge_kind}": []byte("plain" + attentionListSeparator + "" + attentionListSeparator + "" + attentionListSeparator + "\n✳ ready" + attentionListSeparator + "" + attentionListSeparator + "" + attentionListSeparator + "\n"),
 		},
 	}
 	cmd := &attentionCommand{runner: runner}
@@ -289,6 +289,44 @@ func TestAttentionWindowShowsReplyBadge(t *testing.T) {
 		if strings.Contains(stdout.String(), disallowed) {
 			t.Fatalf("stdout = %q, did not expect critical attention token %q", stdout.String(), disallowed)
 		}
+	}
+}
+
+func TestAttentionWindowSemanticPromptWinsOverCompleteAndProgress(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux list-panes -t @4 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}" + attentionListSeparator + "#{@projmux_ai_state}" + attentionListSeparator + "#{@projmux_ai_badge_kind}": []byte("work" + attentionListSeparator + "busy" + attentionListSeparator + "thinking" + attentionListSeparator + "in_progress\nready" + attentionListSeparator + "reply" + attentionListSeparator + "waiting" + attentionListSeparator + "response_complete\napprove" + attentionListSeparator + "reply" + attentionListSeparator + "waiting" + attentionListSeparator + "approval_required\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"window", "@4"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := stdout.String(), "#[fg="+tmuxStateWarningFg+"]●"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestAttentionWindowSemanticProgressOnlyUsesProgressBadge(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux list-panes -t @5 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}" + attentionListSeparator + "#{@projmux_ai_state}" + attentionListSeparator + "#{@projmux_ai_badge_kind}": []byte("work" + attentionListSeparator + "busy" + attentionListSeparator + "thinking" + attentionListSeparator + "in_progress\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"window", "@5"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := stdout.String(), "#[fg="+tmuxStateProgressFg+"]●"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 

@@ -197,6 +197,27 @@ func TestBuildSwitchRowsSidebarShowsAttentionBadge(t *testing.T) {
 	}
 }
 
+func TestBuildSwitchRowsSidebarShowsSemanticPromptBadge(t *testing.T) {
+	t.Parallel()
+
+	rows := BuildSwitchRows([]SwitchCandidate{{
+		Path:        "/home/tester/source/repos/app",
+		DisplayPath: "~rp/app",
+		SessionName: "app",
+		ModeLabel:   "existing",
+		UI:          "sidebar",
+		AIBadgeKind: "input_required",
+	}})
+
+	got := rows[0].Label
+	if !strings.Contains(got, "\x1b[38;5;214m●\x1b[0m") {
+		t.Fatalf("label = %q, want semantic prompt warning badge", got)
+	}
+	if got, want := rows[0].Item.Badges, []string{"needs input"}; !equalStringSlices(got, want) {
+		t.Fatalf("item badges = %q, want %q", got, want)
+	}
+}
+
 func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
 	t.Parallel()
 

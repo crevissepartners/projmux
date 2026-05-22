@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -230,19 +231,13 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 	}
 
 	rows := c.windowAttentionRows(windowID)
-	seenReply := false
+	badgeKind := ""
 	for _, row := range rows {
-		if row.State == attentionStateBusy || hasBraillePrefix(row.Title) {
-			_, err := fmt.Fprint(stdout, "#[fg="+tmuxStateProgressFg+"]●")
-			return err
-		}
-		if row.State == attentionStateReply || hasAttentionPrefix(row.Title) {
-			seenReply = true
-		}
+		badgeKind = aibadge.Aggregate(badgeKind, attentionWindowBadgeKind(row))
 	}
 
-	if seenReply {
-		_, err := fmt.Fprint(stdout, "#[fg="+tmuxStateSuccessFg+"]●")
+	if badgeKind != "" {
+		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAIBadgeKindFg(badgeKind)+"]●")
 		return err
 	}
 	_, err = fmt.Fprint(stdout, " ")
@@ -261,8 +256,10 @@ func parseOptionalAttentionTarget(args []string, command string, stderr io.Write
 }
 
 type attentionWindowRow struct {
-	Title string
-	State string
+	Title       string
+	State       string
+	AIState     string
+	AIBadgeKind string
 }
 
 type attentionPaneRow struct {
@@ -333,6 +330,8 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 		Formats: []string{
 			intmux.TmuxFormat("pane_title"),
 			intmux.PaneOptionFormat(attentionStateOption),
+			intmux.PaneOptionFormat(aiPaneStateOption),
+			intmux.PaneOptionFormat(aiPaneBadgeKindOption),
 		},
 	})
 	if err != nil {
@@ -342,11 +341,40 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 	out := make([]attentionWindowRow, 0, len(rows))
 	for _, fields := range rows {
 		out = append(out, attentionWindowRow{
-			Title: fields[0],
-			State: fields[1],
+			Title:       fields[0],
+			State:       fields[1],
+			AIState:     fields[2],
+			AIBadgeKind: fields[3],
 		})
 	}
 	return out
+}
+
+func attentionWindowBadgeKind(row attentionWindowRow) string {
+	if kind := normalizeAIBadgeKind(row.AIBadgeKind); kind != "" {
+		return kind
+	}
+	switch {
+	case row.State == attentionStateBusy || strings.TrimSpace(row.AIState) == "thinking" || hasBraillePrefix(row.Title):
+		return aiBadgeKindInProgress
+	case row.State == attentionStateReply || strings.TrimSpace(row.AIState) == "waiting" || hasAttentionPrefix(row.Title):
+		return aiBadgeKindResponseComplete
+	default:
+		return ""
+	}
+}
+
+func tmuxAIBadgeKindFg(kind string) string {
+	switch normalizeAIBadgeKind(kind) {
+	case aiBadgeKindApprovalRequired, aiBadgeKindInputRequired:
+		return tmuxStateWarningFg
+	case aiBadgeKindResponseComplete:
+		return tmuxStateSuccessFg
+	case aiBadgeKindInProgress:
+		return tmuxStateProgressFg
+	default:
+		return tmuxStateProgressFg
+	}
 }
 
 func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/picker"
 )
@@ -17,6 +18,7 @@ const (
 	ansiGreen    = theme.ANSIStateExistingStart
 	ansiYellow   = theme.ANSIStatePinnedStart
 	ansiProgress = theme.ANSIStateProgressStart
+	ansiWarning  = "\x1b[38;5;214m"
 	ansiCyan     = theme.ANSIAccentSettingsStart
 )
 
@@ -50,6 +52,7 @@ type SwitchCandidate struct {
 	WindowTabs    []SwitchWindowTab
 	UI            string
 	AttentionRank int
+	AIBadgeKind   string
 	Pinned        bool
 	Tagged        bool
 }
@@ -57,6 +60,7 @@ type SwitchCandidate struct {
 type SwitchWindowTab struct {
 	Name          string
 	AttentionRank int
+	AIBadgeKind   string
 	Active        bool
 }
 
@@ -149,7 +153,9 @@ func switchPickerItem(candidate SwitchCandidate) picker.Item {
 	}
 
 	badges := make([]string, 0, 3)
-	if candidate.AttentionRank == 2 {
+	if badge := switchAttentionBadgeName(candidate.AIBadgeKind, candidate.AttentionRank); badge != "" {
+		badges = append(badges, badge)
+	} else if candidate.AttentionRank == 2 {
 		badges = append(badges, "needs review")
 	} else if candidate.AttentionRank == 1 {
 		badges = append(badges, "ready")
@@ -232,17 +238,17 @@ func formatSwitchWindowTabs(windows []SwitchWindowTab) string {
 		if name == "" {
 			continue
 		}
-		tabs = append(tabs, formatSwitchWindowTab(name, window.AttentionRank, window.Active))
+		tabs = append(tabs, formatSwitchWindowTab(name, window.AIBadgeKind, window.AttentionRank, window.Active))
 	}
 	return strings.Join(tabs, " ")
 }
 
-func formatSwitchWindowTab(name string, attentionRank int, active bool) string {
+func formatSwitchWindowTab(name, badgeKind string, attentionRank int, active bool) string {
 	style := ansiTabInactive
 	if active {
 		style = ansiTabActive
 	}
-	badge := formatInlineAttentionBadge(attentionRank)
+	badge := formatInlineAttentionBadge(badgeKind, attentionRank)
 	if badge != "" {
 		badge += style
 	}
@@ -259,7 +265,7 @@ func formatSidebarSwitchWindowTabs(windows []SwitchWindowTab) string {
 		if name == "" {
 			continue
 		}
-		tabs = append(tabs, formatSidebarSwitchWindowTab(name, window.AttentionRank, window.Active))
+		tabs = append(tabs, formatSidebarSwitchWindowTab(name, window.AIBadgeKind, window.AttentionRank, window.Active))
 	}
 	for len(tabs) < switchSidebarTabSlots {
 		tabs = append(tabs, formatSidebarBlankLane(sidebarSwitchWindowTabWidth()))
@@ -267,12 +273,12 @@ func formatSidebarSwitchWindowTabs(windows []SwitchWindowTab) string {
 	return strings.Join(tabs, " ")
 }
 
-func formatSidebarSwitchWindowTab(name string, attentionRank int, active bool) string {
+func formatSidebarSwitchWindowTab(name, badgeKind string, attentionRank int, active bool) string {
 	style := ansiTabInactive
 	if active {
 		style = ansiTabActive
 	}
-	badge := formatInlineAttentionBadge(attentionRank)
+	badge := formatInlineAttentionBadge(badgeKind, attentionRank)
 	if badge == "" {
 		badge = "  "
 	} else {
@@ -323,6 +329,10 @@ func formatSwitchCardStatusBadge(badges []string) string {
 	parts := make([]string, 0, len(badges))
 	for _, badge := range badges {
 		switch sanitizeCell(badge) {
+		case "needs input":
+			parts = append(parts, ansiWarning+"●"+ansiReset)
+		case "working":
+			parts = append(parts, ansiProgress+"●"+ansiReset)
 		case "needs review":
 			parts = append(parts, ansiProgress+"●"+ansiReset)
 		case "ready":
@@ -336,7 +346,10 @@ func formatSwitchCardStatusBadge(badges []string) string {
 	return strings.Join(parts, " ")
 }
 
-func formatInlineAttentionBadge(rank int) string {
+func formatInlineAttentionBadge(kind string, rank int) string {
+	if style := ansiAIBadgeKindStart(kind); style != "" {
+		return style + "● " + ansiReset
+	}
 	switch rank {
 	case 2:
 		return theme.ANSISwitchAttentionNeedsStart + "● " + ansiReset
@@ -448,7 +461,10 @@ func formatSidebarSwitchLabel(candidate SwitchCandidate) string {
 	return strings.Join(lines, "\n")
 }
 
-func formatAttentionBadge(rank int) string {
+func formatAttentionBadge(kind string, rank int) string {
+	if style := ansiAIBadgeKindStart(kind); style != "" {
+		return style + "●" + ansiReset
+	}
 	switch rank {
 	case 2:
 		return ansiProgress + "●" + ansiReset
@@ -473,10 +489,42 @@ func formatSidebarSessionName(sessionName, mode string) string {
 
 func formatSidebarStatusLane(candidate SwitchCandidate) string {
 	return strings.Join([]string{
-		formatAttentionBadge(candidate.AttentionRank),
+		formatAttentionBadge(candidate.AIBadgeKind, candidate.AttentionRank),
 		formatTagBadge(candidate.Tagged),
 		formatPinBadge(candidate.Pinned),
 	}, " ")
+}
+
+func switchAttentionBadgeName(kind string, rank int) string {
+	switch aibadge.Normalize(kind) {
+	case aibadge.ApprovalRequired, aibadge.InputRequired:
+		return "needs input"
+	case aibadge.ResponseComplete:
+		return "ready"
+	case aibadge.InProgress:
+		return "working"
+	default:
+		if rank == 2 {
+			return "needs review"
+		}
+		if rank == 1 {
+			return "ready"
+		}
+		return ""
+	}
+}
+
+func ansiAIBadgeKindStart(kind string) string {
+	switch aibadge.Normalize(kind) {
+	case aibadge.ApprovalRequired, aibadge.InputRequired:
+		return ansiWarning
+	case aibadge.ResponseComplete:
+		return ansiGreen
+	case aibadge.InProgress:
+		return ansiProgress
+	default:
+		return ""
+	}
 }
 
 func formatSidebarBranchLane(candidate SwitchCandidate) string {

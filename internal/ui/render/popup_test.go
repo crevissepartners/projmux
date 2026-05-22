@@ -106,6 +106,27 @@ func TestRenderPopupPreviewStylesProgressAndLeadPrefixOnlyInRenderer(t *testing.
 	}
 }
 
+func TestRenderPopupPreviewShowsSemanticBadgeKind(t *testing.T) {
+	t.Parallel()
+
+	got := RenderPopupPreview(preview.PopupReadModel{
+		SessionName:         "dev",
+		HasSelection:        true,
+		SelectedWindowIndex: "1",
+		SelectedPaneIndex:   "0",
+		Windows: []preview.Window{
+			{Index: "1", Name: "app", PaneCount: 1},
+		},
+		Panes: []preview.Pane{
+			{WindowIndex: "1", Index: "0", Title: "agent", AIState: "waiting", AIBadgeKind: "input_required", AIAgent: "codex", AITopic: "needs target", Command: "node"},
+		},
+	})
+
+	if !strings.Contains(got, "badge=\x1b[38;5;214minput-required\x1b[0m") {
+		t.Fatalf("RenderPopupPreview() = %q, want semantic input badge", got)
+	}
+}
+
 func TestRenderPopupPreviewWithWindowOnlySelection(t *testing.T) {
 	t.Parallel()
 
