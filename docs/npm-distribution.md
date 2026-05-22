@@ -31,13 +31,15 @@ make npm-pack
 or:
 
 ```bash
-scripts/package-npm.sh --version 0.4.0 --out /tmp/projmux-npm --pack
+scripts/package-npm.sh --version 1.2.3 --out /tmp/projmux-npm --pack
 ```
 
 The script stages package directories under `dist/npm` by default. It builds
 the Go binary for each supported platform, copies package metadata and docs,
-updates package versions in the staged copies, then runs `npm pack --dry-run`
-when `--pack` is set.
+updates package versions in the staged copies, generates root
+`optionalDependencies` for the supported platform packages using the same
+version, verifies the staged metadata is internally consistent, then runs
+`npm pack --dry-run` when `--pack` is set.
 
 ## Publish Order
 
