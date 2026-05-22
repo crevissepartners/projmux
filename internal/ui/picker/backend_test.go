@@ -1718,6 +1718,32 @@ func TestNativeInteractiveRendersPreviewOffset(t *testing.T) {
 	}
 }
 
+func TestNativeSidebarReservesBlankDownPreviewFrame(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{{Title: "api", Value: "/repo/api"}}
+	options := Options{
+		UI:        "sidebar",
+		Preview:   Preview{Window: "down,25%,border-top"},
+		Items:     items,
+		MultiLine: true,
+	}
+	layout := nativeLayout{Rows: 16, Cols: 48}
+	previewHeight := nativePreviewHeight(layout.Rows, options.Preview.Window)
+	listLimit := nativeListLimit(options, layout, "down", previewHeight, true)
+
+	var out bytes.Buffer
+	renderNativeInteractiveContent(&out, options, items, "", 0, 0, 0, layout)
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if got, want := len(lines), nativeChromeLineCount(options)+listLimit+1+previewHeight; got != want {
+		t.Fatalf("rendered line count = %d, want reserved preview frame height %d in %q", got, want, out.String())
+	}
+	if got := strings.Count(out.String(), projmuxpicker.SeparatorLine(layout.Cols)); got < 2 {
+		t.Fatalf("native output = %q, want search separator and reserved down-preview separator", out.String())
+	}
+}
+
 func TestLimitedNativePreviewLinesKeepsLimitWithOverflowNotice(t *testing.T) {
 	t.Parallel()
 

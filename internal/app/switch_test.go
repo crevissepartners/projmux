@@ -568,8 +568,8 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotRunnerOptions.PreviewCommand, ""; got != want {
 		t.Fatalf("runner preview command = %q, want deferred preview", got)
 	}
-	if got, want := gotRunnerOptions.PreviewWindow, ""; got != want {
-		t.Fatalf("runner preview window = %q, want deferred preview", got)
+	if got, want := gotRunnerOptions.PreviewWindow, "down,25%,border-top"; got != want {
+		t.Fatalf("runner preview window = %q, want reserved deferred preview frame %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Bindings, []string{
 		"esc:abort",
@@ -810,6 +810,9 @@ func TestSwitchCommandNativeSidebarDefersGitWindowsAttentionAndPreview(t *testin
 			}
 			if options.Preview.Command != "" {
 				t.Fatalf("preview command before first paint = %q, want deferred", options.Preview.Command)
+			}
+			if options.Preview.Window != "down,25%,border-top" {
+				t.Fatalf("preview window before first paint = %q, want reserved deferred preview frame", options.Preview.Window)
 			}
 			initialLabel := options.Items[0].EffectiveLabel()
 			if got, want := len(strings.Split(initialLabel, "\n")), 3; got != want {
@@ -1668,8 +1671,8 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got, want := fakeRunner.last.PreviewCommand, ""; got != want {
 		t.Fatalf("runner preview command = %q, want deferred preview", got)
 	}
-	if got, want := fakeRunner.last.PreviewWindow, ""; got != want {
-		t.Fatalf("runner preview window = %q, want deferred preview", got)
+	if got, want := fakeRunner.last.PreviewWindow, "down,25%,border-top"; got != want {
+		t.Fatalf("runner preview window = %q, want reserved deferred preview frame %q", got, want)
 	}
 	if got, want := fakeRunner.last.Bindings, []string{
 		"esc:abort",

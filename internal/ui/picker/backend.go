@@ -1506,6 +1506,10 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		previewLimit = previewHeight
 	}
 	previewLines := nativePreviewLines(options, items, selected, previewOffset, previewLimit)
+	reservePreview := nativeReservePreviewFrame(options, placement)
+	if reservePreview && len(previewLines) == 0 {
+		previewLines = nativeBlankPreviewLines(previewHeight)
+	}
 	listLimit := nativeListLimit(options, layout, placement, previewHeight, len(previewLines) > 0)
 	start, end := nativeVisibleRange(len(items), selected, listLimit)
 	if options.MultiLine {
@@ -1571,6 +1575,17 @@ func nativeListLimit(options Options, layout nativeLayout, previewPlacement stri
 		return 1
 	}
 	return available
+}
+
+func nativeReservePreviewFrame(options Options, placement string) bool {
+	return strings.TrimSpace(options.UI) == "sidebar" && placement == "down" && strings.TrimSpace(options.Preview.Window) != ""
+}
+
+func nativeBlankPreviewLines(height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	return make([]string, height)
 }
 
 func nativeAppendPartialNextItemLines(items []Item, lines []string, next, selected, limit int) []string {
