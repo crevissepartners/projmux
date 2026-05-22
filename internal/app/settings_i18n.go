@@ -33,7 +33,10 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Hooks - Project lifecycle hook paths":                          "settings.title.hooks_project",
 	"Project Picker - Project roots, workdirs, and pinned projects": "settings.title.project_picker",
 	"Appearance - Icon decoration":                                  "settings.title.appearance",
+	"Appearance - Theme font and icon decoration":                   "settings.title.appearance_theme_font_icon",
 	"Session State - Restore and autosave controls":                 "settings.title.session_state",
+	"Session State - Auto-save":                                     "settings.title.session_state_autosave",
+	"Session State - Project settings unavailable":                  "settings.title.session_state_project_unavailable",
 	"Labs - Experimental features":                                  "settings.title.labs",
 	"About - Version, updates, key setup":                           "settings.title.about",
 	"Add Project - Choose a filesystem directory":                   "settings.title.add_project",
@@ -48,10 +51,18 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Notifications - Desktop notifications":                         "settings.title.notifications_desktop",
 	"Notifications - Hook quiet policy":                             "settings.title.notifications_hook_quiet_policy",
 	"Notifications - Delivery sources":                              "settings.title.notifications_delivery_sources",
+	"Hook quiet policy":                                             "settings.text.hook_quiet_policy",
 	"Appearance - Path icon":                                        "settings.title.appearance_path_icon",
 	"Appearance - Git icon":                                         "settings.title.appearance_git_icon",
 	"Appearance - Notify icon":                                      "settings.title.appearance_notify_icon",
 	"Appearance - Language / Locale":                                "settings.title.appearance_language_locale",
+	"Theme - Global values":                                         "settings.title.theme_global_values",
+	"Theme - Project overrides":                                     "settings.title.theme_project_overrides",
+	"Theme - Preset selector":                                       "settings.title.theme_preset_selector",
+	"Theme - Effective values":                                      "settings.title.theme_effective_values",
+	"Keybinding":                                                    "settings.text.keybinding",
+	"Add alias":                                                     "settings.text.add_alias",
+	"Replace aliases":                                               "settings.text.replace_aliases",
 	"Keybinding Lab - Diagnose delivery":                            "settings.title.keybinding_lab_diagnose_delivery",
 	"Labs - Sidebar startup picker":                                 "settings.title.labs_sidebar_startup_picker",
 	"Labs - Project Hooks":                                          "settings.title.labs_project_hooks",
@@ -81,32 +92,79 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Settings > AI Settings > Default split mode > ":      "settings.prompt.settings_ai_default_split",
 	"Settings > Notifications > Hook quiet policy > ":     "settings.prompt.settings_hook_quiet_policy",
 	"Settings > Notifications > Delivery sources > ":      "settings.prompt.settings_delivery_sources",
-	"Settings > Keybindings > ":                           "settings.prompt.settings_keybindings",
-	"Settings > Keybindings > Action > ":                  "settings.prompt.settings_keybindings_action",
-	"Type key chord > ":                                   "settings.prompt.type_key_chord",
-	"Settings > Labs > Sidebar startup picker > ":         "settings.prompt.settings_labs_sidebar_startup",
-	"Settings > Labs > Project Hooks > ":                  "settings.prompt.settings_labs_project_hooks",
-	"Settings > Labs > Keybindings > ":                    "settings.prompt.settings_labs_keybindings",
-	"Settings > Labs > Keybindings > Action > ":           "settings.prompt.settings_labs_keybindings_action",
-	"Settings > Appearance > Language / Locale > ":        "settings.prompt.settings_appearance_language_locale",
+	"Settings > Appearance > Path icon > ":                "settings.prompt.settings_appearance_path_icon",
+	"Settings > Appearance > Git icon > ":                 "settings.prompt.settings_appearance_git_icon",
+	"Settings > Appearance > Notify icon > ":              "settings.prompt.settings_appearance_notify_icon",
+	"Settings > Theme > Global > ":                        "settings.prompt.settings_theme_global",
+	"Settings > Project > Theme override > ":              "settings.prompt.settings_project_theme",
+	"Settings > Project > Effective theme > ":             "settings.prompt.settings_project_effective_theme",
+	"Preset > ":                                    "settings.prompt.preset",
+	"Auto-save interval > ":                        "settings.prompt.autosave_interval",
+	"Snapshot name > ":                             "settings.prompt.snapshot_name",
+	"Settings > Keybindings > ":                    "settings.prompt.settings_keybindings",
+	"Settings > Keybindings > Action > ":           "settings.prompt.settings_keybindings_action",
+	"Type key chord > ":                            "settings.prompt.type_key_chord",
+	"Settings > Labs > Sidebar startup picker > ":  "settings.prompt.settings_labs_sidebar_startup",
+	"Settings > Labs > Project Hooks > ":           "settings.prompt.settings_labs_project_hooks",
+	"Settings > Labs > Keybindings > ":             "settings.prompt.settings_labs_keybindings",
+	"Settings > Labs > Keybindings > Action > ":    "settings.prompt.settings_labs_keybindings_action",
+	"Settings > Appearance > Language / Locale > ": "settings.prompt.settings_appearance_language_locale",
 
-	"Project Picker":       "settings.text.project_picker",
-	"AI Settings":          "settings.text.ai_settings",
-	"Notifications":        "settings.root.notifications",
-	"Hooks":                "settings.text.hooks",
-	"Appearance":           "settings.root.appearance",
-	"Theme":                "settings.text.theme",
-	"Session State":        "settings.text.session_state",
-	"Keybindings":          "settings.text.keybindings",
-	"Labs":                 "settings.text.labs",
-	"About":                "settings.text.about",
-	"Trust":                "settings.text.trust",
-	"Hooks (project)":      "settings.text.hooks_project",
-	"Project recipe":       "settings.text.project_recipe",
-	"Effective merge view": "settings.text.effective_merge_view",
-	"Language / Locale":    "settings.text.language_locale",
-	"Warning":              "settings.text.warning",
-	"Current":              "settings.text.current",
+	"Project Picker":        "settings.text.project_picker",
+	"AI Settings":           "settings.text.ai_settings",
+	"Notifications":         "settings.root.notifications",
+	"Hooks":                 "settings.text.hooks",
+	"Appearance":            "settings.root.appearance",
+	"Theme":                 "settings.text.theme",
+	"Session State":         "settings.text.session_state",
+	"Keybindings":           "settings.text.keybindings",
+	"Labs":                  "settings.text.labs",
+	"About":                 "settings.text.about",
+	"Trust":                 "settings.text.trust",
+	"Hooks (project)":       "settings.text.hooks_project",
+	"Project recipe":        "settings.text.project_recipe",
+	"Effective merge view":  "settings.text.effective_merge_view",
+	"Language / Locale":     "settings.text.language_locale",
+	"Warning":               "settings.text.warning",
+	"Current":               "settings.text.current",
+	"Action":                "settings.text.action",
+	"Action ID":             "settings.text.action_id",
+	"Keys":                  "settings.text.keys",
+	"Surface":               "settings.text.surface",
+	"Tier":                  "settings.text.tier",
+	"Delivery path":         "settings.text.delivery_path",
+	"Default transport key": "settings.text.default_transport_key",
+	"Plain aliases":         "settings.text.plain_aliases",
+	"Editing":               "settings.text.editing",
+	"Probe":                 "settings.text.probe",
+	"Terminal":              "settings.text.terminal",
+	"After mapping apply":   "settings.text.after_mapping_apply",
+	"Manual setup":          "settings.text.manual_setup",
+	"Aliases":               "settings.text.aliases",
+	"Probe key":             "settings.text.probe_key",
+	"Probe result":          "settings.text.probe_result",
+	"Last capture":          "settings.text.last_capture",
+	"Saved path":            "settings.text.saved_path",
+	"Not saved":             "settings.text.not_saved",
+	"Plain key reached":     "settings.text.plain_key_reached",
+	"Unexpected sequence":   "settings.text.unexpected_sequence",
+	"Timeout or swallowed":  "settings.text.timeout_or_swallowed",
+	"Version":               "settings.text.version",
+	"Source":                "settings.text.source",
+	"App":                   "settings.text.app",
+	"Tmux actions":          "settings.text.tmux_actions",
+	"Key setup":             "settings.text.key_setup",
+	"Diagnose keys":         "settings.text.diagnose_keys",
+	"Terminal mappings":     "settings.text.terminal_mappings",
+	"Dependencies":          "settings.text.dependencies",
+	"Rename key":            "settings.text.rename_key",
+	"Windows Term.":         "settings.text.windows_term",
+	"Docs":                  "settings.text.docs",
+	"Update":                "settings.text.update",
+	"Latest":                "settings.text.latest",
+	"Update state":          "settings.text.update_state",
+	"Installer":             "settings.text.installer",
+	"Release notes":         "settings.text.release_notes",
 
 	"project roots, workdirs, and pins":              "settings.text.project_roots_workdirs_pins",
 	"default split mode":                             "settings.text.default_split_mode",
@@ -120,26 +178,55 @@ var settingsTextKeys = map[string]i18n.Key{
 	"disabled - no project context":                  "settings.text.disabled_no_project_context",
 	"declare env, kube, startup":                     "settings.text.declare_env_kube_startup",
 	"global + project merge with source labels":      "settings.text.global_project_merge_sources",
+	"folder marker before cwd":                       "settings.text.folder_marker_before_cwd",
+	"provider marker before branch":                  "settings.text.provider_marker_before_branch",
+	"bell marker in notification sidebar":            "settings.text.bell_marker_notification_sidebar",
+	"Nerd Font-style marker":                         "settings.text.nerd_font_marker",
+	"emoji marker":                                   "settings.text.emoji_marker",
+	"no icon prefix":                                 "settings.text.no_icon_prefix",
 
-	"Desktop notifications":       "settings.notifications.desktop",
-	"Delivery sources":            "settings.notifications.delivery_sources",
-	"Welcome":                     "settings.about.welcome",
-	"Quit projmux":                "settings.text.quit_projmux",
-	"Update Now":                  "settings.text.update_now",
-	"Check Updates":               "settings.text.check_updates",
-	"Project Root":                "settings.text.project_root",
-	"Workdirs":                    "settings.text.workdirs",
-	"Pinned Projects":             "settings.text.pinned_projects",
-	"Add Project...":              "settings.text.add_project",
-	"Add Current Project":         "settings.text.add_current_project",
-	"Use Current Project as Root": "settings.text.use_current_project_root",
-	"Set Project Root...":         "settings.text.set_project_root",
-	"Clear Saved Project Root":    "settings.text.clear_saved_project_root",
-	"Type path manually...":       "settings.text.type_path_manually",
-	"Add Workdir...":              "settings.text.add_workdir",
-	"Remove":                      "settings.text.remove",
-	"Clear all pins":              "settings.text.clear_all_pins",
-	"Back":                        "settings.text.back",
+	"Desktop notifications":             "settings.notifications.desktop",
+	"Delivery sources":                  "settings.notifications.delivery_sources",
+	"AI notification dedupe":            "settings.text.ai_notification_dedupe",
+	"In-app queue":                      "settings.text.in_app_queue",
+	"Notification hook override":        "settings.text.notification_hook_override",
+	"Scope":                             "settings.text.scope",
+	"Runtime config":                    "settings.text.runtime_config",
+	"Install":                           "settings.text.install",
+	"Status":                            "settings.text.status",
+	"Config path":                       "settings.text.config_path",
+	"Conflict":                          "settings.text.conflict",
+	"Tested version":                    "settings.text.tested_version",
+	"Notice":                            "settings.text.notice",
+	"Install command":                   "settings.text.install_command",
+	"Remove command":                    "settings.text.remove_command",
+	"Dry-run command":                   "settings.text.dry_run_command",
+	"Copy only":                         "settings.text.copy_only",
+	"Enter copies":                      "settings.text.enter_copies",
+	"Default split mode":                "settings.text.default_split_mode_title",
+	"Current Project Session":           "settings.text.current_project_session",
+	"Session Popup: Open Session State": "settings.text.session_popup_open_session_state",
+	"Welcome":                           "settings.about.welcome",
+	"Quit projmux":                      "settings.text.quit_projmux",
+	"Update Now":                        "settings.text.update_now",
+	"Check Updates":                     "settings.text.check_updates",
+	"Project Root":                      "settings.text.project_root",
+	"Workdirs":                          "settings.text.workdirs",
+	"Pinned Projects":                   "settings.text.pinned_projects",
+	"Add Project...":                    "settings.text.add_project",
+	"Add Current Project":               "settings.text.add_current_project",
+	"Use Current Project as Root":       "settings.text.use_current_project_root",
+	"Set Project Root...":               "settings.text.set_project_root",
+	"Clear Saved Project Root":          "settings.text.clear_saved_project_root",
+	"Type path manually...":             "settings.text.type_path_manually",
+	"Add Workdir...":                    "settings.text.add_workdir",
+	"Remove":                            "settings.text.remove",
+	"Clear all pins":                    "settings.text.clear_all_pins",
+	"Back":                              "settings.text.back",
+	"Saved workdirs":                    "settings.text.saved_workdirs",
+	"Effective Project Root":            "settings.text.effective_project_root",
+	"Saved Project Root":                "settings.text.saved_project_root",
+	"Env":                               "settings.text.env",
 
 	"add or remove scan roots":                      "settings.text.add_remove_scan_roots",
 	"add or remove pins":                            "settings.text.add_remove_pins",
@@ -159,22 +246,105 @@ var settingsTextKeys = map[string]i18n.Key{
 	"save one primary root path directly":           "settings.text.save_primary_root_directly",
 	"remove ~/.config/projmux/projdir":              "settings.text.remove_saved_projdir",
 	"no env, tmux option, or saved value":           "settings.text.no_env_tmux_saved",
-	"revisit the shell quickstart guide":            "settings.text.revisit_shell_guide",
-	"open quit actions":                             "settings.text.open_quit_actions",
-	"run installer-specific update command":         "settings.text.run_installer_update",
-	"refresh cached GitHub release metadata":        "settings.text.refresh_github_release_metadata",
-	"status unavailable":                            "settings.text.status_unavailable",
-	"unreadable":                                    "settings.text.unreadable",
-	"global config unreadable":                      "settings.text.global_config_unreadable",
-	"warning":                                       "settings.text.warning_lower",
-	"current":                                       "settings.text.current_lower",
-	"env override":                                  "settings.text.env_override",
-	"built-in fallback":                             "settings.text.built_in_fallback",
-	"explicit override":                             "settings.text.explicit_override",
-	"English UI":                                    "settings.text.english_ui",
-	"Korean UI":                                     "settings.text.korean_ui",
-	"detect from LC_ALL, LC_MESSAGES, LANG":         "settings.text.detect_locale_env",
-	"unsupported":                                   "settings.text.unsupported",
+	"env, read-only":                                "settings.text.env_read_only",
+	"Project Root is the primary root. Workdirs are extra search roots. Set PROJMUX_PROJDIR, @projmux_projdir, or the saved ~/.config/projmux/projdir value.": "settings.text.project_root_hint",
+	"Env PROJMUX_PROJDIR and tmux @projmux_projdir override the saved value until unset.":                                                                     "settings.text.project_root_override_hint",
+	"(none)":                      "settings.text.none_parenthesized",
+	"consume pending notify rows": "settings.text.consume_pending_notify_rows",
+	"statusbar/sidebar":           "settings.text.statusbar_sidebar",
+	"silence OS notifications; in-app notify queue is unaffected":                   "settings.text.desktop_notify_none_desc",
+	"fire toast / notify-send for AI reply-ready without click-to-focus":            "settings.text.desktop_notify_notify_desc",
+	"fire toast with click-to-focus and auto-raise host terminal via osfocus chain": "settings.text.desktop_notify_raise_desc",
+	"desktop AI notifications":                                 "settings.text.desktop_ai_notifications",
+	"tmux bell fallback stays 5s":                              "settings.text.tmux_bell_fallback_5s",
+	"collapse duplicate desktop AI notifications":              "settings.text.collapse_duplicate_desktop_ai_notifications",
+	"Custom seconds":                                           "settings.text.custom_seconds",
+	"store a positive seconds value":                           "settings.text.store_positive_seconds_value",
+	"catalog defaults":                                         "settings.text.catalog_defaults",
+	"install events stay in catalog":                           "settings.text.install_events_stay_catalog",
+	"runtime action only":                                      "settings.text.runtime_action_only",
+	"install field is unchanged":                               "settings.text.install_field_unchanged",
+	"unchanged":                                                "settings.text.unchanged",
+	"Settings only changes runtime action":                     "settings.text.settings_only_changes_runtime_action",
+	"use embedded or local catalog action":                     "settings.text.use_embedded_or_local_catalog_action",
+	"update pane state without notification delivery":          "settings.text.update_pane_state_without_notification_delivery",
+	"mark hook-active and log only":                            "settings.text.mark_hook_active_log_only",
+	"in-app queue + OS toast supported by specialized handler": "settings.text.hook_notify_desktop_supported",
+	"generic in-app queue only; OS toast unsupported":          "settings.text.hook_notify_generic_only",
+	"no notify handler; falls back to hook-active log only":    "settings.text.hook_notify_no_handler",
+	"revisit the shell quickstart guide":                       "settings.text.revisit_shell_guide",
+	"open quit actions":                                        "settings.text.open_quit_actions",
+	"run installer-specific update command":                    "settings.text.run_installer_update",
+	"refresh cached GitHub release metadata":                   "settings.text.refresh_github_release_metadata",
+	"status unavailable":                                       "settings.text.status_unavailable",
+	"unreadable":                                               "settings.text.unreadable",
+	"global config unreadable":                                 "settings.text.global_config_unreadable",
+	"warning":                                                  "settings.text.warning_lower",
+	"current":                                                  "settings.text.current_lower",
+	"env override":                                             "settings.text.env_override",
+	"built-in fallback":                                        "settings.text.built_in_fallback",
+	"explicit override":                                        "settings.text.explicit_override",
+	"English UI":                                               "settings.text.english_ui",
+	"Korean UI":                                                "settings.text.korean_ui",
+	"detect from LC_ALL, LC_MESSAGES, LANG":                    "settings.text.detect_locale_env",
+	"unsupported":                                              "settings.text.unsupported",
+	"Path icon":                                                "settings.text.path_icon",
+	"Git icon":                                                 "settings.text.git_icon",
+	"Notify icon":                                              "settings.text.notify_icon",
+	"Pending Notifications":                                    "settings.text.pending_notifications",
+	"Preview":                                                  "settings.text.preview",
+	"Set":                                                      "settings.text.set",
+	"Preset selector":                                          "settings.text.preset_selector",
+	"Font family":                                              "settings.text.font_family",
+	"Font size":                                                "settings.text.font_size",
+	"Reset theme values":                                       "settings.text.reset_theme_values",
+	"Project theme":                                            "settings.text.project_theme",
+	"Inherit global preset":                                    "settings.text.inherit_global_preset",
+	"Clear global preset":                                      "settings.text.clear_global_preset",
+	"Inherit global":                                           "settings.text.inherit_global",
+	"Use preset value":                                         "settings.text.use_preset_value",
+	"Type hex value...":                                        "settings.text.type_hex_value",
+	"Swatch":                                                   "settings.text.swatch",
+	"Effective theme":                                          "settings.text.effective_theme",
+	"Global parse error":                                       "settings.text.global_parse_error",
+	"Project parse error":                                      "settings.text.project_parse_error",
+	"Global config":                                            "settings.text.global_config",
+	"Project config":                                           "settings.text.project_config",
+	"parse error":                                              "settings.text.parse_error",
+	"unresolved path":                                          "settings.text.unresolved_path",
+	"missing or empty":                                         "settings.text.missing_or_empty",
+	"loaded":                                                   "settings.text.loaded",
+	"  (no hooks configured)":                                  "settings.text.no_hooks_configured",
+	"  (no entries)":                                           "settings.text.no_entries",
+	"(unset)":                                                  "settings.text.unset_parenthesized",
+	"Auto-save":                                                "settings.text.auto_save",
+	"Storage":                                                  "settings.text.storage",
+	"Retention":                                                "settings.text.retention",
+	"latest snapshot store":                                    "settings.text.latest_snapshot_store",
+	"per-session JSON under XDG state":                         "settings.text.per_session_json_xdg_state",
+	"latest snapshot only":                                     "settings.text.latest_snapshot_only",
+	"named snapshots are manual project files":                 "settings.text.named_snapshots_manual_project_files",
+	"Project path":                                             "settings.text.project_path",
+	"Session identity":                                         "settings.text.session_identity",
+	"Project auto-save":                                        "settings.text.project_auto_save",
+	"Effective auto-save":                                      "settings.text.effective_auto_save",
+	"Global auto-save":                                         "settings.text.global_auto_save",
+	"Auto-save interval":                                       "settings.text.auto_save_interval",
+	"Snapshot actions":                                         "settings.text.snapshot_actions",
+	"Interval":                                                 "settings.text.interval",
+	"Snapshot":                                                 "settings.text.snapshot",
+	"Save latest snapshot":                                     "settings.text.save_latest_snapshot",
+	"Preview restore":                                          "settings.text.preview_restore",
+	"Delete snapshot":                                          "settings.text.delete_snapshot",
+	"capture live project session as latest":                   "settings.text.capture_live_project_session_latest",
+	"choose a name for the live project session":               "settings.text.choose_name_live_project_session",
+	"dry-run only":                                             "settings.text.dry_run_only",
+	"unavailable without a valid snapshot":                     "settings.text.unavailable_without_valid_snapshot",
+	"follow global auto-save":                                  "settings.text.follow_global_auto_save",
+	"enable latest snapshot auto-save for this project":  "settings.text.enable_project_latest_snapshot_autosave",
+	"disable latest snapshot auto-save for this project": "settings.text.disable_project_latest_snapshot_autosave",
+	"enable auto-save":  "settings.text.enable_auto_save",
+	"disable auto-save": "settings.text.disable_auto_save",
 	"Unsupported locale {locale} from {source}; using {fallback}.":                         "settings.text.unsupported_locale_warning",
 	"Choose the default split mode for future AI launches.":                                "settings.footer.choose_default_ai_split",
 	"Choose an agent or shell target to launch.":                                           "settings.footer.choose_agent_or_shell",
@@ -224,12 +394,132 @@ func settingsCatalogText(fallback string) string {
 }
 
 func settingsCatalogTextLocale(locale i18n.Locale, fallback string) string {
+	if text, ok := settingsCatalogExactTextLocale(locale, fallback); ok {
+		return text
+	}
+	if text, ok := settingsCatalogComposedTextLocale(locale, fallback); ok {
+		return text
+	}
+	return fallback
+}
+
+func settingsCatalogExactTextLocale(locale i18n.Locale, fallback string) (string, bool) {
 	key, ok := settingsTextKeys[fallback]
 	if !ok {
 		key, ok = settingsTextKeys[strings.TrimSpace(fallback)]
 	}
 	if !ok {
-		return fallback
+		return "", false
 	}
-	return localizeText(locale, key, fallback)
+	return localizeText(locale, key, fallback), true
+}
+
+func settingsCatalogExactTextOrFallbackLocale(locale i18n.Locale, fallback string) string {
+	if text, ok := settingsCatalogExactTextLocale(locale, fallback); ok {
+		return text
+	}
+	return fallback
+}
+
+func settingsCatalogComposedTextLocale(locale i18n.Locale, fallback string) (string, bool) {
+	if strings.TrimSpace(fallback) == "" {
+		return "", false
+	}
+	if strings.Contains(fallback, " > ") || strings.HasSuffix(fallback, "> ") {
+		if text, ok := settingsCatalogPathTextLocale(locale, fallback); ok {
+			return text, true
+		}
+	}
+	if strings.Contains(fallback, " - ") {
+		parts := strings.Split(fallback, " - ")
+		changed := false
+		for i, part := range parts {
+			if text, ok := settingsCatalogExactTextLocale(locale, part); ok {
+				parts[i] = text
+				changed = true
+			} else if text, ok := settingsCatalogPrefixTextLocale(locale, part); ok {
+				parts[i] = text
+				changed = true
+			} else if before, ok0 := strings.CutSuffix(part, "Pending Notifications"); ok0 {
+				parts[i] = before + settingsCatalogTextLocale(locale, "Pending Notifications")
+				changed = true
+			}
+		}
+		if changed {
+			return strings.Join(parts, " - "), true
+		}
+	}
+	if text, ok := settingsCatalogPrefixTextLocale(locale, fallback); ok {
+		return text, true
+	}
+	if before, ok := strings.CutSuffix(fallback, " hooks"); ok {
+		prefix := strings.TrimSpace(before)
+		if prefix != "" && locale != i18n.FallbackLocale {
+			return prefix + " " + settingsCatalogTextLocale(locale, "Hooks"), true
+		}
+	}
+	if before, ok := strings.CutSuffix(fallback, "Pending Notifications"); ok {
+		prefix := before
+		return prefix + settingsCatalogTextLocale(locale, "Pending Notifications"), true
+	}
+	return "", false
+}
+
+func settingsCatalogPathTextLocale(locale i18n.Locale, fallback string) (string, bool) {
+	trailing := strings.HasSuffix(fallback, "> ")
+	rawParts := strings.Split(fallback, ">")
+	parts := make([]string, 0, len(rawParts))
+	changed := false
+	for _, raw := range rawParts {
+		part := strings.TrimSpace(raw)
+		if part == "" {
+			continue
+		}
+		if text, ok := settingsCatalogExactTextLocale(locale, part); ok {
+			parts = append(parts, text)
+			changed = true
+			continue
+		}
+		if text, ok := settingsCatalogPrefixTextLocale(locale, part); ok {
+			parts = append(parts, text)
+			changed = true
+			continue
+		}
+		parts = append(parts, part)
+	}
+	if !changed || len(parts) == 0 {
+		return "", false
+	}
+	out := strings.Join(parts, " > ")
+	if trailing {
+		out += " > "
+	}
+	return out, true
+}
+
+func settingsCatalogPrefixTextLocale(locale i18n.Locale, fallback string) (string, bool) {
+	for _, prefix := range []string{
+		"Preview",
+		"Set",
+		"Theme",
+		"Keybinding",
+		"Keybindings",
+		"Hook quiet policy",
+		"Project auto-save",
+		"Auto-save",
+		"Sidebar startup picker",
+		"Project hooks",
+	} {
+		if fallback == prefix {
+			continue
+		}
+		if strings.HasPrefix(fallback, prefix+" ") {
+			text, ok := settingsCatalogExactTextLocale(locale, prefix)
+			if !ok {
+				continue
+			}
+			return text + strings.TrimPrefix(fallback, prefix), true
+		}
+	}
+	return "", false
 }

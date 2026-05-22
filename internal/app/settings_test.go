@@ -256,6 +256,201 @@ func TestLiteralProjmuxFootersHaveCatalogMappings(t *testing.T) {
 	}
 }
 
+func TestSettingsKoreanVisibleStringsHaveNoEnglishChromeResidue(t *testing.T) {
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == i18n.LocaleEnvName {
+				return "ko-KR"
+			}
+			return ""
+		},
+		ai:       testAICommand(home),
+		switcher: testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{}),
+	}
+
+	options := settingsKoreanVisibleOptionSamples(t, cmd)
+	for _, option := range options {
+		for _, visible := range settingsVisibleOptionStrings(option) {
+			if visible == "" {
+				continue
+			}
+			if phrase, ok := settingsEnglishChromeResidue(visible); ok {
+				t.Fatalf("%s visible string still contains English %q: %q", option.UI, phrase, visible)
+			}
+		}
+	}
+	for _, visible := range settingsKoreanStaticRowSamples() {
+		if phrase, ok := settingsEnglishChromeResidue(visible); ok {
+			t.Fatalf("static settings row still contains English %q: %q", phrase, visible)
+		}
+	}
+}
+
+func settingsKoreanVisibleOptionSamples(t *testing.T, cmd *settingsCommand) []intpickercompat.Options {
+	t.Helper()
+
+	var samples []intpickercompat.Options
+	add := func(options intpickercompat.Options) {
+		samples = append(samples, cmd.localizeSettingsOptions(options))
+	}
+	add(cmd.rootOptions(settingsRootTabGlobal))
+	for _, section := range []string{
+		settingsSectionProject,
+		settingsSectionNotifications,
+		settingsSectionStatusbar,
+		settingsSectionSessionState,
+		settingsSectionKeybindings,
+		settingsSectionLabs,
+		settingsSectionAbout,
+	} {
+		options, err := cmd.sectionOptions(section)
+		if err != nil {
+			t.Fatalf("sectionOptions(%q): %v", section, err)
+		}
+		add(options)
+	}
+	if options, err := cmd.statusbarDecorationTargetOptions(statusbarDecorationTargetNotify); err == nil {
+		add(options)
+	} else {
+		t.Fatalf("statusbarDecorationTargetOptions(notify): %v", err)
+	}
+	if options, err := cmd.themeLayerOptions(themeLayerGlobal); err == nil {
+		add(options)
+	} else {
+		t.Fatalf("themeLayerOptions(global): %v", err)
+	}
+	add(cmd.effectiveMergeOptions(settingsProjectContext{}))
+	add(intpickercompat.Options{
+		UI:      "settings-notifications-desktop",
+		Entries: cmd.desktopNotifyEntries(),
+		Title:   "Notifications - Desktop notifications",
+		Prompt:  "Settings > Notifications > Desktop notifications > ",
+		Footer:  projmuxFooter("Enter: apply  |  Back row: parent "),
+	})
+	add(intpickercompat.Options{
+		UI:      "settings-notifications-ai-dedupe",
+		Entries: cmd.aiNotifyDedupeEntries(),
+		Title:   "Notifications - AI dedupe window",
+		Prompt:  "Settings > Notifications > AI dedupe > ",
+		Footer:  projmuxFooter("Enter: apply  |  Back row: parent "),
+	})
+	return samples
+}
+
+func settingsVisibleOptionStrings(options intpickercompat.Options) []string {
+	values := []string{options.Title, options.Prompt, options.Header, options.Footer}
+	for _, chip := range options.TitleChips {
+		values = append(values, chip.Label)
+	}
+	return values
+}
+
+func settingsKoreanStaticRowSamples() []string {
+	locale := i18n.Locale("ko-KR")
+	samples := []string{
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Root", "not configured"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Workdirs", "add or remove scan roots"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Pinned Projects", "add or remove pins"),
+		settingsLabelInfoLocale(locale, "Saved workdirs", "(none)", "~/.config/projmux/workdirs"),
+		settingsLabelInfoLocale(locale, "Effective Project Root", "not configured", "no env, tmux option, or saved value"),
+		settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Use Current Project as Root", "/tmp/project"),
+		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Remove", "/tmp/project"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Desktop notifications", "notify - default"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "AI notification dedupe", "60s - default"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Delivery sources", "doctor"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Hook quiet policy", "catalog defaults"),
+		settingsLabelInfoLocale(locale, "In-app queue", "statusbar/sidebar", "consume pending notify rows"),
+		settingsLabelInfoLocale(locale, "Notification hook override", "PROJMUX_NOTIFY_HOOK", "PROJMUX_NOTIFY_HOOK env"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Path icon", "symbol"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Git icon", "emoji"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Notify icon", "off"),
+		settingsLabelInfoLocale(locale, "Current", "symbol", "bell marker in notification sidebar"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Auto-save", "on - default"),
+		settingsLabelInfoLocale(locale, "Storage", "latest snapshot store", "per-session JSON under XDG state"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Snapshot actions", "latest/named save"),
+		settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Save latest snapshot", "capture live project session as latest"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Preview restore", "dry-run only"),
+		settingsLabelInfoLocale(locale, "Action", "Toggle Settings", "Settings"),
+		settingsLabelInfoLocale(locale, "Action ID", "SettingsToggle", ""),
+		settingsLabelInfoLocale(locale, "Terminal", "Ghostty", "supported mappings: projmux init ghostty"),
+		settingsLabelLocale(locale, settingsGlyphType, settingsColorType, "Add alias", "press new key capture"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Hooks", "on - default"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Sidebar startup picker", "on - default"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Welcome", "revisit the shell quickstart guide"),
+		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Quit projmux", "open quit actions"),
+		settingsLabelInfoLocale(locale, "Latest", "v0.0.0", "cache"),
+	}
+	for i := range samples {
+		samples[i] = stripANSI(samples[i])
+	}
+	return samples
+}
+
+func settingsEnglishChromeResidue(visible string) (string, bool) {
+	visible = strings.Join(strings.Fields(visible), " ")
+	allowed := []string{
+		"AI",
+		"Alt-1",
+		"Codex",
+		"Ctrl-C",
+		"Esc",
+		"Git",
+		"GitHub",
+		"JSON",
+		"Meta",
+		"Nerd Font",
+		"OS",
+		"PROJMUX_NOTIFY_HOOK",
+		"XDG",
+		"tmux",
+		"notify-send",
+		"osfocus",
+		"statusbar/sidebar",
+	}
+	normalized := visible
+	for _, literal := range allowed {
+		normalized = strings.ReplaceAll(normalized, literal, "")
+	}
+	for _, phrase := range []string{
+		"Settings >",
+		"Back row",
+		"Project Picker",
+		"Project Root",
+		"Workdirs",
+		"Pinned Projects",
+		"Notifications",
+		"Desktop notifications",
+		"AI notification dedupe",
+		"Delivery sources",
+		"Hook quiet policy",
+		"In-app queue",
+		"Notification hook override",
+		"Appearance",
+		"Path icon",
+		"Git icon",
+		"Notify icon",
+		"Current",
+		"Session State",
+		"Auto-save",
+		"Snapshot actions",
+		"Keybindings",
+		"Labs",
+		"About",
+		"Welcome",
+		"Quit projmux",
+		"Update Now",
+		"Check Updates",
+		"Pending Notifications",
+	} {
+		if strings.Contains(normalized, phrase) {
+			return phrase, true
+		}
+	}
+	return "", false
+}
+
 func TestSettingsRootRowsUsePhase0ChromePalette(t *testing.T) {
 	t.Parallel()
 
