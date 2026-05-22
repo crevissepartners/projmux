@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -215,6 +216,48 @@ func TestBuildSwitchRowsSidebarShowsSemanticPromptBadge(t *testing.T) {
 	}
 	if got, want := rows[0].Item.Badges, []string{"needs input"}; !equalStringSlices(got, want) {
 		t.Fatalf("item badges = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchBadgeDotUsesSemanticPriorityColor(t *testing.T) {
+	t.Parallel()
+
+	rows := BuildSwitchRows([]SwitchCandidate{{
+		Path:          "/home/tester/source/repos/app",
+		DisplayPath:   "~rp/app",
+		SessionName:   "app",
+		ModeLabel:     "existing",
+		UI:            "sidebar",
+		AttentionRank: 2,
+		AIBadgeKind:   "response_complete",
+	}})
+
+	got := rows[0].Label
+	if !strings.Contains(got, "\x1b[32m●\x1b[0m") {
+		t.Fatalf("label = %q, want semantic response-complete dot to outrank legacy busy attention", got)
+	}
+	if strings.Contains(got, "\x1b[38;2;255;204;102m●\x1b[0m") {
+		t.Fatalf("label = %q, legacy busy attention dot must not override semantic response-complete", got)
+	}
+}
+
+func TestSwitchBadgeEmojiStyleCompatibilityGlyphs(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		aibadge.ApprovalRequired: "⏳",
+		aibadge.InputRequired:    "⏳",
+		aibadge.ResponseComplete: "✅",
+		aibadge.InProgress:       "🔄",
+		"":                       " ",
+	}
+	for kind, want := range cases {
+		if got := aibadge.Glyph(kind, aibadge.StyleEmoji); got != want {
+			t.Fatalf("Glyph(%q, emoji) = %q, want %q", kind, got, want)
+		}
+	}
+	if got := aibadge.Glyph(aibadge.ApprovalRequired, "minimal"); got != " " {
+		t.Fatalf("Glyph(approval_required, minimal) = %q, want blank alignment glyph", got)
 	}
 }
 

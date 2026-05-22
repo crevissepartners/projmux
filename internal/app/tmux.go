@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -562,7 +563,7 @@ func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, tmuxStandaloneConfigWithKeymap(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, fallbackRenderThemeSource().tmuxStandaloneConfigWithAIBadgeStyle(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -575,7 +576,7 @@ func (c *tmuxCommand) runPrintAppConfig(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyle(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -616,7 +617,7 @@ func (c *tmuxCommand) runInstall(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	if err := c.writeFile(include, []byte(tmuxStandaloneConfigWithKeymap(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(include, []byte(fallbackRenderThemeSource().tmuxStandaloneConfigWithAIBadgeStyle(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return fmt.Errorf("write tmux standalone config: %w", err)
 	}
 
@@ -672,7 +673,7 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 	if err != nil {
 		return "", err
 	}
-	if err := c.writeFile(config, []byte(tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(config, []byte(fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyle(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return "", fmt.Errorf("write tmux app config: %w", err)
 	}
 	return config, nil
@@ -1235,6 +1236,11 @@ func tmuxShellPaneLabelFormat() string {
 }
 
 func tmuxPaneBorderFormat() string {
+	return tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot)
+}
+
+func tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle config.AIBadgeStyle) string {
+	badgeStyle = config.NormalizeAIBadgeStyle(string(badgeStyle))
 	activePaneLabelFormat := tmuxVisiblePaneLabelFormat()
 	promptPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateWarningFg)
 	busyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(tmuxStateProgressFg)
@@ -1245,8 +1251,13 @@ func tmuxPaneBorderFormat() string {
 	paneProgressFormat := "#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindInProgress + "}"
 	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
 	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + panePromptFormat + ",#[bold#,fg=" + tmuxStateWarningFg + "] ● " + promptPaneLabelFormat + " #[default],#{?" + paneCompleteFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "] ● " + replyPaneLabelFormat + " #[default],#{?#{||:" + paneProgressFormat + "," + paneBusyFormat + "},#[bold#,fg=" + tmuxStateProgressFg + "] ● " + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "] ● " + replyPaneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}}}"
+	inactivePaneBorderFormat := "#{?" + panePromptFormat + ",#[bold#,fg=" + tmuxStateWarningFg + "]" + tmuxAIBadgeMarker(aiBadgeKindApprovalRequired, badgeStyle) + promptPaneLabelFormat + " #[default],#{?" + paneCompleteFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#{?#{||:" + paneProgressFormat + "," + paneBusyFormat + "},#[bold#,fg=" + tmuxStateProgressFg + "]" + tmuxAIBadgeMarker(aiBadgeKindInProgress, badgeStyle) + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + tmuxStateSuccessFg + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}}}"
 	return "#{?pane_active,#[bold#,fg=" + theme.TmuxPaneActiveFg + "#,bg=" + theme.TmuxPaneActiveBg + "] > " + activePaneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
+}
+
+func tmuxAIBadgeMarker(kind string, badgeStyle config.AIBadgeStyle) string {
+	glyph := aibadge.Glyph(kind, string(badgeStyle))
+	return " " + glyph + " "
 }
 
 func tmuxCenteredWindowNameFormat(width int) string {
@@ -1269,16 +1280,22 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDeco
 }
 
 func tmuxStandaloneConfigWithKeymapTheme(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	return tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, decorations, config.AIBadgeStyleDot, catalog, keymapPresent, effective)
+}
+
+func tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
 	tokens := theme.TmuxRenderTokensFromEffective(effective)
 	defaultStandaloneKeyBindings := keyBindingCatalogForScope(keyBindingScopeStandalone)
 	standaloneKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeStandalone)
+	badgeStyle = config.NormalizeAIBadgeStyle(string(badgeStyle))
 	lines := []string{
 		"# Generated by projmux. Safe to source from ~/.tmux.conf.",
 		"set -g " + statusbarDecorationTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Cwd))),
 		"set -g " + statusbarDecorationCwdTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Cwd))),
 		"set -g " + statusbarDecorationGitTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Git))),
 		"set -g " + statusbarDecorationNotifyTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Notify))),
+		"set -g " + aiBadgeStyleTmuxOption + " " + string(badgeStyle),
 	}
 	lines = append(lines,
 		"set-hook -g pane-focus-out "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane}")),
@@ -1286,8 +1303,8 @@ func tmuxStandaloneConfigWithKeymapTheme(binaryPath string, decorations statusba
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
 		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
 		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
-		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tokens.WindowInactiveFg+",bg="+tokens.WindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tokens.WindowInactiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
-		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tokens.WindowActiveFg+",bg="+tokens.WindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tokens.WindowActiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
+		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tokens.WindowInactiveFg+",bg="+tokens.WindowInactiveBg+"] #("+bin+" attention window #{window_id} #{@projmux_ai_badge_style})#[fg="+tokens.WindowInactiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
+		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tokens.WindowActiveFg+",bg="+tokens.WindowActiveBg+"] #("+bin+" attention window #{window_id} #{@projmux_ai_badge_style})#[fg="+tokens.WindowActiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
 		"set -g status 2",
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
@@ -1322,11 +1339,15 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 }
 
 func tmuxAppConfigWithKeymapTheme(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	return tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell, decorations, config.AIBadgeStyleDot, catalog, keymapPresent, effective)
+}
+
+func tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
 	tokens := theme.TmuxRenderTokensFromEffective(effective)
 	shell := tmuxConfigQuote(nonEmpty(strings.TrimSpace(defaultShell), fallbackInteractiveShell))
 	paneLabelFormat := tmuxVisiblePaneLabelFormat()
-	paneBorderFormat := tmuxPaneBorderFormat()
+	paneBorderFormat := tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle)
 	lines := []string{
 		"# Generated by projmux. Used by `projmux shell`.",
 		"set -g @projmux_app 1",
@@ -1368,7 +1389,7 @@ func tmuxAppConfigWithKeymapTheme(binaryPath, defaultShell string, decorations s
 		"set -g pane-border-status top",
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}
-	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapTheme(binaryPath, decorations, catalog, keymapPresent, effective)), "\n")[1:]...)
+	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, decorations, badgeStyle, catalog, keymapPresent, effective)), "\n")[1:]...)
 	lines = append(lines,
 		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
 	)

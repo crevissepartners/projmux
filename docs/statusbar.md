@@ -35,13 +35,19 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
   `isWindowListRangeToken` fallback is now defense-in-depth only.
   Each window tab reserves a one-cell live pane attention prefix from
   `projmux attention window #{window_id}` before the index. AI panes use the
-  semantic `@projmux_ai_badge_kind` first: approval/input-required panes render
-  a warning-colored dot, response-complete panes render a non-critical
-  ready-colored dot, and in-progress panes render a progress-colored dot.
+  semantic `@projmux_ai_badge_kind` first: approval/input-required panes use
+  the warning color, response-complete panes use the non-critical ready color,
+  and in-progress panes use the progress color.
   Legacy busy/reply title and attention-state markers remain the fallback, and
   no-state windows render a blank placeholder so title alignment and click range
   width stay stable. This live window-list badge is independent from the row-0
   notify queue segment.
+  Window-list badges and app pane-border badges use the same semantic priority,
+  with display style controlled by Settings > Appearance > AI badge style and persisted in
+  `~/.config/projmux/ai-badge-style`. The default is `dot`; `emoji` renders
+  `⏳` for approval/input-required, `✅` for response-complete, and `🔄` for
+  in-progress. `off` (also accepted as `minimal` when read from disk) preserves
+  the same spacing without drawing a marker.
   The session, pwd, kube, and git segments on this row are wrapped
   in `#[range=user|<id>]` ranges and dispatched through the projmux
   handler. The standalone config also wraps the right-side `projmux`

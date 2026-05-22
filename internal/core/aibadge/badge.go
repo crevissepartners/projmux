@@ -9,6 +9,12 @@ const (
 	ResponseComplete = "response_complete"
 )
 
+const (
+	StyleDot   = "dot"
+	StyleEmoji = "emoji"
+	StyleOff   = "off"
+)
+
 func Normalize(kind string) string {
 	switch strings.TrimSpace(kind) {
 	case InProgress:
@@ -21,6 +27,42 @@ func Normalize(kind string) string {
 		return ResponseComplete
 	default:
 		return ""
+	}
+}
+
+func NormalizeStyle(style string) string {
+	switch strings.ToLower(strings.TrimSpace(style)) {
+	case StyleEmoji:
+		return StyleEmoji
+	case StyleOff, "minimal":
+		return StyleOff
+	default:
+		return StyleDot
+	}
+}
+
+func Glyph(kind, style string) string {
+	switch NormalizeStyle(style) {
+	case StyleEmoji:
+		switch Normalize(kind) {
+		case ApprovalRequired, InputRequired:
+			return "⏳"
+		case ResponseComplete:
+			return "✅"
+		case InProgress:
+			return "🔄"
+		default:
+			return " "
+		}
+	case StyleOff:
+		return " "
+	default:
+		switch Normalize(kind) {
+		case ApprovalRequired, InputRequired, ResponseComplete, InProgress:
+			return "●"
+		default:
+			return " "
+		}
 	}
 }
 

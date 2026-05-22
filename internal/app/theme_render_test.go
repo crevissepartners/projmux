@@ -50,8 +50,8 @@ func TestRenderThemeSourceFeedsPickerAndTmuxFromSameEffectiveTheme(t *testing.T)
 	tmuxConfig := source.tmuxAppConfig("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
 	for _, want := range []string{
 		"set -g status-style \"bg=" + tmuxTokens.StatusBg + ",fg=" + tmuxTokens.StatusFg + "\"",
-		"#[fg=" + tmuxTokens.WindowInactiveFg + ",bg=" + tmuxTokens.WindowInactiveBg + "] #('/tmp/projmux' attention window #{window_id})",
-		"#[bold,fg=" + tmuxTokens.WindowActiveFg + ",bg=" + tmuxTokens.WindowActiveBg + "] #('/tmp/projmux' attention window #{window_id})",
+		"#[fg=" + tmuxTokens.WindowInactiveFg + ",bg=" + tmuxTokens.WindowInactiveBg + "] #('/tmp/projmux' attention window #{window_id} #{@projmux_ai_badge_style})",
+		"#[bold,fg=" + tmuxTokens.WindowActiveFg + ",bg=" + tmuxTokens.WindowActiveBg + "] #('/tmp/projmux' attention window #{window_id} #{@projmux_ai_badge_style})",
 	} {
 		if !strings.Contains(tmuxConfig, want) {
 			t.Fatalf("tmux config missing shared theme token %q\n%s", want, tmuxConfig)

@@ -349,6 +349,34 @@ func TestAttentionWindowLegacyStubRowsStillRenderBadge(t *testing.T) {
 	}
 }
 
+func TestStatusbarWindowBadgeStyleEmojiAndOff(t *testing.T) {
+	t.Parallel()
+
+	outputKey := "tmux list-panes -t @6 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}" + attentionListSeparator + "#{@projmux_ai_state}" + attentionListSeparator + "#{@projmux_ai_badge_kind}"
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			outputKey: []byte("approve" + attentionListSeparator + "reply" + attentionListSeparator + "waiting" + attentionListSeparator + "approval_required\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	var emoji bytes.Buffer
+	if err := cmd.Run([]string{"window", "@6", "emoji"}, &emoji, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(emoji) error = %v", err)
+	}
+	if got, want := emoji.String(), "#[fg="+tmuxStateWarningFg+"]⏳"; got != want {
+		t.Fatalf("emoji stdout = %q, want %q", got, want)
+	}
+
+	var off bytes.Buffer
+	if err := cmd.Run([]string{"window", "@6", "off"}, &off, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(off) error = %v", err)
+	}
+	if got, want := off.String(), " "; got != want {
+		t.Fatalf("off stdout = %q, want blank placeholder %q", got, want)
+	}
+}
+
 func TestAttentionWindowFallsBackToBlank(t *testing.T) {
 	t.Parallel()
 
