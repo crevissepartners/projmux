@@ -337,6 +337,9 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 	if err != nil {
 		return nil
 	}
+	if len(rows) == 0 {
+		return c.legacyWindowAttentionRows(windowID)
+	}
 
 	out := make([]attentionWindowRow, 0, len(rows))
 	for _, fields := range rows {
@@ -345,6 +348,28 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 			State:       fields[1],
 			AIState:     fields[2],
 			AIBadgeKind: fields[3],
+		})
+	}
+	return out
+}
+
+func (c *attentionCommand) legacyWindowAttentionRows(windowID string) []attentionWindowRow {
+	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
+		Target: windowID,
+		Formats: []string{
+			intmux.TmuxFormat("pane_title"),
+			intmux.PaneOptionFormat(attentionStateOption),
+		},
+	})
+	if err != nil {
+		return nil
+	}
+
+	out := make([]attentionWindowRow, 0, len(rows))
+	for _, fields := range rows {
+		out = append(out, attentionWindowRow{
+			Title: fields[0],
+			State: fields[1],
 		})
 	}
 	return out

@@ -330,6 +330,25 @@ func TestAttentionWindowSemanticProgressOnlyUsesProgressBadge(t *testing.T) {
 	}
 }
 
+func TestAttentionWindowLegacyStubRowsStillRenderBadge(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux list-panes -t @6 -F #{pane_title}" + attentionListSeparator + "#{@projmux_attention_state}": []byte("plain" + attentionListSeparator + "\n✳ ready" + attentionListSeparator + "reply\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"window", "@6"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := stdout.String(), "#[fg="+tmuxStateSuccessFg+"]●"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
 func TestAttentionWindowFallsBackToBlank(t *testing.T) {
 	t.Parallel()
 
