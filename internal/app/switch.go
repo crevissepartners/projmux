@@ -1883,6 +1883,8 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 	options.InitialIndexSet = surface.InitialIndexSet
 	if surface.PreviewCommand != "" {
 		options.Preview = intpicker.Preview{Command: surface.PreviewCommand, Window: switchPreviewWindow(plan.UI)}
+	} else if plan.UI == switchUISidebar && plan.DeferredUpdate != nil {
+		options.Preview = intpicker.Preview{Window: switchPreviewWindow(plan.UI)}
 	}
 
 	compatOptions := intpickercompat.OptionsFromPicker(options)

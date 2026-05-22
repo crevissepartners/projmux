@@ -262,7 +262,7 @@ func formatSidebarSwitchWindowTabs(windows []SwitchWindowTab) string {
 		tabs = append(tabs, formatSidebarSwitchWindowTab(name, window.AttentionRank, window.Active))
 	}
 	for len(tabs) < switchSidebarTabSlots {
-		tabs = append(tabs, ansiTabInactive+strings.Repeat(" ", sidebarSwitchWindowTabWidth())+ansiReset)
+		tabs = append(tabs, formatSidebarBlankLane(sidebarSwitchWindowTabWidth()))
 	}
 	return strings.Join(tabs, " ")
 }
@@ -486,9 +486,16 @@ func formatSidebarBranchLane(candidate SwitchCandidate) string {
 		style = ansiStatusGitActive
 	}
 	if branch == "" {
-		return style + strings.Repeat(" ", switchBranchBadgeMax+2) + ansiReset
+		return formatSidebarBlankLane(switchBranchBadgeMax + 2)
 	}
 	return style + " " + padRight(branch, switchBranchBadgeMax) + " " + ansiReset
+}
+
+func formatSidebarBlankLane(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return ansiReset + strings.Repeat(" ", width) + ansiReset
 }
 
 func formatTagBadge(tagged bool) string {

@@ -235,6 +235,9 @@ func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
 	if len(cheap.Item.MetaLines) != 0 || len(enriched.Item.MetaLines) != 0 {
 		t.Fatalf("sidebar meta lines cheap/enriched = %#v/%#v, want no extra rendered lines beyond the 3-line card", cheap.Item.MetaLines, enriched.Item.MetaLines)
 	}
+	if strings.Contains(cheapLines[1], "48;5;30m") || strings.Contains(cheapLines[2], "48;5;235m") {
+		t.Fatalf("cheap placeholder lanes must stay visually blank, got lines: %q", cheapLines)
+	}
 	for idx := range cheapLines {
 		if got, want := projmuxpicker.VisibleLen(enrichedLines[idx]), projmuxpicker.VisibleLen(cheapLines[idx]); got != want {
 			t.Fatalf("line %d width changed from %d to %d\ncheap:    %q\nenriched: %q", idx, want, got, cheapLines[idx], enrichedLines[idx])
