@@ -144,6 +144,9 @@ func TestBuildSwitchRowsSidebarUsesAnsiStylingForModeAndToggles(t *testing.T) {
 	if itemLabel := rows[0].Item.EffectiveLabel(); strings.Contains(itemLabel, "\n") {
 		t.Fatalf("item label = %q, want compact single-line sidebar row", itemLabel)
 	}
+	if got := rows[0].Item.MetaLines; len(got) != 0 {
+		t.Fatalf("item meta lines = %#v, want sidebar metadata folded into compact label", got)
+	}
 }
 
 func TestBuildSwitchRowsSidebarLeavesNewSessionNameUncolored(t *testing.T) {
@@ -226,6 +229,9 @@ func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
 	enrichedLabel := enriched.Item.EffectiveLabel()
 	if strings.Contains(cheapLabel, "\n") || strings.Contains(enrichedLabel, "\n") {
 		t.Fatalf("sidebar labels must stay single-line\ncheap:    %q\nenriched: %q", cheapLabel, enrichedLabel)
+	}
+	if len(cheap.Item.MetaLines) != 0 || len(enriched.Item.MetaLines) != 0 {
+		t.Fatalf("sidebar meta lines cheap/enriched = %#v/%#v, want no extra rendered lines", cheap.Item.MetaLines, enriched.Item.MetaLines)
 	}
 	if got, want := projmuxpicker.VisibleLen(enrichedLabel), projmuxpicker.VisibleLen(cheapLabel); got != want {
 		t.Fatalf("label width changed from %d to %d\ncheap:    %q\nenriched: %q", want, got, cheapLabel, enrichedLabel)

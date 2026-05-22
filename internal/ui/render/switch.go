@@ -98,6 +98,7 @@ func BuildSwitchRows(candidates []SwitchCandidate) []SwitchRow {
 		item := switchPickerItem(candidate)
 		if candidate.UI == "sidebar" {
 			item.Label = label
+			item.MetaLines = nil
 		}
 		rows = append(rows, SwitchRow{
 			Label: label,
