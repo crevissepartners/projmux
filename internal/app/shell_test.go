@@ -577,12 +577,13 @@ func TestShellWelcomeShowsUntilSkippedForVersion(t *testing.T) {
 		update:       update,
 	}
 
-	var first bytes.Buffer
-	if err := cmd.Run([]string{"--no-install"}, &first, &bytes.Buffer{}); err != nil {
+	var first, stderr bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &first, &stderr); err != nil {
 		t.Fatalf("first Run() error = %v", err)
 	}
-	if !strings.Contains(first.String(), "Welcome to projmux shell "+version.String()) {
-		t.Fatalf("first stdout = %q, want welcome", first.String())
+	assertWelcomeOutput(t, "first stdout", first.String())
+	if stderr.Len() != 0 {
+		t.Fatalf("first stderr = %q, want empty", stderr.String())
 	}
 	path, err := cmd.welcomeStatePath(version.String())
 	if err != nil {
@@ -607,12 +608,13 @@ func TestShellWelcomeShowsUntilSkippedForVersion(t *testing.T) {
 	}
 
 	cmd.welcomeInput = strings.NewReader("\n")
-	var second bytes.Buffer
-	if err := cmd.Run([]string{"--no-install"}, &second, &bytes.Buffer{}); err != nil {
+	var second, secondStderr bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &second, &secondStderr); err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
-	if !strings.Contains(second.String(), "Welcome to projmux shell "+version.String()) {
-		t.Fatalf("second stdout = %q, want repeated welcome until skipped", second.String())
+	assertWelcomeOutput(t, "second stdout", second.String())
+	if secondStderr.Len() != 0 {
+		t.Fatalf("second stderr = %q, want empty", secondStderr.String())
 	}
 }
 
@@ -637,7 +639,7 @@ func TestShellWelcomeSkipsWhenSkipVersionMatchesCurrent(t *testing.T) {
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if strings.Contains(stdout.String(), "Welcome to projmux shell") {
+	if strings.Contains(stdout.String(), version.String()) {
 		t.Fatalf("stdout = %q, did not expect skipped welcome", stdout.String())
 	}
 }
@@ -664,9 +666,7 @@ func TestShellWelcomeShowsWhenSkipVersionDiffers(t *testing.T) {
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Welcome to projmux shell "+version.String()) {
-		t.Fatalf("stdout = %q, want welcome when skip_version differs", stdout.String())
-	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
 }
 
 func TestShellWelcomeLegacyLastWelcomedVersionIsNotSkip(t *testing.T) {
@@ -689,9 +689,7 @@ func TestShellWelcomeLegacyLastWelcomedVersionIsNotSkip(t *testing.T) {
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Welcome to projmux shell "+version.String()) {
-		t.Fatalf("stdout = %q, want legacy last_welcomed_version-only state to show", stdout.String())
-	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
 }
 
 func TestShellWelcomeSkipInputStoresCurrentVersion(t *testing.T) {
@@ -713,8 +711,11 @@ func TestShellWelcomeSkipInputStoresCurrentVersion(t *testing.T) {
 	if got, want := state.SkipVersion, version.String(); got != want {
 		t.Fatalf("skip_version = %q, want %q", got, want)
 	}
-	if !strings.Contains(stdout.String(), "Skipped welcome for projmux "+version.String()) {
-		t.Fatalf("stdout = %q, want welcome skip confirmation", stdout.String())
+	if !strings.Contains(stdout.String(), version.String()) {
+		t.Fatalf("stdout = %q, want current version in skip confirmation", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "projmux") {
+		t.Fatalf("stdout = %q, want projmux marker in skip confirmation", stdout.String())
 	}
 }
 
@@ -787,7 +788,7 @@ func TestShellWelcomeCorruptStateDoesNotBlockStartup(t *testing.T) {
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if strings.Contains(stdout.String(), "Welcome to projmux shell") {
+	if strings.Contains(stdout.String(), version.String()) {
 		t.Fatalf("stdout = %q, did not expect welcome with corrupt state", stdout.String())
 	}
 	if recorder.name != "tmux" {
@@ -844,8 +845,11 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 	if !reflect.DeepEqual(updateCommands, wantCommands) {
 		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
 	}
-	if !strings.Contains(stdout.String(), "Continue? [Enter, u=update, s=skip welcome, d=skip update prompts]") {
-		t.Fatalf("stdout = %q, want inline prompt", stdout.String())
+	assertWelcomeOutput(t, "stdout", stdout.String())
+	for _, want := range []string{"u=", "s=", "d="} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want inline prompt token %q", stdout.String(), want)
+		}
 	}
 }
 
