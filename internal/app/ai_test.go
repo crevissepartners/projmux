@@ -1085,6 +1085,7 @@ func TestAIStatusSetThinkingMarksPaneBusy(t *testing.T) {
 
 	want := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_state", "thinking"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_badge_kind", "in_progress"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_attention_state", "busy"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@projmux_attention_focus_armed"}},
@@ -1147,6 +1148,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 	commands := cmdRecorder(cmd).commands
 	wantPrefix := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_ai_badge_kind", "response_complete"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%2", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_attention_state", "reply"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_attention_focus_armed", "1"}},
@@ -1398,6 +1400,24 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 	}
 }
 
+func TestAIStatusSetIdleClearsSemanticBadge(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+
+	if err := cmd.Run([]string{"status", "set", "idle", "%3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run status set idle error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	for _, want := range []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%3", aiPaneStateOption, "idle"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%3", aiPaneBadgeKindOption}},
+	} {
+		if !containsRecordedAICommand(commands, want) {
+			t.Fatalf("commands = %#v, want %#v", commands, want)
+		}
+	}
+}
+
 func TestAIStatusSetWaitingAcksVisiblePane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
@@ -1415,6 +1435,7 @@ func TestAIStatusSetWaitingAcksVisiblePane(t *testing.T) {
 	commands := cmdRecorder(cmd).commands
 	wantPrefix := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_ai_badge_kind", "response_complete"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%15", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%15", "@projmux_attention_state"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_ack", "1"}},
@@ -1448,6 +1469,7 @@ func TestAIStatusSetWaitingDoesNotAckWhenNoClientViewingPane(t *testing.T) {
 	commands := cmdRecorder(cmd).commands
 	wantPrefix := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_ai_badge_kind", "response_complete"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%15", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_state", "reply"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_focus_armed", "1"}},
@@ -1515,6 +1537,7 @@ func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
 	// then clear attention_state, set attention_ack=1, clear focus_armed.
 	wantPrefix := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", "@projmux_ai_badge_kind", "response_complete"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%21", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%21", "@projmux_attention_state"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", "@projmux_attention_ack", "1"}},
@@ -1732,6 +1755,9 @@ func TestAIWatchTitlePromotesBusyPaneToThinking(t *testing.T) {
 	if !containsAICommandArg(cmdRecorder(cmd).commands, "busy") {
 		t.Fatalf("commands = %#v, want busy attention state", cmdRecorder(cmd).commands)
 	}
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-p", "-t", "%4", aiPaneBadgeKindOption, aiBadgeKindInProgress}) {
+		t.Fatalf("commands = %#v, want in_progress semantic badge", cmdRecorder(cmd).commands)
+	}
 }
 
 func TestAIWatchTitleStopsWhenPaneLookupReturnsEmpty(t *testing.T) {
@@ -1788,6 +1814,48 @@ func TestAIWatchTitleUsesCapturePaneAsReplySignal(t *testing.T) {
 	}
 	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%10", "@projmux_ai_state", "waiting"}) {
 		t.Fatalf("commands = %#v, want waiting AI state from capture", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%10", aiPaneBadgeKindOption, aiBadgeKindInputRequired}) {
+		t.Fatalf("commands = %#v, want input_required semantic badge from capture", commands)
+	}
+}
+
+func TestAIWatchTitleMapsPermissionTitleToApprovalRequired(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	checks := 0
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
+			return []byte("/usr/bin/notify-send\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%16", "#{pane_id}"}):
+			checks++
+			if checks > 1 {
+				return nil, os.ErrNotExist
+			}
+			return []byte("%16\n"), nil
+		case len(args) == 5 && args[0] == "display-message" && args[3] == "%16" && strings.Contains(args[4], aiPaneAgentOption):
+			return []byte("permission required__PROJMUX_TMUX_AI_SEP__node__PROJMUX_TMUX_AI_SEP__" + home + "__PROJMUX_TMUX_AI_SEP__codex__PROJMUX_TMUX_AI_SEP__" + home + "__PROJMUX_TMUX_AI_SEP____PROJMUX_TMUX_AI_SEP____PROJMUX_TMUX_AI_SEP____PROJMUX_TMUX_AI_SEP__\n"), nil
+		case reflect.DeepEqual(args, []string{"capture-pane", "-p", "-J", "-S", "-80", "-t", "%16"}):
+			return []byte("allow command?\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.Run([]string{"watch-title", "%16"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run watch-title error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%16", aiPaneStateOption, "waiting"}) {
+		t.Fatalf("commands = %#v, want waiting AI state", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%16", aiPaneBadgeKindOption, aiBadgeKindApprovalRequired}) {
+		t.Fatalf("commands = %#v, want approval_required semantic badge", commands)
 	}
 }
 
@@ -2055,6 +2123,31 @@ func TestAIReplyTitleIgnoresProjmuxAttentionMarkers(t *testing.T) {
 		if isAIReplyTitle(title) {
 			t.Fatalf("isAIReplyTitle(%q) = true, want false for projmux marker", title)
 		}
+	}
+}
+
+func TestAIBadgeKindContractNormalizesAndFallsBackSafely(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    string
+		explicit string
+		want     string
+	}{
+		{name: "thinking fallback", state: "thinking", want: aiBadgeKindInProgress},
+		{name: "waiting fallback", state: "waiting", want: aiBadgeKindResponseComplete},
+		{name: "idle clears", state: "idle", want: ""},
+		{name: "approval explicit", state: "waiting", explicit: aiBadgeKindApprovalRequired, want: aiBadgeKindApprovalRequired},
+		{name: "input explicit", state: "waiting", explicit: aiBadgeKindInputRequired, want: aiBadgeKindInputRequired},
+		{name: "invalid explicit falls back", state: "waiting", explicit: "future_kind", want: aiBadgeKindResponseComplete},
+		{name: "invalid idle clears", state: "idle", explicit: "future_kind", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := aiBadgeKindForStatus(tt.state, tt.explicit); got != tt.want {
+				t.Fatalf("aiBadgeKindForStatus(%q, %q) = %q, want %q", tt.state, tt.explicit, got, tt.want)
+			}
+		})
 	}
 }
 

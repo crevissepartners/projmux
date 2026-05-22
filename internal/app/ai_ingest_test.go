@@ -122,6 +122,7 @@ func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeSourceOption, "hook"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeUpdatedAtOption, "1970-01-01T00:00:00Z"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindApprovalRequired}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
@@ -169,6 +170,9 @@ func TestIngestCodexHookStopPushesInfoQueueEntry(t *testing.T) {
 	if got.ID != "ai:codex:stop:codex-session:turn-456" || got.Text != "Ready" || got.Severity != notify.SeverityInfo || got.Metadata["category"] != "response_complete" {
 		t.Fatalf("pushed = %#v", got)
 	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindResponseComplete}}) {
+		t.Fatalf("commands = %#v, want response_complete semantic badge", cmdRecorder(cmd).commands)
+	}
 }
 
 func TestIngestCodexHookUserPromptSetsThinkingWithoutQueue(t *testing.T) {
@@ -194,6 +198,7 @@ func TestIngestCodexHookUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeCodex}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "thinking"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindInProgress}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", attentionStateOption, attentionStateBusy}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
@@ -1010,6 +1015,7 @@ func TestIngestClaudeUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneHookActiveOption, "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeClaude}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneStateOption, "thinking"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneBadgeKindOption, aiBadgeKindInProgress}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", attentionStateOption, attentionStateBusy}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
@@ -1047,6 +1053,7 @@ func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneTranscriptPathOption, "/tmp/claude-transcript.jsonl"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeUpdatedAtOption, "1970-01-01T00:00:00Z"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindApprovalRequired}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
@@ -1094,6 +1101,9 @@ func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
 	if len(store.pushed) != 1 || store.pushed[0].Text != "implemented and verified" || store.pushed[0].Metadata["category"] != "response_complete" {
 		t.Fatalf("pushed = %#v", store.pushed)
 	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindResponseComplete}}) {
+		t.Fatalf("commands = %#v, want response_complete semantic badge", cmdRecorder(cmd).commands)
+	}
 
 	store = &stubNotifyStore{}
 	cmd = testAICommand(home)
@@ -1109,6 +1119,9 @@ func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
 	}
 	if len(store.pushed) != 1 || store.pushed[0].Text != "Ready" || store.pushed[0].Metadata["category"] != "response_complete" {
 		t.Fatalf("fallback pushed = %#v", store.pushed)
+	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindResponseComplete}}) {
+		t.Fatalf("fallback commands = %#v, want response_complete semantic badge", cmdRecorder(cmd).commands)
 	}
 }
 
@@ -1135,6 +1148,9 @@ func TestIngestClaudeNotificationMapsInputReady(t *testing.T) {
 	got := store.pushed[0]
 	if got.Text != "Need deployment target" || got.Severity != notify.SeverityCritical || got.Metadata["category"] != "input_required" {
 		t.Fatalf("pushed = %#v", got)
+	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindInputRequired}}) {
+		t.Fatalf("commands = %#v, want input_required semantic badge", cmdRecorder(cmd).commands)
 	}
 }
 

@@ -35,6 +35,7 @@ const (
 	aiPaneAgentOption           = "@projmux_ai_agent"
 	aiPaneContextOption         = "@projmux_ai_context"
 	aiPaneStateOption           = "@projmux_ai_state"
+	aiPaneBadgeKindOption       = "@projmux_ai_badge_kind"
 	aiPaneTopicOption           = "@projmux_ai_topic"
 	aiPaneTopicManualOption     = "@projmux_ai_topic_manual"
 	aiPaneHookActiveOption      = "@projmux_ai_hook_active"
@@ -44,6 +45,11 @@ const (
 	aiPaneResumeSourceOption    = "@projmux_ai_resume_source"
 	aiPaneTranscriptPathOption  = "@projmux_ai_transcript_path"
 	aiPaneResumeUpdatedAtOption = "@projmux_ai_resume_updated_at"
+
+	aiBadgeKindInProgress       = "in_progress"
+	aiBadgeKindApprovalRequired = "approval_required"
+	aiBadgeKindInputRequired    = "input_required"
+	aiBadgeKindResponseComplete = "response_complete"
 )
 
 type aiCommandRunner interface {
@@ -188,6 +194,10 @@ func (c *aiCommand) applyAIStatusWithNotify(state, paneID string, notifyIn atten
 	return c.applyAIStatusInternal(state, paneID, notifyIn, true, true)
 }
 
+func (c *aiCommand) applyAIStatusWithBadgeKind(state, paneID, badgeKind string) error {
+	return c.applyAIStatusWithNotify(state, paneID, attentionNotifyInput{BadgeKind: badgeKind})
+}
+
 func (c *aiCommand) applyAIStatusStateOnly(state, paneID string, notifyIn attentionNotifyInput) error {
 	return c.applyAIStatusInternal(state, paneID, notifyIn, false, false)
 }
@@ -207,15 +217,19 @@ func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attenti
 		notifyIn.Lookup = c.notifyLookup()
 	}
 
-	switch strings.TrimSpace(state) {
+	state = strings.TrimSpace(state)
+	badgeKind := aiBadgeKindForStatus(state, notifyIn.BadgeKind)
+	switch state {
 	case "thinking":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "thinking")
+		c.setAIPaneBadgeKind(paneID, badgeKind)
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateBusy)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
 		c.notifyProducer().AckReplyReady(notifyIn)
 	case "waiting":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "waiting")
+		c.setAIPaneBadgeKind(paneID, badgeKind)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
 		visible := c.paneVisibleToClient(paneID)
 		if visible {
@@ -239,6 +253,7 @@ func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attenti
 		}
 	case "idle", "":
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
+		c.setAIPaneBadgeKind(paneID, badgeKind)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
 		c.notifyProducer().AckReplyReady(notifyIn)
@@ -246,6 +261,15 @@ func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attenti
 		return fmt.Errorf("unknown ai status state: %s", state)
 	}
 	return nil
+}
+
+func (c *aiCommand) setAIPaneBadgeKind(paneID, kind string) {
+	kind = normalizeAIBadgeKind(kind)
+	if kind == "" {
+		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneBadgeKindOption)
+		return
+	}
+	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneBadgeKindOption, kind)
 }
 
 func (c *aiCommand) runNotify(args []string, stderr io.Writer) error {
@@ -428,17 +452,20 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 		snapshot := c.readAIWatchSnapshot(paneID)
 		snapshot = c.bootstrapAIWatchMetadata(paneID, snapshot)
 		nextState := "idle"
+		nextBadgeKind := ""
 		busy, busySignal := aiBusySignal(snapshot.title, snapshot.capture)
 		replyEvidence := strings.Join([]string{snapshot.title, latestAIPaneCaptureLine(snapshot.capture)}, "\n")
 		switch {
 		case busy:
 			phase = "busy"
 			nextState = "thinking"
+			nextBadgeKind = aiBadgeKindInProgress
 			if busySignal == lastBusySignal {
 				settleCount++
 				if settleCount >= settleLimit {
 					phase = "replied"
 					nextState = "waiting"
+					nextBadgeKind = aiBadgeKindResponseComplete
 					lastBusySignal = ""
 				}
 			} else {
@@ -450,29 +477,35 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 			settleCount = 0
 			lastBusySignal = ""
 			nextState = "waiting"
+			nextBadgeKind = aiBadgeKindForReplyEvidence(replyEvidence)
 		case snapshot.ack != "1" && snapshot.attentionState == attentionStateBusy:
 			phase = "replied"
 			settleCount = 0
 			lastBusySignal = ""
 			nextState = "waiting"
+			nextBadgeKind = aiBadgeKindResponseComplete
 		case snapshot.ack != "1" && (snapshot.aiState == "waiting" || snapshot.attentionState == attentionStateReply):
 			phase = "replied"
 			settleCount = 0
 			lastBusySignal = ""
 			nextState = "waiting"
+			nextBadgeKind = defaultString(normalizeAIBadgeKind(snapshot.aiBadgeKind), aiBadgeKindResponseComplete)
 		case phase == "busy":
 			settleCount++
 			if settleCount >= settleLimit {
 				phase = "replied"
 				nextState = "waiting"
+				nextBadgeKind = aiBadgeKindResponseComplete
 				lastBusySignal = ""
 			} else {
 				nextState = "thinking"
+				nextBadgeKind = aiBadgeKindInProgress
 			}
 		case phase == "replied" && snapshot.ack != "1":
 			settleCount = 0
 			lastBusySignal = ""
 			nextState = "waiting"
+			nextBadgeKind = aiBadgeKindResponseComplete
 		default:
 			settleCount = 0
 			lastBusySignal = ""
@@ -481,8 +514,8 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 		if nextState == "waiting" {
 			c.recordAITopic(paneID, bestAITopic(snapshot.title, snapshot.capture), snapshot.topicManual)
 		}
-		if nextState != lastState || aiAttentionMismatch(nextState, snapshot.attentionState) || snapshot.aiState != nextState {
-			_ = c.applyAIStatus(nextState, paneID)
+		if nextState != lastState || aiAttentionMismatch(nextState, snapshot.attentionState) || snapshot.aiState != nextState || aiBadgeKindMismatch(nextState, nextBadgeKind, snapshot.aiBadgeKind) {
+			_ = c.applyAIStatusWithBadgeKind(nextState, paneID, nextBadgeKind)
 			lastState = nextState
 		}
 		c.sleepFor(interval)
@@ -1803,6 +1836,7 @@ type aiPaneInfo struct {
 	topic          string
 	topicManual    string
 	aiState        string
+	aiBadgeKind    string
 	attentionState string
 	ack            string
 	capture        string
@@ -1819,6 +1853,7 @@ func (c *aiCommand) readAIPaneInfo(paneID string) aiPaneInfo {
 		"#{" + aiPaneTopicOption + "}",
 		"#{" + aiPaneTopicManualOption + "}",
 		"#{" + aiPaneStateOption + "}",
+		"#{" + aiPaneBadgeKindOption + "}",
 		"#{" + attentionStateOption + "}",
 		"#{" + attentionAckOption + "}",
 	}, delim)
@@ -1843,7 +1878,13 @@ func (c *aiCommand) readAIPaneInfo(paneID string) aiPaneInfo {
 	if len(fields) > 5 {
 		info.topic = strings.TrimSpace(fields[5])
 	}
-	if len(fields) > 9 {
+	if len(fields) > 10 {
+		info.topicManual = strings.TrimSpace(fields[6])
+		info.aiState = strings.TrimSpace(fields[7])
+		info.aiBadgeKind = normalizeAIBadgeKind(fields[8])
+		info.attentionState = strings.TrimSpace(fields[9])
+		info.ack = strings.TrimSpace(fields[10])
+	} else if len(fields) > 9 {
 		info.topicManual = strings.TrimSpace(fields[6])
 		info.aiState = strings.TrimSpace(fields[7])
 		info.attentionState = strings.TrimSpace(fields[8])
@@ -2497,11 +2538,86 @@ func isAIBusyTitle(title string) bool {
 		strings.Contains(normalized, "generating")
 }
 
+func normalizeAIBadgeKind(kind string) string {
+	switch strings.TrimSpace(kind) {
+	case aiBadgeKindInProgress:
+		return aiBadgeKindInProgress
+	case aiBadgeKindApprovalRequired:
+		return aiBadgeKindApprovalRequired
+	case aiBadgeKindInputRequired:
+		return aiBadgeKindInputRequired
+	case aiBadgeKindResponseComplete:
+		return aiBadgeKindResponseComplete
+	default:
+		return ""
+	}
+}
+
+func aiBadgeKindForStatus(state, explicit string) string {
+	if kind := normalizeAIBadgeKind(explicit); kind != "" {
+		return kind
+	}
+	switch strings.TrimSpace(state) {
+	case "thinking":
+		return aiBadgeKindInProgress
+	case "waiting":
+		return aiBadgeKindResponseComplete
+	default:
+		return ""
+	}
+}
+
+func aiBadgeKindForReplyEvidence(evidence string) string {
+	switch aiReplyKindForTitle(evidence) {
+	case aiBadgeKindApprovalRequired:
+		return aiBadgeKindApprovalRequired
+	case aiBadgeKindInputRequired, "selection_required", "confirmation_required":
+		return aiBadgeKindInputRequired
+	default:
+		return aiBadgeKindResponseComplete
+	}
+}
+
+func aiBadgeKindForNotifyCategory(category string) string {
+	switch strings.TrimSpace(category) {
+	case aiBadgeKindApprovalRequired:
+		return aiBadgeKindApprovalRequired
+	case aiBadgeKindInputRequired:
+		return aiBadgeKindInputRequired
+	case aiBadgeKindResponseComplete, "response_ready":
+		return aiBadgeKindResponseComplete
+	default:
+		return ""
+	}
+}
+
+func aiBadgeKindMismatch(state, expected, actual string) bool {
+	want := aiBadgeKindForStatus(state, expected)
+	got := normalizeAIBadgeKind(actual)
+	if want == "" {
+		return got != ""
+	}
+	return got != want
+}
+
 func isAIReplyTitle(title string) bool {
 	if title == "" {
 		return false
 	}
 	normalized := normalizeAITitle(title)
+	if strings.Contains(normalized, "approval") ||
+		strings.Contains(normalized, "approve") ||
+		strings.Contains(normalized, "permission") ||
+		strings.Contains(normalized, "allow") ||
+		strings.Contains(normalized, "input required") ||
+		strings.Contains(normalized, "need input") ||
+		strings.Contains(normalized, "select") ||
+		strings.Contains(normalized, "choice") ||
+		strings.Contains(normalized, "pick") ||
+		strings.Contains(normalized, "which") ||
+		strings.Contains(normalized, "confirm") {
+		return true
+	}
 	return (strings.Contains(normalized, "response") && !strings.Contains(normalized, "responding")) ||
 		strings.Contains(normalized, "reply") ||
 		strings.Contains(normalized, "response needed") ||
