@@ -263,7 +263,7 @@ func TestAttentionWindowAggregatesResponseAboveProgress(t *testing.T) {
 	if err := cmd.Run([]string{"window", "@1"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), "#[fg="+tmuxStateSuccessFg+"]●"; got != want {
+	if got, want := stdout.String(), "#[fg="+tmuxAIBadgeSuccessFg+"]●"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -282,7 +282,7 @@ func TestAttentionWindowShowsReplyBadge(t *testing.T) {
 	if err := cmd.Run([]string{"window", "@2"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), "#[fg="+tmuxStateSuccessFg+"]●"; got != want {
+	if got, want := stdout.String(), "#[fg="+tmuxAIBadgeSuccessFg+"]●"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	for _, disallowed := range []string{theme.TmuxAccentAttentionStrongBg} {
@@ -306,7 +306,7 @@ func TestAttentionWindowSemanticPromptWinsOverCompleteAndProgress(t *testing.T) 
 	if err := cmd.Run([]string{"window", "@4"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), "#[fg="+tmuxStateWarningFg+"]●"; got != want {
+	if got, want := stdout.String(), "#[fg="+tmuxAIBadgeActionRequiredFg+"]●"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -325,7 +325,7 @@ func TestAttentionWindowSemanticProgressOnlyUsesProgressBadge(t *testing.T) {
 	if err := cmd.Run([]string{"window", "@5"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), "#[fg="+tmuxStateProgressFg+"]●"; got != want {
+	if got, want := stdout.String(), "#[fg="+tmuxAIBadgeProgressFg+"]●"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -344,7 +344,7 @@ func TestAttentionWindowLegacyStubRowsStillRenderBadge(t *testing.T) {
 	if err := cmd.Run([]string{"window", "@6"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), "#[fg="+tmuxStateSuccessFg+"]●"; got != want {
+	if got, want := stdout.String(), "#[fg="+tmuxAIBadgeSuccessFg+"]●"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -364,7 +364,7 @@ func TestStatusbarWindowBadgeStyleEmojiAndOff(t *testing.T) {
 	if err := cmd.Run([]string{"window", "@6", "emoji"}, &emoji, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run(emoji) error = %v", err)
 	}
-	if got, want := emoji.String(), "#[fg="+tmuxStateWarningFg+"]⏳"; got != want {
+	if got, want := emoji.String(), "#[fg="+tmuxAIBadgeActionRequiredFg+"]⏳"; got != want {
 		t.Fatalf("emoji stdout = %q, want %q", got, want)
 	}
 

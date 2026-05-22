@@ -42,6 +42,10 @@ const (
 	ANSIStatePinnedStart   = "\x1b[33m"
 	ANSIStateInfoStart     = "\x1b[34m"
 
+	ANSIAIBadgeProgressStart       = ANSIStateProgressStart
+	ANSIAIBadgeSuccessStart        = "\x1b[38;5;72m"
+	ANSIAIBadgeActionRequiredStart = "\x1b[38;5;214m"
+
 	ANSITrustTrustedStart   = "\x1b[38;2;154;191;136m"
 	ANSITrustStaleStart     = "\x1b[38;2;177;139;212m"
 	ANSITrustUntrustedStart = "\x1b[38;2;210;139;88m"
@@ -107,6 +111,10 @@ const (
 	TmuxStateDirtyFg    = "colour222"
 	TmuxStateAheadFg    = "colour153"
 	TmuxStateBehindFg   = "colour181"
+
+	TmuxAIBadgeProgressFg       = TmuxStateProgressFg
+	TmuxAIBadgeSuccessFg        = TmuxStateSuccessFg
+	TmuxAIBadgeActionRequiredFg = TmuxStateWarningFg
 
 	TmuxGitSegmentBg = "colour30"
 	TmuxGitSegmentFg = TmuxPrimaryFg

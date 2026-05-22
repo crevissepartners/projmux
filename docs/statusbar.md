@@ -36,12 +36,16 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
   Each window tab reserves a one-cell live pane attention prefix from
   `projmux attention window #{window_id}` before the index. AI panes use the
   semantic `@projmux_ai_badge_kind` first: approval/input-required panes use
-  the warning color, response-complete panes use the non-critical ready color,
-  and in-progress panes use the progress color.
+  the action-required amber-orange role, response-complete panes use the
+  non-critical success green role, and in-progress panes use the progress
+  yellow role. Red/critical is reserved for error, failure, and risk chrome;
+  permission or input-required status badges do not use it.
   Legacy busy/reply title and attention-state markers remain the fallback, and
   no-state windows render a blank placeholder so title alignment and click range
   width stay stable. This live window-list badge is independent from the row-0
-  notify queue segment.
+  notify queue segment and from notify queue severity or desktop notification
+  urgency. For example, an approval request may remain a critical queued
+  notification while its live status badge renders action-required amber-orange.
   Window-list badges and app pane-border badges use the same semantic priority,
   with display style controlled by Settings > Appearance > AI badge style and persisted in
   `~/.config/projmux/ai-badge-style`. The default is `dot`; `emoji` renders
