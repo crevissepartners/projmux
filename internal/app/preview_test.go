@@ -343,16 +343,18 @@ func (s *stubPreviewStore) WriteSelection(sessionName, windowIndex, paneIndex st
 }
 
 type stubPreviewInventory struct {
-	sessionWindowsSession string
-	sessionPanesSession   string
-	windows               []corepreview.Window
-	panes                 []corepreview.Pane
-	snapshotTarget        string
-	snapshotStartLine     int
-	snapshot              string
-	windowsErr            error
-	panesErr              error
-	snapshotErr           error
+	sessionWindowsSession  string
+	sessionPanesSession    string
+	sessionWindowsSessions []string
+	sessionPanesSessions   []string
+	windows                []corepreview.Window
+	panes                  []corepreview.Pane
+	snapshotTarget         string
+	snapshotStartLine      int
+	snapshot               string
+	windowsErr             error
+	panesErr               error
+	snapshotErr            error
 }
 
 type stubTmuxPreviewInventoryClient struct {
@@ -377,6 +379,7 @@ func (s stubTmuxPreviewInventoryClient) ListAllPanes(context.Context) ([]inttmux
 
 func (s *stubPreviewInventory) SessionWindows(_ context.Context, sessionName string) ([]corepreview.Window, error) {
 	s.sessionWindowsSession = sessionName
+	s.sessionWindowsSessions = append(s.sessionWindowsSessions, sessionName)
 	if s.windowsErr != nil {
 		return nil, s.windowsErr
 	}
@@ -385,6 +388,7 @@ func (s *stubPreviewInventory) SessionWindows(_ context.Context, sessionName str
 
 func (s *stubPreviewInventory) SessionPanes(_ context.Context, sessionName string) ([]corepreview.Pane, error) {
 	s.sessionPanesSession = sessionName
+	s.sessionPanesSessions = append(s.sessionPanesSessions, sessionName)
 	if s.panesErr != nil {
 		return nil, s.panesErr
 	}

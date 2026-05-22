@@ -140,6 +140,17 @@ func (c *Client) RecentSessions(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
+func (c *Client) ExistingSessions(ctx context.Context) (map[string]bool, error) {
+	output, err := c.run(ctx, "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		if isNoServerError(err) {
+			return map[string]bool{}, nil
+		}
+		return nil, fmt.Errorf("list psmux sessions: %w", err)
+	}
+	return parseExistingSessionSet(output), nil
+}
+
 func (c *Client) RecentSessionSummaries(ctx context.Context) ([]inttmux.RecentSessionSummary, error) {
 	rows, err := c.recentSessionRows(ctx)
 	if err != nil {
@@ -385,6 +396,18 @@ func parseRecentSessionRows(output []byte) ([]recentSessionRow, error) {
 		return rows[i].activity > rows[j].activity
 	})
 	return rows, nil
+}
+
+func parseExistingSessionSet(output []byte) map[string]bool {
+	sessions := map[string]bool{}
+	for line := range strings.SplitSeq(string(output), "\n") {
+		sessionName := strings.TrimSpace(line)
+		if sessionName == "" {
+			continue
+		}
+		sessions[sessionName] = true
+	}
+	return sessions
 }
 
 func parseEphemeralSessions(output []byte) ([]lifecycle.SessionInventory, error) {

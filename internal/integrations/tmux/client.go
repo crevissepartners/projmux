@@ -271,6 +271,18 @@ func (c *Client) RecentSessions(ctx context.Context) ([]string, error) {
 	return parseRecentSessions(output)
 }
 
+// ExistingSessions returns the current tmux session-name inventory as a set.
+func (c *Client) ExistingSessions(ctx context.Context) (map[string]bool, error) {
+	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		if isNoServerError(err) {
+			return map[string]bool{}, nil
+		}
+		return nil, fmt.Errorf("list tmux sessions: %w", err)
+	}
+	return parseExistingSessionSet(output), nil
+}
+
 // RecentSessionSummaries lists tmux session rows ordered by most-recent
 // activity first, enriched with attachment and pane metadata.
 func (c *Client) RecentSessionSummaries(ctx context.Context) ([]RecentSessionSummary, error) {
@@ -1173,6 +1185,18 @@ func parseRecentSessions(output []byte) ([]string, error) {
 	}
 
 	return names, nil
+}
+
+func parseExistingSessionSet(output []byte) map[string]bool {
+	sessions := map[string]bool{}
+	for line := range strings.SplitSeq(string(output), "\n") {
+		sessionName := strings.TrimSpace(line)
+		if sessionName == "" {
+			continue
+		}
+		sessions[sessionName] = true
+	}
+	return sessions
 }
 
 type paneSessionSummary struct {

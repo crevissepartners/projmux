@@ -52,6 +52,11 @@ type Preview struct {
 	Window  string
 }
 
+type DeferredUpdate struct {
+	Items   []Item
+	Preview Preview
+}
+
 type Options struct {
 	UI              string
 	Items           []Item
@@ -69,6 +74,7 @@ type Options struct {
 	AcceptQuery     bool
 	MultiLine       bool
 	Theme           *theme.EffectiveTheme
+	DeferredUpdate  func() (DeferredUpdate, error)
 }
 
 type Result struct {
@@ -285,9 +291,20 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 	if options.DisableSearch {
 		query = ""
 	}
+	deferredApplied := false
 	for {
 		items := nativeFilteredItems(options, query)
 		renderNative(out, options, items, query)
+		if !deferredApplied && options.DeferredUpdate != nil {
+			deferredApplied = true
+			if update, err := options.DeferredUpdate(); err == nil {
+				options = applyNativeDeferredUpdate(options, update)
+				items = nativeFilteredItems(options, query)
+				renderNative(out, options, items, query)
+			} else {
+				nativeDebugLogf("line ui=%q deferred_update_error=%q", options.UI, err.Error())
+			}
+		}
 
 		line, err := readNativeLine(in)
 		if err != nil && !strings.HasSuffix(line, "\n") {
@@ -406,6 +423,16 @@ type nativeMouseEvent struct {
 	Release bool
 }
 
+type nativeKeyRead struct {
+	key nativeKey
+	err error
+}
+
+type nativeDeferredRead struct {
+	update DeferredUpdate
+	err    error
+}
+
 func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result, error) {
 	query := strings.TrimSpace(options.InitialQuery)
 	if options.DisableSearch {
@@ -419,6 +446,9 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	launchKey := strings.ToLower(strings.TrimSpace(os.Getenv(NativeLaunchKeyEnv)))
 	layout := detectNativeLayout(in)
 	renderer := projmuxpicker.FrameUpdateRenderer{}
+	deferredStarted := false
+	var keyCh <-chan nativeKeyRead
+	var deferredCh <-chan nativeDeferredRead
 	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
 	fmt.Fprint(out, nativeScreenEnter)
 	defer leaveNativeInteractiveScreen(out)
@@ -441,8 +471,21 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if focusChanged {
 			runNativeFocusAction(options.Actions, focusValue)
 		}
+		if !deferredStarted && options.DeferredUpdate != nil {
+			deferredStarted = true
+			keyCh = startNativeKeyReader(in)
+			deferredCh = startNativeDeferredUpdate(options.DeferredUpdate)
+		}
 
-		key, err := readNativeKey(in)
+		key, err := nextNativeInteractiveKey(in, keyCh, &deferredCh, func(update DeferredUpdate) {
+			options = applyNativeDeferredUpdate(options, update)
+			nextItems := nativeFilteredItems(options, query)
+			selected = nativeSelectedIndexForValue(nextItems, focusValue, selected)
+			previewOffset = 0
+		}, options.UI)
+		if key.Name == "" && key.Text == "" && err == nil {
+			continue
+		}
 		if err != nil {
 			if err == io.EOF {
 				nativeDebugLogf("interactive ui=%q result=closed reason=eof query=%q", options.UI, query)
@@ -628,6 +671,49 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	}
 }
 
+func startNativeKeyReader(in io.Reader) <-chan nativeKeyRead {
+	ch := make(chan nativeKeyRead, 1)
+	go func() {
+		for {
+			key, err := readNativeKey(in)
+			ch <- nativeKeyRead{key: key, err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return ch
+}
+
+func startNativeDeferredUpdate(update func() (DeferredUpdate, error)) <-chan nativeDeferredRead {
+	ch := make(chan nativeDeferredRead, 1)
+	go func() {
+		result, err := update()
+		ch <- nativeDeferredRead{update: result, err: err}
+	}()
+	return ch
+}
+
+func nextNativeInteractiveKey(in io.Reader, keyCh <-chan nativeKeyRead, deferredCh *<-chan nativeDeferredRead, applyDeferred func(DeferredUpdate), ui string) (nativeKey, error) {
+	if keyCh == nil {
+		return readNativeKey(in)
+	}
+	for {
+		select {
+		case deferred := <-*deferredCh:
+			*deferredCh = nil
+			if deferred.err != nil {
+				nativeDebugLogf("interactive ui=%q deferred_update_error=%q", ui, deferred.err.Error())
+				continue
+			}
+			applyDeferred(deferred.update)
+			return nativeKey{}, nil
+		case key := <-keyCh:
+			return key.key, key.err
+		}
+	}
+}
+
 func nativeAcceptSelectedResult(options Options, items []Item, selected int, query string) Result {
 	if options.AcceptQuery {
 		return Result{Key: "enter", Query: query}
@@ -647,6 +733,37 @@ func nativeFilteredItems(options Options, query string) []Item {
 		return options.Items
 	}
 	return FilterItems(options.Items, query)
+}
+
+func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
+	if update.Items != nil {
+		options.Items = append([]Item(nil), update.Items...)
+	}
+	if strings.TrimSpace(update.Preview.Command) != "" || strings.TrimSpace(update.Preview.Window) != "" {
+		options.Preview = update.Preview
+	}
+	return options
+}
+
+func nativeSelectedIndexForValue(items []Item, value string, fallback int) int {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		for idx, item := range items {
+			if strings.TrimSpace(item.Value) == value {
+				return idx
+			}
+		}
+	}
+	if len(items) == 0 {
+		return 0
+	}
+	if fallback < 0 {
+		return 0
+	}
+	if fallback >= len(items) {
+		return len(items) - 1
+	}
+	return fallback
 }
 
 func runNativePickerAction(action Action, options Options, items []Item, selected int, query string) (Result, bool) {
