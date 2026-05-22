@@ -311,21 +311,19 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	if strings.Contains(command, "printf '%s\\n'") || strings.Contains(command, "read -n1") {
 		t.Fatalf("popup command uses brittle output/read shape: %q", command)
 	}
-	// Frame chrome regression guard: the payload now renders the native
-	// picker frame so the outer box glyphs must appear, paired with the
-	// title bar (`TitlebarStart`) and divider (`TitlebarRule`) the picker
-	// uses for the input variants. Missing any of these means we lost
-	// alignment with the picker visual language.
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+	// Frame chrome regression guard: the payload renders the native picker
+	// frame, including title row and divider geometry, without borrowing
+	// separate titlebar overlay ANSI.
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│", "├", "┤"} {
 		if !strings.Contains(command, glyph) {
 			t.Fatalf("path popup missing frame glyph %q: %q", glyph, command)
 		}
 	}
-	if !strings.Contains(command, projmuxpicker.TitlebarStart) {
-		t.Fatalf("path popup missing frame titlebar ANSI: %q", command)
+	if strings.Contains(command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("path popup must not contain frame titlebar overlay ANSI: %q", command)
 	}
-	if !strings.Contains(command, projmuxpicker.TitlebarRule) {
-		t.Fatalf("path popup missing frame divider ANSI: %q", command)
+	if strings.Contains(command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("path popup must not contain frame divider overlay ANSI: %q", command)
 	}
 }
 
@@ -591,19 +589,18 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !strings.Contains(command, "popup-wait-key") {
 		t.Fatalf("usage popup command = %q, want any-key helper invocation", command)
 	}
-	// Native picker frame chrome must wrap the body: outer glyphs, title
-	// bar ANSI, divider ANSI all required so the popup mirrors the picker
-	// surface one-to-one.
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+	// Native picker frame chrome must wrap the body: outer glyphs and title
+	// divider geometry are required, while titlebar overlay ANSI stays out.
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│", "├", "┤"} {
 		if !strings.Contains(command, glyph) {
 			t.Fatalf("usage popup missing frame glyph %q: %q", glyph, command)
 		}
 	}
-	if !strings.Contains(command, projmuxpicker.TitlebarStart) {
-		t.Fatalf("usage popup missing frame titlebar ANSI: %q", command)
+	if strings.Contains(command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("usage popup must not contain frame titlebar overlay ANSI: %q", command)
 	}
-	if !strings.Contains(command, projmuxpicker.TitlebarRule) {
-		t.Fatalf("usage popup missing frame divider ANSI: %q", command)
+	if strings.Contains(command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("usage popup must not contain frame divider overlay ANSI: %q", command)
 	}
 	for _, call := range runner.calls {
 		if call.name == "/usr/local/bin/projmux" || sawArgsContain(call.args, "popup-toggle") {
@@ -1364,10 +1361,9 @@ func (e *fakeExitError) Error() string { return e.msg }
 func (e *fakeExitError) ExitCode() int { return e.code }
 
 // TestStatusbarPathPopupWearsFrameChrome locks in the picker frame chrome
-// wrap: the popup payload must include the native frame title bar (so the
-// surface reads as a picker, not a bare text dump) but must still not
-// borrow the picker active-row highlight ANSI for any body row (that would
-// misrepresent a non-input popup as a selected picker row).
+// wrap: the popup payload must include the native frame title row and
+// divider geometry (so the surface reads as a picker, not a bare text dump)
+// but must still not borrow picker titlebar or active-row overlay ANSI.
 func TestStatusbarPathPopupWearsFrameChrome(t *testing.T) {
 	t.Parallel()
 
@@ -1378,13 +1374,13 @@ func TestStatusbarPathPopupWearsFrameChrome(t *testing.T) {
 	if !strings.Contains(popup.Command, "Current path") {
 		t.Fatalf("path popup body must render the frame title bar: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
-		t.Fatalf("path popup missing frame titlebar ANSI: %q", popup.Command)
+	if strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("path popup must not contain frame titlebar overlay ANSI: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
-		t.Fatalf("path popup missing frame divider ANSI: %q", popup.Command)
+	if strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("path popup must not contain frame divider overlay ANSI: %q", popup.Command)
 	}
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│", "├", "┤"} {
 		if !strings.Contains(popup.Command, glyph) {
 			t.Fatalf("path popup missing frame glyph %q: %q", glyph, popup.Command)
 		}
@@ -1392,9 +1388,8 @@ func TestStatusbarPathPopupWearsFrameChrome(t *testing.T) {
 }
 
 // TestStatusbarUsagePopupWearsFrameChrome locks in the picker frame chrome
-// wrap: the native frame title bar is drawn inline, but no body row may
-// borrow the picker active-row highlight ANSI (display-only popup, not a
-// picker surface).
+// wrap: the native frame title row is drawn inline, but no row may borrow
+// picker titlebar or active-row overlay ANSI.
 func TestStatusbarUsagePopupWearsFrameChrome(t *testing.T) {
 	t.Parallel()
 
@@ -1408,13 +1403,13 @@ func TestStatusbarUsagePopupWearsFrameChrome(t *testing.T) {
 	if !strings.Contains(popup.Command, "Usage") {
 		t.Fatalf("usage popup body must render the frame title `Usage`: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
-		t.Fatalf("usage popup missing frame titlebar ANSI: %q", popup.Command)
+	if strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("usage popup must not contain frame titlebar overlay ANSI: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
-		t.Fatalf("usage popup missing frame divider ANSI: %q", popup.Command)
+	if strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("usage popup must not contain frame divider overlay ANSI: %q", popup.Command)
 	}
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│", "├", "┤"} {
 		if !strings.Contains(popup.Command, glyph) {
 			t.Fatalf("usage popup missing frame glyph %q: %q", glyph, popup.Command)
 		}

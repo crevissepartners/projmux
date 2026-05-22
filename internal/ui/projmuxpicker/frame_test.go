@@ -150,8 +150,8 @@ func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	if !strings.Contains(lines[1], " Projects ") {
 		t.Fatalf("titlebar row = %q, want title inside picker-owned titlebar", lines[1])
 	}
-	if !strings.Contains(lines[1], TitlebarStart) {
-		t.Fatalf("titlebar row = %q, want distinct neutral titlebar styling", lines[1])
+	if strings.Contains(lines[1], TitlebarStart) || strings.Contains(lines[1], TitlebarRule) {
+		t.Fatalf("titlebar row = %q, want frame styling without titlebar overlay ANSI", lines[1])
 	}
 	if strings.Contains(lines[1], "▌") {
 		t.Fatalf("titlebar row = %q, want no red accent marker next to title", lines[1])
@@ -162,7 +162,7 @@ func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	if got, want := VisibleLen(lines[1]), 24; got != want {
 		t.Fatalf("titlebar row width = %d, want %d: %q", got, want, lines[1])
 	}
-	if !strings.HasPrefix(lines[2], TitlebarRule+"├") || !strings.HasSuffix(lines[2], "┤"+Reset) {
+	if !strings.HasPrefix(lines[2], "├") || !strings.HasSuffix(lines[2], "┤") {
 		t.Fatalf("titlebar divider row = %q, want full-width divider below titlebar", lines[2])
 	}
 	if !strings.Contains(lines[3], "hello") {
@@ -176,7 +176,7 @@ func TestFrameTitlebarLineResetsAroundBordersAndPadsBody(t *testing.T) {
 	const innerWidth = 18
 	line := frameTitlebarLine(DefaultTheme, innerWidth, "Projects")
 
-	if got, want := line, TitlebarRule+"│"+TitlebarStart+" Projects "+strings.Repeat(" ", 8)+TitlebarRule+"│"+Reset; got != want {
+	if got, want := line, "│ Projects "+strings.Repeat(" ", 8)+"│"; got != want {
 		t.Fatalf("frameTitlebarLine() = %q, want %q", got, want)
 	}
 	if got, want := VisibleLen(line), innerWidth+2; got != want {
@@ -184,6 +184,29 @@ func TestFrameTitlebarLineResetsAroundBordersAndPadsBody(t *testing.T) {
 	}
 	if hasActiveStyle(line) {
 		t.Fatalf("frameTitlebarLine() = %q, want reset after right border", line)
+	}
+}
+
+func TestFrameTitlebarLineUsesFrameBackgroundForeground(t *testing.T) {
+	t.Parallel()
+
+	theme := DefaultTheme
+	theme.Background = "\x1b[48;2;1;2;3m"
+	theme.Foreground = "\x1b[38;2;170;187;204m"
+	line := frameTitlebarLine(theme, 18, "\x1b[31mProjects\x1b[0m")
+	style := theme.Background + theme.Foreground
+
+	if !strings.HasPrefix(line, style+"│ ") {
+		t.Fatalf("frameTitlebarLine() = %q, want frame style before titlebar content", line)
+	}
+	if !strings.Contains(line, "\x1b[31mProjects"+Reset+style+strings.Repeat(" ", 9)) {
+		t.Fatalf("frameTitlebarLine() = %q, want embedded reset to resume frame style for padding", line)
+	}
+	if !strings.HasSuffix(line, "│"+Reset) {
+		t.Fatalf("frameTitlebarLine() = %q, want final reset after right border", line)
+	}
+	if strings.Contains(line, TitlebarStart) || strings.Contains(line, TitlebarRule) {
+		t.Fatalf("frameTitlebarLine() = %q, want no titlebar overlay ANSI", line)
 	}
 }
 
@@ -198,11 +221,10 @@ func TestFrameTitlebarChipsLineResetsAroundBordersAndPadsBody(t *testing.T) {
 
 	wantBody := " " +
 		ChipActiveStart + " A " + Reset +
-		ChipInactiveStart + " " + Reset +
+		" " +
 		ChipInactiveStart + " B " + Reset +
-		TitlebarStart +
 		strings.Repeat(" ", 10)
-	if got, want := line, TitlebarRule+"│"+TitlebarStart+wantBody+TitlebarRule+"│"+Reset; got != want {
+	if got, want := line, "│"+wantBody+"│"; got != want {
 		t.Fatalf("frameTitlebarChipsLine() = %q, want %q", got, want)
 	}
 	if got, want := VisibleLen(line), innerWidth+2; got != want {
@@ -210,6 +232,26 @@ func TestFrameTitlebarChipsLineResetsAroundBordersAndPadsBody(t *testing.T) {
 	}
 	if hasActiveStyle(line) {
 		t.Fatalf("frameTitlebarChipsLine() = %q, want reset after right border", line)
+	}
+}
+
+func TestFrameTitlebarChipsLineUsesFrameStyleForGaps(t *testing.T) {
+	t.Parallel()
+
+	theme := DefaultTheme
+	theme.Background = "\x1b[48;2;1;2;3m"
+	theme.Foreground = "\x1b[38;2;170;187;204m"
+	line := frameTitlebarChipsLine(theme, 18, []Chip{
+		{Label: "A", Active: true},
+		{Label: "B"},
+	})
+	style := theme.Background + theme.Foreground
+
+	if !strings.Contains(line, ChipActiveStart+" A "+Reset+style+" "+ChipInactiveStart+" B "+Reset+style) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want chip gap and right pad to resume frame style", line)
+	}
+	if strings.Contains(line, TitlebarStart) || strings.Contains(line, TitlebarRule) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want no titlebar overlay ANSI", line)
 	}
 }
 
@@ -227,11 +269,11 @@ func TestFrameTitlebarChipsLineKeepsRightPadStyledWhenStripFills(t *testing.T) {
 	if !strings.Contains(line, ChipActiveStart+" Projec "+Reset) {
 		t.Fatalf("frameTitlebarChipsLine() = %q, want truncated chip before right pad", line)
 	}
-	if !strings.HasSuffix(line, TitlebarStart+" "+TitlebarRule+"│"+Reset) {
-		t.Fatalf("frameTitlebarChipsLine() = %q, want styled right padding cell before right border", line)
+	if !strings.HasSuffix(line, Reset+" │") {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want inherited right padding cell before right border", line)
 	}
-	if strings.Contains(line, Reset+TitlebarRule+"│") {
-		t.Fatalf("frameTitlebarChipsLine() = %q, want no reset/default background before right border", line)
+	if strings.Contains(line, TitlebarStart) || strings.Contains(line, TitlebarRule) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want no titlebar overlay ANSI", line)
 	}
 }
 
@@ -422,7 +464,7 @@ func TestRendererRenderFrameWithChipsUsesTmuxToneTokens(t *testing.T) {
 	if got, want := VisibleLen(chipRow), 40; got != want {
 		t.Fatalf("chip row width = %d, want %d: %q", got, want, chipRow)
 	}
-	if !strings.HasPrefix(lines[2], TitlebarRule+"├") || !strings.HasSuffix(lines[2], "┤"+Reset) {
+	if !strings.HasPrefix(lines[2], "├") || !strings.HasSuffix(lines[2], "┤") {
 		t.Fatalf("titlebar divider = %q, want full-width divider below chip row", lines[2])
 	}
 	if !strings.Contains(lines[3], "hello") {

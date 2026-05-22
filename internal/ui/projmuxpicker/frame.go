@@ -301,7 +301,6 @@ func frameTitlebarLine(theme Theme, innerWidth int, title string) string {
 	}
 	labelWidthLimit := max(innerWidth-2, 1)
 	label := TruncateANSI(title, labelWidthLimit)
-	label = strings.ReplaceAll(label, Reset, Reset+TitlebarStart)
 	titleBlock := " " + label + " "
 	titleBlockWidth := VisibleLen(titleBlock)
 	body := titleBlock + strings.Repeat(" ", max(innerWidth-titleBlockWidth, 0))
@@ -318,14 +317,12 @@ func frameTitlebarChipsLine(theme Theme, innerWidth int, chips []Chip) string {
 	}
 	leading := " "
 	pad := max(innerWidth-used-VisibleLen(leading), 0)
-	body := leading + rendered + TitlebarStart + strings.Repeat(" ", pad)
+	body := leading + rendered + strings.Repeat(" ", pad)
 	return frameTitlebarStyledLine(theme, body)
 }
 
 func frameTitlebarStyledLine(theme Theme, body string) string {
-	// Keep both border cells and the interior padding explicitly styled so
-	// terminal defaults cannot leak through titlebar, chip-strip, or divider gaps.
-	return TitlebarRule + theme.Vertical + TitlebarStart + body + TitlebarRule + theme.Vertical + Reset
+	return frameBackgroundLine(theme, theme.Vertical+body+theme.Vertical)
 }
 
 func frameBackgroundLine(theme Theme, line string) string {
@@ -339,8 +336,7 @@ func frameBackgroundLine(theme Theme, line string) string {
 // renderChipStrip lays out the chip slice into a single visible-width-bound
 // string and returns the visible width consumed. Chips render with a single
 // cell of padding on each side ("[ Label ]") and are separated by a single
-// gap cell coloured with the inactive-chip background so the gap reads as
-// part of the tab strip rather than as titlebar void.
+// gap cell that inherits the frame row styling.
 func renderChipStrip(chips []Chip, maxWidth int) (string, int) {
 	if maxWidth <= 0 {
 		return "", 0
@@ -393,11 +389,11 @@ func chipSegment(chip Chip, label string) string {
 }
 
 func chipGapSegment() string {
-	return ChipInactiveStart + " " + Reset
+	return " "
 }
 
 func frameTitlebarDivider(theme Theme, innerWidth int) string {
-	return TitlebarRule + "├" + strings.Repeat(theme.Horizontal, innerWidth) + "┤" + Reset
+	return frameBackgroundLine(theme, "├"+strings.Repeat(theme.Horizontal, innerWidth)+"┤")
 }
 
 func writeFrameDiff(w io.Writer, previous, next string) {
