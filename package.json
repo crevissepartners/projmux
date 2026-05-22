@@ -23,12 +23,6 @@
     "README-ko.md",
     "LICENSE"
   ],
-  "optionalDependencies": {
-    "@projmux/darwin-arm64": "0.4.0",
-    "@projmux/darwin-x64": "0.4.0",
-    "@projmux/linux-arm64": "0.4.0",
-    "@projmux/linux-x64": "0.4.0"
-  },
   "scripts": {
     "package:npm": "scripts/package-npm.sh",
     "package:npm:pack": "scripts/package-npm.sh --pack"
