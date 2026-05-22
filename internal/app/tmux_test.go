@@ -1202,8 +1202,8 @@ func TestTmuxConfigThemeUsesProject256ColorBackgroundWithoutGlobalLeak(t *testin
 	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
 	for _, want := range []string{
 		"set -g status-style \"bg=" + tokens.StatusBg + ",fg=" + tokens.StatusFg + "\"",
-		"#[fg=" + tokens.WindowInactiveFg + ",bg=" + tokens.WindowInactiveBg + "] #('/tmp/projmux' attention window #{window_id})",
-		"#[bold,fg=" + tokens.WindowActiveFg + ",bg=" + tokens.WindowActiveBg + "] #('/tmp/projmux' attention window #{window_id})",
+		"#[fg=" + tokens.WindowInactiveFg + ",bg=" + tokens.WindowInactiveBg + "] #('/tmp/projmux' attention window #{window_id} #{@projmux_ai_badge_style})",
+		"#[bold,fg=" + tokens.WindowActiveFg + ",bg=" + tokens.WindowActiveBg + "] #('/tmp/projmux' attention window #{window_id} #{@projmux_ai_badge_style})",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("themed app config missing %q\n%s", want, output)
@@ -1604,6 +1604,60 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)
 		}
+	}
+}
+
+func TestTmuxPrintConfigUsesSavedAIBadgeStyle(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveAIBadgeStyleFile(paths.AIBadgeStyleFile(), config.AIBadgeStyleEmoji); err != nil {
+		t.Fatalf("SaveAIBadgeStyleFile() error = %v", err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"set -g " + aiBadgeStyleTmuxOption + " emoji",
+		"⏳",
+		"✅",
+		"🔄",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
+		}
+	}
+}
+
+func TestTmuxAIBadgeStyleOffPreservesPaneBorderSpacing(t *testing.T) {
+	t.Parallel()
+
+	dot := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot)
+	off := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleOff)
+
+	for _, banned := range []string{" ● ", "⏳", "✅", "🔄"} {
+		if strings.Contains(off, banned) {
+			t.Fatalf("off pane border format = %q, did not expect marker %q", off, banned)
+		}
+	}
+	if strings.Count(off, "]   ") < 3 {
+		t.Fatalf("off pane border format = %q, want blank marker lanes", off)
+	}
+	if got := len([]rune(off)) - len([]rune(dot)); got != 0 {
+		t.Fatalf("off pane border rune-length delta = %d, want stable marker lane width", got)
 	}
 }
 

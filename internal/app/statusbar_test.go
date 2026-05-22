@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -50,6 +51,16 @@ func newStatusbarTestCommand(runner *statusbarFakeRunner, store notifyStore) *st
 		c.notifyStoreFn = func() (notifyStore, error) { return store, nil }
 	}
 	return c
+}
+
+func TestStatusbarBadgeStyleDefaultIsDot(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	got := loadAIBadgeStyle(func() (string, error) { return home, nil }, func(string) string { return "" })
+	if got != config.AIBadgeStyleDot {
+		t.Fatalf("loadAIBadgeStyle(missing) = %q, want %q", got, config.AIBadgeStyleDot)
+	}
 }
 
 func TestStatusbarDispatchTableCoversAllKnownRanges(t *testing.T) {

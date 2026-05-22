@@ -942,6 +942,7 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsNotificationsDesktop, settingsAxisGlobal},
 		{settingsLabsProjectHooks, settingsAxisGlobal},
 		{settingsActionPrefixAI + aiModeCodex, settingsAxisGlobal},
+		{settingsActionPrefixAIBadgeStyle + string(config.AIBadgeStyleEmoji), settingsAxisGlobal},
 		{settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":" + string(config.StatusbarDecorationSymbol), settingsAxisGlobal},
 		{settingsActionPrefixKeymap + "settings", settingsAxisGlobal},
 		{settingsActionPrefixHooks + string(config.ProjectHooksOn), settingsAxisGlobal},
@@ -1459,6 +1460,100 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 				t.Fatalf("tmux calls = %#v", tmuxCalls)
 			}
 		})
+	}
+}
+
+func TestSettingsHubSetsAIBadgeStyle(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveAIBadgeStyleFile(paths.AIBadgeStyleFile(), config.AIBadgeStyleDot); err != nil {
+		t.Fatalf("seed AI badge style: %v", err)
+	}
+
+	var appearanceOptions intpickercompat.Options
+	var detailOptions intpickercompat.Options
+	var refreshedOptions intpickercompat.Options
+	var tmuxCalls [][]string
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}},
+		{observe: func(o intpickercompat.Options) {
+			appearanceOptions = o
+		},
+			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAIBadgeStyle}},
+		{observe: func(o intpickercompat.Options) {
+			detailOptions = o
+		},
+			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAIBadgeStyle + string(config.AIBadgeStyleEmoji)}},
+		{observe: func(o intpickercompat.Options) {
+			refreshedOptions = o
+		}},
+	})
+	cmd := &settingsCommand{
+		ai:       testAICommand(home),
+		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+		runner:       runner,
+		nativePicker: native,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !hasEntryValue(appearanceOptions.Entries, settingsActionPrefixAIBadgeStyle) {
+		t.Fatalf("appearance entries = %#v, want AI badge style row", appearanceOptions.Entries)
+	}
+	if got, want := detailOptions.UI, "settings-ai-badge-style"; got != want {
+		t.Fatalf("AI badge style UI = %q, want %q", got, want)
+	}
+	for _, style := range aiBadgeStyles() {
+		value := settingsActionPrefixAIBadgeStyle + string(style)
+		if !hasEntryValue(detailOptions.Entries, value) {
+			t.Fatalf("AI badge style entries = %#v, want %s row", detailOptions.Entries, value)
+		}
+	}
+	if !hasEntryLabelContaining(detailOptions.Entries, "⏳ prompt") {
+		t.Fatalf("AI badge style entries = %#v, want emoji preview", detailOptions.Entries)
+	}
+	if !hasEntryLabelContainingAll(refreshedOptions.Entries, "Preview "+string(config.AIBadgeStyleEmoji), "current") {
+		t.Fatalf("refreshed entries = %#v, want emoji marked current", refreshedOptions.Entries)
+	}
+
+	got, err := config.LoadAIBadgeStyleFile(paths.AIBadgeStyleFile())
+	if err != nil {
+		t.Fatalf("LoadAIBadgeStyleFile() error = %v", err)
+	}
+	if got != config.AIBadgeStyleEmoji {
+		t.Fatalf("AI badge style = %q, want %q", got, config.AIBadgeStyleEmoji)
+	}
+	if len(tmuxCalls) != 3 {
+		t.Fatalf("tmux calls = %#v, want style option, pane-border-format, display-message", tmuxCalls)
+	}
+	if !reflect.DeepEqual(tmuxCalls[0], []string{"tmux", "set-option", "-g", aiBadgeStyleTmuxOption, string(config.AIBadgeStyleEmoji)}) {
+		t.Fatalf("first tmux call = %#v", tmuxCalls[0])
+	}
+	if !reflect.DeepEqual(tmuxCalls[1][:4], []string{"tmux", "set-option", "-g", "pane-border-format"}) {
+		t.Fatalf("second tmux call = %#v", tmuxCalls[1])
+	}
+	if !strings.Contains(tmuxCalls[1][4], "⏳") || !strings.Contains(tmuxCalls[1][4], "✅") || !strings.Contains(tmuxCalls[1][4], "🔄") {
+		t.Fatalf("pane-border-format call = %#v, want emoji markers", tmuxCalls[1])
+	}
+	if !reflect.DeepEqual(tmuxCalls[2], []string{"tmux", "display-message", "AI badge style: emoji"}) {
+		t.Fatalf("third tmux call = %#v", tmuxCalls[2])
 	}
 }
 

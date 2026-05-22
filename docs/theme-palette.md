@@ -127,10 +127,10 @@ Accents and state:
 | `accent.action` | `141;205;142`, strong `122;199;173` | `colour29` bg / `colour230` fg |
 | `accent.attention` | notify HUD background/project family | `colour53`, project `colour90` |
 | `accent.ai` | notify agent `colour37` family | `colour37` bg / `colour121` fg |
-| `state.progress` | `255;204;102`; switch attention/busy dot and pending notify title/bell/badge `colour220` | `colour220` |
-| `state.warning` | usage/status popup ANSI 256 wrapper | `colour214` |
+| `state.progress` | `255;204;102`; switch attention/busy dot, pane-border in-progress badge, and pending notify title/bell/badge `colour220` | `colour220` |
+| `state.warning` | usage/status popup ANSI 256 wrapper; pane-border approval/input-required badge | `colour214` |
 | `state.danger` | `255;107;107` | `colour160` |
-| `state.success` | settings/trust green families | `colour72`, `colour151` |
+| `state.success` | settings/trust green families; pane-border response-complete badge | `colour72`, `colour151` |
 | `state.ahead` | switch/git metadata and notify age ANSI 256 wrapper | `colour153` |
 | `git.branch` | switch/sidebar branch badge uses the statusbar git branch block colors | `colour30` bg / `colour231` fg |
 
@@ -140,6 +140,7 @@ Surface-specific tokens:
 | --- | --- |
 | Native picker | current row, titlebar, rule, pointer, highlight, muted text, chip active/inactive/disabled |
 | Statusbar row 1 | session identity, cwd secondary text, divider, git branch block, git dirty/staged/ahead/behind, settings action chip, clock |
+| App pane borders | semantic AI badge marker style (`dot`, `emoji`, or spacing-preserving `off`) plus warning/success/progress state color |
 | Notify HUD/sidebar | line bg/fg, project badge, info/warn/crit/stale/gone badges, AI agent badge, count/age text |
 | Usage HUD/popup | OK/warning/critical/over-limit bars and numbers, empty cells, muted sync age |
 | Settings | add/type/open action, destructive remove/quit, back/cancel, info/read-only, dim description, root action/dim rows, trust trusted/stale/untrusted |

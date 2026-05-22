@@ -130,6 +130,7 @@ var settingsEntryPrefixCatalog = []struct {
 }{
 	{settingsActionPrefixAI, settingsEntryMeta{Name: "AI Settings", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAINotifyDiagnostic, settingsEntryMeta{Name: "AI notify diagnostics", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixAIBadgeStyle, settingsEntryMeta{Name: "AI badge style", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixDesktopNotifyMode, settingsEntryMeta{Name: "Desktop notification mode", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAINotifyDedupe, settingsEntryMeta{Name: "AI notification dedupe", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAIHookProvider, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
@@ -191,6 +192,7 @@ const (
 	settingsSectionLabs                    = "section:labs"
 	settingsSectionAbout                   = "section:about"
 	settingsActionPrefixAI                 = "ai:"
+	settingsActionPrefixAIBadgeStyle       = "ai-badge-style:"
 	settingsActionPrefixAINotifyDiagnostic = "ai-notify:"
 	settingsActionPrefixAINotifyCommand    = "ai-notify-command:"
 	settingsActionPrefixAINotifyDedupe     = "ai-notify-dedupe:"
@@ -2312,6 +2314,7 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 
 func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 	current := c.currentStatusbarDecorations()
+	badgeStyle := loadAIBadgeStyle(c.homeDir, c.lookupEnv)
 	targets := []statusbarDecorationTarget{
 		statusbarDecorationTargetCwd,
 		statusbarDecorationTargetGit,
@@ -2322,6 +2325,11 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 	entries = append(entries, settingsBackEntry())
 	entries = append(entries, c.localeSettingsEntry())
 	entries = append(entries, c.themeFontStatusEntry())
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "AI badge style", string(badgeStyle)+" - "+aiBadgeStylePreview(badgeStyle)),
+		Value:     settingsActionPrefixAIBadgeStyle,
+		SearchKey: "appearance ai badge style semantic pane border " + string(badgeStyle),
+	})
 	for _, target := range targets {
 		meta, ok := statusbarDecorationTargetMeta(target)
 		if !ok {
@@ -2404,6 +2412,10 @@ func (c *settingsCommand) runAppearanceSection(stdout, stderr io.Writer) error {
 			if err := c.runLocaleSection(stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsActionPrefixAIBadgeStyle:
+			if err := c.runAIBadgeStyleSection(stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, settingsActionPrefixStatusbar):
 			target, ok := parseStatusbarDecorationTarget(strings.TrimPrefix(action, settingsActionPrefixStatusbar))
 			if !ok {
@@ -2415,6 +2427,112 @@ func (c *settingsCommand) runAppearanceSection(stdout, stderr io.Writer) error {
 		default:
 			return fmt.Errorf("unknown appearance action: %s", action)
 		}
+	}
+}
+
+func (c *settingsCommand) runAIBadgeStyleSection(stdout, stderr io.Writer) error {
+	for {
+		options := c.aiBadgeStyleOptions()
+		result, err := c.runPicker(options)
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixAIBadgeStyle):
+			style := strings.TrimPrefix(action, settingsActionPrefixAIBadgeStyle)
+			if !isAIBadgeStyle(style) {
+				return fmt.Errorf("unknown AI badge style action: %s", action)
+			}
+			if err := c.setAIBadgeStyle(style); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI badge style action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) aiBadgeStyleOptions() intpickercompat.Options {
+	return intpickercompat.Options{
+		UI:         "settings-ai-badge-style",
+		Entries:    c.aiBadgeStyleEntries(),
+		Title:      "Appearance - AI badge style",
+		TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject()),
+		Prompt:     "Settings > Appearance > AI badge style > ",
+		Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
+		ExpectKeys: []string{"enter"},
+		Bindings:   settingsCloseBindings(),
+	}
+}
+
+func (c *settingsCommand) aiBadgeStyleEntries() []intpickercompat.Entry {
+	current := loadAIBadgeStyle(c.homeDir, c.lookupEnv)
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{Label: settingsLabelInfo("Current", string(current), "pane border live AI marker"), Value: settingsNoopValue},
+	}
+	for _, style := range aiBadgeStyles() {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		desc := aiBadgeStylePreview(style) + " - " + aiBadgeStyleDescription(style)
+		if style == current {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+			desc += " - current"
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabel(glyph, color, "Preview "+string(style), desc),
+			Value:     settingsActionPrefixAIBadgeStyle + string(style),
+			SearchKey: "ai badge style " + string(style) + " " + aiBadgeStylePreview(style),
+		})
+	}
+	return entries
+}
+
+func aiBadgeStyles() []config.AIBadgeStyle {
+	return []config.AIBadgeStyle{
+		config.AIBadgeStyleDot,
+		config.AIBadgeStyleEmoji,
+		config.AIBadgeStyleOff,
+	}
+}
+
+func isAIBadgeStyle(value string) bool {
+	switch config.AIBadgeStyle(strings.TrimSpace(value)) {
+	case config.AIBadgeStyleDot, config.AIBadgeStyleEmoji, config.AIBadgeStyleOff:
+		return true
+	default:
+		return false
+	}
+}
+
+func aiBadgeStyleDescription(style config.AIBadgeStyle) string {
+	switch config.NormalizeAIBadgeStyle(string(style)) {
+	case config.AIBadgeStyleEmoji:
+		return "emoji marker"
+	case config.AIBadgeStyleOff:
+		return "preserve spacing without marker"
+	default:
+		return "colored dot marker"
+	}
+}
+
+func aiBadgeStylePreview(style config.AIBadgeStyle) string {
+	switch config.NormalizeAIBadgeStyle(string(style)) {
+	case config.AIBadgeStyleEmoji:
+		return "⏳ prompt  ✅ complete  🔄 working"
+	case config.AIBadgeStyleOff:
+		return "prompt  complete  working"
+	default:
+		return "● prompt  ● complete  ● working"
 	}
 }
 
@@ -4048,6 +4166,23 @@ func (c *settingsCommand) setStatusbarDecoration(value string) error {
 			return fmt.Errorf("set live tmux decoration mode: %w", err)
 		}
 		_ = c.runCommand("tmux", "display-message", label+": "+string(mode))
+	}
+	return nil
+}
+
+func (c *settingsCommand) setAIBadgeStyle(value string) error {
+	style := config.NormalizeAIBadgeStyle(value)
+	if err := saveAIBadgeStyle(c.homeDir, c.lookupEnv, style); err != nil {
+		return err
+	}
+	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
+		if err := c.runCommand("tmux", "set-option", "-g", aiBadgeStyleTmuxOption, string(style)); err != nil {
+			return fmt.Errorf("set live tmux AI badge style option: %w", err)
+		}
+		if err := c.runCommand("tmux", "set-option", "-g", "pane-border-format", tmuxPaneBorderFormatWithAIBadgeStyle(style)); err != nil {
+			return fmt.Errorf("set live tmux pane border format: %w", err)
+		}
+		_ = c.runCommand("tmux", "display-message", "AI badge style: "+string(style))
 	}
 	return nil
 }

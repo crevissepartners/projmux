@@ -221,7 +221,7 @@ func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) error {
-	windowID, err := parseOptionalAttentionTarget(args, "attention window", stderr)
+	windowID, style, err := parseAttentionWindowArgs(args, stderr)
 	if err != nil {
 		return err
 	}
@@ -237,11 +237,32 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 	}
 
 	if badgeKind != "" {
-		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAIBadgeKindFg(badgeKind)+"]●")
+		glyph := aibadge.Glyph(badgeKind, style)
+		if strings.TrimSpace(glyph) == "" {
+			_, err := fmt.Fprint(stdout, " ")
+			return err
+		}
+		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAIBadgeKindFg(badgeKind)+"]"+glyph)
 		return err
 	}
 	_, err = fmt.Fprint(stdout, " ")
 	return err
+}
+
+func parseAttentionWindowArgs(args []string, stderr io.Writer) (windowID, style string, err error) {
+	if len(args) > 2 {
+		printAttentionUsage(stderr)
+		return "", "", errors.New("attention window accepts at most 2 arguments")
+	}
+	if len(args) > 0 {
+		windowID = strings.TrimSpace(args[0])
+	}
+	if len(args) > 1 {
+		style = aibadge.NormalizeStyle(args[1])
+	} else {
+		style = aibadge.StyleDot
+	}
+	return windowID, style, nil
 }
 
 func parseOptionalAttentionTarget(args []string, command string, stderr io.Writer) (string, error) {

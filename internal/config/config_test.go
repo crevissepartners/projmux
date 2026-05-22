@@ -122,6 +122,9 @@ func TestPathsStatusbarDecorationFile(t *testing.T) {
 	if got, want := paths.StatusbarDecorationFile(), filepath.Join(paths.ConfigDir, StatusbarDecorationFileName); got != want {
 		t.Fatalf("StatusbarDecorationFile() = %q, want %q", got, want)
 	}
+	if got, want := paths.AIBadgeStyleFile(), filepath.Join(paths.ConfigDir, AIBadgeStyleFileName); got != want {
+		t.Fatalf("AIBadgeStyleFile() = %q, want %q", got, want)
+	}
 }
 
 func TestPathsPickerBackendFile(t *testing.T) {
@@ -354,6 +357,53 @@ func TestStatusbarDecorationNormalizesInvalidValues(t *testing.T) {
 	}
 	if got != StatusbarDecorationOff {
 		t.Fatalf("LoadStatusbarDecorationFile() after save = %q, want %q", got, StatusbarDecorationOff)
+	}
+}
+
+func TestAIBadgeStyleRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", AIBadgeStyleFileName)
+	if got, err := LoadAIBadgeStyleFile(path); err != nil || got != AIBadgeStyleDot {
+		t.Fatalf("LoadAIBadgeStyleFile(missing) = %q, %v; want %q, nil", got, err, AIBadgeStyleDot)
+	}
+
+	if err := SaveAIBadgeStyleFile(path, AIBadgeStyleEmoji); err != nil {
+		t.Fatalf("SaveAIBadgeStyleFile() error = %v", err)
+	}
+	got, err := LoadAIBadgeStyleFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIBadgeStyleFile() error = %v", err)
+	}
+	if got != AIBadgeStyleEmoji {
+		t.Fatalf("LoadAIBadgeStyleFile() = %q, want %q", got, AIBadgeStyleEmoji)
+	}
+}
+
+func TestAIBadgeStyleNormalizesInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), AIBadgeStyleFileName)
+	if err := os.WriteFile(path, []byte("minimal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadAIBadgeStyleFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIBadgeStyleFile() error = %v", err)
+	}
+	if got != AIBadgeStyleOff {
+		t.Fatalf("LoadAIBadgeStyleFile(minimal) = %q, want %q", got, AIBadgeStyleOff)
+	}
+
+	if err := SaveAIBadgeStyleFile(path, AIBadgeStyle("also-broken")); err != nil {
+		t.Fatalf("SaveAIBadgeStyleFile() error = %v", err)
+	}
+	got, err = LoadAIBadgeStyleFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIBadgeStyleFile() error = %v", err)
+	}
+	if got != AIBadgeStyleDot {
+		t.Fatalf("LoadAIBadgeStyleFile() after save = %q, want %q", got, AIBadgeStyleDot)
 	}
 }
 
