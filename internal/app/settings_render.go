@@ -51,7 +51,7 @@ func settingsLabel(glyph, color, name, description string) string {
 
 func settingsLabelLocale(locale i18n.Locale, glyph, color, name, description string) string {
 	name = settingsCatalogTextLocale(locale, name)
-	description = settingsCatalogTextLocale(locale, description)
+	description = settingsCatalogExactTextOrFallbackLocale(locale, description)
 	var b strings.Builder
 
 	if glyph == "" {
@@ -88,7 +88,7 @@ func settingsLabelDim(name, description string) string {
 
 func settingsLabelDimLocale(locale i18n.Locale, name, description string) string {
 	name = settingsCatalogTextLocale(locale, name)
-	description = settingsCatalogTextLocale(locale, description)
+	description = settingsCatalogExactTextOrFallbackLocale(locale, description)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
 	b.WriteString("  ")
@@ -117,8 +117,7 @@ func settingsLabelInfo(name, value, source string) string {
 
 func settingsLabelInfoLocale(locale i18n.Locale, name, value, source string) string {
 	name = settingsCatalogTextLocale(locale, name)
-	value = settingsCatalogTextLocale(locale, value)
-	source = settingsCatalogTextLocale(locale, source)
+	source = settingsCatalogExactTextOrFallbackLocale(locale, source)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
 	b.WriteString("  ")

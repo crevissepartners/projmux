@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -17,7 +18,7 @@ func TestWelcomeCommandWritesShellGuide(t *testing.T) {
 	t.Parallel()
 
 	cmd := newWelcomeCommand(nil)
-	cmd.lookupEnv = func(string) string { return "" }
+	cmd.lookupEnv = englishWelcomeLookupEnv
 
 	var stdout, stderr bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
@@ -56,7 +57,7 @@ func TestAppDispatchesWelcomeCommand(t *testing.T) {
 	t.Parallel()
 
 	app := New()
-	app.welcome.lookupEnv = func(string) string { return "" }
+	app.welcome.lookupEnv = englishWelcomeLookupEnv
 
 	var stdout, stderr bytes.Buffer
 	if err := app.Run([]string{"welcome"}, &stdout, &stderr); err != nil {
@@ -68,6 +69,13 @@ func TestAppDispatchesWelcomeCommand(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
+}
+
+func englishWelcomeLookupEnv(name string) string {
+	if name == i18n.LocaleEnvName {
+		return string(i18n.FallbackLocale)
+	}
+	return ""
 }
 
 func TestWelcomePopupClaimsPendingAttachWelcomeOnce(t *testing.T) {
