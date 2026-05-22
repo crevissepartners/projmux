@@ -238,6 +238,9 @@ func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
 	if strings.Contains(cheapLines[1], "48;5;30m") || strings.Contains(cheapLines[2], "48;5;235m") {
 		t.Fatalf("cheap placeholder lanes must stay visually blank, got lines: %q", cheapLines)
 	}
+	if strings.Contains(enrichedLines[1], "feature/long-...  ") {
+		t.Fatalf("enriched branch chip = %q, want chip background only around branch text", enrichedLines[1])
+	}
 	for idx := range cheapLines {
 		if got, want := projmuxpicker.VisibleLen(enrichedLines[idx]), projmuxpicker.VisibleLen(cheapLines[idx]); got != want {
 			t.Fatalf("line %d width changed from %d to %d\ncheap:    %q\nenriched: %q", idx, want, got, cheapLines[idx], enrichedLines[idx])
