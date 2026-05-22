@@ -488,7 +488,7 @@ func formatSidebarBranchLane(candidate SwitchCandidate) string {
 	if branch == "" {
 		return formatSidebarBlankLane(switchBranchBadgeMax + 2)
 	}
-	return style + " " + padRight(branch, switchBranchBadgeMax) + " " + ansiReset
+	return style + " " + branch + " " + ansiReset + formatSidebarBlankLane(switchBranchBadgeMax-len([]rune(branch)))
 }
 
 func formatSidebarBlankLane(width int) string {
