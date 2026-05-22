@@ -531,7 +531,7 @@ var notifyKnownAgents = []string{"claude", "codex"}
 //  1. Full long form: line block + badges + text + age + count.
 //  2. Truncate `<text>` with a trailing `…`, preserving age and count.
 //  3. Drop `<age>` (and its preceding `·`) while preserving badges and count.
-//  4. Drop the badges; fall back to a standalone `●` severity icon + text.
+//  4. Drop the badges; fall back to clipped text and count.
 //  5. Hard truncate everything, appending the reset directive.
 //
 // `now` is the wall-clock used to compute the relative age. Pass the zero
@@ -565,7 +565,6 @@ func formatStatusNotifyWithLiveLocale(entries []notify.Notification, maxWidth in
 		renderNotifyStatusMiddleBadge(head, text, display),
 		renderNotifyStatusAgentBadge(head, agent),
 	)
-	icon := renderNotifyIcon(head.Severity)
 	age := ""
 	if !now.IsZero() && !head.CreatedAt.IsZero() {
 		age = formatRelativeAgeLocale(now.Sub(head.CreatedAt), locale)
@@ -590,15 +589,14 @@ func formatStatusNotifyWithLiveLocale(entries []notify.Notification, maxWidth in
 			truncated := shrinkText(text, budget)
 			return assembleNotify(badge, truncated, "", plus)
 		},
-		// Tier 4: drop badge — fall back to bare severity icon + text.
+		// Tier 4: drop badges; keep dotless clipped text and count.
 		func() string {
-			iconLead := icon + "  "
-			budget := tierBudget(maxWidth, iconLead, "", plus)
+			budget := max(maxWidth-notifyVisualLen(plus), 1)
 			truncated := shrinkText(text, budget)
 			if truncated == "" {
-				return iconLead + plus
+				return plus
 			}
-			return iconLead + truncated + plus
+			return truncated + plus
 		},
 	}
 	for _, tier := range tiers {
@@ -611,10 +609,9 @@ func formatStatusNotifyWithLiveLocale(entries []notify.Notification, maxWidth in
 		}
 	}
 
-	// Hard truncate. Keep the icon + plus suffix; rune-truncate everything
-	// in between. The reset directive is appended unconditionally so we
-	// never leak color into the next segment.
-	short := icon + "  " + text + plus
+	// Hard truncate. Keep the dotless text + plus payload. The reset directive
+	// is appended unconditionally so we never leak color into the next segment.
+	short := text + plus
 	return notifyLineOpen + truncateNotifyWithEllipsis(short, maxWidth) + notifyReset
 }
 
@@ -888,14 +885,17 @@ func truncateNotifyWithEllipsis(s string, maxWidth int) string {
 // segment. Unknown severities fall through to the info color so we never
 // emit a stripped escape.
 func renderNotifyIcon(severity string) string {
-	color := notifySeverityInfo
+	return notifySeverityOpen(severity) + notifyIcon + notifyLineOpen
+}
+
+func notifySeverityOpen(severity string) string {
 	switch severity {
 	case notify.SeverityWarn:
-		color = notifySeverityWarn
+		return notifySeverityWarn
 	case notify.SeverityCritical:
-		color = notifySeverityCrit
+		return notifySeverityCrit
 	}
-	return color + notifyIcon + notifyLineOpen
+	return notifySeverityInfo
 }
 
 // splitAgentPrefix extracts the leading `<agent>:` from the queue entry's

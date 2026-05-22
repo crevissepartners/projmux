@@ -2165,6 +2165,76 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 	}
 }
 
+func TestSettingsNotificationsDesktopNotifyRowsUseKoreanCatalog(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	var notificationsOptions intpickercompat.Options
+	var desktopOptions intpickercompat.Options
+	cmd := &settingsCommand{
+		lookupEnv: func(name string) string {
+			switch name {
+			case i18n.LocaleEnvName:
+				return "ko-KR"
+			case "PROJMUX_DESKTOP_NOTIFY_MODE":
+				return "raise"
+			default:
+				return ""
+			}
+		},
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
+			case 2:
+				notificationsOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDesktop}, nil
+			case 3:
+				desktopOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 4:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 5:
+				return intpickercompat.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intpickercompat.Result{}, nil
+			}
+		}),
+	}
+	cmd.nativePicker = nativePickerFromCompatRunner(cmd.runner)
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := desktopOptions.Title, "알림 - 데스크톱 알림"; got != want {
+		t.Fatalf("desktop notifications title = %q, want %q", got, want)
+	}
+	if got, want := desktopOptions.Prompt, "설정 > 알림 > 데스크톱 알림 > "; got != want {
+		t.Fatalf("desktop notifications prompt = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContaining(notificationsOptions.Entries, "데스크톱 알림") {
+		t.Fatalf("notifications entries = %#v, want Korean desktop notifications row", notificationsOptions.Entries)
+	}
+	if !hasEntryLabelContaining(desktopOptions.Entries, "데스크톱 알림") {
+		t.Fatalf("desktop notification entries = %#v, want Korean info row", desktopOptions.Entries)
+	}
+	visible := strings.Join([]string{
+		notificationsOptions.Title,
+		notificationsOptions.Prompt,
+		desktopOptions.Title,
+		desktopOptions.Prompt,
+		settingsEntryLabelsText(notificationsOptions.Entries),
+		settingsEntryLabelsText(desktopOptions.Entries),
+	}, "\n")
+	for _, residue := range []string{"Desktop notifications", "DesktopNotification"} {
+		if strings.Contains(visible, residue) {
+			t.Fatalf("localized notifications visible text contains %q: %q", residue, visible)
+		}
+	}
+}
+
 func TestSettingsNotificationsHookActionsShowsAndSavesRuntimeQuietPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -5630,6 +5700,14 @@ func hasEntryLabelContaining(entries []intpickercompat.Entry, value string) bool
 		}
 	}
 	return false
+}
+
+func settingsEntryLabelsText(entries []intpickercompat.Entry) string {
+	labels := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		labels = append(labels, entry.Label)
+	}
+	return strings.Join(labels, "\n")
 }
 
 func hasEntryLabelContainingAll(entries []intpickercompat.Entry, values ...string) bool {

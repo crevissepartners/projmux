@@ -468,9 +468,9 @@ func TestStatusNotifyWidthTier4TruncatesText(t *testing.T) {
 	}
 }
 
-// Tier 5 drops the block badges. The standalone severity-tinted `●`
-// icon preserves a minimal severity hint for very narrow statuslines.
-func TestStatusNotifyWidthTier5DropsBadge(t *testing.T) {
+// Tier 5 drops the block badges and keeps only clipped text plus count. It
+// intentionally avoids the old standalone severity dot in very narrow cells.
+func TestStatusNotifyWidthTier5DropsBadgeAndDot(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -484,11 +484,14 @@ func TestStatusNotifyWidthTier5DropsBadge(t *testing.T) {
 	if strings.Contains(out, "claude") {
 		t.Fatalf("tier5 must drop the agent label: %q", out)
 	}
-	if !strings.Contains(out, notifySeverityInfo+notifyIcon+notifyLineOpen) {
-		t.Fatalf("tier5 should still show the icon-only severity hint: %q", out)
+	if strings.Contains(out, notifyIcon) || strings.Contains(out, notifySeverityInfo+notifyIcon+notifyLineOpen) {
+		t.Fatalf("tier5 must not show the standalone severity dot: %q", out)
 	}
 	if !strings.Contains(out, "+1") {
 		t.Fatalf("tier5 should still show count: %q", out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Fatalf("tier5 should clip text with ellipsis: %q", out)
 	}
 }
 
@@ -502,6 +505,38 @@ func TestStatusNotifyWidthTier6HardTruncate(t *testing.T) {
 	}
 	if !strings.HasSuffix(out, "#[default]") {
 		t.Fatalf("tier6 must end with #[default]: %q", out)
+	}
+}
+
+func TestStatusNotifyCriticalVeryNarrowFallbackHasNoStandaloneDot(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	out := formatStatusNotify([]notify.Notification{{
+		ID:        "a",
+		Text:      "critical failure needs attention",
+		Severity:  notify.SeverityCritical,
+		Source:    notify.SourceExternal,
+		Session:   "prod",
+		CreatedAt: now,
+	}}, 6, now)
+	if visualLen(out) > 6 {
+		t.Fatalf("critical narrow visualLen=%d > 6: %q", visualLen(out), out)
+	}
+	if strings.Contains(out, notifyIcon) {
+		t.Fatalf("critical narrow fallback must not render standalone dot: %q", out)
+	}
+	if strings.Contains(out, notifySeverityCrit) {
+		t.Fatalf("critical narrow fallback must not render critical severity escape: %q", out)
+	}
+	if strings.Contains(out, renderNotifyBadge("CRIT", notify.SeverityCritical)) {
+		t.Fatalf("critical narrow fallback should drop the CRIT badge: %q", out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Fatalf("critical narrow fallback should clip text: %q", out)
+	}
+	if !strings.HasSuffix(out, "#[default]") {
+		t.Fatalf("critical narrow fallback must end with #[default]: %q", out)
 	}
 }
 

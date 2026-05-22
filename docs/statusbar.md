@@ -95,7 +95,7 @@ When the notify block is wider than its cell budget, clipping shrinks the body
 text first and appends an ellipsis while preserving project, state, agent, age,
 and count metadata. If the segment is still too wide, the age is dropped next
 while badges and the `+N` count stay visible when possible. Very narrow widths
-fall back to the severity-colored dot plus clipped text and count; the final
+fall back to dotless clipped text plus the `+N` count when it fits; the final
 hard-truncate path still closes with `#[default]` so later status segments do
 not inherit notification styling.
 `usage` opens a native-framed detail HUD for the compact usage bar. It reads
