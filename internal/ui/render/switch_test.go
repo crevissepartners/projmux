@@ -138,14 +138,14 @@ func TestBuildSwitchRowsSidebarUsesAnsiStylingForModeAndToggles(t *testing.T) {
 			t.Fatalf("label = %q, want token %q", got, want)
 		}
 	}
-	if strings.Contains(got, "\n") {
-		t.Fatalf("label = %q, want compact single-line sidebar row", got)
+	if got, want := len(strings.Split(got, "\n")), 3; got != want {
+		t.Fatalf("label line count = %d, want card-like 3-line sidebar row: %q", got, got)
 	}
-	if itemLabel := rows[0].Item.EffectiveLabel(); strings.Contains(itemLabel, "\n") {
-		t.Fatalf("item label = %q, want compact single-line sidebar row", itemLabel)
+	if itemLabel := rows[0].Item.EffectiveLabel(); len(strings.Split(itemLabel, "\n")) != 3 {
+		t.Fatalf("item label = %q, want card-like 3-line sidebar row", itemLabel)
 	}
 	if got := rows[0].Item.MetaLines; len(got) != 0 {
-		t.Fatalf("item meta lines = %#v, want sidebar metadata folded into compact label", got)
+		t.Fatalf("item meta lines = %#v, want sidebar card metadata folded into label lines", got)
 	}
 }
 
@@ -166,8 +166,8 @@ func TestBuildSwitchRowsSidebarLeavesNewSessionNameUncolored(t *testing.T) {
 			t.Fatalf("label = %q, want token %q", got, want)
 		}
 	}
-	if strings.Contains(got, "\n") {
-		t.Fatalf("label = %q, want compact single-line sidebar row", got)
+	if got, want := len(strings.Split(got, "\n")), 3; got != want {
+		t.Fatalf("label line count = %d, want card-like 3-line sidebar row: %q", got, got)
 	}
 }
 
@@ -189,8 +189,8 @@ func TestBuildSwitchRowsSidebarShowsAttentionBadge(t *testing.T) {
 			t.Fatalf("label = %q, want token %q", got, want)
 		}
 	}
-	if strings.Contains(got, "\n") {
-		t.Fatalf("label = %q, want compact single-line sidebar row", got)
+	if got, want := len(strings.Split(got, "\n")), 3; got != want {
+		t.Fatalf("label line count = %d, want card-like 3-line sidebar row: %q", got, got)
 	}
 	if got, want := rows[0].Item.Badges, []string{"needs review"}; !equalStringSlices(got, want) {
 		t.Fatalf("item badges = %q, want %q", got, want)
@@ -227,14 +227,18 @@ func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
 
 	cheapLabel := cheap.Item.EffectiveLabel()
 	enrichedLabel := enriched.Item.EffectiveLabel()
-	if strings.Contains(cheapLabel, "\n") || strings.Contains(enrichedLabel, "\n") {
-		t.Fatalf("sidebar labels must stay single-line\ncheap:    %q\nenriched: %q", cheapLabel, enrichedLabel)
+	cheapLines := strings.Split(cheapLabel, "\n")
+	enrichedLines := strings.Split(enrichedLabel, "\n")
+	if len(cheapLines) != 3 || len(enrichedLines) != 3 {
+		t.Fatalf("sidebar labels must stay 3-line card rows\ncheap:    %q\nenriched: %q", cheapLabel, enrichedLabel)
 	}
 	if len(cheap.Item.MetaLines) != 0 || len(enriched.Item.MetaLines) != 0 {
-		t.Fatalf("sidebar meta lines cheap/enriched = %#v/%#v, want no extra rendered lines", cheap.Item.MetaLines, enriched.Item.MetaLines)
+		t.Fatalf("sidebar meta lines cheap/enriched = %#v/%#v, want no extra rendered lines beyond the 3-line card", cheap.Item.MetaLines, enriched.Item.MetaLines)
 	}
-	if got, want := projmuxpicker.VisibleLen(enrichedLabel), projmuxpicker.VisibleLen(cheapLabel); got != want {
-		t.Fatalf("label width changed from %d to %d\ncheap:    %q\nenriched: %q", want, got, cheapLabel, enrichedLabel)
+	for idx := range cheapLines {
+		if got, want := projmuxpicker.VisibleLen(enrichedLines[idx]), projmuxpicker.VisibleLen(cheapLines[idx]); got != want {
+			t.Fatalf("line %d width changed from %d to %d\ncheap:    %q\nenriched: %q", idx, want, got, cheapLines[idx], enrichedLines[idx])
+		}
 	}
 	if !strings.Contains(enrichedLabel, "feature/long-...") {
 		t.Fatalf("enriched label = %q, want truncated branch in fixed lane", enrichedLabel)

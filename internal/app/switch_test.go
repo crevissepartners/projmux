@@ -691,12 +691,12 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 	}
 
 	initialLabel := gotNativeOptions.Items[0].EffectiveLabel()
-	if strings.Contains(initialLabel, "\n") {
-		t.Fatalf("initial row = %q, want compact single-line sidebar row", initialLabel)
+	if got, want := len(strings.Split(initialLabel, "\n")), 3; got != want {
+		t.Fatalf("initial row line count = %d, want card-like 3-line sidebar row: %q", got, initialLabel)
 	}
 	deferredLabel := gotDeferred.Items[0].EffectiveLabel()
-	if strings.Contains(deferredLabel, "\n") {
-		t.Fatalf("deferred row = %q, want compact single-line sidebar row", deferredLabel)
+	if got, want := len(strings.Split(deferredLabel, "\n")), 3; got != want {
+		t.Fatalf("deferred row line count = %d, want card-like 3-line sidebar row: %q", got, deferredLabel)
 	}
 	if !strings.Contains(deferredLabel, "●") {
 		t.Fatalf("deferred entry = %q, want attention marker", deferredLabel)
@@ -812,8 +812,8 @@ func TestSwitchCommandNativeSidebarDefersGitWindowsAttentionAndPreview(t *testin
 				t.Fatalf("preview command before first paint = %q, want deferred", options.Preview.Command)
 			}
 			initialLabel := options.Items[0].EffectiveLabel()
-			if strings.Contains(initialLabel, "\n") {
-				t.Fatalf("initial row = %q, want compact single-line sidebar row", initialLabel)
+			if got, want := len(strings.Split(initialLabel, "\n")), 3; got != want {
+				t.Fatalf("initial row line count = %d, want card-like 3-line sidebar row: %q", got, initialLabel)
 			}
 			if strings.Contains(initialLabel, "branch-main") || strings.Contains(initialLabel, " server ") || strings.Contains(initialLabel, "●") {
 				t.Fatalf("initial item = %q, want reserved lanes without metadata", initialLabel)
