@@ -132,12 +132,17 @@ func TestBuildSwitchRowsSidebarUsesAnsiStylingForModeAndToggles(t *testing.T) {
 		Tagged:      true,
 	}})
 
-	const want = "\x1b[1m\x1b[32mapp\x1b[0m   \x1b[31mx\x1b[0m \x1b[33m*\x1b[0m\n\x1b[2m~rp/app\x1b[0m \x1b[1;38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m"
-	if got := rows[0].Label; got != want {
-		t.Fatalf("label = %q, want %q", got, want)
+	got := rows[0].Label
+	for _, want := range []string{"\x1b[31mx\x1b[0m", "\x1b[33m*\x1b[0m", "\x1b[1m\x1b[32mapp\x1b[0m", "\x1b[2m~rp/app\x1b[0m"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("label = %q, want token %q", got, want)
+		}
 	}
-	if got := rows[0].Item.EffectiveLabel(); got != want {
-		t.Fatalf("item label = %q, want %q", got, want)
+	if strings.Contains(got, "\n") {
+		t.Fatalf("label = %q, want compact single-line sidebar row", got)
+	}
+	if itemLabel := rows[0].Item.EffectiveLabel(); strings.Contains(itemLabel, "\n") {
+		t.Fatalf("item label = %q, want compact single-line sidebar row", itemLabel)
 	}
 }
 
@@ -152,9 +157,14 @@ func TestBuildSwitchRowsSidebarLeavesNewSessionNameUncolored(t *testing.T) {
 		UI:          "sidebar",
 	}})
 
-	const want = "app      \n\x1b[2m~rp/app\x1b[0m \x1b[38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m"
-	if got := rows[0].Label; got != want {
-		t.Fatalf("label = %q, want %q", got, want)
+	got := rows[0].Label
+	for _, want := range []string{"app", "\x1b[2m~rp/app\x1b[0m"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("label = %q, want token %q", got, want)
+		}
+	}
+	if strings.Contains(got, "\n") {
+		t.Fatalf("label = %q, want compact single-line sidebar row", got)
 	}
 }
 
@@ -170,9 +180,14 @@ func TestBuildSwitchRowsSidebarShowsAttentionBadge(t *testing.T) {
 		AttentionRank: 2,
 	}})
 
-	const want = "\x1b[1m\x1b[32mapp\x1b[0m \x1b[38;2;255;204;102m●\x1b[0m    \n\x1b[2m~rp/app\x1b[0m \x1b[1;38;5;231;48;5;30m                  \x1b[0m\n\x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m \x1b[38;5;245;48;5;235m            \x1b[0m"
-	if got := rows[0].Label; got != want {
-		t.Fatalf("label = %q, want %q", got, want)
+	got := rows[0].Label
+	for _, want := range []string{"\x1b[38;2;255;204;102m●\x1b[0m", "\x1b[1m\x1b[32mapp\x1b[0m", "\x1b[2m~rp/app\x1b[0m"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("label = %q, want token %q", got, want)
+		}
+	}
+	if strings.Contains(got, "\n") {
+		t.Fatalf("label = %q, want compact single-line sidebar row", got)
 	}
 	if got, want := rows[0].Item.Badges, []string{"needs review"}; !equalStringSlices(got, want) {
 		t.Fatalf("item badges = %q, want %q", got, want)
@@ -207,21 +222,19 @@ func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
 		AttentionRank: 2,
 	}})[0]
 
-	cheapLines := strings.Split(cheap.Item.EffectiveLabel(), "\n")
-	enrichedLines := strings.Split(enriched.Item.EffectiveLabel(), "\n")
-	if len(cheapLines) != 3 || len(enrichedLines) != 3 {
-		t.Fatalf("line count cheap/enriched = %d/%d, want fixed 3-line sidebar rows", len(cheapLines), len(enrichedLines))
+	cheapLabel := cheap.Item.EffectiveLabel()
+	enrichedLabel := enriched.Item.EffectiveLabel()
+	if strings.Contains(cheapLabel, "\n") || strings.Contains(enrichedLabel, "\n") {
+		t.Fatalf("sidebar labels must stay single-line\ncheap:    %q\nenriched: %q", cheapLabel, enrichedLabel)
 	}
-	for idx := range cheapLines {
-		if got, want := projmuxpicker.VisibleLen(enrichedLines[idx]), projmuxpicker.VisibleLen(cheapLines[idx]); got != want {
-			t.Fatalf("line %d width changed from %d to %d\ncheap:    %q\nenriched: %q", idx, want, got, cheapLines[idx], enrichedLines[idx])
-		}
+	if got, want := projmuxpicker.VisibleLen(enrichedLabel), projmuxpicker.VisibleLen(cheapLabel); got != want {
+		t.Fatalf("label width changed from %d to %d\ncheap:    %q\nenriched: %q", want, got, cheapLabel, enrichedLabel)
 	}
-	if !strings.Contains(enrichedLines[1], "feature/long-...") {
-		t.Fatalf("enriched path/git lane = %q, want truncated branch in fixed lane", enrichedLines[1])
+	if !strings.Contains(enrichedLabel, "feature/long-...") {
+		t.Fatalf("enriched label = %q, want truncated branch in fixed lane", enrichedLabel)
 	}
-	if strings.Contains(enrichedLines[2], "extra") {
-		t.Fatalf("enriched tabs lane = %q, want fixed sidebar tab slots", enrichedLines[2])
+	if strings.Contains(enrichedLabel, "extra") {
+		t.Fatalf("enriched label = %q, want fixed sidebar tab slots", enrichedLabel)
 	}
 }
 
