@@ -18,9 +18,10 @@ const (
 	ansiGreen    = theme.ANSIStateExistingStart
 	ansiYellow   = theme.ANSIStatePinnedStart
 	ansiProgress = theme.ANSIStateProgressStart
-	ansiWarning  = "\x1b[38;5;214m"
 	ansiCyan     = theme.ANSIAccentSettingsStart
 )
+
+var ansiWarning = theme.ANSI256FgStart(theme.TmuxStateWarningFg)
 
 const (
 	ansiStatusPath        = theme.ANSISwitchPathStart
