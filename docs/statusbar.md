@@ -33,6 +33,12 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
   clicks on tmux 3.4+, so a `run-shell` handler can't recover the
   target after the fact — the Go dispatcher's
   `isWindowListRangeToken` fallback is now defense-in-depth only.
+  Each window tab reserves a one-cell live pane attention prefix from
+  `projmux attention window #{window_id}` before the index: busy panes render a
+  progress-colored dot, reply-ready panes render a non-critical ready-colored
+  dot, and idle windows render a blank placeholder so title alignment and click
+  range width stay stable. This live window-list badge is independent from the
+  row-0 notify queue segment.
   The session, pwd, kube, and git segments on this row are wrapped
   in `#[range=user|<id>]` ranges and dispatched through the projmux
   handler. The standalone config also wraps the right-side `projmux`
@@ -97,7 +103,8 @@ and count metadata. If the segment is still too wide, the age is dropped next
 while badges and the `+N` count stay visible when possible. Very narrow widths
 fall back to dotless clipped text plus the `+N` count when it fits; the final
 hard-truncate path still closes with `#[default]` so later status segments do
-not inherit notification styling.
+not inherit notification styling. That dotless narrow fallback applies only to
+the queued notify segment, not to the separate window-list live attention badge.
 `usage` opens a native-framed detail HUD for the compact usage bar. It reads
 the cached usage state in-process, keeps the existing `projmux usage` CLI
 output shape unchanged for external consumers, aligns model/window rows with

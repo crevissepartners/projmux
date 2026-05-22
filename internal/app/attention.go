@@ -242,7 +242,7 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 	}
 
 	if seenReply {
-		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAccentAttentionStrongBg+"]●")
+		_, err := fmt.Fprint(stdout, "#[fg="+tmuxStateSuccessFg+"]●")
 		return err
 	}
 	_, err = fmt.Fprint(stdout, " ")
