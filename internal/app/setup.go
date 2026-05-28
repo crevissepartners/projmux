@@ -66,12 +66,6 @@ type probeKey struct {
 	// (e.g. "\x1b1" for Alt-1). Empty means projmux does not have a
 	// direct plain bind for this key (Ctrl-Shift-{R,L}, etc).
 	Plain string
-	// CSIu is retained only for legacy/archive tests that exercise raw
-	// app-specific escape captures. It is no longer a success path.
-	CSIu string
-	// UserKey is retained only for older fixtures; product flows no longer
-	// surface tmux User keys.
-	UserKey string
 	// PlainChord is the current tmux plain chord for the action after keymap
 	// overrides have been merged. It is for reporting/saving, not raw bytes.
 	PlainChord string
