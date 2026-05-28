@@ -76,8 +76,9 @@ transport candidates such as `Ctrl-N`, `Ctrl-Shift-{R,L,M}`, `Ctrl-M`, and
 `Alt-Shift-{Left,Right}`. Reports `plain`, `csi-u`, `unknown`, or `timeout`
 for each. `--non-interactive` skips the TTY probe and prints the expected key
 map. Default `--timeout` is `5s`. Run it outside tmux after trying
-`projmux shell`; `Alt-1..5` are the only guaranteed zero-config defaults, while
-other probed keys are diagnostic or optional binding candidates.
+`projmux shell`; `Alt-1..5` are the only guaranteed zero-config defaults.
+Settings > Keybindings edits in-app action aliases; terminal delivery
+diagnostics stay in this CLI flow.
 
 ## init
 
@@ -714,9 +715,11 @@ flags with the top-level `switch` UX:
 - `settings` — interactive configuration UI for the project picker, AI
   splits, Notifications, Appearance mode, Project Root management, the
   switcher's saved workdirs list, Labs (experimental), Settings > Keybindings,
-  and About/Update status. The keybinding flow now lives under
-  `Settings > Keybindings` with `Bindings`, `Diagnostic`, `Probe`, and `Init`
-  chips, and includes the `Welcome` entry in About. In Project
+  and About/Update status. The keybinding flow is a single
+  `Settings > Keybindings` action list with simplified action details for
+  aliases and reset. Terminal diagnostics and terminal mapping application stay
+  in `projmux setup` and `projmux init`. The About section includes the
+  `Welcome` entry. In Project
   Picker, `Project Root` manages the saved
   primary root (`~/.config/projmux/projdir`) and displays whether the effective
   value comes from `PROJMUX_PROJDIR`, tmux `@projmux_projdir`, saved config, or

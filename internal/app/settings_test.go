@@ -1204,7 +1204,7 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	}
 }
 
-func TestSettingsLabsKeybindingsRedirectsToUnifiedDiagnosticView(t *testing.T) {
+func TestSettingsLabsKeybindingsRedirectsToUnifiedRootView(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1236,6 +1236,12 @@ func TestSettingsLabsKeybindingsRedirectsToUnifiedDiagnosticView(t *testing.T) {
 	}
 	if got := keybindingOptions.TitleChips; len(got) < 2 || !got[0].Active || strings.TrimSpace(got[0].ClickValue) != "" {
 		t.Fatalf("redirect chips = %#v, want passive Global/Project tabs", got)
+	}
+	if hasEntryValue(keybindingOptions.Entries, settingsActionPrefixLabKeymap+"ProjectSidebarToggle") {
+		t.Fatalf("redirect entries = %#v, want Settings Keybindings root, not diagnostic list", keybindingOptions.Entries)
+	}
+	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
+		t.Fatalf("redirect entries = %#v, want Settings Keybindings action list", keybindingOptions.Entries)
 	}
 }
 
@@ -3515,11 +3521,10 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	if !hasEntryLabelContaining(keybindingOptions.Entries, "All catalog actions are listed") {
 		t.Fatalf("keybindings entries = %#v, want catalog-complete note", keybindingOptions.Entries)
 	}
-	if !hasEntryLabelContainingAll(keybindingOptions.Entries, "transport-dependent defaults stay active", "additive plain aliases") {
-		t.Fatalf("keybindings entries = %#v, want transport alias note", keybindingOptions.Entries)
-	}
-	if hasEntryLabelContaining(keybindingOptions.Entries, "transport-dependent rows are view-only") {
-		t.Fatalf("keybindings entries = %#v, did not want stale transport view-only note", keybindingOptions.Entries)
+	for _, absent := range []string{"Bindings", "Diagnostic", "Probe", "Init", "terminal mappings"} {
+		if hasEntryLabelContaining(keybindingOptions.Entries, absent) {
+			t.Fatalf("keybindings entries = %#v, did not want first-class %q surface", keybindingOptions.Entries, absent)
+		}
 	}
 	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
 		t.Fatalf("keybindings entries = %#v, want canonical ProjectSidebarToggle action", keybindingOptions.Entries)
@@ -3578,11 +3583,11 @@ func TestSettingsHubKeybindingsUsesReadablePrimaryLabels(t *testing.T) {
 	if got, want := title, "Keybinding - Toggle Project Sidebar"; got != want {
 		t.Fatalf("detail title = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContainingAll(detailEntries, "Keys", "Alt-1", "M-1") {
+	if !hasEntryLabelContainingAll(detailEntries, "Keybinding", "Alt-1", "M-1") {
 		t.Fatalf("detail entries = %#v, want readable default alias with tmux chord", detailEntries)
 	}
-	if !hasEntryLabelContainingAll(detailEntries, "Action ID", "ProjectSidebarToggle") {
-		t.Fatalf("detail entries = %#v, want internal action ID only in detail/source context", detailEntries)
+	if hasEntryLabelContaining(detailEntries, "Action ID") {
+		t.Fatalf("detail entries = %#v, did not want internal action ID in simplified detail", detailEntries)
 	}
 }
 
@@ -3676,46 +3681,42 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	if got, want := popupDetail.UI, "settings-keybinding-detail"; got != want {
 		t.Fatalf("popup detail UI = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContainingAll(popupDetail.Entries, "Action ID", "Sidebar:PinProject") {
-		t.Fatalf("popup detail entries = %#v, want internal action ID in detail", popupDetail.Entries)
+	if hasEntryLabelContaining(popupDetail.Entries, "Action ID") {
+		t.Fatalf("popup detail entries = %#v, did not want internal action ID in simplified detail", popupDetail.Entries)
 	}
-	if !hasEntryLabelContainingAll(popupDetail.Entries, "Keys", "Alt-P", "M-p") {
+	if !hasEntryLabelContainingAll(popupDetail.Entries, "Keybinding", "Alt-P", "M-p") {
 		t.Fatalf("popup detail entries = %#v, want readable picker-local keys", popupDetail.Entries)
 	}
-	if !hasEntryLabelContainingAll(popupDetail.Entries, "Tier", "Picker local", "editable picker-local") {
-		t.Fatalf("popup detail entries = %#v, want editable picker-local tier", popupDetail.Entries)
-	}
-	for _, want := range []string{"Type key chord", "Replace primary", "Disable default", "Reset default"} {
+	for _, want := range []string{"Add alias", "Reset aliases/default"} {
 		if !hasEntryLabelContaining(popupDetail.Entries, want) {
 			t.Fatalf("popup detail entries = %#v, want edit action %q", popupDetail.Entries, want)
 		}
 	}
-	if hasEntryLabelContaining(popupDetail.Entries, "Add alias") {
-		t.Fatalf("popup detail entries = %#v, did not want probe capture action", popupDetail.Entries)
+	for _, absent := range []string{"Type key chord", "Replace primary", "Disable default", "Tier", "Delivery path"} {
+		if hasEntryLabelContaining(popupDetail.Entries, absent) {
+			t.Fatalf("popup detail entries = %#v, did not want %q", popupDetail.Entries, absent)
+		}
 	}
 
 	if got, want := transportDetail.UI, "settings-keybinding-detail"; got != want {
 		t.Fatalf("transport detail UI = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContainingAll(transportDetail.Entries, "Action ID", "previous-window") {
-		t.Fatalf("transport detail entries = %#v, want internal action ID in detail", transportDetail.Entries)
+	if hasEntryLabelContaining(transportDetail.Entries, "Action ID") {
+		t.Fatalf("transport detail entries = %#v, did not want internal action ID in simplified detail", transportDetail.Entries)
 	}
-	if !hasEntryLabelContainingAll(transportDetail.Entries, "Keys", "Alt-Shift-Left", "M-S-Left") {
+	if !hasEntryLabelContainingAll(transportDetail.Entries, "Keybinding", "Alt-Shift-Left", "M-S-Left") {
 		t.Fatalf("transport detail entries = %#v, want readable transport keys", transportDetail.Entries)
 	}
-	if !hasEntryLabelContainingAll(transportDetail.Entries, "Default transport key", "Alt-Shift-Left", "M-S-Left") {
-		t.Fatalf("transport detail entries = %#v, want separate transport default row", transportDetail.Entries)
-	}
-	if !hasEntryLabelContainingAll(transportDetail.Entries, "Plain aliases", "(none)") {
+	if !hasEntryLabelContainingAll(transportDetail.Entries, "Aliases", "(none)") {
 		t.Fatalf("transport detail entries = %#v, want separate plain aliases row", transportDetail.Entries)
 	}
-	if !hasEntryLabelContainingAll(transportDetail.Entries, "Tier", "Transport dependent", "additive plain aliases") {
-		t.Fatalf("transport detail entries = %#v, want additive transport alias tier", transportDetail.Entries)
-	}
-	if !hasEntryLabelContaining(transportDetail.Entries, "Add plain alias") {
+	if !hasEntryLabelContaining(transportDetail.Entries, "Add alias") {
 		t.Fatalf("transport detail entries = %#v, want additive alias action", transportDetail.Entries)
 	}
-	for _, absent := range []string{"Replace primary", "Disable default"} {
+	if !hasEntryLabelContaining(transportDetail.Entries, "Reset aliases") {
+		t.Fatalf("transport detail entries = %#v, want reset aliases action", transportDetail.Entries)
+	}
+	for _, absent := range []string{"Add plain alias", "Replace primary", "Disable default", "Default transport key", "Tier", "Delivery path"} {
 		if hasEntryLabelContaining(transportDetail.Entries, absent) {
 			t.Fatalf("transport detail entries = %#v, did not want %q", transportDetail.Entries, absent)
 		}
@@ -3725,13 +3726,10 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries(select-pane-left) error = %v", err)
 	}
-	if !hasEntryLabelContainingAll(paneDetailEntries, "Keys", "Alt-Left", "M-Left") {
+	if !hasEntryLabelContainingAll(paneDetailEntries, "Keybinding", "Alt-Left", "M-Left") {
 		t.Fatalf("pane detail entries = %#v, want readable transport key", paneDetailEntries)
 	}
-	if !hasEntryLabelContainingAll(paneDetailEntries, "Tier", "Transport dependent", "additive plain aliases") {
-		t.Fatalf("pane detail entries = %#v, want transport additive alias tier", paneDetailEntries)
-	}
-	if !hasEntryLabelContaining(paneDetailEntries, "Add plain alias") {
+	if !hasEntryLabelContaining(paneDetailEntries, "Add alias") {
 		t.Fatalf("pane detail entries = %#v, want safe plain alias entry", paneDetailEntries)
 	}
 	if hasEntryLabelContaining(paneDetailEntries, "(unbound)") {
@@ -3752,13 +3750,16 @@ func TestSettingsHubKeybindingsTypedTransportAliasWritesOnlyAlias(t *testing.T) 
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window"}, nil
 		case 3:
-			if !hasEntryLabelContaining(options.Entries, "Add plain alias") {
-				t.Fatalf("transport detail entries = %#v, want Add plain alias", options.Entries)
+			if !hasEntryLabelContaining(options.Entries, "Add alias") {
+				t.Fatalf("transport detail entries = %#v, want Add alias", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:type"}, nil
 		case 4:
 			if got, want := options.UI, "settings-keybinding-type"; got != want {
 				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
+			}
+			if got, want := options.Prompt, "Add alias > "; got != want {
+				t.Fatalf("typed keybinding prompt = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Query: "M-["}, nil
 		case 5:
@@ -3973,50 +3974,21 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 	}
 }
 
-func TestSettingsHubKeybindingsTypedFallbackWritesValidatedAlias(t *testing.T) {
+func TestSettingsHubKeybindingsDirectActionsHideTypedFallback(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
-	var calls int
-	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:type"}, nil
-		case 4:
-			if got, want := options.UI, "settings-keybinding-type"; got != want {
-				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
-			}
-			if !options.AcceptQuery {
-				t.Fatalf("typed keybinding AcceptQuery = false, want true")
-			}
-			return intpickercompat.Result{Key: "enter", Query: "M-a"}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 7:
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
+	cmd := &settingsCommand{}
+	entries, _, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries() error = %v", err)
+	}
+	if !hasEntryLabelContaining(entries, "Add alias") {
+		t.Fatalf("detail entries = %#v, want Add alias", entries)
+	}
+	for _, absent := range []string{"Type key chord", "Replace primary", "Disable default"} {
+		if hasEntryLabelContaining(entries, absent) {
+			t.Fatalf("detail entries = %#v, did not want %q", entries, absent)
 		}
-	})
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"M-a\"]\n") {
-		t.Fatalf("keymap = %q, want typed alias persisted through keys array", keymap)
-	}
-	if !strings.Contains(stdout.String(), "saved keymap") {
-		t.Fatalf("stdout = %q, want save message", stdout.String())
 	}
 }
 
@@ -4128,50 +4100,19 @@ func TestSettingsHubKeybindingsCaptureTimeoutDoesNotSaveOrReload(t *testing.T) {
 	}
 }
 
-func TestSettingsHubKeybindingsDisablePlainSavesWithoutLiveTmux(t *testing.T) {
+func TestSettingsHubKeybindingsDoesNotExposeDisableDefault(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
-	var tmuxCalls [][]string
-	var calls int
-	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:disable"}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd.runCommand = func(name string, args ...string) error {
-		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
-		return nil
+	cmd := &settingsCommand{}
+	entries, _, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries() error = %v", err)
 	}
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if hasEntryLabelContaining(entries, "Disable default") {
+		t.Fatalf("detail entries = %#v, did not want Disable default", entries)
 	}
-	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = []\n") {
-		t.Fatalf("keymap = %q, want disabled keys list", keymap)
-	}
-	if len(tmuxCalls) != 0 {
-		t.Fatalf("tmux calls = %#v, want none outside TMUX", tmuxCalls)
-	}
-	if !strings.Contains(stdout.String(), "no live tmux reload outside TMUX") {
-		t.Fatalf("stdout = %q, want no-live-tmux message", stdout.String())
+	if op, ok := parseKeymapDetailAction(settingsActionPrefixKeymap+"sessionizer-sidebar:disable", "ProjectSidebarToggle"); ok || op != "" {
+		t.Fatalf("parse disable = %q, %v; want rejected", op, ok)
 	}
 }
 
@@ -4252,34 +4193,13 @@ func TestSettingsHubKeybindingsInvalidKeymapShowsErrorRow(t *testing.T) {
 	}
 }
 
-func TestSettingsKeybindingsDiagnosticListsActions(t *testing.T) {
+func TestSettingsKeybindingsLegacyModeOptionsReturnRootList(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
 	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\n")
-	var calls int
-	var labsOptions, listOptions intpickercompat.Options
 	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
-		case 2:
-			labsOptions = options
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
-		case 5:
-			listOptions = options
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
+		return intpickercompat.Result{}, nil
 	})
 	cmd.lookupEnv = func(name string) string {
 		if name == "TERM_PROGRAM" {
@@ -4288,32 +4208,48 @@ func TestSettingsKeybindingsDiagnosticListsActions(t *testing.T) {
 		return ""
 	}
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if got, want := labsOptions.UI, "settings-labs"; got != want {
-		t.Fatalf("labs UI = %q, want %q", got, want)
-	}
-	if hasEntryValue(labsOptions.Entries, settingsLabKeybindings) {
-		t.Fatalf("labs entries = %#v, did not want visible keybinding row", labsOptions.Entries)
-	}
+	listOptions := cmd.keybindingsOptions(settingsKeybindingsDiagnostic)
 	if got, want := listOptions.UI, "settings-keybindings"; got != want {
 		t.Fatalf("keybindings UI = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContaining(listOptions.Entries, "Ghostty") {
-		t.Fatalf("keybinding lab entries = %#v, want detected terminal", listOptions.Entries)
+	if hasEntryLabelContaining(listOptions.Entries, "Ghostty") {
+		t.Fatalf("keybindings entries = %#v, did not want diagnostic terminal rows", listOptions.Entries)
 	}
-	if !hasEntryValue(listOptions.Entries, settingsActionPrefixLabKeymap+"ProjectSidebarToggle") {
-		t.Fatalf("keybinding lab entries = %#v, want canonical ProjectSidebarToggle action", listOptions.Entries)
+	if hasEntryValue(listOptions.Entries, settingsActionPrefixLabKeymap+"ProjectSidebarToggle") {
+		t.Fatalf("keybindings entries = %#v, did not want diagnostic action values", listOptions.Entries)
 	}
-	if !hasEntryLabelContaining(listOptions.Entries, "Alt-1") {
-		t.Fatalf("keybinding lab entries = %#v, want Alt-1 probe label", listOptions.Entries)
+	if !hasEntryValue(listOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
+		t.Fatalf("keybindings entries = %#v, want root action list", listOptions.Entries)
 	}
 	if !hasEntryLabelContaining(listOptions.Entries, "Toggle Project Sidebar") {
-		t.Fatalf("keybinding lab entries = %#v, want readable action label", listOptions.Entries)
+		t.Fatalf("keybindings entries = %#v, want readable action label", listOptions.Entries)
 	}
 	if !hasEntryLabelContaining(listOptions.Entries, "keys Alt-A (M-a) (custom)") {
-		t.Fatalf("keybinding lab entries = %#v, want custom plain summary", listOptions.Entries)
+		t.Fatalf("keybindings entries = %#v, want custom plain summary", listOptions.Entries)
+	}
+}
+
+func TestSettingsKeybindingsRejectsLegacyModeActions(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+
+	err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "unknown keybinding settings action: "+settingsKeybindingsDiagnostic) {
+		t.Fatalf("Run() error = %v, want rejected legacy mode action", err)
 	}
 }
 
@@ -4328,7 +4264,7 @@ func TestSettingsKeybindingsHideLegacyModeChips(t *testing.T) {
 	}
 }
 
-func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
+func TestLabKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -4406,7 +4342,7 @@ func TestSettingsLabsKeybindingDetailShowsProbeOutcomes(t *testing.T) {
 	}
 }
 
-func TestSettingsKeybindingsDiagnosticSeparatesPopupLocalLabelFromInternalID(t *testing.T) {
+func TestLabKeybindingsSeparatesPopupLocalLabelFromInternalID(t *testing.T) {
 	t.Parallel()
 
 	cmd := &settingsCommand{}
@@ -4446,233 +4382,12 @@ func TestSettingsKeybindingsDiagnosticSeparatesPopupLocalLabelFromInternalID(t *
 	}
 }
 
-func TestSettingsLabsUnknownProbeSaveOverrideUsesSuggestedPlainChord(t *testing.T) {
+func TestSettingsKeybindingsDoesNotExposeTerminalMappingRows(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	var tmuxCalls [][]string
-	var calls int
 	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:probe"}, nil
-		case 5:
-			if !hasEntryLabelContaining(options.Entries, "Unexpected sequence") {
-				t.Fatalf("detail entries = %#v, want unexpected sequence row", options.Entries)
-			}
-			if !hasEntryLabelContaining(options.Entries, "Save as plain override") {
-				t.Fatalf("detail entries = %#v, want save override row", options.Entries)
-			}
-			if !hasEntryLabelContaining(options.Entries, "plain = M-a") {
-				t.Fatalf("detail entries = %#v, want suggested M-a description", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:save-plain-override:M-a"}, nil
-		case 6:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 7:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 8:
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd.lookupEnv = func(name string) string {
-		switch name {
-		case "TMUX":
-			return "/tmp/tmux,1,0"
-		case "TERM_PROGRAM":
-			return "ghostty"
-		default:
-			return ""
-		}
-	}
-	cmd.runCommand = func(name string, args ...string) error {
-		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
-		return nil
-	}
-	cmd.probeKeybinding = func(key probeKey, timeout time.Duration) (probeResult, error) {
-		return classifyProbeInput(key, []byte("\x1ba")), nil
-	}
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\n") {
-		t.Fatalf("keymap = %q, want M-a plain override", keymap)
-	}
-	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
-		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
-	}
-	if !strings.Contains(stdout.String(), "reloaded tmux config") {
-		t.Fatalf("stdout = %q, want reload message", stdout.String())
-	}
-}
-
-func TestSettingsLabsPlainProbeSaveUsesKeymapApplyPath(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.ProjectSidebarToggle]\nplain = \"\"\n")
-
-	var tmuxCalls [][]string
-	var calls int
-	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
-		case 4:
-			if got, want := options.UI, "settings-lab-keybinding-detail"; got != want {
-				t.Fatalf("detail UI = %q, want %q", got, want)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:probe"}, nil
-		case 5:
-			if !hasEntryLabelContaining(options.Entries, "Save plain tmux binding") {
-				t.Fatalf("detail entries = %#v, want save row after plain probe", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:save-plain"}, nil
-		case 6:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 7:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 8:
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd.lookupEnv = func(name string) string {
-		switch name {
-		case "TMUX":
-			return "/tmp/tmux,1,0"
-		case "TERM_PROGRAM":
-			return "ghostty"
-		default:
-			return ""
-		}
-	}
-	cmd.runCommand = func(name string, args ...string) error {
-		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
-		return nil
-	}
-	cmd.probeKeybinding = func(key probeKey, timeout time.Duration) (probeResult, error) {
-		return classifyProbeInput(key, []byte(key.Plain)), nil
-	}
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if strings.Contains(keymap, "[bindings.ProjectSidebarToggle]") || strings.Contains(keymap, "plain =") {
-		t.Fatalf("keymap = %q, want plain override reset", keymap)
-	}
-	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
-		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
-	}
-	if !strings.Contains(stdout.String(), "reloaded tmux config") {
-		t.Fatalf("stdout = %q, want reload message", stdout.String())
-	}
-}
-
-func TestSettingsLabsTerminalReloadCapabilityRows(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name string
-		env  map[string]string
-		want []string
-	}{
-		{
-			name: "ghostty reload",
-			env:  map[string]string{"TERM_PROGRAM": "ghostty"},
-			want: []string{"After mapping apply", "ghostty reload-config", "reload Ghostty config"},
-		},
-		{
-			name: "wsl windows terminal restart",
-			env:  map[string]string{"WSL_DISTRO_NAME": "Ubuntu"},
-			want: []string{"After mapping apply", "restart terminal", "restart Windows Terminal tabs"},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			home := t.TempDir()
-			cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-				return intpickercompat.Result{}, nil
-			})
-			cmd.lookupEnv = func(name string) string {
-				return tc.env[name]
-			}
-
-			entries, _, err := cmd.labKeybindingDetailEntries("sessionizer-sidebar")
-			if err != nil {
-				t.Fatalf("labKeybindingDetailEntries() error = %v", err)
-			}
-			for _, want := range tc.want {
-				if !hasEntryLabelContaining(entries, want) {
-					t.Fatalf("entries = %#v, want label containing %q", entries, want)
-				}
-			}
-		})
-	}
-}
-
-func TestSettingsLabsInitPreviewApplyDelegatesToInitEngine(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	var calls int
-	var ran [][]string
-	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
-		case 4:
-			if !hasEntryLabelContaining(options.Entries, "Preview terminal mappings") {
-				t.Fatalf("detail entries = %#v, want preview row", options.Entries)
-			}
-			if !hasEntryLabelContaining(options.Entries, "Apply terminal mappings") {
-				t.Fatalf("detail entries = %#v, want apply row", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:init-preview"}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:init-apply"}, nil
-		case 6:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 7:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 8:
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
+		return intpickercompat.Result{}, nil
 	})
 	cmd.lookupEnv = func(name string) string {
 		if name == "TERM_PROGRAM" {
@@ -4680,77 +4395,15 @@ func TestSettingsLabsInitPreviewApplyDelegatesToInitEngine(t *testing.T) {
 		}
 		return ""
 	}
-	cmd.runInitKeybindings = func(args []string, stdout, stderr io.Writer) error {
-		ran = append(ran, append([]string(nil), args...))
-		return nil
-	}
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !reflect.DeepEqual(ran, [][]string{
-		{"ghostty", "--dry-run"},
-		{"ghostty", "--apply"},
-	}) {
-		t.Fatalf("init calls = %#v", ran)
-	}
-}
-
-func TestSettingsLabsWSLEnvDelegatesWindowsTerminalFallback(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	var calls int
-	var ran [][]string
-	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsKeybindingsDiagnostic}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "ProjectSidebarToggle"}, nil
-		case 4:
-			if !hasEntryLabelContaining(options.Entries, "Windows Terminal") {
-				t.Fatalf("detail entries = %#v, want Windows Terminal mapping", options.Entries)
-			}
-			if !hasEntryLabelContaining(options.Entries, "projmux init windows-terminal") {
-				t.Fatalf("detail entries = %#v, want windows-terminal init command", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:init-preview"}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixLabKeymap + "sessionizer-sidebar:init-apply"}, nil
-		case 6:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 7:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 8:
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
+	options := cmd.keybindingsOptions(settingsKeybindingsInit)
+	for _, absent := range []string{"Terminal", "Preview terminal mappings", "Apply terminal mappings", "projmux init"} {
+		if hasEntryLabelContaining(options.Entries, absent) {
+			t.Fatalf("keybindings entries = %#v, did not want %q", options.Entries, absent)
 		}
-	})
-	cmd.lookupEnv = func(name string) string {
-		if name == "WSL_DISTRO_NAME" {
-			return "Ubuntu"
-		}
-		return ""
 	}
-	cmd.runInitKeybindings = func(args []string, stdout, stderr io.Writer) error {
-		ran = append(ran, append([]string(nil), args...))
-		return nil
-	}
-
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !reflect.DeepEqual(ran, [][]string{
-		{"windows-terminal", "--dry-run"},
-		{"windows-terminal", "--apply"},
-	}) {
-		t.Fatalf("init calls = %#v", ran)
+	if !hasEntryValue(options.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
+		t.Fatalf("keybindings entries = %#v, want root action list", options.Entries)
 	}
 }
 

@@ -357,6 +357,7 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Session state overview is read-only here.":                                            "settings.footer.session_state_read_only",
 	"Editable rows write keymap aliases. View-only rows explain transport-dependent keys.": "settings.footer.keymap_editable_rows",
 	"Use a tmux plain chord such as C-r, M-a, M-S-Left, or C-Space.":                       "settings.footer.tmux_plain_chord_examples",
+	"Enter a safe tmux plain chord alias.":                                                 "settings.footer.enter_safe_tmux_plain_chord_alias",
 	"Use the Back row or picker close action to close":                                     "settings.footer.back_row_or_close",
 
 	"Enter: open  |  Back row: parent":                                        "settings.footer.enter_open_back_parent",
@@ -388,7 +389,8 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Enter: edit/apply  |  Back row: parent":                                  "settings.footer.enter_edit_apply_back_parent",
 	"Enter: action  |  Esc/Ctrl-C: close":                                     "settings.footer.enter_action_esc_ctrl_c_close",
 	"Back row: About  |  Esc: close settings":                                 "settings.footer.back_about_esc_close",
-	"Current aliases, terminal delivery, and conflicts are shown per action.": "settings.footer.keybindings_summary",
+	"Current aliases, terminal delivery, and conflicts are shown per action.": "settings.footer.keybindings_summary_legacy",
+	"Current keybindings and aliases are shown per action.":                   "settings.footer.keybindings_summary",
 }
 
 func settingsLocaleFromEnv() i18n.Locale {

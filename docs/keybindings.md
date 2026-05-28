@@ -12,8 +12,7 @@ supported fallback guidance.
 The recommended path when a key does not fire:
 
 1. Try the key inside `projmux shell`.
-2. Open Settings > Keybindings > Diagnostic, or run `projmux setup` outside
-   tmux, to see which bytes reach the process.
+2. Run `projmux setup` outside tmux to see which bytes reach the process.
 3. For supported terminals, preview `projmux init [terminal]`; add `--apply`
    only after reviewing the merge.
 4. For unsupported terminals, configure plain Meta bytes or add a tmux alias in
@@ -47,6 +46,12 @@ keymap actions, pane switching, window switching, and rename actions remain
 visible. Transport-dependent rows show the default transport key separately
 from editable plain aliases.
 
+The Settings flow is intentionally simple: the root is one action list with
+current key summaries, and each action detail shows the action, current
+keybinding/aliases, `Add alias`, and reset. Diagnostic/probe/init workflows are
+not first-class Settings tabs; use `projmux setup` and `projmux init` from the
+terminal when key delivery needs remediation.
+
 Optional direct aliases can be added for actions such as:
 
 | Canonical action | Meaning |
@@ -69,11 +74,12 @@ an explicit safe alias where the action is editable.
 
 ## Roadmap Requirements
 
-Follow-up Phase 2 keeps Settings > Keybindings as a discovery surface. It must
-continue to expose launch toggles, sidebar keymap actions, picker-local actions,
-pane switching, window switching, and rename actions. Transport-dependent rows
-should explain the default transport key and offer only additive safe plain
-aliases; diagnostic-only rows should explain why they are not editable.
+Settings > Keybindings stays a discovery surface. It must continue to expose
+launch toggles, sidebar keymap actions, picker-local actions, pane switching,
+window switching, and rename actions. The primary Settings flow is not the
+terminal remediation surface: replace-primary, disable-default, typed fallback,
+terminal mapping preview/apply, and init execution rows stay out of the action
+detail.
 
 Follow-up Phase 3 removes the `UserN` / `CSI-u` route from the product model.
 Windows Terminal and Ghostty-centered replacements should use plain
@@ -131,8 +137,8 @@ names: `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
 ## Diagnose: `projmux setup`
 
 Run `projmux setup` outside tmux to find out which projmux keys reach the raw
-terminal. The same diagnostic is available in-app at Settings > Keybindings >
-Diagnostic.
+terminal. Settings > Keybindings remains the action/alias editor; setup is the
+terminal delivery diagnostic.
 
 | Status | Meaning |
 | --- | --- |

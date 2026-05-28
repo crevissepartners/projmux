@@ -87,16 +87,16 @@ language.
 ## Keymap File
 
 Settings > Keybindings is the normal in-app editor for action keys. It lists
-user-configurable direct bindings, opens a detail screen, and offers `Add
-alias`, `Replace primary`, `Disable default`, `Reset`, `Press new key`, and
-`Type key chord`. Saving writes safe tmux plain chords to
+actions with current keybinding summaries, opens a simple detail screen, and
+offers `Add alias` plus reset. Saving writes safe tmux plain chords to
 `~/.config/projmux/keymap.toml`, rewrites `~/.config/projmux/tmux.conf`, and,
 when Settings is running inside tmux, sources that app config so tmux-level
 chords take effect immediately.
 
 Raw sequences that cannot be safely represented as a tmux plain chord are not
-persisted. Use Settings to save a safe direct alias, or use `projmux init` for
-the supported terminal mappings.
+persisted. Use Settings to save a safe direct alias. Use `projmux setup` and
+`projmux init` from the terminal when key delivery needs terminal-layer
+remediation.
 
 `~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
 absent, generated tmux config stays on the built-in defaults.
@@ -126,21 +126,21 @@ do not break. Settings preserves existing prefix entries when rewriting the
 file, but does not create new prefix keys, and generated tmux config no longer
 binds the old action prefix chords.
 
-Use an empty `keys` list to disable direct plain aliases for the action:
+Use an empty `keys` list to disable direct plain aliases for the action when
+editing the file by hand:
 
 ```toml
 [bindings.ProjectSidebarToggle]
 keys = []
 ```
 
-In Settings, `Disable default` writes `keys = []`. `Reset` removes the saved
-override and returns to the built-in default. Legacy popup IDs such as
+In Settings, reset removes the saved override and returns to the built-in
+default. Legacy popup IDs such as
 `sessionizer-sidebar` still read, but new writes use canonical toggle names
 such as `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
 `AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`. Internal
 popup commands use `Surface:Action` IDs and have surface-local conflict
-domains; those are manual `keymap.toml` entries, not Settings list/edit
-targets.
+domains and remain visible in Settings when catalogued.
 
 The Settings writer is deterministic and rewrites the supported saved subset
 only. If the existing file has parse errors or unknown action IDs, Settings
