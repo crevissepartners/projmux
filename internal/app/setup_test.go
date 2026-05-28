@@ -12,7 +12,7 @@ import (
 func TestClassifyProbeInput(t *testing.T) {
 	t.Parallel()
 
-	keyAlt1 := probeKey{Label: "Alt-1", Action: "Open sidebar", Plain: "\x1b1", CSIu: "\x1b[9900u"}
+	keyAlt1 := probeKey{Label: "Alt-1", Action: "Open sidebar", Plain: "\x1b1"}
 	keyCtrlShiftR := probeKey{Label: "Ctrl-Shift-R", Action: "No projmux binding by default"}
 
 	cases := []struct {
@@ -50,7 +50,7 @@ func TestClassifyProbeInput(t *testing.T) {
 func TestClassifyProbeInputDoesNotAliasInput(t *testing.T) {
 	t.Parallel()
 
-	key := probeKey{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9900u"}
+	key := probeKey{Label: "Alt-1", Plain: "\x1b1"}
 	src := []byte("\x1b1")
 	res := classifyProbeInput(key, src)
 	src[0] = 'X'
@@ -62,7 +62,7 @@ func TestClassifyProbeInputDoesNotAliasInput(t *testing.T) {
 func TestRenderProbeStatusContainsSequence(t *testing.T) {
 	t.Parallel()
 
-	res := classifyProbeInput(probeKey{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9900u"}, []byte("\x1b[9900u"))
+	res := classifyProbeInput(probeKey{Label: "Alt-1", Plain: "\x1b1"}, []byte("\x1b[9900u"))
 	rendered := renderProbeStatus(res)
 	if !strings.Contains(rendered, "MISS unknown") {
 		t.Fatalf("expected unknown marker, got %q", rendered)
@@ -362,7 +362,7 @@ func TestSetupCommandRunInteractivePropagatesReadError(t *testing.T) {
 	t.Parallel()
 
 	keys := []probeKey{
-		{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9900u"},
+		{Label: "Alt-1", Plain: "\x1b1"},
 	}
 	cmd := newSetupCommand()
 	cmd.defaultKeys = keys
@@ -436,9 +436,17 @@ func TestDefaultProbeKeysCoverSpec(t *testing.T) {
 			t.Fatalf("default probe key[%d] = %q, want %q (full got=%v)", i, got[i], want[i], got)
 		}
 	}
-	for _, key := range keys {
-		if key.CSIu != "" || key.UserKey != "" {
-			t.Fatalf("default probe key %s has legacy escape/UserKey route: %#v", key.Label, key)
+	cmd := newSetupCommand()
+	cmd.defaultKeys = keys
+	cmd.lookupEnv = func(string) string { return "" }
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"--non-interactive"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run --non-interactive error = %v", err)
+	}
+	out := stdout.String()
+	for _, banned := range []string{"9900u", "User", "CSI-u"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("default probe key output should not include legacy route %q:\n%s", banned, out)
 		}
 	}
 }

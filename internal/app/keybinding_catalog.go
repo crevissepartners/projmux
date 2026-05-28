@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-const noUserSlot = -1
-
 type keyBindingScope string
 
 const (
@@ -59,8 +57,6 @@ type keyBindingAction struct {
 	PlainChord  string
 	PlainChords []string
 	PrefixChord string
-	UserSlot    int
-	CSIu        string
 
 	TmuxKind       tmuxBindingKind
 	TmuxBody       string
@@ -68,7 +64,6 @@ type keyBindingAction struct {
 	Toggleable     bool
 
 	PlainBindOrder  int
-	UserBindOrder   int
 	PrefixBindOrder int
 
 	GhosttyTrigger string
@@ -83,7 +78,6 @@ type keyBindingAction struct {
 	ProbeLabel  string
 	ProbeAction string
 	ProbePlain  string
-	ProbeCSIu   string
 }
 
 func defaultKeyBindingCatalog() []keyBindingAction {
@@ -98,7 +92,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "M-1",
 			PrefixChord:     "F",
-			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingPopupToggle,
 			TmuxBody:        "sessionizer-sidebar",
 			Toggleable:      true,
@@ -125,7 +118,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "M-2",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingPopupToggle,
 			TmuxBody:       "notify-sidebar",
 			Toggleable:     true,
@@ -152,7 +144,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "M-3",
 			PrefixChord:     "b",
-			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingPopupToggle,
 			TmuxBody:        "session-popup",
 			Toggleable:      true,
@@ -179,7 +170,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "M-4",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingPopupToggle,
 			TmuxBody:       "ai-split-picker-right",
 			Toggleable:     true,
@@ -205,7 +195,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "M-5",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingPopupToggle,
 			TmuxBody:       "ai-split-settings",
 			Toggleable:     true,
@@ -232,7 +221,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "",
 			PrefixChord:     "f",
-			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingPopupToggle,
 			TmuxBody:        "sessionizer",
 			Toggleable:      true,
@@ -251,7 +239,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Scope:           keyBindingScopeStandalone,
 			PlainChord:      "",
 			PrefixChord:     "R",
-			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingCommandPrompt,
 			TmuxBody:        "rename-window -- '%%'",
 			TmuxPromptArgs:  "-I \"#{window_name}\"",
@@ -268,7 +255,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeStandalone,
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommandPrompt,
 			TmuxBody:       "select-pane -T '%1' \\; set-option -p " + aiPaneTopicOption + " '%1' \\; if-shell -F '#{==:#{" + aiPaneTopicOption + "},}' 'set-option -p -u " + aiPaneTopicManualOption + "' 'set-option -p " + aiPaneTopicManualOption + " 1'",
 			TmuxPromptArgs: "-p \"ai topic:\" -I \"#{pane_title}\"",
@@ -283,7 +269,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
 			PrefixChord:     "r",
-			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingRunProjmux,
 			TmuxBody:        "ai split right",
 			PrefixBindOrder: 50,
@@ -294,7 +279,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbeOrder:      80,
 			ProbeLabel:      "Ctrl-Shift-R",
 			ProbeAction:     "No projmux binding by default",
-			ProbeCSIu:       "-",
 		},
 		{
 			ID:              "ai-split-down",
@@ -303,7 +287,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
 			PrefixChord:     "l",
-			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingRunProjmux,
 			TmuxBody:        "ai split down",
 			PrefixBindOrder: 60,
@@ -314,7 +297,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbeOrder:      90,
 			ProbeLabel:      "Ctrl-Shift-L",
 			ProbeAction:     "No projmux binding by default",
-			ProbeCSIu:       "-",
 		},
 		{
 			ID:              "current-project-session",
@@ -323,7 +305,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
 			PrefixChord:     "g",
-			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingRunProjmux,
 			TmuxBody:        "current",
 			PrefixBindOrder: 40,
@@ -335,7 +316,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "new-window -c \"#{pane_current_path}\"",
 			PlainBindOrder: 50,
@@ -362,7 +342,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "M-S-Left",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "previous-window",
 			PlainBindOrder: 60,
@@ -374,7 +353,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbeLabel:     "Alt-Shift-Left",
 			ProbeAction:    "Previous window (M-S-Left)",
 			ProbePlain:     "\x1b[1;4D",
-			ProbeCSIu:      "-",
 		},
 		{
 			// See `previous-window` above — the same reasoning applies to the
@@ -385,7 +363,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "M-S-Right",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "next-window",
 			PlainBindOrder: 70,
@@ -397,7 +374,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbeLabel:     "Alt-Shift-Right",
 			ProbeAction:    "Next window (M-S-Right)",
 			ProbePlain:     "\x1b[1;4C",
-			ProbeCSIu:      "-",
 		},
 		{
 			ID:             "select-pane-left",
@@ -406,7 +382,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "M-Left",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "select-pane -L",
 			PlainBindOrder: 10,
@@ -418,7 +393,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "M-Right",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "select-pane -R",
 			PlainBindOrder: 20,
@@ -430,7 +404,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "M-Up",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "select-pane -U",
 			PlainBindOrder: 30,
@@ -442,7 +415,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "M-Down",
-			UserSlot:       noUserSlot,
 			TmuxKind:       tmuxBindingCommand,
 			TmuxBody:       "select-pane -D",
 			PlainBindOrder: 40,
@@ -454,7 +426,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeApp,
 			PrefixChord:     "M",
-			UserSlot:        noUserSlot,
 			TmuxKind:        tmuxBindingCommand,
 			TmuxBody:        "if -F \"#{mouse}\" \"set -g mouse off \\; display-message 'tmux mouse: off'\" \"set -g mouse on \\; display-message 'tmux mouse: on'\"",
 			PrefixBindOrder: 10,
@@ -916,19 +887,11 @@ func probeKeysFromActions(catalog []keyBindingAction) []probeKey {
 
 	keys := make([]probeKey, 0, len(actions))
 	for _, action := range actions {
-		csiu := action.ProbeCSIu
-		if csiu == "" && action.CSIu != "" {
-			csiu = "\x1b[" + action.CSIu + "u"
-		}
-		if csiu == "-" {
-			csiu = ""
-		}
 		keys = append(keys, probeKey{
 			ActionID:   action.ID,
 			Label:      action.ProbeLabel,
 			Action:     action.ProbeAction,
 			Plain:      action.ProbePlain,
-			CSIu:       csiu,
 			PlainChord: firstNonEmptyString(keyBindingEffectivePlainChords(action)),
 		})
 	}
