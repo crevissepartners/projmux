@@ -2702,8 +2702,7 @@ func parseStatusbarDecorationDetailAction(value string) (statusbarDecorationTarg
 }
 
 func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Options {
-	active = normalizeKeybindingsTab(active)
-	entries, err := c.keybindingsTabEntries(active)
+	entries, err := c.keybindingEntries()
 	if err != nil {
 		entries = []intpickercompat.Entry{
 			settingsBackEntry(),
@@ -2718,76 +2717,14 @@ func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Opti
 		Entries:    entries,
 		Title:      "Keybindings",
 		Prompt:     "Settings > Keybindings > ",
-		Footer:     projmuxFooter("Current aliases, terminal delivery, and conflicts are shown per action."),
+		Footer:     projmuxFooter("Current keybindings and aliases are shown per action."),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}
 }
 
 func normalizeKeybindingsTab(active string) string {
-	switch active {
-	case settingsKeybindingsBindings, settingsKeybindingsDiagnostic, settingsKeybindingsProbe, settingsKeybindingsInit:
-		return active
-	default:
-		return settingsKeybindingsBindings
-	}
-}
-
-func keybindingsTitleChips(active string) []projmuxpicker.Chip {
-	return []projmuxpicker.Chip{
-		{Label: "Bindings", Active: active == settingsKeybindingsBindings, ClickValue: settingsKeybindingsBindings},
-		{Label: "Diagnostic", Active: active == settingsKeybindingsDiagnostic, ClickValue: settingsKeybindingsDiagnostic},
-		{Label: "Probe", Active: active == settingsKeybindingsProbe, ClickValue: settingsKeybindingsProbe},
-		{Label: "Init", Active: active == settingsKeybindingsInit, ClickValue: settingsKeybindingsInit},
-	}
-}
-
-func (c *settingsCommand) keybindingsTabEntries(active string) ([]intpickercompat.Entry, error) {
-	switch normalizeKeybindingsTab(active) {
-	case settingsKeybindingsBindings:
-		return c.keybindingEntries()
-	case settingsKeybindingsDiagnostic:
-		return c.labKeybindingEntries()
-	case settingsKeybindingsProbe:
-		entries, err := c.labKeybindingEntries()
-		if err != nil {
-			return nil, err
-		}
-		if len(entries) > 1 {
-			entries = append(entries[:1], append([]intpickercompat.Entry{{
-				Label: settingsLabelInfo("Probe", "select an action, then press its key", "raw key delivery"),
-				Value: settingsNoopValue,
-			}}, entries[1:]...)...)
-		}
-		return entries, nil
-	case settingsKeybindingsInit:
-		terminal := detectTerminal(c.lookupEnv)
-		entries := []intpickercompat.Entry{
-			settingsBackEntry(),
-			{Label: settingsLabelInfo("Terminal", terminal.Display(), labTerminalSupportSummary(terminal)), Value: settingsNoopValue},
-			{Label: settingsLabelInfo("After mapping apply", terminal.ReloadCapability().Label, terminal.ReloadCapability().Summary), Value: settingsNoopValue},
-		}
-		if terminal.InitCommand() != "" {
-			entries = append(entries,
-				intpickercompat.Entry{
-					Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview terminal mappings", strings.TrimSuffix(terminal.InitCommand(), " --apply")),
-					Value: settingsKeybindingsInit + ":preview",
-				},
-				intpickercompat.Entry{
-					Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Apply terminal mappings", terminal.InitCommand()),
-					Value: settingsKeybindingsInit + ":apply",
-				},
-			)
-		} else if hint := terminal.RemediationHint(); hint != "" {
-			entries = append(entries, intpickercompat.Entry{
-				Label: settingsLabelInfo("Manual setup", hint, ""),
-				Value: settingsNoopValue,
-			})
-		}
-		return entries, nil
-	default:
-		return c.keybindingEntries()
-	}
+	return settingsKeybindingsBindings
 }
 
 func (c *settingsCommand) runKeybindingsSection(stdout, stderr io.Writer) error {
@@ -2812,35 +2749,12 @@ func (c *settingsCommand) runKeybindingsSectionWithActive(initial string, stdout
 		if action == settingsBackValue {
 			return nil
 		}
-		if action == settingsKeybindingsBindings || action == settingsKeybindingsDiagnostic || action == settingsKeybindingsProbe || action == settingsKeybindingsInit {
-			active = action
-			continue
-		}
 		if action == settingsNoopValue {
 			continue
 		}
 		if after, ok := strings.CutPrefix(action, settingsActionPrefixKeymap); ok {
 			id := after
 			if err := c.runKeybindingDetail(id, stdout, stderr); err != nil {
-				return err
-			}
-			continue
-		}
-		if after, ok := strings.CutPrefix(action, settingsActionPrefixLabKeymap); ok {
-			id := after
-			if err := c.runLabKeybindingDetail(id, stdout, stderr); err != nil {
-				return err
-			}
-			continue
-		}
-		if action == settingsKeybindingsInit+":preview" {
-			if err := c.runLabTerminalInit(false, stdout, stderr); err != nil {
-				return err
-			}
-			continue
-		}
-		if action == settingsKeybindingsInit+":apply" {
-			if err := c.runLabTerminalInit(true, stdout, stderr); err != nil {
 				return err
 			}
 			continue
@@ -2890,14 +2804,6 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 			if err := c.runKeybindingTyped(actionID, false, stdout); err != nil {
 				return err
 			}
-		case "replace":
-			if err := c.runKeybindingTyped(actionID, true, stdout); err != nil {
-				return err
-			}
-		case "disable":
-			if err := c.saveKeymapKeysAndApply(actionID, nil, stdout); err != nil {
-				return err
-			}
 		case "reset":
 			if err := c.resetKeymapKeysAndApply(actionID, stdout); err != nil {
 				return err
@@ -2927,7 +2833,7 @@ func parseKeymapDetailAction(value, actionID string) (string, bool) {
 	}
 	op := strings.TrimPrefix(value, settingsActionPrefixKeymap+actionID+":")
 	switch op {
-	case "capture", "type", "replace", "disable", "reset":
+	case "capture", "type", "reset":
 		return op, true
 	}
 	return "", false
@@ -2997,8 +2903,8 @@ func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdo
 		UI:            "settings-keybinding-type",
 		Entries:       []intpickercompat.Entry{settingsBackEntry(), {Label: settingsLabelInfo("Action", keyBindingDisplayName(action), keybindingAliasesSummary(action)), Value: settingsNoopValue}},
 		Title:         mode + " - " + keyBindingDisplayName(action),
-		Prompt:        "Type key chord > ",
-		Footer:        projmuxFooter("Use a tmux plain chord such as C-r, M-a, M-S-Left, or C-Space."),
+		Prompt:        "Add alias > ",
+		Footer:        projmuxFooter("Enter a safe tmux plain chord alias."),
 		ExpectKeys:    []string{"enter"},
 		Bindings:      settingsCloseBindings(),
 		AcceptQuery:   true,
@@ -3046,7 +2952,7 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 	entries := make([]intpickercompat.Entry, 0, len(actions)+2)
 	entries = append(entries, settingsBackEntry())
 	entries = append(entries, intpickercompat.Entry{
-		Label: "  " + settingsColorDim + "All catalog actions are listed. Direct tmux and picker-local keys are editable; transport-dependent defaults stay active and accept additive plain aliases." + settingsColorReset,
+		Label: "  " + settingsColorDim + "All catalog actions are listed with their current keybindings and saved aliases." + settingsColorReset,
 		Value: settingsNoopValue,
 	})
 	for _, action := range actions {
@@ -3079,95 +2985,42 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Action ID", action.ID, ""),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Keys", keybindingAliasesSummary(action), keybindingSource(action, defaultAction)),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Surface", keybindingSurfaceSummary(action), keybindingKindSummary(action)),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Tier", keybindingTierSummary(action), keybindingEditabilitySummary(action)),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Delivery path", keybindingDeliveryPath(action), keybindingDeliveryHint(action)),
+			Label: settingsLabelInfo("Keybinding", keybindingAliasesSummary(action), keybindingSource(action, defaultAction)),
 			Value: settingsNoopValue,
 		},
 	}
 	if action.Tier == keyBindingTierTransportDependent {
-		entries = append(entries,
-			intpickercompat.Entry{
-				Label: settingsLabelInfo("Default transport key", keybindingChordDisplay(keybindingTransportChord(action)), "always generated"),
-				Value: settingsNoopValue,
-			},
-			intpickercompat.Entry{
-				Label: settingsLabelInfo("Plain aliases", keybindingPlainAliasesSummary(action), keybindingTransportAliasSource(action, defaultAction)),
-				Value: settingsNoopValue,
-			},
-		)
-	}
-	if !keyBindingEditable(action) {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Editing", "view only", keybindingNonEditableReason(action)),
+			Label: settingsLabelInfo("Aliases", keybindingPlainAliasesSummary(action), keybindingTransportAliasSource(action, defaultAction)),
 			Value: settingsNoopValue,
 		})
+	}
+	if !keyBindingEditable(action) {
 		title := "Keybinding - " + keyBindingDisplayName(action)
 		return entries, title, nil
 	}
-	entries = append(entries, intpickercompat.Entry{
-		Label: "  " + settingsColorDim + keybindingEditNote(action) + settingsColorReset,
-		Value: settingsNoopValue,
-	})
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	if keybindingCanCapture(action) {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphType, settingsColorType, "Add alias", "press new key capture"),
+			Label: settingsLabel(settingsGlyphType, settingsColorType, "Add alias", "press a key"),
 			Value: prefix + "capture",
 		})
-	}
-	if action.Tier == keyBindingTierTransportDependent {
-		entries = append(entries,
-			intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphType, settingsColorType, "Add plain alias", "type safe tmux chord such as M-["),
-				Value: prefix + "type",
-			},
-			intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Reset aliases", "remove keymap aliases; keep transport default"),
-				Value: prefix + "reset",
-			},
-		)
-		if res, ok := c.lastLabProbe[actionID]; ok {
-			entries = append(entries, keybindingCaptureOutcomeEntries(res)...)
-		}
-		title := "Keybinding - " + keyBindingDisplayName(action)
-		return entries, title, nil
-	}
-	entries = append(entries,
-		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphType, settingsColorType, "Type key chord", "enter C-r, M-a, M-S-Left, or C-Space"),
+	} else {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabel(settingsGlyphType, settingsColorType, "Add alias", "enter a tmux plain chord"),
 			Value: prefix + "type",
-		},
-		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphType, settingsColorType, "Replace primary", "type one alias and replace the saved list"),
-			Value: prefix + "replace",
-		},
-		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Disable default", "write keys = []"),
-			Value: prefix + "disable",
-		},
-		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Reset default", "remove key override"),
-			Value: prefix + "reset",
-		},
-	)
-	if res, ok := c.lastLabProbe[actionID]; ok {
-		entries = append(entries, keybindingCaptureOutcomeEntries(res)...)
+		})
 	}
+	resetLabel := "Reset aliases/default"
+	resetDesc := "remove saved keymap override"
+	if action.Tier == keyBindingTierTransportDependent {
+		resetLabel = "Reset aliases"
+		resetDesc = "remove saved aliases; keep default"
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label: settingsLabel(settingsGlyphBack, settingsColorBack, resetLabel, resetDesc),
+		Value: prefix + "reset",
+	})
 	title := "Keybinding - " + keyBindingDisplayName(action)
 	return entries, title, nil
 }
@@ -3622,7 +3475,7 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 		case action == settingsNoopValue:
 			continue
 		case action == settingsLabKeybindings:
-			if err := c.runKeybindingsSectionWithActive(settingsKeybindingsDiagnostic, stdout, stderr); err != nil {
+			if err := c.runKeybindingsSection(stdout, stderr); err != nil {
 				return err
 			}
 		case action == settingsLabsProjectHooks:

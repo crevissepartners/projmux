@@ -15,13 +15,18 @@ view-first layout:
   actions live inside that view.
 - `Settings > Project Picker > Project Root` shows effective and saved values
   first, then the edit actions, then the explanatory hints.
-- `Settings > Keybindings` is the single entry point for keybinding work. The
-  page is split into four chips: `Bindings`, `Diagnostic`, `Probe`, and `Init`.
-- `Settings > Keybindings > Bindings` is a keybinding discovery surface, not
-  only a launch-toggle editor. It must show `Toggle Project Sidebar` with the
+- `Settings > Keybindings` is a single action list plus a simple action detail.
+  It does not expose `Bindings`, `Diagnostic`, `Probe`, or `Init` as first-class
+  chips/tabs in the Settings root flow.
+- `Settings > Keybindings` is a keybinding discovery surface, not only a
+  launch-toggle editor. It must show `Toggle Project Sidebar` with the
   guaranteed `Alt-1` / `M-1` default, plus sidebar-local commands, picker-local
   commands, `Pane navigation`, `Window navigation`, and `Rename` groups or
   equivalent searchable rows.
+- `Settings > Keybindings > Action` keeps the user-facing edit path small:
+  action, current keybinding/aliases, `Add alias`, and reset. It does not offer
+  replace-primary, disable-default, typed-fallback, terminal mapping preview, or
+  terminal mapping apply rows.
 - Rows that cannot safely be edited still stay visible. Mark diagnostic-only
   rows with the delivery path and reason instead of hiding them or turning them
   into unsupported editable aliases. Transport-dependent rows stay visible with
@@ -55,8 +60,8 @@ view-first layout:
   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json`. It does not
   edit catalog `install` values or run agent install/remove commands.
 - `Settings > Labs` keeps experimental toggles, but keybindings no longer have a
-  visible Labs row. The hidden compatibility action still redirects to the
-  unified Keybindings page.
+  visible Labs row. The hidden compatibility action redirects to the
+  `Settings > Keybindings` action list, not to a diagnostic default.
 - `Settings > Labs > Project Hooks` is overview-first. The Labs root opens the
   overview, and the on/off mutation rows live one level deeper.
 - `Settings > AI Settings` is view-first. The root contains `Default split

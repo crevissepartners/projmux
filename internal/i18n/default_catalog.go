@@ -388,6 +388,7 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("settings.footer.session_state_read_only"):                       textEntry("Session state overview is read-only here."),
 		Key("settings.footer.keymap_editable_rows"):                          textEntry("Editable rows write keymap aliases. View-only rows explain transport-dependent keys."),
 		Key("settings.footer.tmux_plain_chord_examples"):                     textEntry("Use a tmux plain chord such as C-r, M-a, M-S-Left, or C-Space."),
+		Key("settings.footer.enter_safe_tmux_plain_chord_alias"):             textEntry("Enter a safe tmux plain chord alias."),
 		Key("settings.footer.back_row_or_close"):                             textEntry("Use the Back row or picker close action to close"),
 		Key("settings.footer.enter_open_back_parent"):                        textEntry("Enter: open  |  Back row: parent"),
 		Key("settings.footer.enter_open_apply_back_parent"):                  textEntry("Enter: open/apply  |  Back row: parent"),
@@ -418,7 +419,8 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("settings.footer.enter_edit_apply_back_parent"):                  textEntry("Enter: edit/apply  |  Back row: parent"),
 		Key("settings.footer.enter_action_esc_ctrl_c_close"):                 textEntry("Enter: action  |  Esc/Ctrl-C: close"),
 		Key("settings.footer.back_about_esc_close"):                          textEntry("Back row: About  |  Esc: close settings"),
-		Key("settings.footer.keybindings_summary"):                           textEntry("Current aliases, terminal delivery, and conflicts are shown per action."),
+		Key("settings.footer.keybindings_summary_legacy"):                    textEntry("Current aliases, terminal delivery, and conflicts are shown per action."),
+		Key("settings.footer.keybindings_summary"):                           textEntry("Current keybindings and aliases are shown per action."),
 	},
 	Locale("ko-KR"): {
 		KeyNotifyAIResponseComplete:                                          textEntry("응답 완료"),
@@ -803,6 +805,7 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("settings.footer.session_state_read_only"):                       textEntry("여기서는 세션 상태 개요를 읽기만 할 수 있습니다."),
 		Key("settings.footer.keymap_editable_rows"):                          textEntry("편집 가능한 행은 keymap 별칭을 씁니다. 보기 전용 행은 전송 방식 의존 키를 설명합니다."),
 		Key("settings.footer.tmux_plain_chord_examples"):                     textEntry("C-r, M-a, M-S-Left, C-Space 같은 tmux plain chord를 사용합니다."),
+		Key("settings.footer.enter_safe_tmux_plain_chord_alias"):             textEntry("안전한 tmux plain chord 별칭을 입력합니다."),
 		Key("settings.footer.back_row_or_close"):                             textEntry("뒤로 행 또는 선택기 닫기 동작으로 닫습니다"),
 		Key("settings.footer.enter_open_back_parent"):                        textEntry("Enter: 열기  |  뒤로 행: 상위"),
 		Key("settings.footer.enter_open_apply_back_parent"):                  textEntry("Enter: 열기/적용  |  뒤로 행: 상위"),
@@ -833,7 +836,8 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("settings.footer.enter_edit_apply_back_parent"):                  textEntry("Enter: 편집/적용  |  뒤로 행: 상위"),
 		Key("settings.footer.enter_action_esc_ctrl_c_close"):                 textEntry("Enter: 실행  |  Esc/Ctrl-C: 닫기"),
 		Key("settings.footer.back_about_esc_close"):                          textEntry("뒤로 행: 정보  |  Esc: 설정 닫기"),
-		Key("settings.footer.keybindings_summary"):                           textEntry("현재 별칭, 터미널 전달, 충돌을 동작별로 표시합니다."),
+		Key("settings.footer.keybindings_summary_legacy"):                    textEntry("현재 별칭, 터미널 전달, 충돌을 동작별로 표시합니다."),
+		Key("settings.footer.keybindings_summary"):                           textEntry("현재 키바인딩과 별칭을 동작별로 표시합니다."),
 	},
 }
 
