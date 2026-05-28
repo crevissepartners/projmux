@@ -226,7 +226,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  doctor    Diagnose runtime dependencies and suggest installs")
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
-	fmt.Fprintln(w, "  init      Merge projmux keybindings into a terminal config")
+	fmt.Fprintln(w, "  init      Preview/apply supported terminal key delivery mappings")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")

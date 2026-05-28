@@ -94,9 +94,10 @@ when Settings is running inside tmux, sources that app config so tmux-level
 chords take effect immediately.
 
 Raw sequences that cannot be safely represented as a tmux plain chord are not
-persisted. Use Settings to save a safe direct alias. Use `projmux setup` and
-`projmux init` from the terminal when key delivery needs terminal-layer
-remediation.
+persisted. Use Settings to save a safe direct alias. When key delivery needs
+terminal-layer remediation, first try the key in `projmux shell`, then run
+`projmux setup` from the raw terminal, then use `projmux init` for supported
+terminal adapters.
 
 `~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
 absent, generated tmux config stays on the built-in defaults.
@@ -149,7 +150,8 @@ shows the keymap error row and refuses to overwrite it until the file is fixed.
 The file currently affects generated tmux config from `projmux tmux
 print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
 `projmux tmux install-app`, and `projmux shell`. Terminal init adapters such as
-Ghostty and Windows Terminal install built-in plain-byte mappings where needed.
+Ghostty and Windows Terminal install built-in plain-byte mappings where needed;
+they do not read `keymap.toml` or copy saved aliases into terminal configs.
 Changing terminal-layer mappings still requires rerunning `projmux init` and
 restarting the terminal where that terminal requires it.
 
