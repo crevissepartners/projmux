@@ -1013,7 +1013,6 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 
 	for _, value := range []string{
 		settingsActionPrefixKeymap + "settings",
-		settingsActionPrefixLabKeymap + "settings",
 		settingsActionPrefixWorkdir + "remove:/tmp/work",
 		settingsActionPrefixSwitch + "add:/tmp/project",
 		settingsActionPrefixSwitch + "pin:/tmp/project",
@@ -1237,8 +1236,10 @@ func TestSettingsLabsKeybindingsRedirectsToUnifiedRootView(t *testing.T) {
 	if got := keybindingOptions.TitleChips; len(got) < 2 || !got[0].Active || strings.TrimSpace(got[0].ClickValue) != "" {
 		t.Fatalf("redirect chips = %#v, want passive Global/Project tabs", got)
 	}
-	if hasEntryValue(keybindingOptions.Entries, settingsActionPrefixLabKeymap+"ProjectSidebarToggle") {
-		t.Fatalf("redirect entries = %#v, want Settings Keybindings root, not diagnostic list", keybindingOptions.Entries)
+	if hasEntryLabelContaining(keybindingOptions.Entries, "Terminal") ||
+		hasEntryLabelContaining(keybindingOptions.Entries, "Preview terminal mappings") ||
+		hasEntryLabelContaining(keybindingOptions.Entries, "Apply terminal mappings") {
+		t.Fatalf("redirect entries = %#v, want Settings Keybindings root without terminal remediation rows", keybindingOptions.Entries)
 	}
 	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
 		t.Fatalf("redirect entries = %#v, want Settings Keybindings action list", keybindingOptions.Entries)
@@ -4215,9 +4216,6 @@ func TestSettingsKeybindingsLegacyModeOptionsReturnRootList(t *testing.T) {
 	if hasEntryLabelContaining(listOptions.Entries, "Ghostty") {
 		t.Fatalf("keybindings entries = %#v, did not want diagnostic terminal rows", listOptions.Entries)
 	}
-	if hasEntryValue(listOptions.Entries, settingsActionPrefixLabKeymap+"ProjectSidebarToggle") {
-		t.Fatalf("keybindings entries = %#v, did not want diagnostic action values", listOptions.Entries)
-	}
 	if !hasEntryValue(listOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
 		t.Fatalf("keybindings entries = %#v, want root action list", listOptions.Entries)
 	}
@@ -4261,124 +4259,6 @@ func TestSettingsKeybindingsHideLegacyModeChips(t *testing.T) {
 
 	if got := options.TitleChips; len(got) != 0 {
 		t.Fatalf("TitleChips = %#v, want hidden legacy chips", got)
-	}
-}
-
-func TestLabKeybindingDetailShowsProbeOutcomes(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name       string
-		seed       string
-		result     probeResult
-		wantLabel  []string
-		wantAbsent []string
-	}{
-		{
-			name: "plain",
-			seed: "[bindings.ProjectSidebarToggle]\nplain = \"\"\n",
-			result: classifyProbeInput(
-				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1"},
-				[]byte("\x1b1"),
-			),
-			wantLabel: []string{"Plain key reached", "Save plain tmux binding"},
-		},
-		{
-			name: "unknown",
-			result: classifyProbeInput(
-				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1"},
-				[]byte("\x1b[A"),
-			),
-			wantLabel:  []string{"Unexpected sequence", "no keymap overwrite"},
-			wantAbsent: []string{"Save as plain override"},
-		},
-		{
-			name: "timeout",
-			result: classifyProbeInput(
-				probeKey{ActionID: "sessionizer-sidebar", Label: "Alt-1", Plain: "\x1b1"},
-				nil,
-			),
-			wantLabel: []string{"Timeout or swallowed", "projmux init ghostty --apply"},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			home := t.TempDir()
-			if tc.seed != "" {
-				writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), tc.seed)
-			}
-			cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-				return intpickercompat.Result{}, nil
-			})
-			cmd.lookupEnv = func(name string) string {
-				if name == "TERM_PROGRAM" {
-					return "ghostty"
-				}
-				return ""
-			}
-			cmd.lastLabProbe = map[string]probeResult{"sessionizer-sidebar": tc.result}
-
-			entries, title, err := cmd.labKeybindingDetailEntries("sessionizer-sidebar")
-			if err != nil {
-				t.Fatalf("labKeybindingDetailEntries() error = %v", err)
-			}
-			if !strings.Contains(title, "Toggle Project Sidebar") {
-				t.Fatalf("title = %q, want readable action label", title)
-			}
-			for _, want := range tc.wantLabel {
-				if !hasEntryLabelContaining(entries, want) {
-					t.Fatalf("entries = %#v, want label containing %q", entries, want)
-				}
-			}
-			for _, absent := range tc.wantAbsent {
-				if hasEntryLabelContaining(entries, absent) {
-					t.Fatalf("entries = %#v, did not want label containing %q", entries, absent)
-				}
-			}
-		})
-	}
-}
-
-func TestLabKeybindingsSeparatesPopupLocalLabelFromInternalID(t *testing.T) {
-	t.Parallel()
-
-	cmd := &settingsCommand{}
-	entries, err := cmd.labKeybindingEntries()
-	if err != nil {
-		t.Fatalf("labKeybindingEntries() error = %v", err)
-	}
-
-	value := settingsActionPrefixLabKeymap + "SessionPopup:KillSession"
-	index := entryIndexValue(entries, value)
-	if index < 0 {
-		t.Fatalf("keybinding lab entries = %#v, want popup-local action value %q", entries, value)
-	}
-	label := entries[index].Label
-	if !strings.Contains(label, "Session Popup: Kill Session") {
-		t.Fatalf("popup-local label = %q, want readable action label", label)
-	}
-	if strings.Contains(label, "SessionPopup:KillSession") {
-		t.Fatalf("popup-local label = %q, want internal id out of user-facing label", label)
-	}
-
-	detailEntries, title, err := cmd.labKeybindingDetailEntries("SessionPopup:KillSession")
-	if err != nil {
-		t.Fatalf("labKeybindingDetailEntries() error = %v", err)
-	}
-	if got, want := title, "Keybindings - Session Popup: Kill Session"; got != want {
-		t.Fatalf("detail title = %q, want %q", got, want)
-	}
-	if !hasEntryLabelContainingAll(detailEntries, "Action", "Session Popup: Kill Session") {
-		t.Fatalf("detail entries = %#v, want readable action row", detailEntries)
-	}
-	if !hasEntryLabelContainingAll(detailEntries, "Action ID", "SessionPopup:KillSession") {
-		t.Fatalf("detail entries = %#v, want internal id in detail context", detailEntries)
-	}
-	if hasEntryLabelContainingAll(detailEntries, "Kill Session", "SessionPopup:KillSession") {
-		t.Fatalf("detail entries = %#v, did not want internal id beside readable action label", detailEntries)
 	}
 }
 
@@ -4488,9 +4368,9 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		"https://github.com/crevissepartners/projmux/releases/tag/" + latest,
 		"sidebar, sessions, projects",
 		"new window, rename window/pane",
-		"Alt-1..5 work zero-config",
+		"try shortcuts in projmux shell",
 		"projmux setup reports swallowed shortcuts",
-		"projmux init applies supported terminal key mappings",
+		"projmux init previews supported terminal key delivery mappings",
 		"projmux doctor checks tmux",
 		"configure a plain alias",
 		"Alt Meta defaults",

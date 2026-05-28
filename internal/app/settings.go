@@ -44,9 +44,7 @@ type settingsCommand struct {
 	runOutput           func(name string, args ...string) ([]byte, error)
 	tmuxRunner          tmuxRunner
 	probeKeybinding     func(probeKey, time.Duration) (probeResult, error)
-	runInitKeybindings  func(args []string, stdout, stderr io.Writer) error
 	aiNotifyDiagnostics func() []doctorAINotifyIntegration
-	lastLabProbe        map[string]probeResult
 }
 
 var errSettingsClosed = errors.New("settings closed")
@@ -142,7 +140,6 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixHookRemove, settingsEntryMeta{Name: "Hook maker - remove", Axis: settingsAxisBoth}},
 	{settingsActionPrefixHookView, settingsEntryMeta{Name: "Hook maker - view", Axis: settingsAxisBoth}},
 	{settingsActionPrefixKeymap, settingsEntryMeta{Name: "Keybindings", Axis: settingsAxisGlobal}},
-	{settingsActionPrefixLabKeymap, settingsEntryMeta{Name: "Keybindings diagnostics", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixLocale, settingsEntryMeta{Name: "Language / Locale", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixPicker, settingsEntryMeta{Name: "Picker backend", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixProjectConfig, settingsEntryMeta{Name: "Project recipe", Axis: settingsAxisProject}},
@@ -202,7 +199,6 @@ const (
 	settingsActionPrefixDesktopNotifyMode  = "desktop-notify-mode:"
 	settingsActionPrefixHooks              = "project-hooks:"
 	settingsActionPrefixKeymap             = "keymap:"
-	settingsActionPrefixLabKeymap          = "lab-keymap:"
 	settingsActionPrefixLocale             = "locale:"
 	settingsActionPrefixPicker             = "picker-backend:"
 	settingsActionPrefixProjectConfig      = "project-config:"
@@ -2854,10 +2850,6 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 	if err != nil {
 		return err
 	}
-	if c.lastLabProbe == nil {
-		c.lastLabProbe = map[string]probeResult{}
-	}
-	c.lastLabProbe[action.ID] = res
 	fmt.Fprintf(stdout, "capture %s: %s\n", key.Label, renderProbeStatus(res))
 	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
 	if !ok {
@@ -3301,50 +3293,6 @@ func keybindingNonEditableReason(action keyBindingAction) string {
 	}
 }
 
-func keybindingEditNote(action keyBindingAction) string {
-	if action.Tier == keyBindingTierNativePickerInternal {
-		return "Picker-local keys are written to keymap.toml and stay scoped to their Settings surface."
-	}
-	if action.Tier == keyBindingTierTransportDependent {
-		return "Transport defaults stay active. Settings writes only extra safe plain aliases to keymap.toml."
-	}
-	return "Terminal mappings may require rerunning projmux init and restarting the terminal where applicable."
-}
-
-func keybindingCaptureOutcomeEntries(res probeResult) []intpickercompat.Entry {
-	entries := []intpickercompat.Entry{
-		{
-			Label: settingsLabelInfo("Last capture", string(res.Status), renderProbeStatus(res)),
-			Value: settingsNoopValue,
-		},
-	}
-	switch res.Status {
-	case probeStatusPlain:
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Saved path", "plain tmux binding", res.Reason),
-			Value: settingsNoopValue,
-		})
-	case probeStatusUnknown:
-		if chord, ok := suggestedPlainChordForSequence(res.Sequence); ok {
-			entries = append(entries, intpickercompat.Entry{
-				Label: settingsLabelInfo("Saved path", "plain "+chord, "safe tmux chord"),
-				Value: settingsNoopValue,
-			})
-		} else {
-			entries = append(entries, intpickercompat.Entry{
-				Label: settingsLabelInfo("Not saved", visibleEscape(string(res.Sequence)), "unsafe raw sequence"),
-				Value: settingsNoopValue,
-			})
-		}
-	case probeStatusTimeout:
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Not saved", "timeout", "no bytes reached projmux"),
-			Value: settingsNoopValue,
-		})
-	}
-	return entries
-}
-
 func (c *settingsCommand) keymapStore() keymapStore {
 	return keymapStore{
 		homeDir:   c.homeDir,
@@ -3560,372 +3508,12 @@ func (c *settingsCommand) runLabsProjectHooksSection(stdout, stderr io.Writer) e
 	}
 }
 
-func (c *settingsCommand) runLabKeybindingsSection(stdout, stderr io.Writer) error {
-	for {
-		entries, err := c.labKeybindingEntries()
-		if err != nil {
-			entries = []intpickercompat.Entry{
-				settingsBackEntry(),
-				{
-					Label: settingsLabelDim("Keymap error", err.Error()),
-					Value: settingsNoopValue,
-				},
-			}
-		}
-		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings-lab-keybindings",
-			Entries:    entries,
-			Title:      "Keybinding Lab - Diagnose delivery",
-			Prompt:     "Settings > Labs > Keybindings > ",
-			Footer:     projmuxFooter("Enter: diagnose  |  Back row: parent "),
-			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
-		})
-		if err != nil {
-			return err
-		}
-		action := strings.TrimSpace(result.Value)
-		if result.Key != "enter" || action == "" {
-			return errSettingsClosed
-		}
-		if action == settingsBackValue {
-			return nil
-		}
-		if action == settingsNoopValue {
-			continue
-		}
-		if id, ok := strings.CutPrefix(action, settingsActionPrefixLabKeymap); ok {
-			if err := c.runLabKeybindingDetail(id, stdout, stderr); err != nil {
-				return err
-			}
-			continue
-		}
-		return fmt.Errorf("unknown lab keybinding action: %s", action)
-	}
-}
-
-func (c *settingsCommand) runLabKeybindingDetail(actionID string, stdout, stderr io.Writer) error {
-	for {
-		entries, title, err := c.labKeybindingDetailEntries(actionID)
-		if err != nil {
-			return err
-		}
-		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings-lab-keybinding-detail",
-			Entries:    entries,
-			Title:      title,
-			Prompt:     "Settings > Labs > Keybindings > Action > ",
-			Footer:     projmuxFooter("Enter: probe/apply  |  Back row: parent "),
-			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
-		})
-		if err != nil {
-			return err
-		}
-		value := strings.TrimSpace(result.Value)
-		if result.Key != "enter" || value == "" {
-			return errSettingsClosed
-		}
-		if value == settingsBackValue {
-			return nil
-		}
-		if value == settingsNoopValue {
-			continue
-		}
-		op, ok := parseLabKeybindingAction(value, actionID)
-		if !ok {
-			return fmt.Errorf("unknown lab keybinding detail action: %s", value)
-		}
-		switch op {
-		case "probe":
-			key, err := c.labProbeKey(actionID)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(stdout, "press %s for %s\n", key.Label, key.Action)
-			res, err := c.probeLabKeybinding(key, defaultProbeTimeout)
-			if err != nil {
-				return err
-			}
-			if c.lastLabProbe == nil {
-				c.lastLabProbe = map[string]probeResult{}
-			}
-			c.lastLabProbe[actionID] = res
-			fmt.Fprintf(stdout, "probe %s: %s\n", key.Label, renderProbeStatus(res))
-		case "init-preview":
-			if err := c.runLabTerminalInit(false, stdout, stderr); err != nil {
-				return err
-			}
-		case "init-apply":
-			if err := c.runLabTerminalInit(true, stdout, stderr); err != nil {
-				return err
-			}
-		case "save-plain":
-			if err := c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, nil, stdout); err != nil {
-				return err
-			}
-		default:
-			if chord, ok := strings.CutPrefix(op, "save-plain-override:"); ok {
-				if err := c.saveKeymapAndApply(actionID, settingsKeymapFieldPlain, &chord, stdout); err != nil {
-					return err
-				}
-				continue
-			}
-			return fmt.Errorf("unknown lab keybinding operation: %s", op)
-		}
-	}
-}
-
-func parseLabKeybindingAction(value, actionID string) (string, bool) {
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
-	if !ok {
-		action = keyBindingAction{ID: actionID}
-	}
-	var matched bool
-	for _, id := range keyBindingActionAliases(action) {
-		prefix := settingsActionPrefixLabKeymap + id + ":"
-		if strings.HasPrefix(value, prefix) {
-			actionID = id
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		return "", false
-	}
-	op := strings.TrimPrefix(value, settingsActionPrefixLabKeymap+actionID+":")
-	switch op {
-	case "probe", "init-preview", "init-apply", "save-plain":
-		return op, true
-	default:
-		if strings.HasPrefix(op, "save-plain-override:") && strings.TrimPrefix(op, "save-plain-override:") != "" {
-			return op, true
-		}
-		return "", false
-	}
-}
-
-func (c *settingsCommand) labKeybindingEntries() ([]intpickercompat.Entry, error) {
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
-	if err != nil {
-		return nil, err
-	}
-	terminal := detectTerminal(c.lookupEnv)
-	keys := probeKeysFromActions(actions)
-	keyByAction := make(map[string]probeKey, len(keys))
-	for _, key := range keys {
-		keyByAction[key.ActionID] = key
-	}
-	entries := make([]intpickercompat.Entry, 0, len(actions)+3)
-	entries = append(entries, settingsBackEntry())
-	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabelInfo("Terminal", terminal.Display(), labTerminalSupportSummary(terminal)),
-		Value: settingsNoopValue,
-	})
-	for _, action := range actions {
-		defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
-		name := keyBindingDisplayName(action)
-		var detail []string
-		if description := strings.TrimSpace(action.Description); description != "" && description != name {
-			detail = append(detail, description)
-		}
-		detail = append(detail, "keys "+keybindingAliasesSummary(action))
-		if keybindingSource(action, defaultAction) == "keymap.toml" {
-			detail[len(detail)-1] += " (custom)"
-		}
-		if key, ok := keyByAction[action.ID]; ok {
-			if key.Label != "" {
-				detail = append(detail, "probe "+key.Label)
-			}
-		} else if action.Surface != "" {
-			detail = append(detail, action.Surface+" local")
-		}
-		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, name, strings.Join(detail, "  ")),
-			Value:     settingsActionPrefixLabKeymap + action.ID,
-			SearchKey: action.ID + " " + name + " " + action.Description + " " + strings.Join(keyBindingEffectivePlainChords(action), " "),
-		})
-	}
-	return entries, nil
-}
-
-func (c *settingsCommand) labKeybindingDetailEntries(actionID string) ([]intpickercompat.Entry, string, error) {
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
-	if err != nil {
-		return nil, "", err
-	}
-	action, ok := keyBindingActionByID(actions, actionID)
-	if !ok {
-		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
-	}
-	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
-	terminal := detectTerminal(c.lookupEnv)
-	prefix := settingsActionPrefixLabKeymap + actionID + ":"
-	displayName := keyBindingDisplayName(action)
-	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
-		{
-			Label: settingsLabelInfo("Action", displayName, action.Description),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Action ID", action.ID, ""),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Terminal", terminal.Display(), labTerminalSupportSummary(terminal)),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("After mapping apply", terminal.ReloadCapability().Label, terminal.ReloadCapability().Summary),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Aliases", keybindingAliasesSummary(action), "tmux plain"),
-			Value: settingsNoopValue,
-		},
-	}
-	if key, err := c.labProbeKeyFromActions(actionID, actions); err == nil {
-		entries = append(entries,
-			intpickercompat.Entry{
-				Label: settingsLabelInfo("Probe key", key.Label, key.Action),
-				Value: settingsNoopValue,
-			},
-			intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphType, settingsColorType, "Press the key", "read one raw keypress from /dev/tty"),
-				Value: prefix + "probe",
-			},
-		)
-	} else {
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Probe key", "not available", "picker-local action"),
-			Value: settingsNoopValue,
-		})
-	}
-	if terminal.InitCommand() != "" {
-		entries = append(entries,
-			intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview terminal mappings", strings.TrimSuffix(terminal.InitCommand(), " --apply")),
-				Value: prefix + "init-preview",
-			},
-			intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Apply terminal mappings", terminal.InitCommand()),
-				Value: prefix + "init-apply",
-			},
-		)
-	} else if hint := terminal.RemediationHint(); hint != "" {
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Manual setup", hint, ""),
-			Value: settingsNoopValue,
-		})
-	}
-	if res, ok := c.lastLabProbe[actionID]; ok {
-		entries = append(entries, labProbeOutcomeEntries(prefix, action, defaultAction, res, terminal)...)
-	} else if res, ok := c.lastLabProbe[action.ID]; ok {
-		entries = append(entries, labProbeOutcomeEntries(prefix, action, defaultAction, res, terminal)...)
-	}
-	return entries, "Keybindings - " + displayName, nil
-}
-
-func labProbeOutcomeEntries(prefix string, action, defaultAction keyBindingAction, res probeResult, terminal terminalInfo) []intpickercompat.Entry {
-	entries := []intpickercompat.Entry{
-		{
-			Label: settingsLabelInfo("Probe result", string(res.Status), renderProbeStatus(res)),
-			Value: settingsNoopValue,
-		},
-	}
-	switch res.Status {
-	case probeStatusPlain:
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Plain key reached", "tmux-level binding can work immediately", res.Reason),
-			Value: settingsNoopValue,
-		})
-		defaultChord := firstNonEmptyString(keyBindingEffectivePlainChords(defaultAction))
-		if defaultChord != "" && !sameStringSlice(keyBindingEffectivePlainChords(action), []string{defaultChord}) {
-			entries = append(entries, intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save plain tmux binding", "reset keymap.toml to "+defaultChord+" and reload app config"),
-				Value: prefix + "save-plain",
-			})
-		}
-	case probeStatusUnknown:
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Unexpected sequence", visibleEscape(string(res.Sequence)), "no keymap overwrite"),
-			Value: settingsNoopValue,
-		})
-		if chord, ok := suggestedPlainChordForSequence(res.Sequence); ok {
-			entries = append(entries, intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save as plain override", "write plain = "+chord+" and reload app config"),
-				Value: prefix + "save-plain-override:" + chord,
-			})
-		}
-	case probeStatusTimeout:
-		desc := "terminal mapping unavailable"
-		if cmd := terminal.InitCommand(); cmd != "" {
-			desc = cmd
-		}
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Timeout or swallowed", "no bytes reached projmux", desc),
-			Value: settingsNoopValue,
-		})
-	}
-	return entries
-}
-
-func (c *settingsCommand) labProbeKey(actionID string) (probeKey, error) {
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
-	if err != nil {
-		return probeKey{}, err
-	}
-	return c.labProbeKeyFromActions(actionID, actions)
-}
-
-func (c *settingsCommand) labProbeKeyFromActions(actionID string, actions []keyBindingAction) (probeKey, error) {
-	action, ok := keyBindingActionByID(actions, actionID)
-	if ok {
-		actionID = action.ID
-	}
-	for _, key := range probeKeysFromActions(actions) {
-		if key.ActionID == actionID {
-			return key, nil
-		}
-	}
-	return probeKey{}, fmt.Errorf("keybinding action %s has no probe key", actionID)
-}
-
 func (c *settingsCommand) probeLabKeybinding(key probeKey, timeout time.Duration) (probeResult, error) {
 	if c.probeKeybinding != nil {
 		return c.probeKeybinding(key, timeout)
 	}
 	cmd := &setupCommand{openTTY: openControllingTTY}
 	return cmd.probeControllingTTYKey(key, timeout)
-}
-
-func (c *settingsCommand) runLabTerminalInit(apply bool, stdout, stderr io.Writer) error {
-	terminal := detectTerminal(c.lookupEnv)
-	if terminal.InitCommand() == "" {
-		return fmt.Errorf("keybinding lab: terminal mappings are not supported for %s", terminal.Display())
-	}
-	args := []string{terminal.Slug, "--dry-run"}
-	if apply {
-		args[1] = "--apply"
-	}
-	if c.runInitKeybindings != nil {
-		return c.runInitKeybindings(args, stdout, stderr)
-	}
-	cmd := newInitCommand()
-	cmd.getenv = c.lookupEnv
-	return cmd.Run(args, stdout, stderr)
-}
-
-func labTerminalSupportSummary(terminal terminalInfo) string {
-	activation := terminal.ReloadCapability()
-	if cmd := terminal.InitCommand(); cmd != "" {
-		return "supported mappings: " + strings.TrimSuffix(cmd, " --apply") + "; after apply: " + activation.Label
-	}
-	if hint := terminal.RemediationHint(); hint != "" {
-		return hint + "; after apply: " + activation.Label
-	}
-	return "no automatic terminal adapter; after apply: " + activation.Label
 }
 
 func (c *settingsCommand) writeTmuxAppConfig() (string, error) {
@@ -4528,9 +4116,9 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 		{"Source", "https://github.com/crevissepartners/projmux"},
 		{"App", "sidebar, sessions, projects, AI picker, settings"},
 		{"Tmux actions", "new window, rename window/pane, previous/next window"},
-		{"Key setup", "Alt-1..5 work zero-config when the terminal forwards Meta"},
+		{"Key setup", "try shortcuts in projmux shell before changing terminal config"},
 		{"Diagnose keys", "projmux setup reports swallowed shortcuts"},
-		{"Terminal mappings", "projmux init applies supported terminal key mappings"},
+		{"Terminal remediation", "projmux init previews supported terminal key delivery mappings"},
 		{"Dependencies", "projmux doctor checks tmux, git, stty, kubectl"},
 		{"Rename key", "configure a plain alias or use tmux prefix rename"},
 		{"Ghostty", "Alt Meta defaults normally need no projmux key block"},

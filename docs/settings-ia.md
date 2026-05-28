@@ -27,6 +27,9 @@ view-first layout:
   action, current keybinding/aliases, `Add alias`, and reset. It does not offer
   replace-primary, disable-default, typed-fallback, terminal mapping preview, or
   terminal mapping apply rows.
+- Terminal delivery remediation lives outside Settings primary flow. The
+  supported order is `projmux shell` first, then `projmux setup`, then
+  `projmux init` for supported terminal adapters.
 - Rows that cannot safely be edited still stay visible. Mark diagnostic-only
   rows with the delivery path and reason instead of hiding them or turning them
   into unsupported editable aliases. Transport-dependent rows stay visible with

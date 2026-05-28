@@ -72,7 +72,7 @@ without storing or replacing the transport default. Rename actions no longer
 have a built-in terminal fallback; use tmux's prefix rename flow or configure
 an explicit safe alias where the action is editable.
 
-## Roadmap Requirements
+## Product Requirements
 
 Settings > Keybindings stays a discovery surface. It must continue to expose
 launch toggles, sidebar keymap actions, picker-local actions, pane switching,
@@ -81,11 +81,11 @@ terminal remediation surface: replace-primary, disable-default, typed fallback,
 terminal mapping preview/apply, and init execution rows stay out of the action
 detail.
 
-Follow-up Phase 3 removes the `UserN` / `CSI-u` route from the product model.
-Windows Terminal and Ghostty-centered replacements should use plain
-Meta/control chords or xterm modifier sequences where possible. If a key cannot
-be represented that way, leave it as a non-editable unsupported or diagnostic
-row instead of preserving a User-key or CSI-u fallback.
+The product model does not support `UserN` or `CSI-u` as fallback guidance.
+Windows Terminal and Ghostty adapters use built-in plain Meta/control bytes or
+xterm modifier sequences where possible. If a key cannot be represented that
+way, leave it as a non-editable unsupported or diagnostic row instead of
+preserving a User-key or CSI-u fallback.
 
 ## Picker Actions
 

@@ -25,7 +25,7 @@ projmux <command> [args...]
 | `current` | Resolve the active tmux pane path. |
 | `doctor` | Diagnose runtime dependencies. |
 | `focus` | Switch the active client to a session/window/pane target. |
-| `init` | Apply supported terminal keybinding fallbacks. |
+| `init` | Preview or apply supported terminal key delivery mappings. |
 | `kill` | Terminate tagged tmux sessions. |
 | `notify` | Manage the pending AI notify queue (push/list/ack/reconcile). |
 | `pin` | Manage pinned project directories. |
@@ -71,11 +71,12 @@ selection has been retired. The native picker is always used.
 projmux setup [--timeout DURATION] [--non-interactive]
 ```
 
-Probes the guaranteed launch defaults (`Alt-1..5`) plus advanced fallback and
-transport candidates such as `Ctrl-N`, `Ctrl-Shift-{R,L,M}`, `Ctrl-M`, and
-`Alt-Shift-{Left,Right}`. Reports `plain`, `csi-u`, `unknown`, or `timeout`
-for each. `--non-interactive` skips the TTY probe and prints the expected key
-map. Default `--timeout` is `5s`. Run it outside tmux after trying
+Probes the guaranteed launch defaults (`Alt-1..5`) plus transport candidates
+such as `Ctrl-N`, `Ctrl-Shift-{R,L,M}`, `Ctrl-M`, and
+`Alt-Shift-{Left,Right}`. Reports whether each key arrived as the expected
+plain bytes, an unsupported legacy/app-specific sequence, an unknown sequence,
+or a timeout. `--non-interactive` skips the TTY probe and prints the expected
+key map. Default `--timeout` is `5s`. Run it outside tmux after trying
 `projmux shell`; `Alt-1..5` are the only guaranteed zero-config defaults.
 Settings > Keybindings edits in-app action aliases; terminal delivery
 diagnostics stay in this CLI flow.
@@ -87,9 +88,9 @@ projmux init [terminal] [--apply | --dry-run] [--config <path>]
              [--allow-symlink]
 ```
 
-Applies a terminal-specific fallback for shortcuts that `projmux setup`
-reports as swallowed. When `terminal` is omitted, autodetects from
-`$TERM_PROGRAM`/`$TERMINAL_EMULATOR`.
+Previews or applies terminal-specific key delivery mappings for supported
+terminals when `projmux setup` reports swallowed shortcuts. When `terminal` is
+omitted, autodetects from `$TERM_PROGRAM`/`$TERMINAL_EMULATOR`.
 Known terminals: `ghostty`, `windows-terminal`. Default is dry-run; pass
 `--apply` to write (timestamped `.bak.<timestamp>` is created). Refuses to
 write through a symlink unless `--allow-symlink` is passed (dotfiles repos).
@@ -718,8 +719,8 @@ flags with the top-level `switch` UX:
   and About/Update status. The keybinding flow is a single
   `Settings > Keybindings` action list with simplified action details for
   aliases and reset. Terminal diagnostics and terminal mapping application stay
-  in `projmux setup` and `projmux init`. The About section includes the
-  `Welcome` entry. In Project
+  in the `projmux shell` -> `projmux setup` -> `projmux init` remediation path.
+  The About section includes the `Welcome` entry. In Project
   Picker, `Project Root` manages the saved
   primary root (`~/.config/projmux/projdir`) and displays whether the effective
   value comes from `PROJMUX_PROJDIR`, tmux `@projmux_projdir`, saved config, or
@@ -735,8 +736,9 @@ flags with the top-level `switch` UX:
   `projmux update apply`, and Welcome opens a Settings-native viewer
   independent of shell skip state. `Settings > About > Quit projmux` routes
   through the same `projmux quit` action picker. The same About section also
-  lists the keybinding diagnostic path: zero-config first, `setup` for swallowed keys,
-  `init` for supported terminal mappings, and `doctor` for dependencies.
+  lists the keybinding diagnostic path: try `projmux shell` first, use `setup`
+  for swallowed keys, use `init` for supported terminal mappings, and use
+  `doctor` for dependencies.
 
 ## See also
 
