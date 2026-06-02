@@ -1969,7 +1969,7 @@ func TestSettingsHubStatusbarDecorationChangeActionIsUnreachable(t *testing.T) {
 	}
 }
 
-func TestSettingsSetDesktopNotifyModeWritesTmuxOption(t *testing.T) {
+func TestSettingsSetDesktopNotifyModePersistsAndWritesTmuxOption(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -1977,15 +1977,17 @@ func TestSettingsSetDesktopNotifyModeWritesTmuxOption(t *testing.T) {
 		wantOpt  string
 		wantText string
 	}{
-		{"none", "none", "none"},
+		{"none", "off", "off"},
 		{"notify", "notify", "notify"},
 		{"raise", "raise", "raise"},
-		{"off", "none", "none"}, // alias accepted by parseDesktopNotifyMode
+		{"off", "off", "off"},
 		{"toast", "notify", "notify"},
 	} {
 		t.Run(tc.in, func(t *testing.T) {
+			home := t.TempDir()
 			var tmuxCalls [][]string
 			cmd := &settingsCommand{
+				homeDir: func() (string, error) { return home, nil },
 				lookupEnv: func(name string) string {
 					if name == "TMUX" {
 						return "/tmp/tmux"
@@ -2000,6 +2002,17 @@ func TestSettingsSetDesktopNotifyModeWritesTmuxOption(t *testing.T) {
 			if err := cmd.setDesktopNotifyMode(tc.in); err != nil {
 				t.Fatalf("setDesktopNotifyMode(%q) error = %v", tc.in, err)
 			}
+			paths, err := config.Homes{HomeDir: home}.Paths()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := config.LoadDesktopNotifyModeFile(paths.DesktopNotifyModeFile())
+			if err != nil {
+				t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
+			}
+			if got != config.DesktopNotifyMode(tc.wantOpt) {
+				t.Fatalf("saved desktop notify mode = %q, want %q", got, tc.wantOpt)
+			}
 			if !reflect.DeepEqual(tmuxCalls, [][]string{
 				{"tmux", "set-option", "-g", desktopNotifyModeTmuxOption, tc.wantOpt},
 				{"tmux", "display-message", "desktop notifications: " + tc.wantText},
@@ -2010,11 +2023,13 @@ func TestSettingsSetDesktopNotifyModeWritesTmuxOption(t *testing.T) {
 	}
 }
 
-func TestSettingsSetDesktopNotifyModeOutsideTmuxIsNoop(t *testing.T) {
+func TestSettingsSetDesktopNotifyModeOutsideTmuxPersistsWithoutLiveUpdate(t *testing.T) {
 	t.Parallel()
 
+	home := t.TempDir()
 	var tmuxCalls [][]string
 	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
 		lookupEnv: func(string) string { return "" },
 		runCommand: func(name string, args ...string) error {
 			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
@@ -2023,6 +2038,17 @@ func TestSettingsSetDesktopNotifyModeOutsideTmuxIsNoop(t *testing.T) {
 	}
 	if err := cmd.setDesktopNotifyMode("none"); err != nil {
 		t.Fatalf("setDesktopNotifyMode(none) outside tmux returned error: %v", err)
+	}
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.LoadDesktopNotifyModeFile(paths.DesktopNotifyModeFile())
+	if err != nil {
+		t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
+	}
+	if got != config.DesktopNotifyModeOff {
+		t.Fatalf("saved desktop notify mode = %q, want %q", got, config.DesktopNotifyModeOff)
 	}
 	if len(tmuxCalls) != 0 {
 		t.Fatalf("outside tmux: tmux calls = %#v, want no live update", tmuxCalls)
@@ -2033,6 +2059,7 @@ func TestSettingsSetDesktopNotifyModeRejectsGarbage(t *testing.T) {
 	t.Parallel()
 
 	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return t.TempDir(), nil },
 		lookupEnv: func(name string) string {
 			if name == "TMUX" {
 				return "/tmp/tmux"
@@ -2074,7 +2101,7 @@ func TestSettingsAIRootNestsDefaultModeAndExcludesDesktopNotifications(t *testin
 		settingsActionPrefixAI + aiModeClaude,
 		settingsActionPrefixAI + aiModeCodex,
 		settingsActionPrefixAI + aiModeShell,
-		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNone),
+		settingsActionPrefixDesktopNotifyMode + string(config.DesktopNotifyModeOff),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
 	} {
@@ -2430,7 +2457,7 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 		}
 	}
 	for _, value := range []string{
-		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNone),
+		settingsActionPrefixDesktopNotifyMode + string(config.DesktopNotifyModeOff),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
 	} {
@@ -2441,7 +2468,7 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 
 	detail := cmd.desktopNotifyEntries()
 	for _, want := range []string{
-		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNone),
+		settingsActionPrefixDesktopNotifyMode + string(config.DesktopNotifyModeOff),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
 	} {

@@ -404,7 +404,7 @@ gated here.
 
 | Mode | On push | On click |
 | --- | --- | --- |
-| `none` | no toast | n/a |
+| `off` / `none` | no toast | n/a |
 | `notify` | toast / notify-send fires | no click action |
 | `raise` | toast / notify-send fires AND the host terminal is auto-raised via the osfocus chain | toast click invokes `projmux focus --uri` via the `projmux://` handler |
 
@@ -416,26 +416,32 @@ up with an on-push auto-raise.
 
 Resolution order (highest priority first):
 
-1. `PROJMUX_DESKTOP_NOTIFY_MODE` env (`none` / `notify` / `raise`).
+1. `PROJMUX_DESKTOP_NOTIFY_MODE` env (`off` / `none` / `notify` / `raise`).
 2. `PROJMUX_DESKTOP_NOTIFY` env (legacy `on` / `off`; `on` → `notify`,
    `off` → `none`).
-3. Tmux global option `@projmux_desktop_notify_mode`.
-4. Tmux global option `@projmux_desktop_notify` (legacy `1` / `0`, same
+3. Saved Settings config
+   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/desktop-notify-mode`
+   (`off` / `notify` / `raise`).
+4. Tmux global option `@projmux_desktop_notify_mode`.
+5. Tmux global option `@projmux_desktop_notify` (legacy `1` / `0`, same
    mapping as the env above).
-5. Default = `raise` when running inside WSL with `$WT_SESSION` set
+6. Default = `raise` when running inside WSL with `$WT_SESSION` set
    (Windows Terminal × WSL is the measured-working cell for osfocus
    raise today); otherwise `notify`.
 
 Migration is intentionally read-time. Users with the previous legacy
 toggle set keep their behavior — `@projmux_desktop_notify=0` resolves to
 `none`, `@projmux_desktop_notify=1` resolves to `notify`. The first
-Settings press through the new row writes the new key and the legacy key
-goes unused. No eager rewrite of tmux state.
+Settings press through the new row writes `desktop-notify-mode`, mirrors the
+new value into `@projmux_desktop_notify_mode` when tmux is live, and leaves the
+legacy key unused. No eager rewrite of tmux state.
 
 Toggle from Settings > Notifications > `Desktop notifications`. The
 Settings info row labels the effective source as `env`, `env (legacy)`,
 `setting`, `setting (legacy)`, or `default` so users see which rung of
-the cascade pinned the value.
+the cascade pinned the value. `projmux tmux apply` regenerates the live tmux
+option from the saved Settings file; when that file is missing, apply writes
+only the default for the current host.
 
 Hook details for new-session lifecycle hooks and project-local
 `.projmux/config.toml` live in [Hooks](hooks.md).

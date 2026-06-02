@@ -438,7 +438,7 @@ func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.writeFile(path, []byte(fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyle(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(path, []byte(fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return fmt.Errorf("write shell app config: %w", err)
 	}
 	return nil

@@ -2270,6 +2270,40 @@ func TestTmuxApplySkipsReloadWhenServerMissing(t *testing.T) {
 	}
 }
 
+func TestTmuxApplyUsesSavedDesktopNotifyMode(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveDesktopNotifyModeFile(paths.DesktopNotifyModeFile(), config.DesktopNotifyModeOff); err != nil {
+		t.Fatalf("SaveDesktopNotifyModeFile() error = %v", err)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	runner := &recordingTmuxRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		writeFile:  os.WriteFile,
+		runner:     runner,
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"apply", "--config", configPath}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), "set -g "+desktopNotifyModeTmuxOption+" off"; !strings.Contains(got, want) {
+		t.Fatalf("app config missing %q\n%s", want, got)
+	}
+}
+
 func TestTmuxApplyReloadsLiveServer(t *testing.T) {
 	t.Parallel()
 
