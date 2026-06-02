@@ -62,7 +62,7 @@ func TestRendererRenderFrameWithTitleKeepsDefaultWhenTitleEmpty(t *testing.T) {
 	}
 }
 
-func TestThemeFromEffectiveFallbackRendersLikeDefault(t *testing.T) {
+func TestThemeFromEffectiveFallbackPaintsFrameBackground(t *testing.T) {
 	t.Parallel()
 
 	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
@@ -82,16 +82,16 @@ func TestThemeFromEffectiveFallbackRendersLikeDefault(t *testing.T) {
 	var themedFrame bytes.Buffer
 	DefaultRenderer().RenderFrame(&defaultFrame, content, layout)
 	themed.RenderFrame(&themedFrame, content, layout)
-	if got, want := themedFrame.String(), defaultFrame.String(); got != want {
-		t.Fatalf("fallback themed frame = %q, want default frame %q", got, want)
+	if got, want := themedFrame.String(), defaultFrame.String(); got == want {
+		t.Fatalf("fallback themed frame = default frame, want app background SGR")
 	}
 
 	var defaultTitle bytes.Buffer
 	var themedTitle bytes.Buffer
 	DefaultRenderer().RenderFrameWithTitle(&defaultTitle, content, "Projects", layout)
 	themed.RenderFrameWithTitle(&themedTitle, content, "Projects", layout)
-	if got, want := themedTitle.String(), defaultTitle.String(); got != want {
-		t.Fatalf("fallback themed title frame = %q, want default frame %q", got, want)
+	if got, want := themedTitle.String(), defaultTitle.String(); got == want {
+		t.Fatalf("fallback themed title frame = default frame, want app background SGR")
 	}
 
 	chips := []Chip{{Label: "Projects", Active: true}, {Label: "Settings"}}
@@ -99,8 +99,25 @@ func TestThemeFromEffectiveFallbackRendersLikeDefault(t *testing.T) {
 	var themedChips bytes.Buffer
 	DefaultRenderer().RenderFrameWithChips(&defaultChips, content, chips, layout)
 	themed.RenderFrameWithChips(&themedChips, content, chips, layout)
-	if got, want := themedChips.String(), defaultChips.String(); got != want {
-		t.Fatalf("fallback themed chip frame = %q, want default frame %q", got, want)
+	if got, want := themedChips.String(), defaultChips.String(); got == want {
+		t.Fatalf("fallback themed chip frame = default frame, want app background SGR")
+	}
+
+	fallbackTheme := ThemeFromEffective(effective)
+	style := fallbackTheme.Background + fallbackTheme.Foreground
+	if style == "" {
+		t.Fatal("fallback frame style empty, want app background/foreground SGR")
+	}
+	for _, rendered := range []string{themedFrame.String(), themedTitle.String(), themedChips.String()} {
+		if !strings.Contains(rendered, style) {
+			t.Fatalf("fallback themed frame = %q, want fallback background/foreground SGR %q", rendered, style)
+		}
+		for line := range strings.SplitSeq(rendered, "\r\n") {
+			if !strings.HasPrefix(line, style) {
+				t.Fatalf("fallback themed row = %q, want style prefix %q", line, style)
+			}
+			assertFrameResetsResumeStyleOrEnd(t, line, style)
+		}
 	}
 }
 
@@ -207,6 +224,47 @@ func TestFrameTitlebarLineUsesFrameBackgroundForeground(t *testing.T) {
 	}
 	if strings.Contains(line, TitlebarStart) || strings.Contains(line, TitlebarRule) {
 		t.Fatalf("frameTitlebarLine() = %q, want no titlebar overlay ANSI", line)
+	}
+}
+
+func TestRendererFrameBackgroundResumesAfterContentResetBeforePadding(t *testing.T) {
+	t.Parallel()
+
+	theme := DefaultTheme
+	theme.Background = "\x1b[48;2;1;2;3m"
+	theme.Foreground = "\x1b[38;2;170;187;204m"
+	style := theme.Background + theme.Foreground
+	content := "\x1b[31mapi\x1b[0m"
+	var out bytes.Buffer
+	NewRenderer(theme).RenderFrame(&out, content, Layout{Rows: 4, Cols: 12})
+
+	lines := strings.Split(out.String(), "\r\n")
+	if got, want := len(lines), 4; got != want {
+		t.Fatalf("frame rows = %d, want %d: %q", got, want, out.String())
+	}
+	contentRow := lines[1]
+	if !strings.Contains(contentRow, "\x1b[31mapi"+Reset+style+strings.Repeat(" ", 7)+"│") {
+		t.Fatalf("content row = %q, want background style resumed for padding and right border", contentRow)
+	}
+	assertFrameResetsResumeStyleOrEnd(t, contentRow, style)
+	if got, want := VisibleLen(contentRow), 12; got != want {
+		t.Fatalf("content row width = %d, want %d: %q", got, want, contentRow)
+	}
+}
+
+func assertFrameResetsResumeStyleOrEnd(t *testing.T, line, style string) {
+	t.Helper()
+	for start := 0; ; {
+		idx := strings.Index(line[start:], Reset)
+		if idx < 0 {
+			return
+		}
+		after := start + idx + len(Reset)
+		if after == len(line) || strings.HasPrefix(line[after:], style) {
+			start = after
+			continue
+		}
+		t.Fatalf("line = %q, want reset followed by frame style %q or row end", line, style)
 	}
 }
 

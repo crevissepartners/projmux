@@ -178,9 +178,10 @@ field with source labels: `project`, `global`, or `fallback`.
 Renderer adapters can apply an already resolved `EffectiveTheme` to native
 picker frame background/foreground SGR and tmux status/window `colourN`
 background tokens. Settings and native project picker surfaces load global and
-project `[theme]` values through the shared effective-theme source. Fallback
-renderer output intentionally keeps the existing palette constants byte for
-byte.
+project `[theme]` values through the shared effective-theme source. Native
+picker frames also apply the built-in fallback `background`/`foreground` tokens
+so picker-owned padding, empty rows, footer rows, and preview gaps do not
+inherit the terminal default background.
 
 Resolver schema shape:
 
