@@ -1045,6 +1045,48 @@ func TestNativeInteractiveKoreanSearchEmptyAndFooterFitWidth(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveSettingsAIBadgeStyleLongPreviewClampsFrameRows(t *testing.T) {
+	t.Parallel()
+
+	label := "◉  " + theme.ANSIAccentActionStart + "Preview emoji            " + theme.ANSIReset +
+		"  " + theme.ANSITextDimStart + "⏳ prompt  ✅ complete  🔄 working - emoji marker - current" + theme.ANSIReset
+	items := []Item{{Label: label, Value: "ai-badge-style:emoji"}}
+	frame := nativeInteractiveFrame(Options{
+		UI:     "settings-ai-badge-style",
+		Title:  "Appearance - AI badge style",
+		Prompt: "Settings > Appearance > AI badge style > ",
+		Footer: "Enter: apply  |  Back row: parent ",
+		Items:  items,
+	}, items, "", 0, 0, 0, nativeLayout{Rows: 10, Cols: 44})
+
+	lines := strings.Split(frame, "\r\n")
+	if len(lines) != 10 {
+		t.Fatalf("native frame rows = %d, want 10: %q", len(lines), frame)
+	}
+	for i, line := range lines {
+		if got, want := projmuxpicker.VisibleLen(line), 44; got != want {
+			t.Fatalf("frame row %d width = %d, want %d: %q", i, got, want, line)
+		}
+		if i > 0 && i < len(lines)-1 && strings.HasPrefix(line, "│") && !strings.HasSuffix(line, "│") {
+			t.Fatalf("frame row %d = %q, want stable vertical borders", i, line)
+		}
+	}
+
+	var previewRow string
+	for _, line := range lines {
+		if strings.Contains(line, "Preview emoji") {
+			previewRow = line
+			break
+		}
+	}
+	if previewRow == "" {
+		t.Fatalf("native frame = %q, want rendered AI badge preview row", frame)
+	}
+	if !strings.Contains(previewRow, nativeReset+" │") {
+		t.Fatalf("preview row = %q, want reset before marker lane and right border", previewRow)
+	}
+}
+
 func TestNativeInteractiveFrameUsesCRLFRowsForRawTTY(t *testing.T) {
 	t.Parallel()
 
