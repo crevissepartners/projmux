@@ -2335,6 +2335,7 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 	}
 
 	current := c.ai.getMode()
+	enabled := c.currentAIEnabledAgents()
 	modes := []struct {
 		mode string
 		desc string
@@ -2347,7 +2348,17 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 
 	entries := make([]intpickercompat.Entry, 0, len(modes)+1)
 	entries = append(entries, settingsBackEntry())
+	if warning := c.aiDefaultModeDisabledWarning(); warning != "" {
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabelDim("Warning", "saved Default split mode "+warning),
+			Value:     settingsNoopValue,
+			SearchKey: "default split mode disabled enabled agents",
+		})
+	}
 	for _, item := range modes {
+		if provider, ok := aiModeProvider(item.mode); ok && !aiEnabledAgentsContains(enabled, provider) {
+			continue
+		}
 		glyph := settingsGlyphInactive
 		color := settingsColorDim
 		if item.mode == current {

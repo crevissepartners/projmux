@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -101,6 +102,30 @@ func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	}
 }
 
+func TestAISettingsRowsHideDisabledAgentDefaults(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatalf("setMode(codex) error = %v", err)
+	}
+
+	rows := cmd.settingsRows()
+	if hasEntryValue(rows, aiModeCodex) {
+		t.Fatalf("settings rows = %#v, want disabled Codex hidden", rows)
+	}
+	for _, want := range []string{aiModeSelective, aiModeClaude, aiModeShell} {
+		if !hasEntryValue(rows, want) {
+			t.Fatalf("settings rows = %#v, want row %q", rows, want)
+		}
+	}
+	if !hasEntryLabelContainingAll(rows, "saved default codex is disabled", "Enabled agents") {
+		t.Fatalf("settings rows = %#v, want disabled default warning", rows)
+	}
+}
+
 func TestAIPickerShowsKeyFooter(t *testing.T) {
 	home := t.TempDir()
 	runner := &capturingAIRunner{}
@@ -130,6 +155,51 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	}
 	if got, want := runner.options.Footer, "Choose an agent or shell target to launch."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
+	}
+}
+
+func TestAIPickerFiltersDisabledAgents(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("right"); err != nil {
+		t.Fatalf("runAgentPicker error = %v", err)
+	}
+	if got, want := entryValues(runner.options.Entries), []string{aiModeClaude, aiModeShell}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("runner entry order = %#v, want %#v", got, want)
+	}
+	if hasEntryValue(runner.options.Entries, aiModeCodex) {
+		t.Fatalf("runner entries = %#v, want disabled Codex hidden", runner.options.Entries)
+	}
+}
+
+func TestAIPickerAllAgentsDisabledShowsShellFallbackGuidance(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), nil); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("down"); err != nil {
+		t.Fatalf("runAgentPicker error = %v", err)
+	}
+	if got, want := entryValues(runner.options.Entries), []string{"", aiModeShell}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("runner entry order = %#v, want guidance plus shell fallback %#v", got, want)
+	}
+	if !hasEntryLabelContainingAll(runner.options.Entries, "AI agents disabled", "shell") {
+		t.Fatalf("runner entries = %#v, want disabled-agent guidance", runner.options.Entries)
+	}
+	if hasEntryValue(runner.options.Entries, aiModeClaude) || hasEntryValue(runner.options.Entries, aiModeCodex) {
+		t.Fatalf("runner entries = %#v, want all AI agents hidden", runner.options.Entries)
 	}
 }
 
@@ -347,6 +417,77 @@ func TestAISplitMissingRunnerPreservesTmuxMessage(t *testing.T) {
 	err := cmd.Run([]string{"split", "--agent", "codex", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || err.Error() != "selected runner is not installed: codex" {
 		t.Fatalf("Run split missing codex error = %v, want selected runner is not installed: codex", err)
+	}
+}
+
+func TestAISplitDirectDisabledAgentFailsBeforeRunnerLookup(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentCodex}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	cmd := testAICommand(home)
+	cmd.readCommand = func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("disabled direct agent should fail before command lookup")
+		return nil, os.ErrNotExist
+	}
+
+	err := cmd.Run([]string{"split", "--agent", "claude", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run split --agent claude error = nil, want disabled-agent error")
+	}
+	for _, want := range []string{"AI agent claude is disabled", "Settings > AI Settings > Enabled agents", "--force-agent"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("commands = %#v, want none", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestAISplitDefaultDisabledAgentFailsClearly(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatalf("setMode(codex) error = %v", err)
+	}
+	cmdRecorder(cmd).commands = nil
+
+	err := cmd.Run([]string{"split", "down"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run split with disabled default error = nil, want disabled-default error")
+	}
+	for _, want := range []string{"AI split default codex is disabled", "choose another default", "--agent shell"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("commands = %#v, want no launch commands", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestAISplitForceAgentOverridesDisabledDirectOnly(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), nil); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd := testAICommand(home)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"codex": codexBin}, "%7", "%9")
+
+	if err := cmd.Run([]string{"split", "--agent", "codex", "--force-agent", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --force-agent error = %v", err)
+	}
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeCodex}) {
+		t.Fatalf("commands = %#v, want forced Codex launch metadata", cmdRecorder(cmd).commands)
 	}
 }
 
@@ -715,6 +856,16 @@ func TestAISplitAgentFlagUsageErrors(t *testing.T) {
 			name: "shell cannot use extra args",
 			args: []string{"split", "--agent", "shell", "right", "--", "echo", "hi"},
 			want: "ai split --agent shell cannot use extra args",
+		},
+		{
+			name: "force agent requires direct agent",
+			args: []string{"split", "--force-agent", "right"},
+			want: "ai split --force-agent requires --agent claude or --agent codex",
+		},
+		{
+			name: "force agent does not apply to picker",
+			args: []string{"split", "--agent", "selective", "--force-agent", "right"},
+			want: "ai split --force-agent only applies to --agent claude or --agent codex",
 		},
 	}
 	for _, tt := range tests {

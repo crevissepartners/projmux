@@ -6,7 +6,7 @@ the same split contract.
 
 ```sh
 projmux ai split --agent <agent> <right|down>
-projmux ai split --agent <agent> <right|down> -- <extra args...>
+projmux ai split --agent <agent> [--force-agent] <right|down> -- <extra args...>
 ```
 
 Use this page for shareable registration patterns. Keep machine-local policy,
@@ -40,6 +40,20 @@ Model, permission, and other agent flags are examples to customize privately in
 your user-level config. Avoid treating placeholder flags in this guide as
 project defaults or current recommendations. If there are no private extra
 arguments, omit the separator entirely; do not leave a trailing bare `--`.
+
+Settings > AI Settings > Enabled agents is the source of truth for whether
+Claude and Codex may be launched. Disabled agents do not appear in the
+selective picker, and direct shortcut commands such as
+`projmux ai split --agent codex right` fail clearly instead of launching. This
+is intentional: shortcuts are thin direct CLI wrappers and must respect the
+same disabled state as hand-written commands.
+
+`--force-agent` is the only override, and it is explicit CLI policy for direct
+`--agent claude|codex` launches. Do not put it in shared picker, default-mode,
+or general shortcut registrations. Use it only in a private one-shot command
+when you deliberately want to launch a disabled agent without changing
+Settings. If every AI agent is disabled, `--agent selective` still offers a
+plain `shell` split and guidance to re-enable Claude/Codex.
 
 `shell` and `selective` are not targets for extra agent arguments. Use them
 without a tail:

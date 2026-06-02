@@ -1218,6 +1218,16 @@ func TestSettingsAIEnabledAgentsWarnsWhenDefaultModeDisabled(t *testing.T) {
 	if !hasEntryLabelContainingAll(detail, "Warning", "Default split mode", "codex disabled") {
 		t.Fatalf("AI enabled agents entries = %#v, want disabled default-mode warning", detail)
 	}
+	defaultModeDetail := cmd.aiEntries()
+	if hasEntryValue(defaultModeDetail, settingsActionPrefixAI+aiModeCodex) {
+		t.Fatalf("AI default mode entries = %#v, want disabled Codex hidden", defaultModeDetail)
+	}
+	if !hasEntryValue(defaultModeDetail, settingsActionPrefixAI+aiModeClaude) {
+		t.Fatalf("AI default mode entries = %#v, want enabled Claude row", defaultModeDetail)
+	}
+	if !hasEntryLabelContainingAll(defaultModeDetail, "Warning", "Default split mode", "codex disabled") {
+		t.Fatalf("AI default mode entries = %#v, want disabled default-mode warning", defaultModeDetail)
+	}
 	if !hasEntryLabelContainingAll(detail, "Enabled agents", "Claude") {
 		t.Fatalf("AI enabled agents entries = %#v, want current enabled set", detail)
 	}
