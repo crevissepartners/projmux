@@ -11,6 +11,8 @@ func TestDesktopNotifyResolverModeCascade(t *testing.T) {
 		name       string
 		envMode    string
 		envLegacy  string
+		configMode desktopNotifyMode
+		configSet  bool
 		optMode    string
 		optLegacy  string
 		isWSL      bool
@@ -38,6 +40,14 @@ func TestDesktopNotifyResolverModeCascade(t *testing.T) {
 		{
 			name: "new tmux option none beats default raise", isWSL: true, wtPresent: true, optMode: "none",
 			wantMode: desktopNotifyModeNone, wantSource: desktopNotifySourceSetting,
+		},
+		{
+			name: "saved config off beats new tmux option", configMode: desktopNotifyModeNone, configSet: true, optMode: "raise",
+			wantMode: desktopNotifyModeNone, wantSource: desktopNotifySourceSetting,
+		},
+		{
+			name: "new env beats saved config", envMode: "raise", configMode: desktopNotifyModeNone, configSet: true,
+			wantMode: desktopNotifyModeRaise, wantSource: desktopNotifySourceEnv,
 		},
 		{
 			name: "new tmux option raise beats default notify", optMode: "raise",
@@ -99,6 +109,9 @@ func TestDesktopNotifyResolverModeCascade(t *testing.T) {
 						return tc.envLegacy
 					}
 					return ""
+				},
+				readConfigMode: func() (desktopNotifyMode, bool) {
+					return tc.configMode, tc.configSet
 				},
 				readTmuxOption: func(name string) string {
 					switch name {

@@ -1873,7 +1873,7 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 
 func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
-	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
+	notifyMode, notifySource := settingsDesktopNotifyResolver(c.homeDir, c.lookupEnv).resolveMode()
 	dedupe := c.currentAINotifyDedupeSeconds()
 	hookSummary := "not set"
 	if c.lookupEnv != nil {
@@ -1884,7 +1884,7 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 	return []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNotificationsDesktopLabel(locale), string(notifyMode)+" - "+string(notifySource)),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNotificationsDesktopLabel(locale), desktopNotifyDisplayName(notifyMode)+" - "+string(notifySource)),
 			Value:     settingsNotificationsDesktop,
 			SearchKey: "desktop notifications none notify raise toast osfocus",
 		},
@@ -3547,12 +3547,13 @@ func (c *settingsCommand) currentStatusbarDecorations() statusbarDecorationSet {
 	return loadStatusbarDecorationSet(c.homeDir, c.lookupEnv)
 }
 
-// setDesktopNotifyMode writes the user-facing 3-way choice into the
-// `@projmux_desktop_notify_mode` global tmux user-option. The env
-// variables (`PROJMUX_DESKTOP_NOTIFY_MODE`, plus the legacy
-// `PROJMUX_DESKTOP_NOTIFY`) continue to take priority at resolve time, so
-// toggling here when an env is set will appear to "do nothing" — the
-// Settings info row surfaces the source so users see why.
+// setDesktopNotifyMode writes the user-facing 3-way choice into the durable
+// Settings config and mirrors it into the live `@projmux_desktop_notify_mode`
+// tmux user-option when a tmux server is available. The env variables
+// (`PROJMUX_DESKTOP_NOTIFY_MODE`, plus the legacy `PROJMUX_DESKTOP_NOTIFY`)
+// continue to take priority at resolve time, so toggling here when an env is
+// set will appear to "do nothing" — the Settings info row surfaces the source
+// so users see why.
 //
 // The legacy `@projmux_desktop_notify` option is intentionally NOT
 // rewritten here. Read-time migration keeps honoring it for users who
@@ -3560,28 +3561,31 @@ func (c *settingsCommand) currentStatusbarDecorations() statusbarDecorationSet {
 // path the new option pins the resolution and the legacy one is
 // effectively orphaned.
 //
-// When projmux runs outside tmux we silently skip the live update; the
-// gate at `aiDesktopNotifier.Notify` only reads the option inside tmux
-// anyway, so there's nothing to persist elsewhere.
+// When projmux runs outside tmux the saved config still changes; only the live
+// tmux mirror is skipped.
 func (c *settingsCommand) setDesktopNotifyMode(value string) error {
 	mode, ok := parseDesktopNotifyMode(value)
 	if !ok {
 		return fmt.Errorf("unknown desktop notification mode: %s", value)
 	}
+	saved := desktopNotifyConfigValue(mode)
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+	if err := config.SaveDesktopNotifyModeFile(paths.DesktopNotifyModeFile(), saved); err != nil {
+		return err
+	}
 	if c.lookupEnv == nil || strings.TrimSpace(c.lookupEnv("TMUX")) == "" {
-		// Outside tmux there is no server to persist to. The toggle is
-		// inherently a tmux-scoped surface (resolve order checks env
-		// first, then this option, then default) so this isn't an
-		// error — just a no-op with a friendly hint.
 		return nil
 	}
 	if c.runCommand == nil {
 		return errors.New("settings runner is not configured")
 	}
-	if err := c.runCommand("tmux", "set-option", "-g", desktopNotifyModeTmuxOption, string(mode)); err != nil {
+	if err := c.runCommand("tmux", "set-option", "-g", desktopNotifyModeTmuxOption, string(saved)); err != nil {
 		return fmt.Errorf("set live tmux desktop-notify-mode option: %w", err)
 	}
-	_ = c.runCommand("tmux", "display-message", "desktop notifications: "+string(mode))
+	_ = c.runCommand("tmux", "display-message", "desktop notifications: "+string(saved))
 	return nil
 }
 
@@ -3728,21 +3732,22 @@ func (c *settingsCommand) labsProjectHooksEntries() []intpickercompat.Entry {
 
 func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
-	notifyMode, notifySource := settingsDesktopNotifyResolver(c.lookupEnv).resolveMode()
+	notifyMode, notifySource := settingsDesktopNotifyResolver(c.homeDir, c.lookupEnv).resolveMode()
 	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
-			Label: settingsLabelInfoLocale(locale, settingsNotificationsDesktopLabel(locale), string(notifyMode), string(notifySource)),
+			Label: settingsLabelInfoLocale(locale, settingsNotificationsDesktopLabel(locale), desktopNotifyDisplayName(notifyMode), string(notifySource)),
 			Value: settingsNoopValue,
 		},
 	}
 	for _, item := range []struct {
 		mode desktopNotifyMode
+		name string
 		desc string
 	}{
-		{desktopNotifyModeNone, "silence OS notifications; in-app notify queue is unaffected"},
-		{desktopNotifyModeNotify, "fire toast / notify-send for AI reply-ready without click-to-focus"},
-		{desktopNotifyModeRaise, "fire toast with click-to-focus and auto-raise host terminal via osfocus chain"},
+		{desktopNotifyModeNone, string(config.DesktopNotifyModeOff), "silence OS notifications; in-app notify queue is unaffected"},
+		{desktopNotifyModeNotify, string(config.DesktopNotifyModeNotify), "fire toast / notify-send for AI reply-ready without click-to-focus"},
+		{desktopNotifyModeRaise, string(config.DesktopNotifyModeRaise), "fire toast with click-to-focus and auto-raise host terminal via osfocus chain"},
 	} {
 		glyph := settingsGlyphInactive
 		color := settingsColorDim
@@ -3751,11 +3756,18 @@ func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 			color = settingsColorAdd
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, string(item.mode), item.desc),
-			Value: settingsActionPrefixDesktopNotifyMode + string(item.mode),
+			Label: settingsLabel(glyph, color, item.name, item.desc),
+			Value: settingsActionPrefixDesktopNotifyMode + item.name,
 		})
 	}
 	return entries
+}
+
+func desktopNotifyDisplayName(mode desktopNotifyMode) string {
+	if mode == desktopNotifyModeNone {
+		return string(config.DesktopNotifyModeOff)
+	}
+	return string(desktopNotifyConfigValue(mode))
 }
 
 func (c *settingsCommand) aiNotifyDedupeEntries() []intpickercompat.Entry {

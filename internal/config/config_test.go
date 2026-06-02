@@ -161,6 +161,56 @@ func TestPathsNotificationFiles(t *testing.T) {
 	if got, want := paths.AIHookActionsFile(), filepath.Join(paths.ConfigDir, AIHookActionsFileName); got != want {
 		t.Fatalf("AIHookActionsFile() = %q, want %q", got, want)
 	}
+	if got, want := paths.DesktopNotifyModeFile(), filepath.Join(paths.ConfigDir, DesktopNotifyModeFileName); got != want {
+		t.Fatalf("DesktopNotifyModeFile() = %q, want %q", got, want)
+	}
+}
+
+func TestDesktopNotifyModeRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", DesktopNotifyModeFileName)
+	if got, err := LoadDesktopNotifyModeFile(path); err != nil || got != DefaultDesktopNotifyMode {
+		t.Fatalf("LoadDesktopNotifyModeFile(missing) = %q, %v; want %q, nil", got, err, DefaultDesktopNotifyMode)
+	}
+
+	if err := SaveDesktopNotifyModeFile(path, DesktopNotifyModeOff); err != nil {
+		t.Fatalf("SaveDesktopNotifyModeFile() error = %v", err)
+	}
+	got, err := LoadDesktopNotifyModeFile(path)
+	if err != nil {
+		t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
+	}
+	if got != DesktopNotifyModeOff {
+		t.Fatalf("LoadDesktopNotifyModeFile() = %q, want %q", got, DesktopNotifyModeOff)
+	}
+}
+
+func TestDesktopNotifyModeNormalizesInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), DesktopNotifyModeFileName)
+	if err := os.WriteFile(path, []byte("broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadDesktopNotifyModeFile(path)
+	if err != nil {
+		t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
+	}
+	if got != DefaultDesktopNotifyMode {
+		t.Fatalf("LoadDesktopNotifyModeFile() = %q, want %q", got, DefaultDesktopNotifyMode)
+	}
+
+	if err := SaveDesktopNotifyModeFile(path, DesktopNotifyMode("none")); err != nil {
+		t.Fatalf("SaveDesktopNotifyModeFile() error = %v", err)
+	}
+	got, err = LoadDesktopNotifyModeFile(path)
+	if err != nil {
+		t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
+	}
+	if got != DesktopNotifyModeOff {
+		t.Fatalf("LoadDesktopNotifyModeFile() after save = %q, want %q", got, DesktopNotifyModeOff)
+	}
 }
 
 func TestAIHookActionsFileRoundtrip(t *testing.T) {

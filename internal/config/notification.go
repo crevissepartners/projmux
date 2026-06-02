@@ -12,6 +12,16 @@ import (
 
 const AINotifyDedupeSecondsFileName = "ai-notify-dedupe-seconds"
 const AIHookActionsFileName = "ai-hook-actions.json"
+const DesktopNotifyModeFileName = "desktop-notify-mode"
+
+type DesktopNotifyMode string
+
+const (
+	DesktopNotifyModeOff     DesktopNotifyMode = "off"
+	DesktopNotifyModeNotify  DesktopNotifyMode = "notify"
+	DesktopNotifyModeRaise   DesktopNotifyMode = "raise"
+	DefaultDesktopNotifyMode                   = DesktopNotifyModeNotify
+)
 
 type AIHookActionsFile struct {
 	Version   int                              `json:"version,omitempty"`
@@ -28,6 +38,73 @@ func (p Paths) AINotifyDedupeSecondsFile() string {
 
 func (p Paths) AIHookActionsFile() string {
 	return filepath.Join(p.ConfigDir, AIHookActionsFileName)
+}
+
+func (p Paths) DesktopNotifyModeFile() string {
+	return filepath.Join(p.ConfigDir, DesktopNotifyModeFileName)
+}
+
+func NormalizeDesktopNotifyMode(value string) DesktopNotifyMode {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(DesktopNotifyModeOff), "none", "disabled":
+		return DesktopNotifyModeOff
+	case string(DesktopNotifyModeRaise), "auto-raise", "autoraise":
+		return DesktopNotifyModeRaise
+	case string(DesktopNotifyModeNotify), "toast":
+		return DesktopNotifyModeNotify
+	default:
+		return DefaultDesktopNotifyMode
+	}
+}
+
+func LoadDesktopNotifyModeFile(path string) (DesktopNotifyMode, error) {
+	if strings.TrimSpace(path) == "" {
+		return DefaultDesktopNotifyMode, nil
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return DefaultDesktopNotifyMode, nil
+		}
+		return DefaultDesktopNotifyMode, fmt.Errorf("read desktop notify mode file: %w", err)
+	}
+	return NormalizeDesktopNotifyMode(string(content)), nil
+}
+
+func SaveDesktopNotifyModeFile(path string, value DesktopNotifyMode) error {
+	if strings.TrimSpace(path) == "" {
+		return ErrHomeDirRequired
+	}
+
+	value = NormalizeDesktopNotifyMode(string(value))
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create desktop notify mode directory: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, DesktopNotifyModeFileName+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create desktop notify mode temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+
+	if _, err := tmp.WriteString(string(value) + "\n"); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write desktop notify mode temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close desktop notify mode temp file: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return fmt.Errorf("chmod desktop notify mode temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename desktop notify mode temp file: %w", err)
+	}
+	return nil
 }
 
 func LoadAINotifyDedupeSecondsFileDefault(path string, fallback int) (int, error) {
