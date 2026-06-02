@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,6 +105,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsKeybindingsProbe:           {Name: "Keybinding Probe", Axis: settingsAxisGlobal},
 	settingsKeybindingsInit:            {Name: "Keybinding Init", Axis: settingsAxisGlobal},
 	settingsAIDefaultMode:              {Name: "Default split mode", Axis: settingsAxisGlobal},
+	settingsAIEnabledAgents:            {Name: "Enabled agents", Axis: settingsAxisGlobal},
 	settingsAINotifyDiagnostics:        {Name: "AI notify diagnostics", Axis: settingsAxisGlobal},
 	settingsNotificationsDesktop:       {Name: "Desktop notification settings", Axis: settingsAxisGlobal},
 	settingsNotificationsAIDedupe:      {Name: "AI notification dedupe", Axis: settingsAxisGlobal},
@@ -127,6 +129,7 @@ var settingsEntryPrefixCatalog = []struct {
 	meta   settingsEntryMeta
 }{
 	{settingsActionPrefixAI, settingsEntryMeta{Name: "AI Settings", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixAIEnabledAgent, settingsEntryMeta{Name: "Enabled agents", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAINotifyDiagnostic, settingsEntryMeta{Name: "AI notify diagnostics", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAIBadgeStyle, settingsEntryMeta{Name: "AI badge style", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixDesktopNotifyMode, settingsEntryMeta{Name: "Desktop notification mode", Axis: settingsAxisGlobal}},
@@ -189,6 +192,7 @@ const (
 	settingsSectionLabs                    = "section:labs"
 	settingsSectionAbout                   = "section:about"
 	settingsActionPrefixAI                 = "ai:"
+	settingsActionPrefixAIEnabledAgent     = "ai-enabled-agent:"
 	settingsActionPrefixAIBadgeStyle       = "ai-badge-style:"
 	settingsActionPrefixAINotifyDiagnostic = "ai-notify:"
 	settingsActionPrefixAINotifyCommand    = "ai-notify-command:"
@@ -229,6 +233,7 @@ const (
 	settingsKeybindingsProbe               = "keybindings:probe"
 	settingsKeybindingsInit                = "keybindings:init"
 	settingsAIDefaultMode                  = "ai-default-mode"
+	settingsAIEnabledAgents                = "ai-enabled-agents"
 	settingsAINotifyDiagnostics            = "ai-notify-diagnostics"
 	settingsNotificationsDesktop           = "notifications:desktop"
 	settingsNotificationsAIDedupe          = "notifications:ai-dedupe"
@@ -576,7 +581,7 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 			Value: settingsSectionProject,
 		},
 		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "AI Settings", "default split mode"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "AI Settings", "default split mode, enabled agents"),
 			Value: settingsSectionAI,
 		},
 		{
@@ -1668,6 +1673,10 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 			if err := c.runAIDefaultModeSection(stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsAIEnabledAgents:
+			if err := c.runAIEnabledAgentsSection(stdout, stderr); err != nil {
+				return err
+			}
 		case action == settingsAINotifyDiagnostics:
 			if err := c.runAINotifyDiagnosticsSection(stdout, stderr); err != nil {
 				return err
@@ -1678,6 +1687,40 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 			}
 		default:
 			return fmt.Errorf("unknown AI settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAIEnabledAgentsSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-ai-enabled-agents",
+			Entries:    c.aiEnabledAgentEntries(),
+			Title:      "AI Settings - Enabled agents",
+			Prompt:     "Settings > AI Settings > Enabled agents > ",
+			Footer:     projmuxFooter("Enter: toggle  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixAIEnabledAgent):
+			provider := strings.TrimPrefix(action, settingsActionPrefixAIEnabledAgent)
+			if err := c.toggleAIEnabledAgent(provider); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI enabled agents action: %s", action)
 		}
 	}
 }
@@ -1864,11 +1907,22 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 		return entries
 	}
 	current := c.ai.getMode()
-	return append(entries, intpickercompat.Entry{
-		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Default split mode", current),
-		Value:     settingsAIDefaultMode,
-		SearchKey: "default split mode claude codex shell selective",
-	})
+	defaultDesc := current
+	if warning := c.aiDefaultModeDisabledWarning(); warning != "" {
+		defaultDesc += " - " + warning
+	}
+	return append(entries,
+		intpickercompat.Entry{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Default split mode", defaultDesc),
+			Value:     settingsAIDefaultMode,
+			SearchKey: "default split mode claude codex shell selective",
+		},
+		intpickercompat.Entry{
+			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Enabled agents", c.aiEnabledAgentsSummary()),
+			Value:     settingsAIEnabledAgents,
+			SearchKey: "enabled agents claude codex",
+		},
+	)
 }
 
 func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
@@ -2306,6 +2360,130 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 		})
 	}
 	return entries
+}
+
+func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
+	enabled := c.currentAIEnabledAgents()
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Enabled agents", c.aiEnabledAgentsSummary(), "~/.config/projmux/"+config.AIEnabledAgentsFileName),
+			Value: settingsNoopValue,
+		},
+	}
+	if warning := c.aiDefaultModeDisabledWarning(); warning != "" {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelDim("Warning", "saved Default split mode "+warning),
+			Value: settingsNoopValue,
+		})
+	}
+
+	for _, item := range []struct {
+		provider config.AIAgentProvider
+		name     string
+		desc     string
+	}{
+		{config.AIAgentClaude, "Claude", "Anthropic CLI split"},
+		{config.AIAgentCodex, "Codex", "OpenAI Codex split"},
+	} {
+		on := aiEnabledAgentsContains(enabled, item.provider)
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		state := "disabled"
+		if on {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+			state = "enabled"
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabel(glyph, color, item.name, state+" - "+item.desc),
+			Value:     settingsActionPrefixAIEnabledAgent + string(item.provider),
+			SearchKey: strings.Join([]string{"enabled agents", item.name, string(item.provider), state}, " "),
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) currentAIEnabledAgents() []config.AIAgentProvider {
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
+	}
+	agents, err := config.LoadAIEnabledAgentsFile(paths.AIEnabledAgentsFile())
+	if err != nil {
+		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
+	}
+	return agents
+}
+
+func (c *settingsCommand) toggleAIEnabledAgent(provider string) error {
+	normalized := config.NormalizeAIEnabledAgents([]string{provider})
+	if len(normalized) != 1 {
+		return fmt.Errorf("unknown AI agent provider: %s", provider)
+	}
+	target := normalized[0]
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+	current, err := config.LoadAIEnabledAgentsFile(paths.AIEnabledAgentsFile())
+	if err != nil {
+		return err
+	}
+	enabled := map[config.AIAgentProvider]bool{}
+	for _, agent := range current {
+		enabled[agent] = true
+	}
+	enabled[target] = !enabled[target]
+
+	next := make([]config.AIAgentProvider, 0, len(config.DefaultAIEnabledAgents))
+	for _, agent := range config.KnownAIAgentProviders() {
+		if enabled[agent] {
+			next = append(next, agent)
+		}
+	}
+	return config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), next)
+}
+
+func (c *settingsCommand) aiEnabledAgentsSummary() string {
+	enabled := c.currentAIEnabledAgents()
+	if len(enabled) == 0 {
+		return "(none)"
+	}
+	names := make([]string, 0, len(enabled))
+	for _, agent := range enabled {
+		names = append(names, aiEnabledAgentDisplayName(agent))
+	}
+	return strings.Join(names, ", ")
+}
+
+func (c *settingsCommand) aiDefaultModeDisabledWarning() string {
+	if c.ai == nil {
+		return ""
+	}
+	mode := config.NormalizeAIEnabledAgents([]string{c.ai.getMode()})
+	if len(mode) != 1 {
+		return ""
+	}
+	if aiEnabledAgentsContains(c.currentAIEnabledAgents(), mode[0]) {
+		return ""
+	}
+	return string(mode[0]) + " disabled"
+}
+
+func aiEnabledAgentsContains(agents []config.AIAgentProvider, provider config.AIAgentProvider) bool {
+	return slices.Contains(agents, provider)
+}
+
+func aiEnabledAgentDisplayName(provider config.AIAgentProvider) string {
+	switch provider {
+	case config.AIAgentClaude:
+		return "Claude"
+	case config.AIAgentCodex:
+		return "Codex"
+	default:
+		return string(provider)
+	}
 }
 
 func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {

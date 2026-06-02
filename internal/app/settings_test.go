@@ -938,10 +938,12 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsWorkdirList, settingsAxisGlobal},
 		{settingsProjectPins, settingsAxisGlobal},
 		{settingsAIDefaultMode, settingsAxisGlobal},
+		{settingsAIEnabledAgents, settingsAxisGlobal},
 		{settingsSectionNotifications, settingsAxisGlobal},
 		{settingsNotificationsDesktop, settingsAxisGlobal},
 		{settingsLabsProjectHooks, settingsAxisGlobal},
 		{settingsActionPrefixAI + aiModeCodex, settingsAxisGlobal},
+		{settingsActionPrefixAIEnabledAgent + aiModeCodex, settingsAxisGlobal},
 		{settingsActionPrefixAIBadgeStyle + string(config.AIBadgeStyleEmoji), settingsAxisGlobal},
 		{settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":" + string(config.StatusbarDecorationSymbol), settingsAxisGlobal},
 		{settingsActionPrefixKeymap + "settings", settingsAxisGlobal},
@@ -985,6 +987,7 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	assertCataloguedEntries("root", cmd.rootEntries())
 	assertCataloguedEntries("ai root", cmd.aiRootEntries())
 	assertCataloguedEntries("ai default mode", cmd.aiEntries())
+	assertCataloguedEntries("ai enabled agents", cmd.aiEnabledAgentEntries())
 	assertCataloguedEntries("notifications", cmd.notificationsEntries())
 	assertCataloguedEntries("desktop notifications", cmd.desktopNotifyEntries())
 	assertCataloguedEntries("appearance", cmd.statusbarEntries())
@@ -1101,6 +1104,9 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if !hasEntryValue(aiOptions.Entries, settingsAIDefaultMode) {
 		t.Fatalf("AI settings entries = %#v, want Default split mode detail row", aiOptions.Entries)
 	}
+	if !hasEntryValue(aiOptions.Entries, settingsAIEnabledAgents) {
+		t.Fatalf("AI settings entries = %#v, want Enabled agents detail row", aiOptions.Entries)
+	}
 	if hasEntryValue(aiOptions.Entries, settingsAINotifyDiagnostics) {
 		t.Fatalf("AI settings entries = %#v, want Notify integrations moved to Notifications", aiOptions.Entries)
 	}
@@ -1123,6 +1129,100 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}
 	if got, want := readModeFile(t, home), "codex\n"; got != want {
 		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsHubTogglesAIEnabledAgentPersists(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	ai := testAICommand(home)
+	switcher := testSettingsSwitchCommand(t, &stubSwitchPinStore{})
+	var enabledOptions intpickercompat.Options
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAI}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsAIEnabledAgents}},
+		{observe: func(o intpickercompat.Options) { enabledOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAIEnabledAgent + aiModeClaude}},
+	})
+	cmd := &settingsCommand{
+		ai:           ai,
+		switcher:     switcher,
+		homeDir:      func() (string, error) { return home, nil },
+		lookupEnv:    func(string) string { return "" },
+		runner:       runner,
+		nativePicker: native,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := enabledOptions.UI, "settings-ai-enabled-agents"; got != want {
+		t.Fatalf("AI enabled agents UI = %q, want %q", got, want)
+	}
+	for _, want := range []string{
+		settingsActionPrefixAIEnabledAgent + aiModeClaude,
+		settingsActionPrefixAIEnabledAgent + aiModeCodex,
+	} {
+		if !hasEntryValue(enabledOptions.Entries, want) {
+			t.Fatalf("AI enabled agents entries = %#v, want %q", enabledOptions.Entries, want)
+		}
+	}
+	for _, unwanted := range []string{
+		settingsActionPrefixAIEnabledAgent + aiModeShell,
+		settingsActionPrefixAIEnabledAgent + aiModeSelective,
+	} {
+		if hasEntryValue(enabledOptions.Entries, unwanted) {
+			t.Fatalf("AI enabled agents entries = %#v, want no %q", enabledOptions.Entries, unwanted)
+		}
+	}
+
+	paths, err := pickerBackendConfigPaths(func() (string, error) { return home, nil }, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("pickerBackendConfigPaths() error = %v", err)
+	}
+	got, err := config.LoadAIEnabledAgentsFile(paths.AIEnabledAgentsFile())
+	if err != nil {
+		t.Fatalf("LoadAIEnabledAgentsFile() error = %v", err)
+	}
+	if len(got) != 1 || got[0] != config.AIAgentCodex {
+		t.Fatalf("enabled agents = %#v, want codex only", got)
+	}
+}
+
+func TestSettingsAIEnabledAgentsWarnsWhenDefaultModeDisabled(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	ai := testAICommand(home)
+	if err := ai.setMode(aiModeCodex); err != nil {
+		t.Fatalf("setMode(codex) error = %v", err)
+	}
+	paths, err := pickerBackendConfigPaths(func() (string, error) { return home, nil }, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("pickerBackendConfigPaths() error = %v", err)
+	}
+	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	cmd := &settingsCommand{
+		ai:        ai,
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+
+	if !hasEntryLabelContainingAll(cmd.aiRootEntries(), "Default split mode", "codex", "disabled") {
+		t.Fatalf("AI root entries = %#v, want disabled default-mode warning", cmd.aiRootEntries())
+	}
+	detail := cmd.aiEnabledAgentEntries()
+	if !hasEntryLabelContainingAll(detail, "Warning", "Default split mode", "codex disabled") {
+		t.Fatalf("AI enabled agents entries = %#v, want disabled default-mode warning", detail)
+	}
+	if !hasEntryLabelContainingAll(detail, "Enabled agents", "Claude") {
+		t.Fatalf("AI enabled agents entries = %#v, want current enabled set", detail)
+	}
+	if hasEntryLabelContainingAll(detail, "Enabled agents", "Codex") {
+		t.Fatalf("AI enabled agents entries = %#v, want current enabled set without Codex", detail)
 	}
 }
 
@@ -2073,7 +2173,7 @@ func TestSettingsSetDesktopNotifyModeRejectsGarbage(t *testing.T) {
 	}
 }
 
-func TestSettingsAIRootNestsDefaultModeAndExcludesDesktopNotifications(t *testing.T) {
+func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -2091,11 +2191,14 @@ func TestSettingsAIRootNestsDefaultModeAndExcludesDesktopNotifications(t *testin
 	if !hasEntryValue(root, settingsAIDefaultMode) {
 		t.Fatalf("AI root entries = %#v, want Default split mode row", root)
 	}
+	if !hasEntryValue(root, settingsAIEnabledAgents) {
+		t.Fatalf("AI root entries = %#v, want Enabled agents row", root)
+	}
 	if hasEntryValue(root, settingsAINotifyDiagnostics) {
 		t.Fatalf("AI root entries = %#v, want Notify integrations moved to Notifications", root)
 	}
-	if got, want := len(root), 2; got != want {
-		t.Fatalf("AI root entries = %#v, want back row plus AI default mode only", root)
+	if got, want := len(root), 3; got != want {
+		t.Fatalf("AI root entries = %#v, want back row plus AI detail rows", root)
 	}
 	for _, want := range []string{
 		settingsActionPrefixAI + aiModeClaude,
@@ -2127,6 +2230,26 @@ func TestSettingsAIRootNestsDefaultModeAndExcludesDesktopNotifications(t *testin
 		if strings.Contains(entry.Label, "Desktop notifications") ||
 			strings.HasPrefix(entry.Value, settingsActionPrefixDesktopNotifyMode) {
 			t.Fatalf("AI default mode entries = %#v, want no Desktop notifications rows", detail)
+		}
+	}
+
+	enabledDetail := cmd.aiEnabledAgentEntries()
+	for _, want := range []string{
+		settingsActionPrefixAIEnabledAgent + aiModeClaude,
+		settingsActionPrefixAIEnabledAgent + aiModeCodex,
+	} {
+		if !hasEntryValue(enabledDetail, want) {
+			t.Fatalf("AI enabled agent entries = %#v, want row %q", enabledDetail, want)
+		}
+	}
+	for _, unwanted := range []string{
+		settingsActionPrefixAIEnabledAgent + aiModeShell,
+		settingsActionPrefixAIEnabledAgent + aiModeSelective,
+		settingsActionPrefixAI + aiModeShell,
+		settingsActionPrefixAI + aiModeSelective,
+	} {
+		if hasEntryValue(enabledDetail, unwanted) {
+			t.Fatalf("AI enabled agent entries = %#v, want no row %q", enabledDetail, unwanted)
 		}
 	}
 }

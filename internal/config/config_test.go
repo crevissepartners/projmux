@@ -166,6 +166,68 @@ func TestPathsNotificationFiles(t *testing.T) {
 	}
 }
 
+func TestPathsAIEnabledAgentsFile(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{ConfigDir: "/tmp/config/projmux"}
+	if got, want := paths.AIEnabledAgentsFile(), filepath.Join(paths.ConfigDir, AIEnabledAgentsFileName); got != want {
+		t.Fatalf("AIEnabledAgentsFile() = %q, want %q", got, want)
+	}
+}
+
+func TestAIEnabledAgentsMissingDefaultsToKnownProviders(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", AIEnabledAgentsFileName)
+	got, err := LoadAIEnabledAgentsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIEnabledAgentsFile(missing) error = %v", err)
+	}
+	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentClaude, AIAgentCodex})
+}
+
+func TestAIEnabledAgentsRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", AIEnabledAgentsFileName)
+	if err := SaveAIEnabledAgentsFile(path, []AIAgentProvider{AIAgentCodex}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	got, err := LoadAIEnabledAgentsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIEnabledAgentsFile() error = %v", err)
+	}
+	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentCodex})
+}
+
+func TestAIEnabledAgentsIgnoresUnknownProviderNames(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), AIEnabledAgentsFileName)
+	if err := os.WriteFile(path, []byte("antigravity,codex\nshell\nclaude\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadAIEnabledAgentsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIEnabledAgentsFile() error = %v", err)
+	}
+	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentCodex, AIAgentClaude})
+}
+
+func TestAIEnabledAgentsCanPersistEmptySet(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", AIEnabledAgentsFileName)
+	if err := SaveAIEnabledAgentsFile(path, nil); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile(nil) error = %v", err)
+	}
+	got, err := LoadAIEnabledAgentsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIEnabledAgentsFile() error = %v", err)
+	}
+	assertAIEnabledAgents(t, got, nil)
+}
+
 func TestDesktopNotifyModeRoundtrip(t *testing.T) {
 	t.Parallel()
 
@@ -324,6 +386,18 @@ func TestProjectHooksNormalizesInvalidValues(t *testing.T) {
 	}
 	if got != ProjectHooksOn {
 		t.Fatalf("LoadProjectHooksFile() = %q, want %q", got, ProjectHooksOn)
+	}
+}
+
+func assertAIEnabledAgents(t *testing.T, got, want []AIAgentProvider) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("AI enabled agents = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("AI enabled agents = %#v, want %#v", got, want)
+		}
 	}
 }
 
