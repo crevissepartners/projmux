@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -636,11 +637,20 @@ func (c *aiCommand) resolveTopicPaneID(explicit string) (string, error) {
 }
 
 type aiSplitInvocation struct {
-	direction string
-	agent     string
-	agentSet  bool
-	extraArgs []string
+	direction  string
+	agent      string
+	agentSet   bool
+	forceAgent bool
+	extraArgs  []string
 }
+
+type aiSplitLaunchPath string
+
+const (
+	aiSplitLaunchDirect  aiSplitLaunchPath = "direct"
+	aiSplitLaunchDefault aiSplitLaunchPath = "default"
+	aiSplitLaunchPicker  aiSplitLaunchPath = "picker"
+)
 
 func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 	invocation, err := parseAISplitInvocation(args, stderr)
@@ -654,14 +664,25 @@ func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 		if invocation.agent == aiModeShell && len(invocation.extraArgs) == 0 {
 			return c.runShellSplit(invocation.direction)
 		}
+		if !invocation.forceAgent {
+			if err := c.requireAIAgentEnabled(invocation.agent, aiSplitLaunchDirect); err != nil {
+				return err
+			}
+		}
 		return c.runAgentSplitWithExtraArgs(invocation.agent, invocation.direction, invocation.extraArgs)
 	}
 
 	mode := c.getMode()
 	switch mode {
 	case aiModeClaude:
+		if err := c.requireAIAgentEnabled(aiModeClaude, aiSplitLaunchDefault); err != nil {
+			return err
+		}
 		return c.runAgentSplit(aiModeClaude, invocation.direction)
 	case aiModeCodex:
+		if err := c.requireAIAgentEnabled(aiModeCodex, aiSplitLaunchDefault); err != nil {
+			return err
+		}
 		return c.runAgentSplit(aiModeCodex, invocation.direction)
 	case aiModeShell:
 		return c.runShellSplit(invocation.direction)
@@ -704,8 +725,14 @@ func (c *aiCommand) runPicker(args []string, stderr io.Writer) error {
 
 	switch normalizeAIMode(result.Value) {
 	case aiModeClaude:
+		if err := c.requireAIAgentEnabled(aiModeClaude, aiSplitLaunchPicker); err != nil {
+			return err
+		}
 		return c.runAgentSplit(aiModeClaude, direction)
 	case aiModeCodex:
+		if err := c.requireAIAgentEnabled(aiModeCodex, aiSplitLaunchPicker); err != nil {
+			return err
+		}
 		return c.runAgentSplit(aiModeCodex, direction)
 	case aiModeShell:
 		return c.runShellSplit(direction)
@@ -776,6 +803,7 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 
 func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 	current := c.getMode()
+	enabled := c.enabledAIAgents()
 	modes := []struct {
 		mode string
 		desc string
@@ -785,8 +813,18 @@ func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 		{aiModeCodex, "always run Codex split"},
 		{aiModeShell, "always open plain shell split"},
 	}
-	rows := make([]intpickercompat.Entry, 0, len(modes))
+	rows := make([]intpickercompat.Entry, 0, len(modes)+1)
+	if provider, ok := aiModeProvider(current); ok && !aiEnabledAgentsContains(enabled, provider) {
+		rows = append(rows, intpickercompat.Entry{
+			Label:     ansiDim(fmt.Sprintf("[INFO] saved default %s is disabled in Enabled agents", provider)),
+			Value:     "",
+			SearchKey: "default split mode disabled enabled agents",
+		})
+	}
 	for _, item := range modes {
+		if provider, ok := aiModeProvider(item.mode); ok && !aiEnabledAgentsContains(enabled, provider) {
+			continue
+		}
 		tag := ansiDim("[ ]")
 		if item.mode == current {
 			tag = "\x1b[32m[ACTIVE]\x1b[0m"
@@ -801,15 +839,26 @@ func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 }
 
 func (c *aiCommand) agentRows() []intpickercompat.Entry {
-	rows := []intpickercompat.Entry{
-		c.agentRow(aiModeCodex, "OpenAI Codex split"),
-		c.agentRow(aiModeClaude, "Anthropic CLI split"),
-		{
-			Label:     fmt.Sprintf("%-8s \x1b[34m[READY]\x1b[0m Plain shell split (\x1b[90mno agent\x1b[0m)", aiModeShell),
-			Value:     aiModeShell,
-			SearchKey: aiModeShell + " plain shell split no agent",
-		},
+	enabled := c.enabledAIAgents()
+	rows := make([]intpickercompat.Entry, 0, len(enabled)+2)
+	if aiEnabledAgentsContains(enabled, config.AIAgentCodex) {
+		rows = append(rows, c.agentRow(aiModeCodex, "OpenAI Codex split"))
 	}
+	if aiEnabledAgentsContains(enabled, config.AIAgentClaude) {
+		rows = append(rows, c.agentRow(aiModeClaude, "Anthropic CLI split"))
+	}
+	if len(enabled) == 0 {
+		rows = append(rows, intpickercompat.Entry{
+			Label:     ansiDim("[INFO] AI agents disabled in Settings; use shell or re-enable Claude/Codex."),
+			Value:     "",
+			SearchKey: "AI agents disabled settings enabled agents shell",
+		})
+	}
+	rows = append(rows, intpickercompat.Entry{
+		Label:     fmt.Sprintf("%-8s \x1b[34m[READY]\x1b[0m Plain shell split (\x1b[90mno agent\x1b[0m)", aiModeShell),
+		Value:     aiModeShell,
+		SearchKey: aiModeShell + " plain shell split no agent",
+	})
 	return rows
 }
 
@@ -822,6 +871,53 @@ func (c *aiCommand) agentRow(mode, desc string) intpickercompat.Entry {
 		Label:     fmt.Sprintf("%-8s %s %s", mode, status, desc),
 		Value:     mode,
 		SearchKey: mode + " " + desc,
+	}
+}
+
+func (c *aiCommand) enabledAIAgents() []config.AIAgentProvider {
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
+	}
+	agents, err := config.LoadAIEnabledAgentsFile(paths.AIEnabledAgentsFile())
+	if err != nil {
+		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
+	}
+	return agents
+}
+
+func (c *aiCommand) requireAIAgentEnabled(mode string, path aiSplitLaunchPath) error {
+	provider, ok := aiModeProvider(mode)
+	if !ok {
+		return nil
+	}
+	if aiEnabledAgentsContains(c.enabledAIAgents(), provider) {
+		return nil
+	}
+	message := disabledAIAgentLaunchMessage(mode, path)
+	_ = c.displayMessage(message)
+	return errors.New(message)
+}
+
+func aiModeProvider(mode string) (config.AIAgentProvider, bool) {
+	switch normalizeAIMode(mode) {
+	case aiModeClaude:
+		return config.AIAgentClaude, true
+	case aiModeCodex:
+		return config.AIAgentCodex, true
+	default:
+		return "", false
+	}
+}
+
+func disabledAIAgentLaunchMessage(mode string, path aiSplitLaunchPath) string {
+	switch path {
+	case aiSplitLaunchDefault:
+		return fmt.Sprintf("AI split default %s is disabled in Settings > AI Settings > Enabled agents; choose another default or use --agent shell", mode)
+	case aiSplitLaunchPicker:
+		return fmt.Sprintf("AI agent %s is disabled in Settings > AI Settings > Enabled agents", mode)
+	default:
+		return fmt.Sprintf("AI agent %s is disabled in Settings > AI Settings > Enabled agents; enable it or pass --force-agent for this direct launch", mode)
 	}
 }
 
@@ -2104,6 +2200,8 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 		case strings.HasPrefix(arg, "--agent="):
 			invocation.agent = strings.TrimSpace(strings.TrimPrefix(arg, "--agent="))
 			invocation.agentSet = true
+		case arg == "--force-agent":
+			invocation.forceAgent = true
 		case strings.HasPrefix(arg, "-"):
 			printAIUsage(stderr)
 			return aiSplitInvocation{}, fmt.Errorf("unknown ai split flag: %s", arg)
@@ -2122,6 +2220,10 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 	if extraArgsSeen && !invocation.agentSet {
 		printAIUsage(stderr)
 		return aiSplitInvocation{}, errors.New("ai split extra args require --agent")
+	}
+	if invocation.forceAgent && !invocation.agentSet {
+		printAIUsage(stderr)
+		return aiSplitInvocation{}, errors.New("ai split --force-agent requires --agent claude or --agent codex")
 	}
 	direction, err := parseAISplitDirection(positionals, "ai split", stderr)
 	if err != nil {
@@ -2142,6 +2244,10 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 		if invocation.agent == aiModeShell && len(invocation.extraArgs) > 0 {
 			printAIUsage(stderr)
 			return aiSplitInvocation{}, errors.New("ai split --agent shell cannot use extra args")
+		}
+		if invocation.forceAgent && invocation.agent != aiModeClaude && invocation.agent != aiModeCodex {
+			printAIUsage(stderr)
+			return aiSplitInvocation{}, errors.New("ai split --force-agent only applies to --agent claude or --agent codex")
 		}
 	}
 	return invocation, nil
@@ -3151,7 +3257,7 @@ func parsePositiveInt(value string) int {
 
 func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|shell|selective>] [right|down] [-- <extra-arg>...]")
+	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|shell|selective>] [--force-agent] [right|down] [-- <extra-arg>...]")
 	fmt.Fprintln(w, "  projmux ai picker [--inside] [--shell] [right|down]")
 	fmt.Fprintln(w, "  projmux ai settings [--get|--set <mode>]")
 	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")
