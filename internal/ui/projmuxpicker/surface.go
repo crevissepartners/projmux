@@ -192,8 +192,12 @@ func ListLinesWithScrollbarRows(lines []string, total, start, end, width, rows i
 		rows = len(lines)
 	}
 	hasScrollbar := total > visible && rows > 0 && width > 1
+	contentWidth, markerWidth := listContentAndMarkerWidth(width)
 	if !hasScrollbar {
-		rendered := RenderableListLines(lines, width)
+		rendered := make([]string, 0, max(len(lines), rows))
+		for _, line := range lines {
+			rendered = append(rendered, renderListLineWithMarker(line, contentWidth, strings.Repeat(" ", markerWidth)))
+		}
 		for len(rendered) < rows {
 			rendered = append(rendered, PadRight("", width))
 		}
@@ -210,10 +214,23 @@ func ListLinesWithScrollbarRows(lines []string, total, start, end, width, rows i
 		if i < len(lines) {
 			line = lines[i]
 		}
-		line = RenderableListLine(line, width-1)
-		rendered = append(rendered, PadStyledLine(TruncateANSI(line, width-1), width-1)+marker)
+		rendered = append(rendered, renderListLineWithMarker(line, contentWidth, marker))
 	}
 	return rendered
+}
+
+func listContentAndMarkerWidth(width int) (int, int) {
+	if width <= 1 {
+		return width, 0
+	}
+	return width - 1, 1
+}
+
+func renderListLineWithMarker(line string, contentWidth int, marker string) string {
+	if contentWidth <= 0 {
+		return marker
+	}
+	return RenderableListLine(line, contentWidth) + marker
 }
 
 func scrollbarThumbRange(total, visible, start, track int) (int, int) {
@@ -249,7 +266,7 @@ func RenderableListLines(lines []string, width int) []string {
 
 func RenderableListLine(line string, width int) string {
 	if line != gapSentinel {
-		return PadStyledLine(line, width)
+		return PadStyledLine(TruncateANSI(line, width), width)
 	}
 	if width <= 0 {
 		return ""
@@ -262,6 +279,10 @@ func PadStyledLine(line string, width int) string {
 		return closeStyledLine(line)
 	}
 	visible := VisibleLen(line)
+	if visible > width {
+		line = TruncateANSI(line, width)
+		visible = VisibleLen(line)
+	}
 	if visible >= width {
 		return closeStyledLine(line)
 	}

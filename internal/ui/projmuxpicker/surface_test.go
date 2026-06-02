@@ -161,6 +161,23 @@ func TestRenderableListLinePadsUnselectedStyleAfterReset(t *testing.T) {
 	}
 }
 
+func TestRenderableListLineTruncatesStyledRowsWithReset(t *testing.T) {
+	t.Parallel()
+
+	line := CurrentStart + "프로젝트 abcdefghijklmnopqrstuvwxyz" + Reset
+	rendered := RenderableListLine(line, 10)
+
+	if got, want := VisibleLen(rendered), 10; got != want {
+		t.Fatalf("VisibleLen(RenderableListLine()) = %d, want %d: %q", got, want, rendered)
+	}
+	if !strings.HasSuffix(rendered, Reset) {
+		t.Fatalf("RenderableListLine() = %q, want reset after truncating styled row", rendered)
+	}
+	if strings.Contains(rendered, "bcdef") {
+		t.Fatalf("RenderableListLine() = %q, want row clamped before overflow text", rendered)
+	}
+}
+
 func TestRenderableListLineRendersGapAtFullListWidth(t *testing.T) {
 	t.Parallel()
 
@@ -362,6 +379,32 @@ func TestListLinesWithScrollbarRowsKeepsViewportTrack(t *testing.T) {
 	}
 	if got := scrollbarCount(rendered); got == 0 {
 		t.Fatalf("scrollbar count = %d, want scrollbar on viewport track: %#v", got, rendered)
+	}
+}
+
+func TestListLinesWithScrollbarUsesSameContentBudgetWithoutScrollbar(t *testing.T) {
+	t.Parallel()
+
+	line := CurrentStart + "프로젝트 abcdefghijklmnopqrstuvwxyz" + Reset
+	noScrollbar := ListLinesWithScrollbarRows([]string{line}, 1, 0, 1, 12, 1)[0]
+	withScrollbar := ListLinesWithScrollbarRows([]string{line}, 10, 0, 1, 12, 1)[0]
+
+	if got, want := VisibleLen(noScrollbar), 12; got != want {
+		t.Fatalf("no-scrollbar row width = %d, want %d: %q", got, want, noScrollbar)
+	}
+	if got, want := VisibleLen(withScrollbar), 12; got != want {
+		t.Fatalf("scrollbar row width = %d, want %d: %q", got, want, withScrollbar)
+	}
+	noScrollbarContent := strings.TrimSuffix(noScrollbar, " ")
+	withScrollbarContent := strings.TrimSuffix(withScrollbar, Scrollbar)
+	if got, want := VisibleLen(noScrollbarContent), 11; got != want {
+		t.Fatalf("no-scrollbar content width = %d, want shared budget %d: %q", got, want, noScrollbarContent)
+	}
+	if got, want := stripANSIForSurfaceTest(noScrollbarContent), stripANSIForSurfaceTest(withScrollbarContent); got != want {
+		t.Fatalf("content budgets differ: no-scrollbar %q, scrollbar %q", got, want)
+	}
+	if !strings.HasSuffix(noScrollbarContent, Reset) || !strings.HasSuffix(withScrollbarContent, Reset) {
+		t.Fatalf("rendered rows = %#v, want reset before marker lane", []string{noScrollbar, withScrollbar})
 	}
 }
 
