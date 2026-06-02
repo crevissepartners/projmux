@@ -445,8 +445,14 @@ func TestVisibleLenUsesTerminalCellWidth(t *testing.T) {
 	if got, want := VisibleLen("프로젝트"), 8; got != want {
 		t.Fatalf("VisibleLen(korean) = %d, want terminal cell width %d", got, want)
 	}
+	if got, want := VisibleLen("api⏳✅"), 7; got != want {
+		t.Fatalf("VisibleLen(lower emoji) = %d, want terminal cell width %d", got, want)
+	}
 	if got, want := VisibleLen("api🔔"), 5; got != want {
 		t.Fatalf("VisibleLen(emoji) = %d, want terminal cell width %d", got, want)
+	}
+	if got, want := VisibleLen("☑️"), 1; got != want {
+		t.Fatalf("VisibleLen(variation selector) = %d, want terminal cell width %d", got, want)
 	}
 	if got, want := VisibleLen("e\u0301"), 1; got != want {
 		t.Fatalf("VisibleLen(combining) = %d, want terminal cell width %d", got, want)
