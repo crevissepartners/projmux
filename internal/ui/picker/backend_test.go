@@ -1048,15 +1048,22 @@ func TestNativeInteractiveKoreanSearchEmptyAndFooterFitWidth(t *testing.T) {
 func TestNativeInteractiveSettingsAIBadgeStyleLongPreviewClampsFrameRows(t *testing.T) {
 	t.Parallel()
 
-	label := "◉  " + theme.ANSIAccentActionStart + "Preview emoji            " + theme.ANSIReset +
-		"  " + theme.ANSITextDimStart + "⏳ prompt  ✅ complete  🔄 working - emoji marker - current" + theme.ANSIReset
+	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	frameStyle := nativeFrameStyleForTest(t, effective)
+	label := "◉  " + theme.ANSIAccentActionStart + "Preview emoji" + theme.ANSIReset +
+		"  " + theme.ANSITextDimStart + "⏳ ✅ 🔄" + theme.ANSIReset
 	items := []Item{{Label: label, Value: "ai-badge-style:emoji"}}
 	frame := nativeInteractiveFrame(Options{
-		UI:     "settings-ai-badge-style",
-		Title:  "Appearance - AI badge style",
-		Prompt: "Settings > Appearance > AI badge style > ",
+		UI:    "settings-ai-badge-style",
+		Title: "모양 - AI 배지 스타일",
+		TitleChips: []projmuxpicker.Chip{
+			{Label: "전체", Active: true, ClickValue: "__settings_tab_global__"},
+			{Label: "프로젝트", Disabled: true, ClickValue: "__settings_tab_project__"},
+		},
+		Prompt: "설정 > 모양 > AI 배지 스타일 > ",
 		Footer: "Enter: apply  |  Back row: parent ",
 		Items:  items,
+		Theme:  &effective,
 	}, items, "", 0, 0, 0, nativeLayout{Rows: 10, Cols: 44})
 
 	lines := strings.Split(frame, "\r\n")
@@ -1064,11 +1071,24 @@ func TestNativeInteractiveSettingsAIBadgeStyleLongPreviewClampsFrameRows(t *test
 		t.Fatalf("native frame rows = %d, want 10: %q", len(lines), frame)
 	}
 	for i, line := range lines {
+		if !strings.HasPrefix(line, frameStyle) {
+			t.Fatalf("frame row %d = %q, want app background style prefix %q", i, line, frameStyle)
+		}
+		assertNativeFrameResetsResumeStyleOrEnd(t, line, frameStyle)
 		if got, want := projmuxpicker.VisibleLen(line), 44; got != want {
 			t.Fatalf("frame row %d width = %d, want %d: %q", i, got, want, line)
 		}
-		if i > 0 && i < len(lines)-1 && strings.HasPrefix(line, "│") && !strings.HasSuffix(line, "│") {
+		plain := stripANSISequences(line)
+		if i > 0 && i < len(lines)-1 && strings.HasPrefix(plain, "│") && !strings.HasSuffix(plain, "│") {
 			t.Fatalf("frame row %d = %q, want stable vertical borders", i, line)
+		}
+	}
+	if chipRow := lines[1]; !strings.Contains(chipRow, "전체") || !strings.Contains(chipRow, "프로젝트") {
+		t.Fatalf("chip row = %q, want Korean Global/Project chips", chipRow)
+	}
+	for _, want := range []string{"설정 > 모양 > AI 배지 스타일 >", "⏳", "✅", "🔄"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("native frame = %q, want %q", frame, want)
 		}
 	}
 
@@ -1082,8 +1102,107 @@ func TestNativeInteractiveSettingsAIBadgeStyleLongPreviewClampsFrameRows(t *test
 	if previewRow == "" {
 		t.Fatalf("native frame = %q, want rendered AI badge preview row", frame)
 	}
-	if !strings.Contains(previewRow, nativeReset+" │") {
-		t.Fatalf("preview row = %q, want reset before marker lane and right border", previewRow)
+	if !strings.Contains(previewRow, nativeReset+frameStyle+" │") {
+		t.Fatalf("preview row = %q, want reset to resume app background before marker lane and right border", previewRow)
+	}
+}
+
+func TestNativeInteractiveNoFooterBlankRowsUseThemeBackground(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	frameStyle := nativeFrameStyleForTest(t, effective)
+	items := []Item{{Title: "\x1b[31mapi\x1b[0m", Value: "/repo/api"}}
+	frame := nativeInteractiveFrame(Options{
+		UI:    "switch",
+		Title: "Projects",
+		Items: items,
+		Theme: &effective,
+	}, items, "", 0, 0, 0, nativeLayout{Rows: 9, Cols: 32})
+
+	lines := strings.Split(frame, "\r\n")
+	if got, want := len(lines), 9; got != want {
+		t.Fatalf("native frame rows = %d, want %d: %q", got, want, frame)
+	}
+	blankRows := 0
+	for i, line := range lines {
+		if !strings.HasPrefix(line, frameStyle) {
+			t.Fatalf("frame row %d = %q, want app background style prefix %q", i, line, frameStyle)
+		}
+		assertNativeFrameResetsResumeStyleOrEnd(t, line, frameStyle)
+		if got, want := projmuxpicker.VisibleLen(line), 32; got != want {
+			t.Fatalf("frame row %d width = %d, want %d: %q", i, got, want, line)
+		}
+		if stripANSISequences(line) == "│"+strings.Repeat(" ", 30)+"│" {
+			blankRows++
+		}
+	}
+	if blankRows == 0 {
+		t.Fatalf("native frame = %q, want no-footer blank rows inside styled frame", frame)
+	}
+}
+
+func TestNativeInteractiveSplitPreviewGapsUseThemeBackground(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	frameStyle := nativeFrameStyleForTest(t, effective)
+	items := []Item{
+		{Title: "api", Value: "/repo/api", PreviewTarget: "/repo/api"},
+		{Title: "web", Value: "/repo/web", PreviewTarget: "/repo/web"},
+	}
+	frame := nativeInteractiveFrame(Options{
+		UI:    "switch",
+		Title: "Projects",
+		Items: items,
+		Preview: Preview{
+			Command: "printf '\\033[32mpreview\\033[0m\\n'",
+			Window:  "right,50%,border-left",
+		},
+		Theme: &effective,
+	}, items, "", 0, 0, 0, nativeLayout{Rows: 9, Cols: 96})
+
+	lines := strings.Split(frame, "\r\n")
+	if got, want := len(lines), 9; got != want {
+		t.Fatalf("native frame rows = %d, want %d: %q", got, want, frame)
+	}
+	if !strings.Contains(frame, "│") || !strings.Contains(frame, "preview") {
+		t.Fatalf("native frame = %q, want split preview separator and preview content", frame)
+	}
+	for i, line := range lines {
+		if !strings.HasPrefix(line, frameStyle) {
+			t.Fatalf("frame row %d = %q, want app background style prefix %q", i, line, frameStyle)
+		}
+		assertNativeFrameResetsResumeStyleOrEnd(t, line, frameStyle)
+		if got, want := projmuxpicker.VisibleLen(line), 96; got != want {
+			t.Fatalf("frame row %d width = %d, want %d: %q", i, got, want, line)
+		}
+	}
+}
+
+func nativeFrameStyleForTest(t *testing.T, effective theme.EffectiveTheme) string {
+	t.Helper()
+	nativeTheme := projmuxpicker.ThemeFromEffective(effective)
+	style := nativeTheme.Background + nativeTheme.Foreground
+	if style == "" {
+		t.Fatal("native frame style empty, want app background/foreground SGR")
+	}
+	return style
+}
+
+func assertNativeFrameResetsResumeStyleOrEnd(t *testing.T, line, style string) {
+	t.Helper()
+	for start := 0; ; {
+		idx := strings.Index(line[start:], nativeReset)
+		if idx < 0 {
+			return
+		}
+		after := start + idx + len(nativeReset)
+		if after == len(line) || strings.HasPrefix(line[after:], style) {
+			start = after
+			continue
+		}
+		t.Fatalf("line = %q, want reset followed by frame style %q or row end", line, style)
 	}
 }
 

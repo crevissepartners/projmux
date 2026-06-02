@@ -43,19 +43,15 @@ const (
 )
 
 // ThemeFromEffective adapts resolver-backed colors to the native picker frame.
-// Fallback-sourced fields deliberately leave DefaultTheme unchanged so existing
-// default render output stays byte-identical.
+// Even fallback-sourced fields are concrete app theme tokens, so native popup
+// rows paint the picker background instead of inheriting the terminal default.
 func ThemeFromEffective(effective theme.EffectiveTheme) Theme {
 	out := DefaultTheme
-	if effective.Background.Source != theme.SourceFallback {
-		if bg := effective.Background.Value.TruecolorBG(); bg != "" {
-			out.Background = "\x1b[" + bg + "m"
-		}
+	if bg := effective.Background.Value.TruecolorBG(); bg != "" {
+		out.Background = "\x1b[" + bg + "m"
 	}
-	if effective.Foreground.Source != theme.SourceFallback {
-		if fg := effective.Foreground.Value.TruecolorFG(); fg != "" {
-			out.Foreground = "\x1b[" + fg + "m"
-		}
+	if fg := effective.Foreground.Value.TruecolorFG(); fg != "" {
+		out.Foreground = "\x1b[" + fg + "m"
 	}
 	return out
 }
