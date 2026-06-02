@@ -1107,6 +1107,84 @@ func TestNativeInteractiveSettingsAIBadgeStyleLongPreviewClampsFrameRows(t *test
 	}
 }
 
+func TestNativeInteractiveSettingsAppearanceParentLongPreviewRowsClampFrame(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	items := []Item{
+		{
+			Label: nativeSettingsAppearanceRowForTest("AI badge style", "emoji - ⏳ prompt ✅ complete 🔄 working extra tail that clamps"),
+			Value: "ai-badge-style:",
+		},
+		{
+			Label: nativeSettingsAppearanceRowForTest("Path icon", "emoji - 📂 ~/source/repos/projmux extra tail that clamps"),
+			Value: "statusbar:cwd",
+		},
+		{
+			Label: nativeSettingsAppearanceRowForTest("Git icon", "emoji - 🐙 main * ↑1 extra tail that clamps"),
+			Value: "statusbar:git",
+		},
+		{
+			Label: nativeSettingsAppearanceRowForTest("Notify icon", "emoji - 🔔 Pending Notifications extra tail that clamps"),
+			Value: "statusbar:notify",
+		},
+	}
+	options := Options{
+		UI:    "settings-statusbar",
+		Title: "모양 - 테마 글꼴 및 아이콘 장식",
+		TitleChips: []projmuxpicker.Chip{
+			{Label: "전체", Active: true},
+			{Label: "프로젝트", Disabled: true},
+		},
+		Prompt: "설정 > 모양 > ",
+		Footer: "Enter: open  |  Back row: parent ",
+		Items:  items,
+		Theme:  &effective,
+	}
+	layout := nativeLayout{Rows: 12, Cols: 72}
+
+	for _, selected := range []int{0, len(items) - 1} {
+		frame := nativeInteractiveFrame(options, items, "", 0, selected, 0, layout)
+		lines := strings.Split(frame, "\r\n")
+		if len(lines) != layout.Rows {
+			t.Fatalf("selected %d native frame rows = %d, want %d: %q", selected, len(lines), layout.Rows, frame)
+		}
+		for i, line := range lines {
+			if got := projmuxpicker.VisibleLen(line); got != layout.Cols {
+				t.Fatalf("selected %d frame row %d width = %d, want %d: %q", selected, i, got, layout.Cols, line)
+			}
+			plain := stripANSISequences(line)
+			if i > 0 && i < len(lines)-1 && strings.HasPrefix(plain, "│") && !strings.HasSuffix(plain, "│") {
+				t.Fatalf("selected %d frame row %d = %q, want stable right border", selected, i, line)
+			}
+			if settingsAppearanceParentRowForTest(plain) && !strings.HasSuffix(plain, " │") {
+				t.Fatalf("selected %d appearance row %d = %q, want marker lane before right border", selected, i, line)
+			}
+		}
+		for _, want := range []string{"검색", "설정 > 모양 >", "전체", "프로젝트", "⏳", "✅", "🔄", "📂", "🐙", "🔔"} {
+			if !strings.Contains(frame, want) {
+				t.Fatalf("selected %d native frame = %q, want %q", selected, frame, want)
+			}
+		}
+	}
+}
+
+func nativeSettingsAppearanceRowForTest(name, description string) string {
+	const nameWidth = 24
+	padding := max(nameWidth-len(name), 0)
+	return "▸  " + theme.ANSIAccentActionStart + name + strings.Repeat(" ", padding) + theme.ANSIReset +
+		"  " + theme.ANSITextDimStart + description + theme.ANSIReset
+}
+
+func settingsAppearanceParentRowForTest(plain string) bool {
+	for _, marker := range []string{"AI badge style", "Path icon", "Git icon", "Notify icon"} {
+		if strings.Contains(plain, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestNativeInteractiveNoFooterBlankRowsUseThemeBackground(t *testing.T) {
 	t.Parallel()
 
