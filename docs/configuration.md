@@ -129,12 +129,9 @@ binds the old action prefix chords.
 
 Settings > Keybindings names `AISplitPickerToggle` as the AI split popup
 picker toggle. That action opens or closes the picker UI and is separate from
-the direct persistent AI pane actions, `ai-split-right` and `ai-split-down`.
-The direct actions open a matching AI pane when none exists, focus the existing
-matching pane on later presses, and focus back to the previous/non-AI pane when
-pressed from that matching AI pane. They do not kill the existing AI pane.
-`right` and `down` are creation hints only; they do not reposition a pane after
-it exists.
+the direct AI pane actions, `ai-split-right` and `ai-split-down`. The direct
+actions create a new managed AI pane each time they run, leaving existing AI
+panes in place. `right` and `down` choose where the new pane is created.
 
 Use an empty `keys` list to disable direct plain aliases for the action when
 editing the file by hand:

@@ -369,6 +369,9 @@ can still render a non-red action-required status badge.
 `ai split right|down` uses the configured default split mode. Add
 `--agent claude`, `--agent codex`, `--agent antigravity`, `--agent shell`, or
 `--agent selective` for a one-shot launch without changing that default.
+Concrete `--agent claude|codex|antigravity` invocations create a new managed
+agent pane every time; existing managed AI panes in the same project/session are
+not selected or reused.
 `--agent selective` opens the existing picker flow; `--agent shell` opens the
 existing plain shell split. Arguments after `--` are extra arguments appended to
 the resolved `claude`, `codex`, or `agy` executable inside the managed wrapper;

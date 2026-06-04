@@ -22,13 +22,10 @@ projmux ai split --agent codex right
 projmux ai split --agent claude down
 ```
 
-Direct AI split shortcuts are persistent pane shortcuts. The first press opens
-a matching managed AI pane when none exists. A later press from another pane
-focuses the existing matching pane for the same session, project context, and
-agent. Pressing the same shortcut while already on that matching AI pane
-focuses back to the previous/non-AI pane when tmux has one. The existing pane
-is not killed on the second press; `right` and `down` are only creation hints
-for a new pane and do not move an existing pane.
+Every direct AI split invocation creates a new managed AI pane for the selected
+agent. Existing Codex, Claude, or Antigravity panes in the same project/session
+are left in place and are not selected by the shortcut. `right` and `down`
+choose where the new pane is created.
 
 Add the separator only when you have extra arguments for the selected agent:
 
@@ -50,18 +47,18 @@ project defaults or current recommendations. If there are no private extra
 arguments, omit the separator entirely; do not leave a trailing bare `--`.
 
 Settings > AI Settings > Enabled agents is the source of truth for whether
-Claude and Codex may be launched. Disabled agents do not appear in the
+Claude, Codex, and Antigravity may be launched. Disabled agents do not appear in the
 selective picker, and direct shortcut commands such as
 `projmux ai split --agent codex right` fail clearly instead of launching. This
 is intentional: shortcuts are thin direct CLI wrappers and must respect the
 same disabled state as hand-written commands.
 
 `--force-agent` is the only override, and it is explicit CLI policy for direct
-`--agent claude|codex` launches. Do not put it in shared picker, default-mode,
-or general shortcut registrations. Use it only in a private one-shot command
-when you deliberately want to launch a disabled agent without changing
-Settings. If every AI agent is disabled, `--agent selective` still offers a
-plain `shell` split and guidance to re-enable Claude/Codex.
+`--agent claude|codex|antigravity` launches. Do not put it in shared picker,
+default-mode, or general shortcut registrations. Use it only in a private
+one-shot command when you deliberately want to launch a disabled agent without
+changing Settings. If every AI agent is disabled, `--agent selective` still
+offers a plain `shell` split and guidance to re-enable Claude/Codex/Antigravity.
 
 `shell` and `selective` are not targets for extra agent arguments. Use them
 without a tail:

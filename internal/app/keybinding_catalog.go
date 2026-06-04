@@ -264,8 +264,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:              "ai-split-right",
-			Description:     "Open an AI split to the right, focus the existing matching AI pane, or focus back from that pane",
-			DisplayName:     "Open/Focus AI Split Right",
+			Description:     "Open a new AI split to the right",
+			DisplayName:     "Open AI Split Right",
 			Kind:            keyBindingActionCommand,
 			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
@@ -283,8 +283,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:              "ai-split-down",
-			Description:     "Open an AI split below, focus the existing matching AI pane, or focus back from that pane",
-			DisplayName:     "Open/Focus AI Split Down",
+			Description:     "Open a new AI split below",
+			DisplayName:     "Open AI Split Down",
 			Kind:            keyBindingActionCommand,
 			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
