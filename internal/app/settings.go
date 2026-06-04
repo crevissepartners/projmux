@@ -1915,12 +1915,12 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 		intpickercompat.Entry{
 			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Default split mode", defaultDesc),
 			Value:     settingsAIDefaultMode,
-			SearchKey: "default split mode claude codex shell selective",
+			SearchKey: "default split mode claude codex antigravity shell selective",
 		},
 		intpickercompat.Entry{
 			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Enabled agents", c.aiEnabledAgentsSummary()),
 			Value:     settingsAIEnabledAgents,
-			SearchKey: "enabled agents claude codex",
+			SearchKey: "enabled agents claude codex antigravity",
 		},
 	)
 }
@@ -2343,6 +2343,7 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 		{aiModeSelective, "show picker each time"},
 		{aiModeClaude, "always run Claude split"},
 		{aiModeCodex, "always run Codex split"},
+		{aiModeAntigravity, "always run Antigravity split"},
 		{aiModeShell, "always open plain shell split"},
 	}
 
@@ -2396,6 +2397,7 @@ func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 	}{
 		{config.AIAgentClaude, "Claude", "Anthropic CLI split"},
 		{config.AIAgentCodex, "Codex", "OpenAI Codex split"},
+		{config.AIAgentAntigravity, "Antigravity", "Antigravity CLI split"},
 	} {
 		on := aiEnabledAgentsContains(enabled, item.provider)
 		glyph := settingsGlyphInactive
@@ -2492,6 +2494,8 @@ func aiEnabledAgentDisplayName(provider config.AIAgentProvider) string {
 		return "Claude"
 	case config.AIAgentCodex:
 		return "Codex"
+	case config.AIAgentAntigravity:
+		return "Antigravity"
 	default:
 		return string(provider)
 	}

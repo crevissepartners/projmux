@@ -183,7 +183,7 @@ func TestAIEnabledAgentsMissingDefaultsToKnownProviders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAIEnabledAgentsFile(missing) error = %v", err)
 	}
-	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentClaude, AIAgentCodex})
+	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentClaude, AIAgentCodex, AIAgentAntigravity})
 }
 
 func TestAIEnabledAgentsRoundtrip(t *testing.T) {
@@ -204,14 +204,14 @@ func TestAIEnabledAgentsIgnoresUnknownProviderNames(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), AIEnabledAgentsFileName)
-	if err := os.WriteFile(path, []byte("antigravity,codex\nshell\nclaude\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("unknownai,codex\nshell\nclaude\nantigravity\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got, err := LoadAIEnabledAgentsFile(path)
 	if err != nil {
 		t.Fatalf("LoadAIEnabledAgentsFile() error = %v", err)
 	}
-	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentCodex, AIAgentClaude})
+	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentCodex, AIAgentClaude, AIAgentAntigravity})
 }
 
 func TestAIEnabledAgentsCanPersistEmptySet(t *testing.T) {

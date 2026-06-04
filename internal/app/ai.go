@@ -28,10 +28,11 @@ import (
 )
 
 const (
-	aiModeSelective = "selective"
-	aiModeClaude    = "claude"
-	aiModeCodex     = "codex"
-	aiModeShell     = "shell"
+	aiModeSelective   = "selective"
+	aiModeClaude      = "claude"
+	aiModeCodex       = "codex"
+	aiModeAntigravity = "antigravity"
+	aiModeShell       = "shell"
 
 	aiPaneManagedOption         = "@projmux_ai_managed"
 	aiPaneAgentOption           = "@projmux_ai_agent"
@@ -828,6 +829,11 @@ func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 			return err
 		}
 		return c.runDirectAgentSplit(aiModeCodex, invocation.direction)
+	case aiModeAntigravity:
+		if err := c.requireAIAgentEnabled(aiModeAntigravity, aiSplitLaunchDefault); err != nil {
+			return err
+		}
+		return c.runDirectAgentSplit(aiModeAntigravity, invocation.direction)
 	case aiModeShell:
 		return c.runShellSplit(invocation.direction)
 	case aiModeSelective:
@@ -878,6 +884,11 @@ func (c *aiCommand) runPicker(args []string, stderr io.Writer) error {
 			return err
 		}
 		return c.runAgentSplit(aiModeCodex, direction)
+	case aiModeAntigravity:
+		if err := c.requireAIAgentEnabled(aiModeAntigravity, aiSplitLaunchPicker); err != nil {
+			return err
+		}
+		return c.runAgentSplit(aiModeAntigravity, direction)
 	case aiModeShell:
 		return c.runShellSplit(direction)
 	default:
@@ -955,6 +966,7 @@ func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 		{aiModeSelective, "show picker each time"},
 		{aiModeClaude, "always run Claude split"},
 		{aiModeCodex, "always run Codex split"},
+		{aiModeAntigravity, "always run Antigravity split"},
 		{aiModeShell, "always open plain shell split"},
 	}
 	rows := make([]intpickercompat.Entry, 0, len(modes)+1)
@@ -991,9 +1003,12 @@ func (c *aiCommand) agentRows() []intpickercompat.Entry {
 	if aiEnabledAgentsContains(enabled, config.AIAgentClaude) {
 		rows = append(rows, c.agentRow(aiModeClaude, "Anthropic CLI split"))
 	}
+	if aiEnabledAgentsContains(enabled, config.AIAgentAntigravity) {
+		rows = append(rows, c.agentRow(aiModeAntigravity, "Antigravity CLI split"))
+	}
 	if len(enabled) == 0 {
 		rows = append(rows, intpickercompat.Entry{
-			Label:     ansiDim("[INFO] AI agents disabled in Settings; use shell or re-enable Claude/Codex."),
+			Label:     ansiDim("[INFO] AI agents disabled in Settings; use shell or re-enable Claude/Codex/Antigravity."),
 			Value:     "",
 			SearchKey: "AI agents disabled settings enabled agents shell",
 		})
@@ -1049,6 +1064,8 @@ func aiModeProvider(mode string) (config.AIAgentProvider, bool) {
 		return config.AIAgentClaude, true
 	case aiModeCodex:
 		return config.AIAgentCodex, true
+	case aiModeAntigravity:
+		return config.AIAgentAntigravity, true
 	default:
 		return "", false
 	}
@@ -1489,6 +1506,17 @@ func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
 			return "codex:" + filepath.Base(contextDir)
 		}
 		return "codexcli"
+	case aiModeAntigravity:
+		if title := strings.TrimSpace(c.env("ANTIGRAVITY_THREAD_TITLE")); title != "" {
+			return "antigravity:" + title
+		}
+		if title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
+			return "antigravity:" + title
+		}
+		if contextDir != "" {
+			return "antigravity:" + filepath.Base(contextDir)
+		}
+		return "antigravity"
 	default:
 		return mode
 	}
@@ -1607,6 +1635,8 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 		binName = "claude"
 	case aiModeCodex:
 		binName = "codex"
+	case aiModeAntigravity:
+		binName = "agy"
 	default:
 		return ""
 	}
@@ -2401,7 +2431,7 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 	}
 	if invocation.forceAgent && !invocation.agentSet {
 		printAIUsage(stderr)
-		return aiSplitInvocation{}, errors.New("ai split --force-agent requires --agent claude or --agent codex")
+		return aiSplitInvocation{}, errors.New("ai split --force-agent requires --agent claude, --agent codex, or --agent antigravity")
 	}
 	direction, err := parseAISplitDirection(positionals, "ai split", stderr)
 	if err != nil {
@@ -2410,7 +2440,7 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 	invocation.direction = direction
 	if invocation.agentSet {
 		switch invocation.agent {
-		case aiModeClaude, aiModeCodex, aiModeShell, aiModeSelective:
+		case aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeShell, aiModeSelective:
 		default:
 			printAIUsage(stderr)
 			return aiSplitInvocation{}, fmt.Errorf("unknown ai split agent: %s", invocation.agent)
@@ -2423,9 +2453,9 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 			printAIUsage(stderr)
 			return aiSplitInvocation{}, errors.New("ai split --agent shell cannot use extra args")
 		}
-		if invocation.forceAgent && invocation.agent != aiModeClaude && invocation.agent != aiModeCodex {
+		if invocation.forceAgent && invocation.agent != aiModeClaude && invocation.agent != aiModeCodex && invocation.agent != aiModeAntigravity {
 			printAIUsage(stderr)
-			return aiSplitInvocation{}, errors.New("ai split --force-agent only applies to --agent claude or --agent codex")
+			return aiSplitInvocation{}, errors.New("ai split --force-agent only applies to --agent claude, --agent codex, or --agent antigravity")
 		}
 	}
 	return invocation, nil
@@ -2449,7 +2479,7 @@ func normalizeAITitle(title string) string {
 
 func displayAITopic(title string) string {
 	topic := trimAIStatePrefix(title)
-	for _, prefix := range []string{"codex:", "Codex:", "claude:", "Claude:"} {
+	for _, prefix := range []string{"codex:", "Codex:", "claude:", "Claude:", "antigravity:", "Antigravity:"} {
 		topic = strings.TrimPrefix(topic, prefix)
 	}
 	return strings.TrimSpace(topic)
@@ -2504,6 +2534,8 @@ func aiAgentDisplayName(title string) string {
 		return "Claude"
 	case strings.HasPrefix(normalized, "codex:") || strings.Contains(normalized, "codex"):
 		return "Codex"
+	case strings.HasPrefix(normalized, "antigravity:") || strings.Contains(normalized, "antigravity"):
+		return "Antigravity"
 	default:
 		return "AI"
 	}
@@ -3324,7 +3356,7 @@ func defaultString(value, fallback string) string {
 
 func normalizeAIMode(mode string) string {
 	switch strings.TrimSpace(mode) {
-	case aiModeClaude, aiModeCodex, aiModeSelective, aiModeShell:
+	case aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeSelective, aiModeShell:
 		return strings.TrimSpace(mode)
 	default:
 		return aiModeSelective
@@ -3435,7 +3467,7 @@ func parsePositiveInt(value string) int {
 
 func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|shell|selective>] [--force-agent] [right|down] [-- <extra-arg>...]")
+	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|antigravity|shell|selective>] [--force-agent] [right|down] [-- <extra-arg>...]")
 	fmt.Fprintln(w, "  projmux ai picker [--inside] [--shell] [right|down]")
 	fmt.Fprintln(w, "  projmux ai settings [--get|--set <mode>]")
 	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")

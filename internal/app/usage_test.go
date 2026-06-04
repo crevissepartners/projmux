@@ -340,6 +340,37 @@ func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
 	}
 }
 
+func TestUsageStatusIgnoresEnabledAntigravityUntilAdapterExists(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	claudeAd := &stubAdapter{name: "claude"}
+	codexAd := &stubAdapter{name: "codex"}
+
+	c := newUsageCommand()
+	c.now = func() time.Time { return now }
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.runStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	if got := stdout.String(); got != "" {
+		t.Fatalf("status usage output = %q, want empty without Antigravity usage adapter", got)
+	}
+	if claudeAd.collectCalls != 0 || codexAd.collectCalls != 0 {
+		t.Fatalf("collect calls with only Antigravity enabled = claude:%d codex:%d, want 0/0", claudeAd.collectCalls, codexAd.collectCalls)
+	}
+}
+
 func TestUsageAllWithNoEnabledAgentsSkipsCollectAndShowsFallback(t *testing.T) {
 	t.Parallel()
 

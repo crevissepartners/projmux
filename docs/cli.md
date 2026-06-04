@@ -19,7 +19,7 @@ projmux <command> [args...]
 
 | Command | Purpose |
 | --- | --- |
-| `ai` | Manage tmux AI splits (Codex/Claude) and per-pane status. |
+| `ai` | Manage tmux AI splits (Codex/Claude/Antigravity) and per-pane status. |
 | `attention` | View and manage live tmux pane attention state. |
 | `attach` | Open tmux lifecycle entry helpers. |
 | `current` | Resolve the active tmux pane path. |
@@ -321,7 +321,7 @@ supplied window.
 ## ai
 
 ```
-projmux ai split    [--agent <claude|codex|shell|selective>] [--force-agent] [right|down] [-- <extra-arg>...]
+projmux ai split    [--agent <claude|codex|antigravity|shell|selective>] [--force-agent] [right|down] [-- <extra-arg>...]
 projmux ai picker   --inside <right|down>
 projmux ai settings
 projmux ai status   set <thinking|waiting|idle> [--pane <id>]
@@ -351,21 +351,22 @@ yellow respectively. That palette is independent from notify queue
 can still render a non-red action-required status badge.
 
 `ai split right|down` uses the configured default split mode. Add
-`--agent claude`, `--agent codex`, `--agent shell`, or `--agent selective` for
-a one-shot launch without changing that default. `--agent selective` opens the
-existing picker flow; `--agent shell` opens the existing plain shell split.
-Arguments after `--` are extra arguments appended to the resolved `claude` or
-`codex` executable inside the managed wrapper; projmux still sets the context
-directory, tmux title, AI pane metadata, title watcher, and split layout.
-Settings > AI Settings > Enabled agents controls Claude/Codex launch
+`--agent claude`, `--agent codex`, `--agent antigravity`, `--agent shell`, or
+`--agent selective` for a one-shot launch without changing that default.
+`--agent selective` opens the existing picker flow; `--agent shell` opens the
+existing plain shell split. Arguments after `--` are extra arguments appended to
+the resolved `claude`, `codex`, or `agy` executable inside the managed wrapper;
+projmux still sets the context directory, tmux title, AI pane metadata, title
+watcher, and split layout.
+Settings > AI Settings > Enabled agents controls Claude/Codex/Antigravity launch
 visibility. Disabled agents are hidden from the selective picker and from the
 default-mode picker. A saved default that later becomes disabled fails clearly
-instead of falling back to another agent. Direct `--agent claude|codex` launches
-also fail when disabled, including shortcuts that call the same command. For a
-deliberate one-shot direct CLI launch, pass `--force-agent`; picker and saved
-default paths do not use this override. If all AI agents are disabled, the
-selective picker still offers the plain `shell` split and shows guidance to
-re-enable Claude/Codex.
+instead of falling back to another agent. Direct
+`--agent claude|codex|antigravity` launches also fail when disabled, including
+shortcuts that call the same command. For a deliberate one-shot direct CLI
+launch, pass `--force-agent`; picker and saved default paths do not use this
+override. If all AI agents are disabled, the selective picker still offers the
+plain `shell` split and shows guidance to re-enable Claude/Codex/Antigravity.
 For user-level skill, slash-command, editor, or launcher registrations that
 call this contract, see [AI Agent Shortcuts](ai-agent-shortcuts.md).
 
