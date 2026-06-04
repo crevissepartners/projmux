@@ -25,7 +25,7 @@ projmux shell
 <p align="center">
   <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI attention demo" width="820">
   <br>
-  <em>An agent finishes in another project. Open notifications, select it, and jump straight back.</em>
+  <em>Switch between projects while an AI pane waits for permission, then jump back from the tmux notification list.</em>
 </p>
 
 ## Why
@@ -94,6 +94,32 @@ For detailed configuration, including `PROJMUX_PROJDIR`, managed roots,
 notifications, and usage tracking, see [Configuration](docs/configuration.md).
 For update behavior by installer type, see [Upgrading](docs/upgrading.md).
 
+## Agent Skills
+
+projmux shortcuts can also live in your AI tool as user-level skills or slash
+commands. A skill is just a thin wrapper around the same CLI contract:
+
+```sh
+projmux ai split --agent codex right
+projmux ai split --agent claude down
+```
+
+After registering a Claude slash command such as `/projmux:codex-right`, ask
+Claude to use it with a prompt. Claude runs the projmux command, Codex opens in
+a managed pane attached to the current project, and the prompt is delivered
+there immediately.
+projmux tracks hook events from the opened pane and shows permission or
+completion notifications in tmux.
+
+Install templates and naming conventions are in
+[AI Agent Shortcuts](docs/ai-agent-shortcuts.md).
+
+<p align="center">
+  <img src="docs/assets/projmux-skill-workflow.gif" alt="projmux skill workflow demo" width="820">
+  <br>
+  <em>Claude invokes a registered projmux skill with a prompt, opens a managed Codex pane, and Codex answers there.</em>
+</p>
+
 ## More Docs
 
 - [Install](docs/install.md)
@@ -105,7 +131,6 @@ For update behavior by installer type, see [Upgrading](docs/upgrading.md).
 - [Hooks](docs/hooks.md)
 - [Usage tracking](docs/usage-tracking.md)
 - [Agent Workflow](docs/agent-workflow.md)
-- [README Hero GIF Recording](docs/readme-hero-gif-recording.md)
 
 ## Development
 
