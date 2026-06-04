@@ -2746,6 +2746,163 @@ func TestSwitchCommandPickerCtrlXDoesNotKillHome(t *testing.T) {
 	}
 }
 
+func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *testing.T) {
+	t.Parallel()
+
+	executor := &capturingSwitchSessionExecutor{
+		exists: map[string]bool{
+			"tmp-app":      true,
+			"tmp-previous": true,
+			"tmp-worker":   true,
+		},
+		recentSessions: []string{"tmp-app", "tmp-previous", "tmp-worker"},
+	}
+	executor.killHook = func(sessionName string) {
+		executor.exists[sessionName] = false
+	}
+
+	var nativeCalls int
+	var mutateCalls int
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app", "/tmp/previous", "/tmp/worker"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			nativeCalls++
+			if options.UI != switchUISidebar {
+				t.Fatalf("native UI = %q, want %q", options.UI, switchUISidebar)
+			}
+			var killAction intpicker.Action
+			for _, action := range options.Actions {
+				if action.Key == switchKillExpectKey {
+					killAction = action
+					break
+				}
+			}
+			if killAction.Mutate == nil {
+				t.Fatalf("kill action = %#v, want mutable native action", killAction)
+			}
+			update, err := killAction.Mutate(intpicker.ActionContext{
+				Key:           switchKillExpectKey,
+				Value:         "/tmp/app",
+				SelectedIndex: 0,
+			})
+			if err != nil {
+				t.Fatalf("kill mutate error = %v", err)
+			}
+			mutateCalls++
+			values := pickerItemValues(update.Items)
+			if !slices.Contains(values, "/tmp/app") {
+				t.Fatalf("refreshed values = %q, want killed project path preserved as normal candidate", values)
+			}
+			if !slices.Contains(values, "/tmp/previous") || !slices.Contains(values, "/tmp/worker") {
+				t.Fatalf("refreshed values = %q, want normal neighboring rows", values)
+			}
+			if update.Preview.Command == "" {
+				t.Fatal("refreshed preview command is empty")
+			}
+			if got, want := update.Preview.Window, switchPreviewWindow(switchUISidebar); got != want {
+				t.Fatalf("refreshed preview window = %q, want %q", got, want)
+			}
+			return intpicker.Result{Closed: true}, nil
+		}),
+		sessions:   executor,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			switch path {
+			case "/tmp/app":
+				return "tmp-app", nil
+			case "/tmp/previous":
+				return "tmp-previous", nil
+			case "/tmp/worker":
+				return "tmp-worker", nil
+			default:
+				return "", errors.New("unexpected path")
+			}
+		}),
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if nativeCalls != 1 {
+		t.Fatalf("native calls = %d, want 1 in-place picker session", nativeCalls)
+	}
+	if mutateCalls != 1 {
+		t.Fatalf("mutate calls = %d, want 1", mutateCalls)
+	}
+	if got, want := executor.calls, []string{"open:tmp-previous", "kill:tmp-app"}; !equalStrings(got, want) {
+		t.Fatalf("session calls = %q, want %q", got, want)
+	}
+	if got, want := cmd.focusSession, "tmp-previous"; got != want {
+		t.Fatalf("focus session = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandPickerSidebarKillMutateBlocksWithoutPreviousLiveSession(t *testing.T) {
+	t.Parallel()
+
+	executor := &capturingSwitchSessionExecutor{
+		exists:         map[string]bool{"tmp-app": true},
+		recentSessions: []string{"tmp-app"},
+	}
+	var mutateCalls int
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			var killAction intpicker.Action
+			for _, action := range options.Actions {
+				if action.Key == switchKillExpectKey {
+					killAction = action
+					break
+				}
+			}
+			if killAction.Mutate == nil {
+				t.Fatalf("kill action = %#v, want mutable native action", killAction)
+			}
+			update, err := killAction.Mutate(intpicker.ActionContext{
+				Key:           switchKillExpectKey,
+				Value:         "/tmp/app",
+				SelectedIndex: 0,
+			})
+			if err != nil {
+				t.Fatalf("kill mutate error = %v", err)
+			}
+			mutateCalls++
+			if values := pickerItemValues(update.Items); !slices.Contains(values, "/tmp/app") {
+				t.Fatalf("refreshed values = %q, want blocked kill row preserved", values)
+			}
+			return intpicker.Result{Closed: true}, nil
+		}),
+		sessions:   executor,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if mutateCalls != 1 {
+		t.Fatalf("mutate calls = %d, want 1", mutateCalls)
+	}
+	if got := executor.killSessionName; got != "" {
+		t.Fatalf("kill session called unexpectedly: %q", got)
+	}
+	if got := executor.openSessionName; got != "" {
+		t.Fatalf("open session called unexpectedly: %q", got)
+	}
+}
+
 func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 	t.Parallel()
 
@@ -3111,6 +3268,7 @@ type capturingSwitchSessionExecutor struct {
 	exists             map[string]bool
 	recentSessions     []string
 	calls              []string
+	killHook           func(string)
 	ensureErr          error
 	openErr            error
 	killErr            error
@@ -3198,7 +3356,13 @@ func (e *capturingSwitchSessionExecutor) OpenSession(_ context.Context, sessionN
 func (e *capturingSwitchSessionExecutor) KillSession(_ context.Context, sessionName string) error {
 	e.killSessionName = sessionName
 	e.calls = append(e.calls, "kill:"+sessionName)
-	return e.killErr
+	if e.killErr != nil {
+		return e.killErr
+	}
+	if e.killHook != nil {
+		e.killHook(sessionName)
+	}
+	return nil
 }
 
 func (e *capturingSwitchSessionExecutor) AuthorizeProjectHooks(_ context.Context, cwd string) (bool, error) {

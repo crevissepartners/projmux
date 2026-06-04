@@ -1851,6 +1851,10 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 		return intpicker.Result{}, fmt.Errorf("native picker is not configured")
 	}
 
+	sidebarKillActions := intpicker.CustomActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:KillSession"}, []string{switchKillExpectKey})...)
+	if plan.UI == switchUISidebar {
+		sidebarKillActions = c.switchSidebarKillActions()
+	}
 	options := intpicker.Options{
 		UI:             plan.UI,
 		Items:          plan.Items,
@@ -1859,14 +1863,10 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 		Footer:         switchPickerFooter(plan.UI, plan.StatusMessage, c.homeDir, c.lookupEnv),
 		InitialQuery:   plan.InitialQuery,
 		DeferredUpdate: plan.DeferredUpdate,
-		Actions: append(
-			pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
-			intpicker.CustomActions(append(
-				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:KillSession"}, []string{switchKillExpectKey}),
-				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:PinProject"}, []string{switchPinExpectKey})...,
-			)...)...,
-		),
+		Actions:        pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
 	}
+	options.Actions = append(options.Actions, sidebarKillActions...)
+	options.Actions = append(options.Actions, intpicker.CustomActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:PinProject"}, []string{switchPinExpectKey})...)...)
 	if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, plan.CurrentPath); err == nil {
 		options = source.pickerOptions(options)
 	} else {
@@ -1904,6 +1904,94 @@ func (c *switchCommand) runPickerBackend(compatOptions intpickercompat.Options, 
 		return intpicker.Result{}, fmt.Errorf("run native switch picker: %w", err)
 	}
 	return result, nil
+}
+
+func (c *switchCommand) switchSidebarKillActions() []intpicker.Action {
+	keys := effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:KillSession"}, []string{switchKillExpectKey})
+	actions := make([]intpicker.Action, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		actions = append(actions, intpicker.Action{
+			Key:    key,
+			Intent: intpicker.ActionCustom,
+			Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+				return c.mutateSwitchSidebarKill(context.Background(), ctx)
+			},
+		})
+	}
+	return actions
+}
+
+func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+	target := cleanOptionalPath(action.Value)
+	if target == "" || target == switchSettingsSentinel {
+		return c.switchSidebarRefreshUpdate(ctx)
+	}
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if target == cleanOptionalPath(homeDir) {
+		return c.switchSidebarRefreshUpdate(ctx)
+	}
+	if c.validate == nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("switch directory validator is not configured")
+	}
+	if err := c.validate(target); err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if c.identityErr != nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("configure session identity resolver: %w", c.identityErr)
+	}
+	if c.identity == nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("switch session identity resolver is not configured")
+	}
+	sessionName, err := c.identity.SessionIdentityForPath(target)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("resolve session identity: %w", err)
+	}
+	fallbackSession, err := c.previousActiveSession(ctx, sessionName)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if fallbackSession == "" {
+		return c.switchSidebarRefreshUpdate(ctx)
+	}
+	if err := c.killFocusedSession(ctx, sessionName, fallbackSession, nil); err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	c.focusSession = fallbackSession
+	return c.switchSidebarRefreshUpdate(ctx)
+}
+
+func (c *switchCommand) switchSidebarRefreshUpdate(ctx context.Context) (intpicker.DeferredUpdate, error) {
+	inputs, err := c.candidateInputs("")
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if c.discover == nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("switch candidate discovery is not configured")
+	}
+	paths, err := c.discover(inputs)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("discover switch candidates: %w", err)
+	}
+	_, items, _, err := c.renderFullRows(ctx, switchUISidebar, paths)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	update := intpicker.DeferredUpdate{Items: items}
+	surface, err := c.switchPickerSurface(switchPlan{UI: switchUISidebar}, true)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if surface.PreviewCommand != "" {
+		update.Preview = intpicker.Preview{Command: surface.PreviewCommand, Window: switchPreviewWindow(switchUISidebar)}
+	}
+	return update, nil
 }
 
 type switchPickerSurface struct {
