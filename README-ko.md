@@ -15,7 +15,7 @@ attention까지 함께 다루는 터미널 workspace 도구입니다.
 <p align="center">
   <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI attention demo" width="820">
   <br>
-  <em>다른 프로젝트에서 일하는 동안 agent 작업이 끝나면 notification에서 바로 해당 pane으로 돌아갑니다.</em>
+  <em>project를 오가며 AI permission 대기를 상태줄에서 확인하고, notification list에서 해당 pane으로 돌아갑니다.</em>
 </p>
 
 ## 무엇인가
@@ -82,17 +82,42 @@ projmux shell
 설정은 [Configuration](docs/configuration.md)을 참고하세요. installer별 update
 동작은 [Upgrading](docs/upgrading.md)에 있습니다.
 
+## 에이전트 스킬
+
+projmux shortcut은 AI 도구의 user-level skill 또는 slash command로도 등록할
+수 있습니다. 스킬은 같은 CLI contract를 감싸는 얇은 wrapper입니다:
+
+```sh
+projmux ai split --agent codex right
+projmux ai split --agent claude down
+```
+
+`/projmux:codex-right` 같은 Claude slash command를 등록한 뒤 prompt와 함께
+실행시키면, Claude가 projmux command를 호출하고 현재 project에 붙은 managed
+Codex pane이 새로 열립니다. prompt는 새 pane으로 바로 전달되고,
+permission/completion hook event가 tmux 상태줄과 notification list에
+표시됩니다.
+
+설치 template과 naming convention은
+[AI Agent Shortcuts](docs/ai-agent-shortcuts.md)에 정리되어 있습니다.
+
+<p align="center">
+  <img src="docs/assets/projmux-skill-workflow.gif" alt="projmux skill workflow demo" width="820">
+  <br>
+  <em>Claude가 prompt와 함께 등록된 projmux skill을 호출해 managed Codex pane을 열고, Codex가 그 자리에서 응답합니다.</em>
+</p>
+
 ## 추가 문서
 
 - [Install](docs/install.md)
 - [Configuration](docs/configuration.md)
 - [Terminal Keybindings](docs/keybindings.md)
+- [AI Agent Shortcuts](docs/ai-agent-shortcuts.md)
 - [CLI Reference](docs/cli.md)
 - [Statusbar](docs/statusbar.md)
 - [Hooks](docs/hooks.md)
 - [Usage tracking](docs/usage-tracking.md)
 - [Agent Workflow](docs/agent-workflow.md)
-- [README Hero GIF Recording](docs/readme-hero-gif-recording.md)
 
 ## 개발
 
