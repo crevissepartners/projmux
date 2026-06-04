@@ -32,7 +32,7 @@ native picker engine and is not a public dependency-policy change.
 | close `--bind key:abort` | Esc, Ctrl-C, Alt-N, Ctrl-Alt-S variants | Covered | `CloseActions`; `TestNativeRunnerUsesSharedCloseActions` |
 | terminal modified-key encoding | legacy parser fixtures, Ghostty/kitty-style modified keys | Covered | native handles app-specific parser fixtures, generic modified letters/digits, and non-text keys such as Enter/Esc/Backspace/Tab; this is backend parity, not product fallback guidance; `TestNativeInteractiveSupportsCSIuAppKeyBindings` |
 | `execute-silent(...)+refresh-preview` | switch/session preview cycling | Covered for command execution and rerender loop | `pickercompat.PickerOptions`/`pickercompat.OptionsFromPicker`; `TestNativeInteractiveRunsCustomActionCommandAndRefreshes`; `TestPickerOptionsMapsCompatBindingsToContractActions`; Docker no-fzf e2e sends `Right` and `Alt-Down` before selection |
-| action-local mutable refresh | notify sidebar `a` ack and `x` non-critical clear; switch sidebar `Ctrl-X` kill | Covered for in-session row/live-state refresh without picker restart | `picker.Action.Mutate` returns a `DeferredUpdate` and reuses the native frame diff renderer plus value-then-clamp selection preservation; `TestNativeInteractiveCustomActionMutatesItemsAndRefreshes`; `TestNativeInteractiveCustomActionRefreshPreservesSelectedValue`; notify sidebar app tests assert one picker invocation with refreshed rows/live state; switch sidebar kill app tests assert one native picker invocation with refreshed rows/preview and previous-live-session guard preservation |
+| action-local/event-backed mutable refresh | notify sidebar `a` ack and `x` non-critical clear; notify sidebar queue-write event refresh; switch sidebar `Ctrl-X` kill | Covered for in-session row/live-state refresh without picker restart | `picker.Action.Mutate` returns a `DeferredUpdate`, notify queue-write events trigger the same `DeferredUpdate` path after an event arrives, and both reuse the native frame diff renderer plus value-then-clamp selection preservation; `TestNativeInteractiveCustomActionMutatesItemsAndRefreshes`; `TestNativeInteractiveCustomActionRefreshPreservesSelectedValue`; `TestNativeInteractiveDeferredUpdateTriggerRefreshesRepeatedly`; notify sidebar app tests assert one picker invocation with refreshed rows/live state and event subscription; switch sidebar kill app tests assert one native picker invocation with refreshed rows/preview and previous-live-session guard preservation |
 | `focus:execute-silent(...)` | switch sidebar focus | Covered | native renders the selection frame diff before running sidebar focus commands so movement stays visible before tmux focus side effects; `runNativeFocusAction`; `TestNativeInteractiveRunsFocusActionOnSelectionChange` |
 | `start:pos(N)` | switch sidebar initial row | Covered | `pickercompat.PickerOptions`/`pickercompat.OptionsFromPicker`; `TestPickerOptionsFromCompatPickerMapsStartPosToInitialIndex`; `TestPickerOptionsMapsCompatBindingsToContractActions` |
 | `--preview` | switch, sessions | Covered by command output | `nativePreviewLines`; `TestNativeInteractiveRendersSelectedPreview` |
@@ -111,8 +111,10 @@ contract; native popups still rely on the existing borderless tmux popup path.
   the right-side preview layout instead of inline preview, asserts the stored
   preview cursor, selects `bravo-web`, and asserts tmux reports the selected
   session's active target on the expected window with the expected pane path.
-- `notify sidebar`: native routing is unit-covered; Docker no-fzf e2e pushes a
-  notification, presses printable expect key `a`, and verifies the row is acked.
+- `notify sidebar`: native routing is unit-covered; app tests cover
+  queue-write event subscription and picker tests cover repeated
+  event-triggered deferred refresh. Docker no-fzf e2e pushes a notification,
+  presses printable expect key `a`, and verifies the row is acked.
 
 ## Experimental Boundaries
 

@@ -699,6 +699,84 @@ func TestNativeInteractiveDeferredUpdatePreservesMutatedFilterAndSelection(t *te
 	}
 }
 
+func TestNativeInteractiveDeferredUpdateTriggerRefreshesRepeatedly(t *testing.T) {
+	t.Parallel()
+
+	reader, writer := io.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	var out lockedBuffer
+	trigger := make(chan struct{}, 1)
+	var started sync.Once
+	deferredStarted := make(chan struct{})
+	calls := 0
+	resultCh := make(chan struct {
+		result Result
+		err    error
+	}, 1)
+
+	go func() {
+		result, err := runNativeInteractive(reader, &out, Options{
+			UI:            "notify-sidebar",
+			DisableSearch: true,
+			Items:         []Item{{Title: "alpha", Value: "alpha"}},
+			DeferredUpdate: func() (DeferredUpdate, error) {
+				started.Do(func() { close(deferredStarted) })
+				calls++
+				if calls == 1 {
+					return DeferredUpdate{Items: []Item{{Title: "beta", Value: "beta"}}}, nil
+				}
+				return DeferredUpdate{Items: []Item{{Title: "gamma", Value: "gamma"}}}, nil
+			},
+			DeferredUpdateTrigger: trigger,
+		})
+		resultCh <- struct {
+			result Result
+			err    error
+		}{result: result, err: err}
+	}()
+
+	waitForNativeOutput(t, &out, "alpha")
+	select {
+	case <-deferredStarted:
+		t.Fatal("deferred update started before trigger")
+	case <-time.After(20 * time.Millisecond):
+	}
+	trigger <- struct{}{}
+	select {
+	case <-deferredStarted:
+	case <-time.After(time.Second):
+		t.Fatal("deferred update did not start after trigger")
+	}
+	waitForNativeOutput(t, &out, "beta")
+	trigger <- struct{}{}
+	waitForNativeOutput(t, &out, "gamma")
+	if _, err := writer.Write([]byte("\r")); err != nil {
+		t.Fatalf("write enter input: %v", err)
+	}
+
+	var got struct {
+		result Result
+		err    error
+	}
+	select {
+	case got = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("runNativeInteractive did not return after enter")
+	}
+	if got.err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", got.err)
+	}
+	if got.result.Value != "gamma" {
+		t.Fatalf("result = %#v, want latest refreshed row", got.result)
+	}
+	if calls != 2 {
+		t.Fatalf("deferred calls = %d, want two event refreshes", calls)
+	}
+}
+
 type lockedBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer

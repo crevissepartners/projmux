@@ -35,6 +35,7 @@ type notifyCommand struct {
 	now        func() time.Time
 	runner     tmuxRunner
 	hooks      *sendNotiHookDispatcher
+	events     notifyQueueRefreshEvents
 	picker     intpickercompat.Runner
 	native     intpicker.Runner
 	executable func() (string, error)
@@ -58,6 +59,7 @@ func newNotifyCommand() *notifyCommand {
 		return cmd
 	}
 	cmd.store = notify.NewDefaultStore(paths)
+	cmd.events = newNotifyQueueRefreshTransport(paths.StateDir)
 	return cmd
 }
 
@@ -188,6 +190,7 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 			Message: strings.TrimSpace(entry.Text),
 		})
 	}
+	c.publishNotifyQueueRefreshBestEffort()
 
 	if *asJSON {
 		payload := map[string]any{
@@ -305,6 +308,13 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		return err
 	}
 	options := c.notifySidebarPickerOptions(store, entries, severities, sources, limit, locale)
+	if trigger, cancel := c.subscribeNotifyQueueRefreshBestEffort(context.Background()); trigger != nil {
+		defer cancel()
+		options.DeferredUpdate = func() (intpicker.DeferredUpdate, error) {
+			return c.notifySidebarDeferredUpdate(store, severities, sources, limit, locale)
+		}
+		options.DeferredUpdateTrigger = trigger
+	}
 	if options.Theme == nil {
 		options = fallbackRenderThemeSource().pickerOptions(options)
 	}
@@ -354,6 +364,26 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		}
 		return nil
 	}
+}
+
+func (c *notifyCommand) publishNotifyQueueRefreshBestEffort() {
+	if c == nil || c.events == nil {
+		return
+	}
+	_ = c.events.Publish()
+}
+
+func (c *notifyCommand) subscribeNotifyQueueRefreshBestEffort(parent context.Context) (<-chan struct{}, context.CancelFunc) {
+	if c == nil || c.events == nil {
+		return nil, func() {}
+	}
+	ctx, cancel := context.WithCancel(parent)
+	events, err := c.events.Subscribe(ctx)
+	if err != nil {
+		cancel()
+		return nil, func() {}
+	}
+	return events, cancel
 }
 
 func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []notify.Notification, severities, sources []string, limit int, locale i18n.Locale) intpicker.Options {
