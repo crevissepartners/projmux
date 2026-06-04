@@ -55,6 +55,7 @@ const (
 	KeyWelcomeShellSurfaces          Key = "welcome.shell.surfaces"
 	KeyWelcomeShellContinue          Key = "welcome.shell.continue"
 	KeyWelcomeShellUpdateNow         Key = "welcome.shell.update_now"
+	KeyWelcomeShellUpdateGuidance    Key = "welcome.shell.update_guidance"
 	KeyWelcomeShellUpdateSkipped     Key = "welcome.shell.update_skipped"
 	KeyWelcomeShellPromptDefault     Key = "welcome.shell.prompt.default"
 	KeyWelcomeShellPromptUpdate      Key = "welcome.shell.prompt.update"
@@ -109,6 +110,7 @@ var foundationKeys = []Key{
 	KeyWelcomeShellSurfaces,
 	KeyWelcomeShellContinue,
 	KeyWelcomeShellUpdateNow,
+	KeyWelcomeShellUpdateGuidance,
 	KeyWelcomeShellUpdateSkipped,
 	KeyWelcomeShellPromptDefault,
 	KeyWelcomeShellPromptUpdate,

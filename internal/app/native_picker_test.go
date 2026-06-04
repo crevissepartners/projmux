@@ -301,9 +301,6 @@ func TestProductionPickerConstructorsDoNotCreateCompatRunner(t *testing.T) {
 	if cmd := newNotifyCommand(); cmd.picker != nil {
 		t.Fatal("newNotifyCommand() created compat runner")
 	}
-	if cmd := newShellCommand(nil); cmd.updatePromptRunner != nil {
-		t.Fatal("newShellCommand() created compat runner")
-	}
 }
 
 func TestPickerOptionsFromCompatPickerMapsCandidatesWhenEntriesAreEmpty(t *testing.T) {

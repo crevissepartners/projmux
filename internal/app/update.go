@@ -395,22 +395,8 @@ func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("update check does not accept positional arguments")
 	}
 
-	rel, err := c.fetchLatestRelease(context.Background())
+	cache, err := c.fetchAndSaveLatestRelease(context.Background())
 	if err != nil {
-		return err
-	}
-	cache := updateCache{
-		Version:     1,
-		CheckedAt:   c.clock().UTC(),
-		TagName:     strings.TrimSpace(rel.TagName),
-		Name:        strings.TrimSpace(rel.Name),
-		HTMLURL:     strings.TrimSpace(rel.HTMLURL),
-		PublishedAt: rel.PublishedAt.UTC(),
-	}
-	if cache.TagName == "" {
-		return errors.New("update check: latest release response did not include tag_name")
-	}
-	if err := c.saveCache(cache); err != nil {
 		return err
 	}
 
@@ -443,6 +429,43 @@ func (c *updateCommand) status() (updateStatus, error) {
 		}, nil
 	}
 	return c.statusFromCache(cache)
+}
+
+func (c *updateCommand) refreshCacheIfNeeded(ctx context.Context) error {
+	cache, ok, err := c.loadCache()
+	if err != nil {
+		return err
+	}
+	if ok {
+		checked := cache.CheckedAt.UTC()
+		if !checked.IsZero() && c.clock().Sub(checked) <= updateCacheMaxAge {
+			return nil
+		}
+	}
+	_, err = c.fetchAndSaveLatestRelease(ctx)
+	return err
+}
+
+func (c *updateCommand) fetchAndSaveLatestRelease(ctx context.Context) (updateCache, error) {
+	rel, err := c.fetchLatestRelease(ctx)
+	if err != nil {
+		return updateCache{}, err
+	}
+	cache := updateCache{
+		Version:     1,
+		CheckedAt:   c.clock().UTC(),
+		TagName:     strings.TrimSpace(rel.TagName),
+		Name:        strings.TrimSpace(rel.Name),
+		HTMLURL:     strings.TrimSpace(rel.HTMLURL),
+		PublishedAt: rel.PublishedAt.UTC(),
+	}
+	if cache.TagName == "" {
+		return updateCache{}, errors.New("update check: latest release response did not include tag_name")
+	}
+	if err := c.saveCache(cache); err != nil {
+		return updateCache{}, err
+	}
+	return cache, nil
 }
 
 func (c *updateCommand) statusFromCache(cache updateCache) (updateStatus, error) {

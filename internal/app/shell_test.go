@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -618,7 +620,7 @@ func TestShellWelcomeShowsUntilSkippedForVersion(t *testing.T) {
 	}
 }
 
-func TestShellWelcomeSkipsWhenSkipVersionMatchesCurrent(t *testing.T) {
+func TestShellWelcomeLegacySkipVersionDoesNotSuppressShellEntry(t *testing.T) {
 	home := t.TempDir()
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -639,9 +641,7 @@ func TestShellWelcomeSkipsWhenSkipVersionMatchesCurrent(t *testing.T) {
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if strings.Contains(stdout.String(), version.String()) {
-		t.Fatalf("stdout = %q, did not expect skipped welcome", stdout.String())
-	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
 }
 
 func TestShellWelcomeShowsWhenSkipVersionDiffers(t *testing.T) {
@@ -692,7 +692,23 @@ func TestShellWelcomeLegacyLastWelcomedVersionIsNotSkip(t *testing.T) {
 	assertWelcomeOutput(t, "stdout", stdout.String())
 }
 
-func TestShellWelcomeSkipInputStoresCurrentVersion(t *testing.T) {
+func TestShellWelcomeSkipInputStoresLatestUpdateTag(t *testing.T) {
+	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	latest := testVersionTag(t, 1)
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     latest,
+		PublishedAt: now,
+	})
+
 	home := t.TempDir()
 	cmd := &shellCommand{
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
@@ -701,21 +717,26 @@ func TestShellWelcomeSkipInputStoresCurrentVersion(t *testing.T) {
 		welcomeInput: strings.NewReader("s\n"),
 		writeFile:    os.WriteFile,
 		runCommand:   (&recordingShellRunner{}).run,
+		update:       update,
 	}
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	state := readShellWelcomeState(t, cmd)
-	if got, want := state.SkipVersion, version.String(); got != want {
-		t.Fatalf("skip_version = %q, want %q", got, want)
+	skipPath, err := cmd.updateSkipPath()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), version.String()) {
-		t.Fatalf("stdout = %q, want current version in skip confirmation", stdout.String())
+	data, err := os.ReadFile(skipPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "projmux") {
-		t.Fatalf("stdout = %q, want projmux marker in skip confirmation", stdout.String())
+	if !strings.Contains(string(data), latest) {
+		t.Fatalf("skip state = %s, want %s", data, latest)
+	}
+	if !strings.Contains(stdout.String(), "Skipped "+latest+" until the next release.") {
+		t.Fatalf("stdout = %q, want skip confirmation", stdout.String())
 	}
 }
 
@@ -788,9 +809,7 @@ func TestShellWelcomeCorruptStateDoesNotBlockStartup(t *testing.T) {
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if strings.Contains(stdout.String(), version.String()) {
-		t.Fatalf("stdout = %q, did not expect welcome with corrupt state", stdout.String())
-	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
 	if recorder.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
 	}
@@ -827,12 +846,8 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 		writeFile:    os.WriteFile,
 		runCommand:   (&recordingShellRunner{}).run,
 		update:       update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected daily update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		}),
 		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected daily update prompt: %#v", options)
+			t.Fatalf("unexpected separate update prompt: %#v", options)
 			return intpickercompat.Result{}, nil
 		})),
 	}
@@ -846,14 +861,17 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
 	}
 	assertWelcomeOutput(t, "stdout", stdout.String())
-	for _, want := range []string{"u=", "s=", "d="} {
+	for _, want := range []string{"Enter=Continue", "u=Upgrade", "s=Skip until next"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want inline prompt token %q", stdout.String(), want)
 		}
 	}
+	if strings.Contains(stdout.String(), "d=") {
+		t.Fatalf("stdout = %q, did not want retired daily skip action", stdout.String())
+	}
 }
 
-func TestShellWelcomeDeclinePrintsUpdateCommand(t *testing.T) {
+func TestShellWelcomeUnknownActionContinuesWithoutUpdating(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
@@ -882,12 +900,8 @@ func TestShellWelcomeDeclinePrintsUpdateCommand(t *testing.T) {
 		writeFile:    os.WriteFile,
 		runCommand:   (&recordingShellRunner{}).run,
 		update:       update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected daily update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		}),
 		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected daily update prompt: %#v", options)
+			t.Fatalf("unexpected separate update prompt: %#v", options)
 			return intpickercompat.Result{}, nil
 		})),
 	}
@@ -896,12 +910,12 @@ func TestShellWelcomeDeclinePrintsUpdateCommand(t *testing.T) {
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Run `projmux update apply` to upgrade.") {
-		t.Fatalf("stdout = %q, want manual update command", stdout.String())
+	if strings.Contains(stdout.String(), "Run `projmux update apply` to upgrade.") {
+		t.Fatalf("stdout = %q, did not want retired manual-command decline copy", stdout.String())
 	}
 }
 
-func TestShellWelcomeDailySkipWritesUpdateSkipState(t *testing.T) {
+func TestShellWelcomeSkipUntilNextWritesUpdateSkipState(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
@@ -923,7 +937,7 @@ func TestShellWelcomeDailySkipWritesUpdateSkipState(t *testing.T) {
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:    func(string) string { return "" },
 		homeDir:      func() (string, error) { return home, nil },
-		welcomeInput: strings.NewReader("d\n"),
+		welcomeInput: strings.NewReader("s\n"),
 		writeFile:    os.WriteFile,
 		runCommand:   (&recordingShellRunner{}).run,
 		update:       update,
@@ -944,7 +958,7 @@ func TestShellWelcomeDailySkipWritesUpdateSkipState(t *testing.T) {
 	if !strings.Contains(string(data), latest) {
 		t.Fatalf("skip state = %s, want %s", data, latest)
 	}
-	if !strings.Contains(stdout.String(), "Skipped "+latest) {
+	if !strings.Contains(stdout.String(), "Skipped "+latest+" until the next release.") {
 		t.Fatalf("stdout = %q, want skip confirmation", stdout.String())
 	}
 }
@@ -984,7 +998,7 @@ func TestShellWelcomeSkipsStaleUpdateRow(t *testing.T) {
 	}
 }
 
-func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
+func TestShellDoesNotRunSeparateUpdatePicker(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
@@ -1009,21 +1023,17 @@ func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
 
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
-	var promptOptions intpickercompat.Options
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			promptOptions = options
-			return intpickercompat.Result{Value: shellUpdateApply}, nil
-		}),
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			promptOptions = options
-			return intpickercompat.Result{Value: shellUpdateApply}, nil
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
 		})),
 	}
 	markShellWelcomed(t, cmd)
@@ -1032,35 +1042,23 @@ func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := promptOptions.UI, "shell-update"; got != want {
-		t.Fatalf("prompt UI = %q, want %q", got, want)
-	}
-	if !strings.Contains(promptOptions.Header, latest) {
-		t.Fatalf("prompt header = %q, want latest %s", promptOptions.Header, latest)
-	}
-	for _, want := range []string{shellUpdateApply, shellUpdateLater, shellUpdateSkip} {
-		if !hasEntryValue(promptOptions.Entries, want) {
-			t.Fatalf("prompt entries = %#v, want %s", promptOptions.Entries, want)
-		}
-	}
-	wantCommands := []string{"npm update -g projmux", "projmux tmux apply"}
-	if !reflect.DeepEqual(updateCommands, wantCommands) {
-		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
-	}
 	if recorder.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
 	}
-	if !strings.Contains(stdout.String(), ">> running: npm update -g projmux") {
-		t.Fatalf("stdout = %q, want npm update command", stdout.String())
+	if len(updateCommands) != 0 {
+		t.Fatalf("update commands = %#v, want none without inline u action", updateCommands)
+	}
+	if !strings.Contains(stdout.String(), latest) {
+		t.Fatalf("stdout = %q, want inline release prompt for %s", stdout.String(), latest)
 	}
 }
 
-func TestShellUpdatePromptLaterContinuesWithoutApplying(t *testing.T) {
+func TestShellWelcomeUnsupportedInstallerShowsGuidanceAndContinues(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
-			return "npm"
+			return "source"
 		}
 		return ""
 	}
@@ -1078,30 +1076,35 @@ func TestShellUpdatePromptLaterContinuesWithoutApplying(t *testing.T) {
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			return intpickercompat.Result{Value: shellUpdateLater}, nil
-		}),
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("u\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			return intpickercompat.Result{Value: shellUpdateLater}, nil
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
 		})),
 	}
 	markShellWelcomed(t, cmd)
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if recorder.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
 	}
+	for _, want := range []string{"Upgrade guidance", "source", "update from the source checkout"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
 }
 
-func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
+func TestShellWelcomeSkippedUpdateTagSuppressesActionsUntilNextTag(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
@@ -1120,30 +1123,23 @@ func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
 
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
-	promptCalls := 0
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			promptCalls++
-			return intpickercompat.Result{Value: shellUpdateSkip}, nil
-		}),
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("s\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			promptCalls++
-			return intpickercompat.Result{Value: shellUpdateSkip}, nil
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
 		})),
 	}
 	markShellWelcomed(t, cmd)
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("first Run() error = %v", err)
-	}
-	if promptCalls != 1 {
-		t.Fatalf("prompt calls after first run = %d, want 1", promptCalls)
 	}
 	skipPath, err := cmd.updateSkipPath()
 	if err != nil {
@@ -1157,55 +1153,64 @@ func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
 		t.Fatalf("skip state = %s, want %s", data, latest)
 	}
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	cmd.welcomeInput = strings.NewReader("u\n")
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
-	if promptCalls != 1 {
-		t.Fatalf("prompt calls after skipped run = %d, want 1", promptCalls)
+	if strings.Contains(stdout.String(), "u=Upgrade") {
+		t.Fatalf("stdout = %q, did not want upgrade action after skip", stdout.String())
+	}
+	if strings.Contains(stdout.String(), ">> running:") {
+		t.Fatalf("stdout = %q, did not want update apply after skip", stdout.String())
 	}
 }
 
-func TestShellSkipsPromptWithoutFreshSupportedUpdate(t *testing.T) {
+func TestShellWelcomeRefreshesStaleUpdateCacheBestEffort(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
-			return "source"
+			return "npm"
 		}
 		return ""
 	}
+	latest := testVersionTag(t, 2)
+	update.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := fmt.Sprintf(`{"tag_name":%q,"name":%q,"html_url":"https://github.com/crevissepartners/projmux/releases/tag/%s","published_at":"2026-05-06T10:00:00Z"}`, latest, latest, latest)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
 		Version:     1,
-		CheckedAt:   now,
+		CheckedAt:   now.Add(-25 * time.Hour),
 		TagName:     testVersionTag(t, 1),
-		PublishedAt: now,
+		PublishedAt: now.Add(-25 * time.Hour),
 	})
-
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		})),
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 	}
-	markShellWelcomed(t, cmd)
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if recorder.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
+	}
+	if !strings.Contains(stdout.String(), latest) {
+		t.Fatalf("stdout = %q, want refreshed latest %s", stdout.String(), latest)
 	}
 }
 

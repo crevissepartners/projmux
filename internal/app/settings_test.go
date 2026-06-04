@@ -4890,7 +4890,7 @@ func TestSettingsAboutWelcomeOpensVisibleViewer(t *testing.T) {
 	if !hasEntryLabelContaining(welcomeOptions.Entries, "Welcome to projmux shell") {
 		t.Fatalf("welcome viewer entries = %#v, want welcome payload", welcomeOptions.Entries)
 	}
-	if !hasEntryLabelContaining(welcomeOptions.Entries, "Enter continues for this run") {
+	if !hasEntryLabelContaining(welcomeOptions.Entries, "Enter continues into the shell") {
 		t.Fatalf("welcome viewer entries = %#v, want shell prompt guidance", welcomeOptions.Entries)
 	}
 	if len(tmuxRunner.calls) != 0 {

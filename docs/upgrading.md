@@ -3,13 +3,14 @@
 projmux has two update surfaces:
 
 - `projmux shell` reads the cached release status before opening the app. When
-  the cache is fresh and a newer release is available, startup shows a picker
-  with Update Now, Later, and Skip This Version actions.
+  the cache is missing or stale, startup attempts a short best-effort refresh
+  and continues if it fails. When a newer release is available, the shell
+  welcome offers Continue, Upgrade, and Skip until next actions.
 - Settings > About > Update shows the current version, detected installer,
   cached latest version, Check Updates, and Update Now actions.
 
-Startup never reaches the network. Refresh the cache explicitly when you want
-projmux to check GitHub Releases:
+Refresh the cache explicitly when you want a full foreground GitHub Releases
+check:
 
 ```sh
 projmux update check
@@ -23,6 +24,11 @@ projmux update apply
 
 Use `--dry-run` to see the planned action and `--no-apply` to skip reloading
 the live tmux config after the binary changes.
+
+Shell Upgrade invokes only `projmux update apply`. Shell Skip until next stores
+the current latest release tag in `update-skip.json`; the prompt appears again
+when the cached latest tag changes. For `source` and unknown installer sources,
+Upgrade prints guidance and continues shell entry without applying anything.
 
 ## npm Installs
 

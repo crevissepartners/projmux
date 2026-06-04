@@ -35,17 +35,9 @@ func (c *shellCommand) prepareWelcomeState() (string, bool) {
 	}
 	state := shellWelcomeState{}
 	data, err := os.ReadFile(path)
-	switch {
-	case err == nil:
-		if err := json.Unmarshal(data, &state); err != nil {
-			return current, false
-		}
-		if strings.TrimSpace(state.SkipVersion) == current {
-			return current, false
-		}
-	case errors.Is(err, os.ErrNotExist):
-		// First run for this version, or no skip has been recorded yet.
-	default:
+	if err == nil {
+		_ = json.Unmarshal(data, &state)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return current, false
 	}
 	state.Version = welcomeStateVersion

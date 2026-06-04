@@ -111,5 +111,6 @@ Shell bootstrap UX is phase-split:
 - `projmux welcome` remains the stdout revisit command.
 - `Settings > About > Welcome` opens a visible native viewer independent of
   shell skip state.
-- Shell `skip_version` state applies only to the automatic `projmux shell`
-  prompt; it does not hide manual revisit surfaces.
+- Legacy shell `skip_version` state remains readable for compatibility but no
+  longer suppresses the automatic `projmux shell` prompt; release skips live in
+  `update-skip.json` and do not hide manual revisit surfaces.
