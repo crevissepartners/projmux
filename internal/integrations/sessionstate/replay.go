@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/aiprovider"
+	antigravityagent "github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	claudeagent "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	codexagent "github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 )
@@ -313,6 +314,8 @@ func replayPaneLaunchTail(launcher agentLaunchResolver, window Window, pane Pane
 		return nil
 	}
 	switch agent {
+	case antigravityagent.AgentName:
+		resumeArgs, err = antigravityagent.ResumeArgs(pane.Recipe.ResumeID)
 	case claudeagent.AgentName:
 		resumeArgs, err = claudeagent.ResumeArgs(pane.Recipe.ResumeID)
 	case codexagent.AgentName:
@@ -373,6 +376,8 @@ func replayAgentRecipe(ctx context.Context, runner Runner, target string, window
 		return nil
 	}
 	switch agent {
+	case antigravityagent.AgentName:
+		command, err = antigravityagent.ResumeCommand(pane.Recipe.ResumeID)
 	case claudeagent.AgentName:
 		command, err = claudeagent.ResumeCommand(pane.Recipe.ResumeID)
 	case codexagent.AgentName:

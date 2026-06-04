@@ -11,6 +11,16 @@ still collect and render that provider even when it is disabled.
 Both adapters read from the upstream's own view of the account so the
 percentages match what `claude /usage` and `codex` show natively.
 
+Antigravity is intentionally not registered as a 5-hour/weekly quota adapter.
+The only stable Phase 0b usage signal is statusline `context_window`, which is
+conversation context-window usage, not account quota usage. `projmux usage
+--model antigravity` and ambient all-model table output therefore render an
+explicit unsupported note when Antigravity is enabled. The statusbar usage
+popup shows an `Antigravity ctx ... unsupported` row, while the compact tmux
+status segment stays silent unless Claude/Codex quota rows exist. Projmux does
+not infer quota, reset timestamps, or account limits from screen scraping,
+tokens, history, OAuth/cache files, or binary strings.
+
 ## Adapters
 
 ### Claude (`internal/core/usage/adapters/claude`)
@@ -85,7 +95,7 @@ across machines (Dropbox, iCloud Drive).
 ### `projmux usage`
 
 ```
-projmux usage [--model codex|claude|all] [--window 5h|weekly|all]
+projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|all]
               [--json] [--force|-f]
 ```
 
@@ -114,7 +124,9 @@ When no AI agents are enabled, all-model table output contains no
 provider rows and prints a short Settings hint. `--json` returns an
 empty array. Explicit `--model claude` and `--model codex` bypass the
 enabled-agent filter for read-only inspection and collect/render only
-the requested adapter.
+the requested adapter. Explicit `--model antigravity` renders the same
+unsupported/context-window-only note even when Antigravity is disabled, because
+there is no supported Antigravity quota adapter to collect.
 
 ### `projmux status usage`
 

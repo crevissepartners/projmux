@@ -371,6 +371,56 @@ func TestUsageStatusIgnoresEnabledAntigravityUntilAdapterExists(t *testing.T) {
 	}
 }
 
+func TestUsageRunShowsAntigravityUnsupportedState(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	c := newUsageCommand()
+	c.now = func() time.Time { return now }
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "all"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Antigravity usage unsupported") ||
+		!strings.Contains(output, "context-window-only") ||
+		!strings.Contains(output, "no supported 5h/weekly quota or reset contract") {
+		t.Fatalf("output = %q, want Antigravity unsupported context-window-only state", output)
+	}
+	if strings.Contains(output, "enable Claude or Codex") {
+		t.Fatalf("output = %q, should not imply Antigravity is not an enabled agent", output)
+	}
+}
+
+func TestUsageRunExplicitAntigravityShowsUnsupportedState(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	c := newUsageCommand()
+	c.now = func() time.Time { return now }
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentClaude}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "antigravity"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if output := stdout.String(); !strings.Contains(output, "Antigravity usage unsupported") {
+		t.Fatalf("output = %q, want explicit Antigravity unsupported state", output)
+	}
+}
+
 func TestUsageAllWithNoEnabledAgentsSkipsCollectAndShowsFallback(t *testing.T) {
 	t.Parallel()
 

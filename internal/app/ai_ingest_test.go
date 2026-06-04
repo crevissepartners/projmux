@@ -1444,14 +1444,15 @@ func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
 	}
 }
 
-func TestIngestAntigravityStopPushesCompletionMetadataWithoutResumeState(t *testing.T) {
+func TestIngestAntigravityStopPushesCompletionMetadataAndResumeState(t *testing.T) {
 	home := t.TempDir()
 	store := &stubNotifyStore{}
 	cmd := testAICommand(home)
 	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	conversationID := "123e4567-e89b-12d3-a456-426614174000"
 	cmd.stdin = strings.NewReader(`{
 		"eventName": "Stop",
-		"conversationId": "ag-conv-123",
+		"conversationId": "` + conversationID + `",
 		"cwd": "/repo/projmux",
 		"transcriptPath": "/tmp/ag.jsonl",
 		"terminationReason": "completed",
@@ -1466,13 +1467,13 @@ func TestIngestAntigravityStopPushesCompletionMetadataWithoutResumeState(t *test
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 	got := store.pushed[0]
-	if got.ID != "ai:antigravity:stop:ag-conv-123" || got.Text != "Ready" || got.Severity != notify.SeverityInfo {
+	if got.ID != "ai:antigravity:stop:"+conversationID || got.Text != "Ready" || got.Severity != notify.SeverityInfo {
 		t.Fatalf("pushed = %#v", got)
 	}
 	for key, want := range map[string]string{
 		"agent":              "antigravity",
 		"event":              "Stop",
-		"conversation_id":    "ag-conv-123",
+		"conversation_id":    conversationID,
 		"cwd":                "/repo/projmux",
 		"transcript_path":    "/tmp/ag.jsonl",
 		"termination_reason": "completed",
@@ -1486,14 +1487,17 @@ func TestIngestAntigravityStopPushesCompletionMetadataWithoutResumeState(t *test
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeAntigravity}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneThreadIDOption, "ag-conv-123"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneThreadIDOption, conversationID}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneSessionIDOption, conversationID}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeIDOption, conversationID}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeSourceOption, "hook"}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
 		}
 	}
-	if hasRecordedAISetOption(cmdRecorder(cmd).commands, aiPaneResumeIDOption) || hasRecordedAISetOption(cmdRecorder(cmd).commands, aiPaneSessionIDOption) {
-		t.Fatalf("commands = %#v, want no session-state resume writes for Antigravity", cmdRecorder(cmd).commands)
+	if !hasRecordedAISetOption(cmdRecorder(cmd).commands, aiPaneResumeUpdatedAtOption) {
+		t.Fatalf("commands = %#v, want Antigravity resume updated timestamp", cmdRecorder(cmd).commands)
 	}
 }
 

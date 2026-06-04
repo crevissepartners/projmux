@@ -61,8 +61,8 @@ func TestProviderRegistryMetadataForCurrentAgents(t *testing.T) {
 	if !ok {
 		t.Fatalf("Lookup(antigravity) missing")
 	}
-	if antigravity.UsageSupported || antigravity.UsageModel != "" || antigravity.Integrate.Supported || antigravity.SessionState.Supported {
-		t.Fatalf("Antigravity metadata = %#v, want no usage/integrate/session-state support in this phase", antigravity)
+	if antigravity.UsageSupported || antigravity.UsageModel != "" || antigravity.Integrate.Supported || !antigravity.SessionState.Supported {
+		t.Fatalf("Antigravity metadata = %#v, want session-state support without quota usage/integrate support", antigravity)
 	}
 	if !antigravity.HookDiagnostics.Supported || antigravity.HookDiagnostics.ID != "antigravity-hooks" || antigravity.HookProvider != "antigravity" {
 		t.Fatalf("Antigravity hook metadata = %#v, want manual hook diagnostics support", antigravity)

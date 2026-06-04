@@ -611,6 +611,17 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 				Reason:          "resume metadata older than 24h0m0s",
 				SnapshotPath:    "/tmp/workspace.json",
 			},
+			{
+				Session:         "workspace",
+				WindowIndex:     0,
+				PaneIndex:       2,
+				Agent:           "antigravity",
+				Status:          "available",
+				Confidence:      "high",
+				ResumeSource:    "hook",
+				ResumeUpdatedAt: "2026-06-04T03:04:05Z",
+				SnapshotPath:    "/tmp/workspace.json",
+			},
 		}
 	}
 
@@ -627,6 +638,10 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 		"confidence: medium",
 		"source: codex-log",
 		"resume metadata older than 24h0m0s",
+		"antigravity",
+		"workspace:0.2",
+		"confidence: high",
+		"source: hook",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
@@ -641,8 +656,8 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("json unmarshal error = %v\n%s", err, stdout.String())
 	}
-	if len(report.SessionStateResume) != 1 || report.SessionStateResume[0].Status != "stale" || report.SessionStateResume[0].Confidence != "medium" {
-		t.Fatalf("SessionStateResume = %#v, want stale medium diagnostic", report.SessionStateResume)
+	if len(report.SessionStateResume) != 2 || report.SessionStateResume[0].Status != "stale" || report.SessionStateResume[1].Agent != "antigravity" || report.SessionStateResume[1].Status != "available" {
+		t.Fatalf("SessionStateResume = %#v, want codex stale and antigravity available diagnostics", report.SessionStateResume)
 	}
 }
 

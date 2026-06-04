@@ -238,7 +238,7 @@ Authoritative AI token usage. See [usage-tracking.md](usage-tracking.md)
 for adapter detail.
 
 ```
-projmux usage [--model codex|claude|all] [--window 5h|weekly|all]
+projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|all]
               [--json] [--force|-f]
 ```
 
@@ -248,6 +248,11 @@ active backoff and bypasses the per-adapter throttle floor (Claude `5m`,
 Codex shares the global `30s`). `--json` emits the snapshot array; when
 backoff is active the wrapper `{snapshots, backoff}` object is emitted
 instead.
+
+Antigravity has no supported 5-hour/weekly quota adapter. `--model
+antigravity` renders an explicit unsupported note: the stable Antigravity
+signal is `context-window-only` statusline data, which is not mixed into the
+Claude/Codex quota HUD.
 
 ## status
 
@@ -446,9 +451,12 @@ without those error signals pushes an info completion row. Accepted identity
 fields include `conversationId`/`conversation_id`, `cwd` or `workspace.path`,
 `transcriptPath`, `fullyIdle`, `agent_state`, and `context_window`.
 Antigravity notify metadata uses `agent=antigravity`. Phase 3 session-state
-restore and usage/quota HUD support are not included; Antigravity ingest stores
-`conversationId` as pane thread metadata for matching, does not write resume
-metadata, and does not read transcript contents.
+restore is included: Antigravity ingest stores `conversationId` as pane thread
+metadata for matching and as session-state resume metadata. Restore uses
+`agy --conversation <uuid>` when that id is present and UUID-shaped; otherwise
+session-state preview/doctor render `resume unavailable`. Usage quota HUD
+support remains unsupported because the only stable usage signal is
+`context-window-only` statusline data. Transcript contents are not read.
 
 `ingest bell --pane <pane_id>` is the narrow tmux-bell fallback ingest path.
 It does not require the pane to be AI-managed. Projmux resolves session,

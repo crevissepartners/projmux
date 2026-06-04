@@ -60,8 +60,10 @@ routing/debug context such as `agent`, `thread_id`, `turn_id`, `cwd`,
 `tool_name`, `tool_input.command`, `error_type`, `subagent_type`, and
 `teammate_name`. Antigravity manual hook rows carry `agent=antigravity`,
 `conversation_id`, `termination_reason`, `fully_idle`,
-`tool_confirmation_pending`, `agent_state`, and `context_window` when present;
-Phase 3 session-state restore and usage/quota HUD support are not included.
+`tool_confirmation_pending`, `agent_state`, and `context_window` when present.
+The same `conversation_id` can seed session-state restore via
+`agy --conversation <uuid>` when it is UUID-shaped; Antigravity quota usage
+remains unsupported because `context_window` is not 5-hour/weekly quota data.
 Tmux bell fallback rows carry `agent=bell`, `event=bell`, and tmux target
 context such as pane title, command, session, window, pane, and socket.
 `notify list --json` includes this metadata as the structured data channel
