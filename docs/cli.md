@@ -152,6 +152,10 @@ client is attached on that socket, it emits the configured desktop
 notification instead. `--socket` is explicit; when omitted, the socket is
 derived from `$TMUX`.
 
+After a successful tmux focus, `projmux focus` dispatches host-terminal
+osfocus only when Desktop notification mode is `raise`. Modes `off` /
+`none` and `notify` keep focus in tmux without a host-window raise.
+
 `--client` is a preferred origin tmux client. In-app consumers such as the
 status bar and notify sidebar pass the clicked client so focus redirects that
 display first. If that client is gone, focus falls back to an attached client

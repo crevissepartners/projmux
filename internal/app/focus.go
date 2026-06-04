@@ -40,6 +40,7 @@ type focusNotifier interface {
 type focusCommand struct {
 	runner        focusCommandRunner
 	lookupEnv     func(string) string
+	homeDir       func() (string, error)
 	stdout        io.Writer
 	stderr        io.Writer
 	notifierOnce  func(stderr io.Writer) focusNotifier
@@ -80,6 +81,7 @@ func newFocusCommand() *focusCommand {
 	return &focusCommand{
 		runner:        focusExecRunner{},
 		lookupEnv:     os.Getenv,
+		homeDir:       os.UserHomeDir,
 		notifyStoreFn: defaultStatusNotifyStore,
 		notifierOnce: func(stderr io.Writer) focusNotifier {
 			// Reuse the existing notifier chain (WSL toast, notify-send, hook).
