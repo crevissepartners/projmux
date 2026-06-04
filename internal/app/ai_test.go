@@ -17,6 +17,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -176,6 +177,25 @@ func TestAIPickerFiltersDisabledAgents(t *testing.T) {
 	}
 	if hasEntryValue(runner.options.Entries, aiModeCodex) {
 		t.Fatalf("runner entries = %#v, want disabled Codex hidden", runner.options.Entries)
+	}
+}
+
+func TestAIProviderPickerRowsDeriveFromRegistryAndHideDisabledProviders(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	cmd := testAICommand(home)
+
+	rows := cmd.agentRows()
+	if got, want := entryValues(rows), []string{string(aiprovider.Claude), aiModeShell}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentRows values = %#v, want enabled registry providers plus shell %#v", got, want)
+	}
+	if hasEntryValue(rows, string(aiprovider.Codex)) {
+		t.Fatalf("agentRows = %#v, want disabled Codex hidden", rows)
+	}
+	if hasEntryValue(rows, string(aiprovider.Antigravity)) {
+		t.Fatalf("agentRows = %#v, want disabled Antigravity hidden", rows)
 	}
 }
 

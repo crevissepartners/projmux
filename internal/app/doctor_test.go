@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
@@ -713,6 +715,46 @@ command = "projmux ai ingest codex-hook"
 	}
 	if len(cmdRecorder(cmd).commands) != 0 {
 		t.Fatalf("commands = %#v, want read-only diagnostics", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestDoctorAINotifyDiagnosticsProviderMetadataShowsDisabledProviders(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	paths := config.DefaultPaths(configHome, t.TempDir())
+	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), nil); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+
+	cmd := testAICommand(t.TempDir())
+	cmd.readFile = os.ReadFile
+	diagnostics := doctorAINotifyDiagnostics(cmd)
+	byID := map[string]doctorAINotifyIntegration{}
+	for _, diagnostic := range diagnostics {
+		byID[diagnostic.ID] = diagnostic
+	}
+
+	for _, tc := range []struct {
+		id       string
+		provider string
+	}{
+		{id: "codex-hooks", provider: "codex"},
+		{id: "claude-hooks", provider: "claude"},
+	} {
+		diagnostic, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("diagnostics = %#v, want %s even when provider is disabled", diagnostics, tc.id)
+		}
+		if diagnostic.ProviderID != tc.provider {
+			t.Fatalf("%s ProviderID = %q, want %q", tc.id, diagnostic.ProviderID, tc.provider)
+		}
+		if diagnostic.ProviderEnabled == nil || *diagnostic.ProviderEnabled {
+			t.Fatalf("%s ProviderEnabled = %#v, want disabled false", tc.id, diagnostic.ProviderEnabled)
+		}
+		if !strings.Contains(diagnostic.Guidance, "provider disabled") || !strings.Contains(diagnostic.Guidance, "explicit diagnostics") {
+			t.Fatalf("%s Guidance = %q, want disabled-provider diagnostic policy", tc.id, diagnostic.Guidance)
+		}
 	}
 }
 

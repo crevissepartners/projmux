@@ -502,45 +502,55 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 		for _, r := range report.AINotifyIntegrations {
 			tag := fmt.Sprintf("[%s]", r.Status)
 			fmt.Fprintf(&buf, "  %-11s%-22s", tag, r.Name)
+			if r.ProviderID != "" {
+				state := "disabled"
+				if r.ProviderEnabled != nil && *r.ProviderEnabled {
+					state = "enabled"
+				}
+				fmt.Fprintf(&buf, "provider: %s (%s)", r.ProviderID, state)
+			}
 			if r.ConfigPath != "" {
+				if r.ProviderID != "" {
+					buf.WriteString("; ")
+				}
 				fmt.Fprintf(&buf, "config: %s", r.ConfigPath)
 			}
 			if r.ConflictReason != "" {
-				if r.ConfigPath != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString(r.ConflictReason)
 			}
 			if r.TestedVersion != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("tested: ")
 				buf.WriteString(r.TestedVersion)
 			}
 			if r.Guidance != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("notice: ")
 				buf.WriteString(r.Guidance)
 			}
 			if r.InstallCommand != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("install: ")
 				buf.WriteString(r.InstallCommand)
 			}
 			if r.DryRunCommand != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("dry-run: ")
 				buf.WriteString(r.DryRunCommand)
 			}
 			if r.RemoveCommand != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" || r.DryRunCommand != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" || r.DryRunCommand != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("remove: ")

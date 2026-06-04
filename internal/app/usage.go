@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	"github.com/crevissepartners/projmux/internal/core/usage"
 	claudeadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/claude"
 	codexadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/codex"
@@ -239,12 +240,16 @@ func (c *usageCommand) managerForScope(modelScope []string) (*usage.Manager, err
 func (c *usageCommand) defaultManager(modelScope []string) (*usage.Manager, error) {
 	registry := usage.NewRegistry()
 	for _, model := range normalizeUsageModelScope(modelScope) {
-		switch model {
-		case string(config.AIAgentClaude):
+		provider, ok := aiprovider.Lookup(model)
+		if !ok || !provider.UsageSupported || provider.UsageModel != model {
+			continue
+		}
+		switch provider.ID {
+		case aiprovider.Claude:
 			if err := registry.Register(claudeadapter.New()); err != nil {
 				return nil, fmt.Errorf("usage: register claude adapter: %w", err)
 			}
-		case string(config.AIAgentCodex):
+		case aiprovider.Codex:
 			if err := registry.Register(codexadapter.New()); err != nil {
 				return nil, fmt.Errorf("usage: register codex adapter: %w", err)
 			}
@@ -285,9 +290,10 @@ func (c *usageCommand) modelScope(model string) ([]string, bool) {
 	switch model {
 	case "all":
 		return c.ambientModelScope(), false
-	case string(config.AIAgentClaude), string(config.AIAgentCodex):
-		return []string{model}, true
 	default:
+		if provider, ok := aiprovider.Lookup(model); ok && provider.UsageSupported && provider.UsageModel == model {
+			return []string{model}, true
+		}
 		return nil, true
 	}
 }
@@ -328,10 +334,11 @@ func normalizeAIAgentProviders(agents []config.AIAgentProvider) []config.AIAgent
 func aiAgentProvidersToUsageModels(agents []config.AIAgentProvider) []string {
 	out := make([]string, 0, len(agents))
 	for _, agent := range normalizeAIAgentProviders(agents) {
-		switch agent {
-		case config.AIAgentClaude, config.AIAgentCodex:
-			out = append(out, string(agent))
+		provider, ok := aiprovider.Lookup(string(agent))
+		if !ok || !provider.UsageSupported || strings.TrimSpace(provider.UsageModel) == "" {
+			continue
 		}
+		out = append(out, provider.UsageModel)
 	}
 	return out
 }

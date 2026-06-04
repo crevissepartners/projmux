@@ -1,5 +1,12 @@
 package app
 
+import (
+	"strings"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aiprovider"
+)
+
 type doctorAINotifyStatus string
 
 const (
@@ -10,34 +17,44 @@ const (
 )
 
 type doctorAINotifyIntegration struct {
-	ID             string               `json:"id"`
-	Name           string               `json:"name"`
-	Status         doctorAINotifyStatus `json:"status"`
-	ConfigPath     string               `json:"config_path,omitempty"`
-	ConflictReason string               `json:"conflict_reason,omitempty"`
-	Guidance       string               `json:"guidance,omitempty"`
-	TestedVersion  string               `json:"tested_version,omitempty"`
-	InstallCommand string               `json:"install_command,omitempty"`
-	RemoveCommand  string               `json:"remove_command,omitempty"`
-	DryRunCommand  string               `json:"dry_run_command,omitempty"`
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	ProviderID      string               `json:"provider_id,omitempty"`
+	ProviderEnabled *bool                `json:"provider_enabled,omitempty"`
+	Status          doctorAINotifyStatus `json:"status"`
+	ConfigPath      string               `json:"config_path,omitempty"`
+	ConflictReason  string               `json:"conflict_reason,omitempty"`
+	Guidance        string               `json:"guidance,omitempty"`
+	TestedVersion   string               `json:"tested_version,omitempty"`
+	InstallCommand  string               `json:"install_command,omitempty"`
+	RemoveCommand   string               `json:"remove_command,omitempty"`
+	DryRunCommand   string               `json:"dry_run_command,omitempty"`
 }
 
 func doctorAINotifyDiagnostics(ai *aiCommand) []doctorAINotifyIntegration {
 	if ai == nil {
 		ai = newAICommand()
 	}
-	return []doctorAINotifyIntegration{
-		doctorCodexIntegrationDiagnostic(ai),
-		doctorClaudeIntegrationDiagnostic(ai),
-		doctorTmuxBellIntegrationDiagnostic(ai),
+	enabled := doctorAIEnabledProviders()
+	var diagnostics []doctorAINotifyIntegration
+	for _, provider := range aiprovider.HookDiagnosticSupported() {
+		switch provider.ID {
+		case aiprovider.Claude:
+			diagnostics = append(diagnostics, withProviderDiagnosticMetadata(doctorClaudeIntegrationDiagnostic(ai), provider, enabled))
+		case aiprovider.Codex:
+			diagnostics = append(diagnostics, withProviderDiagnosticMetadata(doctorCodexIntegrationDiagnostic(ai), provider, enabled))
+		}
 	}
+	diagnostics = append(diagnostics, doctorTmuxBellIntegrationDiagnostic(ai))
+	return diagnostics
 }
 
 func doctorCodexIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {
-	base := "projmux ai integrate codex"
+	provider, _ := aiprovider.Lookup(string(aiprovider.Codex))
+	base := provider.Integrate.Command
 	out := doctorAINotifyIntegration{
-		ID:             "codex-hooks",
-		Name:           "Codex hooks",
+		ID:             provider.HookDiagnostics.ID,
+		Name:           provider.HookDiagnostics.Name,
 		InstallCommand: base,
 		RemoveCommand:  base + " --remove",
 		DryRunCommand:  base + " --dry-run",
@@ -73,10 +90,11 @@ func doctorCodexIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {
 }
 
 func doctorClaudeIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {
-	base := "projmux ai integrate claude"
+	provider, _ := aiprovider.Lookup(string(aiprovider.Claude))
+	base := provider.Integrate.Command
 	out := doctorAINotifyIntegration{
-		ID:             "claude-hooks",
-		Name:           "Claude Code hooks",
+		ID:             provider.HookDiagnostics.ID,
+		Name:           provider.HookDiagnostics.Name,
 		TestedVersion:  ai.aiHookObservedVersion(aiHookProviderClaude),
 		InstallCommand: base,
 		RemoveCommand:  base + " --remove",
@@ -136,4 +154,50 @@ func doctorTmuxBellUnsupportedDiagnostic() doctorAINotifyIntegration {
 		Status:   doctorAINotifyStatusSkip,
 		Guidance: "unsupported on the native Windows psmux track; use Codex or Claude hooks for AI notifications",
 	}
+}
+
+func doctorAIEnabledProviders() map[aiprovider.ID]bool {
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return defaultEnabledProviderSet()
+	}
+	agents, err := config.LoadAIEnabledAgentsFile(paths.AIEnabledAgentsFile())
+	if err != nil {
+		return defaultEnabledProviderSet()
+	}
+	enabled := map[aiprovider.ID]bool{}
+	for _, agent := range agents {
+		enabled[aiprovider.ID(agent)] = true
+	}
+	return enabled
+}
+
+func defaultEnabledProviderSet() map[aiprovider.ID]bool {
+	enabled := map[aiprovider.ID]bool{}
+	for _, agent := range config.DefaultAIEnabledAgents {
+		enabled[aiprovider.ID(agent)] = true
+	}
+	return enabled
+}
+
+func withProviderDiagnosticMetadata(diag doctorAINotifyIntegration, provider aiprovider.Metadata, enabled map[aiprovider.ID]bool) doctorAINotifyIntegration {
+	on := enabled[provider.ID]
+	diag.ProviderID = string(provider.ID)
+	diag.ProviderEnabled = &on
+	if !on {
+		diag.Guidance = appendDiagnosticGuidance(diag.Guidance, "provider disabled in Settings > AI Settings > Enabled agents; explicit diagnostics still show existing hook state")
+	}
+	return diag
+}
+
+func appendDiagnosticGuidance(existing, extra string) string {
+	existing = strings.TrimSpace(existing)
+	extra = strings.TrimSpace(extra)
+	if existing == "" {
+		return extra
+	}
+	if extra == "" {
+		return existing
+	}
+	return existing + " " + extra
 }

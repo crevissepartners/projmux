@@ -20,6 +20,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
@@ -964,11 +965,20 @@ func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 		desc string
 	}{
 		{aiModeSelective, "show picker each time"},
-		{aiModeClaude, "always run Claude split"},
-		{aiModeCodex, "always run Codex split"},
-		{aiModeAntigravity, "always run Antigravity split"},
-		{aiModeShell, "always open plain shell split"},
 	}
+	for _, provider := range aiprovider.SettingsVisible() {
+		modes = append(modes, struct {
+			mode string
+			desc string
+		}{
+			mode: string(provider.ID),
+			desc: "always run " + provider.DisplayName + " split",
+		})
+	}
+	modes = append(modes, struct {
+		mode string
+		desc string
+	}{aiModeShell, "always open plain shell split"})
 	rows := make([]intpickercompat.Entry, 0, len(modes)+1)
 	if provider, ok := aiModeProvider(current); ok && !aiEnabledAgentsContains(enabled, provider) {
 		rows = append(rows, intpickercompat.Entry{
@@ -997,14 +1007,10 @@ func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 func (c *aiCommand) agentRows() []intpickercompat.Entry {
 	enabled := c.enabledAIAgents()
 	rows := make([]intpickercompat.Entry, 0, len(enabled)+2)
-	if aiEnabledAgentsContains(enabled, config.AIAgentCodex) {
-		rows = append(rows, c.agentRow(aiModeCodex, "OpenAI Codex split"))
-	}
-	if aiEnabledAgentsContains(enabled, config.AIAgentClaude) {
-		rows = append(rows, c.agentRow(aiModeClaude, "Anthropic CLI split"))
-	}
-	if aiEnabledAgentsContains(enabled, config.AIAgentAntigravity) {
-		rows = append(rows, c.agentRow(aiModeAntigravity, "Antigravity CLI split"))
+	for _, provider := range aiprovider.PickerEligible() {
+		if aiEnabledAgentsContains(enabled, config.AIAgentProvider(provider.ID)) {
+			rows = append(rows, c.agentRow(provider))
+		}
 	}
 	if len(enabled) == 0 {
 		rows = append(rows, intpickercompat.Entry{
@@ -1021,15 +1027,16 @@ func (c *aiCommand) agentRows() []intpickercompat.Entry {
 	return rows
 }
 
-func (c *aiCommand) agentRow(mode, desc string) intpickercompat.Entry {
+func (c *aiCommand) agentRow(provider aiprovider.Metadata) intpickercompat.Entry {
 	status := "\x1b[33m[MISSING]\x1b[0m"
-	if c.agentAvailable(mode) {
+	if c.agentAvailable(string(provider.ID)) {
 		status = "\x1b[32m[READY]\x1b[0m"
 	}
+	desc := provider.DisplayName + " split"
 	return intpickercompat.Entry{
-		Label:     fmt.Sprintf("%-8s %s %s", mode, status, desc),
-		Value:     mode,
-		SearchKey: mode + " " + desc,
+		Label:     fmt.Sprintf("%-8s %s %s", provider.ID, status, desc),
+		Value:     string(provider.ID),
+		SearchKey: string(provider.ID) + " " + desc,
 	}
 }
 
@@ -1059,16 +1066,11 @@ func (c *aiCommand) requireAIAgentEnabled(mode string, path aiSplitLaunchPath) e
 }
 
 func aiModeProvider(mode string) (config.AIAgentProvider, bool) {
-	switch normalizeAIMode(mode) {
-	case aiModeClaude:
-		return config.AIAgentClaude, true
-	case aiModeCodex:
-		return config.AIAgentCodex, true
-	case aiModeAntigravity:
-		return config.AIAgentAntigravity, true
-	default:
+	provider, ok := aiprovider.Lookup(normalizeAIMode(mode))
+	if !ok || !provider.SettingsVisible {
 		return "", false
 	}
+	return config.AIAgentProvider(provider.ID), true
 }
 
 func disabledAIAgentLaunchMessage(mode string, path aiSplitLaunchPath) string {
@@ -1629,20 +1631,14 @@ func (c *aiCommand) agentAvailable(mode string) bool {
 }
 
 func (c *aiCommand) findAgentBinary(mode string) string {
-	var binName string
-	switch mode {
-	case aiModeClaude:
-		binName = "claude"
-	case aiModeCodex:
-		binName = "codex"
-	case aiModeAntigravity:
-		binName = "agy"
-	default:
+	provider, ok := aiprovider.Lookup(mode)
+	if !ok || !provider.PickerEligible || strings.TrimSpace(provider.BinaryName) == "" {
 		return ""
 	}
+	binName := provider.BinaryName
 
 	if c.usePSMuxAIBackend() {
-		return c.findPSMuxAgentBinary(mode, binName)
+		return c.findPSMuxAgentBinary(string(provider.ID), binName)
 	}
 
 	home := c.homeOrEmpty()
@@ -1656,7 +1652,7 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 	if path := newestExecutable(nodeManagerCandidates(home, binName)); path != "" {
 		return path
 	}
-	if mode == aiModeCodex {
+	if provider.ID == aiprovider.Codex {
 		matches, _ := filepath.Glob(filepath.Join(home, ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
 		return newestExecutable(matches)
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	claudeagent "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	codexagent "github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 )
@@ -308,6 +309,9 @@ func replayPaneLaunchTail(launcher agentLaunchResolver, window Window, pane Pane
 	agent := strings.ToLower(strings.TrimSpace(pane.Recipe.Agent))
 	var resumeArgs []string
 	var err error
+	if !aiprovider.SessionStateSupported(agent) {
+		return nil
+	}
 	switch agent {
 	case claudeagent.AgentName:
 		resumeArgs, err = claudeagent.ResumeArgs(pane.Recipe.ResumeID)
@@ -365,6 +369,9 @@ func replayAgentRecipe(ctx context.Context, runner Runner, target string, window
 	agent := strings.ToLower(strings.TrimSpace(pane.Recipe.Agent))
 	var command string
 	var err error
+	if !aiprovider.SessionStateSupported(agent) {
+		return nil
+	}
 	switch agent {
 	case claudeagent.AgentName:
 		command, err = claudeagent.ResumeCommand(pane.Recipe.ResumeID)
@@ -456,11 +463,11 @@ func appendReplayWarning(result *ReplayResult, warning ReplayWarning) {
 
 func findAgentBinary(agent string) string {
 	binName := strings.TrimSpace(agent)
-	switch binName {
-	case claudeagent.AgentName, codexagent.AgentName:
-	default:
+	provider, ok := aiprovider.Lookup(binName)
+	if !ok || !provider.SessionState.Supported || strings.TrimSpace(provider.BinaryName) == "" {
 		return ""
 	}
+	binName = provider.BinaryName
 
 	home, _ := os.UserHomeDir()
 	if path := firstExecutable(
@@ -473,7 +480,7 @@ func findAgentBinary(agent string) string {
 	if path := newestExecutable(nodeManagerCandidates(home, binName)); path != "" {
 		return path
 	}
-	if binName == codexagent.AgentName {
+	if provider.ID == aiprovider.Codex {
 		matches, _ := filepath.Glob(filepath.Join(home, ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
 		return newestExecutable(matches)
 	}

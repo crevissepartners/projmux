@@ -4,7 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 )
 
 func TestDefaultPaths(t *testing.T) {
@@ -184,6 +187,26 @@ func TestAIEnabledAgentsMissingDefaultsToKnownProviders(t *testing.T) {
 		t.Fatalf("LoadAIEnabledAgentsFile(missing) error = %v", err)
 	}
 	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentClaude, AIAgentCodex, AIAgentAntigravity})
+}
+
+func TestAIProviderRegistryDrivesKnownEnabledAgentDefaults(t *testing.T) {
+	t.Parallel()
+
+	providers := aiprovider.SettingsVisible()
+	want := make([]AIAgentProvider, 0, len(providers))
+	for _, provider := range providers {
+		want = append(want, AIAgentProvider(provider.ID))
+	}
+
+	if got := KnownAIAgentProviders(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("KnownAIAgentProviders() = %#v, want registry order %#v", got, want)
+	}
+	if got := DefaultAIEnabledAgents; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DefaultAIEnabledAgents = %#v, want registry order %#v", got, want)
+	}
+	if got := NormalizeAIEnabledAgents([]string{" CODEX ", "antigravity", "CLAUDE", "codex"}); !reflect.DeepEqual(got, []AIAgentProvider{AIAgentCodex, AIAgentAntigravity, AIAgentClaude}) {
+		t.Fatalf("NormalizeAIEnabledAgents() = %#v, want codex, antigravity, then claude", got)
+	}
 }
 
 func TestAIEnabledAgentsRoundtrip(t *testing.T) {
