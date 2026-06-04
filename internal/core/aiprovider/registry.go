@@ -91,10 +91,16 @@ var registry = []Metadata{
 		DisplayName:     "Antigravity",
 		ShortName:       "Antigravity",
 		BinaryName:      "agy",
+		HookProvider:    string(Antigravity),
 		SettingsVisible: true,
 		PickerEligible:  true,
-		SettingsOrder:   30,
-		PickerOrder:     30,
+		HookDiagnostics: SupportMetadata{
+			Supported: true,
+			ID:        "antigravity-hooks",
+			Name:      "Antigravity hooks",
+		},
+		SettingsOrder: 30,
+		PickerOrder:   30,
 	},
 }
 

@@ -43,6 +43,8 @@ func doctorAINotifyDiagnostics(ai *aiCommand) []doctorAINotifyIntegration {
 			diagnostics = append(diagnostics, withProviderDiagnosticMetadata(doctorClaudeIntegrationDiagnostic(ai), provider, enabled))
 		case aiprovider.Codex:
 			diagnostics = append(diagnostics, withProviderDiagnosticMetadata(doctorCodexIntegrationDiagnostic(ai), provider, enabled))
+		case aiprovider.Antigravity:
+			diagnostics = append(diagnostics, withProviderDiagnosticMetadata(doctorAntigravityIntegrationDiagnostic(ai), provider, enabled))
 		}
 	}
 	diagnostics = append(diagnostics, doctorTmuxBellIntegrationDiagnostic(ai))
@@ -126,6 +128,17 @@ func doctorClaudeIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration 
 	}
 	out.Status = doctorAINotifyStatusMissing
 	return out
+}
+
+func doctorAntigravityIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {
+	provider, _ := aiprovider.Lookup(string(aiprovider.Antigravity))
+	return doctorAINotifyIntegration{
+		ID:            provider.HookDiagnostics.ID,
+		Name:          provider.HookDiagnostics.Name,
+		Status:        doctorAINotifyStatusSkip,
+		TestedVersion: ai.aiHookObservedVersion(aiHookProviderAntigravity),
+		Guidance:      "Antigravity hook payloads support manual projmux ai ingest antigravity-hook wiring only; projmux does not mutate Antigravity user config, and hook commands should use an absolute projmux path or a known cwd because relative hook commands failed smoke.",
+	}
 }
 
 func doctorTmuxBellIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {

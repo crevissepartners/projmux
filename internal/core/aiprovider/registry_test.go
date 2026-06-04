@@ -17,7 +17,7 @@ func TestProviderRegistryOrdersSurfaces(t *testing.T) {
 	if got, want := providerIDs(UsageSupported()), []ID{Claude, Codex}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UsageSupported() = %#v, want %#v", got, want)
 	}
-	if got, want := providerIDs(HookDiagnosticSupported()), []ID{Claude, Codex}; !reflect.DeepEqual(got, want) {
+	if got, want := providerIDs(HookDiagnosticSupported()), []ID{Claude, Codex, Antigravity}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("HookDiagnosticSupported() = %#v, want %#v", got, want)
 	}
 }
@@ -61,8 +61,11 @@ func TestProviderRegistryMetadataForCurrentAgents(t *testing.T) {
 	if !ok {
 		t.Fatalf("Lookup(antigravity) missing")
 	}
-	if antigravity.UsageSupported || antigravity.UsageModel != "" || antigravity.HookDiagnostics.Supported || antigravity.Integrate.Supported || antigravity.SessionState.Supported {
-		t.Fatalf("Antigravity metadata = %#v, want launch/settings only in this phase", antigravity)
+	if antigravity.UsageSupported || antigravity.UsageModel != "" || antigravity.Integrate.Supported || antigravity.SessionState.Supported {
+		t.Fatalf("Antigravity metadata = %#v, want no usage/integrate/session-state support in this phase", antigravity)
+	}
+	if !antigravity.HookDiagnostics.Supported || antigravity.HookDiagnostics.ID != "antigravity-hooks" || antigravity.HookProvider != "antigravity" {
+		t.Fatalf("Antigravity hook metadata = %#v, want manual hook diagnostics support", antigravity)
 	}
 }
 

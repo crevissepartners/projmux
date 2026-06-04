@@ -112,6 +112,45 @@ func formatClaudeTeammateIdleNotifyBody(p claudeHookPayload) aiNotifyBody {
 	}
 }
 
+func formatAntigravityApprovalNotifyBody(p antigravityHookPayload) aiNotifyBody {
+	return aiNotifyBody{
+		Text:     defaultString(joinAINotifyText("Approval needed", p.AgentState), "Approval needed"),
+		Severity: notify.SeverityCritical,
+		Agent:    "antigravity",
+		Category: "approval_required",
+	}
+}
+
+func formatAntigravityStopNotifyBody(p antigravityHookPayload) aiNotifyBody {
+	if antigravityHookHasError(p) {
+		return aiNotifyBody{
+			Text:     defaultString(joinAINotifyText(p.TerminationReason, p.Error), "Error"),
+			Severity: notify.SeverityCritical,
+			Agent:    "antigravity",
+			Category: "error",
+		}
+	}
+	return aiNotifyBody{
+		Text:     "Ready",
+		Severity: notify.SeverityInfo,
+		Agent:    "antigravity",
+		Category: "response_complete",
+	}
+}
+
+func antigravityHookHasError(p antigravityHookPayload) bool {
+	if strings.TrimSpace(p.Error) != "" {
+		return true
+	}
+	reason := strings.ToLower(strings.TrimSpace(p.TerminationReason))
+	switch reason {
+	case "", "stop", "stopped", "complete", "completed", "success", "normal":
+		return false
+	default:
+		return true
+	}
+}
+
 func joinAINotifyText(agent, category string, values ...string) string {
 	parts := []string{}
 	if trimmed := strings.TrimSpace(agent); trimmed != "" {

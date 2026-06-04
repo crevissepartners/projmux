@@ -129,9 +129,9 @@ with `--json`. Doctor does not diagnose terminal key delivery; use `projmux
 setup` for that.
 
 `Settings > Notifications > Delivery sources` shows active Codex hooks, Claude,
-and tmux statuses, conflicts, config paths, and copyable AI integration
-install/remove/dry-run commands. Settings does not install or remove external
-Codex, Claude, or tmux notify wiring.
+Antigravity manual hook ingest, and tmux statuses, conflicts, config paths, and
+copyable AI integration commands where available. Settings does not install or
+remove external Codex, Claude, Antigravity, or tmux notify wiring.
 
 ## focus
 
@@ -333,6 +333,7 @@ projmux ai notify   <reset|notify> [--pane <id>]
 projmux ai watch-title [--pane <id>]
 projmux ai ingest   codex-hook < payload.json
 projmux ai ingest   claude-hook < payload.json
+projmux ai ingest   antigravity-hook < payload.json
 projmux ai ingest   bell --pane <pane_id>
 projmux ai ingest   log [--tail N] [--json] [--path]
 projmux ai integrate codex [--dry-run] [--remove]
@@ -429,6 +430,25 @@ Runtime action overrides from
 precedence over catalog `action` for known Claude events too; for example a
 noisy notify event can be made state-only or quiet without changing installed
 Claude hook commands.
+
+`ingest antigravity-hook` is the manual hook/statusline entrypoint for
+Antigravity CLI `agy` payloads observed in the Phase 0b smoke. Projmux does not
+provide `projmux ai integrate antigravity`, does not install Antigravity hooks,
+and does not mutate Antigravity user config. If users wire Antigravity manually,
+the hook/statusline command should call an absolute `projmux` path or run from a
+known cwd because relative command paths failed smoke.
+
+The default known Antigravity catalog is intentionally narrow:
+`PostInvocation` is quiet/log-only, `Stop` is notify, and `Statusline` is notify
+only when manually wired and `tool_confirmation_pending=true`. `Stop` with
+`error` or a non-normal `terminationReason` pushes a critical error row; `Stop`
+without those error signals pushes an info completion row. Accepted identity
+fields include `conversationId`/`conversation_id`, `cwd` or `workspace.path`,
+`transcriptPath`, `fullyIdle`, `agent_state`, and `context_window`.
+Antigravity notify metadata uses `agent=antigravity`. Phase 3 session-state
+restore and usage/quota HUD support are not included; Antigravity ingest stores
+`conversationId` as pane thread metadata for matching, does not write resume
+metadata, and does not read transcript contents.
 
 `ingest bell --pane <pane_id>` is the narrow tmux-bell fallback ingest path.
 It does not require the pane to be AI-managed. Projmux resolves session,

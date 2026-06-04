@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	aiHookProviderClaude = "claude"
-	aiHookProviderCodex  = "codex"
+	aiHookProviderClaude      = "claude"
+	aiHookProviderCodex       = "codex"
+	aiHookProviderAntigravity = "antigravity"
 
 	aiHookActionNotify = "notify"
 	aiHookActionQuiet  = "quiet"
@@ -24,6 +25,9 @@ var defaultClaudeHookCatalogJSON string
 
 //go:embed ai_hook_catalogs/codex.json
 var defaultCodexHookCatalogJSON string
+
+//go:embed ai_hook_catalogs/antigravity.json
+var defaultAntigravityHookCatalogJSON string
 
 type aiHookCatalog struct {
 	Provider        string               `json:"provider"`
@@ -127,6 +131,8 @@ func defaultAIHookCatalog(provider string) (aiHookCatalog, error) {
 		raw = defaultClaudeHookCatalogJSON
 	case aiHookProviderCodex:
 		raw = defaultCodexHookCatalogJSON
+	case aiHookProviderAntigravity:
+		raw = defaultAntigravityHookCatalogJSON
 	default:
 		return aiHookCatalog{}, fmt.Errorf("unknown AI hook catalog provider %q", provider)
 	}
