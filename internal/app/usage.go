@@ -25,18 +25,17 @@ import (
 // surfaces. Both share a single Manager so collect-once-render-twice stays
 // cheap.
 type usageCommand struct {
-	managerFn func() (*usage.Manager, error)
-	now       func() time.Time
-	lookupEnv func(string) string
+	managerFn       func([]string) (*usage.Manager, error)
+	enabledAgentsFn func() ([]config.AIAgentProvider, error)
+	now             func() time.Time
+	lookupEnv       func(string) string
 }
 
 func newUsageCommand() *usageCommand {
-	c := &usageCommand{
+	return &usageCommand{
 		now:       time.Now,
 		lookupEnv: os.Getenv,
 	}
-	c.managerFn = c.defaultManager
-	return c
 }
 
 // staleAfter is the age at which a snapshot is considered stale and
@@ -79,7 +78,8 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("usage does not accept positional arguments")
 	}
 
-	mgr, err := c.managerFn()
+	modelScope, explicitModel := c.modelScope(*model)
+	mgr, err := c.managerForScope(modelScope)
 	if err != nil {
 		return err
 	}
@@ -92,10 +92,14 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 		snaps      []usage.Snapshot
 		collectErr error
 	)
-	if *force {
-		snaps, collectErr = mgr.ForceCollect(context.Background())
+	if len(modelScope) > 0 {
+		if *force {
+			snaps, collectErr = mgr.ForceCollect(context.Background())
+		} else {
+			snaps, collectErr = mgr.Collect(context.Background())
+		}
 	} else {
-		snaps, collectErr = mgr.Collect(context.Background())
+		snaps, _ = mgr.LoadAll()
 	}
 	// collectErr is informational — adapters that fail still keep the rest
 	// of the rendering pipeline working. We surface a single warning to
@@ -105,15 +109,23 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	filtered := filterSnapshots(snaps, *model, *window)
+	if !explicitModel {
+		filtered = filterSnapshotsByModels(filtered, modelScope)
+	}
 	filtered = usage.SortedSnapshots(filtered)
 
 	state, _ := mgr.LoadState()
+	state = filterUsageStateByModels(state, modelScope)
 
 	if *asJSON {
 		return writeUsageJSON(stdout, filtered, state, c.now())
 	}
 	if err := writeUsageTable(stdout, filtered, c.now()); err != nil {
 		return err
+	}
+	if !explicitModel && len(modelScope) == 0 {
+		fmt.Fprintln(stdout, "no AI usage providers enabled; enable Claude or Codex in Settings > AI Settings > Enabled agents")
+		return nil
 	}
 	// Surface backoff status in the human-readable table form so users
 	// can see why their numbers aren't refreshing. The --json form
@@ -159,7 +171,11 @@ func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("status usage does not accept positional arguments")
 	}
 
-	mgr, err := c.managerFn()
+	modelScope := c.ambientModelScope()
+	if len(modelScope) == 0 {
+		return nil
+	}
+	mgr, err := c.managerForScope(modelScope)
 	if err != nil {
 		// Status segment must never fail loudly — silently emit nothing.
 		return nil
@@ -192,6 +208,7 @@ func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return nil
 	}
+	snaps = filterSnapshotsByModels(snaps, modelScope)
 
 	out := formatStatusUsage(snaps, *maxWidth, c.now())
 	if out == "" {
@@ -212,13 +229,26 @@ const stateDirEnvVar = "PROJMUX_USAGE_STATE_DIR"
 // existing user configs keep working.
 const limitsEnvVar = "PROJMUX_USAGE_LIMITS_PATH"
 
-func (c *usageCommand) defaultManager() (*usage.Manager, error) {
-	registry := usage.NewRegistry()
-	if err := registry.Register(claudeadapter.New()); err != nil {
-		return nil, fmt.Errorf("usage: register claude adapter: %w", err)
+func (c *usageCommand) managerForScope(modelScope []string) (*usage.Manager, error) {
+	if c.managerFn != nil {
+		return c.managerFn(modelScope)
 	}
-	if err := registry.Register(codexadapter.New()); err != nil {
-		return nil, fmt.Errorf("usage: register codex adapter: %w", err)
+	return c.defaultManager(modelScope)
+}
+
+func (c *usageCommand) defaultManager(modelScope []string) (*usage.Manager, error) {
+	registry := usage.NewRegistry()
+	for _, model := range normalizeUsageModelScope(modelScope) {
+		switch model {
+		case string(config.AIAgentClaude):
+			if err := registry.Register(claudeadapter.New()); err != nil {
+				return nil, fmt.Errorf("usage: register claude adapter: %w", err)
+			}
+		case string(config.AIAgentCodex):
+			if err := registry.Register(codexadapter.New()); err != nil {
+				return nil, fmt.Errorf("usage: register codex adapter: %w", err)
+			}
+		}
 	}
 	stateDir, err := c.resolveStateDir()
 	if err != nil {
@@ -245,6 +275,62 @@ func (c *usageCommand) resolveStateDir() (string, error) {
 		return "", fmt.Errorf("usage: resolve config paths: %w", err)
 	}
 	return filepath.Join(paths.StateDir, "usage"), nil
+}
+
+func (c *usageCommand) modelScope(model string) ([]string, bool) {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		model = "all"
+	}
+	switch model {
+	case "all":
+		return c.ambientModelScope(), false
+	case string(config.AIAgentClaude), string(config.AIAgentCodex):
+		return []string{model}, true
+	default:
+		return nil, true
+	}
+}
+
+func (c *usageCommand) ambientModelScope() []string {
+	return aiAgentProvidersToUsageModels(c.currentUsageEnabledAgents())
+}
+
+func (c *usageCommand) currentUsageEnabledAgents() []config.AIAgentProvider {
+	if c.enabledAgentsFn != nil {
+		agents, err := c.enabledAgentsFn()
+		if err == nil {
+			return normalizeAIAgentProviders(agents)
+		}
+	}
+	if c.managerFn != nil {
+		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
+	}
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
+	}
+	agents, err := config.LoadAIEnabledAgentsFile(paths.AIEnabledAgentsFile())
+	if err != nil {
+		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
+	}
+	return normalizeAIAgentProviders(agents)
+}
+
+func normalizeAIAgentProviders(agents []config.AIAgentProvider) []config.AIAgentProvider {
+	values := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		values = append(values, string(agent))
+	}
+	return config.NormalizeAIEnabledAgents(values)
+}
+
+func aiAgentProvidersToUsageModels(agents []config.AIAgentProvider) []string {
+	out := make([]string, 0, len(agents))
+	for _, agent := range normalizeAIAgentProviders(agents) {
+		out = append(out, string(agent))
+	}
+	return out
 }
 
 func (c *usageCommand) env(name string) string {
@@ -274,6 +360,69 @@ func filterSnapshots(snaps []usage.Snapshot, model, window string) []usage.Snaps
 			continue
 		}
 		out = append(out, s)
+	}
+	return out
+}
+
+func filterSnapshotsByModels(snaps []usage.Snapshot, models []string) []usage.Snapshot {
+	allowed := usageModelSet(models)
+	if len(allowed) == 0 {
+		return nil
+	}
+	out := snaps[:0:0]
+	for _, s := range snaps {
+		if allowed[strings.ToLower(strings.TrimSpace(s.Model))] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func filterUsageStateByModels(state usage.State, models []string) usage.State {
+	allowed := usageModelSet(models)
+	if len(allowed) == 0 {
+		return usage.State{
+			LastCollect: map[string]time.Time{},
+			Backoff:     map[string]usage.BackoffState{},
+		}
+	}
+	out := usage.State{
+		Snapshots:   filterSnapshotsByModels(state.Snapshots, models),
+		LastCollect: map[string]time.Time{},
+		Backoff:     map[string]usage.BackoffState{},
+	}
+	for name, value := range state.LastCollect {
+		if allowed[strings.ToLower(strings.TrimSpace(name))] {
+			out.LastCollect[name] = value
+		}
+	}
+	for name, value := range state.Backoff {
+		if allowed[strings.ToLower(strings.TrimSpace(name))] {
+			out.Backoff[name] = value
+		}
+	}
+	return out
+}
+
+func usageModelSet(models []string) map[string]bool {
+	scope := normalizeUsageModelScope(models)
+	out := make(map[string]bool, len(scope))
+	for _, model := range scope {
+		out[model] = true
+	}
+	return out
+}
+
+func normalizeUsageModelScope(models []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(models))
+	for _, model := range models {
+		model = strings.ToLower(strings.TrimSpace(model))
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		out = append(out, model)
 	}
 	return out
 }

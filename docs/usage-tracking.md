@@ -1,8 +1,14 @@
 # Usage tracking
 
 `projmux usage` and `projmux status usage` report authoritative 5-hour
-and weekly utilisation for both Claude Code and the Codex CLI. Both
-adapters read from the upstream's own view of the account so the
+and weekly utilisation for enabled AI agents. `--model all`, the tmux
+HUD, and the statusbar usage popup use Settings > AI Settings > Enabled
+agents as the source of truth, so disabled Claude/Codex providers are
+not refreshed or rendered on ambient/all surfaces. Explicit read-only
+requests such as `projmux usage --model claude` or `--model codex`
+still collect and render that provider even when it is disabled.
+
+Both adapters read from the upstream's own view of the account so the
 percentages match what `claude /usage` and `codex` show natively.
 
 ## Adapters
@@ -83,8 +89,9 @@ projmux usage [--model codex|claude|all] [--window 5h|weekly|all]
               [--json] [--force|-f]
 ```
 
-Calls `Manager.Collect` (or `ForceCollect` with `--force`), filters by
-model/window, and renders the tab-aligned table:
+For `--model all`, calls `Manager.Collect` (or `ForceCollect` with
+`--force`) only for providers enabled in Settings > AI Settings >
+Enabled agents, filters by window, and renders the tab-aligned table:
 
 ```
 MODEL   WINDOW  PCT   RESETS_AT                STALE
@@ -103,16 +110,25 @@ instead. A backoff note is appended to the human table:
 claude is in backoff, try again in 30m (use --force to bypass)
 ```
 
+When no AI agents are enabled, all-model table output contains no
+provider rows and prints a short Settings hint. `--json` returns an
+empty array. Explicit `--model claude` and `--model codex` bypass the
+enabled-agent filter for read-only inspection and collect/render only
+the requested adapter.
+
 ### `projmux status usage`
 
 ```
 projmux status usage [--max-width N] [--force|-f]
 ```
 
-The HUD bar wired to the tmux status interval. Triggers an
-opportunistic refresh: `MaybeCollect(throttle=30s)` (subject to
-per-adapter throttle and active backoff). Errors are swallowed unless
-`PROJMUX_USAGE_DEBUG` is set. Then loads the cache and renders.
+The HUD bar wired to the tmux status interval. It scopes the registry to
+enabled AI agents, then triggers an opportunistic refresh:
+`MaybeCollect(throttle=30s)` (subject to per-adapter throttle and active
+backoff). Disabled providers are not refreshed just to be hidden. Errors
+are swallowed unless `PROJMUX_USAGE_DEBUG` is set. Then it loads the
+cache, filters to the same enabled-agent scope, and renders. If no AI
+agents are enabled, the status segment emits nothing.
 
 Output degrades through six tiers as `--max-width` shrinks:
 
@@ -132,10 +148,11 @@ because the rollout file is always near-current (no throttle gap to report).
 ### Statusbar usage popup
 
 `projmux statusbar click usage` renders a native-framed popup from the same
-cache instead of shelling out to `projmux usage`. This keeps `projmux usage
---json` backwards-compatible for CLI consumers while giving the tmux click path
-a structured table with aligned rows, right-aligned numeric values, dim
-unavailable cells, amber usage at 80%, and red usage at 95%.
+cache instead of shelling out to `projmux usage`. The popup filters rows and
+sync metadata to the same enabled-agent scope as the ambient HUD. This keeps
+`projmux usage --json` backwards-compatible for CLI consumers while giving the
+tmux click path a structured table with aligned rows, right-aligned numeric
+values, dim unavailable cells, amber usage at 80%, and red usage at 95%.
 
 The popup sync line uses the maximum authoritative `LastCollect` timestamp from
 the cache. If that field is unavailable, it falls back to the snapshots file
