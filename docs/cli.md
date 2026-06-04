@@ -710,7 +710,7 @@ flags with the top-level `switch` UX:
   tmux default shell when set, otherwise `/bin/sh`. `shell` starts or attaches
   the app session directly after resolving the target app session name and
   startup directory. Alt-1 sidebar project open defaults to `Empty session`; the
-  Labs `Sidebar startup picker` opt-in shows `Latest snapshot`, `Named
+  Session State `Sidebar startup picker` opt-in shows `Latest snapshot`, `Named
   snapshot`, and `Empty session` before creating a closed project session.
   `Latest snapshot` is auto-saved; named snapshots are fixed until the user
   saves or replaces them.

@@ -74,10 +74,21 @@ func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error
 			}, stdout, stderr); err != nil {
 				return err
 			}
+		case settingsSessionStateSidebarStartupPickerDetail, settingsCompatSidebarStartupPicker:
+			if err := c.runSidebarStartupPickerDetail(stdout, stderr); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unknown session state settings action: %s", action)
 		}
 	}
+}
+
+func (c *settingsCommand) runSidebarStartupPickerDetail(stdout, stderr io.Writer) error {
+	return c.runSessionStateToggleDetail("Session State - Sidebar startup picker", "Settings > Session State > Sidebar startup picker > ", func() []intpickercompat.Entry {
+		sidebarStartup := c.currentSidebarStartupPicker()
+		return c.sidebarStartupPickerEntries(sidebarStartup)
+	}, stdout, stderr)
 }
 
 func (c *settingsCommand) runProjectSessionStateSection(stdout, stderr io.Writer) error {
@@ -256,11 +267,16 @@ func (c *settingsCommand) projectSessionStateTitle() string {
 func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
 	autosave := c.currentSessionStateAutosave()
 	interval := c.currentSessionStateAutosaveInterval()
+	sidebarStartup := c.currentSidebarStartupPicker()
 	entries := []intpickercompat.Entry{
 		settingsBackEntry(),
 		{
 			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Auto-save", string(autosave.Mode)+" - interval "+formatSessionStateAutosaveInterval(interval.Duration)+" - "+autosave.Source),
 			Value: settingsSessionStateAutosaveDetail,
+		},
+		{
+			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Sidebar startup picker", string(sidebarStartup.Mode)+" - "+sidebarStartup.Source),
+			Value: settingsSessionStateSidebarStartupPickerDetail,
 		},
 		{
 			Label: settingsLabelInfo("Storage", "latest snapshot store", "per-session JSON under XDG state"),
@@ -339,6 +355,36 @@ func (c *settingsCommand) sessionStateAutosaveDetailEntries(autosave sessionStat
 		},
 	}
 	entries = append(entries, c.sessionStateToggleEntries("Auto-save", "autosave", autosave.Mode)...)
+	return entries
+}
+
+func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStateEffectiveToggle) []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{
+		settingsBackEntry(),
+		{
+			Label: settingsLabelInfo("Sidebar startup picker", string(sidebarStartup.Mode), sidebarStartup.Source),
+			Value: settingsNoopValue,
+		},
+	}
+	for _, item := range []struct {
+		mode config.SessionStateToggle
+		desc string
+	}{
+		{config.SessionStateToggleOn, "show Start project step in the sidebar"},
+		{config.SessionStateToggleOff, "open closed sidebar projects as empty sessions"},
+	} {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if item.mode == sidebarStartup.Mode {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabel(glyph, color, "Sidebar startup picker "+string(item.mode), item.desc+" - "+sidebarStartup.Source),
+			Value:     settingsActionPrefixSessionState + "sidebar-startup:" + string(item.mode),
+			SearchKey: "Sidebar startup picker Start project empty session on off",
+		})
+	}
 	return entries
 }
 
@@ -1271,15 +1317,16 @@ func sessionStateToggleEnabledDefault(homeDir func() (string, error), lookupEnv 
 }
 
 const (
-	settingsSessionStateAutosaveDetail        = settingsActionPrefixSessionState + "view-autosave"
-	settingsSessionStateAutosaveIntervalSet   = settingsActionPrefixSessionState + "autosave-interval-set"
-	settingsProjectSessionStateAutosaveDetail = settingsActionPrefixSessionState + "project-view-autosave"
-	settingsProjectSessionStateActionsDetail  = settingsActionPrefixSessionState + "project-view-actions"
-	settingsProjectSessionStateSaveLatest     = settingsActionPrefixSessionState + "project-save-latest"
-	settingsProjectSessionStateSaveNamed      = settingsActionPrefixSessionState + "project-save-named"
-	settingsProjectSessionStateSave           = settingsActionPrefixSessionState + "project-save"
-	settingsProjectSessionStatePreview        = settingsActionPrefixSessionState + "project-preview"
-	settingsProjectSessionStateDelete         = settingsActionPrefixSessionState + "project-delete"
-	settingsSessionStateConfirmYes            = "sessionstate:confirm-yes"
-	settingsSessionStateConfirmNo             = "sessionstate:confirm-no"
+	settingsSessionStateAutosaveDetail             = settingsActionPrefixSessionState + "view-autosave"
+	settingsSessionStateSidebarStartupPickerDetail = settingsActionPrefixSessionState + "view-sidebar-startup-picker"
+	settingsSessionStateAutosaveIntervalSet        = settingsActionPrefixSessionState + "autosave-interval-set"
+	settingsProjectSessionStateAutosaveDetail      = settingsActionPrefixSessionState + "project-view-autosave"
+	settingsProjectSessionStateActionsDetail       = settingsActionPrefixSessionState + "project-view-actions"
+	settingsProjectSessionStateSaveLatest          = settingsActionPrefixSessionState + "project-save-latest"
+	settingsProjectSessionStateSaveNamed           = settingsActionPrefixSessionState + "project-save-named"
+	settingsProjectSessionStateSave                = settingsActionPrefixSessionState + "project-save"
+	settingsProjectSessionStatePreview             = settingsActionPrefixSessionState + "project-preview"
+	settingsProjectSessionStateDelete              = settingsActionPrefixSessionState + "project-delete"
+	settingsSessionStateConfirmYes                 = "sessionstate:confirm-yes"
+	settingsSessionStateConfirmNo                  = "sessionstate:confirm-no"
 )

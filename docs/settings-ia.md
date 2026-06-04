@@ -62,6 +62,10 @@ view-first layout:
   runtime action values and writes only
   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json`. It does not
   edit catalog `install` values or run agent install/remove commands.
+- `Settings > Session State > Sidebar startup picker` controls the Alt-1
+  project-open startup selector. The saved file remains
+  `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`, and the
+  stale `labs:sidebar-startup-picker` action opens this Session State detail.
 - `Settings > Labs` keeps experimental toggles, but keybindings no longer have a
   visible Labs row. The hidden compatibility action redirects to the
   `Settings > Keybindings` action list, not to a diagnostic default.
