@@ -655,141 +655,6 @@ const (
 	aiSplitLaunchPicker  aiSplitLaunchPath = "picker"
 )
 
-type aiSplitToggleAction string
-
-const (
-	aiSplitToggleLaunchExistingPath aiSplitToggleAction = "launch-existing-path"
-	aiSplitToggleFocusExisting      aiSplitToggleAction = "focus-existing"
-	aiSplitToggleFocusBack          aiSplitToggleAction = "focus-back"
-	aiSplitToggleNoop               aiSplitToggleAction = "noop"
-
-	aiSplitTogglePaneFormat = "#{pane_id}\t#{pane_active}\t#{pane_last}\t#{" + aiPaneManagedOption + "}\t#{" + aiPaneAgentOption + "}\t#{" + aiPaneContextOption + "}"
-)
-
-type aiSplitTogglePane struct {
-	id      string
-	active  bool
-	last    bool
-	managed bool
-	agent   string
-	context string
-}
-
-type aiSplitToggleDecision struct {
-	action     aiSplitToggleAction
-	targetPane string
-}
-
-func (c *aiCommand) readAISplitTogglePanes(targetPane string) []aiSplitTogglePane {
-	targetPane = strings.TrimSpace(targetPane)
-	if targetPane == "" {
-		return nil
-	}
-	out, err := c.read("tmux", "list-panes", "-s", "-t", targetPane, "-F", aiSplitTogglePaneFormat)
-	if err != nil {
-		return nil
-	}
-	return parseAISplitTogglePanes(string(out))
-}
-
-func parseAISplitTogglePanes(value string) []aiSplitTogglePane {
-	lines := strings.Split(strings.TrimSpace(value), "\n")
-	panes := make([]aiSplitTogglePane, 0, len(lines))
-	for _, line := range lines {
-		fields := strings.Split(line, "\t")
-		if len(fields) != 6 || strings.TrimSpace(fields[0]) == "" {
-			continue
-		}
-		panes = append(panes, aiSplitTogglePane{
-			id:      strings.TrimSpace(fields[0]),
-			active:  tmuxTruthy(fields[1]),
-			last:    tmuxTruthy(fields[2]),
-			managed: tmuxTruthy(fields[3]),
-			agent:   strings.TrimSpace(fields[4]),
-			context: strings.TrimSpace(fields[5]),
-		})
-	}
-	return panes
-}
-
-func decideAISplitToggle(currentPane, contextDir, agent string, panes []aiSplitTogglePane) aiSplitToggleDecision {
-	currentPane = strings.TrimSpace(currentPane)
-	contextDir = cleanAISplitToggleContext(contextDir)
-	agent = strings.TrimSpace(agent)
-
-	matches := make([]aiSplitTogglePane, 0, len(panes))
-	for _, pane := range panes {
-		if pane.matchesAISplitToggle(contextDir, agent) {
-			matches = append(matches, pane)
-		}
-	}
-	if len(matches) == 0 {
-		return aiSplitToggleDecision{action: aiSplitToggleLaunchExistingPath}
-	}
-
-	for _, pane := range matches {
-		if pane.id == currentPane {
-			if backPane, ok := chooseAISplitFocusBackPane(currentPane, contextDir, agent, panes); ok {
-				return aiSplitToggleDecision{action: aiSplitToggleFocusBack, targetPane: backPane.id}
-			}
-			return aiSplitToggleDecision{action: aiSplitToggleNoop}
-		}
-	}
-
-	focusPane := chooseAISplitFocusPane(matches)
-	return aiSplitToggleDecision{action: aiSplitToggleFocusExisting, targetPane: focusPane.id}
-}
-
-func chooseAISplitFocusPane(matches []aiSplitTogglePane) aiSplitTogglePane {
-	for _, pane := range matches {
-		if pane.last {
-			return pane
-		}
-	}
-	for _, pane := range matches {
-		if pane.active {
-			return pane
-		}
-	}
-	return matches[0]
-}
-
-func chooseAISplitFocusBackPane(currentPane, contextDir, agent string, panes []aiSplitTogglePane) (aiSplitTogglePane, bool) {
-	for _, pane := range panes {
-		if pane.last && pane.id != currentPane && !pane.matchesAISplitToggle(contextDir, agent) {
-			return pane, true
-		}
-	}
-	for _, pane := range panes {
-		if pane.last && pane.id != currentPane {
-			return pane, true
-		}
-	}
-	return aiSplitTogglePane{}, false
-}
-
-func (p aiSplitTogglePane) matchesAISplitToggle(contextDir, agent string) bool {
-	agent = strings.TrimSpace(agent)
-	if strings.TrimSpace(p.id) == "" || !p.managed || strings.TrimSpace(p.agent) == "" || agent == "" {
-		return false
-	}
-	if cleanAISplitToggleContext(p.context) != cleanAISplitToggleContext(contextDir) {
-		return false
-	}
-	if strings.TrimSpace(p.agent) != agent {
-		return false
-	}
-	return true
-}
-
-func cleanAISplitToggleContext(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	return filepath.Clean(value)
-}
-
 func tmuxTruthy(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "on", "true", "yes":
@@ -1165,12 +1030,6 @@ func (c *aiCommand) runDirectAgentSplit(mode, direction string) error {
 func (c *aiCommand) runDirectAgentSplitWithExtraArgs(mode, direction string, extraArgs []string) error {
 	targetPane := c.resolveTargetPane()
 	contextDir := c.resolveAgentContextDir(mode)
-	if !c.usePSMuxAIBackend() {
-		handled, err := c.handleAgentSplitToggle(targetPane, contextDir, mode)
-		if handled || err != nil {
-			return err
-		}
-	}
 	return c.runAgentSplitResolved(mode, direction, extraArgs, targetPane, contextDir)
 }
 
@@ -1214,22 +1073,6 @@ func (c *aiCommand) runAgentSplitResolved(mode, direction string, extraArgs []st
 	c.applySplitLayout(targetPane, direction)
 	c.startAIWatchTitle(paneID)
 	return nil
-}
-
-func (c *aiCommand) handleAgentSplitToggle(targetPane, contextDir, mode string) (bool, error) {
-	targetPane = strings.TrimSpace(targetPane)
-	if targetPane == "" {
-		return false, nil
-	}
-	decision := decideAISplitToggle(targetPane, contextDir, mode, c.readAISplitTogglePanes(targetPane))
-	switch decision.action {
-	case aiSplitToggleFocusExisting, aiSplitToggleFocusBack:
-		return true, c.run("tmux", "select-pane", "-t", decision.targetPane)
-	case aiSplitToggleNoop:
-		return true, nil
-	default:
-		return false, nil
-	}
 }
 
 func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, string, error) {
