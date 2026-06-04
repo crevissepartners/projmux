@@ -13,11 +13,12 @@ const AIEnabledAgentsFileName = "ai-enabled-agents"
 type AIAgentProvider string
 
 const (
-	AIAgentClaude AIAgentProvider = "claude"
-	AIAgentCodex  AIAgentProvider = "codex"
+	AIAgentClaude      AIAgentProvider = "claude"
+	AIAgentCodex       AIAgentProvider = "codex"
+	AIAgentAntigravity AIAgentProvider = "antigravity"
 )
 
-var DefaultAIEnabledAgents = []AIAgentProvider{AIAgentClaude, AIAgentCodex}
+var DefaultAIEnabledAgents = []AIAgentProvider{AIAgentClaude, AIAgentCodex, AIAgentAntigravity}
 
 func (p Paths) AIEnabledAgentsFile() string {
 	return filepath.Join(p.ConfigDir, AIEnabledAgentsFileName)
@@ -41,6 +42,11 @@ func NormalizeAIEnabledAgents(values []string) []AIAgentProvider {
 			if !seen[AIAgentCodex] {
 				normalized = append(normalized, AIAgentCodex)
 				seen[AIAgentCodex] = true
+			}
+		case string(AIAgentAntigravity):
+			if !seen[AIAgentAntigravity] {
+				normalized = append(normalized, AIAgentAntigravity)
+				seen[AIAgentAntigravity] = true
 			}
 		}
 	}

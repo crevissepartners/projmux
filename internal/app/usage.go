@@ -328,7 +328,10 @@ func normalizeAIAgentProviders(agents []config.AIAgentProvider) []config.AIAgent
 func aiAgentProvidersToUsageModels(agents []config.AIAgentProvider) []string {
 	out := make([]string, 0, len(agents))
 	for _, agent := range normalizeAIAgentProviders(agents) {
-		out = append(out, string(agent))
+		switch agent {
+		case config.AIAgentClaude, config.AIAgentCodex:
+			out = append(out, string(agent))
+		}
 	}
 	return out
 }

@@ -145,7 +145,7 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	if got := runner.options.Header; got != "" {
 		t.Fatalf("runner header = %q, want direction only in title", got)
 	}
-	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiModeClaude, aiModeShell}; !reflect.DeepEqual(got, want) {
+	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiModeClaude, aiModeAntigravity, aiModeShell}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("runner entry order = %#v, want %#v", got, want)
 	}
 	for _, entry := range runner.options.Entries {
@@ -198,7 +198,7 @@ func TestAIPickerAllAgentsDisabledShowsShellFallbackGuidance(t *testing.T) {
 	if !hasEntryLabelContainingAll(runner.options.Entries, "AI agents disabled", "shell") {
 		t.Fatalf("runner entries = %#v, want disabled-agent guidance", runner.options.Entries)
 	}
-	if hasEntryValue(runner.options.Entries, aiModeClaude) || hasEntryValue(runner.options.Entries, aiModeCodex) {
+	if hasEntryValue(runner.options.Entries, aiModeClaude) || hasEntryValue(runner.options.Entries, aiModeCodex) || hasEntryValue(runner.options.Entries, aiModeAntigravity) {
 		t.Fatalf("runner entries = %#v, want all AI agents hidden", runner.options.Entries)
 	}
 }
@@ -237,6 +237,7 @@ func TestFindAgentBinaryDiscoversNodeManagerInstalls(t *testing.T) {
 	}{
 		{"codex via nvm", aiModeCodex, filepath.Join(".nvm", "versions", "node", "v24.15.0", "bin", "codex")},
 		{"claude via nvm", aiModeClaude, filepath.Join(".nvm", "versions", "node", "v22.0.0", "bin", "claude")},
+		{"antigravity via nvm", aiModeAntigravity, filepath.Join(".nvm", "versions", "node", "v24.15.0", "bin", "agy")},
 		{"codex via fnm", aiModeCodex, filepath.Join(".fnm", "node-versions", "v22.4.0", "installation", "bin", "codex")},
 		{"codex via asdf", aiModeCodex, filepath.Join(".asdf", "installs", "nodejs", "20.10.0", "bin", "codex")},
 		{"claude via volta", aiModeClaude, filepath.Join(".volta", "bin", "claude")},
@@ -417,6 +418,22 @@ func TestAISplitMissingRunnerPreservesTmuxMessage(t *testing.T) {
 	err := cmd.Run([]string{"split", "--agent", "codex", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || err.Error() != "selected runner is not installed: codex" {
 		t.Fatalf("Run split missing codex error = %v, want selected runner is not installed: codex", err)
+	}
+}
+
+func TestAISplitMissingAntigravityRunnerReportsMode(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		return nil, os.ErrNotExist
+	}
+
+	err := cmd.Run([]string{"split", "--agent", "antigravity", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || err.Error() != "selected runner is not installed: antigravity" {
+		t.Fatalf("Run split missing antigravity error = %v, want selected runner is not installed: antigravity", err)
+	}
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "command", []string{"-v", "agy"}) {
+		t.Fatalf("commands = %#v, want agy lookup", cmdRecorder(cmd).commands)
 	}
 }
 
@@ -1120,6 +1137,39 @@ func TestAISplitAgentFlagLaunchesCodexWithoutChangingClaudeDefault(t *testing.T)
 	}
 }
 
+func TestAISplitAgentFlagLaunchesAntigravityWithoutChangingDefault(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agyBin := writeExecutable(t, filepath.Join(home, "bin", "agy"))
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeClaude); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"agy": agyBin}, "%7", "%9")
+
+	if err := cmd.Run([]string{"split", "--agent=antigravity", "down"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent antigravity error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if got, want := readModeFile(t, home), "claude\n"; got != want {
+		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-v", "-t", "%7", "-c", work, "/bin/bash", "-lc"}) {
+		t.Fatalf("commands = %#v, want vertical Antigravity split", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeAntigravity}) {
+		t.Fatalf("commands = %#v, want Antigravity AI pane metadata", commands)
+	}
+	if !containsAICommandArgSubstring(commands, "exec "+shellQuote(agyBin)) {
+		t.Fatalf("commands = %#v, want Antigravity exec", commands)
+	}
+}
+
 func TestAISplitCodexExtraArgsKeepsPaneSetupWatcherAndLayout(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")
@@ -1306,12 +1356,12 @@ func TestAISplitAgentFlagUsageErrors(t *testing.T) {
 		{
 			name: "force agent requires direct agent",
 			args: []string{"split", "--force-agent", "right"},
-			want: "ai split --force-agent requires --agent claude or --agent codex",
+			want: "ai split --force-agent requires --agent claude, --agent codex, or --agent antigravity",
 		},
 		{
 			name: "force agent does not apply to picker",
 			args: []string{"split", "--agent", "selective", "--force-agent", "right"},
-			want: "ai split --force-agent only applies to --agent claude or --agent codex",
+			want: "ai split --force-agent only applies to --agent claude, --agent codex, or --agent antigravity",
 		},
 	}
 	for _, tt := range tests {

@@ -1047,6 +1047,8 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	cmd := &settingsCommand{
 		ai:           ai,
 		switcher:     switcher,
+		homeDir:      func() (string, error) { return home, nil },
+		lookupEnv:    func(string) string { return "" },
 		runner:       runner,
 		nativePicker: native,
 	}
@@ -1112,6 +1114,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	}
 	if hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeClaude) ||
 		hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeCodex) ||
+		hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeAntigravity) ||
 		hasEntryValue(aiOptions.Entries, settingsActionPrefixAI+aiModeShell) {
 		t.Fatalf("AI settings entries = %#v, want no direct mode choices at root", aiOptions.Entries)
 	}
@@ -1121,6 +1124,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	for _, want := range []string{
 		settingsActionPrefixAI + aiModeClaude,
 		settingsActionPrefixAI + aiModeCodex,
+		settingsActionPrefixAI + aiModeAntigravity,
 		settingsActionPrefixAI + aiModeShell,
 	} {
 		if !hasEntryValue(aiDetailOptions.Entries, want) {
@@ -1163,6 +1167,7 @@ func TestSettingsHubTogglesAIEnabledAgentPersists(t *testing.T) {
 	for _, want := range []string{
 		settingsActionPrefixAIEnabledAgent + aiModeClaude,
 		settingsActionPrefixAIEnabledAgent + aiModeCodex,
+		settingsActionPrefixAIEnabledAgent + aiModeAntigravity,
 	} {
 		if !hasEntryValue(enabledOptions.Entries, want) {
 			t.Fatalf("AI enabled agents entries = %#v, want %q", enabledOptions.Entries, want)
@@ -1185,8 +1190,9 @@ func TestSettingsHubTogglesAIEnabledAgentPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAIEnabledAgentsFile() error = %v", err)
 	}
-	if len(got) != 1 || got[0] != config.AIAgentCodex {
-		t.Fatalf("enabled agents = %#v, want codex only", got)
+	want := []config.AIAgentProvider{config.AIAgentCodex, config.AIAgentAntigravity}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("enabled agents = %#v, want %#v", got, want)
 	}
 }
 
@@ -2212,6 +2218,7 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 	for _, want := range []string{
 		settingsActionPrefixAI + aiModeClaude,
 		settingsActionPrefixAI + aiModeCodex,
+		settingsActionPrefixAI + aiModeAntigravity,
 		settingsActionPrefixAI + aiModeShell,
 		settingsActionPrefixDesktopNotifyMode + string(config.DesktopNotifyModeOff),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
@@ -2229,6 +2236,7 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 	for _, want := range []string{
 		settingsActionPrefixAI + aiModeClaude,
 		settingsActionPrefixAI + aiModeCodex,
+		settingsActionPrefixAI + aiModeAntigravity,
 		settingsActionPrefixAI + aiModeShell,
 	} {
 		if !hasEntryValue(detail, want) {
@@ -2246,6 +2254,7 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 	for _, want := range []string{
 		settingsActionPrefixAIEnabledAgent + aiModeClaude,
 		settingsActionPrefixAIEnabledAgent + aiModeCodex,
+		settingsActionPrefixAIEnabledAgent + aiModeAntigravity,
 	} {
 		if !hasEntryValue(enabledDetail, want) {
 			t.Fatalf("AI enabled agent entries = %#v, want row %q", enabledDetail, want)
