@@ -551,8 +551,8 @@ while `on` and `off` take precedence. Auto-save only updates the latest
 snapshot. Named snapshots are manual and are never updated by auto-save.
 
 Project open from the Alt-1 sidebar defaults to opening a closed project as an
-`Empty session`. The optional `Settings > Labs > Sidebar startup picker` toggle
-enables the native sidebar `Start project` step. Rows appear as `Latest
+`Empty session`. The optional `Settings > Session State > Sidebar startup
+picker` toggle enables the native sidebar `Start project` step. Rows appear as `Latest
 snapshot`, named snapshot rows, `Empty session`, and `Back`. `Latest snapshot`
 is the snapshot auto-save that changes as auto-save runs; named snapshots are
 fixed snapshots. Rows include saved-at date/time metadata when projmux can
@@ -571,7 +571,7 @@ Default `projmux shell` no longer opens a startup picker or replays session-stat
 snapshots before attach. It still derives the default app session identity and
 startup directory from the current project context when available; otherwise it
 uses the `home` target and home directory. Session-state restore selection is
-limited to the Labs sidebar startup picker.
+limited to the Session State sidebar startup picker.
 
 Settings > Session State is global settings only: global auto-save, auto-save
 interval, and storage/retention policy. Settings > Project > Session State

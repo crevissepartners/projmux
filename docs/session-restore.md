@@ -74,7 +74,7 @@ when building `Named snapshot` candidates; new primary surfaces should describe
 the restore unit as a snapshot, not as a separate layout or preset feature.
 
 Project open from the Alt-1 sidebar defaults to opening a closed project as an
-`Empty session`. `Settings > Labs > Sidebar startup picker` is an opt-in toggle;
+`Empty session`. `Settings > Session State > Sidebar startup picker` is an opt-in toggle;
 when it is on, closed project open advances inside the sidebar to the native
 `Start project` step. Rows are ordered `Latest snapshot`, named snapshot rows,
 `Empty session`, then `Back`. `Latest snapshot` is the auto-saved snapshot that
@@ -98,5 +98,5 @@ directly without a startup picker or trust gate.
 Default `projmux shell` no longer opens a compatibility startup picker and no
 longer accepts startup selector flags for session-state restore. It always
 follows the normal empty attach path after resolving the target app session name
-and startup directory. Use `Settings > Labs > Sidebar startup picker` for
+and startup directory. Use `Settings > Session State > Sidebar startup picker` for
 interactive Latest snapshot / Named snapshot / Empty session selection.

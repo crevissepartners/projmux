@@ -1274,10 +1274,9 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	if !hasEntryValue(labsOptions.Entries, settingsLabsProjectHooks) {
 		t.Fatalf("labs settings entries = %#v, want project hooks overview row", labsOptions.Entries)
 	}
-	if !hasEntryLabelContaining(labsOptions.Entries, "Sidebar startup picker") ||
-		!hasEntryLabelContaining(labsOptions.Entries, "off") ||
-		!hasEntryValue(labsOptions.Entries, settingsLabsSidebarStartupPicker) {
-		t.Fatalf("labs settings entries = %#v, want sidebar startup picker overview row", labsOptions.Entries)
+	if hasEntryLabelContaining(labsOptions.Entries, "Sidebar startup picker") ||
+		hasEntryValue(labsOptions.Entries, settingsCompatSidebarStartupPicker) {
+		t.Fatalf("labs settings entries = %#v, want sidebar startup picker moved to Session State", labsOptions.Entries)
 	}
 	if hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:off") ||
 		hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:on") {
@@ -2846,6 +2845,9 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 		sessionStateAutosaveEnv + " env",
 		"interval",
 		"1m",
+		"Sidebar startup picker",
+		"off",
+		"default",
 		"Storage",
 		"latest snapshot store",
 		"Retention",
@@ -2862,6 +2864,7 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 	}
 	for _, want := range []string{
 		settingsSessionStateAutosaveDetail,
+		settingsSessionStateSidebarStartupPickerDetail,
 	} {
 		if !hasEntryValue(entries, want) {
 			t.Fatalf("session state entries = %#v, want %q", entries, want)
@@ -2872,6 +2875,8 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 		settingsActionPrefixSessionState + "autosave:off",
 		settingsActionPrefixSessionState + "autorestore:on",
 		settingsActionPrefixSessionState + "autorestore:off",
+		settingsActionPrefixSessionState + "sidebar-startup:on",
+		settingsActionPrefixSessionState + "sidebar-startup:off",
 	} {
 		if hasEntryValue(entries, absent) {
 			t.Fatalf("session state entries = %#v, want no direct mutation row %q", entries, absent)
@@ -2988,7 +2993,7 @@ func TestSettingsSessionStateGlobalDefaultAutosaveOffAndNoTree(t *testing.T) {
 
 	cmd := &settingsCommand{homeDir: func() (string, error) { return t.TempDir(), nil }}
 	entries := cmd.sessionStateEntries()
-	for _, want := range []string{"Auto-save", "off", "default", "Storage", "Retention"} {
+	for _, want := range []string{"Auto-save", "off", "default", "Sidebar startup picker", "Storage", "Retention"} {
 		if !hasEntryLabelContaining(entries, want) {
 			t.Fatalf("session state entries = %#v, want %q", entries, want)
 		}
@@ -2997,6 +3002,120 @@ func TestSettingsSessionStateGlobalDefaultAutosaveOffAndNoTree(t *testing.T) {
 		if hasEntryLabelContaining(entries, absent) {
 			t.Fatalf("session state entries = %#v, did not want %q", entries, absent)
 		}
+	}
+}
+
+func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			if got, want := options.UI, "settings-sessionstate"; got != want {
+				t.Fatalf("session state UI = %q, want %q", got, want)
+			}
+			if !hasEntryValue(options.Entries, settingsSessionStateSidebarStartupPickerDetail) {
+				t.Fatalf("session state entries = %#v, want sidebar startup picker detail row", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateSidebarStartupPickerDetail}, nil
+		case 2:
+			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
+				t.Fatalf("sidebar startup detail UI = %q, want %q", got, want)
+			}
+			if got, want := options.Title, "Session State - Sidebar startup picker"; got != want {
+				t.Fatalf("sidebar startup detail title = %q, want %q", got, want)
+			}
+			if got, want := options.Prompt, "Settings > Session State > Sidebar startup picker > "; got != want {
+				t.Fatalf("sidebar startup detail prompt = %q, want %q", got, want)
+			}
+			if strings.Contains(options.Title, "Labs") || strings.Contains(options.Prompt, "Labs") {
+				t.Fatalf("sidebar startup detail chrome = title %q prompt %q, want no Labs path", options.Title, options.Prompt)
+			}
+			if !hasEntryValue(options.Entries, settingsActionPrefixSessionState+"sidebar-startup:on") ||
+				!hasEntryValue(options.Entries, settingsActionPrefixSessionState+"sidebar-startup:off") {
+				t.Fatalf("sidebar startup detail entries = %#v, want on/off mutation rows", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSessionState + "sidebar-startup:on"}, nil
+		case 3:
+			if !hasEntryLabelContaining(options.Entries, "on") {
+				t.Fatalf("sidebar startup detail entries after save = %#v, want on state", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		default:
+			t.Fatalf("unexpected picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd := &settingsCommand{
+		nativePicker: nativePickerFromCompatRunner(runner),
+		homeDir:      func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
+	}
+
+	if err := cmd.runSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runSessionStateSection() error = %v", err)
+	}
+	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := config.LoadSessionStateToggleFile(paths.SidebarStartupPickerFile()); err != nil || got != config.SessionStateToggleOn {
+		t.Fatalf("sidebar startup picker file = %q, %v; want on, nil", got, err)
+	}
+	if got := filepath.Base(paths.SidebarStartupPickerFile()); got != config.SidebarStartupPickerFileName {
+		t.Fatalf("sidebar startup picker file name = %q, want %q", got, config.SidebarStartupPickerFileName)
+	}
+}
+
+func TestSettingsLabsSidebarStartupPickerRedirectsToSessionStateDetail(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			if got, want := options.UI, "settings-labs"; got != want {
+				t.Fatalf("labs UI = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsCompatSidebarStartupPicker}, nil
+		case 2:
+			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
+				t.Fatalf("redirect detail UI = %q, want %q", got, want)
+			}
+			if strings.Contains(options.Title, "Labs") || strings.Contains(options.Prompt, "Labs") {
+				t.Fatalf("redirect detail chrome = title %q prompt %q, want Session State path", options.Title, options.Prompt)
+			}
+			if got, want := options.Title, "Session State - Sidebar startup picker"; got != want {
+				t.Fatalf("redirect detail title = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		default:
+			t.Fatalf("unexpected picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd := &settingsCommand{
+		nativePicker: nativePickerFromCompatRunner(runner),
+		homeDir:      func() (string, error) { return home, nil },
+		lookupEnv:    func(string) string { return "" },
+	}
+
+	if err := cmd.runLabsSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runLabsSection() error = %v", err)
 	}
 }
 
