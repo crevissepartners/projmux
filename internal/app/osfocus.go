@@ -1,6 +1,9 @@
 package app
 
 import (
+	"context"
+	"strings"
+
 	"github.com/crevissepartners/projmux/internal/core/focus"
 	"github.com/crevissepartners/projmux/internal/integrations/osfocus"
 )
@@ -32,6 +35,9 @@ func defaultOSFocusChain() osFocusDispatcher {
 // detects (the common case until the user is on a measured terminal × OS
 // combo), this is a no-op.
 func (c *focusCommand) dispatchOSFocus(target focus.Target, socket string) {
+	if c.desktopNotifyMode(socket) != desktopNotifyModeRaise {
+		return
+	}
 	chain := c.osFocusChain
 	if chain == nil {
 		chain = defaultOSFocusChain()
@@ -42,4 +48,33 @@ func (c *focusCommand) dispatchOSFocus(target focus.Target, socket string) {
 		Window:  target.WindowSelector(),
 		Pane:    target.PaneSelector(),
 	})
+}
+
+func (c *focusCommand) desktopNotifyMode(socket string) desktopNotifyMode {
+	lookupEnv := c.lookupEnv
+	resolver := desktopNotifyResolver{
+		lookupEnv: lookupEnv,
+		readConfigMode: func() (desktopNotifyMode, bool) {
+			return loadSavedDesktopNotifyMode(c.homeDir, lookupEnv)
+		},
+		readTmuxOption: func(name string) string {
+			if c.runner == nil {
+				return ""
+			}
+			if strings.TrimSpace(socket) == "" {
+				if lookupEnv == nil || strings.TrimSpace(lookupEnv("TMUX")) == "" {
+					return ""
+				}
+			}
+			out, err := c.runner.Run(context.Background(), "tmux", c.tmuxArgs(socket, "show-options", "-gqv", name)...)
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(string(out))
+		},
+		isWSL:     lookupEnv != nil && strings.TrimSpace(lookupEnv("WSL_DISTRO_NAME")) != "",
+		wtPresent: lookupEnv != nil && strings.TrimSpace(lookupEnv("WT_SESSION")) != "",
+	}
+	mode, _ := resolver.resolveMode()
+	return mode
 }

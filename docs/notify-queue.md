@@ -230,6 +230,8 @@ Outcomes:
 
 The same consume policy is shared by notify-sidebar Enter and OS
 click-to-focus Toast callbacks after a real tmux focus dispatch succeeds.
+OS Toast click-to-focus is only registered when Desktop notification mode is
+`raise`; the in-app sidebar/statusbar consume path works in every mode.
 Pane focus hooks and attention clear paths remain live-attention-only and do
 not ack the notify queue. Non-critical AI completion producers also compact
 older same-pane non-critical AI rows after replacing/pushing their latest row,

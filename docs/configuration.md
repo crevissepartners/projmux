@@ -410,7 +410,9 @@ only a generic in-app queue/sidebar/statusbar row; it does not fire OS toast,
 The OS-level dispatch carries three modes. The in-app notify queue, the
 statusbar segment, and the attention badge stay live regardless of which
 mode is active — only the toast / notify-send / auto-raise fan-out is
-gated here.
+gated here. The same mode also gates `projmux focus` post-switch osfocus
+dispatch: only `raise` asks the host terminal to come forward after a
+successful tmux focus.
 
 | Mode | On push | On click |
 | --- | --- | --- |
@@ -422,7 +424,8 @@ Click activation is wired only for `raise`. The `projmux://` URI handler is
 registered on the first `raise` Notify of each tmux server (gated by the
 `@projmux_uri_protocol_registered_v6` marker). The
 mode only controls whether a toast fires at all and whether to follow it
-up with an on-push auto-raise.
+up with an on-push auto-raise. `off` / `none` and `notify` also suppress
+the focus-triggered osfocus raise after `projmux focus`.
 
 Resolution order (highest priority first):
 
