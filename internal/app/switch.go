@@ -447,7 +447,7 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 
-	_, err = io.WriteString(stdout, intrender.RenderSwitchPreview(model, *ui))
+	_, err = io.WriteString(stdout, intrender.RenderSwitchPreviewWithAIBadgeStyle(model, *ui, string(loadAIBadgeStyle(c.homeDir, c.lookupEnv))))
 	return err
 }
 
@@ -2356,6 +2356,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 	sessionNames := make(map[string]string, len(candidatePaths))
 	attentionRanks := map[string]int(nil)
 	aiBadgeKinds := map[string]string(nil)
+	aiBadgeStyle := string(loadAIBadgeStyle(c.homeDir, c.lookupEnv))
 	if mode == switchRowRenderFull {
 		attentionRanks, aiBadgeKinds = c.switchAttentionBadges(ctx)
 	}
@@ -2405,6 +2406,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 			UI:            ui,
 			AttentionRank: attentionRanks[sessionName],
 			AIBadgeKind:   aiBadgeKinds[sessionName],
+			AIBadgeStyle:  aiBadgeStyle,
 			Pinned:        pinnedSet[cleanOptionalPath(candidatePath)],
 		})
 	}
@@ -2447,6 +2449,7 @@ func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, m
 		panes = nil
 	}
 	attentionRanks, aiBadgeKinds := switchWindowAttentionBadges(panes)
+	aiBadgeStyle := string(loadAIBadgeStyle(c.homeDir, c.lookupEnv))
 	tabs := make([]intrender.SwitchWindowTab, 0, len(windows))
 	for _, window := range windows {
 		name := strings.TrimSpace(window.Name)
@@ -2460,6 +2463,7 @@ func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, m
 			Name:          name,
 			AttentionRank: attentionRanks[strings.TrimSpace(window.Index)],
 			AIBadgeKind:   aiBadgeKinds[strings.TrimSpace(window.Index)],
+			AIBadgeStyle:  aiBadgeStyle,
 			Active:        window.Active,
 		})
 	}

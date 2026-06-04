@@ -151,6 +151,37 @@ func TestThemeFromEffectiveProjectDoesNotLeakGlobalBackgroundForeground(t *testi
 	}
 }
 
+func TestThemeFromEffectiveProjectMapsSemanticRoles(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{
+		SurfaceActive: "#010203",
+		Foreground:    "#111213",
+		Muted:         "#212223",
+		Accent:        "#313233",
+		Warning:       "#414243",
+		Critical:      "#515253",
+	})
+	pickerTheme := ThemeFromEffective(effective)
+
+	for name, values := range map[string][2]string{
+		"selected": {pickerTheme.Selected, "\x1b[48;2;1;2;3m\x1b[38;2;17;18;19m"},
+		"muted":    {pickerTheme.Muted, "\x1b[38;2;33;34;35m"},
+		"accent":   {pickerTheme.Accent, "\x1b[38;2;49;50;51m"},
+		"warning":  {pickerTheme.Warning, "\x1b[38;2;65;66;67m"},
+		"critical": {pickerTheme.Critical, "\x1b[38;2;81;82;83m"},
+	} {
+		if values[0] != values[1] {
+			t.Fatalf("%s role = %q, want %q", name, values[0], values[1])
+		}
+	}
+
+	selected := RenderableListLineWithTheme(pickerTheme, InteractiveRowLinesWithTheme(pickerTheme, Row{Label: "\x1b[36mapi\x1b[0m"}, true, false)[0], 16)
+	if !strings.Contains(selected, pickerTheme.Selected) || !strings.Contains(selected, pickerTheme.Accent+"▌"+pickerTheme.Selected) {
+		t.Fatalf("selected row = %q, want themed selected/accent roles", selected)
+	}
+}
+
 func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	t.Parallel()
 

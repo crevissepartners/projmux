@@ -25,6 +25,13 @@ type Theme struct {
 	Vertical    string
 	Background  string
 	Foreground  string
+	Selected    string
+	Muted       string
+	Accent      string
+	Highlight   string
+	Warning     string
+	Critical    string
+	Cursor      string
 }
 
 type Renderer struct {
@@ -48,6 +55,13 @@ var DefaultTheme = Theme{
 	BottomRight: "╯",
 	Horizontal:  "─",
 	Vertical:    "│",
+	Selected:    CurrentStart,
+	Muted:       MutedStart,
+	Accent:      themeAccentStart,
+	Highlight:   HighlightStart,
+	Warning:     themeWarningStart,
+	Critical:    themeCriticalStart,
+	Cursor:      CursorStart,
 }
 
 func NewRenderer(theme Theme) Renderer {

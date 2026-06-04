@@ -1487,16 +1487,17 @@ func nativeContentLayoutForOptions(layout nativeLayout, options Options) nativeL
 
 func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
 	var screen strings.Builder
+	pickerTheme := nativeTheme(options)
 	if header := strings.TrimSpace(options.Header); header != "" {
-		fmt.Fprintln(&screen, nativeHeaderLine(header, layout.Cols))
+		fmt.Fprintln(&screen, nativeHeaderLineWithTheme(pickerTheme, header, layout.Cols))
 	}
 	if !options.DisableSearch {
 		prompt := strings.TrimSpace(options.Prompt)
 		if prompt == "" {
 			prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
 		}
-		fmt.Fprintln(&screen, nativePromptLineWithCursor(prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
-		fmt.Fprintln(&screen, nativeSearchSeparatorLine(layout.Cols))
+		fmt.Fprintln(&screen, nativePromptLineWithCursorAndTheme(pickerTheme, prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
+		fmt.Fprintln(&screen, nativeSearchSeparatorLineWithTheme(pickerTheme, layout.Cols))
 	}
 
 	placement := nativePreviewPlacement(options.Preview.Window)
@@ -1517,18 +1518,18 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	}
 	displayItems := items
 	if !options.MultiLine {
-		displayItems = nativeHighlightSimpleItems(options, items, query)
+		displayItems = nativeHighlightSimpleItemsWithTheme(pickerTheme, options, items, query)
 	}
-	listLines := nativeInteractiveListLines(displayItems, start, end, selected, options.MultiLine)
+	listLines := nativeInteractiveListLinesWithTheme(pickerTheme, displayItems, start, end, selected, options.MultiLine)
 	prependedRows := 0
 	if options.MultiLine {
-		listLines = nativeAppendPartialNextItemLines(displayItems, listLines, end, selected, listLimit)
-		listLines, prependedRows = nativePrependPartialPreviousItemLines(displayItems, listLines, start, selected, listLimit)
+		listLines = nativeAppendPartialNextItemLinesWithTheme(pickerTheme, displayItems, listLines, end, selected, listLimit)
+		listLines, prependedRows = nativePrependPartialPreviousItemLinesWithTheme(pickerTheme, displayItems, listLines, start, selected, listLimit)
 	}
 	var main strings.Builder
 	if len(items) == 0 {
 		fmt.Fprintln(&main, "  "+nativeLocalizedText(i18n.KeyPickerEmptyNoMatches, "no matches"))
-		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
+		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
@@ -1539,7 +1540,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 			scrollEnd = min(scrollStart+len(listLines), scrollTotal)
 		}
 		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, scrollTotal, scrollStart, scrollEnd, listLimit)
-		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
+		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
 	scrollRows := listLimit
@@ -1551,19 +1552,19 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		scrollStart = max(scrollStart-prependedRows, 0)
 		scrollEnd = min(scrollStart+len(listLines), scrollTotal)
 	}
-	listLines = nativeListLinesWithScrollbarRows(listLines, scrollTotal, scrollStart, scrollEnd, layout.Cols, scrollRows)
+	listLines = nativeListLinesWithScrollbarRowsWithTheme(pickerTheme, listLines, scrollTotal, scrollStart, scrollEnd, layout.Cols, scrollRows)
 	for _, line := range listLines {
 		fmt.Fprintln(&main, line)
 	}
 	if len(previewLines) > 0 && placement == "down" {
 		renderNativeDownPreview(&main, previewLines, layout)
-		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
+		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
 	if len(previewLines) > 0 {
 		renderNativeInlinePreview(&main, previewLines, layout)
 	}
-	writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
+	writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
 }
 
 func nativeListLimit(options Options, layout nativeLayout, previewPlacement string, previewHeight int, hasPreview bool) int {
@@ -1589,6 +1590,10 @@ func nativeBlankPreviewLines(height int) []string {
 }
 
 func nativeAppendPartialNextItemLines(items []Item, lines []string, next, selected, limit int) []string {
+	return nativeAppendPartialNextItemLinesWithTheme(projmuxpicker.DefaultTheme, items, lines, next, selected, limit)
+}
+
+func nativeAppendPartialNextItemLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, lines []string, next, selected, limit int) []string {
 	if limit <= 0 || len(lines) >= limit || next < 0 || next >= len(items) {
 		return lines
 	}
@@ -1597,7 +1602,7 @@ func nativeAppendPartialNextItemLines(items []Item, lines []string, next, select
 		return lines
 	}
 	out := append([]string(nil), lines...)
-	nextLines := nativePartialNextItemLines(items, next, selected)
+	nextLines := nativePartialNextItemLinesWithTheme(pickerTheme, items, next, selected)
 	if len(nextLines) > remaining {
 		nextLines = nextLines[:remaining]
 	}
@@ -1605,6 +1610,10 @@ func nativeAppendPartialNextItemLines(items []Item, lines []string, next, select
 }
 
 func nativePrependPartialPreviousItemLines(items []Item, lines []string, start, selected, limit int) ([]string, int) {
+	return nativePrependPartialPreviousItemLinesWithTheme(projmuxpicker.DefaultTheme, items, lines, start, selected, limit)
+}
+
+func nativePrependPartialPreviousItemLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, lines []string, start, selected, limit int) ([]string, int) {
 	if limit <= 0 || len(lines) >= limit || start <= 0 || start > len(items) {
 		return lines, 0
 	}
@@ -1612,7 +1621,7 @@ func nativePrependPartialPreviousItemLines(items []Item, lines []string, start, 
 	if remaining <= 0 {
 		return lines, 0
 	}
-	prefix := nativeLinesBeforeItem(items, start, selected)
+	prefix := nativeLinesBeforeItemWithTheme(pickerTheme, items, start, selected)
 	if len(prefix) > remaining {
 		prefix = prefix[len(prefix)-remaining:]
 	}
@@ -1623,11 +1632,15 @@ func nativePrependPartialPreviousItemLines(items []Item, lines []string, start, 
 }
 
 func nativeLinesBeforeItem(items []Item, index, selected int) []string {
+	return nativeLinesBeforeItemWithTheme(projmuxpicker.DefaultTheme, items, index, selected)
+}
+
+func nativeLinesBeforeItemWithTheme(pickerTheme projmuxpicker.Theme, items []Item, index, selected int) []string {
 	if index <= 0 || index >= len(items) {
 		return nil
 	}
-	withCurrent := nativeInteractiveListLines(items, 0, index+1, selected, true)
-	current := nativeInteractiveListLines(items, index, index+1, selected, true)
+	withCurrent := nativeInteractiveListLinesWithTheme(pickerTheme, items, 0, index+1, selected, true)
+	current := nativeInteractiveListLinesWithTheme(pickerTheme, items, index, index+1, selected, true)
 	if len(current) == 0 || len(withCurrent) <= len(current) {
 		return nil
 	}
@@ -1635,16 +1648,20 @@ func nativeLinesBeforeItem(items []Item, index, selected int) []string {
 }
 
 func nativePartialNextItemLines(items []Item, next, selected int) []string {
+	return nativePartialNextItemLinesWithTheme(projmuxpicker.DefaultTheme, items, next, selected)
+}
+
+func nativePartialNextItemLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, next, selected int) []string {
 	if next < 0 || next >= len(items) {
 		return nil
 	}
 	if next == 0 {
-		return nativeInteractiveItemLines(items[next], next == selected, true)
+		return nativeInteractiveItemLinesWithTheme(pickerTheme, items[next], next == selected, true)
 	}
-	withNext := nativeInteractiveListLines(items, next-1, next+1, selected, true)
-	withoutNext := nativeInteractiveListLines(items, next-1, next, selected, true)
+	withNext := nativeInteractiveListLinesWithTheme(pickerTheme, items, next-1, next+1, selected, true)
+	withoutNext := nativeInteractiveListLinesWithTheme(pickerTheme, items, next-1, next, selected, true)
 	if len(withNext) <= len(withoutNext) {
-		return nativeInteractiveItemLines(items[next], next == selected, true)
+		return nativeInteractiveItemLinesWithTheme(pickerTheme, items[next], next == selected, true)
 	}
 	return withNext[len(withoutNext):]
 }
@@ -1676,8 +1693,16 @@ func nativeSearchSeparatorLine(cols int) string {
 	return projmuxpicker.SeparatorLine(cols)
 }
 
+func nativeSearchSeparatorLineWithTheme(pickerTheme projmuxpicker.Theme, cols int) string {
+	return projmuxpicker.SeparatorLineWithTheme(pickerTheme, cols)
+}
+
 func nativeHeaderLine(header string, cols int) string {
 	return projmuxpicker.HeaderLine(header, cols)
+}
+
+func nativeHeaderLineWithTheme(pickerTheme projmuxpicker.Theme, header string, cols int) string {
+	return projmuxpicker.HeaderLineWithTheme(pickerTheme, header, cols)
 }
 
 func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
@@ -1693,10 +1718,14 @@ func renderNativeFrameWithChips(w io.Writer, content string, chips []projmuxpick
 }
 
 func nativeRenderer(options Options) projmuxpicker.Renderer {
+	return projmuxpicker.NewRenderer(nativeTheme(options))
+}
+
+func nativeTheme(options Options) projmuxpicker.Theme {
 	if options.Theme == nil {
-		return projmuxpicker.DefaultRenderer()
+		return projmuxpicker.DefaultTheme
 	}
-	return projmuxpicker.NewRenderer(projmuxpicker.ThemeFromEffective(*options.Theme))
+	return projmuxpicker.ThemeFromEffective(*options.Theme)
 }
 
 func nativeTitlebarRowsForOptions(options Options) int {
@@ -1708,6 +1737,25 @@ func nativeTitlebarRowsForOptions(options Options) int {
 
 func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {
 	projmuxpicker.WriteContentWithFooter(w, top, main, footer, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+}
+
+func writeNativeContentWithFooterWithTheme(w io.Writer, pickerTheme projmuxpicker.Theme, top, main, footer string, layout nativeLayout) {
+	var screen strings.Builder
+	screen.WriteString(top)
+	screen.WriteString(main)
+	footerLines := projmuxpicker.FooterBlockLinesWithTheme(pickerTheme, footer, layout.Cols)
+	if len(footerLines) == 0 {
+		fmt.Fprint(w, screen.String())
+		return
+	}
+	remaining := layout.Rows - nativeRenderedTextLineCount(screen.String()) - len(footerLines)
+	for range remaining {
+		fmt.Fprintln(&screen)
+	}
+	for _, line := range footerLines {
+		fmt.Fprintln(&screen, line)
+	}
+	fmt.Fprint(w, screen.String())
 }
 
 func nativeFooterBlockLines(footer string, cols int) []string {
@@ -1724,6 +1772,10 @@ func nativePromptLine(prompt, query string, matches, total, cols int) string {
 
 func nativePromptLineWithCursor(prompt, query string, cursor, matches, total, cols int) string {
 	return projmuxpicker.PromptLineWithCursorLabel(nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, cursor, matches, total, cols)
+}
+
+func nativePromptLineWithCursorAndTheme(pickerTheme projmuxpicker.Theme, prompt, query string, cursor, matches, total, cols int) string {
+	return projmuxpicker.PromptLineWithRenderedQueryLabelAndTheme(pickerTheme, nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, projmuxpicker.QueryWithCursorAndTheme(pickerTheme, query, cursor), matches, total, cols)
 }
 
 func nativePromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
@@ -1807,12 +1859,20 @@ func nativeInteractiveListLines(items []Item, start, end, selected int, multiLin
 	return projmuxpicker.InteractiveListLines(nativeRows(items), start, end, selected, multiLine)
 }
 
+func nativeInteractiveListLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, start, end, selected int, multiLine bool) []string {
+	return projmuxpicker.InteractiveListLinesWithTheme(pickerTheme, nativeRows(items), start, end, selected, multiLine)
+}
+
 func nativeListLinesWithScrollbar(lines []string, total, start, end, width int) []string {
 	return projmuxpicker.ListLinesWithScrollbar(lines, total, start, end, width)
 }
 
 func nativeListLinesWithScrollbarRows(lines []string, total, start, end, width, rows int) []string {
 	return projmuxpicker.ListLinesWithScrollbarRows(lines, total, start, end, width, rows)
+}
+
+func nativeListLinesWithScrollbarRowsWithTheme(pickerTheme projmuxpicker.Theme, lines []string, total, start, end, width, rows int) []string {
+	return projmuxpicker.ListLinesWithScrollbarRowsWithTheme(pickerTheme, lines, total, start, end, width, rows)
 }
 
 func nativeListScrollbarUnits(items []Item, start, end int, multiLine bool) (int, int, int) {
@@ -1845,6 +1905,10 @@ func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
 	return projmuxpicker.InteractiveRowLines(nativeRow(item), selected, multiLine)
 }
 
+func nativeInteractiveItemLinesWithTheme(pickerTheme projmuxpicker.Theme, item Item, selected, multiLine bool) []string {
+	return projmuxpicker.InteractiveRowLinesWithTheme(pickerTheme, nativeRow(item), selected, multiLine)
+}
+
 func nativeSelectedContent(value string) string {
 	return projmuxpicker.SelectedContent(value)
 }
@@ -1869,6 +1933,10 @@ func nativeRow(item Item) projmuxpicker.Row {
 }
 
 func nativeHighlightSimpleItems(options Options, items []Item, query string) []Item {
+	return nativeHighlightSimpleItemsWithTheme(projmuxpicker.DefaultTheme, options, items, query)
+}
+
+func nativeHighlightSimpleItemsWithTheme(pickerTheme projmuxpicker.Theme, options Options, items []Item, query string) []Item {
 	query = strings.TrimSpace(query)
 	if query == "" || options.DisableSearch || hasNativeSearchKey(options.Items) {
 		return items
@@ -1883,7 +1951,7 @@ func nativeHighlightSimpleItems(options Options, items []Item, query string) []I
 		if !ok {
 			continue
 		}
-		highlighted[i].Label = nativeHighlightANSIVisiblePositions(label, positions)
+		highlighted[i].Label = nativeHighlightANSIVisiblePositionsWithTheme(pickerTheme, label, positions)
 	}
 	return highlighted
 }
@@ -1927,8 +1995,16 @@ func nativeFuzzyMatchPositions(source string, pattern []rune, caseSensitive bool
 }
 
 func nativeHighlightANSIVisiblePositions(value string, positions []int) string {
+	return nativeHighlightANSIVisiblePositionsWithTheme(projmuxpicker.DefaultTheme, value, positions)
+}
+
+func nativeHighlightANSIVisiblePositionsWithTheme(pickerTheme projmuxpicker.Theme, value string, positions []int) string {
 	if len(positions) == 0 || value == "" {
 		return value
+	}
+	highlightStart := pickerTheme.Highlight
+	if highlightStart == "" {
+		highlightStart = nativeHighlightStart
 	}
 	positionSet := make(map[int]struct{}, len(positions))
 	for _, position := range positions {
@@ -1960,7 +2036,7 @@ func nativeHighlightANSIVisiblePositions(value string, positions []int) string {
 			break
 		}
 		if _, ok := positionSet[visible]; ok {
-			out.WriteString(nativeHighlightStart)
+			out.WriteString(highlightStart)
 			out.WriteRune(r)
 			out.WriteString(nativeReset)
 			out.WriteString(activeSGR)
