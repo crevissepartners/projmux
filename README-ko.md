@@ -4,8 +4,9 @@
   <img src="docs/assets/projmux-icon.png" alt="projmux icon" width="112">
 </p>
 
-프로젝트별 tmux workspace를 빠르게 전환하고, preview/status context/AI pane
-attention까지 함께 다루는 터미널 workspace 도구입니다.
+프로젝트별 tmux workspace를 빠르게 전환하고, Claude Code, Codex,
+Antigravity pane의 preview/status context/attention까지 함께 다루는 터미널
+workspace 도구입니다.
 
 [![npm version](https://img.shields.io/npm/v/projmux?logo=npm)](https://www.npmjs.com/package/projmux)
 [![CI](https://github.com/crevissepartners/projmux/actions/workflows/ci.yml/badge.svg)](https://github.com/crevissepartners/projmux/actions/workflows/ci.yml)
@@ -23,6 +24,8 @@ attention까지 함께 다루는 터미널 workspace 도구입니다.
 `projmux`는 프로젝트 디렉터리를 오래 유지되는 tmux session으로 연결합니다.
 프로젝트 전환, session preview, AI split 실행, tmux 안의 상태 표시를 한
 키보드 중심 workspace 앱으로 묶습니다.
+Claude Code와 Codex hook event를 직접 수집하고, 수동으로 연결한 Antigravity
+hook/statusline event도 같은 notification 흐름으로 다룹니다.
 
 터미널 workspace를 한 명령으로 열고, 한 세트의 키로 project/window/pane,
 notification, settings 사이를 오가고 싶을 때 사용합니다.
@@ -90,6 +93,7 @@ projmux shortcut은 AI 도구의 user-level skill 또는 slash command로도 등
 ```sh
 projmux ai split --agent codex right
 projmux ai split --agent claude down
+projmux ai split --agent antigravity right
 ```
 
 `/projmux:codex-right` 같은 Claude slash command를 등록한 뒤 prompt와 함께
@@ -97,6 +101,8 @@ projmux ai split --agent claude down
 Codex pane이 새로 열립니다. prompt는 새 pane으로 바로 전달되고,
 permission/completion hook event가 tmux 상태줄과 notification list에
 표시됩니다.
+Antigravity도 같은 managed split 경로로 실행되며, 수동 hook ingest와 session
+resume 지원 범위는 CLI reference에 정리되어 있습니다.
 
 설치 template과 naming convention은
 [AI Agent Shortcuts](docs/ai-agent-shortcuts.md)에 정리되어 있습니다.
