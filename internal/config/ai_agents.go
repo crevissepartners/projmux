@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 )
 
 const AIEnabledAgentsFileName = "ai-enabled-agents"
@@ -18,37 +20,30 @@ const (
 	AIAgentAntigravity AIAgentProvider = "antigravity"
 )
 
-var DefaultAIEnabledAgents = []AIAgentProvider{AIAgentClaude, AIAgentCodex, AIAgentAntigravity}
+var DefaultAIEnabledAgents = knownAIEnabledAgentProviders()
 
 func (p Paths) AIEnabledAgentsFile() string {
 	return filepath.Join(p.ConfigDir, AIEnabledAgentsFileName)
 }
 
 func KnownAIAgentProviders() []AIAgentProvider {
-	return append([]AIAgentProvider(nil), DefaultAIEnabledAgents...)
+	return knownAIEnabledAgentProviders()
 }
 
 func NormalizeAIEnabledAgents(values []string) []AIAgentProvider {
 	seen := map[AIAgentProvider]bool{}
-	normalized := make([]AIAgentProvider, 0, len(DefaultAIEnabledAgents))
+	known := map[AIAgentProvider]bool{}
+	for _, agent := range KnownAIAgentProviders() {
+		known[agent] = true
+	}
+	normalized := make([]AIAgentProvider, 0, len(known))
 	for _, value := range values {
-		switch strings.ToLower(strings.TrimSpace(value)) {
-		case string(AIAgentClaude):
-			if !seen[AIAgentClaude] {
-				normalized = append(normalized, AIAgentClaude)
-				seen[AIAgentClaude] = true
-			}
-		case string(AIAgentCodex):
-			if !seen[AIAgentCodex] {
-				normalized = append(normalized, AIAgentCodex)
-				seen[AIAgentCodex] = true
-			}
-		case string(AIAgentAntigravity):
-			if !seen[AIAgentAntigravity] {
-				normalized = append(normalized, AIAgentAntigravity)
-				seen[AIAgentAntigravity] = true
-			}
+		agent := AIAgentProvider(strings.ToLower(strings.TrimSpace(value)))
+		if !known[agent] || seen[agent] {
+			continue
 		}
+		normalized = append(normalized, agent)
+		seen[agent] = true
 	}
 	return normalized
 }
@@ -116,4 +111,13 @@ func splitAIEnabledAgentNames(content string) []string {
 	return strings.FieldsFunc(content, func(r rune) bool {
 		return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
 	})
+}
+
+func knownAIEnabledAgentProviders() []AIAgentProvider {
+	providers := aiprovider.SettingsVisible()
+	out := make([]AIAgentProvider, 0, len(providers))
+	for _, provider := range providers {
+		out = append(out, AIAgentProvider(provider.ID))
+	}
+	return out
 }

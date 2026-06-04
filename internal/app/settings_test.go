@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -1193,6 +1194,35 @@ func TestSettingsHubTogglesAIEnabledAgentPersists(t *testing.T) {
 	want := []config.AIAgentProvider{config.AIAgentCodex, config.AIAgentAntigravity}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("enabled agents = %#v, want %#v", got, want)
+	}
+}
+
+func TestSettingsAIProviderRegistryDrivesEnabledAgentRows(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{
+		ai:        testAICommand(t.TempDir()),
+		homeDir:   func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(string) string { return "" },
+	}
+
+	entries := cmd.aiEnabledAgentEntries()
+	for _, provider := range aiprovider.SettingsVisible() {
+		value := settingsActionPrefixAIEnabledAgent + string(provider.ID)
+		if !hasEntryValue(entries, value) {
+			t.Fatalf("AI enabled agents entries = %#v, want provider row %q", entries, value)
+		}
+		if !hasEntryLabelContainingAll(entries, provider.DisplayName, provider.DisplayName+" split") {
+			t.Fatalf("AI enabled agents entries = %#v, want display metadata for %q", entries, provider.ID)
+		}
+	}
+	for _, unwanted := range []string{
+		settingsActionPrefixAIEnabledAgent + aiModeShell,
+		settingsActionPrefixAIEnabledAgent + aiModeSelective,
+	} {
+		if hasEntryValue(entries, unwanted) {
+			t.Fatalf("AI enabled agents entries = %#v, want no %q", entries, unwanted)
+		}
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -2341,11 +2342,20 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 		desc string
 	}{
 		{aiModeSelective, "show picker each time"},
-		{aiModeClaude, "always run Claude split"},
-		{aiModeCodex, "always run Codex split"},
-		{aiModeAntigravity, "always run Antigravity split"},
-		{aiModeShell, "always open plain shell split"},
 	}
+	for _, provider := range aiprovider.SettingsVisible() {
+		modes = append(modes, struct {
+			mode string
+			desc string
+		}{
+			mode: string(provider.ID),
+			desc: "always run " + provider.DisplayName + " split",
+		})
+	}
+	modes = append(modes, struct {
+		mode string
+		desc string
+	}{aiModeShell, "always open plain shell split"})
 
 	entries := make([]intpickercompat.Entry, 0, len(modes)+1)
 	entries = append(entries, settingsBackEntry())
@@ -2390,16 +2400,9 @@ func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 		})
 	}
 
-	for _, item := range []struct {
-		provider config.AIAgentProvider
-		name     string
-		desc     string
-	}{
-		{config.AIAgentClaude, "Claude", "Anthropic CLI split"},
-		{config.AIAgentCodex, "Codex", "OpenAI Codex split"},
-		{config.AIAgentAntigravity, "Antigravity", "Antigravity CLI split"},
-	} {
-		on := aiEnabledAgentsContains(enabled, item.provider)
+	for _, provider := range aiprovider.SettingsVisible() {
+		configProvider := config.AIAgentProvider(provider.ID)
+		on := aiEnabledAgentsContains(enabled, configProvider)
 		glyph := settingsGlyphInactive
 		color := settingsColorDim
 		state := "disabled"
@@ -2409,9 +2412,9 @@ func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 			state = "enabled"
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(glyph, color, item.name, state+" - "+item.desc),
-			Value:     settingsActionPrefixAIEnabledAgent + string(item.provider),
-			SearchKey: strings.Join([]string{"enabled agents", item.name, string(item.provider), state}, " "),
+			Label:     settingsLabel(glyph, color, provider.DisplayName, state+" - "+provider.DisplayName+" split"),
+			Value:     settingsActionPrefixAIEnabledAgent + string(provider.ID),
+			SearchKey: strings.Join([]string{"enabled agents", provider.DisplayName, string(provider.ID), state}, " "),
 		})
 	}
 	return entries
@@ -2489,16 +2492,10 @@ func aiEnabledAgentsContains(agents []config.AIAgentProvider, provider config.AI
 }
 
 func aiEnabledAgentDisplayName(provider config.AIAgentProvider) string {
-	switch provider {
-	case config.AIAgentClaude:
-		return "Claude"
-	case config.AIAgentCodex:
-		return "Codex"
-	case config.AIAgentAntigravity:
-		return "Antigravity"
-	default:
-		return string(provider)
+	if meta, ok := aiprovider.Lookup(string(provider)); ok && meta.DisplayName != "" {
+		return meta.DisplayName
 	}
+	return string(provider)
 }
 
 func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
