@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.6.6](https://github.com/crevissepartners/projmux/compare/v0.6.5...v0.6.6) (2026-06-02)
+
+
+### Features
+
+* add AI agent enablement settings ([#381](https://github.com/crevissepartners/projmux/issues/381)) ([b7f72fb](https://github.com/crevissepartners/projmux/commit/b7f72fbb318dd8ec6b10e3c0642c0d316e03234b))
+* add AI badge display styles ([#374](https://github.com/crevissepartners/projmux/issues/374)) ([e9ca5e6](https://github.com/crevissepartners/projmux/commit/e9ca5e647c885eccfd496b8aaf91bb539beaf564))
+* add AI semantic badge state contract ([#370](https://github.com/crevissepartners/projmux/issues/370)) ([3b32f76](https://github.com/crevissepartners/projmux/commit/3b32f7679a6775daf20d6d83fee5f215ba19519c))
+* cover Settings picker i18n ([#359](https://github.com/crevissepartners/projmux/issues/359)) ([429f159](https://github.com/crevissepartners/projmux/commit/429f159d8b1454f0943a74fd87dcdc577e6ff11c))
+* gate AI split launches by enabled agents ([#382](https://github.com/crevissepartners/projmux/issues/382)) ([774e0dd](https://github.com/crevissepartners/projmux/commit/774e0dda9a3ae29408d206b81af2bd5990e6c731))
+* harden AI semantic badge theme roles ([#375](https://github.com/crevissepartners/projmux/issues/375)) ([8418c1a](https://github.com/crevissepartners/projmux/commit/8418c1a9d2ab383190eddc82c2d4926759b66e49))
+* render AI semantic status badges ([#371](https://github.com/crevissepartners/projmux/issues/371)) ([d910f4d](https://github.com/crevissepartners/projmux/commit/d910f4d01e5070a0a6f85047ee7a8f7970916076))
+
+
+### Bug Fixes
+
+* clamp native picker row width ([#380](https://github.com/crevissepartners/projmux/issues/380)) ([d5390d3](https://github.com/crevissepartners/projmux/commit/d5390d30b950e8a478c23643a25526ca1f8550dd))
+* drop sidebar switch metadata lines ([#366](https://github.com/crevissepartners/projmux/issues/366)) ([44eff9c](https://github.com/crevissepartners/projmux/commit/44eff9cc5dc2170cb99723665776f0210dbe1b38))
+* fill native picker app background ([#383](https://github.com/crevissepartners/projmux/issues/383)) ([8f0b984](https://github.com/crevissepartners/projmux/commit/8f0b984f8544691567f6c0440193435ea49064a3))
+* keep Alt-1 branch chip compact ([#369](https://github.com/crevissepartners/projmux/issues/369)) ([804135e](https://github.com/crevissepartners/projmux/commit/804135e6f7e88fe97b670f9ea8a263f5f03bb5dd))
+* keep Alt-1 sidebar rows compact ([#364](https://github.com/crevissepartners/projmux/issues/364)) ([75d9c82](https://github.com/crevissepartners/projmux/commit/75d9c82a8209be3f8f4431d806cf150a9de4a0a5))
+* keep appearance parent rows inside native frame ([#384](https://github.com/crevissepartners/projmux/issues/384)) ([c5886af](https://github.com/crevissepartners/projmux/commit/c5886afad1b6036bdabbeff251a848f30a8dd8ae))
+* **npm:** generate optional package metadata at staging ([#362](https://github.com/crevissepartners/projmux/issues/362)) ([3e1b10e](https://github.com/crevissepartners/projmux/commit/3e1b10e5f790aa7ae8d991a4a1a740b99c99688e))
+* persist desktop notification setting ([#379](https://github.com/crevissepartners/projmux/issues/379)) ([9dc71a0](https://github.com/crevissepartners/projmux/commit/9dc71a0bad724140d5ef8bf1f70b797dc5305a02))
+* preserve legacy attention window rows ([#373](https://github.com/crevissepartners/projmux/issues/373)) ([9e79302](https://github.com/crevissepartners/projmux/commit/9e793022cf22206e91361c7b0f96569c14c6c2a4))
+* reserve blank Alt-1 sidebar lanes ([#368](https://github.com/crevissepartners/projmux/issues/368)) ([d007ddb](https://github.com/crevissepartners/projmux/commit/d007ddbfa01b4597b886e6bbe6989a8990e17527))
+* restore Alt-1 sidebar card rows ([#367](https://github.com/crevissepartners/projmux/issues/367)) ([cf7c716](https://github.com/crevissepartners/projmux/commit/cf7c716ad7160088fb28bcf2b8f2ef761ad8790a))
+* reuse palette warning for AI badges ([#372](https://github.com/crevissepartners/projmux/issues/372)) ([e5b8031](https://github.com/crevissepartners/projmux/commit/e5b8031efcd4e3195e7a169c02829b29e7098384))
+* simplify native picker titlebar ANSI ([#358](https://github.com/crevissepartners/projmux/issues/358)) ([6942fd2](https://github.com/crevissepartners/projmux/commit/6942fd272503b13dcb49c0547f061940611cf796))
+* soften window-list attention badge ([#365](https://github.com/crevissepartners/projmux/issues/365)) ([a8db0d2](https://github.com/crevissepartners/projmux/commit/a8db0d2a1c92808e014870f5251d0a7886954996))
+* stabilize Alt-1 sidebar row geometry ([#360](https://github.com/crevissepartners/projmux/issues/360)) ([092fff9](https://github.com/crevissepartners/projmux/commit/092fff9dde41f8ce8b78b2e212fc4ab4e70a93da))
+* **statusbar:** clean visible notify settings chrome ([#355](https://github.com/crevissepartners/projmux/issues/355)) ([8bd4544](https://github.com/crevissepartners/projmux/commit/8bd4544118478bed01f120886a0857404fc5d99c))
+
+
+### Performance Improvements
+
+* improve Alt-1 sidebar first paint ([#357](https://github.com/crevissepartners/projmux/issues/357)) ([533f273](https://github.com/crevissepartners/projmux/commit/533f2733b9fd7ea87a018659f3bbc8e0bd89ff3b))
+
 ## [0.6.5](https://github.com/crevissepartners/projmux/compare/v0.6.4...v0.6.5) (2026-05-21)
 
 
