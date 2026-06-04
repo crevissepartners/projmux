@@ -813,7 +813,7 @@ func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 				return err
 			}
 		}
-		return c.runAgentSplitWithExtraArgs(invocation.agent, invocation.direction, invocation.extraArgs)
+		return c.runDirectAgentSplitWithExtraArgs(invocation.agent, invocation.direction, invocation.extraArgs)
 	}
 
 	mode := c.getMode()
@@ -822,12 +822,12 @@ func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 		if err := c.requireAIAgentEnabled(aiModeClaude, aiSplitLaunchDefault); err != nil {
 			return err
 		}
-		return c.runAgentSplit(aiModeClaude, invocation.direction)
+		return c.runDirectAgentSplit(aiModeClaude, invocation.direction)
 	case aiModeCodex:
 		if err := c.requireAIAgentEnabled(aiModeCodex, aiSplitLaunchDefault); err != nil {
 			return err
 		}
-		return c.runAgentSplit(aiModeCodex, invocation.direction)
+		return c.runDirectAgentSplit(aiModeCodex, invocation.direction)
 	case aiModeShell:
 		return c.runShellSplit(invocation.direction)
 	case aiModeSelective:
@@ -1138,14 +1138,32 @@ func (c *aiCommand) runAgentSplit(mode, direction string) error {
 	return c.runAgentSplitWithExtraArgs(mode, direction, nil)
 }
 
+func (c *aiCommand) runDirectAgentSplit(mode, direction string) error {
+	return c.runDirectAgentSplitWithExtraArgs(mode, direction, nil)
+}
+
+func (c *aiCommand) runDirectAgentSplitWithExtraArgs(mode, direction string, extraArgs []string) error {
+	targetPane := c.resolveTargetPane()
+	contextDir := c.resolveAgentContextDir(mode)
+	if !c.usePSMuxAIBackend() {
+		handled, err := c.handleAgentSplitToggle(targetPane, contextDir, mode)
+		if handled || err != nil {
+			return err
+		}
+	}
+	return c.runAgentSplitResolved(mode, direction, extraArgs, targetPane, contextDir)
+}
+
 func (c *aiCommand) runAgentSplitWithExtraArgs(mode, direction string, extraArgs []string) error {
+	return c.runAgentSplitResolved(mode, direction, extraArgs, c.resolveTargetPane(), c.resolveAgentContextDir(mode))
+}
+
+func (c *aiCommand) runAgentSplitResolved(mode, direction string, extraArgs []string, targetPane, contextDir string) error {
 	execArgv, pathPrepend, err := c.agentExecArgv(mode, extraArgs)
 	if err != nil {
 		return err
 	}
 	usePSMux := c.usePSMuxAIBackend()
-	targetPane := c.resolveTargetPane()
-	contextDir := c.resolveAgentContextDir(mode)
 	title := c.buildAgentTitle(mode, contextDir)
 	command, commandArgs, err := c.agentSplitCommand(mode, pathPrepend, contextDir, title, execArgv)
 	if err != nil {
@@ -1176,6 +1194,22 @@ func (c *aiCommand) runAgentSplitWithExtraArgs(mode, direction string, extraArgs
 	c.applySplitLayout(targetPane, direction)
 	c.startAIWatchTitle(paneID)
 	return nil
+}
+
+func (c *aiCommand) handleAgentSplitToggle(targetPane, contextDir, mode string) (bool, error) {
+	targetPane = strings.TrimSpace(targetPane)
+	if targetPane == "" {
+		return false, nil
+	}
+	decision := decideAISplitToggle(targetPane, contextDir, mode, c.readAISplitTogglePanes(targetPane))
+	switch decision.action {
+	case aiSplitToggleFocusExisting, aiSplitToggleFocusBack:
+		return true, c.run("tmux", "select-pane", "-t", decision.targetPane)
+	case aiSplitToggleNoop:
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, string, error) {
