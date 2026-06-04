@@ -127,6 +127,15 @@ do not break. Settings preserves existing prefix entries when rewriting the
 file, but does not create new prefix keys, and generated tmux config no longer
 binds the old action prefix chords.
 
+Settings > Keybindings names `AISplitPickerToggle` as the AI split popup
+picker toggle. That action opens or closes the picker UI and is separate from
+the direct persistent AI pane actions, `ai-split-right` and `ai-split-down`.
+The direct actions open a matching AI pane when none exists, focus the existing
+matching pane on later presses, and focus back to the previous/non-AI pane when
+pressed from that matching AI pane. They do not kill the existing AI pane.
+`right` and `down` are creation hints only; they do not reposition a pane after
+it exists.
+
 Use an empty `keys` list to disable direct plain aliases for the action when
 editing the file by hand:
 

@@ -33,7 +33,7 @@ These shortcuts are the guaranteed launch defaults. They need no tmux prefix.
 | `Alt-1` | Project sidebar |
 | `Alt-2` | Notify sidebar |
 | `Alt-3` | Existing session popup |
-| `Alt-4` | AI split picker |
+| `Alt-4` | AI split popup picker |
 | `Alt-5` | Settings |
 
 The tmux prefix remains the upstream default `Ctrl-b`. Inside a running
@@ -57,8 +57,24 @@ Optional direct aliases can be added for actions such as:
 | Canonical action | Meaning |
 | --- | --- |
 | `ProjectSwitcherToggle` | Project switcher popup |
+| `AISplitPickerToggle` | AI split popup picker; pressing again closes the picker popup |
+| `ai-split-right` | Direct persistent AI split open/focus/focus-back, with `right` used only when creating a new pane |
+| `ai-split-down` | Direct persistent AI split open/focus/focus-back, with `down` used only when creating a new pane |
 | `new-window` | New tmux window in the current pane directory |
 | `rename-window` | Rename the current tmux window |
+
+`AISplitPickerToggle` is the `Alt-4` popup picker toggle. It opens or closes
+the picker UI where the user chooses the AI split mode. It is separate from
+the direct `ai-split-right` and `ai-split-down` actions.
+
+The direct AI split actions are persistent pane actions, not destructive
+toggles. On first press, if there is no matching managed AI pane for the same
+session, project context, and agent, projmux creates one using the requested
+direction as the creation hint. On the next press from another pane, projmux
+focuses the existing matching AI pane instead of creating a duplicate. Pressing
+the same direct split key while already on that matching AI pane focuses back
+to the previous/non-AI pane when tmux has one. The existing AI pane is not
+killed, and the original direction does not move an already-created pane.
 
 Pane switching is catalogued as transport-dependent and the generated app tmux
 config binds `M-Left`, `M-Right`, `M-Up`, and `M-Down` to `select-pane`
@@ -132,7 +148,9 @@ Legacy popup IDs such as `sessionizer-sidebar`, `notify-sidebar`,
 `session-popup`, `ai-split-picker-right`, `ai-split-settings`, and
 `sessionizer` still read. Settings and new docs show the canonical toggle
 names: `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
-`AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`.
+`AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`. Direct
+AI split actions keep their command IDs, `ai-split-right` and `ai-split-down`,
+so Settings can distinguish them from the `Alt-4` popup picker toggle.
 
 ## Diagnose: `projmux setup`
 

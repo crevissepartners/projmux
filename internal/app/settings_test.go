@@ -4145,7 +4145,7 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 		"ProjectSidebarToggle":      "Toggle Project Sidebar",
 		"NotifySidebarToggle":       "Toggle Notify Sidebar",
 		"SessionPopupToggle":        "Toggle Session Popup",
-		"AISplitPickerToggle":       "Toggle AI Split Picker",
+		"AISplitPickerToggle":       "Toggle AI Split Picker Popup",
 		"SettingsToggle":            "Toggle Settings",
 		"ProjectSwitcherToggle":     "Toggle Project Switcher",
 		"Sidebar:PinProject":        "Project Sidebar: Pin Project",
@@ -4157,6 +4157,8 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 		"Settings:SwitchTabPrev":    "Previous Settings Tab",
 		"rename-window":             "Rename Window",
 		"current-project-session":   "Current Project Session",
+		"ai-split-right":            "Open/Focus AI Split Right",
+		"ai-split-down":             "Open/Focus AI Split Down",
 	}
 	for id, want := range cases {
 		action, ok := keyBindingActionByID(catalog, id)
