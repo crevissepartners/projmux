@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -518,8 +519,10 @@ func TestIngestCodexHookBlankSessionIDDoesNotRewriteResumeMetadata(t *testing.T)
 func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 	home := t.TempDir()
 	store := &stubNotifyStore{}
+	events := &stubNotifyQueueEvents{publishErr: errors.New("listener unavailable")}
 	cmd := testAICommand(home)
 	cmd.notifyStore = store
+	cmd.events = events
 	cmd.now = func() time.Time { return time.Unix(100, 0) }
 
 	lastBellAt := ""
@@ -553,6 +556,9 @@ func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 
 	if len(store.pushed) != 1 {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	if events.publishCalls != 1 {
+		t.Fatalf("publish calls = %d, want one successful queue write event", events.publishCalls)
 	}
 	got := store.pushed[0]
 	if got.ID != "ai:bell:workspace:%7" {

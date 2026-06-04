@@ -66,23 +66,24 @@ type DeferredUpdate struct {
 }
 
 type Options struct {
-	UI              string
-	Items           []Item
-	Title           string
-	TitleChips      []projmuxpicker.Chip
-	Prompt          string
-	Header          string
-	Footer          string
-	Actions         []Action
-	Preview         Preview
-	InitialQuery    string
-	InitialIndex    int
-	InitialIndexSet bool
-	DisableSearch   bool
-	AcceptQuery     bool
-	MultiLine       bool
-	Theme           *theme.EffectiveTheme
-	DeferredUpdate  func() (DeferredUpdate, error)
+	UI                    string
+	Items                 []Item
+	Title                 string
+	TitleChips            []projmuxpicker.Chip
+	Prompt                string
+	Header                string
+	Footer                string
+	Actions               []Action
+	Preview               Preview
+	InitialQuery          string
+	InitialIndex          int
+	InitialIndexSet       bool
+	DisableSearch         bool
+	AcceptQuery           bool
+	MultiLine             bool
+	Theme                 *theme.EffectiveTheme
+	DeferredUpdate        func() (DeferredUpdate, error)
+	DeferredUpdateTrigger <-chan struct{}
 }
 
 type Result struct {
@@ -457,9 +458,15 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	deferredStarted := false
 	var keyCh <-chan nativeKeyRead
 	var deferredCh <-chan nativeDeferredRead
+	var stopDeferred chan struct{}
 	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
 	fmt.Fprint(out, nativeScreenEnter)
 	defer leaveNativeInteractiveScreen(out)
+	defer func() {
+		if stopDeferred != nil {
+			close(stopDeferred)
+		}
+	}()
 
 	for {
 		items := nativeFilteredItems(options, query)
@@ -482,7 +489,8 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if !deferredStarted && options.DeferredUpdate != nil {
 			deferredStarted = true
 			keyCh = startNativeKeyReader(in)
-			deferredCh = startNativeDeferredUpdate(options.DeferredUpdate)
+			stopDeferred = make(chan struct{})
+			deferredCh = startNativeDeferredUpdate(options.DeferredUpdate, options.DeferredUpdateTrigger, stopDeferred)
 		}
 
 		key, err := nextNativeInteractiveKey(in, keyCh, &deferredCh, func(update DeferredUpdate) {
@@ -711,11 +719,36 @@ func startNativeKeyReader(in io.Reader) <-chan nativeKeyRead {
 	return ch
 }
 
-func startNativeDeferredUpdate(update func() (DeferredUpdate, error)) <-chan nativeDeferredRead {
+func startNativeDeferredUpdate(update func() (DeferredUpdate, error), triggers <-chan struct{}, stop <-chan struct{}) <-chan nativeDeferredRead {
 	ch := make(chan nativeDeferredRead, 1)
 	go func() {
-		result, err := update()
-		ch <- nativeDeferredRead{update: result, err: err}
+		defer close(ch)
+		run := func() bool {
+			result, err := update()
+			select {
+			case ch <- nativeDeferredRead{update: result, err: err}:
+				return true
+			case <-stop:
+				return false
+			}
+		}
+		if triggers == nil {
+			_ = run()
+			return
+		}
+		for {
+			select {
+			case _, ok := <-triggers:
+				if !ok {
+					return
+				}
+				if !run() {
+					return
+				}
+			case <-stop:
+				return
+			}
+		}
 	}()
 	return ch
 }
@@ -726,8 +759,11 @@ func nextNativeInteractiveKey(in io.Reader, keyCh <-chan nativeKeyRead, deferred
 	}
 	for {
 		select {
-		case deferred := <-*deferredCh:
-			*deferredCh = nil
+		case deferred, ok := <-*deferredCh:
+			if !ok {
+				*deferredCh = nil
+				continue
+			}
 			if deferred.err != nil {
 				nativeDebugLogf("interactive ui=%q deferred_update_error=%q", ui, deferred.err.Error())
 				continue

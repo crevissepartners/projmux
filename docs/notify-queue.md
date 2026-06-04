@@ -13,6 +13,7 @@ via `projmux focus`, and feeds the HUD pill rendered by
 ```
 ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/notify.json
 ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/notify.json.lock
+${XDG_STATE_HOME:-$HOME/.local/state}/projmux/notify-queue-events/refresh-*.sock
 ```
 
 The lock file is acquired via `O_CREATE|O_EXCL` with bounded retry
@@ -23,6 +24,13 @@ queue.
 The queue file is a pretty-printed JSON array of `Notification`
 objects, sorted newest-first on read. `expires_at` is freshness metadata;
 expired entries are not filtered or deleted by `list`.
+
+Open native notify sidebars also create per-process Unix datagram sockets for
+queue-write refresh events. If the state-dir socket path would exceed Unix
+socket path limits, projmux uses a short per-state-dir temp runtime path for
+the socket directory. These sockets are transient UI delivery endpoints only:
+they are not queue state, do not change the JSON schema, and are removed when
+the sidebar exits.
 
 ## Data model
 
@@ -114,6 +122,14 @@ notification text first, then age, project, window, and pane metadata; hidden
 queue ids remain action values but the sidebar has no search input and
 intentionally does not expose a separate metadata detail view.
 
+When a new pending notification is successfully pushed by any app producer
+(`notify push`, reply-ready, reconcile backfill, or bell fallback), open native
+notify sidebars receive a best-effort queue-write event and rerun the same
+`DeferredUpdate` row/live-state refresh path used by `a` ack and `x`
+non-critical clear. Event delivery errors are ignored after the queue write:
+the push still succeeds, and reopening the sidebar remains the recovery path
+for seeing the latest queue.
+
 `--live` adds a non-mutating explanation view that reads
 `tmux list-panes -a` and compares the queue with live reply-state panes. It
 does not push, ack, or otherwise repair anything. Human output keeps the
@@ -162,6 +178,9 @@ path), then:
 - reports every existing queue entry whose id starts with `ai:` and whose
   pane no longer matches that condition as stale, without acking it.
 
+Successful backfill pushes publish the same best-effort open-sidebar refresh
+event as other pending queue additions.
+
 Soft-fails when tmux is not running (returns a populated `errors`
 field rather than a non-zero exit) so the post-install hook does not
 break. Run this as the recovery path when the on-disk queue has drifted
@@ -189,7 +208,10 @@ an entry with:
 When the pane leaves the reply state (manual `attention clear`,
 `status set idle`, or a window close), `AckReplyReady` intentionally does not
 remove the entry. The user consumes it through explicit ack. Store errors are
-swallowed so the live tmux UI never blocks on disk IO.
+swallowed so the live tmux UI never blocks on disk IO. After a successful
+queue write and same-pane non-critical compaction, the producer publishes the
+same best-effort notify-sidebar queue-write refresh event used by
+`projmux notify push`.
 
 Manual `projmux attention toggle` on a pane without an agent option
 does NOT push — the queue is intentionally AI-driven; reconcile honours
@@ -209,7 +231,9 @@ tmux and writes an info/source-ai row with:
 Unlike reply-ready reconcile, bell ingest does not require AI pane metadata.
 It is intentionally available for arbitrary CLIs that only signal attention
 through BEL or OSC 9. Repeated bells from the same pane are suppressed for 5
-seconds before a later bell refreshes the stable queue id.
+seconds before a later bell refreshes the stable queue id. Successful
+non-deduped bell queue writes publish the same best-effort open-sidebar
+refresh event as other pending queue additions.
 
 ## Consumer (status-bar click)
 

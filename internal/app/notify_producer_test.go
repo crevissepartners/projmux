@@ -74,6 +74,30 @@ func TestStoreAttentionNotifyProducerPushReplyReadyHappyPath(t *testing.T) {
 	}
 }
 
+func TestStoreAttentionNotifyProducerPublishesQueueRefreshBestEffort(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{}
+	events := &stubNotifyQueueEvents{publishErr: errors.New("listener unavailable")}
+	producer := &storeAttentionNotifyProducer{store: store, ttl: time.Minute, events: events}
+
+	lookup := newFakeAttentionLookup(map[string]string{
+		"%9|@projmux_ai_agent": "claude",
+		"%9|#S":                "main",
+		"%9|#{window_id}":      "@4",
+		"%9|#{pane_id}":        "%9",
+	})
+
+	producer.PushReplyReady(attentionNotifyInput{PaneID: "%9", Lookup: lookup})
+
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want queue write to succeed", len(store.pushed))
+	}
+	if events.publishCalls != 1 {
+		t.Fatalf("publish calls = %d, want 1", events.publishCalls)
+	}
+}
+
 func TestStoreAttentionNotifyProducerPushReplyReadyWithTopic(t *testing.T) {
 	t.Parallel()
 

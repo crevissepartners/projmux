@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -69,6 +70,30 @@ type notifyPickerFunc func(options intpickercompat.Options) (intpickercompat.Res
 
 func (f notifyPickerFunc) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
 	return f(options)
+}
+
+type stubNotifyQueueEvents struct {
+	publishCalls   int
+	publishErr     error
+	subscribeCalls int
+	subscribeErr   error
+	trigger        chan struct{}
+}
+
+func (e *stubNotifyQueueEvents) Publish() error {
+	e.publishCalls++
+	return e.publishErr
+}
+
+func (e *stubNotifyQueueEvents) Subscribe(context.Context) (<-chan struct{}, error) {
+	e.subscribeCalls++
+	if e.subscribeErr != nil {
+		return nil, e.subscribeErr
+	}
+	if e.trigger == nil {
+		e.trigger = make(chan struct{}, 1)
+	}
+	return e.trigger, nil
 }
 
 type recordingNotifyNativePicker struct {
@@ -232,6 +257,28 @@ func TestNotifyPushDefaults(t *testing.T) {
 	}
 	if in.TTL != notify.DefaultTTL {
 		t.Fatalf("TTL = %s", in.TTL)
+	}
+}
+
+func TestNotifyPushPublishesQueueRefreshBestEffort(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{
+		pushResult: notify.PushResult{ID: "abc", QueueLen: 1},
+		pushEntry:  notify.Notification{ID: "abc"},
+	}
+	events := &stubNotifyQueueEvents{publishErr: errors.New("listener unavailable")}
+	cmd := newCmd(store)
+	cmd.events = events
+
+	if err := cmd.Run([]string{"push", "--text", "hi", "--target", "s"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if events.publishCalls != 1 {
+		t.Fatalf("publish calls = %d, want 1", events.publishCalls)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want queue write to succeed", len(store.pushed))
 	}
 }
 
@@ -887,6 +934,47 @@ func TestNotifyListSidebarXClearNonCriticalRendersEmptyState(t *testing.T) {
 	}
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want no sidebar clear output", stdout.String())
+	}
+}
+
+func TestNotifyListSidebarSubscribesToQueueRefreshEvents(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
+	}
+	picker := &recordingNotifyNativePicker{}
+	events := &stubNotifyQueueEvents{trigger: make(chan struct{}, 1)}
+	cmd := newCmd(store)
+	cmd.native = picker
+	cmd.events = events
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if events.subscribeCalls != 1 {
+		t.Fatalf("subscribe calls = %d, want 1", events.subscribeCalls)
+	}
+	if len(picker.options) != 1 {
+		t.Fatalf("picker runs = %d, want 1", len(picker.options))
+	}
+	options := picker.options[0]
+	if options.DeferredUpdate == nil {
+		t.Fatal("DeferredUpdate is nil, want event-backed refresh path")
+	}
+	if options.DeferredUpdateTrigger != events.trigger {
+		t.Fatalf("DeferredUpdateTrigger = %#v, want injected trigger", options.DeferredUpdateTrigger)
+	}
+
+	store.listEntries = append([]notify.Notification{
+		{ID: "def", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
+	}, store.listEntries...)
+	update, err := options.DeferredUpdate()
+	if err != nil {
+		t.Fatalf("DeferredUpdate() error = %v", err)
+	}
+	if len(update.Items) != 2 || update.Items[0].Value != "def" || update.Items[1].Value != "abc" {
+		t.Fatalf("update items = %#v, want refreshed def then abc", update.Items)
 	}
 }
 

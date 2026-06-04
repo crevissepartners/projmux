@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -135,6 +136,32 @@ func TestNotifyReconcilePushesMissingEntryForReplyPane(t *testing.T) {
 	}
 	if in.Target.Socket != "/tmp/tmux-1000/projmux" {
 		t.Fatalf("Socket = %q", in.Target.Socket)
+	}
+	if got := stdout.String(); got != "reconcile: pushed 1, acked 0, kept 0, stale 0\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestNotifyReconcilePublishesQueueRefreshBestEffort(t *testing.T) {
+	t.Parallel()
+
+	runner := &reconcileTmuxRunner{
+		output: []byte("main|@4|%16|reply|waiting|claude|notify wiring|/tmp/tmux-1000/projmux\n"),
+	}
+	store := &memNotifyStore{}
+	events := &stubNotifyQueueEvents{publishErr: errors.New("listener unavailable")}
+	cmd := newReconcileCmd(store, runner)
+	cmd.events = events
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"reconcile"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want queue write to succeed", len(store.pushed))
+	}
+	if events.publishCalls != 1 {
+		t.Fatalf("publish calls = %d, want 1", events.publishCalls)
 	}
 	if got := stdout.String(); got != "reconcile: pushed 1, acked 0, kept 0, stale 0\n" {
 		t.Fatalf("stdout = %q", got)

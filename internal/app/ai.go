@@ -76,6 +76,7 @@ type aiCommand struct {
 	sleep        func(time.Duration)
 	producer     attentionNotifyProducer
 	notifyStore  notifyStore
+	events       notifyQueueRefreshEvents
 }
 
 func newAICommand() *aiCommand {

@@ -335,6 +335,7 @@ func (c *aiCommand) ingestBell(paneID string) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "error", Reason: err.Error(), Pane: info.Pane})
 		return err
 	}
+	c.publishNotifyQueueRefreshBestEffort()
 	c.recordBellNotification(info.Pane)
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "notify", Pane: info.Pane})
 	return nil

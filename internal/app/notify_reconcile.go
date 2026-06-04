@@ -167,6 +167,7 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 			result.Errors = append(result.Errors, fmt.Sprintf("push %s: %v", id, err))
 			continue
 		}
+		c.publishNotifyQueueRefreshBestEffort()
 		result.Pushed++
 	}
 

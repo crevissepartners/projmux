@@ -62,9 +62,10 @@ func (noopAttentionNotifyProducer) AckReplyReady(attentionNotifyInput) {}
 // storeAttentionNotifyProducer is the production implementation that writes
 // to the shared notify queue file.
 type storeAttentionNotifyProducer struct {
-	store notifyStore
-	ttl   time.Duration
-	hooks *sendNotiHookDispatcher
+	store  notifyStore
+	ttl    time.Duration
+	hooks  *sendNotiHookDispatcher
+	events notifyQueueRefreshEvents
 }
 
 // newAttentionNotifyProducer builds a producer that uses the default notify
@@ -77,9 +78,10 @@ func newAttentionNotifyProducer() attentionNotifyProducer {
 		return noopAttentionNotifyProducer{}
 	}
 	return &storeAttentionNotifyProducer{
-		store: notify.NewDefaultStore(paths),
-		ttl:   attentionNotifyTTL,
-		hooks: newSendNotiHookDispatcher(),
+		store:  notify.NewDefaultStore(paths),
+		ttl:    attentionNotifyTTL,
+		hooks:  newSendNotiHookDispatcher(),
+		events: newNotifyQueueRefreshTransport(paths.StateDir),
 	}
 }
 
@@ -162,12 +164,20 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 			_ = ackOlderSameTargetAINotifications(p.store, entry, entries)
 		}
 	}
+	p.publishNotifyQueueRefreshBestEffort()
 }
 
 // AckReplyReady is kept for the attention state-machine seam, but it no
 // longer removes rows. Leaving reply state does not mean the user consumed the
 // notification; only explicit `notify ack` does.
 func (p *storeAttentionNotifyProducer) AckReplyReady(in attentionNotifyInput) {
+}
+
+func (p *storeAttentionNotifyProducer) publishNotifyQueueRefreshBestEffort() {
+	if p == nil || p.events == nil {
+		return
+	}
+	_ = p.events.Publish()
 }
 
 // buildAttentionNotifyID renders the composite id that pairs a push with its

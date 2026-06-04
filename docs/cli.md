@@ -206,10 +206,13 @@ projmux notify reconcile [--json]
 - `push` — append (or refresh, with `--id`) one entry. `--ttl` defaults to
   `600` seconds as freshness metadata; it does not remove rows from
   `notify list`. `--text` is hard-capped to 80 runes (longer text is
-  truncated server-side). After a successful queue write, projmux fires
-  declarative `[hooks.send-noti]` asynchronously if configured. That hook gets
-  a JSON payload on stdin plus `PROJMUX_NOTIFY_*` env vars, and it does not
-  replace the normal desktop notification path.
+  truncated server-side). After a successful queue write, projmux sends a
+  best-effort refresh event to open native notify sidebars and fires
+  declarative `[hooks.send-noti]` asynchronously if configured. Event delivery
+  failure does not fail the queue write; reopening the sidebar still shows the
+  latest queue. The hook gets a JSON payload on stdin plus
+  `PROJMUX_NOTIFY_*` env vars, and it does not replace the normal desktop
+  notification path.
 - `list` — newest-first pending queue table `ID AGE SEV SRC TARGET TEXT`
   (or JSON). `--severity` and `--source` are repeatable filters.
   `--live` adds a non-mutating explanation table (or JSON report) that
@@ -219,10 +222,13 @@ projmux notify reconcile [--json]
   queue entries whose live pane no longer matches. `--ui=sidebar` opens the
   compact interactive notify list where Enter focuses and acks a target, `a`
   acks the selected row, `x` clears non-critical rows, and `Ctrl-X` clears all;
-  opening or navigating the sidebar does not ack. The sidebar uses two-line cards with notification text
-  first and compact age/project/window/pane metadata below. Hidden queue ids
-  remain action values, but the sidebar has no search input. `--client` is
-  used by tmux popup launchers to keep row-select focus on the clicked client.
+  opening or navigating the sidebar does not ack. While open, the native
+  sidebar refreshes its row list on successful queue-write events without an
+  Alt-2 close/reopen toggle, using the same deferred refresh path as `a` and
+  `x`. The sidebar uses two-line cards with notification text first and
+  compact age/project/window/pane metadata below. Hidden queue ids remain
+  action values, but the sidebar has no search input. `--client` is used by
+  tmux popup launchers to keep row-select focus on the clicked client.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
   panes whose attention state is `reply` AND whose AI agent option is
