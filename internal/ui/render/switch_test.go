@@ -265,6 +265,35 @@ func TestSwitchBadgeEmojiStyleCompatibilityGlyphs(t *testing.T) {
 	}
 }
 
+func TestBuildSwitchRowsSidebarWindowTabsUseAIBadgeStyle(t *testing.T) {
+	t.Parallel()
+
+	rows := BuildSwitchRows([]SwitchCandidate{{
+		Path:         "/home/tester/source/repos/app",
+		DisplayPath:  "~rp/app",
+		DisplayName:  "app",
+		SessionName:  "repos-app",
+		ModeLabel:    "existing",
+		UI:           "sidebar",
+		AIBadgeStyle: aibadge.StyleEmoji,
+		WindowTabs: []SwitchWindowTab{
+			{Name: "shell", AIBadgeKind: aibadge.ApprovalRequired, Active: true},
+			{Name: "server", AIBadgeKind: aibadge.ResponseComplete},
+			{Name: "tests", AIBadgeKind: aibadge.InProgress},
+		},
+	}})[0]
+
+	got := rows.Item.EffectiveLabel()
+	for _, want := range []string{"⏳", "✅", "🔄"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sidebar label = %q, want AI badge style glyph %q", got, want)
+		}
+	}
+	if strings.Contains(got, "●") {
+		t.Fatalf("sidebar label = %q, want emoji badge style without dot glyphs", got)
+	}
+}
+
 func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
 	t.Parallel()
 

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 )
 
@@ -128,6 +129,27 @@ func TestRenderSwitchPreviewForSidebarUsesSemanticPromptBadge(t *testing.T) {
 
 	if !strings.Contains(got, "\x1b[38;5;214m●\x1b[0m approval needed") {
 		t.Fatalf("RenderSwitchPreview() = %q, want semantic prompt warning badge", got)
+	}
+}
+
+func TestRenderSwitchPreviewAIBadgeStyleEmoji(t *testing.T) {
+	t.Parallel()
+
+	got := RenderSwitchPreviewWithAIBadgeStyle(corepreview.SwitchReadModel{
+		SessionMode: "existing",
+		Windows: []corepreview.Window{
+			{Index: "1", Name: "app"},
+		},
+		Panes: []corepreview.Pane{
+			{WindowIndex: "1", Index: "0", Title: "agent", AIAgent: "codex", AITopic: "approval needed", AIBadgeKind: aibadge.ApprovalRequired},
+		},
+	}, "sidebar", aibadge.StyleEmoji)
+
+	if !strings.Contains(got, "\x1b[38;5;214m⏳\x1b[0m approval needed") {
+		t.Fatalf("RenderSwitchPreviewWithAIBadgeStyle() = %q, want emoji prompt badge", got)
+	}
+	if strings.Contains(got, "● approval needed") {
+		t.Fatalf("RenderSwitchPreviewWithAIBadgeStyle() = %q, want no dot prompt badge", got)
 	}
 }
 

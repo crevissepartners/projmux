@@ -1279,6 +1279,13 @@ func tmuxCenteredWindowNameFormat(width int) string {
 	return fallback
 }
 
+func tmuxWindowStatusFormats(binaryPath string, effective theme.EffectiveTheme) (string, string) {
+	bin := tmuxShellQuote(binaryPath)
+	tokens := theme.TmuxRenderTokensFromEffective(effective)
+	return "#[fg=" + tokens.WindowInactiveFg + ",bg=" + tokens.WindowInactiveBg + "] #(" + bin + " attention window #{window_id} #{@projmux_ai_badge_style})#[fg=" + tokens.WindowInactiveFg + "] #I " + statusbarWindowTitleFormat() + " #[default]",
+		"#[bold,fg=" + tokens.WindowActiveFg + ",bg=" + tokens.WindowActiveBg + "] #(" + bin + " attention window #{window_id} #{@projmux_ai_badge_style})#[fg=" + tokens.WindowActiveFg + "] #I " + statusbarWindowTitleFormat() + " #[default]"
+}
+
 func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
 	return fallbackRenderThemeSource().tmuxStandaloneConfig(binaryPath, decorations, catalog, keymapPresent)
 }
@@ -1293,7 +1300,7 @@ func tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath string, decor
 
 func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
-	tokens := theme.TmuxRenderTokensFromEffective(effective)
+	windowStatusFormat, windowStatusCurrentFormat := tmuxWindowStatusFormats(binaryPath, effective)
 	defaultStandaloneKeyBindings := keyBindingCatalogForScope(keyBindingScopeStandalone)
 	standaloneKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeStandalone)
 	badgeStyle = config.NormalizeAIBadgeStyle(string(badgeStyle))
@@ -1313,8 +1320,8 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryP
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
 		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
 		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
-		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tokens.WindowInactiveFg+",bg="+tokens.WindowInactiveBg+"] #("+bin+" attention window #{window_id} #{@projmux_ai_badge_style})#[fg="+tokens.WindowInactiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
-		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tokens.WindowActiveFg+",bg="+tokens.WindowActiveBg+"] #("+bin+" attention window #{window_id} #{@projmux_ai_badge_style})#[fg="+tokens.WindowActiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
+		"set -g window-status-format "+tmuxConfigQuote(windowStatusFormat),
+		"set -g window-status-current-format "+tmuxConfigQuote(windowStatusCurrentFormat),
 		"set -g status 2",
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",

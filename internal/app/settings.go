@@ -3782,6 +3782,21 @@ func (c *settingsCommand) setAIBadgeStyle(value string) error {
 		if err := c.runCommand("tmux", "set-option", "-g", "pane-border-format", tmuxPaneBorderFormatWithAIBadgeStyle(style)); err != nil {
 			return fmt.Errorf("set live tmux pane border format: %w", err)
 		}
+		source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, c.resolveSettingsProjectContext().Path)
+		if err != nil {
+			return fmt.Errorf("resolve live tmux theme: %w", err)
+		}
+		binaryPath, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve live tmux executable: %w", err)
+		}
+		windowStatusFormat, windowStatusCurrentFormat := tmuxWindowStatusFormats(binaryPath, source.effective)
+		if err := c.runCommand("tmux", "set-option", "-g", "window-status-format", windowStatusFormat); err != nil {
+			return fmt.Errorf("set live tmux window status format: %w", err)
+		}
+		if err := c.runCommand("tmux", "set-option", "-g", "window-status-current-format", windowStatusCurrentFormat); err != nil {
+			return fmt.Errorf("set live tmux current window status format: %w", err)
+		}
 		_ = c.runCommand("tmux", "display-message", "AI badge style: "+string(style))
 	}
 	return nil

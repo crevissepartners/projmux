@@ -1692,8 +1692,8 @@ func TestSettingsHubSetsAIBadgeStyle(t *testing.T) {
 	if got != config.AIBadgeStyleEmoji {
 		t.Fatalf("AI badge style = %q, want %q", got, config.AIBadgeStyleEmoji)
 	}
-	if len(tmuxCalls) != 3 {
-		t.Fatalf("tmux calls = %#v, want style option, pane-border-format, display-message", tmuxCalls)
+	if len(tmuxCalls) != 5 {
+		t.Fatalf("tmux calls = %#v, want style option, pane-border-format, window-status formats, display-message", tmuxCalls)
 	}
 	if !reflect.DeepEqual(tmuxCalls[0], []string{"tmux", "set-option", "-g", aiBadgeStyleTmuxOption, string(config.AIBadgeStyleEmoji)}) {
 		t.Fatalf("first tmux call = %#v", tmuxCalls[0])
@@ -1704,8 +1704,20 @@ func TestSettingsHubSetsAIBadgeStyle(t *testing.T) {
 	if !strings.Contains(tmuxCalls[1][4], "⏳") || !strings.Contains(tmuxCalls[1][4], "✅") || !strings.Contains(tmuxCalls[1][4], "🔄") {
 		t.Fatalf("pane-border-format call = %#v, want emoji markers", tmuxCalls[1])
 	}
-	if !reflect.DeepEqual(tmuxCalls[2], []string{"tmux", "display-message", "AI badge style: emoji"}) {
+	if !reflect.DeepEqual(tmuxCalls[2][:4], []string{"tmux", "set-option", "-g", "window-status-format"}) {
 		t.Fatalf("third tmux call = %#v", tmuxCalls[2])
+	}
+	if !strings.Contains(tmuxCalls[2][4], "attention window #{window_id} #{@projmux_ai_badge_style}") {
+		t.Fatalf("window-status-format call = %#v, want dynamic AI badge style", tmuxCalls[2])
+	}
+	if !reflect.DeepEqual(tmuxCalls[3][:4], []string{"tmux", "set-option", "-g", "window-status-current-format"}) {
+		t.Fatalf("fourth tmux call = %#v", tmuxCalls[3])
+	}
+	if !strings.Contains(tmuxCalls[3][4], "attention window #{window_id} #{@projmux_ai_badge_style}") {
+		t.Fatalf("window-status-current-format call = %#v, want dynamic AI badge style", tmuxCalls[3])
+	}
+	if !reflect.DeepEqual(tmuxCalls[4], []string{"tmux", "display-message", "AI badge style: emoji"}) {
+		t.Fatalf("fifth tmux call = %#v", tmuxCalls[4])
 	}
 }
 

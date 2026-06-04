@@ -16,8 +16,8 @@ const (
 	MutedStart     = theme.ANSITextMutedStart
 	TitlebarStart  = theme.ANSISurfaceRaisedStart
 	TitlebarRule   = theme.ANSISurfaceRuleStart
-	Pointer        = CurrentStart + theme.ANSIAccentActionStrongStart + "▌" + CurrentStart + " "
-	Continuation   = CurrentStart + theme.ANSIAccentActionStrongStart + "▌" + CurrentStart + " "
+	Pointer        = CurrentStart + themeAccentStart + "▌" + CurrentStart + " "
+	Continuation   = CurrentStart + themeAccentStart + "▌" + CurrentStart + " "
 	Reset          = theme.ANSIReset
 	InverseStart   = theme.ANSIInverse
 	CursorStart    = theme.ANSIInverse
@@ -42,6 +42,12 @@ const (
 	ChipDisabledStart = theme.ANSIChipDisabledStart
 )
 
+const (
+	themeAccentStart   = theme.ANSIAccentActionStrongStart
+	themeWarningStart  = theme.ANSIStateProgressStart
+	themeCriticalStart = theme.ANSIStateDangerStart
+)
+
 // ThemeFromEffective adapts resolver-backed colors to the native picker frame.
 // Even fallback-sourced fields are concrete app theme tokens, so native popup
 // rows paint the picker background instead of inheriting the terminal default.
@@ -53,7 +59,37 @@ func ThemeFromEffective(effective theme.EffectiveTheme) Theme {
 	if fg := effective.Foreground.Value.TruecolorFG(); fg != "" {
 		out.Foreground = "\x1b[" + fg + "m"
 	}
+	if effective.SurfaceActive.Source != theme.SourceFallback || effective.Foreground.Source != theme.SourceFallback {
+		out.Selected = ansiBG(effective.SurfaceActive) + ansiFG(effective.Foreground)
+	}
+	if effective.Muted.Source != theme.SourceFallback {
+		out.Muted = ansiFG(effective.Muted)
+	}
+	if effective.Accent.Source != theme.SourceFallback {
+		out.Accent = ansiFG(effective.Accent)
+		out.Highlight = out.Accent
+	}
+	if effective.Warning.Source != theme.SourceFallback {
+		out.Warning = ansiFG(effective.Warning)
+	}
+	if effective.Critical.Source != theme.SourceFallback {
+		out.Critical = ansiFG(effective.Critical)
+	}
 	return out
+}
+
+func ansiFG(field theme.ColorField) string {
+	if fg := field.Value.TruecolorFG(); fg != "" {
+		return "\x1b[" + fg + "m"
+	}
+	return ""
+}
+
+func ansiBG(field theme.ColorField) string {
+	if bg := field.Value.TruecolorBG(); bg != "" {
+		return "\x1b[" + bg + "m"
+	}
+	return ""
 }
 
 func PadRight(value string, width int) string {
