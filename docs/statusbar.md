@@ -46,6 +46,9 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
   notify queue segment and from notify queue severity or desktop notification
   urgency. For example, an approval request may remain a critical queued
   notification while its live status badge renders action-required amber-orange.
+  Pane focus hooks and `projmux attention clear` consume only the
+  response-complete live badge, including stale `@projmux_ai_state=waiting`
+  fallback state; action-required and in-progress live badges remain visible.
   Window-list badges and app pane-border badges use the same semantic priority,
   with display style controlled by Settings > Appearance > AI badge style and persisted in
   `~/.config/projmux/ai-badge-style`. The default is `dot`; `emoji` renders

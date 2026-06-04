@@ -84,6 +84,8 @@ func TestAttentionClearAcksAndStripsPrefix(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%3", "@projmux_attention_state"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%3", "@projmux_attention_ack", "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%3", "@projmux_attention_focus_armed"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{@projmux_ai_badge_kind}"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{@projmux_ai_state}"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{pane_title}"}},
 		{name: "tmux", args: []string{"select-pane", "-T", "done", "-t", "%3"}},
 	}
@@ -191,6 +193,8 @@ func TestAttentionClearAcksActiveUnarmedReplyPane(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%7", "@projmux_attention_state"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_attention_ack", "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%7", "@projmux_attention_focus_armed"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{@projmux_ai_badge_kind}"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{@projmux_ai_state}"}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{pane_title}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
@@ -223,6 +227,89 @@ func TestAttentionClearKeepsReplyPaneWhenClientOnDifferentWindow(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestAttentionClearConsumesResponseCompleteSemanticBadge(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux display-message -p -t %9 #{@projmux_attention_state}": []byte("\n"),
+			"tmux display-message -p -t %9 #{@projmux_ai_badge_kind}":   []byte("response_complete\n"),
+			"tmux display-message -p -t %9 #{@projmux_ai_state}":        []byte("waiting\n"),
+			"tmux display-message -p -t %9 #{pane_title}":               []byte("worker\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	if err := cmd.Run([]string{"clear", "%9"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	for _, want := range []attentionCall{
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%9", aiPaneBadgeKindOption}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneStateOption, "idle"}},
+	} {
+		if !containsAttentionCall(runner.calls, want) {
+			t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+		}
+	}
+}
+
+func TestAttentionClearIdlesStaleWaitingFallbackBadge(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux display-message -p -t %10 #{@projmux_attention_state}": []byte("\n"),
+			"tmux display-message -p -t %10 #{@projmux_ai_badge_kind}":   []byte("\n"),
+			"tmux display-message -p -t %10 #{@projmux_ai_state}":        []byte("waiting\n"),
+			"tmux display-message -p -t %10 #{pane_title}":               []byte("worker\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner}
+
+	if err := cmd.Run([]string{"clear", "%10"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !containsAttentionCall(runner.calls, attentionCall{name: "tmux", args: []string{"set-option", "-p", "-t", "%10", aiPaneStateOption, "idle"}}) {
+		t.Fatalf("calls = %#v, want stale waiting fallback to be idled", runner.calls)
+	}
+	if containsAttentionCall(runner.calls, attentionCall{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%10", aiPaneBadgeKindOption}}) {
+		t.Fatalf("calls = %#v, did not expect empty badge option unset", runner.calls)
+	}
+}
+
+func TestAttentionClearPreservesActionAndProgressSemanticBadges(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []string{aiBadgeKindApprovalRequired, aiBadgeKindInputRequired, aiBadgeKindInProgress} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+
+			runner := &recordingAttentionRunner{
+				outputs: map[string][]byte{
+					"tmux display-message -p -t %11 #{@projmux_attention_state}": []byte("\n"),
+					"tmux display-message -p -t %11 #{@projmux_ai_badge_kind}":   []byte(kind + "\n"),
+					"tmux display-message -p -t %11 #{@projmux_ai_state}":        []byte("waiting\n"),
+					"tmux display-message -p -t %11 #{pane_title}":               []byte("worker\n"),
+				},
+			}
+			cmd := &attentionCommand{runner: runner}
+
+			if err := cmd.Run([]string{"clear", "%11"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			if containsAttentionCall(runner.calls, attentionCall{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%11", aiPaneBadgeKindOption}}) {
+				t.Fatalf("calls = %#v, did not expect %s badge unset", runner.calls, kind)
+			}
+			if containsAttentionCall(runner.calls, attentionCall{name: "tmux", args: []string{"set-option", "-p", "-t", "%11", aiPaneStateOption, "idle"}}) {
+				t.Fatalf("calls = %#v, did not expect %s badge to idle ai state", runner.calls, kind)
+			}
+		})
 	}
 }
 
@@ -514,6 +601,15 @@ func attentionListTestRow(fields ...string) string {
 type attentionCall struct {
 	name string
 	args []string
+}
+
+func containsAttentionCall(calls []attentionCall, want attentionCall) bool {
+	for _, got := range calls {
+		if got.name == want.name && reflect.DeepEqual(got.args, want.args) {
+			return true
+		}
+	}
+	return false
 }
 
 type recordingAttentionRunner struct {
