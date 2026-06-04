@@ -22,6 +22,14 @@ projmux ai split --agent codex right
 projmux ai split --agent claude down
 ```
 
+Direct AI split shortcuts are persistent pane shortcuts. The first press opens
+a matching managed AI pane when none exists. A later press from another pane
+focuses the existing matching pane for the same session, project context, and
+agent. Pressing the same shortcut while already on that matching AI pane
+focuses back to the previous/non-AI pane when tmux has one. The existing pane
+is not killed on the second press; `right` and `down` are only creation hints
+for a new pane and do not move an existing pane.
+
 Add the separator only when you have extra arguments for the selected agent:
 
 ```sh

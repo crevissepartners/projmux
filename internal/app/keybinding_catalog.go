@@ -163,8 +163,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "AISplitPickerToggle",
-			Description:    "AI split picker",
-			DisplayName:    "Toggle AI Split Picker",
+			Description:    "Toggle the popup picker for choosing an AI split mode",
+			DisplayName:    "Toggle AI Split Picker Popup",
 			LegacyIDs:      []string{"ai-split-picker-right"},
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
@@ -264,7 +264,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:              "ai-split-right",
-			Description:     "Open AI split to the right",
+			Description:     "Open an AI split to the right, focus the existing matching AI pane, or focus back from that pane",
+			DisplayName:     "Open/Focus AI Split Right",
 			Kind:            keyBindingActionCommand,
 			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
@@ -282,7 +283,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:              "ai-split-down",
-			Description:     "Open AI split below",
+			Description:     "Open an AI split below, focus the existing matching AI pane, or focus back from that pane",
+			DisplayName:     "Open/Focus AI Split Down",
 			Kind:            keyBindingActionCommand,
 			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
