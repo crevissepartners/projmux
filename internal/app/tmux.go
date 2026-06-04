@@ -436,7 +436,12 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 		return fmt.Errorf("stat tmux popup marker: %w", err)
 	}
 
-	command, options, err := buildPopupToggleWithPickerBackend(mode, binaryPath, marker, popupCtx, c.pickerBackend(), c.lookupEnv)
+	backend := c.pickerBackend()
+	popupBodyStyle := ""
+	if backend == intpicker.BackendNative {
+		popupBodyStyle = c.nativePickerPopupBodyStyle(popupCtx.ContextDir)
+	}
+	command, options, err := buildPopupToggleWithPickerBackendAndStyle(mode, binaryPath, marker, popupCtx, backend, c.lookupEnv, popupBodyStyle)
 	if err != nil {
 		return err
 	}
@@ -834,6 +839,26 @@ func (c *tmuxCommand) pickerBackend() intpicker.Backend {
 	return resolvePickerBackendWithConfig(c.homeDir, c.lookupEnv)
 }
 
+func (c *tmuxCommand) nativePickerPopupBodyStyle(projectPath string) string {
+	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, projectPath)
+	if err != nil {
+		source = fallbackRenderThemeSource()
+	}
+	return nativePickerPopupBodyStyleFromEffective(source.effective)
+}
+
+func nativePickerPopupBodyStyleFromEffective(effective theme.EffectiveTheme) string {
+	tokens := theme.TmuxRenderTokensFromEffective(effective)
+	style := []string{}
+	if bg := strings.TrimSpace(tokens.StatusBg); bg != "" {
+		style = append(style, "bg="+bg)
+	}
+	if fg := strings.TrimSpace(tokens.StatusFg); fg != "" {
+		style = append(style, "fg="+fg)
+	}
+	return strings.Join(style, ",")
+}
+
 func (c *tmuxCommand) applyPickerPopupBackend(options inttmux.PopupOptions) inttmux.PopupOptions {
 	env := options.Env
 	if env == nil {
@@ -936,6 +961,10 @@ func addSwitchTargetClientEnv(env map[string]string, ctx tmuxPopupContext) {
 }
 
 func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, backend intpicker.Backend, lookupEnv func(string) string) (string, inttmux.PopupOptions, error) {
+	return buildPopupToggleWithPickerBackendAndStyle(mode, binaryPath, marker, ctx, backend, lookupEnv, "")
+}
+
+func buildPopupToggleWithPickerBackendAndStyle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, backend intpicker.Backend, lookupEnv func(string) string, popupBodyStyle string) (string, inttmux.PopupOptions, error) {
 	options := inttmux.PopupOptions{
 		Target:        ctx.OriginPane,
 		CloseBehavior: inttmux.PopupCloseOnExit,
@@ -1004,6 +1033,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 	inheritPopupPickerEnv(env, lookupEnv)
 	if backend == intpicker.BackendNative {
 		options.NoBorder = true
+		options.BodyStyle = strings.TrimSpace(popupBodyStyle)
 		env[intpicker.BackendEnv] = string(intpicker.BackendNative)
 	}
 

@@ -338,6 +338,27 @@ func TestRunnerDisplayPopupBuildsExistingPopupArgs(t *testing.T) {
 	}
 }
 
+func TestBuildDisplayPopupArgsAddsBodyStyle(t *testing.T) {
+	got, err := BuildDisplayPopupArgs("printf hello", PopupOptions{
+		BodyStyle: " bg=colour235,fg=colour245 ",
+	})
+	if err != nil {
+		t.Fatalf("BuildDisplayPopupArgs returned error: %v", err)
+	}
+
+	want := []string{
+		"display-popup",
+		"-E",
+		"-w", "80%",
+		"-h", "80%",
+		"-s", "bg=colour235,fg=colour245",
+		"printf hello",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildDisplayPopupArgs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestRunnerClosePopupBuildsScopedCloseArgs(t *testing.T) {
 	backend := &recordingBackend{}
 	runner := NewRunner(backend)

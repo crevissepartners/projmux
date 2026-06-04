@@ -192,6 +192,14 @@ picker frames also apply the built-in fallback `background`/`foreground` tokens
 so picker-owned padding, empty rows, footer rows, and preview gaps do not
 inherit the terminal default background.
 
+Native picker popups launched through `projmux tmux popup-toggle` also pass a
+per-popup tmux 3.4 `display-popup -s` body style using the effective theme
+`background`/`foreground` tmux tokens. This styles only the tmux popup body
+before the native renderer draws. It does not set global `popup-style` or
+`popup-border-style`, and it does not change shell pane backgrounds,
+`default-style`, `window-style`, OSC terminal backgrounds, or the general
+status/window palette.
+
 Resolver schema shape:
 
 ```toml
