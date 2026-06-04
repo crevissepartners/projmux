@@ -378,6 +378,111 @@ func TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend(t *testing.T) 
 	}
 }
 
+func TestAppRunTmuxPopupToggleUsesNativePopupBodyStyleFromEffectiveTheme(t *testing.T) {
+	t.Setenv("PROJMUX_PICKER_BACKEND", "native")
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#ff0000"
+foreground = "#00ff00"
+`)
+	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
+[theme]
+background = "#010203"
+foreground = "#aabbcc"
+`)
+
+	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-native-style"), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":        "/dev/pts/projmux-test-native-style",
+		"#{pane_id}":           "%1",
+		"#S":                   "work",
+		"#{pane_current_path}": filepath.Join(project, "subdir"),
+		"#{client_width}":      "200",
+		"#{client_height}":     "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	wantStyle := nativePickerPopupBodyStyleFromEffective(theme.ResolveTheme(
+		theme.ThemeConfig{Background: "#ff0000", Foreground: "#00ff00"},
+		theme.ThemeConfig{Background: "#010203", Foreground: "#aabbcc"},
+	))
+	globalStyle := nativePickerPopupBodyStyleFromEffective(theme.ResolveTheme(
+		theme.ThemeConfig{Background: "#ff0000", Foreground: "#00ff00"},
+		theme.ThemeConfig{},
+	))
+	if wantStyle == "" || wantStyle == globalStyle {
+		t.Fatalf("test styles not distinct: project=%q global=%q", wantStyle, globalStyle)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	if !containsTmuxArgPair(got.args, "-s", wantStyle) {
+		t.Fatalf("display call = %#v, want native popup body style %q", got, wantStyle)
+	}
+	if containsTmuxArgPair(got.args, "-s", globalStyle) {
+		t.Fatalf("display call = %#v, leaked global popup body style %q", got, globalStyle)
+	}
+}
+
+func TestBuildPopupToggleWithPickerBackendStylesNativeOnly(t *testing.T) {
+	t.Parallel()
+
+	mode := tmuxPopupToggleMode{Raw: "sessionizer-sidebar", Canonical: "sessionizer-sidebar"}
+	ctx := tmuxPopupContext{
+		OriginPane:   "%1",
+		ContextDir:   "/workspace/project",
+		ClientWidth:  200,
+		ClientHeight: 50,
+	}
+
+	_, nativeOptions, err := buildPopupToggleWithPickerBackendAndStyle(
+		mode,
+		"/tmp/projmux",
+		"/tmp/marker",
+		ctx,
+		intpicker.BackendNative,
+		func(string) string { return "" },
+		" bg=colour235,fg=colour245 ",
+	)
+	if err != nil {
+		t.Fatalf("buildPopupToggleWithPickerBackendAndStyle(native) error = %v", err)
+	}
+	if got, want := nativeOptions.BodyStyle, "bg=colour235,fg=colour245"; got != want {
+		t.Fatalf("native BodyStyle = %q, want %q", got, want)
+	}
+
+	_, legacyOptions, err := buildPopupToggleWithPickerBackendAndStyle(
+		mode,
+		"/tmp/projmux",
+		"/tmp/marker",
+		ctx,
+		intpicker.Backend("fzf"),
+		func(string) string { return "" },
+		"bg=colour235,fg=colour245",
+	)
+	if err != nil {
+		t.Fatalf("buildPopupToggleWithPickerBackendAndStyle(non-native) error = %v", err)
+	}
+	if legacyOptions.BodyStyle != "" {
+		t.Fatalf("non-native BodyStyle = %q, want empty", legacyOptions.BodyStyle)
+	}
+}
+
 func TestSessionizerSidebarWidthUsesNativeCompactMinimum(t *testing.T) {
 	t.Parallel()
 

@@ -25,6 +25,7 @@ type PopupOptions struct {
 	Cwd           string
 	Env           map[string]string
 	NoBorder      bool
+	BodyStyle     string
 	X             string
 	Y             string
 	Width         string
@@ -152,6 +153,9 @@ func BuildDisplayPopupArgs(command string, options PopupOptions) ([]string, erro
 	if resolved.Title != "" {
 		args = append(args, "-T", resolved.Title)
 	}
+	if resolved.BodyStyle != "" {
+		args = append(args, "-s", resolved.BodyStyle)
+	}
 	args = append(args, command)
 	return args, nil
 }
@@ -231,6 +235,7 @@ func resolvePopupOptions(options PopupOptions) (PopupOptions, error) {
 		Cwd:           strings.TrimSpace(options.Cwd),
 		Env:           cleanPopupEnv(options.Env),
 		NoBorder:      options.NoBorder,
+		BodyStyle:     strings.TrimSpace(options.BodyStyle),
 		X:             strings.TrimSpace(options.X),
 		Y:             strings.TrimSpace(options.Y),
 		Width:         strings.TrimSpace(options.Width),
