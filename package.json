@@ -1,6 +1,6 @@
 {
   "name": "projmux",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "tmux project session manager",
   "license": "MIT",
   "homepage": "https://github.com/crevissepartners/projmux#readme",

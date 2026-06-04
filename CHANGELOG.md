@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.6.7](https://github.com/crevissepartners/projmux/compare/v0.6.6...v0.6.7) (2026-06-04)
+
+
+### Features
+
+* add AI provider metadata registry ([#392](https://github.com/crevissepartners/projmux/issues/392)) ([a957662](https://github.com/crevissepartners/projmux/commit/a957662ac58c585b90c09cb6c102f0af711e3df4))
+* **ai:** add antigravity launch support ([#391](https://github.com/crevissepartners/projmux/issues/391)) ([6946e1f](https://github.com/crevissepartners/projmux/commit/6946e1f9b6b9bc89ebbb73d7fd05b34695dee8f2))
+* **ai:** add antigravity notify ingest ([#398](https://github.com/crevissepartners/projmux/issues/398)) ([fa4cc21](https://github.com/crevissepartners/projmux/commit/fa4cc217b62324347f0803e0f50654f0b0bdebd4))
+* **ai:** add antigravity session state usage ([#400](https://github.com/crevissepartners/projmux/issues/400)) ([5e31d94](https://github.com/crevissepartners/projmux/commit/5e31d94578ebb0e41cb4764aa93a806cb4a6ec41))
+* propagate native picker badge styles ([#394](https://github.com/crevissepartners/projmux/issues/394)) ([d2d8cff](https://github.com/crevissepartners/projmux/commit/d2d8cff29dc207c8ce9e24d7567e347d6e0b26cf))
+* refresh notify sidebar actions in native picker ([#397](https://github.com/crevissepartners/projmux/issues/397)) ([23d34c4](https://github.com/crevissepartners/projmux/commit/23d34c405113893e80f6fcced6de6c55af55e7b9))
+* refresh notify sidebar on queue writes ([#402](https://github.com/crevissepartners/projmux/issues/402)) ([1e159b4](https://github.com/crevissepartners/projmux/commit/1e159b4e7fb5c19a29102aaa0606b1d06bc7e15b))
+* refresh sessionizer kill in native sidebar ([#399](https://github.com/crevissepartners/projmux/issues/399)) ([252cd33](https://github.com/crevissepartners/projmux/commit/252cd33f52132a50b43496c5c434ad401d2c83ab))
+* reuse existing AI split panes ([#388](https://github.com/crevissepartners/projmux/issues/388)) ([c3bb41e](https://github.com/crevissepartners/projmux/commit/c3bb41e383fb1809145b640c90ad4d1c0f2019f2))
+* **shell:** unify welcome update prompt ([#401](https://github.com/crevissepartners/projmux/issues/401)) ([1e328c2](https://github.com/crevissepartners/projmux/commit/1e328c27ef9fe2f2f37e1d259750b87901f224b6))
+
+
+### Bug Fixes
+
+* **ai:** restore split as new pane ([#403](https://github.com/crevissepartners/projmux/issues/403)) ([9971cc8](https://github.com/crevissepartners/projmux/commit/9971cc8246ad487df2cae5ee49b0ab890d3e3836))
+* consume response-complete live badges ([#395](https://github.com/crevissepartners/projmux/issues/395)) ([43fa936](https://github.com/crevissepartners/projmux/commit/43fa9364388ed4b5ac15ad283e7ade373e9f1677))
+* filter usage HUD by enabled agents ([#385](https://github.com/crevissepartners/projmux/issues/385)) ([cf1a1a7](https://github.com/crevissepartners/projmux/commit/cf1a1a732c031b116fdb9c54d0050f339e1ff08f))
+* gate focus osfocus by desktop notify mode ([#393](https://github.com/crevissepartners/projmux/issues/393)) ([d67f9bc](https://github.com/crevissepartners/projmux/commit/d67f9bc781da604bde0eb95f348892fadd8ff761))
+* **settings:** propagate saved locale to picker chrome ([#404](https://github.com/crevissepartners/projmux/issues/404)) ([0454884](https://github.com/crevissepartners/projmux/commit/04548844330e1e58b3c8b890f1c98c5a86cb348f))
+* style native picker popup predraw body ([#396](https://github.com/crevissepartners/projmux/issues/396)) ([d499251](https://github.com/crevissepartners/projmux/commit/d4992515cd1be2aa80c88b21b3e1ce4125508092))
+
 ## [0.6.6](https://github.com/crevissepartners/projmux/compare/v0.6.5...v0.6.6) (2026-06-02)
 
 

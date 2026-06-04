@@ -1,6 +1,6 @@
 {
   "name": "@projmux/darwin-arm64",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "macOS arm64 binary for projmux",
   "license": "MIT",
   "repository": {
