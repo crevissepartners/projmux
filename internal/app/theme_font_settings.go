@@ -12,13 +12,13 @@ func (c *settingsCommand) themeFontStatusEntry() intpickercompat.Entry {
 	application, source, err := c.currentThemeFontApplication()
 	if err != nil {
 		return intpickercompat.Entry{
-			Label:     settingsLabelDim("Theme font", "not applied - "+err.Error()),
+			Label:     c.rowLabelDim("Theme font", "not applied - "+err.Error()),
 			Value:     settingsNoopValue,
 			SearchKey: "appearance theme font not applied error",
 		}
 	}
 	return intpickercompat.Entry{
-		Label:     settingsLabelInfo("Theme font", application.Desired(), source+"; "+application.Summary()),
+		Label:     c.rowLabelInfo("Theme font", application.Desired(), source+"; "+application.Summary()),
 		Value:     settingsNoopValue,
 		SearchKey: "appearance theme font family size desired " + string(application.Status),
 	}

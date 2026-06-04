@@ -79,7 +79,7 @@ func (c *settingsCommand) localeEntries() []intpickercompat.Entry {
 	resolution := appLocaleResolution(c.homeDir, c.lookupEnv)
 	locale := resolution.Locale
 	setting, source, err := c.currentGlobalLocaleSetting()
-	entries := []intpickercompat.Entry{settingsBackEntry()}
+	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
 	if err != nil {
 		return append(entries, intpickercompat.Entry{
 			Label: settingsLabelDimLocale(locale, "Warning", settingsCatalogTextLocale(locale, "global config unreadable")+" - "+err.Error()),

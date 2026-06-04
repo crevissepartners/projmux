@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
@@ -1120,6 +1121,62 @@ func TestNativeInteractiveKoreanSearchEmptyAndFooterFitWidth(t *testing.T) {
 		if got := projmuxpicker.VisibleLen(line); got > 44 {
 			t.Fatalf("native localized line width = %d, want <= frame width 44: %q", got, line)
 		}
+	}
+}
+
+func TestNativeInteractiveExplicitLocaleOverridesEnvironmentChrome(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:     "settings",
+		Title:  "Settings",
+		Footer: "Enter: open",
+		Locale: i18n.FallbackLocale,
+	}, nil, "", 0, 0, nativeLayout{Rows: 10, Cols: 42})
+
+	rendered := out.String()
+	for _, want := range []string{"Search", "No matches"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native output = %q, want explicit English chrome %q", rendered, want)
+		}
+	}
+	for _, reject := range []string{"검색", "일치하는 항목 없음"} {
+		if strings.Contains(rendered, reject) {
+			t.Fatalf("native output = %q, rejected env-derived Korean chrome %q", rendered, reject)
+		}
+	}
+}
+
+func TestNativeInteractiveGeneralPickerEmptyLocaleUsesEnvironmentFallback(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:    "switch",
+		Title: "Projects",
+	}, nil, "", 0, 0, nativeLayout{Rows: 10, Cols: 42})
+
+	rendered := out.String()
+	for _, want := range []string{"검색", "일치하는 항목 없음"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native output = %q, want environment fallback chrome %q", rendered, want)
+		}
+	}
+}
+
+func TestNativeLineModeExplicitLocaleOverridesEnvironmentPrompt(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+
+	var out bytes.Buffer
+	renderNative(&out, Options{
+		UI:     "settings",
+		Prompt: "Settings > ",
+		Locale: i18n.Locale("ko-KR"),
+	}, nil, "")
+
+	if got := out.String(); !strings.Contains(got, "번호, 검색어, 빈 입력으로 닫기: ") {
+		t.Fatalf("native line mode output = %q, want Korean prompt from explicit locale", got)
 	}
 }
 

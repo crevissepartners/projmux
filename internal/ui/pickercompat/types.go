@@ -1,6 +1,7 @@
 package pickercompat
 
 import (
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
@@ -15,6 +16,7 @@ type Options struct {
 	Prompt         string
 	Header         string
 	Footer         string
+	Locale         i18n.Locale
 	ExpectKeys     []string
 	PreviewCommand string
 	PreviewWindow  string
