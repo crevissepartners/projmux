@@ -7,7 +7,7 @@
 <p align="center">
   <strong>A tmux-native workspace for multi-agent AI development.</strong>
   <br>
-  <em>First-class Claude Code and Codex integration with hook-driven attention and agent-aware session resume.</em>
+  <em>Managed Claude Code, Codex, and Antigravity panes with hook-driven attention and agent-aware session resume.</em>
 </p>
 
 <p align="center">
@@ -30,15 +30,15 @@ projmux shell
 
 ## Why
 
-Six tmux windows. Each one is running Claude Code or Codex on a different
-repo. Three are idle. One is waiting on a permission prompt. One crashed an
-hour ago and you have no idea which.
+Six tmux windows. Each one is running Claude Code, Codex, or Antigravity on a
+different repo. Three are idle. One is waiting on a permission prompt. One
+crashed an hour ago and you have no idea which.
 
-projmux ingests Claude Code and Codex hook events directly, shows live
-per-pane state in the tmux status bar, and lets one keystroke take you to
-the pane that actually needs you. It also remembers each agent's resume id,
-so after a reboot every pane comes back as the *same* conversation — not a
-fresh one.
+projmux ingests Claude Code and Codex hook events directly, accepts manually
+wired Antigravity hook/statusline events, shows live per-pane state in the tmux
+status bar, and lets one keystroke take you to the pane that actually needs
+you. It also remembers each agent's resume id, so after a reboot every pane
+comes back as the *same* conversation — not a fresh one.
 
 ## Requirements
 
@@ -102,6 +102,7 @@ commands. A skill is just a thin wrapper around the same CLI contract:
 ```sh
 projmux ai split --agent codex right
 projmux ai split --agent claude down
+projmux ai split --agent antigravity right
 ```
 
 After registering a Claude slash command such as `/projmux:codex-right`, ask
@@ -110,6 +111,8 @@ a managed pane attached to the current project, and the prompt is delivered
 there immediately.
 projmux tracks hook events from the opened pane and shows permission or
 completion notifications in tmux.
+Antigravity uses the same managed split path, with manual hook ingest and
+session resume support documented in the CLI reference.
 
 Install templates and naming conventions are in
 [AI Agent Shortcuts](docs/ai-agent-shortcuts.md).
