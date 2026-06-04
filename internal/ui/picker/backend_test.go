@@ -2549,6 +2549,75 @@ func TestNativeInteractiveRunsCustomActionCommandAndRefreshes(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveCustomActionMutatesItemsAndRefreshes(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	result, err := runNativeInteractive(strings.NewReader("a\r"), io.Discard, Options{
+		UI:            "notify-sidebar",
+		DisableSearch: true,
+		Items: []Item{
+			{Title: "api", Value: "api"},
+			{Title: "web", Value: "web"},
+		},
+		Actions: []Action{{
+			Key:    "a",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				calls++
+				if ctx.Key != "a" || ctx.Value != "api" || ctx.SelectedIndex != 0 {
+					t.Fatalf("action context = %#v, want selected api", ctx)
+				}
+				return DeferredUpdate{Items: []Item{{Title: "web", Value: "web"}}}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("mutate calls = %d, want 1", calls)
+	}
+	if result.Value != "web" {
+		t.Fatalf("result = %#v, want web after in-session refresh", result)
+	}
+}
+
+func TestNativeInteractiveCustomActionRefreshPreservesSelectedValue(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("x\r"), io.Discard, Options{
+		UI:              "notify-sidebar",
+		DisableSearch:   true,
+		InitialIndex:    1,
+		InitialIndexSet: true,
+		Items: []Item{
+			{Title: "api", Value: "api"},
+			{Title: "web", Value: "web"},
+			{Title: "worker", Value: "worker"},
+		},
+		Actions: []Action{{
+			Key:    "x",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				if ctx.Value != "web" || ctx.SelectedIndex != 1 {
+					t.Fatalf("action context = %#v, want selected web", ctx)
+				}
+				return DeferredUpdate{Items: []Item{
+					{Title: "web", Value: "web"},
+					{Title: "worker", Value: "worker"},
+				}}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "web" {
+		t.Fatalf("result = %#v, want preserved web selection", result)
+	}
+}
+
 func TestNativeInteractiveRunsFocusActionOnSelectionChange(t *testing.T) {
 	t.Parallel()
 

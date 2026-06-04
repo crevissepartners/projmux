@@ -71,8 +71,8 @@
   reconcile reports stale rows), `notify list --live` queue/live explanations, notify sidebar
   two-line card rendering with age/project/window/pane metadata plus focus/ack/non-critical-clear/clear-all
   actions, notify/statusbar/sidebar attention-vs-AI palette assertions including muted stale/gone rows,
-  in-place `a` ack that refreshes the sidebar without
-  focusing, non-critical `x` bulk clear that preserves critical rows, and empty
+  native picker-session-local `a` ack that refreshes the sidebar without
+  focusing or restarting the picker, non-critical `x` bulk clear that preserves critical rows, and empty
   state rendering after all visible non-critical rows are cleared, and `focus` dispatch diagnostics for session fallback, unresolved
   targets, window fallback, pane fallback, explicit id failures as unresolved exits, and
   notify-only fallback.

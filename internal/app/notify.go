@@ -300,100 +300,168 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		return errors.New("native picker is not configured")
 	}
 
-	nextIndex := -1
-	for {
-		entries, err := store.List()
-		if err != nil {
-			return fmt.Errorf("list notifications: %w", err)
-		}
-		entries = filterEntries(entries, severities, sources)
-		if limit > 0 && len(entries) > limit {
-			entries = entries[:limit]
-		}
-		bindings := pickerCloseBindingsForToggle(c.homeDir, c.lookupEnv, "NotifySidebarToggle", "esc", "alt-2")
-		if len(entries) == 0 {
-			nextIndex = -1
-		} else if nextIndex >= 0 {
-			if nextIndex >= len(entries) {
-				nextIndex = len(entries) - 1
-			}
-			bindings = append(bindings, fmt.Sprintf("start:pos(%d)", nextIndex+1))
-		}
-
-		now := c.clock()
-		liveByID := c.notifyLiveByIDBestEffort()
-		compatOptions := intpickercompat.Options{
-			UI:     "notify-sidebar",
-			Read0:  true,
-			Title:  theme.ANSINotifyTitleStart + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications" + theme.ANSIReset,
-			Prompt: "Notify > ",
-			Header: "Newest first",
-			Footer: pickerActionKeyGuide(c.homeDir, c.lookupEnv, []pickerActionKeyGuideItem{
-				{ActionID: "NotifySidebar:FocusAndAck", Label: "focus/ack"},
-				{ActionID: "NotifySidebar:Ack", Label: "ack"},
-				{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
-				{ActionID: "NotifySidebar:ClearAll", Label: "clear all"},
-			}),
-			ExpectKeys: append(
-				append(
-					effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:Ack"}, []string{"a"}),
-					effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearNonCritical"}, []string{"x"})...,
-				),
-				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearAll"}, []string{"ctrl-x"})...,
-			),
-			Bindings:      bindings,
-			Entries:       notifySidebarEntriesWithLiveLocale(entries, now, liveByID, locale),
-			DisableSearch: true,
-		}
-		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.picker, compatOptions)
-		if err != nil {
-			return fmt.Errorf("run notify sidebar: %w", err)
-		}
-		id := strings.TrimSpace(result.Value)
-		if id == "" || id == notifySidebarEmptyValue {
-			return nil
-		}
-
-		switch {
-		case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearAll", "ctrl-x"):
-			removed, err := store.AckAll()
-			if err != nil {
-				return fmt.Errorf("clear all notifications: %w", err)
-			}
-			_, err = fmt.Fprintf(stdout, "cleared %s\n", i18n.FormatCount(removed, i18n.CountNotifications, locale, i18n.FormatFull))
-			return err
-		case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:Ack", "a"):
-			nextIndex = indexNotificationByID(entries, id)
-			if err := store.Ack(id); err != nil {
-				return fmt.Errorf("ack notification: %w", err)
-			}
-			continue
-		case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearNonCritical", "x"):
-			nextIndex = indexNotificationByID(entries, id)
-			if err := ackNonCriticalNotifications(store, entries); err != nil {
-				return err
-			}
-			continue
-		default:
-			entry, ok := findNotificationByID(entries, id)
-			if !ok {
-				return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
-			}
-			if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
-				if isFocusTargetUnresolved(err) {
-					if ackErr := store.Ack(id); ackErr != nil {
-						return fmt.Errorf("ack target-gone notification: %w", ackErr)
-					}
-					return nil
-				}
-				return err
-			}
-			if err := ackFocusedNotification(store, entry, entries); err != nil {
-				return fmt.Errorf("ack focused notification: %w", err)
-			}
-			return nil
-		}
+	entries, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+	if err != nil {
+		return err
 	}
+	options := c.notifySidebarPickerOptions(store, entries, severities, sources, limit, locale)
+	if options.Theme == nil {
+		options = fallbackRenderThemeSource().pickerOptions(options)
+	}
+	result, err := c.native.Run(options)
+	if err != nil {
+		return fmt.Errorf("run notify sidebar: %w", err)
+	}
+	id := strings.TrimSpace(result.Value)
+	if id == "" || id == notifySidebarEmptyValue {
+		return nil
+	}
+
+	switch {
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearAll", "ctrl-x"):
+		removed, err := store.AckAll()
+		if err != nil {
+			return fmt.Errorf("clear all notifications: %w", err)
+		}
+		_, err = fmt.Fprintf(stdout, "cleared %s\n", i18n.FormatCount(removed, i18n.CountNotifications, locale, i18n.FormatFull))
+		return err
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:Ack", "a"):
+		if err := store.Ack(id); err != nil {
+			return fmt.Errorf("ack notification: %w", err)
+		}
+		return nil
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearNonCritical", "x"):
+		if err := ackNonCriticalNotifications(store, entries); err != nil {
+			return err
+		}
+		return nil
+	default:
+		entry, ok := findNotificationByID(entries, id)
+		if !ok {
+			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
+		}
+		if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
+			if isFocusTargetUnresolved(err) {
+				if ackErr := store.Ack(id); ackErr != nil {
+					return fmt.Errorf("ack target-gone notification: %w", ackErr)
+				}
+				return nil
+			}
+			return err
+		}
+		if err := ackFocusedNotification(store, entry, entries); err != nil {
+			return fmt.Errorf("ack focused notification: %w", err)
+		}
+		return nil
+	}
+}
+
+func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []notify.Notification, severities, sources []string, limit int, locale i18n.Locale) intpicker.Options {
+	refresh := func() (intpicker.DeferredUpdate, error) {
+		return c.notifySidebarDeferredUpdate(store, severities, sources, limit, locale)
+	}
+	ack := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		id := strings.TrimSpace(ctx.Value)
+		if id == "" || id == notifySidebarEmptyValue {
+			return refresh()
+		}
+		if err := store.Ack(id); err != nil {
+			return intpicker.DeferredUpdate{}, fmt.Errorf("ack notification: %w", err)
+		}
+		return refresh()
+	}
+	clearNonCritical := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		if err := ackNonCriticalNotifications(store, current); err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		return refresh()
+	}
+	actions := append(
+		pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"NotifySidebarToggle"}, "esc", "alt-2"),
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:Ack"}, []string{"a"}), ack)...,
+	)
+	actions = append(actions,
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearNonCritical"}, []string{"x"}), clearNonCritical)...,
+	)
+	for _, key := range effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearAll"}, []string{"ctrl-x"}) {
+		actions = append(actions, intpicker.Action{Key: key, Intent: intpicker.ActionAccept})
+	}
+
+	now := c.clock()
+	liveByID := c.notifyLiveByIDBestEffort()
+	return intpicker.Options{
+		UI:            "notify-sidebar",
+		MultiLine:     true,
+		Title:         theme.ANSINotifyTitleStart + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications" + theme.ANSIReset,
+		Prompt:        "Notify > ",
+		Header:        "Newest first",
+		Footer:        notifySidebarFooter(c.homeDir, c.lookupEnv),
+		Actions:       actions,
+		Items:         notifySidebarPickerItems(notifySidebarEntriesWithLiveLocale(entries, now, liveByID, locale)),
+		DisableSearch: true,
+	}
+}
+
+func notifySidebarMutableActions(keys []string, mutate func(intpicker.ActionContext) (intpicker.DeferredUpdate, error)) []intpicker.Action {
+	actions := make([]intpicker.Action, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		actions = append(actions, intpicker.Action{Key: key, Intent: intpicker.ActionCustom, Mutate: mutate})
+	}
+	return actions
+}
+
+func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string) string {
+	return pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
+		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus/ack"},
+		{ActionID: "NotifySidebar:Ack", Label: "ack"},
+		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
+		{ActionID: "NotifySidebar:ClearAll", Label: "clear all"},
+	})
+}
+
+func (c *notifyCommand) notifySidebarDeferredUpdate(store notifyStore, severities, sources []string, limit int, locale i18n.Locale) (intpicker.DeferredUpdate, error) {
+	entries, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	now := c.clock()
+	liveByID := c.notifyLiveByIDBestEffort()
+	return intpicker.DeferredUpdate{
+		Items: notifySidebarPickerItems(notifySidebarEntriesWithLiveLocale(entries, now, liveByID, locale)),
+	}, nil
+}
+
+func (c *notifyCommand) notifySidebarFilteredEntries(store notifyStore, severities, sources []string, limit int) ([]notify.Notification, error) {
+	entries, err := store.List()
+	if err != nil {
+		return nil, fmt.Errorf("list notifications: %w", err)
+	}
+	entries = filterEntries(entries, severities, sources)
+	if limit > 0 && len(entries) > limit {
+		entries = entries[:limit]
+	}
+	return entries, nil
+}
+
+func notifySidebarPickerItems(entries []intpickercompat.Entry) []intpicker.Item {
+	items := make([]intpicker.Item, 0, len(entries))
+	for _, entry := range entries {
+		items = append(items, intpicker.Item{
+			Label:      entry.Label,
+			Title:      entry.Label,
+			Value:      entry.Value,
+			SearchText: entry.SearchKey,
+		})
+	}
+	return items
 }
 
 func ackNonCriticalNotifications(store notifyStore, entries []notify.Notification) error {
@@ -671,15 +739,6 @@ func findNotificationByID(entries []notify.Notification, id string) (notify.Noti
 		}
 	}
 	return notify.Notification{}, false
-}
-
-func indexNotificationByID(entries []notify.Notification, id string) int {
-	for i, e := range entries {
-		if e.ID == id {
-			return i
-		}
-	}
-	return -1
 }
 
 func (c *notifyCommand) notifyOriginClient(explicit string) string {
