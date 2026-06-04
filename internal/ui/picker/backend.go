@@ -45,6 +45,14 @@ type Action struct {
 	Label   string
 	Command string
 	Refresh bool
+	Mutate  func(ActionContext) (DeferredUpdate, error)
+}
+
+type ActionContext struct {
+	Key           string
+	Value         string
+	Query         string
+	SelectedIndex int
 }
 
 type Preview struct {
@@ -546,7 +554,16 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		}
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
-			result, refresh := runNativePickerAction(action, options, items, selected, query)
+			result, refresh, update, err := runNativePickerAction(action, options, items, selected, query)
+			if err != nil {
+				return Result{}, err
+			}
+			if refresh {
+				options = applyNativeDeferredUpdate(options, update)
+				nextItems := nativeFilteredItems(options, query)
+				selected = nativeSelectedIndexForValue(nextItems, selectedNativeValue(items, selected), selected)
+				previewOffset = 0
+			}
 			nativeDebugLogf("interactive ui=%q action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
 			if refresh {
 				continue
@@ -555,7 +572,16 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		}
 		if key.Text != "" {
 			if action, ok := findAction(options.Actions, key.Text); ok {
-				result, refresh := runNativePickerAction(action, options, items, selected, query)
+				result, refresh, update, err := runNativePickerAction(action, options, items, selected, query)
+				if err != nil {
+					return Result{}, err
+				}
+				if refresh {
+					options = applyNativeDeferredUpdate(options, update)
+					nextItems := nativeFilteredItems(options, query)
+					selected = nativeSelectedIndexForValue(nextItems, selectedNativeValue(items, selected), selected)
+					previewOffset = 0
+				}
 				nativeDebugLogf("interactive ui=%q text_action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
 				if refresh {
 					continue
@@ -766,24 +792,36 @@ func nativeSelectedIndexForValue(items []Item, value string, fallback int) int {
 	return fallback
 }
 
-func runNativePickerAction(action Action, options Options, items []Item, selected int, query string) (Result, bool) {
+func runNativePickerAction(action Action, options Options, items []Item, selected int, query string) (Result, bool, DeferredUpdate, error) {
 	value := selectedNativeValue(items, selected)
 	switch action.Intent {
 	case ActionClose:
-		return Result{Key: action.Key, Query: query, Closed: true}, false
+		return Result{Key: action.Key, Query: query, Closed: true}, false, DeferredUpdate{}, nil
 	case ActionCustom:
+		if action.Mutate != nil {
+			update, err := action.Mutate(ActionContext{
+				Key:           action.Key,
+				Value:         value,
+				Query:         query,
+				SelectedIndex: selected,
+			})
+			if err != nil {
+				return Result{}, false, DeferredUpdate{}, fmt.Errorf("run native picker action %q: %w", action.Key, err)
+			}
+			return Result{}, true, update, nil
+		}
 		if strings.TrimSpace(action.Command) != "" {
 			runNativeActionCommand(action.Command, value)
-			return Result{}, true
+			return Result{}, true, DeferredUpdate{}, nil
 		}
-		return Result{Key: action.Key, Value: value, Query: query}, false
+		return Result{Key: action.Key, Value: value, Query: query}, false, DeferredUpdate{}, nil
 	case ActionAccept:
 		if options.AcceptQuery {
-			return Result{Key: action.Key, Query: query}, false
+			return Result{Key: action.Key, Query: query}, false, DeferredUpdate{}, nil
 		}
-		return Result{Key: action.Key, Value: value, Query: query}, false
+		return Result{Key: action.Key, Value: value, Query: query}, false, DeferredUpdate{}, nil
 	default:
-		return Result{}, false
+		return Result{}, false, DeferredUpdate{}, nil
 	}
 }
 

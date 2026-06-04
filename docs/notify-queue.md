@@ -100,7 +100,10 @@ pane and acks the row after focus succeeds. The surface actions
 are edited in Settings, while internal picker aliases are adjusted in
 `keymap.toml` when needed. Runtime footer key guides read the merged keymap
 and show the default alias when present, otherwise the first configured alias,
-so custom aliases do not make the UI stale. Rows are intentionally compact: the visible label keeps
+so custom aliases do not make the UI stale. `NotifySidebar:Ack` and
+`NotifySidebar:ClearNonCritical` refresh rows, live state, and selection inside
+the same native picker session; `NotifySidebar:ClearAll` still closes the
+popup and prints a summary. Rows are intentionally compact: the visible label keeps
 notification text first, then age, project, window, and pane metadata; hidden
 queue ids remain action values but the sidebar has no search input and
 intentionally does not expose a separate metadata detail view.
