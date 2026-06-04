@@ -73,6 +73,7 @@ type Options struct {
 	Prompt                string
 	Header                string
 	Footer                string
+	Locale                i18n.Locale
 	Actions               []Action
 	Preview               Preview
 	InitialQuery          string
@@ -106,6 +107,18 @@ func ResolveBackend(lookup func(string) string) Backend {
 
 func nativeLocalizedText(key i18n.Key, fallback string) string {
 	text, err := i18n.NewLocalizer(nativeLocale()).Text(key)
+	if err != nil {
+		return fallback
+	}
+	return text.String()
+}
+
+func nativeLocalizedTextForOptions(options Options, key i18n.Key, fallback string) string {
+	locale := options.Locale
+	if locale == "" {
+		locale = nativeLocale()
+	}
+	text, err := i18n.NewLocalizer(locale).Text(key)
 	if err != nil {
 		return fallback
 	}
@@ -1570,7 +1583,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		if prompt == "" {
 			prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
 		}
-		fmt.Fprintln(&screen, nativePromptLineWithCursorAndTheme(pickerTheme, prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
+		fmt.Fprintln(&screen, nativePromptLineWithCursorAndThemeForOptions(pickerTheme, options, prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
 		fmt.Fprintln(&screen, nativeSearchSeparatorLineWithTheme(pickerTheme, layout.Cols))
 	}
 
@@ -1602,7 +1615,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	}
 	var main strings.Builder
 	if len(items) == 0 {
-		fmt.Fprintln(&main, "  "+nativeLocalizedText(i18n.KeyPickerEmptyNoMatches, "no matches"))
+		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerEmptyNoMatches, "no matches"))
 		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
@@ -1850,6 +1863,10 @@ func nativePromptLineWithCursor(prompt, query string, cursor, matches, total, co
 
 func nativePromptLineWithCursorAndTheme(pickerTheme projmuxpicker.Theme, prompt, query string, cursor, matches, total, cols int) string {
 	return projmuxpicker.PromptLineWithRenderedQueryLabelAndTheme(pickerTheme, nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, projmuxpicker.QueryWithCursorAndTheme(pickerTheme, query, cursor), matches, total, cols)
+}
+
+func nativePromptLineWithCursorAndThemeForOptions(pickerTheme projmuxpicker.Theme, options Options, prompt, query string, cursor, matches, total, cols int) string {
+	return projmuxpicker.PromptLineWithRenderedQueryLabelAndTheme(pickerTheme, nativeLocalizedTextForOptions(options, i18n.KeyPickerPromptSearch, "Search"), prompt, query, projmuxpicker.QueryWithCursorAndTheme(pickerTheme, query, cursor), matches, total, cols)
 }
 
 func nativePromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
@@ -2271,7 +2288,7 @@ func renderNative(w io.Writer, options Options, items []Item, query string) {
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		fmt.Fprintln(w, footer)
 	}
-	fmt.Fprint(w, nativeLocalizedText(i18n.KeyPickerLinePrompt, "number, search, or empty to close: "))
+	fmt.Fprint(w, nativeLocalizedTextForOptions(options, i18n.KeyPickerLinePrompt, "number, search, or empty to close: "))
 }
 
 func findAction(actions []Action, key string) (Action, bool) {

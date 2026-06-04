@@ -208,6 +208,277 @@ locale = "ko-KR"
 	}
 }
 
+func TestSettingsCommandPropagatesGlobalLocaleThroughSettingsPicker(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[ui]
+locale = "ko-KR"
+`)
+
+	var rootOptions intpickercompat.Options
+	var appearanceOptions intpickercompat.Options
+	var localeOptions intpickercompat.Options
+	runner, native := scriptedPicker(t, []pickerStep{
+		{observe: func(o intpickercompat.Options) { rootOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}},
+		{observe: func(o intpickercompat.Options) { appearanceOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsAppearanceLanguage}},
+		{observe: func(o intpickercompat.Options) { localeOptions = o },
+			reply: intpickercompat.Result{Key: "esc"}},
+	})
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "LANG" {
+				return "en_US.UTF-8"
+			}
+			return ""
+		},
+		runner:       runner,
+		nativePicker: native,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := rootOptions.Locale, i18n.Locale("ko-KR"); got != want {
+		t.Fatalf("root options locale = %q, want %q", got, want)
+	}
+	if got, want := rootOptions.Title, "설정"; got != want {
+		t.Fatalf("root title = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContaining(rootOptions.Entries, "모양") {
+		t.Fatalf("root entries = %#v, want Korean Appearance row", rootOptions.Entries)
+	}
+	if got, want := appearanceOptions.Locale, i18n.Locale("ko-KR"); got != want {
+		t.Fatalf("appearance options locale = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContaining(appearanceOptions.Entries, "경로 아이콘") {
+		t.Fatalf("appearance entries = %#v, want Korean depth-2 row label", appearanceOptions.Entries)
+	}
+	if got := appearanceOptions.TitleChips; len(got) < 1 || got[0].Label != "전체" {
+		t.Fatalf("appearance title chips = %#v, want Korean Global chip", got)
+	}
+	if got, want := localeOptions.Locale, i18n.Locale("ko-KR"); got != want {
+		t.Fatalf("locale detail options locale = %q, want %q", got, want)
+	}
+	if got, want := localeOptions.Prompt, "설정 > 모양 > 언어 / Locale > "; got != want {
+		t.Fatalf("locale detail prompt = %q, want %q", got, want)
+	}
+	if got, want := localeOptions.Footer, "Enter: 적용  |  뒤로 행: 상위"; got != want {
+		t.Fatalf("locale detail footer = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContainingAll(localeOptions.Entries, "현재", "ko-KR", "config.toml") {
+		t.Fatalf("locale detail entries = %#v, want Korean current row from config", localeOptions.Entries)
+	}
+}
+
+func TestSettingsCommandLocalePrecedenceForRenderedRows(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	tests := []struct {
+		name       string
+		config     string
+		lookupEnv  func(string) string
+		wantLocale i18n.Locale
+		wantLabel  string
+		reject     string
+		wantChip   string
+		rejectChip string
+	}{
+		{
+			name:   "global english beats lang korean",
+			config: "en-US",
+			lookupEnv: func(name string) string {
+				if name == "LANG" {
+					return "ko_KR.UTF-8"
+				}
+				return ""
+			},
+			wantLocale: i18n.Locale("en-US"),
+			wantLabel:  "Path icon",
+			reject:     "경로 아이콘",
+			wantChip:   "Global",
+			rejectChip: "전체",
+		},
+		{
+			name:   "global korean beats lang english",
+			config: "ko-KR",
+			lookupEnv: func(name string) string {
+				if name == "LANG" {
+					return "en_US.UTF-8"
+				}
+				return ""
+			},
+			wantLocale: i18n.Locale("ko-KR"),
+			wantLabel:  "경로 아이콘",
+			reject:     "Path icon",
+			wantChip:   "전체",
+			rejectChip: "Global",
+		},
+		{
+			name:   "projmux locale beats global korean",
+			config: "ko-KR",
+			lookupEnv: func(name string) string {
+				switch name {
+				case i18n.LocaleEnvName:
+					return "en-US"
+				case "LANG":
+					return "ko_KR.UTF-8"
+				default:
+					return ""
+				}
+			},
+			wantLocale: i18n.Locale("en-US"),
+			wantLabel:  "Path icon",
+			reject:     "경로 아이콘",
+			wantChip:   "Global",
+			rejectChip: "전체",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), fmt.Sprintf(`
+[ui]
+locale = %q
+`, tt.config))
+			var appearanceOptions intpickercompat.Options
+			runner, native := scriptedPicker(t, []pickerStep{
+				{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}},
+				{observe: func(o intpickercompat.Options) { appearanceOptions = o },
+					reply: intpickercompat.Result{Key: "esc"}},
+			})
+			cmd := &settingsCommand{
+				homeDir:      func() (string, error) { return home, nil },
+				lookupEnv:    tt.lookupEnv,
+				runner:       runner,
+				nativePicker: native,
+			}
+
+			if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if got := appearanceOptions.Locale; got != tt.wantLocale {
+				t.Fatalf("appearance options locale = %q, want %q", got, tt.wantLocale)
+			}
+			if !hasEntryLabelContaining(appearanceOptions.Entries, tt.wantLabel) {
+				t.Fatalf("appearance entries = %#v, want label %q", appearanceOptions.Entries, tt.wantLabel)
+			}
+			if hasEntryLabelContaining(appearanceOptions.Entries, tt.reject) {
+				t.Fatalf("appearance entries = %#v, rejected label %q", appearanceOptions.Entries, tt.reject)
+			}
+			if len(appearanceOptions.TitleChips) == 0 || appearanceOptions.TitleChips[0].Label != tt.wantChip {
+				t.Fatalf("appearance title chips = %#v, want first chip %q", appearanceOptions.TitleChips, tt.wantChip)
+			}
+			for _, chip := range appearanceOptions.TitleChips {
+				if chip.Label == tt.rejectChip {
+					t.Fatalf("appearance title chips = %#v, rejected chip %q", appearanceOptions.TitleChips, tt.rejectChip)
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsCommandLocalePrecedenceForAIDepthRows(t *testing.T) {
+	tests := []struct {
+		name         string
+		config       string
+		lookupEnv    func(string) string
+		wantLocale   i18n.Locale
+		wantRow      string
+		rejectRow    string
+		wantBack     string
+		rejectBack   string
+		wantDetailUI string
+	}{
+		{
+			name:   "global english beats lang korean",
+			config: "en-US",
+			lookupEnv: func(name string) string {
+				if name == "LANG" {
+					return "ko_KR.UTF-8"
+				}
+				return ""
+			},
+			wantLocale:   i18n.Locale("en-US"),
+			wantRow:      "Default split mode",
+			rejectRow:    "기본 분할 모드",
+			wantBack:     "Back",
+			rejectBack:   "뒤로",
+			wantDetailUI: "settings-ai-default-mode",
+		},
+		{
+			name:   "global korean beats lang english",
+			config: "ko-KR",
+			lookupEnv: func(name string) string {
+				if name == "LANG" {
+					return "en_US.UTF-8"
+				}
+				return ""
+			},
+			wantLocale:   i18n.Locale("ko-KR"),
+			wantRow:      "기본 분할 모드",
+			rejectRow:    "Default split mode",
+			wantBack:     "뒤로",
+			rejectBack:   "Back",
+			wantDetailUI: "settings-ai-default-mode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), fmt.Sprintf(`
+[ui]
+locale = %q
+`, tt.config))
+			var aiOptions intpickercompat.Options
+			var detailOptions intpickercompat.Options
+			runner, native := scriptedPicker(t, []pickerStep{
+				{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAI}},
+				{observe: func(o intpickercompat.Options) { aiOptions = o },
+					reply: intpickercompat.Result{Key: "enter", Value: settingsAIDefaultMode}},
+				{observe: func(o intpickercompat.Options) { detailOptions = o },
+					reply: intpickercompat.Result{Key: "esc"}},
+			})
+			cmd := &settingsCommand{
+				ai:           testAICommand(home),
+				homeDir:      func() (string, error) { return home, nil },
+				lookupEnv:    tt.lookupEnv,
+				runner:       runner,
+				nativePicker: native,
+			}
+
+			if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if got := aiOptions.Locale; got != tt.wantLocale {
+				t.Fatalf("AI options locale = %q, want %q", got, tt.wantLocale)
+			}
+			if !hasEntryLabelContaining(aiOptions.Entries, tt.wantRow) {
+				t.Fatalf("AI entries = %#v, want row %q", aiOptions.Entries, tt.wantRow)
+			}
+			if hasEntryLabelContaining(aiOptions.Entries, tt.rejectRow) {
+				t.Fatalf("AI entries = %#v, rejected row %q", aiOptions.Entries, tt.rejectRow)
+			}
+			if got := detailOptions.UI; got != tt.wantDetailUI {
+				t.Fatalf("AI detail UI = %q, want %q", got, tt.wantDetailUI)
+			}
+			if got := detailOptions.Locale; got != tt.wantLocale {
+				t.Fatalf("AI detail options locale = %q, want %q", got, tt.wantLocale)
+			}
+			if !hasEntryLabelContaining(detailOptions.Entries, tt.wantBack) {
+				t.Fatalf("AI detail entries = %#v, want localized Back row %q", detailOptions.Entries, tt.wantBack)
+			}
+			if hasEntryLabelContaining(detailOptions.Entries, tt.rejectBack) {
+				t.Fatalf("AI detail entries = %#v, rejected Back row %q", detailOptions.Entries, tt.rejectBack)
+			}
+		})
+	}
+}
+
 func TestSettingsTextKeysHaveFallbackCatalogEntries(t *testing.T) {
 	t.Parallel()
 

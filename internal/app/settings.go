@@ -397,8 +397,8 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 }
 
 func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
-	options = c.localizeSettingsOptions(options)
 	options = c.withSettingsScopeTabs(options)
+	options = c.localizeSettingsOptions(options)
 	if options.Theme == nil {
 		if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, c.resolveSettingsProjectContext().Path); err == nil {
 			options = source.pickerCompatOptions(options)
@@ -415,7 +415,8 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 }
 
 func (c *settingsCommand) localizeSettingsOptions(options intpickercompat.Options) intpickercompat.Options {
-	locale := appLocale(c.homeDir, c.lookupEnv)
+	locale := c.locale()
+	options.Locale = locale
 	options.Title = settingsCatalogTextLocale(locale, options.Title)
 	options.Prompt = settingsCatalogTextLocale(locale, options.Prompt)
 	options.Header = settingsCatalogTextLocale(locale, options.Header)
@@ -426,6 +427,26 @@ func (c *settingsCommand) localizeSettingsOptions(options intpickercompat.Option
 	return options
 }
 
+func (c *settingsCommand) locale() i18n.Locale {
+	return appLocale(c.homeDir, c.lookupEnv)
+}
+
+func (c *settingsCommand) backEntry() intpickercompat.Entry {
+	return settingsBackEntryLocale(c.locale())
+}
+
+func (c *settingsCommand) rowLabel(glyph, color, name, description string) string {
+	return settingsLabelLocale(c.locale(), glyph, color, name, description)
+}
+
+func (c *settingsCommand) rowLabelDim(name, description string) string {
+	return settingsLabelDimLocale(c.locale(), name, description)
+}
+
+func (c *settingsCommand) rowLabelInfo(name, value, source string) string {
+	return settingsLabelInfoLocale(c.locale(), name, value, source)
+}
+
 func (c *settingsCommand) withSettingsScopeTabs(options intpickercompat.Options) intpickercompat.Options {
 	if !strings.HasPrefix(strings.TrimSpace(options.UI), "settings") || len(options.TitleChips) != 0 {
 		return options
@@ -434,7 +455,7 @@ func (c *settingsCommand) withSettingsScopeTabs(options intpickercompat.Options)
 	if strings.HasPrefix(strings.TrimSpace(options.Prompt), "Settings > Project >") || strings.HasPrefix(strings.TrimSpace(options.UI), "settings-project") {
 		active = settingsRootTabProject
 	}
-	options.TitleChips = settingsPassiveRootTabChips(active, c.resolveSettingsProjectContext().hasProject())
+	options.TitleChips = settingsPassiveRootTabChipsLocale(active, c.resolveSettingsProjectContext().hasProject(), c.locale())
 	return options
 }
 
@@ -925,7 +946,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			UI:         "settings-statusbar",
 			Entries:    c.statusbarEntries(),
 			Title:      "Appearance - Theme font and icon decoration",
-			TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, ctx.hasProject()),
+			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, ctx.hasProject(), c.locale()),
 			Prompt:     "Settings > Appearance > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
@@ -1047,7 +1068,8 @@ func (c *settingsCommand) runAddProject(stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	entries = append([]intpickercompat.Entry{settingsBackEntry()}, entries...)
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	entries = append([]intpickercompat.Entry{settingsBackEntryLocale(locale)}, entries...)
 
 	result, err := c.runPicker(intpickercompat.Options{
 		UI:         "settings-project-add",
@@ -1174,9 +1196,10 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	entries = append([]intpickercompat.Entry{
-		settingsBackEntry(),
-		settingsWorkdirTypedEntry(),
+		settingsBackEntryLocale(locale),
+		settingsWorkdirTypedEntryLocale(locale),
 	}, entries...)
 
 	result, err := c.runPicker(intpickercompat.Options{
@@ -1208,8 +1231,12 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 // bypasses the filesystem scan and lets the user type an absolute path
 // directly. Useful for heavy WSL mounts (/mnt/c/Users/...), large NFS, etc.
 func settingsWorkdirTypedEntry() intpickercompat.Entry {
+	return settingsWorkdirTypedEntryLocale(settingsLocaleFromEnv())
+}
+
+func settingsWorkdirTypedEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphType, settingsColorType, "Type path manually...", "skip filesystem scan"),
+		Label: settingsLabelLocale(locale, settingsGlyphType, settingsColorType, "Type path manually...", "skip filesystem scan"),
 		Value: settingsWorkdirTyped,
 	}
 }
@@ -1330,10 +1357,11 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 }
 
 func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) {
-	entries := []intpickercompat.Entry{settingsBackEntry()}
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
 	if c.switcher == nil {
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("Saved workdirs", "unavailable"),
+			Label: settingsLabelDimLocale(locale, "Saved workdirs", "unavailable"),
 			Value: settingsNoopValue,
 		}), nil
 	}
@@ -1345,17 +1373,17 @@ func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) 
 
 	if len(saved) == 0 {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Saved workdirs", "(none)", "~/.config/projmux/workdirs"),
+			Label: settingsLabelInfoLocale(locale, "Saved workdirs", "(none)", "~/.config/projmux/workdirs"),
 			Value: settingsNoopValue,
 		})
 	} else {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Saved workdirs", strconv.Itoa(len(saved)), "~/.config/projmux/workdirs"),
+			Label: settingsLabelInfoLocale(locale, "Saved workdirs", strconv.Itoa(len(saved)), "~/.config/projmux/workdirs"),
 			Value: settingsNoopValue,
 		})
 		for _, dir := range saved {
 			entries = append(entries, intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Remove", dir+"  (saved)"),
+				Label: settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Remove", dir+"  (saved)"),
 				Value: settingsActionPrefixWorkdir + "remove:" + dir,
 			})
 		}
@@ -1366,12 +1394,12 @@ func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) 
 			continue
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo(src.Name, src.Value, "env, read-only"),
+			Label: settingsLabelInfoLocale(locale, src.Name, src.Value, "env, read-only"),
 			Value: settingsNoopValue,
 		})
 	}
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Workdir...", "append a directory to the saved workdirs list"),
+		Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Add Workdir...", "append a directory to the saved workdirs list"),
 		Value: settingsWorkdirAdd,
 	})
 	return entries, nil
@@ -1419,17 +1447,18 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 }
 
 func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		settingsBackEntryLocale(locale),
 	}
 
-	entries = append(entries, c.projectRootEntry())
+	entries = append(entries, c.projectRootEntryLocale(locale))
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Workdirs", "add or remove scan roots"),
+		Label: settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Workdirs", "add or remove scan roots"),
 		Value: settingsWorkdirList,
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Pinned Projects", "add or remove pins"),
+		Label: settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Pinned Projects", "add or remove pins"),
 		Value: settingsProjectPins,
 	})
 	return entries
@@ -1438,39 +1467,48 @@ func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
 // projectRootEntry renders the resolved primary root with its source label.
 // Opening it manages the saved project root; rendering never memoizes env state.
 func (c *settingsCommand) projectRootEntry() intpickercompat.Entry {
+	return c.projectRootEntryLocale(appLocale(c.homeDir, c.lookupEnv))
+}
+
+func (c *settingsCommand) projectRootEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	if c.switcher == nil {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Project Root", "unavailable"),
+			Label: settingsLabelDimLocale(locale, "Project Root", "unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
 	value, source, err := c.switcher.currentProjdirInfo()
 	if err != nil || value == "" {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Project Root", "not configured"),
+			Label: settingsLabelDimLocale(locale, "Project Root", "not configured"),
 			Value: settingsProjectRootManage,
 		}
 	}
 	return intpickercompat.Entry{
-		Label: settingsLabelInfo("Project Root", value, source),
+		Label: settingsLabelInfoLocale(locale, "Project Root", value, source),
 		Value: settingsProjectRootManage,
 	}
 }
 
 func (c *settingsCommand) projectRootHintEntry() intpickercompat.Entry {
+	return c.projectRootHintEntryLocale(settingsLocaleFromEnv())
+}
+
+func (c *settingsCommand) projectRootHintEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	// Keep the entire hint in one dim run so search substrings such as
 	// "Set PROJMUX_PROJDIR" stay contiguous in the rendered label.
 	return intpickercompat.Entry{
-		Label: "  " + settingsColorDim + "Project Root is the primary root. Workdirs are extra search roots. Set PROJMUX_PROJDIR, @projmux_projdir, or the saved ~/.config/projmux/projdir value." + settingsColorReset,
+		Label: "  " + settingsColorDim + settingsCatalogTextLocale(locale, "Project Root is the primary root. Workdirs are extra search roots. Set PROJMUX_PROJDIR, @projmux_projdir, or the saved ~/.config/projmux/projdir value.") + settingsColorReset,
 		Value: settingsNoopValue,
 	}
 }
 
 func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) {
-	entries := []intpickercompat.Entry{settingsBackEntry()}
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
 	if c.switcher == nil {
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("Project Root", "unavailable"),
+			Label: settingsLabelDimLocale(locale, "Project Root", "unavailable"),
 			Value: settingsNoopValue,
 		}), nil
 	}
@@ -1482,12 +1520,12 @@ func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) 
 
 	if info.EffectiveValue == "" {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Effective Project Root", "not configured", "no env, tmux option, or saved value"),
+			Label: settingsLabelInfoLocale(locale, "Effective Project Root", "not configured", "no env, tmux option, or saved value"),
 			Value: settingsNoopValue,
 		})
 	} else {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Effective Project Root", info.EffectiveValue, info.EffectiveSource),
+			Label: settingsLabelInfoLocale(locale, "Effective Project Root", info.EffectiveValue, info.EffectiveSource),
 			Value: settingsNoopValue,
 		})
 	}
@@ -1495,39 +1533,39 @@ func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) 
 	switch {
 	case info.SavedValue == "":
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Saved Project Root", "not set", "~/.config/projmux/projdir"),
+			Label: settingsLabelInfoLocale(locale, "Saved Project Root", "not set", "~/.config/projmux/projdir"),
 			Value: settingsNoopValue,
 		})
 	case info.EffectiveSource == projdirSourceSaved:
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Saved Project Root", info.SavedValue, "active"),
+			Label: settingsLabelInfoLocale(locale, "Saved Project Root", info.SavedValue, "active"),
 			Value: settingsNoopValue,
 		})
 	case info.EffectiveSource == projdirSourceUnresolved:
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Saved Project Root", info.SavedValue, "saved"),
+			Label: settingsLabelInfoLocale(locale, "Saved Project Root", info.SavedValue, "saved"),
 			Value: settingsNoopValue,
 		})
 	default:
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Saved Project Root", info.SavedValue, "shadowed by "+info.EffectiveSource),
+			Label: settingsLabelInfoLocale(locale, "Saved Project Root", info.SavedValue, "shadowed by "+info.EffectiveSource),
 			Value: settingsNoopValue,
 		})
 	}
 
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Set Project Root...", "save one primary root path directly"),
+			Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Set Project Root...", "save one primary root path directly"),
 			Value: settingsProjdirSetTyped,
 		},
-		c.setCurrentProjectRootEntry(),
+		c.setCurrentProjectRootEntryLocale(locale),
 		intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Clear Saved Project Root", "remove ~/.config/projmux/projdir"),
+			Label: settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Clear Saved Project Root", "remove ~/.config/projmux/projdir"),
 			Value: settingsProjdirClear,
 		},
-		c.projectRootHintEntry(),
+		c.projectRootHintEntryLocale(locale),
 		intpickercompat.Entry{
-			Label: "  " + settingsColorDim + "Env PROJMUX_PROJDIR and tmux @projmux_projdir override the saved value until unset." + settingsColorReset,
+			Label: "  " + settingsColorDim + settingsCatalogTextLocale(locale, "Env PROJMUX_PROJDIR and tmux @projmux_projdir override the saved value until unset.") + settingsColorReset,
 			Value: settingsNoopValue,
 		},
 	)
@@ -1535,9 +1573,13 @@ func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) 
 }
 
 func (c *settingsCommand) setCurrentProjectRootEntry() intpickercompat.Entry {
+	return c.setCurrentProjectRootEntryLocale(appLocale(c.homeDir, c.lookupEnv))
+}
+
+func (c *settingsCommand) setCurrentProjectRootEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	if c.switcher == nil {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Use Current Project as Root", "unavailable"),
+			Label: settingsLabelDimLocale(locale, "Use Current Project as Root", "unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
@@ -1545,7 +1587,7 @@ func (c *settingsCommand) setCurrentProjectRootEntry() intpickercompat.Entry {
 	homeDir, err := c.switcher.resolveHomeDir()
 	if err != nil {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Use Current Project as Root", "home unavailable"),
+			Label: settingsLabelDimLocale(locale, "Use Current Project as Root", "home unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
@@ -1553,20 +1595,24 @@ func (c *settingsCommand) setCurrentProjectRootEntry() intpickercompat.Entry {
 	currentTarget, err := c.switcher.resolveSwitchTargetNoMemoize(nil, "settings project root")
 	if err != nil || currentTarget == "" || currentTarget == switchSettingsSentinel {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Use Current Project as Root", "no project context"),
+			Label: settingsLabelDimLocale(locale, "Use Current Project as Root", "no project context"),
 			Value: settingsNoopValue,
 		}
 	}
 	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Use Current Project as Root", intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
+		Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Use Current Project as Root", intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 		Value: settingsProjdirSetCurrent,
 	}
 }
 
 func (c *settingsCommand) addCurrentProjectEntry() intpickercompat.Entry {
+	return c.addCurrentProjectEntryLocale(appLocale(c.homeDir, c.lookupEnv))
+}
+
+func (c *settingsCommand) addCurrentProjectEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	if c.switcher == nil {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Add Current Project", "unavailable"),
+			Label: settingsLabelDimLocale(locale, "Add Current Project", "unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
@@ -1574,14 +1620,14 @@ func (c *settingsCommand) addCurrentProjectEntry() intpickercompat.Entry {
 	pins, err := c.switcher.loadPins()
 	if err != nil {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Add Current Project", "pins unavailable"),
+			Label: settingsLabelDimLocale(locale, "Add Current Project", "pins unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
 	homeDir, err := c.switcher.resolveHomeDir()
 	if err != nil {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Add Current Project", "home unavailable"),
+			Label: settingsLabelDimLocale(locale, "Add Current Project", "home unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
@@ -1589,34 +1635,35 @@ func (c *settingsCommand) addCurrentProjectEntry() intpickercompat.Entry {
 	currentTarget, err := c.switcher.resolveSwitchTarget(nil, "settings project picker")
 	if err != nil || currentTarget == "" || currentTarget == switchSettingsSentinel {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Add Current Project", "no project context"),
+			Label: settingsLabelDimLocale(locale, "Add Current Project", "no project context"),
 			Value: settingsNoopValue,
 		}
 	}
 	if containsString(pins, currentTarget) {
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Add Current Project", "already pinned  "+intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
+			Label: settingsLabelDimLocale(locale, "Add Current Project", "already pinned  "+intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 			Value: settingsNoopValue,
 		}
 	}
 	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Current Project", intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
+		Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Add Current Project", intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 		Value: settingsActionPrefixSwitch + "add:" + currentTarget,
 	}
 }
 
 func (c *settingsCommand) pinnedProjectEntries() ([]intpickercompat.Entry, error) {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		settingsBackEntryLocale(locale),
 		{
-			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add Project...", "scan filesystem roots"),
+			Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Add Project...", "scan filesystem roots"),
 			Value: settingsProjectAdd,
 		},
-		c.addCurrentProjectEntry(),
+		c.addCurrentProjectEntryLocale(locale),
 	}
 	if c.switcher == nil {
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("(no pinned projects)", ""),
+			Label: settingsLabelDimLocale(locale, "(no pinned projects)", ""),
 			Value: settingsNoopValue,
 		}), nil
 	}
@@ -1633,18 +1680,18 @@ func (c *settingsCommand) pinnedProjectEntries() ([]intpickercompat.Entry, error
 
 	if len(pins) == 0 {
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("(no pinned projects)", ""),
+			Label: settingsLabelDimLocale(locale, "(no pinned projects)", ""),
 			Value: settingsNoopValue,
 		}), nil
 	}
 
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Clear all pins", ""),
+		Label: settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Clear all pins", ""),
 		Value: settingsActionPrefixSwitch + "clear",
 	})
 	for _, pin := range pins {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Remove", intrender.PrettyPath(pin, homeDir, repoRoot)),
+			Label: settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Remove", intrender.PrettyPath(pin, homeDir, repoRoot)),
 			Value: settingsActionPrefixSwitch + "pin:" + pin,
 		})
 	}
@@ -1903,7 +1950,8 @@ func (c *settingsCommand) runAIDefaultModeSection(stdout, stderr io.Writer) erro
 }
 
 func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
-	entries := []intpickercompat.Entry{settingsBackEntry()}
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
 	if c.ai == nil {
 		return entries
 	}
@@ -1914,12 +1962,12 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 	}
 	return append(entries,
 		intpickercompat.Entry{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Default split mode", defaultDesc),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Default split mode", defaultDesc),
 			Value:     settingsAIDefaultMode,
 			SearchKey: "default split mode claude codex antigravity shell selective",
 		},
 		intpickercompat.Entry{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Enabled agents", c.aiEnabledAgentsSummary()),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Enabled agents", c.aiEnabledAgentsSummary()),
 			Value:     settingsAIEnabledAgents,
 			SearchKey: "enabled agents claude codex antigravity",
 		},
@@ -1937,7 +1985,7 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 		}
 	}
 	return []intpickercompat.Entry{
-		settingsBackEntry(),
+		settingsBackEntryLocale(locale),
 		{
 			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNotificationsDesktopLabel(locale), desktopNotifyDisplayName(notifyMode)+" - "+string(notifySource)),
 			Value:     settingsNotificationsDesktop,
@@ -2144,7 +2192,7 @@ func (c *settingsCommand) runAINotifyDiagnosticDetail(id string, stderr io.Write
 		}
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-notifications-delivery-detail",
-			Entries:    aiNotifyDiagnosticDetailEntries(diag),
+			Entries:    aiNotifyDiagnosticDetailEntriesLocale(c.locale(), diag),
 			Title:      "AI Notify - " + diag.Name,
 			Prompt:     "Settings > Notifications > Delivery sources > " + diag.Name + " > ",
 			Footer:     projmuxFooter("Enter: copy command  |  Back row: parent "),
@@ -2227,11 +2275,12 @@ func (c *settingsCommand) aiNotifyDiagnosticsSummary() string {
 }
 
 func (c *settingsCommand) aiNotifyDiagnosticEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	diagnostics := c.currentAINotifyDiagnostics()
 	entries := make([]intpickercompat.Entry, 0, len(diagnostics)+1)
-	entries = append(entries, settingsBackEntry())
+	entries = append(entries, settingsBackEntryLocale(locale))
 	for _, diag := range diagnostics {
-		entries = append(entries, aiNotifyDiagnosticEntry(diag))
+		entries = append(entries, aiNotifyDiagnosticEntryLocale(locale, diag))
 	}
 	return entries
 }
@@ -2246,6 +2295,10 @@ func (c *settingsCommand) aiNotifyDiagnosticByID(id string) (doctorAINotifyInteg
 }
 
 func aiNotifyDiagnosticEntry(diag doctorAINotifyIntegration) intpickercompat.Entry {
+	return aiNotifyDiagnosticEntryLocale(settingsLocaleFromEnv(), diag)
+}
+
+func aiNotifyDiagnosticEntryLocale(locale i18n.Locale, diag doctorAINotifyIntegration) intpickercompat.Entry {
 	glyph, color := aiNotifyDiagnosticTone(diag.Status)
 	desc := string(diag.Status)
 	if diag.TestedVersion != "" {
@@ -2258,7 +2311,7 @@ func aiNotifyDiagnosticEntry(diag doctorAINotifyIntegration) intpickercompat.Ent
 		desc += " - " + diag.ConflictReason
 	}
 	return intpickercompat.Entry{
-		Label:     settingsLabel(glyph, color, diag.Name, desc),
+		Label:     settingsLabelLocale(locale, glyph, color, diag.Name, desc),
 		Value:     settingsActionPrefixAINotifyDiagnostic + diag.ID,
 		SearchKey: strings.Join([]string{diag.Name, string(diag.Status), diag.TestedVersion, diag.Guidance, diag.ConfigPath, diag.ConflictReason, diag.InstallCommand, diag.RemoveCommand, diag.DryRunCommand}, " "),
 	}
@@ -2276,37 +2329,45 @@ func aiNotifyDiagnosticTone(status doctorAINotifyStatus) (string, string) {
 }
 
 func aiNotifyDiagnosticDetailEntries(diag doctorAINotifyIntegration) []intpickercompat.Entry {
+	return aiNotifyDiagnosticDetailEntriesLocale(settingsLocaleFromEnv(), diag)
+}
+
+func aiNotifyDiagnosticDetailEntriesLocale(locale i18n.Locale, diag doctorAINotifyIntegration) []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
-		{Label: settingsLabelInfo("Status", string(diag.Status), "doctor"), Value: settingsNoopValue},
+		settingsBackEntryLocale(locale),
+		{Label: settingsLabelInfoLocale(locale, "Status", string(diag.Status), "doctor"), Value: settingsNoopValue},
 	}
 	if diag.ConfigPath != "" {
-		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Config path", diag.ConfigPath, ""), Value: settingsNoopValue})
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Config path", diag.ConfigPath, ""), Value: settingsNoopValue})
 	}
 	if diag.ConflictReason != "" {
-		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Conflict", diag.ConflictReason, ""), Value: settingsNoopValue})
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Conflict", diag.ConflictReason, ""), Value: settingsNoopValue})
 	}
 	if diag.TestedVersion != "" {
-		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Tested version", diag.TestedVersion, "catalog"), Value: settingsNoopValue})
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Tested version", diag.TestedVersion, "catalog"), Value: settingsNoopValue})
 	}
 	if diag.Guidance != "" {
-		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfo("Notice", diag.Guidance, ""), Value: settingsNoopValue})
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Notice", diag.Guidance, ""), Value: settingsNoopValue})
 	}
 	entries = append(entries,
-		aiNotifyDiagnosticCommandEntry(diag, "install", "Install command", diag.InstallCommand),
-		aiNotifyDiagnosticCommandEntry(diag, "remove", "Remove command", diag.RemoveCommand),
-		aiNotifyDiagnosticCommandEntry(diag, "dry-run", "Dry-run command", diag.DryRunCommand),
-		intpickercompat.Entry{Label: settingsLabelDim("Copy only", "Settings copies command text and does not execute these commands"), Value: settingsNoopValue},
+		aiNotifyDiagnosticCommandEntryLocale(locale, diag, "install", "Install command", diag.InstallCommand),
+		aiNotifyDiagnosticCommandEntryLocale(locale, diag, "remove", "Remove command", diag.RemoveCommand),
+		aiNotifyDiagnosticCommandEntryLocale(locale, diag, "dry-run", "Dry-run command", diag.DryRunCommand),
+		intpickercompat.Entry{Label: settingsLabelDimLocale(locale, "Copy only", "Settings copies command text and does not execute these commands"), Value: settingsNoopValue},
 	)
 	return entries
 }
 
 func aiNotifyDiagnosticCommandEntry(diag doctorAINotifyIntegration, kind, label, command string) intpickercompat.Entry {
+	return aiNotifyDiagnosticCommandEntryLocale(settingsLocaleFromEnv(), diag, kind, label, command)
+}
+
+func aiNotifyDiagnosticCommandEntryLocale(locale i18n.Locale, diag doctorAINotifyIntegration, kind, label, command string) intpickercompat.Entry {
 	if strings.TrimSpace(command) == "" {
-		return intpickercompat.Entry{Label: settingsLabelInfo(label, "", "unavailable"), Value: settingsNoopValue}
+		return intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, label, "", "unavailable"), Value: settingsNoopValue}
 	}
 	return intpickercompat.Entry{
-		Label:     settingsLabelInfo(label, command, "Enter copies"),
+		Label:     settingsLabelInfoLocale(locale, label, command, "Enter copies"),
 		Value:     settingsActionPrefixAINotifyCommand + diag.ID + ":" + kind,
 		SearchKey: strings.Join([]string{label, command, "copy clipboard"}, " "),
 	}
@@ -2358,10 +2419,10 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 	}{aiModeShell, "always open plain shell split"})
 
 	entries := make([]intpickercompat.Entry, 0, len(modes)+1)
-	entries = append(entries, settingsBackEntry())
+	entries = append(entries, c.backEntry())
 	if warning := c.aiDefaultModeDisabledWarning(); warning != "" {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabelDim("Warning", "saved Default split mode "+warning),
+			Label:     c.rowLabelDim("Warning", "saved Default split mode "+warning),
 			Value:     settingsNoopValue,
 			SearchKey: "default split mode disabled enabled agents",
 		})
@@ -2377,7 +2438,7 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 			color = settingsColorAdd
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, item.mode, item.desc),
+			Label: c.rowLabel(glyph, color, item.mode, item.desc),
 			Value: settingsActionPrefixAI + item.mode,
 		})
 	}
@@ -2387,15 +2448,15 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 	enabled := c.currentAIEnabledAgents()
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("Enabled agents", c.aiEnabledAgentsSummary(), "~/.config/projmux/"+config.AIEnabledAgentsFileName),
+			Label: c.rowLabelInfo("Enabled agents", c.aiEnabledAgentsSummary(), "~/.config/projmux/"+config.AIEnabledAgentsFileName),
 			Value: settingsNoopValue,
 		},
 	}
 	if warning := c.aiDefaultModeDisabledWarning(); warning != "" {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("Warning", "saved Default split mode "+warning),
+			Label: c.rowLabelDim("Warning", "saved Default split mode "+warning),
 			Value: settingsNoopValue,
 		})
 	}
@@ -2412,7 +2473,7 @@ func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 			state = "enabled"
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(glyph, color, provider.DisplayName, state+" - "+provider.DisplayName+" split"),
+			Label:     c.rowLabel(glyph, color, provider.DisplayName, state+" - "+provider.DisplayName+" split"),
 			Value:     settingsActionPrefixAIEnabledAgent + string(provider.ID),
 			SearchKey: strings.Join([]string{"enabled agents", provider.DisplayName, string(provider.ID), state}, " "),
 		})
@@ -2499,6 +2560,7 @@ func aiEnabledAgentDisplayName(provider config.AIAgentProvider) string {
 }
 
 func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	current := c.currentStatusbarDecorations()
 	badgeStyle := loadAIBadgeStyle(c.homeDir, c.lookupEnv)
 	targets := []statusbarDecorationTarget{
@@ -2508,11 +2570,11 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 	}
 
 	entries := make([]intpickercompat.Entry, 0, len(targets)+3)
-	entries = append(entries, settingsBackEntry())
+	entries = append(entries, settingsBackEntryLocale(locale))
 	entries = append(entries, c.localeSettingsEntry())
 	entries = append(entries, c.themeFontStatusEntry())
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "AI badge style", string(badgeStyle)+" - "+aiBadgeStylePreview(badgeStyle)),
+		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "AI badge style", string(badgeStyle)+" - "+aiBadgeStylePreview(badgeStyle)),
 		Value:     settingsActionPrefixAIBadgeStyle,
 		SearchKey: "appearance ai badge style semantic pane border " + string(badgeStyle),
 	})
@@ -2523,7 +2585,7 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 		}
 		mode := current.modeForTarget(target)
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, meta.Name, string(mode)+" - "+statusbarDecorationPreview(target, mode)),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, meta.Name, string(mode)+" - "+statusbarDecorationPreview(target, mode)),
 			Value:     settingsActionPrefixStatusbar + string(target),
 			SearchKey: "appearance decoration statusbar " + string(target) + " " + string(mode) + " " + meta.Name + " " + meta.Description,
 		})
@@ -2647,11 +2709,12 @@ func (c *settingsCommand) runAIBadgeStyleSection(stdout, stderr io.Writer) error
 }
 
 func (c *settingsCommand) aiBadgeStyleOptions() intpickercompat.Options {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	return intpickercompat.Options{
 		UI:         "settings-ai-badge-style",
 		Entries:    c.aiBadgeStyleEntries(),
 		Title:      "Appearance - AI badge style",
-		TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject()),
+		TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), locale),
 		Prompt:     "Settings > Appearance > AI badge style > ",
 		Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
@@ -2660,10 +2723,11 @@ func (c *settingsCommand) aiBadgeStyleOptions() intpickercompat.Options {
 }
 
 func (c *settingsCommand) aiBadgeStyleEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	current := loadAIBadgeStyle(c.homeDir, c.lookupEnv)
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
-		{Label: settingsLabelInfo("Current", string(current), "pane border live AI marker"), Value: settingsNoopValue},
+		settingsBackEntryLocale(locale),
+		{Label: settingsLabelInfoLocale(locale, "Current", string(current), "pane border live AI marker"), Value: settingsNoopValue},
 	}
 	for _, style := range aiBadgeStyles() {
 		glyph := settingsGlyphInactive
@@ -2675,7 +2739,7 @@ func (c *settingsCommand) aiBadgeStyleEntries() []intpickercompat.Entry {
 			desc += " - current"
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(glyph, color, "Preview "+string(style), desc),
+			Label:     settingsLabelLocale(locale, glyph, color, "Preview "+string(style), desc),
 			Value:     settingsActionPrefixAIBadgeStyle + string(style),
 			SearchKey: "ai badge style " + string(style) + " " + aiBadgeStylePreview(style),
 		})
@@ -2757,6 +2821,7 @@ func (c *settingsCommand) runAppearanceTargetSection(target statusbarDecorationT
 }
 
 func (c *settingsCommand) statusbarDecorationTargetOptions(target statusbarDecorationTarget) (intpickercompat.Options, error) {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	meta, ok := statusbarDecorationTargetMeta(target)
 	if !ok {
 		return intpickercompat.Options{}, fmt.Errorf("unknown appearance target: %s", target)
@@ -2765,7 +2830,7 @@ func (c *settingsCommand) statusbarDecorationTargetOptions(target statusbarDecor
 		UI:         "settings-statusbar-detail",
 		Entries:    c.statusbarDecorationTargetEntries(target),
 		Title:      meta.Title,
-		TitleChips: settingsPassiveRootTabChips(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject()),
+		TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), locale),
 		Prompt:     "Settings > Appearance > " + meta.Name + " > ",
 		Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
@@ -2774,11 +2839,12 @@ func (c *settingsCommand) statusbarDecorationTargetOptions(target statusbarDecor
 }
 
 func (c *settingsCommand) statusbarDecorationTargetEntries(target statusbarDecorationTarget) []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	current := c.currentStatusbarDecorations().modeForTarget(target)
 	meta, _ := statusbarDecorationTargetMeta(target)
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
-		{Label: settingsLabelInfo("Current", string(current), meta.Description), Value: settingsNoopValue},
+		settingsBackEntryLocale(locale),
+		{Label: settingsLabelInfoLocale(locale, "Current", string(current), meta.Description), Value: settingsNoopValue},
 	}
 	for _, mode := range statusbarDecorationModes() {
 		glyph := settingsGlyphInactive
@@ -2790,7 +2856,7 @@ func (c *settingsCommand) statusbarDecorationTargetEntries(target statusbarDecor
 			desc += " - current"
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(glyph, color, "Preview "+string(mode), desc),
+			Label:     settingsLabelLocale(locale, glyph, color, "Preview "+string(mode), desc),
 			Value:     settingsActionPrefixStatusbar + string(target) + ":" + string(mode),
 			SearchKey: string(target) + " " + string(mode) + " preview " + statusbarDecorationPreview(target, mode),
 		})
@@ -2891,9 +2957,9 @@ func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Opti
 	entries, err := c.keybindingEntries()
 	if err != nil {
 		entries = []intpickercompat.Entry{
-			settingsBackEntry(),
+			c.backEntry(),
 			{
-				Label: settingsLabelDim("Keymap error", err.Error()),
+				Label: c.rowLabelDim("Keymap error", err.Error()),
 				Value: settingsNoopValue,
 			},
 		}
@@ -3083,7 +3149,7 @@ func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdo
 	}
 	result, err := c.runPicker(intpickercompat.Options{
 		UI:            "settings-keybinding-type",
-		Entries:       []intpickercompat.Entry{settingsBackEntry(), {Label: settingsLabelInfo("Action", keyBindingDisplayName(action), keybindingAliasesSummary(action)), Value: settingsNoopValue}},
+		Entries:       []intpickercompat.Entry{c.backEntry(), {Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), keybindingAliasesSummary(action)), Value: settingsNoopValue}},
 		Title:         mode + " - " + keyBindingDisplayName(action),
 		Prompt:        "Add alias > ",
 		Footer:        projmuxFooter("Enter a safe tmux plain chord alias."),
@@ -3132,9 +3198,9 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 	}
 	defaults := defaultKeyBindingCatalog()
 	entries := make([]intpickercompat.Entry, 0, len(actions)+2)
-	entries = append(entries, settingsBackEntry())
+	entries = append(entries, c.backEntry())
 	entries = append(entries, intpickercompat.Entry{
-		Label: "  " + settingsColorDim + "All catalog actions are listed with their current keybindings and saved aliases." + settingsColorReset,
+		Label: "  " + settingsColorDim + settingsCatalogTextLocale(c.locale(), "All catalog actions are listed with their current keybindings and saved aliases.") + settingsColorReset,
 		Value: settingsNoopValue,
 	})
 	for _, action := range actions {
@@ -3142,7 +3208,7 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 		desc := keybindingCurrentSummary(action, defaultAction)
 		displayName := keyBindingDisplayName(action)
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, displayName, desc),
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, displayName, desc),
 			Value:     settingsActionPrefixKeymap + action.ID,
 			SearchKey: action.ID + " " + displayName + " " + action.Surface + " " + action.Description + " " + strings.Join(keybindingVisibleChords(action), " "),
 		})
@@ -3161,19 +3227,19 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 	}
 	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("Action", keyBindingDisplayName(action), action.Description),
+			Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), action.Description),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Keybinding", keybindingAliasesSummary(action), keybindingSource(action, defaultAction)),
+			Label: c.rowLabelInfo("Keybinding", keybindingAliasesSummary(action), keybindingSource(action, defaultAction)),
 			Value: settingsNoopValue,
 		},
 	}
 	if action.Tier == keyBindingTierTransportDependent {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Aliases", keybindingPlainAliasesSummary(action), keybindingTransportAliasSource(action, defaultAction)),
+			Label: c.rowLabelInfo("Aliases", keybindingPlainAliasesSummary(action), keybindingTransportAliasSource(action, defaultAction)),
 			Value: settingsNoopValue,
 		})
 	}
@@ -3184,12 +3250,12 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	if keybindingCanCapture(action) {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphType, settingsColorType, "Add alias", "press a key"),
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Add alias", "press a key"),
 			Value: prefix + "capture",
 		})
 	} else {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(settingsGlyphType, settingsColorType, "Add alias", "enter a tmux plain chord"),
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Add alias", "enter a tmux plain chord"),
 			Value: prefix + "type",
 		})
 	}
@@ -3200,7 +3266,7 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 		resetDesc = "remove saved aliases; keep default"
 	}
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphBack, settingsColorBack, resetLabel, resetDesc),
+		Label: c.rowLabel(settingsGlyphBack, settingsColorBack, resetLabel, resetDesc),
 		Value: prefix + "reset",
 	})
 	title := "Keybinding - " + keyBindingDisplayName(action)
@@ -3816,18 +3882,19 @@ func parseStatusbarDecorationSetting(value string) (statusbarDecorationTarget, c
 }
 
 func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	current, source := c.currentPickerBackend()
 	hookMode, hookSource := c.currentProjectHooksMode()
 	entries := make([]intpickercompat.Entry, 0, 4)
-	entries = append(entries, settingsBackEntry())
+	entries = append(entries, settingsBackEntryLocale(locale))
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabel(settingsGlyphOpen, settingsColorType, "Project Hooks", string(hookMode)+" - "+hookSource),
+		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Hooks", string(hookMode)+" - "+hookSource),
 		Value:     settingsLabsProjectHooks,
 		SearchKey: "Project Hooks trusted local hooks on off",
 	})
 	if source != "" {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Picker source", string(current), source),
+			Label: settingsLabelInfoLocale(locale, "Picker source", string(current), source),
 			Value: settingsNoopValue,
 		})
 	}
@@ -3835,11 +3902,12 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 }
 
 func (c *settingsCommand) labsProjectHooksEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	hookMode, hookSource := c.currentProjectHooksMode()
 	entries := make([]intpickercompat.Entry, 0, 4)
-	entries = append(entries, settingsBackEntry())
+	entries = append(entries, settingsBackEntryLocale(locale))
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabelInfo("Project hooks", string(hookMode), hookSource),
+		Label: settingsLabelInfoLocale(locale, "Project hooks", string(hookMode), hookSource),
 		Value: settingsNoopValue,
 	})
 	for _, item := range []struct {
@@ -3856,7 +3924,7 @@ func (c *settingsCommand) labsProjectHooksEntries() []intpickercompat.Entry {
 			color = settingsColorAdd
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, "Project hooks "+string(item.mode), item.desc),
+			Label: settingsLabelLocale(locale, glyph, color, "Project hooks "+string(item.mode), item.desc),
 			Value: settingsActionPrefixHooks + string(item.mode),
 		})
 	}
@@ -3867,7 +3935,7 @@ func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	notifyMode, notifySource := settingsDesktopNotifyResolver(c.homeDir, c.lookupEnv).resolveMode()
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		settingsBackEntryLocale(locale),
 		{
 			Label: settingsLabelInfoLocale(locale, settingsNotificationsDesktopLabel(locale), desktopNotifyDisplayName(notifyMode), string(notifySource)),
 			Value: settingsNoopValue,
@@ -3889,7 +3957,7 @@ func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 			color = settingsColorAdd
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, item.name, item.desc),
+			Label: settingsLabelLocale(locale, glyph, color, item.name, item.desc),
 			Value: settingsActionPrefixDesktopNotifyMode + item.name,
 		})
 	}
@@ -3906,13 +3974,13 @@ func desktopNotifyDisplayName(mode desktopNotifyMode) string {
 func (c *settingsCommand) aiNotifyDedupeEntries() []intpickercompat.Entry {
 	current := c.currentAINotifyDedupeSeconds()
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("AI notification dedupe", fmt.Sprintf("%ds", current.Seconds), string(current.Source)),
+			Label: c.rowLabelInfo("AI notification dedupe", fmt.Sprintf("%ds", current.Seconds), string(current.Source)),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Scope", "desktop AI notifications", "tmux bell fallback stays 5s"),
+			Label: c.rowLabelInfo("Scope", "desktop AI notifications", "tmux bell fallback stays 5s"),
 			Value: settingsNoopValue,
 		},
 	}
@@ -3924,12 +3992,12 @@ func (c *settingsCommand) aiNotifyDedupeEntries() []intpickercompat.Entry {
 			color = settingsColorAdd
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, fmt.Sprintf("%ds", seconds), "collapse duplicate desktop AI notifications"),
+			Label: c.rowLabel(glyph, color, fmt.Sprintf("%ds", seconds), "collapse duplicate desktop AI notifications"),
 			Value: settingsActionPrefixAINotifyDedupe + strconv.Itoa(seconds),
 		})
 	}
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphType, settingsColorType, "Custom seconds", "store a positive seconds value"),
+		Label: c.rowLabel(settingsGlyphType, settingsColorType, "Custom seconds", "store a positive seconds value"),
 		Value: settingsActionPrefixAINotifyDedupe + "custom",
 	})
 	return entries
@@ -3949,9 +4017,9 @@ func (c *settingsCommand) aiHookActionsSummary() string {
 
 func (c *settingsCommand) aiHookProviderEntries() []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("Runtime config", c.aiHookActionsSummary(), "install events stay in catalog"),
+			Label: c.rowLabelInfo("Runtime config", c.aiHookActionsSummary(), "install events stay in catalog"),
 			Value: settingsNoopValue,
 		},
 	}
@@ -3965,7 +4033,7 @@ func (c *settingsCommand) aiHookProviderEntries() []intpickercompat.Entry {
 	sort.Strings(providers[2:])
 	for _, provider := range providers {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(settingsGlyphOpen, settingsColorType, aiHookProviderLabel(provider)+" hooks", c.aiHookProviderSummary(provider)),
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, aiHookProviderLabel(provider)+" hooks", c.aiHookProviderSummary(provider)),
 			Value:     settingsActionPrefixAIHookProvider + provider,
 			SearchKey: provider + " hooks quiet notify state runtime catalog",
 		})
@@ -3992,9 +4060,9 @@ func (c *settingsCommand) aiHookProviderSummary(provider string) string {
 
 func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("Scope", "runtime action only", "install field is unchanged"),
+			Label: c.rowLabelInfo("Scope", "runtime action only", "install field is unchanged"),
 			Value: settingsNoopValue,
 		},
 	}
@@ -4014,7 +4082,7 @@ func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.
 				desc += " - install=false"
 			}
 			entries = append(entries, intpickercompat.Entry{
-				Label:     settingsLabel(aiHookActionGlyph(resolution.Action), aiHookActionColor(resolution.Action), event.Name, desc),
+				Label:     c.rowLabel(aiHookActionGlyph(resolution.Action), aiHookActionColor(resolution.Action), event.Name, desc),
 				Value:     settingsActionPrefixAIHookEvent + provider + ":" + event.Name,
 				SearchKey: strings.Join([]string{provider, event.Name, resolution.Action, resolution.Source, "quiet notify state"}, " "),
 			})
@@ -4032,7 +4100,7 @@ func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.
 		for _, event := range extras {
 			action := actions.Events[event]
 			entries = append(entries, intpickercompat.Entry{
-				Label:     settingsLabel(aiHookActionGlyph(action), aiHookActionColor(action), event, action+" - runtime - install not managed"),
+				Label:     c.rowLabel(aiHookActionGlyph(action), aiHookActionColor(action), event, action+" - runtime - install not managed"),
 				Value:     settingsActionPrefixAIHookEvent + provider + ":" + event,
 				SearchKey: strings.Join([]string{provider, event, action, "runtime quiet notify state"}, " "),
 			})
@@ -4045,13 +4113,13 @@ func (c *settingsCommand) aiHookActionChoiceEntries(provider, event string) []in
 	cmd := c.aiForSettings()
 	resolution := cmd.aiHookEffectiveAction(provider, event)
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("Current", resolution.Action, resolution.Source),
+			Label: c.rowLabelInfo("Current", resolution.Action, resolution.Source),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Install", "unchanged", "Settings only changes runtime action"),
+			Label: c.rowLabelInfo("Install", "unchanged", "Settings only changes runtime action"),
 			Value: settingsNoopValue,
 		},
 	}
@@ -4072,7 +4140,7 @@ func (c *settingsCommand) aiHookActionChoiceEntries(provider, event string) []in
 			color = settingsColorAdd
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabel(glyph, color, choice.action, choice.desc),
+			Label:     c.rowLabel(glyph, color, choice.action, choice.desc),
 			Value:     settingsActionPrefixAIHookSet + provider + ":" + event + ":" + choice.action,
 			SearchKey: provider + " " + event + " " + choice.action + " " + choice.desc,
 		})
@@ -4251,6 +4319,7 @@ func (c *settingsCommand) setPickerBackend(value string) error {
 }
 
 func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	status, statusErr := updateStatus{}, errors.New("update status is not configured")
 	if c.update != nil {
 		status, statusErr = c.update.status()
@@ -4271,18 +4340,18 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 		{"Docs", "docs/keybindings.md has copyable terminal examples"},
 	}
 	entries := make([]intpickercompat.Entry, 0, len(rows)+8)
-	entries = append(entries, settingsBackEntry())
+	entries = append(entries, settingsBackEntryLocale(locale))
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Welcome", "revisit the shell quickstart guide"),
+		Label: settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Welcome", "revisit the shell quickstart guide"),
 		Value: settingsWelcomeShow,
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Quit projmux", "open quit actions"),
+		Label: settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Quit projmux", "open quit actions"),
 		Value: settingsQuitOpen,
 	})
 	if statusErr != nil {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Update", "status unavailable", statusErr.Error()),
+			Label: settingsLabelInfoLocale(locale, "Update", "status unavailable", statusErr.Error()),
 			Value: settingsNoopValue,
 		})
 	} else {
@@ -4292,36 +4361,36 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 		}
 		entries = append(entries,
 			intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Update Now", "run installer-specific update command"),
+				Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Update Now", "run installer-specific update command"),
 				Value: settingsUpdateApply,
 			},
 			intpickercompat.Entry{
-				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Check Updates", "refresh cached GitHub release metadata"),
+				Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Check Updates", "refresh cached GitHub release metadata"),
 				Value: settingsUpdateCheck,
 			},
 			intpickercompat.Entry{
-				Label: settingsLabelInfo("Latest", latest, status.CacheState),
+				Label: settingsLabelInfoLocale(locale, "Latest", latest, status.CacheState),
 				Value: settingsNoopValue,
 			},
 			intpickercompat.Entry{
-				Label: settingsLabelInfo("Update state", status.UpdateState, ""),
+				Label: settingsLabelInfoLocale(locale, "Update state", status.UpdateState, ""),
 				Value: settingsNoopValue,
 			},
 			intpickercompat.Entry{
-				Label: settingsLabelInfo("Installer", status.Installer.Source, status.Installer.Note),
+				Label: settingsLabelInfoLocale(locale, "Installer", status.Installer.Source, status.Installer.Note),
 				Value: settingsNoopValue,
 			},
 		)
 		if status.ReleaseURL != "" {
 			entries = append(entries, intpickercompat.Entry{
-				Label: settingsLabelInfo("Release notes", status.ReleaseURL, ""),
+				Label: settingsLabelInfoLocale(locale, "Release notes", status.ReleaseURL, ""),
 				Value: settingsNoopValue,
 			})
 		}
 	}
 	for _, r := range rows {
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo(r.name, r.value, ""),
+			Label: settingsLabelInfoLocale(locale, r.name, r.value, ""),
 			Value: settingsNoopValue,
 		})
 	}
@@ -4426,7 +4495,7 @@ func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options
 	var body strings.Builder
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	_ = writeShellWelcome(&body, welcomeCurrentVersion(), status, hasStatus, false, false, false, welcomeWidthFromEnv(c.lookupEnv), locale)
-	entries := []intpickercompat.Entry{settingsBackEntry()}
+	entries := []intpickercompat.Entry{c.backEntry()}
 	for line := range strings.SplitSeq(strings.Trim(body.String(), "\n"), "\n") {
 		entries = append(entries, intpickercompat.Entry{
 			Label:     line,
@@ -4446,8 +4515,12 @@ func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options
 }
 
 func settingsBackEntry() intpickercompat.Entry {
+	return settingsBackEntryLocale(settingsLocaleFromEnv())
+}
+
+func settingsBackEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Back", ""),
+		Label: settingsLabelLocale(locale, settingsGlyphBack, settingsColorBack, "Back", ""),
 		Value: settingsBackValue,
 	}
 }
