@@ -606,6 +606,36 @@ Codex and are managed from `Settings > Notifications > Hook quiet policy`.
 They only affect ingest delivery; `projmux ai integrate claude` still uses the
 catalog `install` field for installed hook events.
 
+## Antigravity Hook Ingest
+
+`projmux ai ingest antigravity-hook < payload.json` is available for manual
+Antigravity CLI `agy` hook/statusline payloads. Projmux does not provide
+`projmux ai integrate antigravity`, does not install Antigravity hooks, and
+does not mutate Antigravity user config. The Delivery sources diagnostic
+therefore reports Antigravity as a read-only unsupported/manual row. If users
+wire it by hand, use an absolute `projmux` command path or a known cwd because
+relative command paths failed the Phase 0b smoke.
+
+The default known Antigravity catalog records only observed Phase 0b signals
+and marks them `install: false`:
+
+| Event/signal | Behavior |
+| --- | --- |
+| `PostInvocation` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
+| `Stop` | pushes a completion row, or a critical error row when `error` is present or `terminationReason` is non-normal |
+| `Statusline` with `tool_confirmation_pending=true` | pushes a critical approval row; this is only active when a statusline/manual status payload is wired to ingest |
+| `Statusline` without `tool_confirmation_pending=true` | marks the matched pane hook-active and writes a quiet ingest diagnostic |
+| unknown events | mark the matched pane hook-active and write quiet ingest diagnostics only |
+
+Antigravity notify rows use `agent=antigravity` metadata. Accepted fields
+include `conversationId`/`conversation_id`, `cwd`, `workspace.path`,
+`transcriptPath`, `terminationReason`, `error`, `fullyIdle`, `agent_state`,
+`context_window`, and nested `statusline.tool_confirmation_pending`.
+Antigravity ingest uses `conversationId` as pane thread metadata for matching
+and does not write resume/session-state metadata. Phase 3 session-state restore
+and usage/quota HUD support are not included, and raw payloads or transcript
+contents are not stored.
+
 ## Ingest Debug Log
 
 Every `projmux ai ingest ...` path appends compact JSONL diagnostics to

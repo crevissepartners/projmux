@@ -1,0 +1,9 @@
+{
+  "provider": "antigravity",
+  "observed_version": "Antigravity CLI agy Phase 0b smoke",
+  "events": [
+    { "name": "PostInvocation", "install": false, "action": "quiet" },
+    { "name": "Stop", "install": false, "action": "notify" },
+    { "name": "Statusline", "install": false, "action": "notify" }
+  ]
+}

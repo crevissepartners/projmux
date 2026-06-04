@@ -3471,6 +3471,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai watch-title [pane]")
 	fmt.Fprintln(w, "  projmux ai ingest codex-hook < payload.json")
 	fmt.Fprintln(w, "  projmux ai ingest claude-hook < payload.json")
+	fmt.Fprintln(w, "  projmux ai ingest antigravity-hook < payload.json")
 	fmt.Fprintln(w, "  projmux ai ingest bell --pane <pane_id>")
 	fmt.Fprintln(w, "  projmux ai ingest log [--tail N] [--json] [--path]")
 	fmt.Fprintln(w, "  projmux ai integrate codex [--dry-run] [--remove]")

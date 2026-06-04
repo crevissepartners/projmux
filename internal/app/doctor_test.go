@@ -698,6 +698,9 @@ command = "projmux ai ingest codex-hook"
 	if byID["tmux-bell"].Status != doctorAINotifyStatusInstalled {
 		t.Fatalf("tmux bell status = %#v, want installed", byID["tmux-bell"])
 	}
+	if byID["antigravity-hooks"].Status != doctorAINotifyStatusSkip {
+		t.Fatalf("antigravity hooks status = %#v, want skip/manual diagnostic", byID["antigravity-hooks"])
+	}
 	if byID["codex-hooks"].InstallCommand != "projmux ai integrate codex" {
 		t.Fatalf("codex hooks InstallCommand = %q", byID["codex-hooks"].InstallCommand)
 	}
@@ -712,6 +715,12 @@ command = "projmux ai ingest codex-hook"
 	}
 	if byID["claude-hooks"].TestedVersion != "Claude Code 2.1.140" {
 		t.Fatalf("claude hooks TestedVersion = %q", byID["claude-hooks"].TestedVersion)
+	}
+	if byID["antigravity-hooks"].ProviderID != "antigravity" || byID["antigravity-hooks"].InstallCommand != "" || byID["antigravity-hooks"].RemoveCommand != "" || byID["antigravity-hooks"].DryRunCommand != "" {
+		t.Fatalf("antigravity hooks diagnostic = %#v", byID["antigravity-hooks"])
+	}
+	if !strings.Contains(byID["antigravity-hooks"].Guidance, "does not mutate Antigravity user config") || !strings.Contains(byID["antigravity-hooks"].Guidance, "absolute projmux path") {
+		t.Fatalf("antigravity hooks Guidance = %q, want manual/absolute-command notice", byID["antigravity-hooks"].Guidance)
 	}
 	if len(cmdRecorder(cmd).commands) != 0 {
 		t.Fatalf("commands = %#v, want read-only diagnostics", cmdRecorder(cmd).commands)
@@ -741,6 +750,7 @@ func TestDoctorAINotifyDiagnosticsProviderMetadataShowsDisabledProviders(t *test
 	}{
 		{id: "codex-hooks", provider: "codex"},
 		{id: "claude-hooks", provider: "claude"},
+		{id: "antigravity-hooks", provider: "antigravity"},
 	} {
 		diagnostic, ok := byID[tc.id]
 		if !ok {

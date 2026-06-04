@@ -2348,6 +2348,14 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			RemoveCommand:  "projmux ai integrate tmux-bell --remove",
 			DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
 		},
+		{
+			ID:            "antigravity-hooks",
+			Name:          "Antigravity hooks",
+			Status:        doctorAINotifyStatusSkip,
+			ProviderID:    "antigravity",
+			TestedVersion: "Antigravity CLI agy Phase 0b smoke",
+			Guidance:      "Antigravity hook payloads support manual projmux ai ingest antigravity-hook wiring only; projmux does not mutate Antigravity user config.",
+		},
 	}
 
 	var calls int
@@ -2429,6 +2437,11 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
 		}
 	}
+	for _, want := range []string{"Antigravity hooks", "skip", "Antigravity CLI agy Phase 0b smoke"} {
+		if !hasEntryLabelContaining(listOptions.Entries, want) {
+			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
+		}
+	}
 	if got, want := detailOptions.UI, "settings-notifications-delivery-detail"; got != want {
 		t.Fatalf("delivery source detail UI = %q, want %q", got, want)
 	}
@@ -2469,6 +2482,79 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	}
 	if len(tmuxRunner.calls) != 0 {
 		t.Fatalf("tmux calls = %#v, want no clipboard copy while opening detail", tmuxRunner.calls)
+	}
+}
+
+func TestSettingsNotificationsDeliveryShowsAntigravityUnsupportedReadOnly(t *testing.T) {
+	t.Parallel()
+
+	diagnostics := []doctorAINotifyIntegration{{
+		ID:            "antigravity-hooks",
+		Name:          "Antigravity hooks",
+		ProviderID:    "antigravity",
+		Status:        doctorAINotifyStatusSkip,
+		TestedVersion: "Antigravity CLI agy Phase 0b smoke",
+		Guidance:      "Antigravity hook payloads support manual projmux ai ingest antigravity-hook wiring only; projmux does not mutate Antigravity user config, and hook commands should use an absolute projmux path or a known cwd.",
+	}}
+
+	var calls int
+	var listOptions intpickercompat.Options
+	var detailOptions intpickercompat.Options
+	cmd := &settingsCommand{
+		ai:                  testAICommand(t.TempDir()),
+		aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return diagnostics },
+		tmuxRunner:          &recordingTmuxRunner{},
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
+			case 2:
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
+			case 3:
+				listOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "antigravity-hooks"}, nil
+			case 4:
+				detailOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsNoopValue}, nil
+			case 5:
+				return intpickercompat.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intpickercompat.Result{}, nil
+			}
+		}),
+	}
+	cmd.nativePicker = nativePickerFromCompatRunner(cmd.runner)
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil && err != errSettingsClosed {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+"antigravity-hooks") {
+		t.Fatalf("delivery sources entries = %#v, want antigravity row", listOptions.Entries)
+	}
+	for _, want := range []string{"Antigravity hooks", "skip", "Antigravity CLI agy Phase 0b smoke"} {
+		if !hasEntryLabelContaining(listOptions.Entries, want) {
+			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
+		}
+	}
+	for _, want := range []string{
+		"manual projmux ai ingest antigravity-hook",
+		"does not mutate Antigravity user config",
+		"absolute projmux path",
+		"Install command",
+		"unavailable",
+		"Remove command",
+		"Dry-run command",
+	} {
+		if !hasEntryLabelContaining(detailOptions.Entries, want) {
+			t.Fatalf("antigravity detail entries = %#v, want %q", detailOptions.Entries, want)
+		}
+	}
+	for _, entry := range detailOptions.Entries {
+		if strings.HasPrefix(entry.Value, settingsActionPrefixAINotifyCommand) {
+			t.Fatalf("antigravity detail entry = %#v, want no copyable install actions", entry)
+		}
 	}
 }
 

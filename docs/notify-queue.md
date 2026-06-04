@@ -58,11 +58,15 @@ exit code 2.
 routing/debug context such as `agent`, `thread_id`, `turn_id`, `cwd`,
 `model`, and `client`; Claude hook rows also carry event-specific keys such as
 `tool_name`, `tool_input.command`, `error_type`, `subagent_type`, and
-`teammate_name`. Tmux bell fallback rows carry `agent=bell`, `event=bell`,
-and tmux target context such as pane title, command, session, window, pane, and
-socket. `notify list --json` includes this metadata as the structured data
-channel while human table/sidebar output keeps the compact text body. Existing
-entries without metadata remain valid.
+`teammate_name`. Antigravity manual hook rows carry `agent=antigravity`,
+`conversation_id`, `termination_reason`, `fully_idle`,
+`tool_confirmation_pending`, `agent_state`, and `context_window` when present;
+Phase 3 session-state restore and usage/quota HUD support are not included.
+Tmux bell fallback rows carry `agent=bell`, `event=bell`, and tmux target
+context such as pane title, command, session, window, pane, and socket.
+`notify list --json` includes this metadata as the structured data channel
+while human table/sidebar output keeps the compact text body. Existing entries
+without metadata remain valid.
 
 ## CLI surface
 

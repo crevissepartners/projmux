@@ -1390,6 +1390,261 @@ func TestIngestClaudeUnknownEventFallsBackToQuiet(t *testing.T) {
 	}
 }
 
+func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
+	t.Parallel()
+
+	payload, err := parseAntigravityHookPayload([]byte(`{
+		"eventName": "Stop",
+		"conversationId": "ag-conv-123",
+		"workspace": {"path": "/repo/projmux"},
+		"transcriptPath": "/tmp/ag.jsonl",
+		"terminationReason": "completed",
+		"fullyIdle": true,
+		"statusline": {
+			"agent_state": "idle",
+			"tool_confirmation_pending": false,
+			"context_window": "42%"
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("parseAntigravityHookPayload() error = %v", err)
+	}
+	if payload.EventName != "Stop" || payload.ConversationID != "ag-conv-123" || payload.CWD != "/repo/projmux" || payload.TranscriptPath != "/tmp/ag.jsonl" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if payload.TerminationReason != "completed" || !payload.FullyIdle || !payload.FullyIdleSet || payload.ToolConfirmationPending || payload.AgentState != "idle" || payload.ContextWindow != "42%" {
+		t.Fatalf("observed fields = %+v", payload)
+	}
+
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","tool_confirmation_pending":true}`))
+	if err != nil {
+		t.Fatalf("parseAntigravityHookPayload() statusline-only error = %v", err)
+	}
+	if payload.EventName != "Statusline" || !payload.ToolConfirmationPending {
+		t.Fatalf("statusline payload = %+v, want Statusline approval signal", payload)
+	}
+
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","agent_state":"idle","context_window":"38%"}`))
+	if err != nil {
+		t.Fatalf("parseAntigravityHookPayload() statusline-shaped error = %v", err)
+	}
+	if payload.EventName != "Statusline" || payload.ToolConfirmationPending || payload.ToolConfirmationPendingSet {
+		t.Fatalf("statusline-shaped payload = %+v, want Statusline without pending metadata", payload)
+	}
+	if metadata := payload.antigravityMetadata(); metadata["tool_confirmation_pending"] != "" {
+		t.Fatalf("metadata = %#v, want absent tool_confirmation_pending when field was absent", metadata)
+	}
+
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","toolConfirmationPending":false}`))
+	if err != nil {
+		t.Fatalf("parseAntigravityHookPayload() explicit false statusline error = %v", err)
+	}
+	if payload.EventName != "Statusline" || payload.ToolConfirmationPending || !payload.ToolConfirmationPendingSet {
+		t.Fatalf("explicit false statusline payload = %+v, want Statusline with pending=false", payload)
+	}
+}
+
+func TestIngestAntigravityStopPushesCompletionMetadataWithoutResumeState(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"eventName": "Stop",
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux",
+		"transcriptPath": "/tmp/ag.jsonl",
+		"terminationReason": "completed",
+		"fullyIdle": true
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Stop error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:antigravity:stop:ag-conv-123" || got.Text != "Ready" || got.Severity != notify.SeverityInfo {
+		t.Fatalf("pushed = %#v", got)
+	}
+	for key, want := range map[string]string{
+		"agent":              "antigravity",
+		"event":              "Stop",
+		"conversation_id":    "ag-conv-123",
+		"cwd":                "/repo/projmux",
+		"transcript_path":    "/tmp/ag.jsonl",
+		"termination_reason": "completed",
+		"fully_idle":         "true",
+		"category":           "response_complete",
+	} {
+		if got.Metadata[key] != want {
+			t.Fatalf("metadata[%s] = %q, want %q in %#v", key, got.Metadata[key], want, got.Metadata)
+		}
+	}
+	for _, want := range []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeAntigravity}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneThreadIDOption, "ag-conv-123"}},
+	} {
+		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
+			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
+		}
+	}
+	if hasRecordedAISetOption(cmdRecorder(cmd).commands, aiPaneResumeIDOption) || hasRecordedAISetOption(cmdRecorder(cmd).commands, aiPaneSessionIDOption) {
+		t.Fatalf("commands = %#v, want no session-state resume writes for Antigravity", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestIngestAntigravityStopIgnoresToolConfirmationPendingForApproval(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"eventName": "Stop",
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux",
+		"tool_confirmation_pending": true,
+		"terminationReason": "completed"
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Stop error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:antigravity:stop:ag-conv-123" || got.Metadata["category"] != "response_complete" || got.Severity != notify.SeverityInfo {
+		t.Fatalf("pushed = %#v, want Stop completion mapping", got)
+	}
+}
+
+func TestIngestAntigravityStopErrorPushesCritical(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"eventName": "Stop",
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux",
+		"terminationReason": "error",
+		"error": {"message": "tool failed"}
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Stop error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.Severity != notify.SeverityCritical || got.Metadata["category"] != "error" || got.Metadata["error"] != "tool failed" {
+		t.Fatalf("pushed = %#v", got)
+	}
+}
+
+func TestIngestAntigravityStatuslineApprovalPushesCritical(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux",
+		"statusline": {
+			"agent_state": "waiting_for_tool",
+			"tool_confirmation_pending": true
+		}
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Statusline error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:antigravity:approval:ag-conv-123:waiting_for_tool" || got.Severity != notify.SeverityCritical || got.Metadata["category"] != "approval_required" {
+		t.Fatalf("pushed = %#v", got)
+	}
+	if got.Metadata["agent"] != "antigravity" || got.Metadata["tool_confirmation_pending"] != "true" || got.Metadata["agent_state"] != "waiting_for_tool" {
+		t.Fatalf("metadata = %#v", got.Metadata)
+	}
+}
+
+func TestIngestAntigravityStatuslineWithoutPendingQuietLogsReason(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux",
+		"agent_state": "idle",
+		"context_window": "38%"
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Statusline quiet error = %v", err)
+	}
+	if len(store.pushed) != 0 {
+		t.Fatalf("push count = %d, want 0: %#v", len(store.pushed), store.pushed)
+	}
+	var out bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest log --json error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		`"source":"antigravity-hook"`,
+		`"event":"Statusline"`,
+		`"result":"quiet"`,
+		`"reason":"statusline has no pending tool confirmation"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("log output = %q, want %s", got, want)
+		}
+	}
+}
+
+func TestIngestAntigravityPostInvocationQuietWithoutNotify(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"eventName": "PostInvocation",
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux"
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook PostInvocation error = %v", err)
+	}
+	if len(store.pushed) != 0 {
+		t.Fatalf("push count = %d, want 0: %#v", len(store.pushed), store.pushed)
+	}
+	var out bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest log --json error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, `"source":"antigravity-hook"`) || !strings.Contains(got, `"event":"PostInvocation"`) || !strings.Contains(got, `"result":"quiet"`) {
+		t.Fatalf("log output = %q", got)
+	}
+}
+
 func TestAIWatchTitleSkipsHookActivePane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
@@ -1456,6 +1711,29 @@ func codexHookIngestReadCommand(paneID string) func(context.Context, string, ...
 			return []byte(paneID + "\x1f/repo/projmux\x1f\x1fcodex-session\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{@projmux_ai_agent}"}):
 			return []byte("codex\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#S"}):
+			return []byte("workspace\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{window_id}"}):
+			return []byte("@1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{pane_id}"}):
+			return []byte(paneID + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{socket_path}"}):
+			return []byte("/tmp/tmux-1000/projmux\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+func antigravityIngestReadCommand(paneID string) func(context.Context, string, ...string) ([]byte, error) {
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}):
+			return []byte(paneID + "\x1f/repo/projmux\x1f\x1f\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{@projmux_ai_agent}"}):
+			return []byte("antigravity\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#S"}):
 			return []byte("workspace\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{window_id}"}):
