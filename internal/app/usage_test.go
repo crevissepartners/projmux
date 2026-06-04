@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/usage"
 )
 
@@ -233,15 +234,258 @@ func TestFilterSnapshotsByModelAndWindow(t *testing.T) {
 	}
 }
 
+func TestUsageRunAllScopesToEnabledClaudeOnly(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	if err := store.SaveState(usage.State{
+		Snapshots: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 12, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+			{Model: "codex", Window: usage.Window5h, Pct: 88, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		},
+		Backoff: map[string]usage.BackoffState{
+			"codex": {Until: now.Add(5 * time.Minute), Consecutive: 1},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 13, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+	codexAd := &stubAdapter{name: "codex", snaps: []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 89, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+
+	c := newUsageCommand()
+	c.now = func() time.Time { return now }
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentClaude}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "all"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "claude") || !strings.Contains(out, "13%") {
+		t.Fatalf("expected enabled claude row: %q", out)
+	}
+	if strings.Contains(out, "codex") {
+		t.Fatalf("disabled codex leaked into all-model output: %q", out)
+	}
+	if strings.Contains(out, "codex is in backoff") {
+		t.Fatalf("disabled codex backoff leaked into all-model output: %q", out)
+	}
+	if claudeAd.collectCalls != 1 {
+		t.Fatalf("claude collect calls = %d, want 1", claudeAd.collectCalls)
+	}
+	if codexAd.collectCalls != 0 {
+		t.Fatalf("codex collect calls = %d, want 0 for disabled ambient scope", codexAd.collectCalls)
+	}
+}
+
+func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	if err := store.SaveState(usage.State{
+		Snapshots: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 44, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+			{Model: "codex", Window: usage.Window5h, Pct: 22, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 45, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+	codexAd := &stubAdapter{name: "codex", snaps: []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 23, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+
+	c := newUsageCommand()
+	c.now = func() time.Time { return now }
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentCodex}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.runStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Codex") || !strings.Contains(out, "23%") {
+		t.Fatalf("expected enabled codex HUD: %q", out)
+	}
+	if strings.Contains(out, "Claude") {
+		t.Fatalf("disabled claude leaked into status HUD: %q", out)
+	}
+	if claudeAd.collectCalls != 0 {
+		t.Fatalf("claude collect calls = %d, want 0 for disabled ambient scope", claudeAd.collectCalls)
+	}
+	if codexAd.collectCalls != 1 {
+		t.Fatalf("codex collect calls = %d, want 1", codexAd.collectCalls)
+	}
+}
+
+func TestUsageAllWithNoEnabledAgentsSkipsCollectAndShowsFallback(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	if err := store.SaveState(usage.State{
+		Snapshots: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 44, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+			{Model: "codex", Window: usage.Window5h, Pct: 22, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	claudeAd := &stubAdapter{name: "claude"}
+	codexAd := &stubAdapter{name: "codex"}
+
+	c := newUsageCommand()
+	c.now = func() time.Time { return now }
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return nil, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "all"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "no AI usage providers enabled") {
+		t.Fatalf("missing no-enabled-agents fallback: %q", out)
+	}
+	if strings.Contains(out, "claude") || strings.Contains(out, "codex") {
+		t.Fatalf("disabled cached rows leaked with no enabled agents: %q", out)
+	}
+	if claudeAd.collectCalls != 0 || codexAd.collectCalls != 0 {
+		t.Fatalf("collect calls with no enabled agents = claude:%d codex:%d, want 0/0", claudeAd.collectCalls, codexAd.collectCalls)
+	}
+
+	stdout.Reset()
+	if err := c.runStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("status output with no enabled agents = %q, want empty", stdout.String())
+	}
+}
+
+func TestUsageExplicitClaudeWorksWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 31, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+	codexAd := &stubAdapter{name: "codex", snaps: []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 91, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+
+	c := newUsageCommand()
+	c.now = func() time.Time { return now }
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentCodex}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "claude"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "claude") || !strings.Contains(out, "31%") {
+		t.Fatalf("explicit disabled claude should render read-only data: %q", out)
+	}
+	if strings.Contains(out, "codex") {
+		t.Fatalf("explicit claude output should not include codex: %q", out)
+	}
+	if claudeAd.collectCalls != 1 {
+		t.Fatalf("claude collect calls = %d, want 1 for explicit disabled model", claudeAd.collectCalls)
+	}
+	if codexAd.collectCalls != 0 {
+		t.Fatalf("codex collect calls = %d, want 0 for explicit claude scope", codexAd.collectCalls)
+	}
+}
+
+func TestUsageExplicitCodexWorksWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 31, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+	codexAd := &stubAdapter{name: "codex", snaps: []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 91, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+
+	c := newUsageCommand()
+	c.now = func() time.Time { return now }
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentClaude}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "codex"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "codex") || !strings.Contains(out, "91%") {
+		t.Fatalf("explicit disabled codex should render read-only data: %q", out)
+	}
+	if strings.Contains(out, "claude") {
+		t.Fatalf("explicit codex output should not include claude: %q", out)
+	}
+	if codexAd.collectCalls != 1 {
+		t.Fatalf("codex collect calls = %d, want 1 for explicit disabled model", codexAd.collectCalls)
+	}
+	if claudeAd.collectCalls != 0 {
+		t.Fatalf("claude collect calls = %d, want 0 for explicit codex scope", claudeAd.collectCalls)
+	}
+}
+
 // stubAdapter emits Snapshots directly under the v2 contract.
 type stubAdapter struct {
-	name  string
-	snaps []usage.Snapshot
-	err   error
+	name         string
+	snaps        []usage.Snapshot
+	err          error
+	collectCalls int
 }
 
 func (s *stubAdapter) Name() string { return s.name }
 func (s *stubAdapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
+	s.collectCalls++
 	return s.snaps, s.err
 }
 
@@ -257,11 +501,28 @@ func newStubManager(t *testing.T, adapters []*stubAdapter) *usage.Manager {
 	return usage.NewManager(registry, store, func() time.Time { return now })
 }
 
+func scopedUsageManagerFactory(t *testing.T, store *usage.Store, now time.Time, adapters map[string]*stubAdapter) func([]string) (*usage.Manager, error) {
+	t.Helper()
+	return func(scope []string) (*usage.Manager, error) {
+		registry := usage.NewRegistry()
+		for _, model := range normalizeUsageModelScope(scope) {
+			adapter, ok := adapters[model]
+			if !ok {
+				continue
+			}
+			if err := registry.Replace(adapter); err != nil {
+				return nil, err
+			}
+		}
+		return usage.NewManager(registry, store, func() time.Time { return now }), nil
+	}
+}
+
 func TestUsageRunJSONEmptyCacheReturnsArray(t *testing.T) {
 	t.Parallel()
 
 	c := newUsageCommand()
-	c.managerFn = func() (*usage.Manager, error) {
+	c.managerFn = func([]string) (*usage.Manager, error) {
 		dir := t.TempDir()
 		registry := usage.NewRegistry()
 		_ = registry.Register(&stubAdapter{name: "claude"})
@@ -297,7 +558,7 @@ func TestUsageStatusEmitsFormattedSegment(t *testing.T) {
 	if _, err := mgr.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -314,7 +575,7 @@ func TestUsageStatusManagerErrorIsSilent(t *testing.T) {
 	t.Parallel()
 
 	c := newUsageCommand()
-	c.managerFn = func() (*usage.Manager, error) {
+	c.managerFn = func([]string) (*usage.Manager, error) {
 		return nil, errors.New("boom")
 	}
 	stdout := &bytes.Buffer{}
@@ -340,7 +601,7 @@ func TestUsageStatusMaybeCollectThrottledOnSecondCall(t *testing.T) {
 			{Model: "codex", Window: usage.Window5h, Pct: 10, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 		}},
 	})
-	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -372,7 +633,7 @@ func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
 	mgr := usage.NewManager(registry, store, func() time.Time {
 		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	})
-	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -404,7 +665,7 @@ func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 	mgr := usage.NewManager(registry, store, func() time.Time {
 		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	})
-	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -608,7 +869,7 @@ func TestUsageRunForceBypassesBackoffAndThrottle(t *testing.T) {
 	mgr := usage.NewManager(registry, store, func() time.Time { return now })
 
 	c := newUsageCommand()
-	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
 	c.now = func() time.Time { return now }
 
 	stdout := &bytes.Buffer{}
@@ -657,7 +918,7 @@ func TestUsageRunDefaultRespectsBackoff(t *testing.T) {
 	mgr := usage.NewManager(registry, store, func() time.Time { return now })
 
 	c := newUsageCommand()
-	c.managerFn = func() (*usage.Manager, error) { return mgr, nil }
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
 	c.now = func() time.Time { return now }
 
 	stdout := &bytes.Buffer{}

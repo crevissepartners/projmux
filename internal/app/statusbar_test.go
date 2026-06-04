@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -679,6 +680,59 @@ func TestStatusbarUsageStateSyncPrefersLastCollectThenCacheMTime(t *testing.T) {
 	}
 	if fromMTime.LastSyncSource != "cache mtime" {
 		t.Fatalf("LastSyncSource = %q, want cache mtime", fromMTime.LastSyncSource)
+	}
+}
+
+func TestStatusbarDefaultUsageStateFiltersDisabledProviders(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, "xdg-config")
+	stateHome := filepath.Join(home, "xdg-state")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("PROJMUX_USAGE_STATE_DIR", "")
+
+	paths := config.DefaultPaths(configHome, stateHome)
+	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile: %v", err)
+	}
+
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	claudeCollect := now.Add(-4 * time.Minute)
+	codexCollect := now.Add(-time.Minute)
+	store := coreusage.NewStore(filepath.Join(paths.StateDir, "usage"))
+	if err := store.SaveState(coreusage.State{
+		LastCollect: map[string]time.Time{
+			"claude": claudeCollect,
+			"codex":  codexCollect,
+		},
+		Snapshots: []coreusage.Snapshot{
+			{Model: "claude", Window: coreusage.Window5h, Pct: 31, ResetsAt: now.Add(time.Hour), UpdatedAt: claudeCollect},
+			{Model: "codex", Window: coreusage.Window5h, Pct: 92, ResetsAt: now.Add(time.Hour), UpdatedAt: codexCollect},
+		},
+	}); err != nil {
+		t.Fatalf("seed usage state: %v", err)
+	}
+
+	cmd := newStatusbarCommand()
+	cmd.now = func() time.Time { return now }
+	state, err := cmd.defaultUsageState(context.Background())
+	if err != nil {
+		t.Fatalf("defaultUsageState: %v", err)
+	}
+	if len(state.Snapshots) != 1 || state.Snapshots[0].Model != "claude" {
+		t.Fatalf("Snapshots = %#v, want only enabled claude row", state.Snapshots)
+	}
+	if !state.LastSync.Equal(claudeCollect) {
+		t.Fatalf("LastSync = %v, want enabled claude collect %v", state.LastSync, claudeCollect)
+	}
+	if state.LastSyncSource != "last collect" {
+		t.Fatalf("LastSyncSource = %q, want last collect", state.LastSyncSource)
+	}
+
+	popup := statusbarUsagePopup(state, now, "/usr/local/bin/projmux")
+	if !strings.Contains(popup.Command, "Claude") || strings.Contains(popup.Command, "Codex") {
+		t.Fatalf("popup command = %q, want Claude only", popup.Command)
 	}
 }
 

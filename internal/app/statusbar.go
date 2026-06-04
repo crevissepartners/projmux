@@ -489,7 +489,8 @@ func (c *statusbarCommand) loadUsageState(ctx context.Context) (statusbarUsageSt
 func (c *statusbarCommand) defaultUsageState(_ context.Context) (statusbarUsageState, error) {
 	cmd := newUsageCommand()
 	cmd.now = c.nowTime
-	mgr, err := cmd.managerFn()
+	modelScope := cmd.ambientModelScope()
+	mgr, err := cmd.managerForScope(modelScope)
 	if err != nil {
 		return statusbarUsageState{}, err
 	}
@@ -497,6 +498,7 @@ func (c *statusbarCommand) defaultUsageState(_ context.Context) (statusbarUsageS
 	if err != nil {
 		return statusbarUsageState{}, err
 	}
+	state = filterUsageStateByModels(state, modelScope)
 	var cacheMTime time.Time
 	stateDir, err := cmd.resolveStateDir()
 	if err == nil {
