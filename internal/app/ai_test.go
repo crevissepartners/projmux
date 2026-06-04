@@ -515,6 +515,142 @@ func TestAISplitSelectiveDelegatesToPopupToggle(t *testing.T) {
 	}
 }
 
+func TestAISplitToggleMissingPaneUsesExistingLaunchPath(t *testing.T) {
+	panes := []aiSplitTogglePane{
+		{id: "%1", active: true, managed: false, context: "/work/repo"},
+		{id: "%2", managed: true, agent: aiModeCodex, context: "/work/other"},
+	}
+
+	decision := decideAISplitToggle("%1", "/work/repo", aiModeCodex, panes)
+
+	if decision.action != aiSplitToggleLaunchExistingPath || decision.targetPane != "" {
+		t.Fatalf("decision = %#v, want launch existing split path", decision)
+	}
+}
+
+func TestAISplitToggleFocusExistingManagedPaneSameProjectAndAgent(t *testing.T) {
+	panes := []aiSplitTogglePane{
+		{id: "%1", active: true, managed: false, context: "/work/repo"},
+		{id: "%2", last: true, managed: true, agent: aiModeCodex, context: "/work/repo/."},
+		{id: "%3", managed: true, agent: aiModeClaude, context: "/work/repo"},
+	}
+
+	decision := decideAISplitToggle("%1", "/work/repo", aiModeCodex, panes)
+
+	if decision.action != aiSplitToggleFocusExisting || decision.targetPane != "%2" {
+		t.Fatalf("decision = %#v, want focus existing Codex pane %%2", decision)
+	}
+}
+
+func TestAISplitToggleRequiresManagedAgentAndSameProject(t *testing.T) {
+	tests := []struct {
+		name string
+		pane aiSplitTogglePane
+	}{
+		{
+			name: "unmanaged",
+			pane: aiSplitTogglePane{id: "%2", managed: false, agent: aiModeCodex, context: "/work/repo"},
+		},
+		{
+			name: "missing agent metadata",
+			pane: aiSplitTogglePane{id: "%2", managed: true, agent: "", context: "/work/repo"},
+		},
+		{
+			name: "different project",
+			pane: aiSplitTogglePane{id: "%2", managed: true, agent: aiModeCodex, context: "/work/other"},
+		},
+		{
+			name: "different concrete agent",
+			pane: aiSplitTogglePane{id: "%2", managed: true, agent: aiModeClaude, context: "/work/repo"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			panes := []aiSplitTogglePane{
+				{id: "%1", active: true, managed: false, context: "/work/repo"},
+				tt.pane,
+			}
+			decision := decideAISplitToggle("%1", "/work/repo", aiModeCodex, panes)
+			if decision.action != aiSplitToggleLaunchExistingPath {
+				t.Fatalf("decision = %#v, want launch because pane does not match", decision)
+			}
+		})
+	}
+}
+
+func TestAISplitToggleRequiresConcreteRequestedAgent(t *testing.T) {
+	panes := []aiSplitTogglePane{
+		{id: "%1", active: true, managed: false, context: "/work/repo"},
+		{id: "%2", managed: true, agent: aiModeCodex, context: "/work/repo"},
+	}
+
+	decision := decideAISplitToggle("%1", "/work/repo", "", panes)
+
+	if decision.action != aiSplitToggleLaunchExistingPath {
+		t.Fatalf("decision = %#v, want launch because requested agent is not concrete", decision)
+	}
+}
+
+func TestAISplitToggleFocusBackUsesPreviousNonMatchingPane(t *testing.T) {
+	panes := []aiSplitTogglePane{
+		{id: "%1", last: true, managed: false, context: "/work/repo"},
+		{id: "%2", active: true, managed: true, agent: aiModeCodex, context: "/work/repo"},
+	}
+
+	decision := decideAISplitToggle("%2", "/work/repo", aiModeCodex, panes)
+
+	if decision.action != aiSplitToggleFocusBack || decision.targetPane != "%1" {
+		t.Fatalf("decision = %#v, want focus back to tmux previous pane %%1", decision)
+	}
+}
+
+func TestAISplitToggleFocusBackFallsBackToPreviousPane(t *testing.T) {
+	panes := []aiSplitTogglePane{
+		{id: "%1", last: true, managed: true, agent: aiModeCodex, context: "/work/repo"},
+		{id: "%2", active: true, managed: true, agent: aiModeCodex, context: "/work/repo"},
+	}
+
+	decision := decideAISplitToggle("%2", "/work/repo", aiModeCodex, panes)
+
+	if decision.action != aiSplitToggleFocusBack || decision.targetPane != "%1" {
+		t.Fatalf("decision = %#v, want focus back to tmux previous pane %%1", decision)
+	}
+}
+
+func TestAISplitToggleCurrentMatchingPaneWithoutPreviousNoop(t *testing.T) {
+	panes := []aiSplitTogglePane{
+		{id: "%2", active: true, managed: true, agent: aiModeCodex, context: "/work/repo"},
+	}
+
+	decision := decideAISplitToggle("%2", "/work/repo", aiModeCodex, panes)
+
+	if decision.action != aiSplitToggleNoop || decision.targetPane != "" {
+		t.Fatalf("decision = %#v, want non-destructive no-op", decision)
+	}
+}
+
+func TestAISplitToggleReadsSessionScopedPaneMetadata(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-s", "-t", "%1", "-F", aiSplitTogglePaneFormat}) {
+			return []byte("%1\t1\t0\t0\t\t/work/repo\n%2\t0\t1\t1\tcodex\t/work/repo\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	panes := cmd.readAISplitTogglePanes("%1")
+
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"list-panes", "-s", "-t", "%1", "-F", aiSplitTogglePaneFormat}) {
+		t.Fatalf("commands = %#v, want session-scoped list-panes for target", cmdRecorder(cmd).commands)
+	}
+	if len(panes) != 2 || !panes[0].active || !panes[1].last || !panes[1].managed || panes[1].agent != aiModeCodex || panes[1].context != "/work/repo" {
+		t.Fatalf("panes = %#v, want parsed AI split toggle metadata", panes)
+	}
+}
+
 func TestAISplitCodexRunsNativeTmuxSplitAndStartsWatcher(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")
