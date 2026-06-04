@@ -243,6 +243,8 @@ func TestSessionStateRestoreDryRunShowsResumeHealth(t *testing.T) {
 				{Index: 0, Title: "codex", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipeWithResumeMetadata("codex", "codex-session", "topic", "session-id", now.Format(time.RFC3339))},
 				{Index: 1, Title: "stale claude", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipeWithResumeMetadata("claude", "claude-session", "topic", "claude-transcript", now.Add(-48*time.Hour).Format(time.RFC3339))},
 				{Index: 2, Title: "missing codex", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipe("codex", "", "topic")},
+				{Index: 3, Title: "antigravity", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipeWithResumeMetadata("antigravity", "123e4567-e89b-12d3-a456-426614174000", "topic", "hook", now.Format(time.RFC3339))},
+				{Index: 4, Title: "missing antigravity", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipe("antigravity", "", "topic")},
 			},
 		}},
 	}
@@ -264,6 +266,8 @@ func TestSessionStateRestoreDryRunShowsResumeHealth(t *testing.T) {
 		"status available confidence high",
 		"status stale confidence medium",
 		"status unavailable confidence none source unknown",
+		"pane 0.3 antigravity agent antigravity resume 123e4567-e89b-12d3-a456-426614174000",
+		"antigravity status unavailable confidence none source unknown",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("dry-run output missing %q:\n%s", want, output)

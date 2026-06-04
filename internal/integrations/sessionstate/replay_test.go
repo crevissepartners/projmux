@@ -297,6 +297,44 @@ func TestReplayAgentDirectStartSplitPaneUsesSplitWindowTail(t *testing.T) {
 	}
 }
 
+func TestReplayAntigravityAgentDirectStartUsesConversation(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	agentBin := "/opt/antigravity/bin/agy"
+	conversationID := "123e4567-e89b-12d3-a456-426614174000"
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{
+		{
+			Index:           0,
+			Name:            "agent",
+			ActivePaneIndex: 0,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: AgentRecipe("antigravity", conversationID, "antigravity topic")},
+			},
+		},
+	}
+	runner := &recordingReplayRunner{}
+
+	result, err := Replay(context.Background(), runner, snap, replayAgentOptions(agentBin))
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("Replay() warnings = %#v, want none", result.Warnings)
+	}
+
+	want := append([]string{"new-session", "-d", "-s", "home", "-c", cwd}, replayAgentTail("antigravity", agentBin, cwd, "antigravity topic", "--conversation", conversationID)...)
+	if got := runner.commands[0].args; !reflect.DeepEqual(got, want) {
+		t.Fatalf("new-session args = %#v, want %#v", got, want)
+	}
+	for _, command := range runner.commands {
+		if len(command.args) > 0 && command.args[0] == "send-keys" {
+			t.Fatalf("Replay() sent Antigravity resume through send-keys: %#v", command)
+		}
+	}
+}
+
 func TestReplayRunsStartupRecipeAfterLayoutAndPaneSelection(t *testing.T) {
 	t.Parallel()
 
@@ -500,6 +538,41 @@ func TestReplaySkipsCodexResumeWithInvalidResumeID(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReplaySkipsAntigravityResumeWithInvalidConversationID(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{
+		{
+			Index:           0,
+			Name:            "agent",
+			ActivePaneIndex: 0,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: AgentRecipe("antigravity", "ag-conv-123", "topic")},
+			},
+		},
+	}
+	runner := &recordingReplayRunner{}
+
+	result, err := Replay(context.Background(), runner, snap, ReplayOptions{})
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("warnings = %#v, want one invalid resume warning", result.Warnings)
+	}
+	if result.Warnings[0].Scope != "agent" || !strings.Contains(result.Warnings[0].Reason, "invalid antigravity resume id") {
+		t.Fatalf("warning = %#v, want invalid antigravity resume id warning", result.Warnings[0])
+	}
+	assertAgentFallbackShellPane(t, runner.commands, []string{"new-session", "-d", "-s", "home", "-c", cwd})
+	for _, command := range runner.commands {
+		if len(command.args) > 0 && command.args[0] == "send-keys" {
+			t.Fatalf("Replay() sent unsafe Antigravity resume command: %#v", command)
+		}
 	}
 }
 

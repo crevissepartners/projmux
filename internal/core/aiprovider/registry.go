@@ -99,6 +99,7 @@ var registry = []Metadata{
 			ID:        "antigravity-hooks",
 			Name:      "Antigravity hooks",
 		},
+		SessionState:  SupportMetadata{Supported: true},
 		SettingsOrder: 30,
 		PickerOrder:   30,
 	},

@@ -632,9 +632,12 @@ include `conversationId`/`conversation_id`, `cwd`, `workspace.path`,
 `transcriptPath`, `terminationReason`, `error`, `fullyIdle`, `agent_state`,
 `context_window`, and nested `statusline.tool_confirmation_pending`.
 Antigravity ingest uses `conversationId` as pane thread metadata for matching
-and does not write resume/session-state metadata. Phase 3 session-state restore
-and usage/quota HUD support are not included, and raw payloads or transcript
-contents are not stored.
+and as session-state resume metadata. Session restore uses
+`agy --conversation <uuid>` only when that id is present and UUID-shaped;
+otherwise preview and doctor render `resume unavailable`. Antigravity usage
+quota HUD support remains unsupported because the stable usage signal is
+`context-window-only` statusline data, not 5-hour/weekly quota data. Raw
+payloads or transcript contents are not stored.
 
 ## Ingest Debug Log
 

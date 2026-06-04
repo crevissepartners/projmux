@@ -781,7 +781,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte) error {
 		return nil
 	}
 
-	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, "", payload.TranscriptPath)
+	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, payload.ConversationID, payload.TranscriptPath)
 	metadata := payload.antigravityMetadata()
 	action := c.aiHookEffectiveAction(aiHookProviderAntigravity, payload.EventName)
 
@@ -895,7 +895,7 @@ func (c *aiCommand) quietClaudeHook(paneID string, payload claudeHookPayload, re
 }
 
 func (c *aiCommand) quietAntigravityHook(paneID string, payload antigravityHookPayload, reason string) {
-	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, "", payload.TranscriptPath)
+	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, payload.ConversationID, payload.TranscriptPath)
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 }
 

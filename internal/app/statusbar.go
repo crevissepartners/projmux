@@ -499,6 +499,7 @@ func (c *statusbarCommand) defaultUsageState(_ context.Context) (statusbarUsageS
 		return statusbarUsageState{}, err
 	}
 	state = filterUsageStateByModels(state, modelScope)
+	unsupported := cmd.unsupportedUsageProviders("all", false)
 	var cacheMTime time.Time
 	stateDir, err := cmd.resolveStateDir()
 	if err == nil {
@@ -506,7 +507,9 @@ func (c *statusbarCommand) defaultUsageState(_ context.Context) (statusbarUsageS
 			cacheMTime = info.ModTime()
 		}
 	}
-	return statusbarUsageStateFromCache(state, cacheMTime), nil
+	out := statusbarUsageStateFromCache(state, cacheMTime)
+	out.Unsupported = unsupported
+	return out, nil
 }
 
 func statusbarUsageStateFromCache(state coreusage.State, cacheMTime time.Time) statusbarUsageState {
@@ -728,6 +731,7 @@ type statusbarUsageState struct {
 	LastSyncSource string
 	CacheMTime     time.Time
 	LoadError      error
+	Unsupported    []usageUnsupportedProvider
 }
 
 type statusbarUsagePopupView struct {
@@ -792,11 +796,14 @@ func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int
 	}
 	if state.LoadError != nil {
 		lines = append(lines, dimANSI("usage data unavailable: "+statusbarUsageErrorSummary(state.LoadError)))
-	} else if len(rows) == 0 {
+	} else if len(rows) == 0 && len(state.Unsupported) == 0 {
 		lines = append(lines, dimANSI("No usage data available yet."))
 	} else {
 		for _, row := range rows {
 			lines = append(lines, row.render())
+		}
+		for _, provider := range state.Unsupported {
+			lines = append(lines, statusbarUnsupportedUsageLine(provider))
 		}
 	}
 	lines = append(lines, statusbarPopupFooterLines(cols)...)
@@ -809,6 +816,9 @@ func statusbarUsageToast(state statusbarUsageState) string {
 	}
 	rows := statusbarUsageRows(state.Snapshots)
 	if len(rows) == 0 {
+		if len(state.Unsupported) > 0 {
+			return "usage: " + state.Unsupported[0].Model + " unsupported"
+		}
 		return "usage: no data"
 	}
 	parts := make([]string, 0, min(len(rows), 2))
@@ -819,6 +829,14 @@ func statusbarUsageToast(state statusbarUsageState) string {
 		}
 	}
 	return "usage: " + strings.Join(parts, " · ")
+}
+
+func statusbarUnsupportedUsageLine(provider usageUnsupportedProvider) string {
+	label := strings.TrimSpace(provider.Label)
+	if label == "" {
+		label = provider.Model
+	}
+	return dimANSI(fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", label, "ctx", "-", "-", "-", "-", "unsupported"))
 }
 
 func statusbarUsageSyncLine(state statusbarUsageState, now time.Time) string {

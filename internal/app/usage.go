@@ -60,7 +60,7 @@ const veryStaleAfter = 1 * time.Hour
 func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	model := fs.String("model", "all", "filter by model: codex | claude | all")
+	model := fs.String("model", "all", "filter by model: codex | claude | antigravity | all")
 	window := fs.String("window", "all", "filter by window: 5h | weekly | all")
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the tab-aligned table")
 	// --force / -f bypasses the per-adapter throttle floor AND clears
@@ -117,6 +117,7 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	state, _ := mgr.LoadState()
 	state = filterUsageStateByModels(state, modelScope)
+	unsupported := c.unsupportedUsageProviders(*model, explicitModel)
 
 	if *asJSON {
 		return writeUsageJSON(stdout, filtered, state, c.now())
@@ -124,8 +125,11 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if err := writeUsageTable(stdout, filtered, c.now()); err != nil {
 		return err
 	}
+	writeUsageUnsupportedNotes(stdout, unsupported)
 	if !explicitModel && len(modelScope) == 0 {
-		fmt.Fprintln(stdout, "no AI usage providers enabled; enable Claude or Codex in Settings > AI Settings > Enabled agents")
+		if len(unsupported) == 0 {
+			fmt.Fprintln(stdout, "no AI usage providers enabled; enable Claude or Codex in Settings > AI Settings > Enabled agents")
+		}
 		return nil
 	}
 	// Surface backoff status in the human-readable table form so users
@@ -341,6 +345,57 @@ func aiAgentProvidersToUsageModels(agents []config.AIAgentProvider) []string {
 		out = append(out, provider.UsageModel)
 	}
 	return out
+}
+
+type usageUnsupportedProvider struct {
+	Model  string
+	Label  string
+	Reason string
+}
+
+func (c *usageCommand) unsupportedUsageProviders(model string, explicitModel bool) []usageUnsupportedProvider {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		model = "all"
+	}
+	if explicitModel {
+		provider, ok := aiprovider.Lookup(model)
+		if !ok || provider.UsageSupported {
+			return nil
+		}
+		return []usageUnsupportedProvider{unsupportedUsageProviderFor(provider)}
+	}
+	out := make([]usageUnsupportedProvider, 0)
+	for _, agent := range c.currentUsageEnabledAgents() {
+		provider, ok := aiprovider.Lookup(string(agent))
+		if !ok || provider.UsageSupported {
+			continue
+		}
+		out = append(out, unsupportedUsageProviderFor(provider))
+	}
+	return out
+}
+
+func unsupportedUsageProviderFor(provider aiprovider.Metadata) usageUnsupportedProvider {
+	reason := "no supported 5h/weekly quota usage adapter"
+	if provider.ID == aiprovider.Antigravity {
+		reason = "context-window-only statusline data; no supported 5h/weekly quota or reset contract"
+	}
+	return usageUnsupportedProvider{
+		Model:  string(provider.ID),
+		Label:  provider.DisplayName,
+		Reason: reason,
+	}
+}
+
+func writeUsageUnsupportedNotes(w io.Writer, providers []usageUnsupportedProvider) {
+	for _, provider := range providers {
+		label := strings.TrimSpace(provider.Label)
+		if label == "" {
+			label = provider.Model
+		}
+		fmt.Fprintf(w, "%s usage unsupported: %s\n", label, provider.Reason)
+	}
 }
 
 func (c *usageCommand) env(name string) string {
@@ -989,7 +1044,7 @@ func runeLen(s string) int {
 
 func printUsageHelp(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux usage [--model codex|claude|all] [--window 5h|weekly|all] [--json] [--force|-f]")
+	fmt.Fprintln(w, "  projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|all] [--json] [--force|-f]")
 	fmt.Fprintln(w, "  projmux status usage [--max-width N] [--force|-f]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")

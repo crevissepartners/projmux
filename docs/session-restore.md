@@ -51,8 +51,12 @@ CLI for inspection/actions.
 Agent restore direct-starts supported resume commands when creating fresh tmux
 panes, matching the `projmux ai split` wrapper shape: the wrapper prepends the
 agent binary directory to `PATH`, changes to the saved cwd, sets the terminal
-and tmux pane title from the saved agent topic, then execs `codex resume <id>`
-or `claude --resume <id>`. This avoids typing agent resumes with
+and tmux pane title from the saved agent topic, then execs `codex resume <id>`,
+`claude --resume <id>`, or `agy --conversation <uuid>`. Antigravity restore
+uses only the stable statusline `conversation_id` or hook `conversationId`
+metadata captured as the pane resume id; missing or non-UUID Antigravity ids
+render as `resume unavailable` rather than falling back silently to a shell
+recipe. This avoids typing agent resumes with
 `tmux send-keys`. The restore wrapper is still a non-interactive shell command
 tail, so it does not replay the original pane's interactive shell startup,
 environment, shell functions, aliases, or live process state. Startup recipes
