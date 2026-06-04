@@ -199,6 +199,7 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 	c.setPaneOption(paneID, attentionAckOption, "1")
 	c.unsetPaneOption(paneID, attentionFocusArmedOption)
 	c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
+	c.consumeResponseCompleteLiveBadge(paneID)
 
 	title := c.paneTitle(paneID)
 	clean := trimAttentionPrefix(title)
@@ -408,6 +409,29 @@ func attentionWindowBadgeKind(row attentionWindowRow) string {
 	default:
 		return ""
 	}
+}
+
+func (c *attentionCommand) consumeResponseCompleteLiveBadge(paneID string) {
+	badgeKind := strings.TrimSpace(c.paneOption(paneID, aiPaneBadgeKindOption))
+	aiState := strings.TrimSpace(c.paneOption(paneID, aiPaneStateOption))
+	if isResponseCompleteLiveBadgeKind(badgeKind) {
+		c.unsetPaneOption(paneID, aiPaneBadgeKindOption)
+		if aiState == "waiting" {
+			c.setPaneOption(paneID, aiPaneStateOption, "idle")
+		}
+		return
+	}
+	if normalizeAIBadgeKind(badgeKind) != "" {
+		return
+	}
+	if aiState == "waiting" {
+		c.setPaneOption(paneID, aiPaneStateOption, "idle")
+	}
+}
+
+func isResponseCompleteLiveBadgeKind(kind string) bool {
+	kind = strings.TrimSpace(kind)
+	return normalizeAIBadgeKind(kind) == aiBadgeKindResponseComplete || kind == "response_ready"
 }
 
 func tmuxAIBadgeKindFg(kind string) string {
