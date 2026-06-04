@@ -4425,7 +4425,7 @@ func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options
 	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
 	var body strings.Builder
 	locale := appLocale(c.homeDir, c.lookupEnv)
-	_ = writeShellWelcome(&body, welcomeCurrentVersion(), status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv), locale)
+	_ = writeShellWelcome(&body, welcomeCurrentVersion(), status, hasStatus, false, false, false, welcomeWidthFromEnv(c.lookupEnv), locale)
 	entries := []intpickercompat.Entry{settingsBackEntry()}
 	for line := range strings.SplitSeq(strings.Trim(body.String(), "\n"), "\n") {
 		entries = append(entries, intpickercompat.Entry{

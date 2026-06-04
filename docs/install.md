@@ -28,14 +28,14 @@ projmux shell
 ```
 
 Each `projmux shell` launch prints a short welcome with the current version,
-detach/exit keys, core app shortcuts, and cached update status when available.
-Press Enter to continue for this run, or press `s` to skip the welcome for the
-current projmux version. The next projmux version shows the welcome again.
+detach/exit keys, a bootstrap reminder, and cached release status when
+available. Press Enter to continue into the shell.
 
-If an installer-supported update is available, the same prompt keeps update
-actions separate from welcome skip: press `u` to run `projmux update apply`,
-`n` to print the manual update command, or `d` to skip daily update prompts for
-that release.
+If an update is available, the same shell-entry prompt uses one action
+vocabulary: Enter continues, `u` upgrades by invoking `projmux update apply`,
+and `s` skips that latest release tag until a newer tag appears. For `source`
+or unknown installer sources, `u` prints installer guidance and then continues
+shell entry.
 
 To revisit the guide later, run `projmux welcome`, or use Settings > About >
 Welcome inside the app to open it in a visible viewer. Set `PROJMUX_WELCOME=off` before

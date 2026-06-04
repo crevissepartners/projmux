@@ -670,10 +670,13 @@ latest/update/cache result. `--json` emits the same machine-readable
 status shape for both subcommands.
 
 `projmux shell` reads the same cache before opening the isolated tmux app.
-When the cache is fresh, an update is available, and the installer supports
-`update apply`, shell startup shows a small picker with Update Now, Later,
-and Skip This Version actions. This startup prompt never reaches the network;
-run `projmux update check` first when you want it to see the newest release.
+When the cache is missing or stale, shell startup attempts a bounded
+best-effort refresh, then continues even if the network check fails. When a
+fresh cached update is available, the shell welcome uses Enter=Continue,
+`u`=Upgrade, and `s`=Skip until next. Upgrade invokes only
+`projmux update apply`; Skip until next writes the latest release tag to
+`${XDG_CACHE_HOME:-~/.cache}/projmux/update-skip.json` and suppresses that tag
+until a newer latest release appears.
 
 Installer detection honors
 `PROJMUX_INSTALLER=npm|go|github-release|source`. When unset or invalid,
@@ -708,9 +711,8 @@ installs.
 projmux welcome [--popup [--force]]
 ```
 
-Prints the onboarding shell guide (`projmux shell` welcome view) without
-starting tmux. This is useful when you want to revisit the key/shortcut/update
-walkthrough at any time.
+Prints the shell-entry release prompt and bootstrap reminder without starting
+tmux. This is useful when you want to revisit the welcome view at any time.
 
 `--popup` is the tmux attach-helper form. It shows the popup only when a
 pending attach welcome marker exists. `--popup --force` opens the popup without

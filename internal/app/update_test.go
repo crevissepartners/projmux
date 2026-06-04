@@ -27,10 +27,12 @@ func testUpdateCommand(t *testing.T, now time.Time) (*updateCommand, string) {
 	t.Helper()
 	cacheDir := t.TempDir()
 	cmd := &updateCommand{
-		now:        func() time.Time { return now },
-		getenv:     func(string) string { return "" },
-		cacheDir:   func() (string, error) { return cacheDir, nil },
-		client:     http.DefaultClient,
+		now:      func() time.Time { return now },
+		getenv:   func(string) string { return "" },
+		cacheDir: func() (string, error) { return cacheDir, nil },
+		client: &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("unexpected update request to %s", req.URL.String())
+		})},
 		apiURL:     "https://example.invalid/latest",
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		goos:       "linux",

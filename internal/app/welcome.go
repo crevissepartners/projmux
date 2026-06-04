@@ -2,11 +2,13 @@ package app
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -14,6 +16,7 @@ import (
 
 const (
 	shellWelcomeApplyCommand = "projmux update apply"
+	shellUpdateCheckTimeout  = 1500 * time.Millisecond
 
 	welcomeReset = "\x1b[0m"
 	welcomeBox   = "\x1b[38;5;45m"
@@ -29,40 +32,37 @@ func (c *shellCommand) promptWelcome(stdout, stderr io.Writer) (bool, error) {
 
 	status, hasStatus := c.welcomeUpdateStatus()
 	skipped := hasStatus && c.updatePromptSkipped(status)
-	updateAvailable := hasStatus && shouldPromptShellUpdate(status)
+	updateAvailable := hasStatus && shouldPromptShellUpdate(status) && !skipped
+	upgradeEnabled := hasStatus && shellUpdateCanUpgrade(status)
 	locale := appLocale(c.homeDir, c.env)
-	if err := writeShellWelcome(stdout, current, status, hasStatus, updateAvailable, skipped, c.welcomeWidth(), locale); err != nil {
+	if err := writeShellWelcome(stdout, current, status, hasStatus, updateAvailable, skipped, upgradeEnabled, c.welcomeWidth(), locale); err != nil {
 		return hasStatus, err
 	}
 
-	action, err := c.readWelcomeAction(stdout, updateAvailable, skipped, locale)
+	action, err := c.readWelcomeAction(stdout, updateAvailable, upgradeEnabled, locale)
 	if err != nil {
 		return true, nil
 	}
 	switch action {
-	case "s", "skip":
-		if err := c.skipWelcomeVersion(current); err != nil {
-			return true, err
-		}
-		_, _ = fmt.Fprintf(stdout, "Skipped welcome for projmux %s.\n", current)
-	case "u", "update":
+	case "s", "skip", "skip until next":
 		if !updateAvailable {
-			return true, nil
-		}
-		if err := c.update.Run([]string{"apply"}, stdout, stderr); err != nil {
-			return true, fmt.Errorf("run shell welcome update: %w", err)
-		}
-	case "d", "daily-skip", "skip-update":
-		if !updateAvailable || skipped {
 			return true, nil
 		}
 		if err := c.writeUpdateSkip(status); err != nil {
 			return true, err
 		}
-		_, _ = fmt.Fprintf(stdout, "Skipped %s for daily update prompts.\n", strings.TrimSpace(status.LatestVersion))
-	case "n", "no":
-		if updateAvailable {
-			_, _ = fmt.Fprintf(stdout, "Run `%s` to upgrade.\n", shellWelcomeApplyCommand)
+		_, _ = fmt.Fprintf(stdout, "Skipped %s until the next release.\n", strings.TrimSpace(status.LatestVersion))
+	case "u", "upgrade", "update":
+		if !updateAvailable {
+			return true, nil
+		}
+		if !upgradeEnabled {
+			_, _ = fmt.Fprintf(stdout, "Upgrade is not available for installer source %q. %s\n", status.Installer.Source, status.Installer.Note)
+			_, _ = fmt.Fprintln(stdout, "Continue shell entry, then run `projmux update status` for details.")
+			return true, nil
+		}
+		if err := c.update.Run([]string{"apply"}, stdout, stderr); err != nil {
+			return true, fmt.Errorf("run shell welcome update: %w", err)
 		}
 	default:
 	}
@@ -70,15 +70,37 @@ func (c *shellCommand) promptWelcome(stdout, stderr io.Writer) (bool, error) {
 }
 
 func (c *shellCommand) welcomeUpdateStatus() (updateStatus, bool) {
+	c.refreshWelcomeUpdateCache()
 	return resolveWelcomeUpdateStatus(c.update)
 }
 
-func (c *shellCommand) readWelcomeAction(stdout io.Writer, updateAvailable, updateSkipped bool, locale i18n.Locale) (string, error) {
-	prompt := localizeText(locale, i18n.KeyWelcomeShellPromptDefault, "Continue? [Enter, s=skip welcome] ")
+func (c *shellCommand) refreshWelcomeUpdateCache() {
+	if c.update == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.welcomeUpdateCheckTimeout())
+	defer cancel()
+	_ = c.update.refreshCacheIfNeeded(ctx)
+}
+
+func (c *shellCommand) welcomeUpdateCheckTimeout() time.Duration {
+	raw := strings.TrimSpace(c.env("PROJMUX_SHELL_UPDATE_CHECK_TIMEOUT_MS"))
+	if raw == "" {
+		return shellUpdateCheckTimeout
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms <= 0 {
+		return shellUpdateCheckTimeout
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func (c *shellCommand) readWelcomeAction(stdout io.Writer, updateAvailable, upgradeEnabled bool, locale i18n.Locale) (string, error) {
+	prompt := localizeText(locale, i18n.KeyWelcomeShellPromptDefault, "Continue? [Enter=Continue] ")
 	if updateAvailable {
-		prompt = localizeText(locale, i18n.KeyWelcomeShellPromptUpdate, "Continue? [Enter, u=update, s=skip welcome, d=skip update prompts] ")
-		if updateSkipped {
-			prompt = localizeText(locale, i18n.KeyWelcomeShellPromptUpdateSkip, "Continue? [Enter, u=update, s=skip welcome] ")
+		prompt = localizeText(locale, i18n.KeyWelcomeShellPromptUpdate, "Continue? [Enter=Continue, u=Upgrade, s=Skip until next] ")
+		if !upgradeEnabled {
+			prompt = localizeText(locale, i18n.KeyWelcomeShellPromptUpdateSkip, "Continue? [Enter=Continue, u=Upgrade guidance, s=Skip until next] ")
 		}
 	}
 	if _, err := fmt.Fprint(stdout, prompt); err != nil {
@@ -134,7 +156,7 @@ func resolveWelcomeUpdateStatus(update *updateCommand) (updateStatus, bool) {
 	}
 }
 
-func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStatus, updateAvailable, skipped bool, width int, locale i18n.Locale) error {
+func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStatus, updateAvailable, skipped, upgradeEnabled bool, width int, locale i18n.Locale) error {
 	if w == nil {
 		return nil
 	}
@@ -145,18 +167,22 @@ func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStat
 		localizeText(locale, i18n.KeyWelcomeShellTitle, "Welcome to projmux") + " shell " + current + ".",
 		localizeText(locale, i18n.KeyWelcomeShellDetach, "Detach: Ctrl-b d keeps sessions running; re-enter with projmux shell."),
 		localizeText(locale, i18n.KeyWelcomeShellExit, "Exit: run exit in every window, or tmux -L projmux kill-server."),
-		localizeText(locale, i18n.KeyWelcomeShellSurfaces, "Launch surfaces are available from the generated tmux config and Settings."),
+		localizeText(locale, i18n.KeyWelcomeShellSurfaces, "Bootstrap: generated tmux config and Settings stay available after entry."),
 	}
 	if hasStatus {
 		lines = append(lines, "")
 		lines = append(lines, shellWelcomeUpdateLines(status, updateAvailable, skipped)...)
 	}
 	lines = append(lines, "")
-	lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellContinue, "Enter continues for this run. Press s to skip this welcome for the current version."))
-	if updateAvailable && skipped {
-		lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellUpdateSkipped, "Press u to update now. Daily update prompts are already skipped for this release."))
-	} else if updateAvailable {
-		lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellUpdateNow, "Press u to update now. Press d to skip daily update prompts for this release."))
+	lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellContinue, "Enter continues into the shell."))
+	if updateAvailable {
+		if upgradeEnabled {
+			lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellUpdateNow, "Press u to upgrade with projmux update apply, or s to skip until the next release."))
+		} else {
+			lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellUpdateGuidance, "Press u for upgrade guidance, or s to skip until the next release."))
+		}
+	} else if hasStatus && skipped {
+		lines = append(lines, localizeText(locale, i18n.KeyWelcomeShellUpdateSkipped, "This release is skipped until the next latest tag appears."))
 	}
 
 	inner := width - 4
@@ -200,12 +226,18 @@ func shellWelcomeUpdateLines(status updateStatus, updateAvailable, skipped bool)
 		return []string{"Update: you're on the latest release (" + latest + ")."}
 	case "update_available":
 		if skipped {
-			return []string{"Update: " + latest + " is available; daily prompts are skipped for this version."}
+			return []string{"Update: " + latest + " is available; skipped until the next release."}
 		}
 		if updateAvailable {
+			if !shellUpdateCanUpgrade(status) {
+				return []string{
+					"Update: " + latest + " is available (current " + current + ").",
+					"Upgrade guidance: " + status.Installer.Note,
+				}
+			}
 			return []string{
 				"Update: " + latest + " is available (current " + current + ").",
-				"Run `" + shellWelcomeApplyCommand + "` to upgrade manually.",
+				"Upgrade runs `" + shellWelcomeApplyCommand + "`.",
 			}
 		}
 		return []string{

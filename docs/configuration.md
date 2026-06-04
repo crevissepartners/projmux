@@ -290,11 +290,12 @@ user/global preference in this release.
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
 | `PROJMUX_PICKER_BACKEND` | Legacy picker backend override. Any value, including old `fzf` settings, now resolves to the native picker. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
+| `PROJMUX_SHELL_UPDATE_CHECK_TIMEOUT_MS` | Timeout in milliseconds for the best-effort release check attempted by `projmux shell` when the update cache is missing or stale. Invalid, zero, or negative values use the default. |
 
 ## Welcome State
 
-`projmux shell` stores per-version welcome state under the projmux state
-directory, normally:
+`projmux shell` still reads and rewrites legacy per-version welcome state under
+the projmux state directory for attach-popup compatibility, normally:
 
 ```text
 ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/welcomed-v<version>.json
@@ -312,11 +313,21 @@ The current schema is:
 }
 ```
 
-`skip_version` is the only field that suppresses the shell welcome. When it
-matches the current projmux version, `projmux shell` skips the welcome. When it
-is absent or names a different version, the welcome is shown again. Older state
-files that contain only `last_welcomed_version` remain readable, but that field
-does not count as a skip.
+This file no longer suppresses the shell-entry welcome. `skip_version` and
+`last_welcomed_version` remain readable for legacy state and pending attach
+popup compatibility, but the automatic shell prompt now uses release skip state
+instead.
+
+Update prompt skips are stored by latest release tag under the update cache
+directory:
+
+```text
+${XDG_CACHE_HOME:-$HOME/.cache}/projmux/update-skip.json
+```
+
+When `tag_name` matches the fresh cached latest release tag, `projmux shell`
+continues without offering the update actions. A newer latest tag makes the
+prompt eligible again.
 
 Example:
 
