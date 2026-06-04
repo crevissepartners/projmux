@@ -470,6 +470,97 @@ func TestAISplitDefaultDisabledAgentFailsClearly(t *testing.T) {
 	}
 }
 
+func TestAISplitDisabledConcreteAgentFailsBeforeToggleMetadataFocusOrSplit(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		agent      string
+		enabled    []config.AIAgentProvider
+		defaultSet bool
+		want       []string
+	}{
+		{
+			name:    "direct",
+			args:    []string{"split", "--agent", "claude", "right"},
+			agent:   aiModeClaude,
+			enabled: []config.AIAgentProvider{config.AIAgentCodex},
+			want:    []string{"AI agent claude is disabled", "--force-agent"},
+		},
+		{
+			name:       "default",
+			args:       []string{"split", "right"},
+			agent:      aiModeCodex,
+			enabled:    []config.AIAgentProvider{config.AIAgentClaude},
+			defaultSet: true,
+			want:       []string{"AI split default codex is disabled", "choose another default"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			work := filepath.Join(home, "repo")
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), tt.enabled); err != nil {
+				t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+			}
+			cmd := testAICommand(home)
+			if tt.defaultSet {
+				if err := cmd.setMode(tt.agent); err != nil {
+					t.Fatalf("setMode(%s) error = %v", tt.agent, err)
+				}
+				cmdRecorder(cmd).commands = nil
+			}
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "HOME":
+					return home
+				case "TMUX":
+					return "/tmp/tmux"
+				default:
+					return ""
+				}
+			}
+			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+				if name != "tmux" {
+					return nil, os.ErrNotExist
+				}
+				switch {
+				case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+					return []byte("%1\n"), nil
+				case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+					return []byte(work + "\n"), nil
+				case reflect.DeepEqual(args, []string{"list-panes", "-s", "-t", "%1", "-F", aiSplitTogglePaneFormat}):
+					return []byte("%1\t1\t0\t0\t\t" + work + "\n%2\t0\t1\t1\t" + tt.agent + "\t" + work + "\n"), nil
+				}
+				return nil, os.ErrNotExist
+			}
+
+			err := cmd.Run(tt.args, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("Run(%v) error = nil, want disabled-agent error", tt.args)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want substring %q", err.Error(), want)
+				}
+			}
+			commands := cmdRecorder(cmd).commands
+			for _, forbidden := range [][]string{
+				{"list-panes", "-s", "-t", "%1", "-F", aiSplitTogglePaneFormat},
+				{"select-pane", "-t", "%2"},
+				{"split-window"},
+			} {
+				if containsAICommandArgs(commands, "tmux", forbidden) {
+					t.Fatalf("commands = %#v, disabled agent must fail before %v", commands, forbidden)
+				}
+			}
+		})
+	}
+}
+
 func TestAISplitForceAgentOverridesDisabledDirectOnly(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")
@@ -648,6 +739,225 @@ func TestAISplitToggleReadsSessionScopedPaneMetadata(t *testing.T) {
 	}
 	if len(panes) != 2 || !panes[0].active || !panes[1].last || !panes[1].managed || panes[1].agent != aiModeCodex || panes[1].context != "/work/repo" {
 		t.Fatalf("panes = %#v, want parsed AI split toggle metadata", panes)
+	}
+}
+
+func TestAISplitToggleDirectFocusesExistingManagedPaneWithoutDuplicateSplit(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" {
+			t.Fatal("matching AI pane should focus before runner lookup")
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+			return []byte("%1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-s", "-t", "%1", "-F", aiSplitTogglePaneFormat}):
+			return []byte("%1\t1\t0\t0\t\t" + work + "\n%2\t0\t1\t1\tcodex\t" + work + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "codex", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent codex error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"select-pane", "-t", "%2"}) {
+		t.Fatalf("commands = %#v, want focus existing Codex pane %%2", commands)
+	}
+	for _, forbidden := range [][]string{
+		{"split-window"},
+		{"set-option", "-p", "-t", "%2", aiPaneManagedOption, "1"},
+	} {
+		if containsAICommandArgs(commands, "tmux", forbidden) {
+			t.Fatalf("commands = %#v, did not expect duplicate launch command %v", commands, forbidden)
+		}
+	}
+	if containsAICommandArgs(commands, "command", []string{"-v", "codex"}) {
+		t.Fatalf("commands = %#v, did not expect Codex lookup when reusing pane", commands)
+	}
+}
+
+func TestAISplitToggleDefaultFocusesExistingManagedPaneWithoutDuplicateSplit(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" {
+			t.Fatal("matching default AI pane should focus before runner lookup")
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+			return []byte("%1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-s", "-t", "%1", "-F", aiSplitTogglePaneFormat}):
+			return []byte("%1\t1\t0\t0\t\t" + work + "\n%2\t0\t1\t1\tcodex\t" + work + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "down"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split default codex error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"select-pane", "-t", "%2"}) {
+		t.Fatalf("commands = %#v, want focus existing default Codex pane %%2", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"split-window"}) {
+		t.Fatalf("commands = %#v, did not expect duplicate split-window", commands)
+	}
+}
+
+func TestAISplitToggleDirectFocusesBackFromCurrentAIPane(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" {
+			t.Fatal("current AI pane toggle should focus back before runner lookup")
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+			return []byte("%2\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-s", "-t", "%2", "-F", aiSplitTogglePaneFormat}):
+			return []byte("%1\t0\t1\t0\t\t" + work + "\n%2\t1\t0\t1\tcodex\t" + work + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "codex", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent codex error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"select-pane", "-t", "%1"}) {
+		t.Fatalf("commands = %#v, want focus back to previous pane %%1", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"split-window"}) {
+		t.Fatalf("commands = %#v, did not expect kill or duplicate split on toggle", commands)
+	}
+}
+
+func TestAISplitPickerSelectionPreservesLaunchPathWithExistingManagedPane(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiModeCodex}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		case "SHELL":
+			return "/bin/bash"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(codexBin + "\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+			return []byte("%1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
+			return []byte("%9\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
+			return []byte("%1\t0\t0\t40\t10\n%9\t41\t0\t40\t10\n"), nil
+		}
+		if reflect.DeepEqual(args, []string{"list-panes", "-s", "-t", "%1", "-F", aiSplitTogglePaneFormat}) {
+			t.Fatal("picker launch path should not read AI split toggle pane metadata")
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"picker", "--inside", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run picker --inside error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%1", "-c", work, "/bin/bash", "-lc"}) {
+		t.Fatalf("commands = %#v, want picker-selected Codex split-window", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"select-pane", "-t", "%2"}) {
+		t.Fatalf("commands = %#v, picker path must not focus existing toggle pane", commands)
 	}
 }
 
