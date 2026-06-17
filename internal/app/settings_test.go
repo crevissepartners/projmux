@@ -4640,14 +4640,15 @@ keys = ["p"]
 keys = []
 `)
 	homeDir := func() (string, error) { return home, nil }
-	keys := effectivePickerKeysForActions(homeDir, nil, []string{"Sidebar:PinProject"}, []string{switchPinExpectKey})
+	lookupEnv := func(string) string { return "" }
+	keys := effectivePickerKeysForActions(homeDir, lookupEnv, []string{"Sidebar:PinProject"}, []string{switchPinExpectKey})
 	if !equalStrings(keys, []string{"p"}) {
 		t.Fatalf("pin keys = %#v, want custom key only", keys)
 	}
-	if pickerKeyMatchesAction(homeDir, nil, switchKillExpectKey, "Sidebar:KillSession", switchKillExpectKey) {
+	if pickerKeyMatchesAction(homeDir, lookupEnv, switchKillExpectKey, "Sidebar:KillSession", switchKillExpectKey) {
 		t.Fatalf("kill fallback still matches after explicit unbind")
 	}
-	guide := pickerActionKeyGuide(homeDir, nil, []pickerActionKeyGuideItem{
+	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
 		{ActionID: "Sidebar:PinProject", Label: "pin project"},
 		{ActionID: "Sidebar:KillSession", Label: "kill session"},
 	})
