@@ -2101,12 +2101,30 @@ func pickerKeyMatchesAction(homeDir func() (string, error), lookupEnv func(strin
 }
 
 func effectivePickerKeysForActions(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback []string) []string {
-	keys := append([]string{}, fallback...)
 	actions := defaultKeyBindingCatalog()
 	if homeDir != nil {
 		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv}); err == nil {
 			actions = merged
 		}
+	}
+	defaultActionKeys := map[string]bool{}
+	for _, id := range actionIDs {
+		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), id)
+		if !ok {
+			continue
+		}
+		for _, chord := range keyBindingEffectivePlainChords(action) {
+			if key := pickerKeyFromTmuxChord(chord); key != "" {
+				defaultActionKeys[key] = true
+			}
+		}
+	}
+	var keys []string
+	for _, key := range fallback {
+		if defaultActionKeys[key] {
+			continue
+		}
+		keys = append(keys, key)
 	}
 	for _, id := range actionIDs {
 		action, ok := keyBindingActionByID(actions, id)

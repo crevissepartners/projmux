@@ -263,6 +263,12 @@ func suggestedPlainChordForSequence(seq []byte) (string, bool) {
 	if len(seq) == 1 && seq[0] >= 0x01 && seq[0] <= 0x1a {
 		return fmt.Sprintf("C-%c", 'a'+seq[0]-1), true
 	}
+	if len(seq) == 1 && seq[0] >= 0x21 && seq[0] <= 0x7e {
+		chord := string(seq)
+		if err := validateKeymapChord(chord); err == nil {
+			return chord, true
+		}
+	}
 	return "", false
 }
 

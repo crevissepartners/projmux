@@ -537,7 +537,7 @@ func mergeKeymapOverrides(actions []keyBindingAction, keymap keymapFile) ([]keyB
 		}
 		if override.KeysSet {
 			keys := override.Keys
-			if actions[idx].Tier == keyBindingTierTransportDependent {
+			if actions[idx].Tier == keyBindingTierTransportDependent && len(keys) != 0 {
 				aliases, err := transportPlainAliasChords(actions[idx], keys)
 				if err != nil {
 					return nil, fmt.Errorf("keymap binding %q: %w", id, err)

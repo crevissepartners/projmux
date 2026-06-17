@@ -87,14 +87,15 @@ language.
 ## Keymap File
 
 Settings > Keybindings is the normal in-app editor for action keys. It lists
-actions with current keybinding summaries, opens a simple detail screen, and
-offers `Add alias` plus reset. Saving writes safe tmux plain chords to
+actions with current keys, source, and delivery summaries. Open an action and
+use `Keys / Edit Keys` to capture or type custom keys, remove keys, unbind the
+action, or reset the user override. Saving writes safe direct keybindings to
 `~/.config/projmux/keymap.toml`, rewrites `~/.config/projmux/tmux.conf`, and,
 when Settings is running inside tmux, sources that app config so tmux-level
 chords take effect immediately.
 
-Raw sequences that cannot be safely represented as a tmux plain chord are not
-persisted. Use Settings to save a safe direct alias. When key delivery needs
+Raw sequences that cannot be safely represented as a direct keybinding are not
+persisted. Use Settings to save a custom key. When key delivery needs
 terminal-layer remediation, first try the key in `projmux shell`, then run
 `projmux setup` from the raw terminal, then use `projmux init` for supported
 terminal adapters.
