@@ -647,7 +647,7 @@ func settingsKoreanStaticRowSamples() []string {
 		settingsLabelInfoLocale(locale, "Action", "Toggle Settings", "Settings"),
 		settingsLabelInfoLocale(locale, "Action ID", "SettingsToggle", ""),
 		settingsLabelInfoLocale(locale, "Terminal", "Ghostty", "supported mappings: projmux init ghostty"),
-		settingsLabelLocale(locale, settingsGlyphType, settingsColorType, "Capture custom key", "press the desired key"),
+		settingsLabelLocale(locale, settingsGlyphType, settingsColorType, "Add key", "press desired key"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Hooks", "on - default"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Sidebar startup picker", "on - default"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Welcome", "revisit the shell quickstart guide"),
@@ -4206,10 +4206,10 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	if !hasEntryValue(keybindingOptions.Entries, settingsBackValue) {
 		t.Fatalf("keybindings entries = %#v, want back entry", keybindingOptions.Entries)
 	}
-	if !hasEntryLabelContaining(keybindingOptions.Entries, "All catalog actions are listed") {
-		t.Fatalf("keybindings entries = %#v, want catalog-complete note", keybindingOptions.Entries)
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "Actions are listed with active keys and state") {
+		t.Fatalf("keybindings entries = %#v, want compact action-list note", keybindingOptions.Entries)
 	}
-	for _, absent := range []string{"Bindings", "Diagnostic", "Probe", "Init", "terminal mappings"} {
+	for _, absent := range []string{"Bindings", "Diagnostic", "Probe", "Init", "terminal mappings", "source ", "delivery "} {
 		if hasEntryLabelContaining(keybindingOptions.Entries, absent) {
 			t.Fatalf("keybindings entries = %#v, did not want first-class %q surface", keybindingOptions.Entries, absent)
 		}
@@ -4226,11 +4226,11 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"select-pane-left") {
 		t.Fatalf("keybindings entries = %#v, want select-pane-left action in Settings list", keybindingOptions.Entries)
 	}
-	if !hasEntryLabelContaining(keybindingOptions.Entries, "keys Alt-A (M-a)  source Custom") {
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "keys Alt-A (M-a)  state Custom") {
 		t.Fatalf("keybindings entries = %#v, want custom plain value", keybindingOptions.Entries)
 	}
-	if !hasEntryLabelContaining(keybindingOptions.Entries, "prefix-backed; direct key unassigned") {
-		t.Fatalf("keybindings entries = %#v, want prefix-backed action reason", keybindingOptions.Entries)
+	if !hasEntryLabelContaining(keybindingOptions.Entries, "state Available") {
+		t.Fatalf("keybindings entries = %#v, want available unassigned action state", keybindingOptions.Entries)
 	}
 }
 
@@ -4271,11 +4271,16 @@ func TestSettingsHubKeybindingsUsesReadablePrimaryLabels(t *testing.T) {
 	if got, want := title, "Keybinding - Toggle Project Sidebar"; got != want {
 		t.Fatalf("detail title = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContainingAll(detailEntries, "Keys / Edit Keys", "Alt-1", "M-1") {
+	if !hasEntryLabelContainingAll(detailEntries, "Keys", "Alt-1", "M-1") {
 		t.Fatalf("detail entries = %#v, want readable default alias with tmux chord", detailEntries)
 	}
 	if hasEntryLabelContaining(detailEntries, "Action ID") {
 		t.Fatalf("detail entries = %#v, did not want internal action ID in simplified detail", detailEntries)
+	}
+	for _, absent := range []string{"Summary", "Surface", "Source", "Default fallback keys", "Apply State", "Delivery", "Advanced Delivery"} {
+		if hasEntryLabelContaining(detailEntries, absent) {
+			t.Fatalf("detail entries = %#v, did not want always-visible %q section", detailEntries, absent)
+		}
 	}
 }
 
@@ -4294,24 +4299,24 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 		wants          []string
 		wantSearchText string
 	}{
-		{settingsActionPrefixKeymap + "Sidebar:PinProject", "Project Sidebar: Pin Project", []string{"Alt-P", "M-p", "Sidebar"}, "Project Sidebar"},
-		{settingsActionPrefixKeymap + "Sidebar:KillSession", "Project Sidebar: Kill Session", []string{"Ctrl-X", "C-x", "Sidebar"}, "Project Sidebar"},
-		{settingsActionPrefixKeymap + "SessionPopup:KillSession", "Session Popup: Kill Session", []string{"Ctrl-X", "C-x", "SessionPopup"}, "Session Popup"},
-		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewWindowPrev", "Session Popup: Preview Previous Window", []string{"Left", "SessionPopup"}, "Session Popup"},
-		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewPanePrev", "Session Popup: Preview Previous Pane", []string{"Alt-Up", "M-Up", "SessionPopup"}, "Session Popup"},
-		{settingsActionPrefixKeymap + "NotifySidebar:Ack", "Notify Sidebar: Acknowledge", []string{"A", "a", "NotifySidebar"}, "Notify Sidebar"},
-		{settingsActionPrefixKeymap + "NotifySidebar:ClearAll", "Notify Sidebar: Clear All", []string{"Ctrl-X", "C-x", "NotifySidebar"}, "Notify Sidebar"},
-		{settingsActionPrefixKeymap + "Settings:SwitchTabNext", "Next Settings Tab", []string{"Alt-Shift-Right", "M-S-Right", "Settings"}, "Next Settings Tab"},
-		{settingsActionPrefixKeymap + "previous-window", "Previous Window", []string{"Alt-Shift-Left", "M-S-Left", "transport-dependent"}, "Previous Window"},
-		{settingsActionPrefixKeymap + "next-window", "Next Window", []string{"Alt-Shift-Right", "M-S-Right", "transport-dependent"}, "Next Window"},
-		{settingsActionPrefixKeymap + "select-pane-left", "Select Pane Left", []string{"Alt-Left", "M-Left", "transport-dependent"}, "Select Pane Left"},
-		{settingsActionPrefixKeymap + "select-pane-right", "Select Pane Right", []string{"Alt-Right", "M-Right", "transport-dependent"}, "Select Pane Right"},
-		{settingsActionPrefixKeymap + "select-pane-up", "Select Pane Up", []string{"Alt-Up", "M-Up", "transport-dependent"}, "Select Pane Up"},
-		{settingsActionPrefixKeymap + "select-pane-down", "Select Pane Down", []string{"Alt-Down", "M-Down", "transport-dependent"}, "Select Pane Down"},
-		{settingsActionPrefixKeymap + "last-pane", "Return to Previously Active Pane", []string{"(unbound)", "plain tmux"}, "previously active pane"},
-		{settingsActionPrefixKeymap + "ai-split-codex-right", "Open Codex Split Right", []string{"(unbound)", "plain tmux"}, "Codex split"},
-		{settingsActionPrefixKeymap + "ai-split-claude-down", "Open Claude Split Down", []string{"(unbound)", "plain tmux"}, "Claude split"},
-		{settingsActionPrefixKeymap + "ai-split-shell-right", "Open Shell Split Right", []string{"(unbound)", "plain tmux"}, "shell split"},
+		{settingsActionPrefixKeymap + "Sidebar:PinProject", "Project Sidebar: Pin Project", []string{"Alt-P", "M-p", "state Default"}, "Project Sidebar"},
+		{settingsActionPrefixKeymap + "Sidebar:KillSession", "Project Sidebar: Kill Session", []string{"Ctrl-X", "C-x", "state Default"}, "Project Sidebar"},
+		{settingsActionPrefixKeymap + "SessionPopup:KillSession", "Session Popup: Kill Session", []string{"Ctrl-X", "C-x", "state Default"}, "Session Popup"},
+		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewWindowPrev", "Session Popup: Preview Previous Window", []string{"Left", "state Default"}, "Session Popup"},
+		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewPanePrev", "Session Popup: Preview Previous Pane", []string{"Alt-Up", "M-Up", "state Default"}, "Session Popup"},
+		{settingsActionPrefixKeymap + "NotifySidebar:Ack", "Notify Sidebar: Acknowledge", []string{"A", "a", "state Default"}, "Notify Sidebar"},
+		{settingsActionPrefixKeymap + "NotifySidebar:ClearAll", "Notify Sidebar: Clear All", []string{"Ctrl-X", "C-x", "state Default"}, "Notify Sidebar"},
+		{settingsActionPrefixKeymap + "Settings:SwitchTabNext", "Next Settings Tab", []string{"Alt-Shift-Right", "M-S-Right", "state Default"}, "Next Settings Tab"},
+		{settingsActionPrefixKeymap + "previous-window", "Previous Window", []string{"Alt-Shift-Left", "M-S-Left", "state Default"}, "Previous Window"},
+		{settingsActionPrefixKeymap + "next-window", "Next Window", []string{"Alt-Shift-Right", "M-S-Right", "state Default"}, "Next Window"},
+		{settingsActionPrefixKeymap + "select-pane-left", "Select Pane Left", []string{"Alt-Left", "M-Left", "state Default"}, "Select Pane Left"},
+		{settingsActionPrefixKeymap + "select-pane-right", "Select Pane Right", []string{"Alt-Right", "M-Right", "state Default"}, "Select Pane Right"},
+		{settingsActionPrefixKeymap + "select-pane-up", "Select Pane Up", []string{"Alt-Up", "M-Up", "state Default"}, "Select Pane Up"},
+		{settingsActionPrefixKeymap + "select-pane-down", "Select Pane Down", []string{"Alt-Down", "M-Down", "state Default"}, "Select Pane Down"},
+		{settingsActionPrefixKeymap + "last-pane", "Return to Previously Active Pane", []string{"(unbound)", "state Available"}, "previously active pane"},
+		{settingsActionPrefixKeymap + "ai-split-codex-right", "Open Codex Split Right", []string{"(unbound)", "state Available"}, "Codex split"},
+		{settingsActionPrefixKeymap + "ai-split-claude-down", "Open Claude Split Down", []string{"(unbound)", "state Available"}, "Claude split"},
+		{settingsActionPrefixKeymap + "ai-split-shell-right", "Open Shell Split Right", []string{"(unbound)", "state Available"}, "shell split"},
 	}
 	for _, tc := range cases {
 		idx := entryIndexValue(entries, tc.id)
@@ -4400,15 +4405,15 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	if hasEntryLabelContaining(popupDetail.Entries, "Action ID") {
 		t.Fatalf("popup detail entries = %#v, did not want internal action ID in simplified detail", popupDetail.Entries)
 	}
-	if !hasEntryLabelContainingAll(popupDetail.Entries, "Keys / Edit Keys", "Alt-P", "M-p") {
+	if !hasEntryLabelContainingAll(popupDetail.Entries, "Keys", "Alt-P", "M-p") {
 		t.Fatalf("popup detail entries = %#v, want readable picker-local keys", popupDetail.Entries)
 	}
-	for _, want := range []string{"Capture custom key", "Type custom key", "Unbind action", "Reset user override"} {
+	for _, want := range []string{"Add key", "Remove key", "Unbind", "Troubleshooting", "Test key delivery", "Advanced..."} {
 		if !hasEntryLabelContaining(popupDetail.Entries, want) {
 			t.Fatalf("popup detail entries = %#v, want edit action %q", popupDetail.Entries, want)
 		}
 	}
-	for _, absent := range []string{"Add alias", "Type key chord", "Replace primary", "Disable default", "Tier", "Delivery path"} {
+	for _, absent := range []string{"Add alias", "Type key chord", "Replace primary", "Disable default", "Reset to default", "Tier", "Delivery path", "Summary", "Surface", "Source", "Default fallback keys", "Apply State", "Delivery", "Advanced Delivery"} {
 		if hasEntryLabelContaining(popupDetail.Entries, absent) {
 			t.Fatalf("popup detail entries = %#v, did not want %q", popupDetail.Entries, absent)
 		}
@@ -4420,19 +4425,13 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	if hasEntryLabelContaining(transportDetail.Entries, "Action ID") {
 		t.Fatalf("transport detail entries = %#v, did not want internal action ID in simplified detail", transportDetail.Entries)
 	}
-	if !hasEntryLabelContainingAll(transportDetail.Entries, "Keys / Edit Keys", "Alt-Shift-Left", "M-S-Left") {
+	if !hasEntryLabelContainingAll(transportDetail.Entries, "Keys", "Alt-Shift-Left", "M-S-Left") {
 		t.Fatalf("transport detail entries = %#v, want readable transport keys", transportDetail.Entries)
 	}
-	if !hasEntryLabelContainingAll(transportDetail.Entries, "Transport default", "Alt-Shift-Left", "M-S-Left") {
-		t.Fatalf("transport detail entries = %#v, want separate transport default row", transportDetail.Entries)
+	if !hasEntryLabelContaining(transportDetail.Entries, "Add key") {
+		t.Fatalf("transport detail entries = %#v, want custom key action", transportDetail.Entries)
 	}
-	if !hasEntryLabelContaining(transportDetail.Entries, "Capture custom key") {
-		t.Fatalf("transport detail entries = %#v, want custom key capture action", transportDetail.Entries)
-	}
-	if !hasEntryLabelContaining(transportDetail.Entries, "Reset user override") {
-		t.Fatalf("transport detail entries = %#v, want reset override action", transportDetail.Entries)
-	}
-	for _, absent := range []string{"Add alias", "Add plain alias", "Replace primary", "Disable default", "Default transport key", "Tier", "Delivery path"} {
+	for _, absent := range []string{"Add alias", "Add plain alias", "Replace primary", "Disable default", "Reset to default", "Default transport key", "Transport default", "Tier", "Delivery path", "Apply State", "Delivery", "Advanced Delivery"} {
 		if hasEntryLabelContaining(transportDetail.Entries, absent) {
 			t.Fatalf("transport detail entries = %#v, did not want %q", transportDetail.Entries, absent)
 		}
@@ -4442,10 +4441,10 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries(select-pane-left) error = %v", err)
 	}
-	if !hasEntryLabelContainingAll(paneDetailEntries, "Keys / Edit Keys", "Alt-Left", "M-Left") {
+	if !hasEntryLabelContainingAll(paneDetailEntries, "Keys", "Alt-Left", "M-Left") {
 		t.Fatalf("pane detail entries = %#v, want readable transport key", paneDetailEntries)
 	}
-	if !hasEntryLabelContaining(paneDetailEntries, "Capture custom key") {
+	if !hasEntryLabelContaining(paneDetailEntries, "Add key") {
 		t.Fatalf("pane detail entries = %#v, want custom key capture entry", paneDetailEntries)
 	}
 	if hasEntryLabelContaining(paneDetailEntries, "(unbound)") {
@@ -4466,15 +4465,15 @@ func TestSettingsHubKeybindingsTypedTransportAliasWritesOnlyAlias(t *testing.T) 
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window"}, nil
 		case 3:
-			if !hasEntryLabelContaining(options.Entries, "Type custom key") {
-				t.Fatalf("transport detail entries = %#v, want Type custom key", options.Entries)
+			if !hasEntryLabelContaining(options.Entries, "Add key") {
+				t.Fatalf("transport detail entries = %#v, want Add key", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:type"}, nil
 		case 4:
 			if got, want := options.UI, "settings-keybinding-type"; got != want {
 				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
 			}
-			if got, want := options.Prompt, "Type custom key > "; got != want {
+			if got, want := options.Prompt, "Enter key > "; got != want {
 				t.Fatalf("typed keybinding prompt = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Query: "M-["}, nil
@@ -4597,8 +4596,8 @@ func TestSettingsHubKeybindingsUnbindWritesEmptyKeys(t *testing.T) {
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window"}, nil
 		case 3:
-			if !hasEntryLabelContainingAll(options.Entries, "Unbind action", "keys = []") {
-				t.Fatalf("detail entries = %#v, want unbind explicit no-bind row", options.Entries)
+			if !hasEntryLabelContainingAll(options.Entries, "Unbind", "remove all active keys") {
+				t.Fatalf("detail entries = %#v, want unbind row", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:unbind"}, nil
 		case 4:
@@ -4624,8 +4623,8 @@ func TestSettingsHubKeybindingsUnbindWritesEmptyKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries(previous-window) error = %v", err)
 	}
-	if !hasEntryLabelContainingAll(entries, "Source", "Unbound") {
-		t.Fatalf("detail entries = %#v, want unbound source after keys = []", entries)
+	if !hasEntryLabelContainingAll(entries, "Previous Window", "Unbound") {
+		t.Fatalf("detail entries = %#v, want unbound state after keys = []", entries)
 	}
 }
 
@@ -4809,8 +4808,8 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
 		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
 	}
-	if !strings.Contains(stdout.String(), "reloaded tmux config") {
-		t.Fatalf("stdout = %q, want reload message", stdout.String())
+	if got := stdout.String(); !strings.Contains(got, "saved keybinding\n") || strings.Contains(got, "reloaded tmux config") {
+		t.Fatalf("stdout = %q, want simplified saved-keybinding success copy", got)
 	}
 }
 
@@ -4822,10 +4821,10 @@ func TestSettingsHubKeybindingsDirectActionsHideTypedFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries() error = %v", err)
 	}
-	if !hasEntryLabelContaining(entries, "Capture custom key") {
-		t.Fatalf("detail entries = %#v, want Capture custom key", entries)
+	if !hasEntryLabelContaining(entries, "Add key") {
+		t.Fatalf("detail entries = %#v, want Add key", entries)
 	}
-	for _, absent := range []string{"Add alias", "Type key chord", "Replace primary", "Disable default"} {
+	for _, absent := range []string{"Add alias", "Type key chord", "Replace primary", "Disable default", "Capture custom key"} {
 		if hasEntryLabelContaining(entries, absent) {
 			t.Fatalf("detail entries = %#v, did not want %q", entries, absent)
 		}
@@ -5061,7 +5060,7 @@ func TestSettingsKeybindingsLegacyModeOptionsReturnRootList(t *testing.T) {
 	if !hasEntryLabelContaining(listOptions.Entries, "Toggle Project Sidebar") {
 		t.Fatalf("keybindings entries = %#v, want readable action label", listOptions.Entries)
 	}
-	if !hasEntryLabelContaining(listOptions.Entries, "keys Alt-A (M-a)  source Custom") {
+	if !hasEntryLabelContaining(listOptions.Entries, "keys Alt-A (M-a)  state Custom") {
 		t.Fatalf("keybindings entries = %#v, want custom plain summary", listOptions.Entries)
 	}
 }

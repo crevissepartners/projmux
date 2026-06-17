@@ -18,11 +18,10 @@ The recommended path when a key does not fire:
 4. For unsupported terminals, configure plain Meta bytes or add a tmux alias in
    Settings > Keybindings.
 
-Settings writes safe tmux plain chords to
-`~/.config/projmux/keymap.toml`, regenerates
-`~/.config/projmux/tmux.conf`, and hot-reloads the live tmux config when it is
-running inside tmux. Raw escape payloads, Windows Terminal `sendInput` strings,
-and tmux User keys are rejected as aliases.
+Settings saves safe tmux plain chords for actions. Successful saves use simple
+confirmation copy; if saving, runtime config update, or active tmux reload
+fails, the error names the failed stage. Raw escape payloads, Windows Terminal
+`sendInput` strings, and tmux User keys are rejected as aliases.
 
 ## Quick Start
 
@@ -43,17 +42,16 @@ session, `Ctrl-b ?` lists the live tmux bindings.
 
 Settings > Keybindings lists the full action catalogue. In particular, sidebar
 keymap actions, pane switching, window switching, and rename actions remain
-visible. Transport-dependent rows show the default transport key separately
-from user custom keys.
+visible.
 
 The Settings flow is intentionally simple: the root is one action list with
-current key, source, and delivery summaries. Each action detail exposes
-Summary, Keys / Edit Keys, Apply State, Delivery, and Advanced Delivery rows.
-Keys / Edit Keys is the primary edit path: capture or type a custom key, remove
-keys, unbind the action with `keys = []`, or reset the user override.
-Diagnostic/probe/init workflows are not first-class Settings tabs; use
-`projmux setup` and `projmux init` from the terminal when key delivery needs
-remediation.
+current keys and state. State vocabulary is limited to Default, Custom,
+Available, and Unbound. Each action detail shows the action label, state, Keys,
+Actions, and a collapsed Troubleshooting row with Test key delivery and
+Advanced... entry points. Actions cover adding keys, removing keys, unbinding
+the action, and reset/use-default flows. Diagnostic/probe/init workflows are
+not first-class Settings tabs; use `projmux setup` and `projmux init` from the
+terminal when key delivery needs remediation.
 
 Optional direct aliases can be added for actions such as:
 
