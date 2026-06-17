@@ -107,6 +107,62 @@ keys = ["M-S-Left"]
 	}
 }
 
+func TestKeymapEmptyKeysExplicitlyUnbindsTransportDefault(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := parseKeymapFile("/tmp/keymap.toml", `[bindings.previous-window]
+keys = []
+`)
+	if err != nil {
+		t.Fatalf("parseKeymapFile() error = %v", err)
+	}
+	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	if err != nil {
+		t.Fatalf("mergeKeymapOverrides() error = %v", err)
+	}
+	action, ok := keyBindingActionByID(merged, "previous-window")
+	if !ok {
+		t.Fatalf("missing previous-window")
+	}
+	if got := keyBindingEffectivePlainChords(action); len(got) != 0 {
+		t.Fatalf("previous-window keys = %#v, want explicitly unbound", got)
+	}
+	lines := strings.Join(tmuxBindLines("/bin/projmux", keyBindingCatalogForScopeFrom(merged, keyBindingScopeApp)), "\n")
+	if strings.Contains(lines, "bind-key -n M-S-Left previous-window") {
+		t.Fatalf("tmux bind lines =\n%s\ndid not want transport default bind after keys = []", lines)
+	}
+}
+
+func TestKeyBindingCatalogPhase0UserBindableCoverage(t *testing.T) {
+	t.Parallel()
+
+	catalog := defaultKeyBindingCatalog()
+	cases := map[string]string{
+		"last-pane":             "last-pane",
+		"ai-split-codex-right":  "ai split --agent codex right",
+		"ai-split-codex-down":   "ai split --agent codex down",
+		"ai-split-claude-right": "ai split --agent claude right",
+		"ai-split-claude-down":  "ai split --agent claude down",
+		"ai-split-shell-right":  "ai split --agent shell right",
+		"ai-split-shell-down":   "ai split --agent shell down",
+	}
+	for id, body := range cases {
+		action, ok := keyBindingActionByID(catalog, id)
+		if !ok {
+			t.Fatalf("catalog missing %q", id)
+		}
+		if !keyBindingEditable(action) {
+			t.Fatalf("%s is not editable", id)
+		}
+		if got := firstNonEmptyString(keyBindingEffectivePlainChords(action)); got != "" {
+			t.Fatalf("%s default key = %q, want no-bind default", id, got)
+		}
+		if action.TmuxBody != body {
+			t.Fatalf("%s TmuxBody = %q, want %q", id, action.TmuxBody, body)
+		}
+	}
+}
+
 func TestKeymapLegacyActionIDAndQuotedInternalIDMergeToCanonicalActions(t *testing.T) {
 	t.Parallel()
 

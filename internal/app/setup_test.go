@@ -257,8 +257,13 @@ func TestSuggestedPlainChordForSequence(t *testing.T) {
 		{name: "alt printable", seq: []byte("\x1ba"), want: "M-a", ok: true},
 		{name: "alt digit", seq: []byte("\x1b7"), want: "M-7", ok: true},
 		{name: "control byte", seq: []byte{0x01}, want: "C-a", ok: true},
+		{name: "printable key", seq: []byte("p"), want: "p", ok: true},
+		{name: "printable uppercase key", seq: []byte("P"), want: "P", ok: true},
 		{name: "catalog plain sequence", seq: []byte("\x1b[1;4D"), want: "M-S-Left", ok: true},
 		{name: "enter is ambiguous", seq: []byte("\r"), ok: false},
+		{name: "space is not a keymap chord", seq: []byte(" "), ok: false},
+		{name: "unsupported printable config char", seq: []byte(`"`), ok: false},
+		{name: "raw multi-byte printable sequence", seq: []byte("pa"), ok: false},
 		{name: "arrow is not a plain tmux chord", seq: []byte("\x1b[A"), ok: false},
 	}
 

@@ -44,13 +44,16 @@ session, `Ctrl-b ?` lists the live tmux bindings.
 Settings > Keybindings lists the full action catalogue. In particular, sidebar
 keymap actions, pane switching, window switching, and rename actions remain
 visible. Transport-dependent rows show the default transport key separately
-from editable plain aliases.
+from user custom keys.
 
 The Settings flow is intentionally simple: the root is one action list with
-current key summaries, and each action detail shows the action, current
-keybinding/aliases, `Add alias`, and reset. Diagnostic/probe/init workflows are
-not first-class Settings tabs; use `projmux setup` and `projmux init` from the
-terminal when key delivery needs remediation.
+current key, source, and delivery summaries. Each action detail exposes
+Summary, Keys / Edit Keys, Apply State, Delivery, and Advanced Delivery rows.
+Keys / Edit Keys is the primary edit path: capture or type a custom key, remove
+keys, unbind the action with `keys = []`, or reset the user override.
+Diagnostic/probe/init workflows are not first-class Settings tabs; use
+`projmux setup` and `projmux init` from the terminal when key delivery needs
+remediation.
 
 Optional direct aliases can be added for actions such as:
 

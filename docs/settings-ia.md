@@ -24,9 +24,10 @@ view-first layout:
   commands, `Pane navigation`, `Window navigation`, and `Rename` groups or
   equivalent searchable rows.
 - `Settings > Keybindings > Action` keeps the user-facing edit path small:
-  action, current keybinding/aliases, `Add alias`, and reset. It does not offer
-  replace-primary, disable-default, typed-fallback, terminal mapping preview, or
-  terminal mapping apply rows.
+  Summary, Keys / Edit Keys, Apply State, Delivery, and Advanced Delivery. Keys
+  / Edit Keys offers capture/type custom key, remove key, unbind action, and
+  reset user override. It does not offer replace-primary, terminal mapping
+  preview, or terminal mapping apply rows.
 - Terminal delivery remediation lives outside Settings primary flow. The
   supported order is `projmux shell` first, then `projmux setup`, then
   `projmux init` for supported terminal adapters.
