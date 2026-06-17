@@ -87,12 +87,12 @@ language.
 ## Keymap File
 
 Settings > Keybindings is the normal in-app editor for action keys. It lists
-actions with current keys, source, and delivery summaries. Open an action and
-use `Keys / Edit Keys` to capture or type custom keys, remove keys, unbind the
-action, or reset the user override. Saving writes safe direct keybindings to
-`~/.config/projmux/keymap.toml`, rewrites `~/.config/projmux/tmux.conf`, and,
-when Settings is running inside tmux, sources that app config so tmux-level
-chords take effect immediately.
+actions with the current active keys and one state: Default, Custom, Available,
+or Unbound. Open an action to see the action label, state, Keys, Actions, and a
+collapsed Troubleshooting row. Actions are limited to adding keys, removing
+keys, unbinding the action, or resetting/using the default when that applies.
+Successful saves report the keybinding as saved; failures identify the stage
+that failed.
 
 Raw sequences that cannot be safely represented as a direct keybinding are not
 persisted. Use Settings to save a custom key. When key delivery needs
