@@ -439,21 +439,11 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(labelLines) != 2 {
 		t.Fatalf("sidebar label = %q, want two-line card", entry.Label)
 	}
-	if got := stripANSI(labelLines[0]); got != " main  Codex · Response complete" {
-		t.Fatalf("sidebar first line = %q, want project badge before notification text", labelLines[0])
+	if got := stripANSI(labelLines[0]); !strings.Contains(got, "▸ Codex · worker loop") || !strings.Contains(got, "1 notification") || !strings.Contains(got, "WARN") || !strings.Contains(got, "30s ago") {
+		t.Fatalf("sidebar first line = %q, want grouped title/count/severity/age", labelLines[0])
 	}
-	if !strings.Contains(labelLines[1], theme.ANSIChipActiveStart+" worker loop ") {
-		t.Fatalf("sidebar metadata = %q, want prominent topic badge", labelLines[1])
-	}
-	metaText := stripANSI(labelLines[1])
-	ageIndex := strings.Index(metaText, "30s ago")
-	topicIndex := strings.Index(metaText, "worker loop")
-	statusIndex := strings.Index(metaText, "WARN")
-	if !(ageIndex >= 0 && ageIndex < topicIndex && topicIndex < statusIndex) {
-		t.Fatalf("sidebar metadata = %q, want age/topic/status order", labelLines[1])
-	}
-	if meta := labelLines[1]; !strings.Contains(meta, " 30s ago ") || strings.Contains(meta, " main ") || strings.Contains(meta, " codex ") || !strings.Contains(meta, " WARN ") || strings.Contains(meta, "window 1") || strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
-		t.Fatalf("sidebar metadata = %q, want age/topic/status without project/target/source", meta)
+	if meta := labelLines[1]; !strings.Contains(meta, " main ") || !strings.Contains(meta, "Codex · Response complete") || !strings.Contains(meta, "win 1") || !strings.Contains(meta, "pane 0") || strings.Contains(meta, " queued ") || strings.Contains(meta, " ai ") {
+		t.Fatalf("sidebar metadata = %q, want project/target/latest preview without queue internals", meta)
 	}
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
@@ -634,6 +624,126 @@ func TestNotifySidebarLabelUsesKoreanFormatterOutput(t *testing.T) {
 	}
 }
 
+func TestNotifySidebarGroupedReadModelConstructsCollapsedPaneRows(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	entries := []notify.Notification{
+		{ID: "new", Text: "tests failed", Severity: notify.SeverityWarn, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: now.Add(-1 * time.Minute)},
+		{ID: "old", Text: "background update", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: now.Add(-5 * time.Minute)},
+	}
+
+	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	if len(model.Groups) != 1 {
+		t.Fatalf("groups = %#v, want one pane group", model.Groups)
+	}
+	group := model.Groups[0]
+	if group.Key != "pane\x00sock\x00main\x00%2" {
+		t.Fatalf("group key = %q, want pane precedence key", group.Key)
+	}
+	if group.Count != 2 || group.Worst != notify.SeverityWarn || group.Display != notifyDisplayLive || group.Latest.ID != "new" {
+		t.Fatalf("group = %+v, want count/worst/latest live group", group)
+	}
+	collapsed := model.CollapsedEntries()
+	if len(collapsed) != 1 || collapsed[0].Value != "new" {
+		t.Fatalf("collapsed entries = %#v, want latest notification value", collapsed)
+	}
+	label := stripANSI(collapsed[0].Label)
+	for _, want := range []string{"▸ Codex · worker loop", "2 notifications", "WARN", "1m ago", "main", "tests failed"} {
+		if !strings.Contains(label, want) {
+			t.Fatalf("group label = %q, want %q", label, want)
+		}
+	}
+
+	expanded := model.ExpandedEntries(map[string]bool{group.Key: true})
+	if len(expanded) != 3 || expanded[1].Value != "new" || expanded[2].Value != "old" {
+		t.Fatalf("expanded entries = %#v, want group then newest-first child rows", expanded)
+	}
+	if !strings.Contains(expanded[1].Label, " WARN ") || !strings.Contains(expanded[2].Label, " INFO ") {
+		t.Fatalf("child labels = %#v, want existing severity badges preserved", expanded)
+	}
+}
+
+func TestNotifySidebarGroupedReadModelTitleUsesOlderRowMetadata(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	entries := []notify.Notification{
+		{ID: "latest", Text: "new sparse update", Severity: notify.SeverityInfo, Source: notify.SourceAI, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: now},
+		{ID: "older", Text: "older rich update", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: now.Add(-2 * time.Minute)},
+	}
+
+	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	collapsed := model.CollapsedEntries()
+	if len(collapsed) != 1 || collapsed[0].Value != "latest" {
+		t.Fatalf("collapsed entries = %#v, want latest notification value", collapsed)
+	}
+	label := stripANSI(collapsed[0].Label)
+	if !strings.Contains(label, "▸ Codex · worker loop") {
+		t.Fatalf("group label = %q, want agent/topic metadata from older same-pane row", label)
+	}
+}
+
+func TestNotifySidebarGroupedReadModelUsesWorstSeverity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	entries := []notify.Notification{
+		{ID: "latest", Text: "minor update", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Session: "main", Pane: "%2", CreatedAt: now},
+		{ID: "critical", Text: "approval required", Severity: notify.SeverityCritical, Source: notify.SourceExternal, Session: "main", Pane: "%2", CreatedAt: now.Add(-1 * time.Minute)},
+	}
+	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	if got := model.Groups[0].Worst; got != notify.SeverityCritical {
+		t.Fatalf("worst severity = %q, want critical", got)
+	}
+	if label := model.CollapsedEntries()[0].Label; !strings.Contains(label, " CRIT ") {
+		t.Fatalf("group label = %q, want CRIT badge", label)
+	}
+}
+
+func TestNotifySidebarGroupedReadModelDisplaysStaleAndGoneGroups(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	entries := []notify.Notification{
+		{ID: "ai:main:%2", Text: "Ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"}, Session: "main", Pane: "%2", CreatedAt: now},
+		{ID: "external", Text: "orphaned", Severity: notify.SeverityWarn, Source: notify.SourceExternal, Session: "", CreatedAt: now.Add(-1 * time.Minute)},
+	}
+	model := buildNotifySidebarReadModel(entries, now, map[string]notifyLivePane{}, i18n.FallbackLocale)
+	if len(model.Groups) != 2 {
+		t.Fatalf("groups = %#v, want stale and gone groups", model.Groups)
+	}
+	if model.Groups[0].Display != notifyDisplayStale || !strings.Contains(model.Groups[0].Label, " STALE ") {
+		t.Fatalf("stale group = %+v, want STALE display", model.Groups[0])
+	}
+	if model.Groups[1].Display != notifyDisplayGone || !strings.Contains(model.Groups[1].Label, " GONE ") {
+		t.Fatalf("gone group = %+v, want GONE display", model.Groups[1])
+	}
+}
+
+func TestNotifySidebarGroupedReadModelPaneLessFallbackKeys(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	entries := []notify.Notification{
+		{ID: "window", Text: "window scoped", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Socket: "sock", Session: "main", Window: "@1", CreatedAt: now},
+		{ID: "session", Text: "session scoped", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Socket: "sock", Session: "main", CreatedAt: now.Add(-1 * time.Minute)},
+		{ID: "external", Text: "external scoped", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Socket: "sock", CreatedAt: now.Add(-2 * time.Minute)},
+	}
+	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	got := []string{model.Groups[0].Key, model.Groups[1].Key, model.Groups[2].Key}
+	want := []string{"window\x00sock\x00main\x00@1", "session\x00sock\x00main", "external\x00sock"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("group keys = %#v, want %#v", got, want)
+	}
+	labels := []string{stripANSI(model.Groups[0].Label), stripANSI(model.Groups[1].Label), stripANSI(model.Groups[2].Label)}
+	for i, wantLabel := range []string{"win 1", "main", "external"} {
+		if !strings.Contains(labels[i], wantLabel) {
+			t.Fatalf("label[%d] = %q, want fallback %q", i, labels[i], wantLabel)
+		}
+	}
+}
+
 func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{{
@@ -790,9 +900,9 @@ func TestNotifyListSidebarAAcksSelectedRowAndRefreshes(t *testing.T) {
 
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{
-			{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
-			{ID: "def", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
-			{ID: "ghi", Text: "blocked", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main"},
+			{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%1"},
+			{ID: "def", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%2"},
+			{ID: "ghi", Text: "blocked", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%3"},
 		},
 	}
 	picker := &recordingNotifyNativePicker{
@@ -857,9 +967,9 @@ func TestNotifyListSidebarXClearsNonCriticalAndPreservesCritical(t *testing.T) {
 
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{
-			{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
-			{ID: "def", Text: "blocked", Severity: notify.SeverityCritical, Source: notify.SourceAI, Session: "main"},
-			{ID: "ghi", Text: "warn", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main"},
+			{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%1"},
+			{ID: "def", Text: "blocked", Severity: notify.SeverityCritical, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%2"},
+			{ID: "ghi", Text: "warn", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%3"},
 		},
 	}
 	picker := &recordingNotifyNativePicker{
@@ -973,8 +1083,8 @@ func TestNotifyListSidebarSubscribesToQueueRefreshEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeferredUpdate() error = %v", err)
 	}
-	if len(update.Items) != 2 || update.Items[0].Value != "def" || update.Items[1].Value != "abc" {
-		t.Fatalf("update items = %#v, want refreshed def then abc", update.Items)
+	if len(update.Items) != 1 || update.Items[0].Value != "def" || !strings.Contains(update.Items[0].Label, "2 notifications") {
+		t.Fatalf("update items = %#v, want one refreshed grouped row with def latest and count 2", update.Items)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -513,21 +514,7 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpic
 }
 
 func notifySidebarEntriesWithLiveLocale(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, locale i18n.Locale) []intpickercompat.Entry {
-	if len(entries) == 0 {
-		return []intpickercompat.Entry{{
-			Label: "No pending notifications",
-			Value: notifySidebarEmptyValue,
-		}}
-	}
-	out := make([]intpickercompat.Entry, 0, len(entries))
-	for _, e := range entries {
-		label := notifySidebarLabelForLocale(e, now, classifyNotifyRowState(e, liveByID), locale)
-		out = append(out, intpickercompat.Entry{
-			Label: label,
-			Value: e.ID,
-		})
-	}
-	return out
+	return buildNotifySidebarReadModel(entries, now, liveByID, locale).CollapsedEntries()
 }
 
 // notifySidebarEntriesWithLive renders sidebar rows with awareness of
@@ -536,6 +523,359 @@ func notifySidebarEntriesWithLiveLocale(entries []notify.Notification, now time.
 // missing tmux server does not falsely dim every entry.
 func notifySidebarEntriesWithLive(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane) []intpickercompat.Entry {
 	return notifySidebarEntriesWithLiveLocale(entries, now, liveByID, i18n.FallbackLocale)
+}
+
+type notifySidebarReadModel struct {
+	Groups []notifySidebarGroup
+}
+
+type notifySidebarGroup struct {
+	Key         string
+	Label       string
+	Project     string
+	Count       int
+	NewestAt    time.Time
+	Worst       string
+	Display     notifyRowDisplayState
+	Latest      notify.Notification
+	LatestLabel string
+	Rows        []notifySidebarRow
+}
+
+type notifySidebarRow struct {
+	GroupKey string
+	Entry    intpickercompat.Entry
+	Notify   notify.Notification
+	Display  notifyRowDisplayState
+}
+
+func (m notifySidebarReadModel) CollapsedEntries() []intpickercompat.Entry {
+	if len(m.Groups) == 0 {
+		return notifySidebarEmptyEntries()
+	}
+	out := make([]intpickercompat.Entry, 0, len(m.Groups))
+	for _, group := range m.Groups {
+		out = append(out, intpickercompat.Entry{
+			Label: group.Label,
+			Value: group.Latest.ID,
+		})
+	}
+	return out
+}
+
+func (m notifySidebarReadModel) ExpandedEntries(expanded map[string]bool) []intpickercompat.Entry {
+	if len(m.Groups) == 0 {
+		return notifySidebarEmptyEntries()
+	}
+	out := make([]intpickercompat.Entry, 0, len(m.Groups))
+	for _, group := range m.Groups {
+		out = append(out, intpickercompat.Entry{
+			Label: group.Label,
+			Value: group.Latest.ID,
+		})
+		if !expanded[group.Key] {
+			continue
+		}
+		for _, row := range group.Rows {
+			out = append(out, row.Entry)
+		}
+	}
+	return out
+}
+
+func notifySidebarEmptyEntries() []intpickercompat.Entry {
+	return []intpickercompat.Entry{{
+		Label: "No pending notifications",
+		Value: notifySidebarEmptyValue,
+	}}
+}
+
+func buildNotifySidebarReadModel(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, locale i18n.Locale) notifySidebarReadModel {
+	type groupBuild struct {
+		group notifySidebarGroup
+	}
+	builders := make(map[string]*groupBuild)
+	order := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		key := notifySidebarGroupKey(entry)
+		builder, ok := builders[key]
+		if !ok {
+			builder = &groupBuild{group: notifySidebarGroup{
+				Key:     key,
+				Project: notifyProjectName(entry.Session),
+				Worst:   notify.SeverityInfo,
+			}}
+			builders[key] = builder
+			order = append(order, key)
+		}
+		display := classifyNotifyRowState(entry, liveByID)
+		label := notifySidebarLabelForLocale(entry, now, display, locale)
+		builder.group.Rows = append(builder.group.Rows, notifySidebarRow{
+			GroupKey: key,
+			Entry: intpickercompat.Entry{
+				Label: label,
+				Value: entry.ID,
+			},
+			Notify:  entry,
+			Display: display,
+		})
+		builder.group.Worst = notifySidebarWorstSeverity(builder.group.Worst, entry.Severity)
+		builder.group.Display = notifySidebarWorstDisplay(builder.group.Display, display)
+		if builder.group.Count == 0 || entry.CreatedAt.After(builder.group.NewestAt) {
+			builder.group.NewestAt = entry.CreatedAt
+			builder.group.Latest = entry
+			builder.group.LatestLabel = label
+		}
+		builder.group.Count++
+	}
+
+	groups := make([]notifySidebarGroup, 0, len(order))
+	for _, key := range order {
+		group := builders[key].group
+		sort.SliceStable(group.Rows, func(i, j int) bool {
+			return group.Rows[i].Notify.CreatedAt.After(group.Rows[j].Notify.CreatedAt)
+		})
+		group.Label = notifySidebarGroupLabel(group, liveByID, now, locale)
+		groups = append(groups, group)
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		return groups[i].NewestAt.After(groups[j].NewestAt)
+	})
+	return notifySidebarReadModel{Groups: groups}
+}
+
+func notifySidebarGroupKey(entry notify.Notification) string {
+	socket := strings.TrimSpace(entry.Socket)
+	session := strings.TrimSpace(entry.Session)
+	window := strings.TrimSpace(entry.Window)
+	pane := strings.TrimSpace(entry.Pane)
+	switch {
+	case session != "" && pane != "":
+		return "pane\x00" + socket + "\x00" + session + "\x00" + pane
+	case session != "" && window != "":
+		return "window\x00" + socket + "\x00" + session + "\x00" + window
+	case session != "":
+		return "session\x00" + socket + "\x00" + session
+	default:
+		return "external\x00" + socket
+	}
+}
+
+func notifySidebarWorstSeverity(current, next string) string {
+	if notifySidebarSeverityRank(next) > notifySidebarSeverityRank(current) {
+		return next
+	}
+	if strings.TrimSpace(current) == "" {
+		return notify.SeverityInfo
+	}
+	return current
+}
+
+func notifySidebarSeverityRank(severity string) int {
+	switch severity {
+	case notify.SeverityCritical:
+		return 3
+	case notify.SeverityWarn:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func notifySidebarWorstDisplay(current, next notifyRowDisplayState) notifyRowDisplayState {
+	if notifySidebarDisplayRank(next) > notifySidebarDisplayRank(current) {
+		return next
+	}
+	return current
+}
+
+func notifySidebarDisplayRank(display notifyRowDisplayState) int {
+	switch display {
+	case notifyDisplayGone:
+		return 3
+	case notifyDisplayStale:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func notifySidebarGroupLabel(group notifySidebarGroup, liveByID map[string]notifyLivePane, now time.Time, locale i18n.Locale) string {
+	latest := group.Latest
+	preview := notifySidebarGroupPreview(latest, locale)
+	if preview == "" {
+		preview = "(empty notification)"
+	}
+	if group.Display != notifyDisplayLive {
+		preview = notifySidebarDimText(preview)
+	}
+	title := notifySidebarGroupTitle(group, liveByID, locale)
+	count := i18n.FormatCount(group.Count, i18n.CountNotifications, locale, i18n.FormatCompact)
+	ageDuration := time.Duration(0)
+	if !group.NewestAt.IsZero() {
+		ageDuration = now.Sub(group.NewestAt)
+	}
+	age := formatAgeLocale(ageDuration, locale)
+	stateEntry := latest
+	stateEntry.Severity = group.Worst
+	stateBadge := notifySidebarStateBadgeForDisplay(notifyStateLabelForLocale(stateEntry, preview, group.Display, locale), group.Display)
+	firstLine := "▸ " + title + "  " + notifySidebarDim(count) + " " + stateBadge + " " + notifySidebarAge(age)
+
+	metaParts := []string{notifySidebarProjectBadge(group.Project)}
+	if target := notifySidebarGroupTarget(latest, locale); target != "" {
+		metaParts = append(metaParts, target)
+	}
+	return firstLine + "\n  " + strings.Join(metaParts, " ") + " " + preview
+}
+
+func notifySidebarGroupPreview(entry notify.Notification, locale i18n.Locale) string {
+	if entry.Source == notify.SourceAI {
+		text := renderAINotifyText(entry.Text, entry.Metadata, locale).Full
+		if text == "" {
+			text = entry.Text
+		}
+		if notifySidebarLabelCell(entry.Metadata["topic"]) == notifySidebarLabelCell(entry.Text) {
+			text = "Ready"
+		}
+		return notifySidebarLabelCell(text)
+	}
+	_, text := splitAgentPrefix(entry)
+	return notifySidebarLabelCell(text)
+}
+
+func notifySidebarGroupTitle(group notifySidebarGroup, liveByID map[string]notifyLivePane, locale i18n.Locale) string {
+	latest := group.Latest
+	agent := notifySidebarGroupExplicitAgent(group.Rows, liveByID)
+	context := notifySidebarGroupContext(group.Rows, liveByID)
+	fallback := notifySidebarGroupFallbackLabel(latest, locale)
+	if agent == "" {
+		agent = notifySidebarGroupSourceLabel(latest)
+	}
+	switch {
+	case agent != "" && context != "":
+		return agent + " · " + notifySidebarLabelCell(context)
+	case agent != "" && fallback != "":
+		return agent + " · " + fallback
+	case agent != "":
+		return agent
+	case context != "":
+		return notifySidebarLabelCell(context)
+	default:
+		return fallback
+	}
+}
+
+func notifySidebarGroupExplicitAgent(rows []notifySidebarRow, liveByID map[string]notifyLivePane) string {
+	for _, row := range rows {
+		live := liveByID[row.Notify.ID]
+		if agent := firstNonEmptyNotifySidebarString(live.Agent, row.Notify.Metadata["agent"], row.Notify.Metadata["provider"]); agent != "" {
+			return notifySidebarAgentDisplayName(agent)
+		}
+	}
+	return ""
+}
+
+func notifySidebarGroupContext(rows []notifySidebarRow, liveByID map[string]notifyLivePane) string {
+	for _, row := range rows {
+		live := liveByID[row.Notify.ID]
+		if context := firstNonEmptyNotifySidebarString(
+			live.Topic,
+			row.Notify.Metadata["topic"],
+			live.Title,
+			row.Notify.Metadata["pane_title"],
+			row.Notify.Metadata["title"],
+		); context != "" {
+			return notifySidebarLabelCell(context)
+		}
+	}
+	return ""
+}
+
+func notifySidebarGroupSourceLabel(entry notify.Notification) string {
+	switch entry.Source {
+	case notify.SourceAI:
+		return "AI"
+	case notify.SourceK8s:
+		return "K8s"
+	case notify.SourceGit:
+		return "Git"
+	}
+	return ""
+}
+
+func notifySidebarAgentDisplayName(agent string) string {
+	agent = notifySidebarLabelCell(agent)
+	switch strings.ToLower(agent) {
+	case "codex":
+		return "Codex"
+	case "claude":
+		return "Claude"
+	case "antigravity":
+		return "Antigravity"
+	default:
+		if agent == "" {
+			return ""
+		}
+		lower := strings.ToLower(agent)
+		return strings.ToUpper(lower[:1]) + lower[1:]
+	}
+}
+
+func notifySidebarGroupFallbackLabel(entry notify.Notification, locale i18n.Locale) string {
+	if pane := notifySidebarPlainTargetPart(i18n.TargetPane, entry.Pane, locale); pane != "" {
+		return pane
+	}
+	if window := notifySidebarPlainTargetPart(i18n.TargetWindow, entry.Window, locale); window != "" {
+		return window
+	}
+	if session := notifyProjectName(entry.Session); session != "" {
+		return session
+	}
+	return "external"
+}
+
+func notifySidebarPlainTargetPart(kind i18n.TargetKind, value string, locale i18n.Locale) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.TrimLeft(value, "@%")
+	value = notifySidebarLabelCell(value)
+	if value == "" {
+		return ""
+	}
+	number := parsePositiveInt(value)
+	if number > 0 {
+		return i18n.FormatTargetLabel(kind, number, locale, i18n.FormatCompact)
+	}
+	switch kind {
+	case i18n.TargetWindow:
+		return "window " + value
+	case i18n.TargetPane:
+		return "pane " + value
+	default:
+		return value
+	}
+}
+
+func notifySidebarGroupTarget(entry notify.Notification, locale i18n.Locale) string {
+	parts := make([]string, 0, 2)
+	if window := notifySidebarTargetPart("window", entry.Window, locale); window != "" {
+		parts = append(parts, window)
+	}
+	if pane := notifySidebarTargetPart("pane", entry.Pane, locale); pane != "" {
+		parts = append(parts, pane)
+	}
+	return strings.Join(parts, " ")
+}
+
+func firstNonEmptyNotifySidebarString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func notifySidebarLabel(e notify.Notification, now time.Time) string {

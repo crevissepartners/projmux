@@ -141,10 +141,12 @@ last collect timestamp when present, falls back to the cache file mtime when
 needed, and keeps stale sync metadata muted instead of escalating it to a
 warning color.
 The notification HUD detail surface opens the right-side notification popup
-through the notify sidebar action, with newest-first rows and an
-attention-tinted title. When notification icon decoration is `symbol` or
-`emoji`, the bell appears before the title text.
-Selecting a row still focuses and acknowledges that notification. Internal
+through the notify sidebar action, showing the grouped pane/session inbox with
+collapsed group rows and the same attention-tinted title. When notification
+icon decoration is `symbol` or `emoji`, the bell appears before the title text.
+Selecting a collapsed group row focuses and acknowledges only that group's
+latest notification. Fold/unfold and group ack are not Phase 0/current
+keybindings. Internal
 notify commands use `NotifySidebar:*` IDs in `keymap.toml`; runtime footers
 render key guides from the merged keymap and prefer the default alias when it
 is still configured.
