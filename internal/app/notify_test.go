@@ -443,14 +443,14 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(labelLines) != 3 {
 		t.Fatalf("sidebar label = %q, want three-line group card", entry.Label)
 	}
-	if got := stripANSI(labelLines[0]); !strings.Contains(got, "▸ Codex · worker loop") || !strings.Contains(got, "30s ago") || strings.Contains(got, "WARN") || strings.Contains(got, "notification") {
-		t.Fatalf("sidebar first line = %q, want identity and age only", labelLines[0])
+	if got := stripANSI(labelLines[0]); !strings.Contains(got, "▸") || !strings.Contains(got, "main") || !strings.Contains(got, "· Codex") || !strings.Contains(got, "30s ago") || strings.Contains(got, "worker loop") || strings.Contains(got, "WARN") || strings.Contains(got, "notification") {
+		t.Fatalf("sidebar first line = %q, want project/provider and age only", labelLines[0])
 	}
-	if got := stripANSI(labelLines[1]); !strings.Contains(got, "Codex · Response complete") || !strings.Contains(got, "WARN") || strings.Contains(got, "+0") || strings.Contains(got, "win 1") || strings.Contains(got, "pane 0") {
-		t.Fatalf("sidebar second line = %q, want preview and aggregate metadata without target ids", labelLines[1])
+	if got := stripANSI(labelLines[1]); !strings.Contains(got, "worker loop") || !strings.Contains(got, "+0") || !strings.Contains(got, "WARN") || strings.Contains(got, "win 1") || strings.Contains(got, "pane 0") {
+		t.Fatalf("sidebar second line = %q, want context and aggregate metadata without target ids", labelLines[1])
 	}
-	if aux := labelLines[2]; !strings.Contains(aux, " main ") || strings.Contains(aux, "queued") || strings.Contains(aux, " ai ") {
-		t.Fatalf("sidebar aux line = %q, want project context without queue internals", aux)
+	if got := stripANSI(labelLines[2]); !strings.Contains(got, "Codex · Response complete") || strings.Contains(got, "queued") || strings.Contains(got, " ai ") {
+		t.Fatalf("sidebar third line = %q, want latest preview without queue internals", labelLines[2])
 	}
 	if strings.Contains(entry.Label, "abc") {
 		t.Fatalf("sidebar label = %q, want hidden queue id", entry.Label)
@@ -664,21 +664,21 @@ func TestNotifySidebarGroupedReadModelConstructsCollapsedPaneRows(t *testing.T) 
 	if len(lines) != 3 {
 		t.Fatalf("group label = %q, want three-line card", label)
 	}
-	if !strings.Contains(lines[0], "▸ Codex · worker loop") || !strings.Contains(lines[0], "1m ago") || strings.Contains(lines[0], "WARN") || strings.Contains(lines[0], "+1") {
-		t.Fatalf("group row 1 = %q, want identity and age only", lines[0])
+	if !strings.Contains(lines[0], "▸") || !strings.Contains(lines[0], "main") || !strings.Contains(lines[0], "· Codex") || !strings.Contains(lines[0], "1m ago") || strings.Contains(lines[0], "worker loop") || strings.Contains(lines[0], "WARN") || strings.Contains(lines[0], "+1") {
+		t.Fatalf("group row 1 = %q, want project/provider identity and age only", lines[0])
 	}
-	if !strings.Contains(lines[1], "tests failed") || !strings.Contains(lines[1], "+1") || !strings.Contains(lines[1], "WARN") {
-		t.Fatalf("group row 2 = %q, want preview and aggregate metadata", lines[1])
+	if !strings.Contains(lines[1], "worker loop") || !strings.Contains(lines[1], "+1") || !strings.Contains(lines[1], "WARN") || strings.Contains(lines[1], "tests failed") {
+		t.Fatalf("group row 2 = %q, want context and aggregate metadata", lines[1])
 	}
-	if !strings.Contains(lines[2], "main") {
-		t.Fatalf("group row 3 = %q, want project context", lines[2])
+	if !strings.Contains(lines[2], "tests failed") {
+		t.Fatalf("group row 3 = %q, want latest preview", lines[2])
 	}
 	for _, forbidden := range []string{"2 notifications", "win 1", "pane 2", "%2", "@1"} {
 		if strings.Contains(label, forbidden) {
 			t.Fatalf("group label = %q, did not expect collapsed technical/count text %q", label, forbidden)
 		}
 	}
-	for _, want := range []string{"▸ Codex · worker loop", "WARN", "1m ago", "main", "tests failed"} {
+	for _, want := range []string{"▸", "Codex", "worker loop", "WARN", "1m ago", "main", "tests failed"} {
 		if !strings.Contains(label, want) {
 			t.Fatalf("group label = %q, want %q", label, want)
 		}
@@ -688,11 +688,17 @@ func TestNotifySidebarGroupedReadModelConstructsCollapsedPaneRows(t *testing.T) 
 	if len(expanded) != 3 || expanded[0].Value != groupValue || expanded[1].Value != "new" || expanded[2].Value != "old" {
 		t.Fatalf("expanded entries = %#v, want group then newest-first child rows", expanded)
 	}
-	if !strings.Contains(stripANSI(expanded[0].Label), "▾ Codex · worker loop") {
+	if !strings.Contains(stripANSI(expanded[0].Label), "▾") || !strings.Contains(stripANSI(expanded[0].Label), "main") || !strings.Contains(stripANSI(expanded[0].Label), "worker loop") {
 		t.Fatalf("expanded group label = %q, want unfolded marker", expanded[0].Label)
 	}
 	if !strings.Contains(expanded[1].Label, " WARN ") || !strings.Contains(expanded[2].Label, " INFO ") {
 		t.Fatalf("child labels = %#v, want existing severity badges preserved", expanded)
+	}
+	for i, child := range expanded[1:] {
+		stripped := stripANSI(child.Label)
+		if strings.Count(stripped, "\n") != 0 || strings.Contains(stripped, " main ") || strings.Contains(stripped, "worker loop") {
+			t.Fatalf("child label[%d] = %q, want compact event row without duplicated group metadata", i, child.Label)
+		}
 	}
 }
 
@@ -711,8 +717,9 @@ func TestNotifySidebarGroupedReadModelTitleUsesOlderRowMetadata(t *testing.T) {
 		t.Fatalf("collapsed entries = %#v, want group value", collapsed)
 	}
 	label := stripANSI(collapsed[0].Label)
-	if !strings.Contains(label, "▸ Codex · worker loop") {
-		t.Fatalf("group label = %q, want agent/topic metadata from older same-pane row", label)
+	lines := strings.Split(label, "\n")
+	if len(lines) != 3 || !strings.Contains(lines[0], "main") || !strings.Contains(lines[0], "· Codex") || !strings.Contains(lines[1], "worker loop") {
+		t.Fatalf("group label = %q, want project/provider line and older topic context line", label)
 	}
 }
 
@@ -734,12 +741,107 @@ func TestNotifySidebarGroupedReadModelReducesDuplicateLabelPreview(t *testing.T)
 	if len(lines) != 3 {
 		t.Fatalf("group label = %q, want three-line card", label)
 	}
-	if !strings.Contains(lines[0], "Codex · worker loop") {
-		t.Fatalf("group row 1 = %q, want topic identity", lines[0])
+	if !strings.Contains(lines[0], "main") || !strings.Contains(lines[0], "· Codex") || strings.Contains(lines[0], "worker loop") {
+		t.Fatalf("group row 1 = %q, want project/provider identity", lines[0])
 	}
-	if strings.Contains(lines[1], "worker loop") || !strings.Contains(lines[1], "Ready") {
-		t.Fatalf("group row 2 = %q, want reduced non-duplicate preview", lines[1])
+	if !strings.Contains(lines[1], "worker loop") || !strings.Contains(lines[1], "+0") {
+		t.Fatalf("group row 2 = %q, want topic context and fixed count metadata", lines[1])
 	}
+	if strings.Contains(lines[2], "worker loop") || !strings.Contains(lines[2], "Ready") {
+		t.Fatalf("group row 3 = %q, want reduced non-duplicate preview", lines[2])
+	}
+}
+
+func TestNotifySidebarGroupedReadModelKeepsProjectSlotWhenTopicContainsProject(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name  string
+		topic string
+	}{
+		{name: "topic contains project", topic: "main worker loop"},
+		{name: "topic does not contain project", topic: "worker loop"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			entries := []notify.Notification{
+				{ID: "latest", Text: "done", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": tt.topic}, Session: "team-main", Pane: "%2", CreatedAt: now},
+			}
+
+			model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+			label := stripANSI(model.CollapsedEntries()[0].Label)
+			lines := strings.Split(label, "\n")
+			if len(lines) != 3 {
+				t.Fatalf("group label = %q, want fixed three-line card", label)
+			}
+			if !strings.Contains(lines[0], "main") || !strings.Contains(lines[0], "· Codex") {
+				t.Fatalf("group row 1 = %q, want stable project/provider slot", lines[0])
+			}
+			if !strings.Contains(lines[1], tt.topic) || strings.Contains(lines[1], "· Codex") {
+				t.Fatalf("group row 2 = %q, want topic context independent of project slot", lines[1])
+			}
+		})
+	}
+}
+
+func TestNotifySidebarGroupedReadModelSelectionMarkerKeepsFieldShape(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	model := buildNotifySidebarReadModel([]notify.Notification{
+		{ID: "latest", Text: "done", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Session: "main", Pane: "%2", CreatedAt: now},
+	}, now, nil, i18n.FallbackLocale)
+	group := model.Groups[0]
+	folded := stripANSI(notifySidebarGroupEntry(group, false).Label)
+	expanded := stripANSI(notifySidebarGroupEntry(group, true).Label)
+	foldedLines := strings.Split(folded, "\n")
+	expandedLines := strings.Split(expanded, "\n")
+	if len(foldedLines) != 3 || len(expandedLines) != 3 {
+		t.Fatalf("folded/expanded labels = %q / %q, want fixed three-line cards", folded, expanded)
+	}
+	if !strings.HasPrefix(foldedLines[0], "▸ ") || !strings.HasPrefix(expandedLines[0], "▾ ") {
+		t.Fatalf("folded/expanded labels = %q / %q, want only marker changed", folded, expanded)
+	}
+	foldedLines[0] = strings.TrimPrefix(foldedLines[0], "▸ ")
+	expandedLines[0] = strings.TrimPrefix(expandedLines[0], "▾ ")
+	if !reflect.DeepEqual(foldedLines, expandedLines) {
+		t.Fatalf("folded lines = %#v, expanded lines = %#v, want same fields after marker", foldedLines, expandedLines)
+	}
+}
+
+func TestNotifySidebarExpandedChildRowsStayCompactAndPreserveWarnCritical(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	entries := []notify.Notification{
+		{ID: "critical", Text: "approval required", Severity: notify.SeverityCritical, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Session: "main", Pane: "%2", CreatedAt: now},
+		{ID: "warn", Text: "tests failed", Severity: notify.SeverityWarn, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Session: "main", Pane: "%2", CreatedAt: now.Add(-1 * time.Minute)},
+	}
+
+	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	expanded := model.ExpandedEntries(map[string]bool{model.Groups[0].Key: true})
+	if len(expanded) != 3 {
+		t.Fatalf("expanded entries = %#v, want group plus two compact child rows", expanded)
+	}
+	assertCompact := func(entry intpickercompat.Entry, severity, preview string) {
+		t.Helper()
+		label := stripANSI(entry.Label)
+		if strings.Count(label, "\n") != 0 {
+			t.Fatalf("child label = %q, want one-line compact event row", entry.Label)
+		}
+		for _, forbidden := range []string{" main ", "worker loop", "Codex"} {
+			if strings.Contains(label, forbidden) {
+				t.Fatalf("child label = %q, did not expect duplicated group metadata %q", entry.Label, forbidden)
+			}
+		}
+		if !strings.Contains(label, preview) || !strings.Contains(label, severity) {
+			t.Fatalf("child label = %q, want preview %q and severity %q", entry.Label, preview, severity)
+		}
+	}
+	assertCompact(expanded[1], "CRIT", "approval required")
+	assertCompact(expanded[2], "WARN", "tests failed")
 }
 
 func TestNotifySidebarGroupedReadModelUsesWorstSeverity(t *testing.T) {
@@ -772,11 +874,11 @@ func TestNotifySidebarGroupedReadModelDisplaysStaleAndGoneGroups(t *testing.T) {
 		t.Fatalf("groups = %#v, want stale and gone groups", model.Groups)
 	}
 	staleLines := strings.Split(stripANSI(model.Groups[0].Label), "\n")
-	if model.Groups[0].Display != notifyDisplayStale || len(staleLines) < 2 || strings.Contains(staleLines[0], "STALE") || !strings.Contains(staleLines[1], "STALE") {
+	if model.Groups[0].Display != notifyDisplayStale || len(staleLines) != 3 || strings.Contains(staleLines[0], "STALE") || !strings.Contains(staleLines[1], "STALE") {
 		t.Fatalf("stale group = %+v, want STALE display", model.Groups[0])
 	}
 	goneLines := strings.Split(stripANSI(model.Groups[1].Label), "\n")
-	if model.Groups[1].Display != notifyDisplayGone || len(goneLines) < 2 || strings.Contains(goneLines[0], "GONE") || !strings.Contains(goneLines[1], "GONE") {
+	if model.Groups[1].Display != notifyDisplayGone || len(goneLines) != 3 || strings.Contains(goneLines[0], "GONE") || !strings.Contains(goneLines[1], "GONE") {
 		t.Fatalf("gone group = %+v, want GONE display", model.Groups[1])
 	}
 }
