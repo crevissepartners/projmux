@@ -63,6 +63,7 @@ type Preview struct {
 type DeferredUpdate struct {
 	Items   []Item
 	Preview Preview
+	Result  *Result
 }
 
 type Options struct {
@@ -856,6 +857,19 @@ func runNativePickerAction(action Action, options Options, items []Item, selecte
 			})
 			if err != nil {
 				return Result{}, false, DeferredUpdate{}, fmt.Errorf("run native picker action %q: %w", action.Key, err)
+			}
+			if update.Result != nil {
+				result := *update.Result
+				if result.Key == "" {
+					result.Key = action.Key
+				}
+				if result.Value == "" && !result.Closed {
+					result.Value = value
+				}
+				if result.Query == "" {
+					result.Query = query
+				}
+				return result, false, DeferredUpdate{}, nil
 			}
 			return Result{}, true, update, nil
 		}

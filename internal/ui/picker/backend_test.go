@@ -2718,6 +2718,39 @@ func TestNativeInteractiveCustomActionMutatesItemsAndRefreshes(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveCustomActionCanReturnResult(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	result, err := runNativeInteractive(strings.NewReader("\r"), io.Discard, Options{
+		UI:            "notify-sidebar",
+		DisableSearch: true,
+		Items: []Item{
+			{Title: "child", Value: "child-id"},
+		},
+		Actions: []Action{{
+			Key:    "enter",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				calls++
+				if ctx.Value != "child-id" {
+					t.Fatalf("action context = %#v, want child-id", ctx)
+				}
+				return DeferredUpdate{Result: &Result{Key: ctx.Key, Value: ctx.Value, Query: ctx.Query}}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("mutate calls = %d, want 1", calls)
+	}
+	if result.Key != "enter" || result.Value != "child-id" {
+		t.Fatalf("result = %#v, want custom result for child-id", result)
+	}
+}
+
 func TestNativeInteractiveCustomActionRefreshPreservesSelectedValue(t *testing.T) {
 	t.Parallel()
 

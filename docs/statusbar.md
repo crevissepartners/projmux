@@ -144,12 +144,13 @@ The notification HUD detail surface opens the right-side notification popup
 through the notify sidebar action, showing the grouped pane/session inbox with
 collapsed group rows and the same attention-tinted title. When notification
 icon decoration is `symbol` or `emoji`, the bell appears before the title text.
-Selecting a collapsed group row focuses and acknowledges only that group's
-latest notification. Fold/unfold and group ack are not Phase 0/current
-keybindings. Internal
-notify commands use `NotifySidebar:*` IDs in `keymap.toml`; runtime footers
-render key guides from the merged keymap and prefer the default alias when it
-is still configured.
+Right/Left fold and unfold groups locally inside the native sidebar. Enter on a
+group row unfolds it; Enter on a child notification preserves the existing
+focus and acknowledgement behavior. `NotifySidebar:AckGroup` acknowledges every
+visible notification in the selected group, including critical notifications.
+Internal notify commands use `NotifySidebar:*` IDs in `keymap.toml`; runtime
+footers render key guides from the merged keymap and prefer the default alias
+when it is still configured.
 
 Empty `#{mouse_status_range}` (a click on whitespace) falls through to
 `select-window -t @<mouse_window>` when `--mouse-window` is non-empty,

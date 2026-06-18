@@ -600,6 +600,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			PlainChord:  "a",
 		},
 		{
+			ID:          "NotifySidebar:AckGroup",
+			Description: "Acknowledge every visible notification in the selected group",
+			DisplayName: "Notify Sidebar: Acknowledge Group",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "NotifySidebar",
+			PlainChord:  "A",
+		},
+		{
 			ID:          "NotifySidebar:ClearNonCritical",
 			Description: "Clear non-critical notifications",
 			DisplayName: "Notify Sidebar: Clear Non-Critical",
