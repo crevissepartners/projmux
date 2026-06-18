@@ -4234,7 +4234,7 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	}
 }
 
-func TestSettingsHubKeybindingsUsesReadablePrimaryLabels(t *testing.T) {
+func TestSettingsHubKeybindingsUsesReadableKeyLabels(t *testing.T) {
 	t.Parallel()
 
 	cmd := &settingsCommand{}
@@ -4261,7 +4261,7 @@ func TestSettingsHubKeybindingsUsesReadablePrimaryLabels(t *testing.T) {
 		}
 	}
 	if strings.Contains(projectLabel, "ProjectSidebarToggle") {
-		t.Fatalf("project sidebar label = %q, want primary label without internal action ID", projectLabel)
+		t.Fatalf("project sidebar label = %q, want readable label without internal action ID", projectLabel)
 	}
 
 	detailEntries, title, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
@@ -4272,7 +4272,7 @@ func TestSettingsHubKeybindingsUsesReadablePrimaryLabels(t *testing.T) {
 		t.Fatalf("detail title = %q, want %q", got, want)
 	}
 	if !hasEntryLabelContainingAll(detailEntries, "Keys", "Alt-1", "M-1") {
-		t.Fatalf("detail entries = %#v, want readable default alias with tmux chord", detailEntries)
+		t.Fatalf("detail entries = %#v, want readable default key with tmux chord", detailEntries)
 	}
 	if hasEntryLabelContaining(detailEntries, "Action ID") {
 		t.Fatalf("detail entries = %#v, did not want internal action ID in simplified detail", detailEntries)
@@ -4295,7 +4295,7 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 
 	cases := []struct {
 		id             string
-		primaryLabel   string
+		actionLabel    string
 		wants          []string
 		wantSearchText string
 	}{
@@ -4313,10 +4313,10 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 		{settingsActionPrefixKeymap + "select-pane-right", "Select Pane Right", []string{"Alt-Right", "M-Right", "state Default"}, "Select Pane Right"},
 		{settingsActionPrefixKeymap + "select-pane-up", "Select Pane Up", []string{"Alt-Up", "M-Up", "state Default"}, "Select Pane Up"},
 		{settingsActionPrefixKeymap + "select-pane-down", "Select Pane Down", []string{"Alt-Down", "M-Down", "state Default"}, "Select Pane Down"},
-		{settingsActionPrefixKeymap + "last-pane", "Return to Previously Active Pane", []string{"(unbound)", "state Available"}, "previously active pane"},
-		{settingsActionPrefixKeymap + "ai-split-codex-right", "Open Codex Split Right", []string{"(unbound)", "state Available"}, "Codex split"},
-		{settingsActionPrefixKeymap + "ai-split-claude-down", "Open Claude Split Down", []string{"(unbound)", "state Available"}, "Claude split"},
-		{settingsActionPrefixKeymap + "ai-split-shell-right", "Open Shell Split Right", []string{"(unbound)", "state Available"}, "shell split"},
+		{settingsActionPrefixKeymap + "last-pane", "Return to Previously Active Pane", []string{"Not bound", "state Available"}, "previously active pane"},
+		{settingsActionPrefixKeymap + "ai-split-codex-right", "Open Codex Split Right", []string{"Not bound", "state Available"}, "Codex split"},
+		{settingsActionPrefixKeymap + "ai-split-claude-down", "Open Claude Split Down", []string{"Not bound", "state Available"}, "Claude split"},
+		{settingsActionPrefixKeymap + "ai-split-shell-right", "Open Shell Split Right", []string{"Not bound", "state Available"}, "shell split"},
 	}
 	for _, tc := range cases {
 		idx := entryIndexValue(entries, tc.id)
@@ -4324,8 +4324,8 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 			t.Fatalf("keybindings entries missing %q: %#v", tc.id, entries)
 		}
 		label := entries[idx].Label
-		if !strings.Contains(label, tc.primaryLabel) {
-			t.Fatalf("entry %q label = %q, want primary label %q", tc.id, label, tc.primaryLabel)
+		if !strings.Contains(label, tc.actionLabel) {
+			t.Fatalf("entry %q label = %q, want action label %q", tc.id, label, tc.actionLabel)
 		}
 		for _, want := range tc.wants {
 			if !strings.Contains(label, want) {
@@ -4333,7 +4333,7 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 			}
 		}
 		if strings.Contains(label, strings.TrimPrefix(tc.id, settingsActionPrefixKeymap)) {
-			t.Fatalf("entry %q label = %q, want primary label without internal action ID", tc.id, label)
+			t.Fatalf("entry %q label = %q, want readable label without internal action ID", tc.id, label)
 		}
 		if !strings.Contains(entries[idx].SearchKey, tc.wantSearchText) {
 			t.Fatalf("entry %q search key = %q, want searchable text %q", tc.id, entries[idx].SearchKey, tc.wantSearchText)
@@ -4341,7 +4341,7 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 	}
 }
 
-func TestSettingsHubKeybindingsLastPaneHasKoreanSearchAlias(t *testing.T) {
+func TestSettingsHubKeybindingsLastPaneHasKoreanSearchText(t *testing.T) {
 	t.Parallel()
 
 	cmd := &settingsCommand{
@@ -4361,11 +4361,11 @@ func TestSettingsHubKeybindingsLastPaneHasKoreanSearchAlias(t *testing.T) {
 		t.Fatalf("keybindings entries missing last-pane: %#v", entries)
 	}
 	if !strings.Contains(entries[idx].SearchKey, "직전 활성 pane으로 돌아가기") {
-		t.Fatalf("last-pane search key = %q, want Korean alias", entries[idx].SearchKey)
+		t.Fatalf("last-pane search key = %q, want Korean search text", entries[idx].SearchKey)
 	}
 }
 
-func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllowsPlainAliases(t *testing.T) {
+func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllowsCustomKeys(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -4408,14 +4408,23 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	if !hasEntryLabelContainingAll(popupDetail.Entries, "Keys", "Alt-P", "M-p") {
 		t.Fatalf("popup detail entries = %#v, want readable picker-local keys", popupDetail.Entries)
 	}
-	for _, want := range []string{"Add key", "Remove key", "Unbind", "Troubleshooting", "Test key delivery", "Advanced..."} {
+	for _, want := range []string{"+ Add key", "Options", "Unbind", "Troubleshooting", "Test key delivery", "Advanced..."} {
 		if !hasEntryLabelContaining(popupDetail.Entries, want) {
 			t.Fatalf("popup detail entries = %#v, want edit action %q", popupDetail.Entries, want)
 		}
 	}
-	for _, absent := range []string{"Add alias", "Type key chord", "Replace primary", "Disable default", "Reset to default", "Tier", "Delivery path", "Summary", "Surface", "Source", "Default fallback keys", "Apply State", "Delivery", "Advanced Delivery"} {
+	for _, absent := range []string{"Add alias", "Type key chord", "Enter key name", "Replace primary", "Primary key", "Additional keys", "Disable default", "Reset to default", "Tier", "Delivery path", "Summary", "Surface", "Source", "Default fallback keys", "Apply State", "Delivery", "Advanced Delivery"} {
 		if hasEntryLabelContaining(popupDetail.Entries, absent) {
 			t.Fatalf("popup detail entries = %#v, did not want %q", popupDetail.Entries, absent)
+		}
+	}
+	keyDetail, _, err := cmd.keybindingKeyDetailEntries("Sidebar:PinProject", "M-p")
+	if err != nil {
+		t.Fatalf("keybindingKeyDetailEntries(Sidebar:PinProject, M-p) error = %v", err)
+	}
+	for _, want := range []string{"Key", "Alt-P", "M-p", "Remove key", "Test key"} {
+		if !hasEntryLabelContaining(keyDetail, want) {
+			t.Fatalf("key detail entries = %#v, want %q", keyDetail, want)
 		}
 	}
 
@@ -4431,7 +4440,7 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	if !hasEntryLabelContaining(transportDetail.Entries, "Add key") {
 		t.Fatalf("transport detail entries = %#v, want custom key action", transportDetail.Entries)
 	}
-	for _, absent := range []string{"Add alias", "Add plain alias", "Replace primary", "Disable default", "Reset to default", "Default transport key", "Transport default", "Tier", "Delivery path", "Apply State", "Delivery", "Advanced Delivery"} {
+	for _, absent := range []string{"Add alias", "Add plain alias", "Enter key name", "Replace primary", "Primary key", "Additional keys", "Disable default", "Reset to default", "Default transport key", "Transport default", "Tier", "Delivery path", "Apply State", "Delivery", "Advanced Delivery"} {
 		if hasEntryLabelContaining(transportDetail.Entries, absent) {
 			t.Fatalf("transport detail entries = %#v, did not want %q", transportDetail.Entries, absent)
 		}
@@ -4452,7 +4461,7 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	}
 }
 
-func TestSettingsHubKeybindingsTypedTransportAliasWritesOnlyAlias(t *testing.T) {
+func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -4468,8 +4477,34 @@ func TestSettingsHubKeybindingsTypedTransportAliasWritesOnlyAlias(t *testing.T) 
 			if !hasEntryLabelContaining(options.Entries, "Add key") {
 				t.Fatalf("transport detail entries = %#v, want Add key", options.Entries)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:type"}, nil
+			if hasEntryLabelContaining(options.Entries, "Enter key name") {
+				t.Fatalf("transport detail entries = %#v, did not want basic typed entry", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:add"}, nil
 		case 4:
+			if got, want := options.UI, "settings-keybinding-add"; got != want {
+				t.Fatalf("add key UI = %q, want %q", got, want)
+			}
+			for _, want := range []string{"Press a key", "Cancel", "Advanced..."} {
+				if !hasEntryLabelContaining(options.Entries, want) {
+					t.Fatalf("add key entries = %#v, want %q", options.Entries, want)
+				}
+			}
+			if hasEntryLabelContaining(options.Entries, "Enter key name") {
+				t.Fatalf("add key entries = %#v, did not want typed entry before Advanced", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:advanced"}, nil
+		case 5:
+			if got, want := options.UI, "settings-keybinding-add-advanced"; got != want {
+				t.Fatalf("advanced add key UI = %q, want %q", got, want)
+			}
+			for _, want := range []string{"Enter key name", "Raw diagnostic view"} {
+				if !hasEntryLabelContaining(options.Entries, want) {
+					t.Fatalf("advanced add key entries = %#v, want %q", options.Entries, want)
+				}
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:type"}, nil
+		case 6:
 			if got, want := options.UI, "settings-keybinding-type"; got != want {
 				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
 			}
@@ -4477,11 +4512,11 @@ func TestSettingsHubKeybindingsTypedTransportAliasWritesOnlyAlias(t *testing.T) 
 				t.Fatalf("typed keybinding prompt = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Query: "M-["}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 7:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 8:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 9:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -4494,14 +4529,14 @@ func TestSettingsHubKeybindingsTypedTransportAliasWritesOnlyAlias(t *testing.T) 
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
 	if !strings.Contains(keymap, "[bindings.previous-window]\nkeys = [\"M-[\"]\n") {
-		t.Fatalf("keymap = %q, want transport alias only", keymap)
+		t.Fatalf("keymap = %q, want transport custom key only", keymap)
 	}
 	if strings.Contains(keymap, "M-S-Left") {
-		t.Fatalf("keymap = %q, did not want transport default stored as alias", keymap)
+		t.Fatalf("keymap = %q, did not want transport default stored as custom key", keymap)
 	}
 }
 
-func TestSettingsHubKeybindingsTypedPopupLocalAliasWritesQuotedKeymap(t *testing.T) {
+func TestSettingsHubKeybindingsTypedPopupLocalKeyWritesQuotedKeymap(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -4514,17 +4549,21 @@ func TestSettingsHubKeybindingsTypedPopupLocalAliasWritesQuotedKeymap(t *testing
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject"}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:type"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:add"}, nil
 		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:advanced"}, nil
+		case 5:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:type"}, nil
+		case 6:
 			if got, want := options.UI, "settings-keybinding-type"; got != want {
 				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Query: "p"}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 7:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 8:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 9:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -4554,12 +4593,20 @@ func TestSettingsHubKeybindingsCapturePrintableKeyWritesQuotedKeymap(t *testing.
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject"}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:capture"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:add"}, nil
 		case 4:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			if got, want := options.UI, "settings-keybinding-add"; got != want {
+				t.Fatalf("add key UI = %q, want %q", got, want)
+			}
+			if !hasEntryLabelContaining(options.Entries, "Press a key") {
+				t.Fatalf("add key entries = %#v, want default press-key flow", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:capture"}, nil
 		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)

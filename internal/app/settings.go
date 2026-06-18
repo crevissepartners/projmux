@@ -3048,6 +3048,10 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 			return fmt.Errorf("unknown keybinding detail action: %s", action)
 		}
 		switch op {
+		case "add":
+			if err := c.runKeybindingAdd(actionID, stdout, stderr); err != nil {
+				return err
+			}
 		case "capture":
 			if err := c.runKeybindingCapture(actionID, stdout); err != nil {
 				return err
@@ -3065,6 +3069,12 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 				return err
 			}
 		default:
+			if chord, ok := strings.CutPrefix(op, "key:"); ok {
+				if err := c.runKeybindingKeyDetail(actionID, chord, stdout, stderr); err != nil {
+					return err
+				}
+				continue
+			}
 			if chord, ok := strings.CutPrefix(op, "remove:"); ok {
 				if err := c.removeKeymapKeyAndApply(actionID, chord, stdout); err != nil {
 					return err
@@ -3095,12 +3105,150 @@ func parseKeymapDetailAction(value, actionID string) (string, bool) {
 	}
 	op := strings.TrimPrefix(value, settingsActionPrefixKeymap+actionID+":")
 	switch {
-	case op == "capture", op == "type", op == "reset", op == "unbind":
+	case op == "add", op == "advanced", op == "capture", op == "type", op == "reset", op == "unbind":
+		return op, true
+	case strings.HasPrefix(op, "key:"):
 		return op, true
 	case strings.HasPrefix(op, "remove:"):
 		return op, true
+	case strings.HasPrefix(op, "test:"):
+		return op, true
 	}
 	return "", false
+}
+
+func (c *settingsCommand) runKeybindingAdd(actionID string, stdout, stderr io.Writer) error {
+	for {
+		entries, title, err := c.keybindingAddEntries(actionID)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-keybinding-add",
+			Entries:    entries,
+			Title:      title,
+			Prompt:     "Settings > Keybindings > Action > Add key > ",
+			Footer:     projmuxFooter("Press a key to add it to this action."),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		op, ok := parseKeymapDetailAction(action, actionID)
+		if !ok {
+			return fmt.Errorf("unknown keybinding add action: %s", action)
+		}
+		switch op {
+		case "capture":
+			return c.runKeybindingCapture(actionID, stdout)
+		case "advanced":
+			done, err := c.runKeybindingAddAdvanced(actionID, stdout, stderr)
+			if err != nil {
+				return err
+			}
+			if done {
+				return nil
+			}
+		default:
+			return fmt.Errorf("unknown keybinding add operation: %s", op)
+		}
+	}
+}
+
+func (c *settingsCommand) runKeybindingAddAdvanced(actionID string, stdout, stderr io.Writer) (bool, error) {
+	for {
+		entries, title, err := c.keybindingAddAdvancedEntries(actionID)
+		if err != nil {
+			return false, err
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-keybinding-add-advanced",
+			Entries:    entries,
+			Title:      title,
+			Prompt:     "Settings > Keybindings > Action > Add key > Advanced > ",
+			Footer:     projmuxFooter("Typed key names and raw diagnostics stay advanced."),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return false, err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return false, errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return false, nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		op, ok := parseKeymapDetailAction(action, actionID)
+		if !ok {
+			return false, fmt.Errorf("unknown keybinding add advanced action: %s", action)
+		}
+		switch op {
+		case "type":
+			return true, c.runKeybindingTyped(actionID, false, stdout)
+		default:
+			return false, fmt.Errorf("unknown keybinding add advanced operation: %s", op)
+		}
+	}
+}
+
+func (c *settingsCommand) runKeybindingKeyDetail(actionID, chord string, stdout, stderr io.Writer) error {
+	for {
+		entries, title, err := c.keybindingKeyDetailEntries(actionID, chord)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-keybinding-key-detail",
+			Entries:    entries,
+			Title:      title,
+			Prompt:     "Settings > Keybindings > Action > Key > ",
+			Footer:     projmuxFooter("Manage this active key."),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		op, ok := parseKeymapDetailAction(action, actionID)
+		if !ok {
+			return fmt.Errorf("unknown keybinding key action: %s", action)
+		}
+		switch {
+		case strings.HasPrefix(op, "remove:"):
+			removeChord := strings.TrimPrefix(op, "remove:")
+			return c.removeKeymapKeyAndApply(actionID, removeChord, stdout)
+		case strings.HasPrefix(op, "test:"):
+			continue
+		default:
+			return fmt.Errorf("unknown keybinding key operation: %s", op)
+		}
+	}
 }
 
 func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer) error {
@@ -3249,10 +3397,13 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Label: c.rowLabelInfo("Keys", keybindingAliasesSummary(action), keybindingKeysDetail(action)),
 			Value: settingsNoopValue,
 		},
-		{
-			Label: c.rowLabelInfo("Actions", keybindingActionsSummary(keymap, action, defaultAction), "choose a row below"),
-			Value: settingsNoopValue,
-		},
+	}
+	prefix := settingsActionPrefixKeymap + action.ID + ":"
+	for _, key := range keybindingVisibleChords(action) {
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, keybindingChordDisplay(key), "key detail"),
+			Value: prefix + "key:" + key,
+		})
 	}
 	if !keyBindingEditable(action) {
 		entries = append(entries, intpickercompat.Entry{
@@ -3262,23 +3413,14 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 		title := "Keybinding - " + keyBindingDisplayName(action)
 		return entries, title, nil
 	}
-	prefix := settingsActionPrefixKeymap + action.ID + ":"
-	entries = append(entries,
-		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Add key", "press desired key"),
-			Value: prefix + "capture",
-		},
-		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Add key", "enter key name"),
-			Value: prefix + "type",
-		},
-	)
-	for _, key := range removableKeybindingKeys(keymap, action, defaultAction) {
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Remove key", keybindingChordDisplay(key)),
-			Value: prefix + "remove:" + key,
-		})
-	}
+	entries = append(entries, intpickercompat.Entry{
+		Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "+ Add key", "press desired key"),
+		Value: prefix + "add",
+	})
+	entries = append(entries, intpickercompat.Entry{
+		Label: c.rowLabelInfo("Options", keybindingActionsSummary(keymap, action, defaultAction), "choose a row below"),
+		Value: settingsNoopValue,
+	})
 	if len(keybindingVisibleChords(action)) != 0 {
 		entries = append(entries, intpickercompat.Entry{
 			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Unbind", "remove all active keys"),
@@ -3297,6 +3439,93 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 	})
 	title := "Keybinding - " + keyBindingDisplayName(action)
 	return entries, title, nil
+}
+
+func (c *settingsCommand) keybindingAddEntries(actionID string) ([]intpickercompat.Entry, string, error) {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return nil, "", err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	prefix := settingsActionPrefixKeymap + action.ID + ":"
+	entries := []intpickercompat.Entry{
+		{
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Press a key", "capture desired key"),
+			Value: prefix + "capture",
+		},
+		{
+			Label: c.rowLabel(settingsGlyphBack, settingsColorBack, "Cancel", "return to action"),
+			Value: settingsBackValue,
+		},
+		{
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Advanced...", "advanced options"),
+			Value: prefix + "advanced",
+		},
+	}
+	return entries, "Add Key - " + keyBindingDisplayName(action), nil
+}
+
+func (c *settingsCommand) keybindingAddAdvancedEntries(actionID string) ([]intpickercompat.Entry, string, error) {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return nil, "", err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	prefix := settingsActionPrefixKeymap + action.ID + ":"
+	entries := []intpickercompat.Entry{
+		c.backEntry(),
+		{
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name", "type a tmux key name"),
+			Value: prefix + "type",
+		},
+		{
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Raw diagnostic view", "advanced diagnostics"),
+			Value: settingsNoopValue,
+		},
+	}
+	return entries, "Advanced Add Key - " + keyBindingDisplayName(action), nil
+}
+
+func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]intpickercompat.Entry, string, error) {
+	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return nil, "", err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	prefix := settingsActionPrefixKeymap + action.ID + ":"
+	displayKey := keybindingChordDisplay(chord)
+	entries := []intpickercompat.Entry{
+		c.backEntry(),
+		{
+			Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), keybindingState(keymap, action, defaultAction)),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: c.rowLabelInfo("Key", displayKey, "active key"),
+			Value: settingsNoopValue,
+		},
+	}
+	if containsString(removableKeybindingKeys(keymap, action, defaultAction), chord) {
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Remove key", displayKey),
+			Value: prefix + "remove:" + chord,
+		})
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Test key", "diagnostic"),
+		Value: prefix + "test:" + chord,
+	})
+	return entries, "Key - " + displayKey, nil
 }
 
 func keybindingAliasesSummary(action keyBindingAction) string {
@@ -3480,7 +3709,19 @@ func sameStringSlice(a, b []string) bool {
 }
 
 func keybindingListSummary(action keyBindingAction, state string) string {
-	return strings.Join([]string{"keys " + keybindingAliasesSummary(action), "state " + state}, "  ")
+	return strings.Join([]string{"keys " + keybindingListKeysSummary(action), "state " + state}, "  ")
+}
+
+func keybindingListKeysSummary(action keyBindingAction) string {
+	keys := keybindingVisibleChords(action)
+	if len(keys) == 0 {
+		return "Not bound"
+	}
+	summary := keybindingChordDisplay(keys[0])
+	if len(keys) > 1 {
+		summary += fmt.Sprintf(" +%d", len(keys)-1)
+	}
+	return summary
 }
 
 func keybindingKeysDetail(action keyBindingAction) string {
