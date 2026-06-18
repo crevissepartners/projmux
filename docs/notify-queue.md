@@ -116,10 +116,13 @@ topic/pane-title/task context plus count and severity/live-state aggregate
 metadata, and line 3 keeps the latest notification preview. Collapsed group
 cards do not promote window/pane ids as primary information. Right/Left unfold
 and fold the selected group inside the native sidebar only; this fold state is
-session-local and is not persisted. Enter on a group row unfolds the group
-instead of acknowledging it. Expanded child notification rows are compact event
-rows with age, message preview, and severity/state while keeping the existing
-focus success, target-gone, failure, and ack behavior. The surface actions
+session-local and is not persisted. Enter on a group row, whether folded or
+expanded, focuses the group's representative pane and acknowledges every
+visible notification in that group only after focus succeeds. If the
+representative target is stale, gone, or focus fails, Enter keeps the group
+pending, shows a clear message, and refreshes/prunes the list. Expanded child
+notification rows are compact event rows with age, message preview, and
+severity/state while keeping the existing focus/ack-one behavior. The surface actions
 `NotifySidebar:Ack`, `NotifySidebar:AckGroup`,
 `NotifySidebar:ClearNonCritical`, and `NotifySidebar:ClearAll` are internal
 picker actions; direct launch aliases are edited in Settings, while internal
