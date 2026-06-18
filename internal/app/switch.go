@@ -2157,6 +2157,9 @@ func pickerKeyFromTmuxChord(chord string) string {
 	if after, ok := strings.CutPrefix(chord, "C-"); ok {
 		return "ctrl-" + strings.ToLower(after)
 	}
+	if len(chord) == 1 && chord[0] >= 'A' && chord[0] <= 'Z' {
+		return chord
+	}
 	return strings.ToLower(chord)
 }
 
@@ -2219,9 +2222,17 @@ func pickerActionKeyGuide(homeDir func() (string, error), lookupEnv func(string)
 		if label == "" {
 			label = item.ActionID
 		}
-		parts = append(parts, keybindingReadableChord(chord)+": "+label)
+		parts = append(parts, pickerActionGuideReadableChord(chord)+": "+label)
 	}
 	return strings.Join(parts, "  |  ")
+}
+
+func pickerActionGuideReadableChord(chord string) string {
+	chord = strings.TrimSpace(chord)
+	if len(chord) == 1 {
+		return chord
+	}
+	return keybindingReadableChord(chord)
 }
 
 func pickerActionGuideChord(actions []keyBindingAction, actionID string) string {

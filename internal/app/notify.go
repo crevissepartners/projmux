@@ -312,10 +312,9 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 	options := c.notifySidebarPickerOptions(store, entries, severities, sources, limit, locale)
 	if trigger, cancel := c.subscribeNotifyQueueRefreshBestEffort(context.Background()); trigger != nil {
 		defer cancel()
-		options.DeferredUpdate = func() (intpicker.DeferredUpdate, error) {
-			return c.notifySidebarDeferredUpdate(store, severities, sources, limit, locale)
-		}
 		options.DeferredUpdateTrigger = trigger
+	} else {
+		options.DeferredUpdate = nil
 	}
 	if options.Theme == nil {
 		options = fallbackRenderThemeSource().pickerOptions(options)
@@ -338,8 +337,20 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		_, err = fmt.Fprintf(stdout, "cleared %s\n", i18n.FormatCount(removed, i18n.CountNotifications, locale, i18n.FormatFull))
 		return err
 	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:Ack", "a"):
+		if notifySidebarGroupKeyFromValue(id) != "" {
+			return nil
+		}
 		if err := store.Ack(id); err != nil {
 			return fmt.Errorf("ack notification: %w", err)
+		}
+		return nil
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:AckGroup", "A"):
+		groupKey := notifySidebarSelectedGroupKey(entries, id)
+		if groupKey == "" {
+			return nil
+		}
+		if err := ackNotifySidebarGroup(store, entries, groupKey); err != nil {
+			return err
 		}
 		return nil
 	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearNonCritical", "x"):
@@ -348,6 +359,9 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		}
 		return nil
 	default:
+		if notifySidebarGroupKeyFromValue(id) != "" {
+			return nil
+		}
 		entry, ok := findNotificationByID(entries, id)
 		if !ok {
 			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
@@ -389,17 +403,36 @@ func (c *notifyCommand) subscribeNotifyQueueRefreshBestEffort(parent context.Con
 }
 
 func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []notify.Notification, severities, sources []string, limit int, locale i18n.Locale) intpicker.Options {
+	expanded := map[string]bool{}
 	refresh := func() (intpicker.DeferredUpdate, error) {
-		return c.notifySidebarDeferredUpdate(store, severities, sources, limit, locale)
+		return c.notifySidebarDeferredUpdate(store, severities, sources, limit, locale, expanded)
 	}
 	ack := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
 		id := strings.TrimSpace(ctx.Value)
 		if id == "" || id == notifySidebarEmptyValue {
 			return refresh()
 		}
+		if notifySidebarGroupKeyFromValue(id) != "" {
+			return refresh()
+		}
 		if err := store.Ack(id); err != nil {
 			return intpicker.DeferredUpdate{}, fmt.Errorf("ack notification: %w", err)
 		}
+		return refresh()
+	}
+	ackGroup := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		groupKey := notifySidebarSelectedGroupKey(current, ctx.Value)
+		if groupKey == "" {
+			return refresh()
+		}
+		if err := ackNotifySidebarGroup(store, current, groupKey); err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		delete(expanded, groupKey)
 		return refresh()
 	}
 	clearNonCritical := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
@@ -412,29 +445,70 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 		}
 		return refresh()
 	}
+	unfold := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		if groupKey := notifySidebarSelectedGroupKey(current, ctx.Value); groupKey != "" {
+			expanded[groupKey] = true
+		}
+		return refresh()
+	}
+	fold := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		if groupKey := notifySidebarSelectedGroupKey(current, ctx.Value); groupKey != "" {
+			delete(expanded, groupKey)
+		}
+		return refresh()
+	}
+	focusOrUnfold := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		if groupKey := notifySidebarSelectedGroupKey(current, ctx.Value); groupKey != "" && notifySidebarGroupKeyFromValue(ctx.Value) != "" {
+			expanded[groupKey] = true
+			return refresh()
+		}
+		return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: ctx.Key, Value: ctx.Value, Query: ctx.Query}}, nil
+	}
 	actions := append(
 		pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"NotifySidebarToggle"}, "esc", "alt-2"),
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:FocusAndAck"}, []string{"enter"}), focusOrUnfold)...,
+	)
+	actions = append(actions,
 		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:Ack"}, []string{"a"}), ack)...,
+	)
+	actions = append(actions,
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:AckGroup"}, []string{"A"}), ackGroup)...,
 	)
 	actions = append(actions,
 		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearNonCritical"}, []string{"x"}), clearNonCritical)...,
 	)
+	actions = append(actions, notifySidebarMutableActions([]string{"right"}, unfold)...)
+	actions = append(actions, notifySidebarMutableActions([]string{"left"}, fold)...)
 	for _, key := range effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearAll"}, []string{"ctrl-x"}) {
 		actions = append(actions, intpicker.Action{Key: key, Intent: intpicker.ActionAccept})
 	}
 
 	now := c.clock()
 	liveByID := c.notifyLiveByIDBestEffort()
+	model := buildNotifySidebarReadModel(entries, now, liveByID, locale)
 	return intpicker.Options{
-		UI:            "notify-sidebar",
-		MultiLine:     true,
-		Title:         theme.ANSINotifyTitleStart + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications" + theme.ANSIReset,
-		Prompt:        "Notify > ",
-		Header:        "Newest first",
-		Footer:        notifySidebarFooter(c.homeDir, c.lookupEnv),
-		Actions:       actions,
-		Items:         notifySidebarPickerItems(notifySidebarEntriesWithLiveLocale(entries, now, liveByID, locale)),
-		DisableSearch: true,
+		UI:             "notify-sidebar",
+		MultiLine:      true,
+		Title:          theme.ANSINotifyTitleStart + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications" + theme.ANSIReset,
+		Prompt:         "Notify > ",
+		Header:         "Newest first",
+		Footer:         notifySidebarFooter(c.homeDir, c.lookupEnv),
+		Actions:        actions,
+		Items:          notifySidebarPickerItems(model.ExpandedEntries(expanded)),
+		DisableSearch:  true,
+		DeferredUpdate: refresh,
 	}
 }
 
@@ -451,23 +525,31 @@ func notifySidebarMutableActions(keys []string, mutate func(intpicker.ActionCont
 }
 
 func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string) string {
-	return pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
+	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
 		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus/ack"},
 		{ActionID: "NotifySidebar:Ack", Label: "ack"},
+		{ActionID: "NotifySidebar:AckGroup", Label: "ack group"},
 		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
 		{ActionID: "NotifySidebar:ClearAll", Label: "clear all"},
 	})
+	local := keybindingReadableChord("Right") + ": unfold  |  " + keybindingReadableChord("Left") + ": fold"
+	if guide == "" {
+		return local
+	}
+	return local + "  |  " + guide
 }
 
-func (c *notifyCommand) notifySidebarDeferredUpdate(store notifyStore, severities, sources []string, limit int, locale i18n.Locale) (intpicker.DeferredUpdate, error) {
+func (c *notifyCommand) notifySidebarDeferredUpdate(store notifyStore, severities, sources []string, limit int, locale i18n.Locale, expanded map[string]bool) (intpicker.DeferredUpdate, error) {
 	entries, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
 	if err != nil {
 		return intpicker.DeferredUpdate{}, err
 	}
 	now := c.clock()
 	liveByID := c.notifyLiveByIDBestEffort()
+	model := buildNotifySidebarReadModel(entries, now, liveByID, locale)
+	pruneNotifySidebarExpanded(expanded, model)
 	return intpicker.DeferredUpdate{
-		Items: notifySidebarPickerItems(notifySidebarEntriesWithLiveLocale(entries, now, liveByID, locale)),
+		Items: notifySidebarPickerItems(model.ExpandedEntries(expanded)),
 	}, nil
 }
 
@@ -509,6 +591,71 @@ func ackNonCriticalNotifications(store notifyStore, entries []notify.Notificatio
 }
 
 const notifySidebarEmptyValue = "__projmux_notify_empty__"
+const notifySidebarGroupValuePrefix = "__projmux_notify_group__:"
+
+func notifySidebarGroupValue(groupKey string) string {
+	groupKey = strings.TrimSpace(groupKey)
+	if groupKey == "" {
+		return ""
+	}
+	return notifySidebarGroupValuePrefix + groupKey
+}
+
+func notifySidebarGroupKeyFromValue(value string) string {
+	value = strings.TrimSpace(value)
+	key, ok := strings.CutPrefix(value, notifySidebarGroupValuePrefix)
+	if !ok {
+		return ""
+	}
+	return key
+}
+
+func notifySidebarSelectedGroupKey(entries []notify.Notification, selectedValue string) string {
+	selectedValue = strings.TrimSpace(selectedValue)
+	if selectedValue == "" || selectedValue == notifySidebarEmptyValue {
+		return ""
+	}
+	if groupKey := notifySidebarGroupKeyFromValue(selectedValue); groupKey != "" {
+		return groupKey
+	}
+	for _, entry := range entries {
+		if entry.ID == selectedValue {
+			return notifySidebarGroupKey(entry)
+		}
+	}
+	return ""
+}
+
+func ackNotifySidebarGroup(store notifyStore, entries []notify.Notification, groupKey string) error {
+	groupKey = strings.TrimSpace(groupKey)
+	if groupKey == "" {
+		return nil
+	}
+	for _, entry := range entries {
+		if notifySidebarGroupKey(entry) != groupKey {
+			continue
+		}
+		if err := store.Ack(entry.ID); err != nil {
+			return fmt.Errorf("ack notification group: %w", err)
+		}
+	}
+	return nil
+}
+
+func pruneNotifySidebarExpanded(expanded map[string]bool, model notifySidebarReadModel) {
+	if len(expanded) == 0 {
+		return
+	}
+	visible := make(map[string]bool, len(model.Groups))
+	for _, group := range model.Groups {
+		visible[group.Key] = true
+	}
+	for key := range expanded {
+		if !visible[key] {
+			delete(expanded, key)
+		}
+	}
+}
 
 func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpickercompat.Entry {
 	return notifySidebarEntriesWithLive(entries, now, nil)
@@ -556,10 +703,7 @@ func (m notifySidebarReadModel) CollapsedEntries() []intpickercompat.Entry {
 	}
 	out := make([]intpickercompat.Entry, 0, len(m.Groups))
 	for _, group := range m.Groups {
-		out = append(out, intpickercompat.Entry{
-			Label: group.Label,
-			Value: group.Latest.ID,
-		})
+		out = append(out, notifySidebarGroupEntry(group, false))
 	}
 	return out
 }
@@ -570,11 +714,9 @@ func (m notifySidebarReadModel) ExpandedEntries(expanded map[string]bool) []intp
 	}
 	out := make([]intpickercompat.Entry, 0, len(m.Groups))
 	for _, group := range m.Groups {
-		out = append(out, intpickercompat.Entry{
-			Label: group.Label,
-			Value: group.Latest.ID,
-		})
-		if !expanded[group.Key] {
+		isExpanded := expanded[group.Key]
+		out = append(out, notifySidebarGroupEntry(group, isExpanded))
+		if !isExpanded {
 			continue
 		}
 		for _, row := range group.Rows {
@@ -582,6 +724,24 @@ func (m notifySidebarReadModel) ExpandedEntries(expanded map[string]bool) []intp
 		}
 	}
 	return out
+}
+
+func notifySidebarGroupEntry(group notifySidebarGroup, expanded bool) intpickercompat.Entry {
+	return intpickercompat.Entry{
+		Label: notifySidebarGroupLabelWithMarker(group.Label, expanded),
+		Value: notifySidebarGroupValue(group.Key),
+	}
+}
+
+func notifySidebarGroupLabelWithMarker(label string, expanded bool) string {
+	marker := "▸ "
+	if expanded {
+		marker = "▾ "
+	}
+	if strings.HasPrefix(label, "▸ ") || strings.HasPrefix(label, "▾ ") {
+		return marker + label[len("▸ "):]
+	}
+	return marker + label
 }
 
 func notifySidebarEmptyEntries() []intpickercompat.Entry {

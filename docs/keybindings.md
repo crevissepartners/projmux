@@ -114,7 +114,11 @@ by different picker surfaces, while conflicts inside one surface are rejected.
 | `SessionPopup:KillSession` | Kill the focused session |
 | `SessionPopup:CyclePreviewWindowPrev` / `SessionPopup:CyclePreviewWindowNext` | Preview windows |
 | `SessionPopup:CyclePreviewPanePrev` / `SessionPopup:CyclePreviewPaneNext` | Preview panes |
-| `NotifySidebar:Ack` / `NotifySidebar:ClearNonCritical` / `NotifySidebar:ClearAll` | Manage notifications |
+| `NotifySidebar:Ack` / `NotifySidebar:AckGroup` / `NotifySidebar:ClearNonCritical` / `NotifySidebar:ClearAll` | Manage notifications |
+
+Notify sidebar Right/Left group fold navigation is picker-local and is not part
+of the Settings action catalog. `NotifySidebar:AckGroup` defaults to uppercase
+`A`, distinct from `NotifySidebar:Ack` on lowercase `a`.
 
 Runtime picker footers render key guides from the merged keymap, using the
 first active key as the representative key.

@@ -112,17 +112,21 @@ flat; the sidebar builds a read-only grouped view for display. The first screen
 shows collapsed group rows keyed by pane when available, then window, then
 session/external fallback. Each group row summarizes the pending count, newest
 age, latest preview, project/session, worst severity, and live/stale/gone
-display state. Selecting a collapsed group row focuses and acks that group's
-latest notification after focus succeeds. Child notification rows are prepared
-for expanded rendering and keep the existing per-notification styling, but
-fold/unfold interaction and explicit group ack are future Phase 1 behavior and
-are not current keybindings. The surface actions
-`NotifySidebar:Ack`, `NotifySidebar:ClearNonCritical`, and
-`NotifySidebar:ClearAll` are internal picker actions; direct launch aliases
-are edited in Settings, while internal picker aliases are adjusted in
-`keymap.toml` when needed. Runtime footer key guides read the merged keymap
-and show the default alias when present, otherwise the first configured alias,
-so custom aliases do not make the UI stale. `NotifySidebar:Ack` and
+display state. Right/Left unfold and fold the
+selected group inside the native sidebar only; this fold state is session-local
+and is not persisted. Enter on a group row unfolds the group instead of
+acknowledging it. Child notification rows keep the existing focus success,
+target-gone, failure, and ack behavior. The surface actions
+`NotifySidebar:Ack`, `NotifySidebar:AckGroup`,
+`NotifySidebar:ClearNonCritical`, and `NotifySidebar:ClearAll` are internal
+picker actions; direct launch aliases are edited in Settings, while internal
+picker aliases are adjusted in `keymap.toml` when needed.
+`NotifySidebar:AckGroup` defaults to uppercase `A` and explicitly
+acknowledges every visible notification in the selected group, including
+critical notifications. Runtime footer key guides read the merged keymap and
+show the default alias when present, otherwise the first configured alias, so
+custom aliases do not make the UI stale.
+`NotifySidebar:Ack`, `NotifySidebar:AckGroup`, and
 `NotifySidebar:ClearNonCritical` refresh rows, live state, and selection inside
 the same native picker session; `NotifySidebar:ClearAll` still closes the
 popup and prints a summary. Rows are intentionally compact: hidden queue ids

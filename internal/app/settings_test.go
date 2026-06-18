@@ -4305,6 +4305,7 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewWindowPrev", "Session Popup: Preview Previous Window", []string{"Left", "state Default"}, "Session Popup"},
 		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewPanePrev", "Session Popup: Preview Previous Pane", []string{"Alt-Up", "M-Up", "state Default"}, "Session Popup"},
 		{settingsActionPrefixKeymap + "NotifySidebar:Ack", "Notify Sidebar: Acknowledge", []string{"A", "a", "state Default"}, "Notify Sidebar"},
+		{settingsActionPrefixKeymap + "NotifySidebar:AckGroup", "Notify Sidebar: Acknowledge Group", []string{"A", "state Default"}, "Notify Sidebar"},
 		{settingsActionPrefixKeymap + "NotifySidebar:ClearAll", "Notify Sidebar: Clear All", []string{"Ctrl-X", "C-x", "state Default"}, "Notify Sidebar"},
 		{settingsActionPrefixKeymap + "Settings:SwitchTabNext", "Next Settings Tab", []string{"Alt-Shift-Right", "M-S-Right", "state Default"}, "Next Settings Tab"},
 		{settingsActionPrefixKeymap + "previous-window", "Previous Window", []string{"Alt-Shift-Left", "M-S-Left", "state Default"}, "Previous Window"},
@@ -4338,6 +4339,19 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 		if !strings.Contains(entries[idx].SearchKey, tc.wantSearchText) {
 			t.Fatalf("entry %q search key = %q, want searchable text %q", tc.id, entries[idx].SearchKey, tc.wantSearchText)
 		}
+	}
+}
+
+func TestNotifySidebarAckGroupPickerKeyStaysDistinctFromAck(t *testing.T) {
+	t.Parallel()
+
+	ack := effectivePickerKeysForActions(nil, nil, []string{"NotifySidebar:Ack"}, []string{"a"})
+	if !reflect.DeepEqual(ack, []string{"a"}) {
+		t.Fatalf("ack keys = %#v, want lowercase a", ack)
+	}
+	ackGroup := effectivePickerKeysForActions(nil, nil, []string{"NotifySidebar:AckGroup"}, []string{"A"})
+	if !reflect.DeepEqual(ackGroup, []string{"A"}) {
+		t.Fatalf("ack group keys = %#v, want uppercase A", ackGroup)
 	}
 }
 
@@ -4698,7 +4712,7 @@ keys = []
 		{ActionID: "Sidebar:PinProject", Label: "pin project"},
 		{ActionID: "Sidebar:KillSession", Label: "kill session"},
 	})
-	if !strings.Contains(guide, "P: pin project") || strings.Contains(guide, "kill session") {
+	if !strings.Contains(guide, "p: pin project") || strings.Contains(guide, "kill session") {
 		t.Fatalf("picker guide = %q, want custom pin key and no unbound kill guide", guide)
 	}
 }
@@ -4749,6 +4763,7 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 		"Sidebar:KillSession":       "Project Sidebar: Kill Session",
 		"SessionPopup:KillSession":  "Session Popup: Kill Session",
 		"NotifySidebar:Ack":         "Notify Sidebar: Acknowledge",
+		"NotifySidebar:AckGroup":    "Notify Sidebar: Acknowledge Group",
 		"NotifySidebar:ClearAll":    "Notify Sidebar: Clear All",
 		"NotifySidebar:FocusAndAck": "Notify Sidebar: Focus and Acknowledge",
 		"Settings:SwitchTabPrev":    "Previous Settings Tab",

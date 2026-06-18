@@ -131,6 +131,9 @@ func (p *recordingNotifyNativePicker) Run(options intpicker.Options) (intpicker.
 		if err != nil {
 			return intpicker.Result{}, err
 		}
+		if update.Result != nil {
+			return *update.Result, nil
+		}
 		p.updates = append(p.updates, update.Items)
 		options.Items = update.Items
 	}
@@ -425,13 +428,14 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Enter: focus/ack  |  A: ack  |  X: clear non-critical  |  Ctrl-X: clear all"; got != want {
+	if got, want := picker.options.Footer, "Right: unfold  |  Left: fold  |  Enter: focus/ack  |  a: ack  |  A: ack group  |  x: clear non-critical  |  Ctrl-X: clear all"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
-	if got, want := picker.options.ExpectKeys, []string{"a", "x", "ctrl-x"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options.ExpectKeys, []string{"enter", "a", "A", "x", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expect keys = %#v, want %#v", got, want)
 	}
-	if len(picker.options.Entries) != 1 || picker.options.Entries[0].Value != "abc" {
+	groupValue := notifySidebarGroupValue("pane\x00projmux\x00main\x000")
+	if len(picker.options.Entries) != 1 || picker.options.Entries[0].Value != groupValue {
 		t.Fatalf("entries = %#v", picker.options.Entries)
 	}
 	entry := picker.options.Entries[0]
@@ -481,6 +485,9 @@ keys = ["o", "Enter"]
 [bindings."NotifySidebar:Ack"]
 keys = ["b", "a"]
 
+[bindings."NotifySidebar:AckGroup"]
+keys = ["h", "A"]
+
 [bindings."NotifySidebar:ClearNonCritical"]
 keys = ["c"]
 
@@ -503,7 +510,7 @@ keys = ["C-y"]
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	want := "Enter: focus/ack  |  A: ack  |  C: clear non-critical  |  Ctrl-Y: clear all"
+	want := "Right: unfold  |  Left: fold  |  Enter: focus/ack  |  a: ack  |  A: ack group  |  c: clear non-critical  |  Ctrl-Y: clear all"
 	if got := picker.options.Footer; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
@@ -647,9 +654,10 @@ func TestNotifySidebarGroupedReadModelConstructsCollapsedPaneRows(t *testing.T) 
 	if group.Count != 2 || group.Worst != notify.SeverityWarn || group.Display != notifyDisplayLive || group.Latest.ID != "new" {
 		t.Fatalf("group = %+v, want count/worst/latest live group", group)
 	}
+	groupValue := notifySidebarGroupValue(group.Key)
 	collapsed := model.CollapsedEntries()
-	if len(collapsed) != 1 || collapsed[0].Value != "new" {
-		t.Fatalf("collapsed entries = %#v, want latest notification value", collapsed)
+	if len(collapsed) != 1 || collapsed[0].Value != groupValue {
+		t.Fatalf("collapsed entries = %#v, want group value %q", collapsed, groupValue)
 	}
 	label := stripANSI(collapsed[0].Label)
 	lines := strings.Split(label, "\n")
@@ -677,8 +685,11 @@ func TestNotifySidebarGroupedReadModelConstructsCollapsedPaneRows(t *testing.T) 
 	}
 
 	expanded := model.ExpandedEntries(map[string]bool{group.Key: true})
-	if len(expanded) != 3 || expanded[1].Value != "new" || expanded[2].Value != "old" {
+	if len(expanded) != 3 || expanded[0].Value != groupValue || expanded[1].Value != "new" || expanded[2].Value != "old" {
 		t.Fatalf("expanded entries = %#v, want group then newest-first child rows", expanded)
+	}
+	if !strings.Contains(stripANSI(expanded[0].Label), "▾ Codex · worker loop") {
+		t.Fatalf("expanded group label = %q, want unfolded marker", expanded[0].Label)
 	}
 	if !strings.Contains(expanded[1].Label, " WARN ") || !strings.Contains(expanded[2].Label, " INFO ") {
 		t.Fatalf("child labels = %#v, want existing severity badges preserved", expanded)
@@ -696,8 +707,8 @@ func TestNotifySidebarGroupedReadModelTitleUsesOlderRowMetadata(t *testing.T) {
 
 	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
 	collapsed := model.CollapsedEntries()
-	if len(collapsed) != 1 || collapsed[0].Value != "latest" {
-		t.Fatalf("collapsed entries = %#v, want latest notification value", collapsed)
+	if len(collapsed) != 1 || collapsed[0].Value != notifySidebarGroupValue(model.Groups[0].Key) {
+		t.Fatalf("collapsed entries = %#v, want group value", collapsed)
 	}
 	label := stripANSI(collapsed[0].Label)
 	if !strings.Contains(label, "▸ Codex · worker loop") {
@@ -825,8 +836,9 @@ func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 		if options.UI != "notify-sidebar" {
 			t.Fatalf("native UI = %q, want notify-sidebar", options.UI)
 		}
-		if len(options.Items) != 1 || options.Items[0].Value != "abc" {
-			t.Fatalf("native items = %#v, want abc", options.Items)
+		groupValue := notifySidebarGroupValue("pane\x00projmux\x00main\x000")
+		if len(options.Items) != 1 || options.Items[0].Value != groupValue {
+			t.Fatalf("native items = %#v, want group value %q", options.Items, groupValue)
 		}
 		return intpicker.Result{Value: "abc"}, nil
 	})
@@ -991,23 +1003,26 @@ func TestNotifyListSidebarAAcksSelectedRowAndRefreshes(t *testing.T) {
 	if len(picker.updates) != 2 {
 		t.Fatalf("picker updates = %d, want 2", len(picker.updates))
 	}
+	abcGroup := notifySidebarGroupValue("pane\x00\x00main\x00%1")
+	defGroup := notifySidebarGroupValue("pane\x00\x00main\x00%2")
+	ghiGroup := notifySidebarGroupValue("pane\x00\x00main\x00%3")
 	first := picker.options[0].Items
-	if len(first) != 3 || first[0].Value != "abc" || first[1].Value != "def" || first[2].Value != "ghi" {
+	if len(first) != 3 || first[0].Value != abcGroup || first[1].Value != defGroup || first[2].Value != ghiGroup {
 		t.Fatalf("first picker entries = %#v, want abc then def then ghi", first)
 	}
 	compatOptions := intpickercompat.OptionsFromPicker(picker.options[0])
 	if got, want := compatOptions.Bindings, []string{"esc:abort", "alt-2:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("picker bindings = %#v, want %#v", got, want)
 	}
-	if got, want := compatOptions.ExpectKeys, []string{"a", "x", "ctrl-x"}; !reflect.DeepEqual(got, want) {
+	if got, want := compatOptions.ExpectKeys, []string{"enter", "a", "A", "x", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expect keys = %#v, want %#v", got, want)
 	}
 	second := picker.updates[0]
-	if len(second) != 2 || second[0].Value != "abc" || second[1].Value != "ghi" {
+	if len(second) != 2 || second[0].Value != abcGroup || second[1].Value != ghiGroup {
 		t.Fatalf("second picker entries = %#v, want abc then ghi", second)
 	}
 	third := picker.updates[1]
-	if len(third) != 1 || third[0].Value != "ghi" {
+	if len(third) != 1 || third[0].Value != ghiGroup {
 		t.Fatalf("third picker entries = %#v, want ghi", third)
 	}
 	if stdout.String() != "" {
@@ -1015,6 +1030,147 @@ func TestNotifyListSidebarAAcksSelectedRowAndRefreshes(t *testing.T) {
 	}
 	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 0 {
 		t.Fatalf("focus calls = %#v, want none", focusCalls)
+	}
+}
+
+func TestNotifyListSidebarRightLeftFoldNavigation(t *testing.T) {
+	t.Parallel()
+
+	groupKey := "pane\x00\x00main\x00%1"
+	groupValue := notifySidebarGroupValue(groupKey)
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "new", Text: "reply ready", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%1", CreatedAt: time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)},
+			{ID: "old", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%1", CreatedAt: time.Date(2026, time.May, 6, 11, 59, 0, 0, time.UTC)},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{
+			{key: "right", value: groupValue, selectedIndex: 0},
+			{key: "left", value: "old", selectedIndex: 2},
+		},
+	}
+	cmd := newCmd(store)
+	cmd.native = picker
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if got, want := len(picker.updates), 2; got != want {
+		t.Fatalf("picker updates = %d, want %d", got, want)
+	}
+	expanded := picker.updates[0]
+	if len(expanded) != 3 || expanded[0].Value != groupValue || expanded[1].Value != "new" || expanded[2].Value != "old" {
+		t.Fatalf("expanded items = %#v, want group plus child rows", expanded)
+	}
+	if !strings.Contains(stripANSI(expanded[0].Label), "▾ ") {
+		t.Fatalf("expanded group label = %q, want unfolded marker", expanded[0].Label)
+	}
+	folded := picker.updates[1]
+	if len(folded) != 1 || folded[0].Value != groupValue {
+		t.Fatalf("folded items = %#v, want only group row", folded)
+	}
+	if !strings.Contains(stripANSI(folded[0].Label), "▸ ") {
+		t.Fatalf("folded group label = %q, want folded marker", folded[0].Label)
+	}
+}
+
+func TestNotifyListSidebarEnterOnGroupUnfoldsAndChildEnterFocuses(t *testing.T) {
+	t.Parallel()
+
+	groupValue := notifySidebarGroupValue("pane\x00sock\x00main\x00%2")
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "new", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)},
+			{ID: "old", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: time.Date(2026, time.May, 6, 11, 59, 0, 0, time.UTC)},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{
+			{key: "enter", value: groupValue, selectedIndex: 0},
+			{key: "enter", value: "new", selectedIndex: 1},
+		},
+	}
+	runner := &focusFakeRunner{}
+	cmd := newCmd(store)
+	cmd.native = picker
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if got, want := store.ackedIDs, []string{"new", "old"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want focused AI bulk ack %#v", got, want)
+	}
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 3 {
+		t.Fatalf("enter group updates = %#v, want one expanded update", picker.updates)
+	}
+	focusCalls := filterFocusCalls(runner.calls)
+	if len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one child focus call", focusCalls)
+	}
+}
+
+func TestNotifyListSidebarEnterOnGroupDoesNotAckWhenNotFollowedByChild(t *testing.T) {
+	t.Parallel()
+
+	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "new", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%2"},
+			{ID: "old", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%2"},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{{key: "enter", value: groupValue, selectedIndex: 0}},
+	}
+	runner := &focusFakeRunner{}
+	cmd := newCmd(store)
+	cmd.native = picker
+	cmd.runner = runner
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if len(store.ackedIDs) != 0 {
+		t.Fatalf("ackedIDs = %#v, want none for group Enter unfold", store.ackedIDs)
+	}
+	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 0 {
+		t.Fatalf("focus calls = %#v, want none for group Enter unfold", focusCalls)
+	}
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 3 {
+		t.Fatalf("updates = %#v, want expanded group", picker.updates)
+	}
+}
+
+func TestNotifyListSidebarAckGroupRemovesVisibleMixedSeverityIncludingCritical(t *testing.T) {
+	t.Parallel()
+
+	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%9")
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "info", Text: "info", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%9"},
+			{ID: "critical", Text: "critical", Severity: notify.SeverityCritical, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%9"},
+			{ID: "warn", Text: "warn", Severity: notify.SeverityWarn, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%9"},
+			{ID: "other", Text: "other", Severity: notify.SeverityCritical, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%10"},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{{key: "A", value: groupValue, selectedIndex: 0}},
+	}
+	cmd := newCmd(store)
+	cmd.native = picker
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if got, want := store.ackedIDs, []string{"info", "critical", "warn"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want group ack including critical %#v", got, want)
+	}
+	otherGroup := notifySidebarGroupValue("pane\x00\x00main\x00%10")
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != otherGroup {
+		t.Fatalf("updates = %#v, want only other critical group remaining", picker.updates)
 	}
 }
 
@@ -1049,10 +1205,11 @@ func TestNotifyListSidebarXClearsNonCriticalAndPreservesCritical(t *testing.T) {
 		t.Fatalf("picker updates = %d, want 1", len(picker.updates))
 	}
 	second := picker.updates[0]
-	if len(second) != 1 || second[0].Value != "def" {
+	defGroup := notifySidebarGroupValue("pane\x00\x00main\x00%2")
+	if len(second) != 1 || second[0].Value != defGroup {
 		t.Fatalf("second picker entries = %#v, want critical def preserved", second)
 	}
-	if second[0].Value == "abc" || second[0].Value == "ghi" {
+	if second[0].Value == notifySidebarGroupValue("pane\x00\x00main\x00%1") || second[0].Value == notifySidebarGroupValue("pane\x00\x00main\x00%3") {
 		t.Fatalf("second picker entries = %#v, want non-critical rows removed", second)
 	}
 	if stdout.String() != "" {
@@ -1139,8 +1296,59 @@ func TestNotifyListSidebarSubscribesToQueueRefreshEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeferredUpdate() error = %v", err)
 	}
-	if len(update.Items) != 1 || update.Items[0].Value != "def" || !strings.Contains(update.Items[0].Label, "+1") {
+	groupValue := notifySidebarGroupValue("session\x00\x00main")
+	if len(update.Items) != 1 || update.Items[0].Value != groupValue || !strings.Contains(update.Items[0].Label, "+1") {
 		t.Fatalf("update items = %#v, want one refreshed grouped row with def latest and compact extra count", update.Items)
+	}
+}
+
+func TestNotifyListSidebarDeferredRefreshKeepsExpandedGroupAndPrunesGoneGroup(t *testing.T) {
+	t.Parallel()
+
+	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%1")
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "new", Text: "reply ready", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%1", CreatedAt: time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)},
+			{ID: "old", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%1", CreatedAt: time.Date(2026, time.May, 6, 11, 59, 0, 0, time.UTC)},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{{key: "right", value: groupValue, selectedIndex: 0}},
+	}
+	events := &stubNotifyQueueEvents{trigger: make(chan struct{}, 1)}
+	cmd := newCmd(store)
+	cmd.native = picker
+	cmd.events = events
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	options := picker.options[0]
+	if options.DeferredUpdate == nil {
+		t.Fatal("DeferredUpdate is nil, want event-backed refresh")
+	}
+	store.listEntries = append([]notify.Notification{
+		{ID: "newer", Text: "newer", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%1", CreatedAt: time.Date(2026, time.May, 6, 12, 1, 0, 0, time.UTC)},
+	}, store.listEntries...)
+	update, err := options.DeferredUpdate()
+	if err != nil {
+		t.Fatalf("DeferredUpdate() error = %v", err)
+	}
+	if len(update.Items) != 4 || update.Items[0].Value != groupValue || update.Items[1].Value != "newer" {
+		t.Fatalf("expanded deferred items = %#v, want expanded group with newer child", update.Items)
+	}
+
+	store.listEntries = []notify.Notification{{ID: "other", Text: "other", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%2"}}
+	update, err = options.DeferredUpdate()
+	if err != nil {
+		t.Fatalf("DeferredUpdate() after prune error = %v", err)
+	}
+	otherGroup := notifySidebarGroupValue("pane\x00\x00main\x00%2")
+	if len(update.Items) != 1 || update.Items[0].Value != otherGroup {
+		t.Fatalf("pruned deferred items = %#v, want only folded other group", update.Items)
+	}
+	if strings.Contains(stripANSI(update.Items[0].Label), "▾ ") {
+		t.Fatalf("pruned group label = %q, did not expect stale expanded marker", update.Items[0].Label)
 	}
 }
 
@@ -1172,7 +1380,8 @@ func TestNotifyListSidebarAAckLastRowStartsAtPreviousRow(t *testing.T) {
 		t.Fatalf("picker updates = %d, want 1", len(picker.updates))
 	}
 	second := picker.updates[0]
-	if len(second) != 1 || second[0].Value != "abc" {
+	groupValue := notifySidebarGroupValue("session\x00\x00main")
+	if len(second) != 1 || second[0].Value != groupValue {
 		t.Fatalf("second picker entries = %#v, want only abc", second)
 	}
 }
@@ -1222,7 +1431,8 @@ func TestNotifyListSidebarAAckRefreshesLiveStateEachLoop(t *testing.T) {
 		t.Fatalf("picker updates = %d, want 1", len(picker.updates))
 	}
 	second := picker.updates[0]
-	if len(second) != 1 || second[0].Value != "ai:main:%3" {
+	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%3")
+	if len(second) != 1 || second[0].Value != groupValue {
 		t.Fatalf("second picker entries = %#v, want only ai:main:%%3", second)
 	}
 	if !strings.Contains(second[0].Label, "STALE") {
