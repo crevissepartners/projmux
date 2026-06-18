@@ -89,6 +89,7 @@ type App struct {
 	upgrade      *upgradeCommand
 	usage        *usageCommand
 	welcome      *welcomeCommand
+	window       *windowCommand
 }
 
 // New builds the default application graph.
@@ -128,6 +129,7 @@ func New() *App {
 		upgrade:      newUpgradeCommand(),
 		usage:        newUsageCommand(),
 		welcome:      newWelcomeCommand(update),
+		window:       newWindowCommand(),
 	}
 }
 
@@ -203,6 +205,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.usage.Run(args[1:], stdout, stderr)
 	case "welcome":
 		return a.welcome.Run(args[1:], stdout, stderr)
+	case "window":
+		return a.window.Run(args[1:], stdout, stderr)
 	case "version", "--version", "-version":
 		_, err := fmt.Fprintf(stdout, "projmux %s\n", version.String())
 		return err
@@ -248,6 +252,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  upgrade   Self-update projmux via go install")
 	fmt.Fprintln(w, "  usage     Report AI token usage across 5h and weekly windows")
 	fmt.Fprintln(w, "  welcome   Reprint the shell welcome guide")
+	fmt.Fprintln(w, "  window    Open recent window navigation surfaces")
 	fmt.Fprintln(w, "  help      Show bootstrap help")
 	fmt.Fprintln(w, "  version   Print the current version")
 }
