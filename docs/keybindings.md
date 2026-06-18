@@ -4,7 +4,7 @@ projmux is keyboard-driven, but the guaranteed launch contract is small:
 fresh installs bind `Alt-1` through `Alt-5` as plain Meta sequences
 (`M-1`..`M-5`, bytes `\x1b1`..`\x1b5`). Other actions remain discoverable in
 Settings > Keybindings. Transport-dependent actions keep their built-in
-transport default key, and Settings can add separate safe tmux plain aliases to
+transport default key, and Settings can add separate safe tmux plain keys to
 the same action. They are not installed as terminal-specific User-key
 fallbacks. `UserN` and `CSI-u` are legacy/removal/unsupported targets, not
 supported fallback guidance.
@@ -15,13 +15,13 @@ The recommended path when a key does not fire:
 2. Run `projmux setup` outside tmux to see which bytes reach the process.
 3. For supported terminals, preview `projmux init [terminal]`; add `--apply`
    only after reviewing the merge.
-4. For unsupported terminals, configure plain Meta bytes or add a tmux alias in
+4. For unsupported terminals, configure plain Meta bytes or add a custom key in
    Settings > Keybindings.
 
 Settings saves safe tmux plain chords for actions. Successful saves use simple
 confirmation copy; if saving, runtime config update, or active tmux reload
 fails, the error names the failed stage. Raw escape payloads, Windows Terminal
-`sendInput` strings, and tmux User keys are rejected as aliases.
+`sendInput` strings, and tmux User keys are rejected as action keys.
 
 ## Quick Start
 
@@ -44,16 +44,19 @@ Settings > Keybindings lists the full action catalogue. In particular, sidebar
 keymap actions, pane switching, window switching, and rename actions remain
 visible.
 
-The Settings flow is intentionally simple: the root is one action list with
-current keys and state. State vocabulary is limited to Default, Custom,
-Available, and Unbound. Each action detail shows the action label, state, Keys,
-Actions, and a collapsed Troubleshooting row with Test key delivery and
-Advanced... entry points. Actions cover adding keys, removing keys, unbinding
-the action, and reset/use-default flows. Diagnostic/probe/init workflows are
-not first-class Settings tabs; use `projmux setup` and `projmux init` from the
-terminal when key delivery needs remediation.
+The Settings flow is intentionally simple: the root is one action list with a
+key summary and state. The key summary uses the first key plus `+N`, or
+`Not bound` when no key is active. State vocabulary is limited to Default,
+Custom, Available, and Unbound. Each action detail shows the action label,
+state, a flat Keys list with `+ Add key`, Options, and a collapsed
+Troubleshooting row with Test key delivery and Advanced... entry points. Key
+rows open key detail for Remove key and Test key. Add key opens Press a key by
+default; Enter key name and raw diagnostics live under Advanced. Options covers
+unbinding the action and reset/use-default flows. Diagnostic/probe/init
+workflows are not first-class Settings tabs; use `projmux setup` and
+`projmux init` from the terminal when key delivery needs remediation.
 
-Optional direct aliases can be added for actions such as:
+Optional direct keys can be added for actions such as:
 
 | Canonical action | Meaning |
 | --- | --- |
@@ -78,20 +81,20 @@ movement. Previous/next window remain transport-dependent and the generated app
 tmux config binds `M-S-Left` / `M-S-Right` to the tmux window navigation
 commands. These default transport keys are always rendered by projmux, because
 delivery still depends on the terminal forwarding the modifier-arrow sequence.
-Settings can add extra safe plain aliases, such as `M-[` for
-`previous-window`; those aliases are saved to `keymap.toml` as `keys = [...]`
+Settings can add extra safe plain keys, such as `M-[` for
+`previous-window`; those keys are saved to `keymap.toml` as `keys = [...]`
 without storing or replacing the transport default. Rename actions no longer
 have a built-in terminal fallback; use tmux's prefix rename flow or configure
-an explicit safe alias where the action is editable.
+an explicit safe key where the action is editable.
 
 ## Product Requirements
 
 Settings > Keybindings stays a discovery surface. It must continue to expose
 launch toggles, sidebar keymap actions, picker-local actions, pane switching,
-window switching, and rename actions. The primary Settings flow is not the
-terminal remediation surface: replace-primary, disable-default, typed fallback,
-terminal mapping preview/apply, and init execution rows stay out of the action
-detail.
+window switching, and rename actions. The basic Settings flow is not the
+terminal remediation surface: key-role replacement, disable-default, typed
+fallback, terminal mapping preview/apply, and init execution rows stay out of
+the action detail.
 
 The product model does not support `UserN` or `CSI-u` as fallback guidance.
 Windows Terminal and Ghostty adapters use built-in plain Meta/control bytes or
@@ -113,8 +116,8 @@ by different picker surfaces, while conflicts inside one surface are rejected.
 | `SessionPopup:CyclePreviewPanePrev` / `SessionPopup:CyclePreviewPaneNext` | Preview panes |
 | `NotifySidebar:Ack` / `NotifySidebar:ClearNonCritical` / `NotifySidebar:ClearAll` | Manage notifications |
 
-Runtime picker footers render key guides from the merged keymap, preferring the
-default alias when it is present and otherwise using the first configured alias.
+Runtime picker footers render key guides from the merged keymap, using the
+first active key as the representative key.
 
 ## Keymap File
 
@@ -151,7 +154,7 @@ so Settings can distinguish them from the `Alt-4` popup picker toggle.
 ## Diagnose: `projmux setup`
 
 Run `projmux setup` outside tmux to find out which projmux keys reach the raw
-terminal. Settings > Keybindings remains the action/alias editor; setup is the
+terminal. Settings > Keybindings remains the action-key editor; setup is the
 terminal delivery diagnostic.
 
 | Status | Meaning |
@@ -185,7 +188,7 @@ projmux init --allow-symlink
 
 The merge is idempotent: matching bindings are no-ops, missing bindings are
 added, and keys already mapped to a different user action are skipped with a
-warning. `projmux init` does not read `keymap.toml`; direct tmux aliases still
+warning. `projmux init` does not read `keymap.toml`; direct tmux keys still
 belong in Settings > Keybindings or the keymap file.
 
 ### Ghostty

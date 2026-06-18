@@ -24,19 +24,22 @@ view-first layout:
   commands, `Pane navigation`, `Window navigation`, and `Rename` groups or
   equivalent searchable rows.
 - `Settings > Keybindings > Action` keeps the user-facing edit path small:
-  action label, state, Keys, Actions, and a collapsed Troubleshooting row.
-  Keys shows only currently active/effective keys. Actions offers Add key,
-  Remove key, Unbind, Reset to default/Use default when state-appropriate. It
+  action label, state, a flat Keys list, Options, and a collapsed
+  Troubleshooting row. Keys shows only currently active/effective keys plus
+  `+ Add key`. Pressing a key row opens key detail, where Remove key and Test
+  key live. Options offers Unbind and Reset to default/Use default when
+  state-appropriate. Add key opens the default Press a key flow with Cancel and
+  Advanced...; typed key-name entry and raw diagnostics live under Advanced. It
   does not expose Default key, Apply State, Delivery, Advanced Delivery,
-  replace-primary, terminal mapping preview, or terminal mapping apply rows as
-  always-visible sections.
+  key-role replacement, terminal mapping preview, or terminal mapping apply
+  rows as always-visible sections.
 - Terminal delivery remediation lives outside Settings primary flow. The
   supported order is `projmux shell` first, then `projmux setup`, then
   `projmux init` for supported terminal adapters.
 - Rows that cannot safely be edited still stay visible. Mark diagnostic-only
   rows with the delivery path and reason instead of hiding them or turning them
-  into unsupported editable aliases. Transport-dependent rows stay visible with
-  a separate default transport key and additive plain-alias entry; replacing or
+  into unsupported editable keys. Transport-dependent rows stay visible with
+  their default transport key and additive custom-key entry; replacing or
   disabling the transport default is not exposed.
 - `Alt-1..5` are the only guaranteed zero-config launch defaults. `UserN` and
   `CSI-u` are legacy/removal/unsupported targets, not supported fallback

@@ -88,11 +88,11 @@ language.
 
 Settings > Keybindings is the normal in-app editor for action keys. It lists
 actions with the current active keys and one state: Default, Custom, Available,
-or Unbound. Open an action to see the action label, state, Keys, Actions, and a
-collapsed Troubleshooting row. Actions are limited to adding keys, removing
-keys, unbinding the action, or resetting/using the default when that applies.
-Successful saves report the keybinding as saved; failures identify the stage
-that failed.
+or Unbound. Open an action to see the action label, state, a flat Keys list,
+Options, and a collapsed Troubleshooting row. Create flows start from
+`+ Add key`, deletion lives under each key's detail, and action-level state
+changes such as Unbind or Reset live under Options. Successful saves report the
+keybinding as saved; failures identify the stage that failed.
 
 Raw sequences that cannot be safely represented as a direct keybinding are not
 persisted. Use Settings to save a custom key. When key delivery needs
@@ -134,7 +134,7 @@ the direct AI pane actions, `ai-split-right` and `ai-split-down`. The direct
 actions create a new managed AI pane each time they run, leaving existing AI
 panes in place. `right` and `down` choose where the new pane is created.
 
-Use an empty `keys` list to disable direct plain aliases for the action when
+Use an empty `keys` list to disable direct plain keys for the action when
 editing the file by hand:
 
 ```toml
@@ -158,7 +158,7 @@ The file currently affects generated tmux config from `projmux tmux
 print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
 `projmux tmux install-app`, and `projmux shell`. Terminal init adapters such as
 Ghostty and Windows Terminal install built-in plain-byte mappings where needed;
-they do not read `keymap.toml` or copy saved aliases into terminal configs.
+they do not read `keymap.toml` or copy saved keys into terminal configs.
 Changing terminal-layer mappings still requires rerunning `projmux init` and
 restarting the terminal where that terminal requires it.
 
