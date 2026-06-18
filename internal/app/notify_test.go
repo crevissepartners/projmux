@@ -437,7 +437,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Right: unfold  |  Left: fold  |  Enter: focus + ack group  |  a: ack  |  A: ack group  |  x: clear non-critical  |  Ctrl-X: clear all"; got != want {
+	if got, want := picker.options.Footer, "Right: unfold  |  Left: fold  |  Enter: focus live / clean stale-gone group  |  a: ack  |  A: ack group  |  x: clear non-critical  |  Ctrl-X: clear all"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
 	if got, want := picker.options.ExpectKeys, []string{"enter", "a", "A", "x", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
@@ -519,7 +519,7 @@ keys = ["C-y"]
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	want := "Right: unfold  |  Left: fold  |  Enter: focus + ack group  |  a: ack  |  A: ack group  |  c: clear non-critical  |  Ctrl-Y: clear all"
+	want := "Right: unfold  |  Left: fold  |  Enter: focus live / clean stale-gone group  |  a: ack  |  A: ack group  |  c: clear non-critical  |  Ctrl-Y: clear all"
 	if got := picker.options.Footer; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
@@ -1271,13 +1271,14 @@ func TestNotifyListSidebarEnterOnExpandedGroupFocusesAndAcksWithoutFolding(t *te
 	}
 }
 
-func TestNotifyListSidebarEnterOnGroupTargetGoneDoesNotAckAndRefreshes(t *testing.T) {
+func TestNotifyListSidebarEnterOnGroupTargetGoneCleansVisibleGroupWithoutFocus(t *testing.T) {
 	t.Parallel()
 
 	groupValue := notifySidebarGroupValue("external\x00")
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{
 			{ID: "gone", Text: "orphan", Severity: notify.SeverityInfo, Source: notify.SourceExternal},
+			{ID: "critical", Text: "blocked", Severity: notify.SeverityCritical, Source: notify.SourceExternal},
 		},
 	}
 	picker := &recordingNotifyNativePicker{
@@ -1292,27 +1293,28 @@ func TestNotifyListSidebarEnterOnGroupTargetGoneDoesNotAckAndRefreshes(t *testin
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if len(store.ackedIDs) != 0 {
-		t.Fatalf("ackedIDs = %#v, want none when group target is gone", store.ackedIDs)
+	if got, want := store.ackedIDs, []string{"gone", "critical"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want gone group cleanup including critical %#v", got, want)
 	}
 	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 0 {
 		t.Fatalf("focus calls = %#v, want none when group target is gone", focusCalls)
 	}
-	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify group target gone; not acked"}) {
-		t.Fatalf("runner calls = %#v, want clear target-gone display message", runner.calls)
+	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify gone group cleaned"}) {
+		t.Fatalf("runner calls = %#v, want clear target-gone cleanup message", runner.calls)
 	}
-	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != groupValue {
-		t.Fatalf("updates = %#v, want refreshed unchanged gone group", picker.updates)
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != notifySidebarEmptyValue {
+		t.Fatalf("updates = %#v, want empty state after gone group cleanup", picker.updates)
 	}
 }
 
-func TestNotifyListSidebarEnterOnGroupStaleDoesNotAckAndRefreshes(t *testing.T) {
+func TestNotifyListSidebarEnterOnGroupStaleCleansVisibleGroupWithoutFocus(t *testing.T) {
 	t.Parallel()
 
 	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{
 			{ID: "ai:main:%2", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%2"},
+			{ID: "ai:main:%2:critical", Text: "blocked", Severity: notify.SeverityCritical, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%2"},
 		},
 	}
 	picker := &recordingNotifyNativePicker{
@@ -1332,17 +1334,17 @@ func TestNotifyListSidebarEnterOnGroupStaleDoesNotAckAndRefreshes(t *testing.T) 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if len(store.ackedIDs) != 0 {
-		t.Fatalf("ackedIDs = %#v, want none when group target is stale", store.ackedIDs)
+	if got, want := store.ackedIDs, []string{"ai:main:%2", "ai:main:%2:critical"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want stale group cleanup including critical %#v", got, want)
 	}
 	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 0 {
 		t.Fatalf("focus calls = %#v, want none when group target is stale", focusCalls)
 	}
-	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify group target stale; not acked"}) {
-		t.Fatalf("runner calls = %#v, want clear stale display message", runner.calls)
+	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify stale group cleaned"}) {
+		t.Fatalf("runner calls = %#v, want clear stale cleanup message", runner.calls)
 	}
-	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != groupValue {
-		t.Fatalf("updates = %#v, want refreshed unchanged stale group", picker.updates)
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != notifySidebarEmptyValue {
+		t.Fatalf("updates = %#v, want empty state after stale group cleanup", picker.updates)
 	}
 }
 
@@ -1383,11 +1385,52 @@ func TestNotifyListSidebarEnterOnGroupPrefersLiveRepresentativeOverNewerStaleRow
 	if !sliceContainsPair(focusCalls[0].args, "--target", "main:@1.%2") {
 		t.Fatalf("focus args = %#v, want live representative target", focusCalls[0].args)
 	}
-	if hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify group target stale; not acked"}) {
-		t.Fatalf("runner calls = %#v, did not expect stale no-ack display message", runner.calls)
+	if hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify stale group cleaned"}) {
+		t.Fatalf("runner calls = %#v, did not expect stale cleanup display message", runner.calls)
 	}
 	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != notifySidebarEmptyValue {
 		t.Fatalf("updates = %#v, want empty state after visible group ack", picker.updates)
+	}
+}
+
+func TestNotifyListSidebarEnterOnGroupTargetGoneRaceCleansVisibleGroup(t *testing.T) {
+	t.Parallel()
+
+	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "new", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%2"},
+			{ID: "critical", Text: "blocked", Severity: notify.SeverityCritical, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%2"},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{{key: "enter", value: groupValue, selectedIndex: 0}},
+	}
+	runner := &focusFakeRunner{respond: func(args []string) ([]byte, error) {
+		if containsArg(args, "focus") {
+			return nil, &fakeExitError{code: focusExitNotResolved, msg: "target unresolved"}
+		}
+		return nil, nil
+	}}
+	cmd := newCmd(store)
+	cmd.native = picker
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if got, want := store.ackedIDs, []string{"new", "critical"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want target-gone race cleanup including critical %#v", got, want)
+	}
+	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one failed focus call before cleanup", focusCalls)
+	}
+	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify gone group cleaned"}) {
+		t.Fatalf("runner calls = %#v, want target-gone race cleanup message", runner.calls)
+	}
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != notifySidebarEmptyValue {
+		t.Fatalf("updates = %#v, want empty state after target-gone race cleanup", picker.updates)
 	}
 }
 

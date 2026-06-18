@@ -147,12 +147,14 @@ icon decoration is `symbol` or `emoji`, the bell appears before the title text.
 Right/Left fold and unfold groups locally inside the native sidebar. Enter on a
 group row, whether folded or expanded, focuses the group's representative pane
 and acknowledges every visible notification in that group only after focus
-succeeds. If the representative target is stale, gone, or focus fails, Enter
-does not acknowledge the group and the sidebar refreshes/prunes after showing a
-clear message. Enter on a child notification preserves the existing focus and
-ack-one behavior. `NotifySidebar:AckGroup` remains the explicit group ack action
-and acknowledges every visible notification in the selected group, including
-critical notifications.
+succeeds. If the representative target is stale or gone, Enter cleans up the
+selected group without focusing and acknowledges every visible notification in
+that group, including critical notifications. A target-gone focus race follows
+the same cleanup policy; other focus failures keep the group pending and show a
+clear message before refresh/prune. Enter on a child notification preserves the
+existing focus and ack-one behavior. `NotifySidebar:AckGroup` remains the
+explicit group ack action and acknowledges every visible notification in the
+selected group, including critical notifications.
 Internal notify commands use `NotifySidebar:*` IDs in `keymap.toml`; runtime
 footers render key guides from the merged keymap and prefer the default alias
 when it is still configured.
