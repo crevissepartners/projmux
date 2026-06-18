@@ -106,9 +106,17 @@ table `ID AGE SEV SRC TARGET TEXT`. `--severity` / `--source` are
 repeatable filters. Without `--live`, this command reads only the queue and
 preserves the stable JSON array used by scripts.
 
-`--ui=sidebar` opens the notify queue as an interactive right-side list when
-run inside the tmux popup surface. Selecting a row focuses the selected target
-pane and acks the row after focus succeeds. The surface actions
+`--ui=sidebar` opens the notify queue as an interactive right-side pane/session
+inbox when run inside the tmux popup surface. The queue source of truth remains
+flat; the sidebar builds a read-only grouped view for display. The first screen
+shows collapsed group rows keyed by pane when available, then window, then
+session/external fallback. Each group row summarizes the pending count, newest
+age, latest preview, project/session, worst severity, and live/stale/gone
+display state. Selecting a collapsed group row focuses and acks that group's
+latest notification after focus succeeds. Child notification rows are prepared
+for expanded rendering and keep the existing per-notification styling, but
+fold/unfold interaction and explicit group ack are future Phase 1 behavior and
+are not current keybindings. The surface actions
 `NotifySidebar:Ack`, `NotifySidebar:ClearNonCritical`, and
 `NotifySidebar:ClearAll` are internal picker actions; direct launch aliases
 are edited in Settings, while internal picker aliases are adjusted in
@@ -117,10 +125,9 @@ and show the default alias when present, otherwise the first configured alias,
 so custom aliases do not make the UI stale. `NotifySidebar:Ack` and
 `NotifySidebar:ClearNonCritical` refresh rows, live state, and selection inside
 the same native picker session; `NotifySidebar:ClearAll` still closes the
-popup and prints a summary. Rows are intentionally compact: the visible label keeps
-notification text first, then age, project, window, and pane metadata; hidden
-queue ids remain action values but the sidebar has no search input and
-intentionally does not expose a separate metadata detail view.
+popup and prints a summary. Rows are intentionally compact: hidden queue ids
+remain action values but the sidebar has no search input and intentionally does
+not expose a separate metadata detail view.
 
 When a new pending notification is successfully pushed by any app producer
 (`notify push`, reply-ready, reconcile backfill, or bell fallback), open native
