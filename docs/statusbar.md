@@ -145,9 +145,14 @@ through the notify sidebar action, showing the grouped pane/session inbox with
 collapsed group rows and the same attention-tinted title. When notification
 icon decoration is `symbol` or `emoji`, the bell appears before the title text.
 Right/Left fold and unfold groups locally inside the native sidebar. Enter on a
-group row unfolds it; Enter on a child notification preserves the existing
-focus and acknowledgement behavior. `NotifySidebar:AckGroup` acknowledges every
-visible notification in the selected group, including critical notifications.
+group row, whether folded or expanded, focuses the group's representative pane
+and acknowledges every visible notification in that group only after focus
+succeeds. If the representative target is stale, gone, or focus fails, Enter
+does not acknowledge the group and the sidebar refreshes/prunes after showing a
+clear message. Enter on a child notification preserves the existing focus and
+ack-one behavior. `NotifySidebar:AckGroup` remains the explicit group ack action
+and acknowledges every visible notification in the selected group, including
+critical notifications.
 Internal notify commands use `NotifySidebar:*` IDs in `keymap.toml`; runtime
 footers render key guides from the merged keymap and prefer the default alias
 when it is still configured.

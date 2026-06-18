@@ -149,6 +149,15 @@ func notifyNativeActionByKey(actions []intpicker.Action, key string) (intpicker.
 	return intpicker.Action{}, false
 }
 
+func hasFocusFakeCall(calls []focusFakeCall, name string, args []string) bool {
+	for _, call := range calls {
+		if call.name == name && reflect.DeepEqual(call.args, args) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *stubNotifyStore) Push(in notify.PushInput) (notify.Notification, notify.PushResult, error) {
 	s.pushed = append(s.pushed, in)
 	return s.pushEntry, s.pushResult, s.pushErr
@@ -428,7 +437,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Right: unfold  |  Left: fold  |  Enter: focus/ack  |  a: ack  |  A: ack group  |  x: clear non-critical  |  Ctrl-X: clear all"; got != want {
+	if got, want := picker.options.Footer, "Right: unfold  |  Left: fold  |  Enter: focus + ack group  |  a: ack  |  A: ack group  |  x: clear non-critical  |  Ctrl-X: clear all"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
 	if got, want := picker.options.ExpectKeys, []string{"enter", "a", "A", "x", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
@@ -510,7 +519,7 @@ keys = ["C-y"]
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	want := "Right: unfold  |  Left: fold  |  Enter: focus/ack  |  a: ack  |  A: ack group  |  c: clear non-critical  |  Ctrl-Y: clear all"
+	want := "Right: unfold  |  Left: fold  |  Enter: focus + ack group  |  a: ack  |  A: ack group  |  c: clear non-critical  |  Ctrl-Y: clear all"
 	if got := picker.options.Footer; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
@@ -1177,20 +1186,62 @@ func TestNotifyListSidebarRightLeftFoldNavigation(t *testing.T) {
 	}
 }
 
-func TestNotifyListSidebarEnterOnGroupUnfoldsAndChildEnterFocuses(t *testing.T) {
+func TestNotifyListSidebarEnterOnFoldedGroupFocusesRepresentativeAndAcksVisibleGroup(t *testing.T) {
 	t.Parallel()
 
 	groupValue := notifySidebarGroupValue("pane\x00sock\x00main\x00%2")
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{
 			{ID: "new", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)},
-			{ID: "old", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: time.Date(2026, time.May, 6, 11, 59, 0, 0, time.UTC)},
+			{ID: "critical", Text: "blocked", Severity: notify.SeverityCritical, Source: notify.SourceAI, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: time.Date(2026, time.May, 6, 11, 59, 0, 0, time.UTC)},
+			{ID: "other", Text: "other pane", Severity: notify.SeverityInfo, Source: notify.SourceAI, Socket: "sock", Session: "main", Window: "@1", Pane: "%3", CreatedAt: time.Date(2026, time.May, 6, 11, 58, 0, 0, time.UTC)},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{{key: "enter", value: groupValue, selectedIndex: 0}},
+	}
+	runner := &focusFakeRunner{}
+	cmd := newCmd(store)
+	cmd.native = picker
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if got, want := store.ackedIDs, []string{"new", "critical"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want group ack including critical %#v", got, want)
+	}
+	otherGroup := notifySidebarGroupValue("pane\x00sock\x00main\x00%3")
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != otherGroup {
+		t.Fatalf("enter group updates = %#v, want only other group remaining", picker.updates)
+	}
+	focusCalls := filterFocusCalls(runner.calls)
+	if len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one group representative focus call", focusCalls)
+	}
+	if !sliceContainsPair(focusCalls[0].args, "--target", "main:@1.%2") {
+		t.Fatalf("focus args = %#v, want group representative target", focusCalls[0].args)
+	}
+	if !sliceContainsPair(focusCalls[0].args, "--kind", "group-select") {
+		t.Fatalf("focus args = %#v, want group-select kind", focusCalls[0].args)
+	}
+}
+
+func TestNotifyListSidebarEnterOnExpandedGroupFocusesAndAcksWithoutFolding(t *testing.T) {
+	t.Parallel()
+
+	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "new", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%2", CreatedAt: time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)},
+			{ID: "old", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%2", CreatedAt: time.Date(2026, time.May, 6, 11, 59, 0, 0, time.UTC)},
 		},
 	}
 	picker := &recordingNotifyNativePicker{
 		steps: []notifyNativeActionStep{
+			{key: "right", value: groupValue, selectedIndex: 0},
 			{key: "enter", value: groupValue, selectedIndex: 0},
-			{key: "enter", value: "new", selectedIndex: 1},
 		},
 	}
 	runner := &focusFakeRunner{}
@@ -1203,18 +1254,144 @@ func TestNotifyListSidebarEnterOnGroupUnfoldsAndChildEnterFocuses(t *testing.T) 
 		t.Fatalf("Run error = %v", err)
 	}
 	if got, want := store.ackedIDs, []string{"new", "old"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("ackedIDs = %#v, want focused AI bulk ack %#v", got, want)
-	}
-	if len(picker.updates) != 1 || len(picker.updates[0]) != 3 {
-		t.Fatalf("enter group updates = %#v, want one expanded update", picker.updates)
+		t.Fatalf("ackedIDs = %#v, want expanded group ack %#v", got, want)
 	}
 	focusCalls := filterFocusCalls(runner.calls)
 	if len(focusCalls) != 1 {
-		t.Fatalf("focus calls = %#v, want one child focus call", focusCalls)
+		t.Fatalf("focus calls = %#v, want one group representative focus call", focusCalls)
+	}
+	if len(picker.updates) != 2 {
+		t.Fatalf("updates = %#v, want right unfold update and enter ack refresh", picker.updates)
+	}
+	if len(picker.updates[0]) != 3 || picker.updates[0][0].Value != groupValue {
+		t.Fatalf("first update = %#v, want expanded group", picker.updates[0])
+	}
+	if len(picker.updates[1]) != 1 || picker.updates[1][0].Value != notifySidebarEmptyValue {
+		t.Fatalf("second update = %#v, want empty state after group ack", picker.updates[1])
 	}
 }
 
-func TestNotifyListSidebarEnterOnGroupDoesNotAckWhenNotFollowedByChild(t *testing.T) {
+func TestNotifyListSidebarEnterOnGroupTargetGoneDoesNotAckAndRefreshes(t *testing.T) {
+	t.Parallel()
+
+	groupValue := notifySidebarGroupValue("external\x00")
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "gone", Text: "orphan", Severity: notify.SeverityInfo, Source: notify.SourceExternal},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{{key: "enter", value: groupValue, selectedIndex: 0}},
+	}
+	runner := &focusFakeRunner{}
+	cmd := newCmd(store)
+	cmd.native = picker
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if len(store.ackedIDs) != 0 {
+		t.Fatalf("ackedIDs = %#v, want none when group target is gone", store.ackedIDs)
+	}
+	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 0 {
+		t.Fatalf("focus calls = %#v, want none when group target is gone", focusCalls)
+	}
+	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify group target gone; not acked"}) {
+		t.Fatalf("runner calls = %#v, want clear target-gone display message", runner.calls)
+	}
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != groupValue {
+		t.Fatalf("updates = %#v, want refreshed unchanged gone group", picker.updates)
+	}
+}
+
+func TestNotifyListSidebarEnterOnGroupStaleDoesNotAckAndRefreshes(t *testing.T) {
+	t.Parallel()
+
+	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "ai:main:%2", Text: "reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%2"},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{{key: "enter", value: groupValue, selectedIndex: 0}},
+	}
+	runner := &focusFakeRunner{respond: func(args []string) ([]byte, error) {
+		if containsArg(args, "list-panes") {
+			return []byte{}, nil
+		}
+		return nil, nil
+	}}
+	cmd := newCmd(store)
+	cmd.native = picker
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if len(store.ackedIDs) != 0 {
+		t.Fatalf("ackedIDs = %#v, want none when group target is stale", store.ackedIDs)
+	}
+	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 0 {
+		t.Fatalf("focus calls = %#v, want none when group target is stale", focusCalls)
+	}
+	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify group target stale; not acked"}) {
+		t.Fatalf("runner calls = %#v, want clear stale display message", runner.calls)
+	}
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != groupValue {
+		t.Fatalf("updates = %#v, want refreshed unchanged stale group", picker.updates)
+	}
+}
+
+func TestNotifyListSidebarEnterOnGroupPrefersLiveRepresentativeOverNewerStaleRow(t *testing.T) {
+	t.Parallel()
+
+	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{ID: "ai:main:%2", Text: "stale ai", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main", Window: "@1", Pane: "%2", CreatedAt: time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)},
+			{ID: "external", Text: "live external", Severity: notify.SeverityWarn, Source: notify.SourceExternal, Session: "main", Window: "@1", Pane: "%2", CreatedAt: time.Date(2026, time.May, 6, 11, 59, 0, 0, time.UTC)},
+		},
+	}
+	picker := &recordingNotifyNativePicker{
+		steps: []notifyNativeActionStep{{key: "enter", value: groupValue, selectedIndex: 0}},
+	}
+	runner := &focusFakeRunner{respond: func(args []string) ([]byte, error) {
+		if containsArg(args, "list-panes") {
+			return []byte{}, nil
+		}
+		return nil, nil
+	}}
+	cmd := newCmd(store)
+	cmd.native = picker
+	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if got, want := store.ackedIDs, []string{"ai:main:%2", "external"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want visible group ack %#v", got, want)
+	}
+	focusCalls := filterFocusCalls(runner.calls)
+	if len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one live representative focus call", focusCalls)
+	}
+	if !sliceContainsPair(focusCalls[0].args, "--target", "main:@1.%2") {
+		t.Fatalf("focus args = %#v, want live representative target", focusCalls[0].args)
+	}
+	if hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify group target stale; not acked"}) {
+		t.Fatalf("runner calls = %#v, did not expect stale no-ack display message", runner.calls)
+	}
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != notifySidebarEmptyValue {
+		t.Fatalf("updates = %#v, want empty state after visible group ack", picker.updates)
+	}
+}
+
+func TestNotifyListSidebarEnterOnGroupFocusFailureDoesNotAckAndRefreshes(t *testing.T) {
 	t.Parallel()
 
 	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
@@ -1227,22 +1404,31 @@ func TestNotifyListSidebarEnterOnGroupDoesNotAckWhenNotFollowedByChild(t *testin
 	picker := &recordingNotifyNativePicker{
 		steps: []notifyNativeActionStep{{key: "enter", value: groupValue, selectedIndex: 0}},
 	}
-	runner := &focusFakeRunner{}
+	runner := &focusFakeRunner{respond: func(args []string) ([]byte, error) {
+		if containsArg(args, "focus") {
+			return nil, errors.New("focus failed")
+		}
+		return nil, nil
+	}}
 	cmd := newCmd(store)
 	cmd.native = picker
 	cmd.runner = runner
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
 	if len(store.ackedIDs) != 0 {
-		t.Fatalf("ackedIDs = %#v, want none for group Enter unfold", store.ackedIDs)
+		t.Fatalf("ackedIDs = %#v, want none when group focus fails", store.ackedIDs)
 	}
-	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 0 {
-		t.Fatalf("focus calls = %#v, want none for group Enter unfold", focusCalls)
+	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one failed focus call", focusCalls)
 	}
-	if len(picker.updates) != 1 || len(picker.updates[0]) != 3 {
-		t.Fatalf("updates = %#v, want expanded group", picker.updates)
+	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify group focus failed: focus failed; not acked"}) {
+		t.Fatalf("runner calls = %#v, want clear focus-failed display message", runner.calls)
+	}
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != groupValue {
+		t.Fatalf("updates = %#v, want refreshed unchanged group", picker.updates)
 	}
 }
 

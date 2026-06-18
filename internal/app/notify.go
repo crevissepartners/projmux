@@ -309,7 +309,7 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 	if err != nil {
 		return err
 	}
-	options := c.notifySidebarPickerOptions(store, entries, severities, sources, limit, locale)
+	options := c.notifySidebarPickerOptions(store, entries, severities, sources, limit, clientTTY, locale)
 	if trigger, cancel := c.subscribeNotifyQueueRefreshBestEffort(context.Background()); trigger != nil {
 		defer cancel()
 		options.DeferredUpdateTrigger = trigger
@@ -359,8 +359,8 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		}
 		return nil
 	default:
-		if notifySidebarGroupKeyFromValue(id) != "" {
-			return nil
+		if groupKey := notifySidebarGroupKeyFromValue(id); groupKey != "" {
+			return c.focusAndAckNotifySidebarGroup(store, entries, groupKey, clientTTY, locale)
 		}
 		entry, ok := findNotificationByID(entries, id)
 		if !ok {
@@ -402,7 +402,7 @@ func (c *notifyCommand) subscribeNotifyQueueRefreshBestEffort(parent context.Con
 	return events, cancel
 }
 
-func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []notify.Notification, severities, sources []string, limit int, locale i18n.Locale) intpicker.Options {
+func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []notify.Notification, severities, sources []string, limit int, clientTTY string, locale i18n.Locale) intpicker.Options {
 	expanded := map[string]bool{}
 	refresh := func() (intpicker.DeferredUpdate, error) {
 		return c.notifySidebarDeferredUpdate(store, severities, sources, limit, locale, expanded)
@@ -465,20 +465,24 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 		}
 		return refresh()
 	}
-	focusOrUnfold := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+	focusOrAckGroup := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
 		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
 		if err != nil {
 			return intpicker.DeferredUpdate{}, err
 		}
-		if groupKey := notifySidebarSelectedGroupKey(current, ctx.Value); groupKey != "" && notifySidebarGroupKeyFromValue(ctx.Value) != "" {
-			expanded[groupKey] = true
+		groupKey := notifySidebarGroupKeyFromValue(ctx.Value)
+		if groupKey != "" {
+			if err := c.focusAndAckNotifySidebarGroup(store, current, groupKey, clientTTY, locale); err != nil {
+				return intpicker.DeferredUpdate{}, err
+			}
+			delete(expanded, groupKey)
 			return refresh()
 		}
 		return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: ctx.Key, Value: ctx.Value, Query: ctx.Query}}, nil
 	}
 	actions := append(
 		pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"NotifySidebarToggle"}, "esc", "alt-2"),
-		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:FocusAndAck"}, []string{"enter"}), focusOrUnfold)...,
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:FocusAndAck"}, []string{"enter"}), focusOrAckGroup)...,
 	)
 	actions = append(actions,
 		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:Ack"}, []string{"a"}), ack)...,
@@ -526,7 +530,7 @@ func notifySidebarMutableActions(keys []string, mutate func(intpicker.ActionCont
 
 func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string) string {
 	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
-		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus/ack"},
+		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus + ack group"},
 		{ActionID: "NotifySidebar:Ack", Label: "ack"},
 		{ActionID: "NotifySidebar:AckGroup", Label: "ack group"},
 		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
@@ -640,6 +644,76 @@ func ackNotifySidebarGroup(store notifyStore, entries []notify.Notification, gro
 		}
 	}
 	return nil
+}
+
+func (c *notifyCommand) focusAndAckNotifySidebarGroup(store notifyStore, entries []notify.Notification, groupKey, clientTTY string, locale i18n.Locale) error {
+	group, ok := notifySidebarGroupByKey(entries, c.clock(), c.notifyLiveByIDBestEffort(), groupKey, locale)
+	if !ok {
+		c.displayNotifySidebarMessage("notify group target gone; not acked")
+		return nil
+	}
+	representative, display, ok := notifySidebarGroupRepresentative(group)
+	if !ok {
+		c.displayNotifySidebarMessage("notify group target gone; not acked")
+		return nil
+	}
+	if display != notifyDisplayLive {
+		c.displayNotifySidebarMessage(notifySidebarGroupFocusBlockedMessage(display, nil))
+		return nil
+	}
+	if err := c.focusNotification(representative, "notify-sidebar", "group-select", clientTTY); err != nil {
+		c.displayNotifySidebarMessage(notifySidebarGroupFocusBlockedMessage(notifyDisplayLive, err))
+		return nil
+	}
+	return ackNotifySidebarGroup(store, entries, groupKey)
+}
+
+func notifySidebarGroupByKey(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, groupKey string, locale i18n.Locale) (notifySidebarGroup, bool) {
+	groupKey = strings.TrimSpace(groupKey)
+	if groupKey == "" {
+		return notifySidebarGroup{}, false
+	}
+	model := buildNotifySidebarReadModel(entries, now, liveByID, locale)
+	for _, group := range model.Groups {
+		if group.Key == groupKey {
+			return group, true
+		}
+	}
+	return notifySidebarGroup{}, false
+}
+
+func notifySidebarGroupRepresentative(group notifySidebarGroup) (notify.Notification, notifyRowDisplayState, bool) {
+	if len(group.Rows) == 0 {
+		return notify.Notification{}, notifyDisplayGone, false
+	}
+	for _, row := range group.Rows {
+		if row.Display == notifyDisplayLive {
+			return row.Notify, row.Display, true
+		}
+	}
+	row := group.Rows[0]
+	return row.Notify, row.Display, true
+}
+
+func notifySidebarGroupFocusBlockedMessage(display notifyRowDisplayState, err error) string {
+	switch display {
+	case notifyDisplayGone:
+		return "notify group target gone; not acked"
+	case notifyDisplayStale:
+		return "notify group target stale; not acked"
+	}
+	if isFocusTargetUnresolved(err) {
+		return "notify group target gone; not acked"
+	}
+	return fmt.Sprintf("notify group focus failed: %s; not acked", focusFailureSummary(err))
+}
+
+func (c *notifyCommand) displayNotifySidebarMessage(message string) {
+	message = strings.TrimSpace(message)
+	if message == "" || c == nil || c.runner == nil {
+		return
+	}
+	_, _ = c.runner.Run(context.Background(), "tmux", "display-message", message)
 }
 
 func pruneNotifySidebarExpanded(expanded map[string]bool, model notifySidebarReadModel) {
