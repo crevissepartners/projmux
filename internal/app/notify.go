@@ -530,7 +530,7 @@ func notifySidebarMutableActions(keys []string, mutate func(intpicker.ActionCont
 
 func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string) string {
 	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
-		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus + ack group"},
+		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live / clean stale-gone group"},
 		{ActionID: "NotifySidebar:Ack", Label: "ack"},
 		{ActionID: "NotifySidebar:AckGroup", Label: "ack group"},
 		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
@@ -649,19 +649,29 @@ func ackNotifySidebarGroup(store notifyStore, entries []notify.Notification, gro
 func (c *notifyCommand) focusAndAckNotifySidebarGroup(store notifyStore, entries []notify.Notification, groupKey, clientTTY string, locale i18n.Locale) error {
 	group, ok := notifySidebarGroupByKey(entries, c.clock(), c.notifyLiveByIDBestEffort(), groupKey, locale)
 	if !ok {
-		c.displayNotifySidebarMessage("notify group target gone; not acked")
+		c.displayNotifySidebarMessage("notify group already gone")
 		return nil
 	}
 	representative, display, ok := notifySidebarGroupRepresentative(group)
 	if !ok {
-		c.displayNotifySidebarMessage("notify group target gone; not acked")
+		c.displayNotifySidebarMessage("notify group already gone")
 		return nil
 	}
 	if display != notifyDisplayLive {
-		c.displayNotifySidebarMessage(notifySidebarGroupFocusBlockedMessage(display, nil))
+		if err := ackNotifySidebarGroup(store, entries, groupKey); err != nil {
+			return err
+		}
+		c.displayNotifySidebarMessage(notifySidebarGroupCleanupMessage(display))
 		return nil
 	}
 	if err := c.focusNotification(representative, "notify-sidebar", "group-select", clientTTY); err != nil {
+		if isFocusTargetUnresolved(err) {
+			if ackErr := ackNotifySidebarGroup(store, entries, groupKey); ackErr != nil {
+				return ackErr
+			}
+			c.displayNotifySidebarMessage(notifySidebarGroupCleanupMessage(notifyDisplayGone))
+			return nil
+		}
 		c.displayNotifySidebarMessage(notifySidebarGroupFocusBlockedMessage(notifyDisplayLive, err))
 		return nil
 	}
@@ -698,14 +708,25 @@ func notifySidebarGroupRepresentative(group notifySidebarGroup) (notify.Notifica
 func notifySidebarGroupFocusBlockedMessage(display notifyRowDisplayState, err error) string {
 	switch display {
 	case notifyDisplayGone:
-		return "notify group target gone; not acked"
+		return notifySidebarGroupCleanupMessage(display)
 	case notifyDisplayStale:
-		return "notify group target stale; not acked"
+		return notifySidebarGroupCleanupMessage(display)
 	}
 	if isFocusTargetUnresolved(err) {
-		return "notify group target gone; not acked"
+		return notifySidebarGroupCleanupMessage(notifyDisplayGone)
 	}
 	return fmt.Sprintf("notify group focus failed: %s; not acked", focusFailureSummary(err))
+}
+
+func notifySidebarGroupCleanupMessage(display notifyRowDisplayState) string {
+	switch display {
+	case notifyDisplayStale:
+		return "notify stale group cleaned"
+	case notifyDisplayGone:
+		return "notify gone group cleaned"
+	default:
+		return "notify group cleaned"
+	}
 }
 
 func (c *notifyCommand) displayNotifySidebarMessage(message string) {

@@ -119,10 +119,14 @@ and fold the selected group inside the native sidebar only; this fold state is
 session-local and is not persisted. Enter on a group row, whether folded or
 expanded, focuses the group's representative pane and acknowledges every
 visible notification in that group only after focus succeeds. If the
-representative target is stale, gone, or focus fails, Enter keeps the group
-pending, shows a clear message, and refreshes/prunes the list. Expanded child
-notification rows are compact event rows with age, message preview, and
-severity/state while keeping the existing focus/ack-one behavior. The surface actions
+representative target is stale or gone, Enter treats the selected pane inbox as
+explicit cleanup and acknowledges/prunes the visible group without focusing,
+including critical notifications. If a live-looking representative target
+disappears during focus, Enter uses the same gone-group cleanup policy. Other
+focus failures keep the group pending, show a clear message, and refresh/prune
+the list. Expanded child notification rows are compact event rows with age,
+message preview, and severity/state while keeping the existing focus/ack-one
+behavior. The surface actions
 `NotifySidebar:Ack`, `NotifySidebar:AckGroup`,
 `NotifySidebar:ClearNonCritical`, and `NotifySidebar:ClearAll` are internal
 picker actions; direct launch aliases are edited in Settings, while internal
