@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -710,7 +711,6 @@ func notifySidebarGroupLabel(group notifySidebarGroup, liveByID map[string]notif
 		preview = notifySidebarDimText(preview)
 	}
 	title := notifySidebarGroupTitle(group, liveByID, locale)
-	count := i18n.FormatCount(group.Count, i18n.CountNotifications, locale, i18n.FormatCompact)
 	ageDuration := time.Duration(0)
 	if !group.NewestAt.IsZero() {
 		ageDuration = now.Sub(group.NewestAt)
@@ -719,13 +719,29 @@ func notifySidebarGroupLabel(group notifySidebarGroup, liveByID map[string]notif
 	stateEntry := latest
 	stateEntry.Severity = group.Worst
 	stateBadge := notifySidebarStateBadgeForDisplay(notifyStateLabelForLocale(stateEntry, preview, group.Display, locale), group.Display)
-	firstLine := "▸ " + title + "  " + notifySidebarDim(count) + " " + stateBadge + " " + notifySidebarAge(age)
 
-	metaParts := []string{notifySidebarProjectBadge(group.Project)}
-	if target := notifySidebarGroupTarget(latest, locale); target != "" {
-		metaParts = append(metaParts, target)
+	aggregateParts := make([]string, 0, 2)
+	if extra := notifySidebarGroupExtraCount(group.Count); extra != "" {
+		aggregateParts = append(aggregateParts, notifySidebarDim(extra))
 	}
-	return firstLine + "\n  " + strings.Join(metaParts, " ") + " " + preview
+	aggregateParts = append(aggregateParts, stateBadge)
+
+	lines := []string{
+		"▸ " + title + "  " + notifySidebarAge(age),
+		"  " + preview + "  " + strings.Join(aggregateParts, " "),
+	}
+	if aux := notifySidebarGroupAuxiliary(group, title); aux != "" {
+		lines = append(lines, "  "+aux)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func notifySidebarGroupExtraCount(count int) string {
+	extra := count - 1
+	if extra <= 0 {
+		return ""
+	}
+	return "+" + strconv.Itoa(extra)
 }
 
 func notifySidebarGroupPreview(entry notify.Notification, locale i18n.Locale) string {
@@ -747,7 +763,7 @@ func notifySidebarGroupTitle(group notifySidebarGroup, liveByID map[string]notif
 	latest := group.Latest
 	agent := notifySidebarGroupExplicitAgent(group.Rows, liveByID)
 	context := notifySidebarGroupContext(group.Rows, liveByID)
-	fallback := notifySidebarGroupFallbackLabel(latest, locale)
+	fallback := notifySidebarGroupFallbackLabel(latest)
 	if agent == "" {
 		agent = notifySidebarGroupSourceLabel(latest)
 	}
@@ -821,52 +837,28 @@ func notifySidebarAgentDisplayName(agent string) string {
 	}
 }
 
-func notifySidebarGroupFallbackLabel(entry notify.Notification, locale i18n.Locale) string {
-	if pane := notifySidebarPlainTargetPart(i18n.TargetPane, entry.Pane, locale); pane != "" {
-		return pane
-	}
-	if window := notifySidebarPlainTargetPart(i18n.TargetWindow, entry.Window, locale); window != "" {
-		return window
-	}
+func notifySidebarGroupFallbackLabel(entry notify.Notification) string {
 	if session := notifyProjectName(entry.Session); session != "" {
 		return session
 	}
 	return "external"
 }
 
-func notifySidebarPlainTargetPart(kind i18n.TargetKind, value string, locale i18n.Locale) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
+func notifySidebarGroupAuxiliary(group notifySidebarGroup, title string) string {
+	project := strings.TrimSpace(group.Project)
+	if project == "" {
 		return ""
 	}
-	value = strings.TrimLeft(value, "@%")
-	value = notifySidebarLabelCell(value)
-	if value == "" {
+	if notifySidebarSamePlainText(project, title) || strings.Contains(strings.ToLower(title), strings.ToLower(project)) {
 		return ""
 	}
-	number := parsePositiveInt(value)
-	if number > 0 {
-		return i18n.FormatTargetLabel(kind, number, locale, i18n.FormatCompact)
-	}
-	switch kind {
-	case i18n.TargetWindow:
-		return "window " + value
-	case i18n.TargetPane:
-		return "pane " + value
-	default:
-		return value
-	}
+	return notifySidebarProjectBadge(project)
 }
 
-func notifySidebarGroupTarget(entry notify.Notification, locale i18n.Locale) string {
-	parts := make([]string, 0, 2)
-	if window := notifySidebarTargetPart("window", entry.Window, locale); window != "" {
-		parts = append(parts, window)
-	}
-	if pane := notifySidebarTargetPart("pane", entry.Pane, locale); pane != "" {
-		parts = append(parts, pane)
-	}
-	return strings.Join(parts, " ")
+func notifySidebarSamePlainText(left, right string) bool {
+	left = strings.ToLower(notifySidebarLabelCell(left))
+	right = strings.ToLower(notifySidebarLabelCell(right))
+	return left != "" && left == right
 }
 
 func firstNonEmptyNotifySidebarString(values ...string) string {
