@@ -468,8 +468,17 @@ func TestKeymapKeysRejectTransportPayloadAliases(t *testing.T) {
 		{name: "user fallback", body: `[bindings.ProjectSidebarToggle]
 keys = ["User4"]
 `},
+		{name: "user key", body: `[bindings.ProjectSidebarToggle]
+keys = ["UserKey4"]
+`},
+		{name: "user sequence", body: `[bindings.ProjectSidebarToggle]
+keys = ["UserSequence4"]
+`},
 		{name: "csi u", body: `[bindings.ProjectSidebarToggle]
 keys = ["[9005u"]
+`},
+		{name: "xterm modified key", body: `[bindings.ProjectSidebarToggle]
+keys = ["[1;4D"]
 `},
 		{name: "raw escape", body: "[bindings.ProjectSidebarToggle]\nkeys = [\"\x1b1\"]\n"},
 		{name: "send input", body: `[bindings.ProjectSidebarToggle]
@@ -517,7 +526,7 @@ func TestKeymapConflictDomains(t *testing.T) {
 func TestNormalizeKeymapTypedChordRejectsTransportPayloads(t *testing.T) {
 	t.Parallel()
 
-	for _, input := range []string{"\x1b[9005u", "[9005u", "csi:9005u", `\u001b[9005u`, `\x1b[9005u`, `sendInput("\u001b1")`, "User4"} {
+	for _, input := range []string{"\x1b[9005u", "\x1b[1;4D", "[9005u", "[1;4D", "csi:9005u", `\u001b[9005u`, `\x1b[9005u`, `sendInput("\u001b1")`, "User4", "UserKey4", "UserSequence4"} {
 		if got, err := normalizeKeymapTypedChord(input); err == nil {
 			t.Fatalf("normalizeKeymapTypedChord(%q) = %q, nil; want rejection", input, got)
 		}
@@ -530,6 +539,27 @@ func TestNormalizeKeymapTypedChordRejectsTransportPayloads(t *testing.T) {
 		if got != input {
 			t.Fatalf("normalizeKeymapTypedChord(%q) = %q, want same", input, got)
 		}
+	}
+}
+
+func TestKeymapPrimaryKeysRemainLogicalAndExcludeDiagnosticPayloads(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range defaultKeyBindingCatalog() {
+		for _, key := range keyBindingEffectivePlainChords(action) {
+			for _, forbidden := range []string{"\x1b", "[1;", "[9005u", "User", "CSI-u"} {
+				if strings.Contains(key, forbidden) {
+					t.Fatalf("%s primary key %q contains diagnostic payload marker %q", action.ID, key, forbidden)
+				}
+			}
+		}
+	}
+	prev, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "previous-window")
+	if !ok {
+		t.Fatalf("missing previous-window")
+	}
+	if got, want := keyBindingEffectivePlainChords(prev), []string{"M-S-Left"}; !equalStrings(got, want) {
+		t.Fatalf("previous-window keys = %#v, want logical key %#v", got, want)
 	}
 }
 

@@ -611,6 +611,9 @@ func normalizeKeymapAliasChord(value string) (string, error) {
 	if strings.HasPrefix(lower, "[") && strings.HasSuffix(lower, "u") {
 		return "", fmt.Errorf("key alias must not be a modified-key escape payload")
 	}
+	if strings.HasPrefix(lower, "[") && strings.Contains(lower, ";") {
+		return "", fmt.Errorf("key alias must not be an xterm modified-key escape payload")
+	}
 	if strings.HasPrefix(lower, "user") {
 		return "", fmt.Errorf("key alias must not be a tmux User fallback key")
 	}

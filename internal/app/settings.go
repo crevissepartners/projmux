@@ -3265,6 +3265,9 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 		return err
 	}
 	fmt.Fprintf(stdout, "capture custom key: %s\n", renderProbeStatus(res))
+	for _, line := range renderKeybindingDeliveryDiagnostic(res) {
+		fmt.Fprintln(stdout, line)
+	}
 
 	switch res.Status {
 	case probeStatusPlain:
@@ -3345,6 +3348,79 @@ func captureResultPlainChord(res probeResult) (string, bool) {
 		return chord, true
 	}
 	return suggestedPlainChordForSequence(res.Sequence)
+}
+
+type keybindingDeliveryDiagnosticStatus string
+
+const (
+	keybindingDeliveryDelivered     keybindingDeliveryDiagnosticStatus = "delivered"
+	keybindingDeliveryMissing       keybindingDeliveryDiagnosticStatus = "key-did-not-arrive"
+	keybindingDeliveryAmbiguous     keybindingDeliveryDiagnosticStatus = "ambiguous-key"
+	keybindingDeliveryAdapterNeeded keybindingDeliveryDiagnosticStatus = "adapter-needed"
+)
+
+type keybindingDeliveryDiagnostic struct {
+	Status          keybindingDeliveryDiagnosticStatus
+	LogicalKey      string
+	RawBytes        string
+	TmuxReceivedKey string
+	Summary         string
+}
+
+func keybindingDeliveryDiagnosticForProbe(res probeResult) keybindingDeliveryDiagnostic {
+	diag := keybindingDeliveryDiagnostic{
+		LogicalKey:      strings.TrimSpace(res.Key.Label),
+		RawBytes:        visibleEscape(string(res.Sequence)),
+		TmuxReceivedKey: "(none)",
+	}
+	if diag.LogicalKey == "" {
+		diag.LogicalKey = "custom key"
+	}
+	if len(res.Sequence) == 0 {
+		diag.Status = keybindingDeliveryMissing
+		diag.RawBytes = "(none)"
+		diag.Summary = "key did not arrive; terminal or OS likely intercepted it before tmux"
+		return diag
+	}
+	if isAmbiguousEnterSequence(res.Sequence) {
+		diag.Status = keybindingDeliveryAmbiguous
+		diag.TmuxReceivedKey = "Enter / C-m"
+		diag.Summary = "ambiguous key; Enter and Ctrl-M share this byte sequence"
+		return diag
+	}
+	if chord := strings.TrimSpace(res.Key.PlainChord); chord != "" && res.Status == probeStatusPlain {
+		diag.Status = keybindingDeliveryDelivered
+		diag.TmuxReceivedKey = chord
+		diag.Summary = "logical key reached tmux as the expected plain key"
+		return diag
+	}
+	if chord, ok := suggestedPlainChordForSequence(res.Sequence); ok && res.Key.Plain == "" {
+		diag.Status = keybindingDeliveryDelivered
+		diag.TmuxReceivedKey = chord
+		diag.Summary = "captured bytes can be saved as a safe tmux plain key"
+		return diag
+	}
+	if chord, ok := suggestedPlainChordForSequence(res.Sequence); ok && res.Status == probeStatusPlain {
+		diag.Status = keybindingDeliveryDelivered
+		diag.TmuxReceivedKey = chord
+		diag.Summary = "logical key reached tmux as a plain key"
+		return diag
+	}
+	diag.Status = keybindingDeliveryAdapterNeeded
+	diag.TmuxReceivedKey = "not a saved tmux key"
+	diag.Summary = "adapter-needed key; use a Projmux terminal adapter snippet/apply path or choose a safe direct key"
+	return diag
+}
+
+func renderKeybindingDeliveryDiagnostic(res probeResult) []string {
+	diag := keybindingDeliveryDiagnosticForProbe(res)
+	return []string{
+		"capture result:",
+		"  logical key: " + diag.LogicalKey,
+		"  raw bytes: " + diag.RawBytes,
+		"  tmux received key: " + diag.TmuxReceivedKey,
+		"  delivery status: " + string(diag.Status) + " - " + diag.Summary,
+	}
 }
 
 func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
@@ -3481,6 +3557,18 @@ func (c *settingsCommand) keybindingAddAdvancedEntries(actionID string) ([]intpi
 		{
 			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name", "type a tmux key name"),
 			Value: prefix + "type",
+		},
+		{
+			Label: c.rowLabelInfo("Safe direct keys", keybindingSafeDirectKeyPoolCopy(), "saved as logical tmux key names"),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: c.rowLabelInfo("Risky/reserved keys", keybindingRiskyReservedKeyCopy(), "diagnostic-only, not saved to keymap"),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: c.rowLabelInfo("Advanced delivery", keybindingAdvancedDeliveryCopy(action), "Projmux action owned"),
+			Value: settingsNoopValue,
 		},
 		{
 			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Raw diagnostic view", "advanced diagnostics"),
@@ -3934,6 +4022,28 @@ func keybindingAdvancedDeliveryHint(action keyBindingAction) string {
 		return "prefix-backed action; add a direct key here when wanted"
 	}
 	return "raw sequences/UserKey/terminal adapters are diagnostic-only"
+}
+
+func keybindingSafeDirectKeyPoolCopy() string {
+	return "M-letter/M-number, C-letter, C-Space, function/navigation names, and printable keys"
+}
+
+func keybindingRiskyReservedKeyCopy() string {
+	return "raw escape, CSI-u, xterm modified-key bytes, tmux UserKey/UserSequence"
+}
+
+func keybindingAdvancedDeliveryCopy(action keyBindingAction) string {
+	var adapters []string
+	if strings.TrimSpace(action.GhosttyTrigger) != "" || strings.TrimSpace(action.GhosttyAction) != "" {
+		adapters = append(adapters, "projmux init ghostty")
+	}
+	if strings.TrimSpace(action.WTID) != "" || strings.TrimSpace(action.WTInput) != "" {
+		adapters = append(adapters, "projmux init windows-terminal")
+	}
+	if len(adapters) == 0 {
+		return "no supported adapter snippet for this Projmux action; choose a safe direct key"
+	}
+	return strings.Join(adapters, " / ") + " previews and applies Projmux-owned snippets; UserSequence/UserKey stays diagnostic-only"
 }
 
 func removableKeybindingKeys(keymap keymapFile, action, defaultAction keyBindingAction) []string {
