@@ -43,10 +43,212 @@ func TestRecentWindowPickerItemEmphasizesNamesAndAge(t *testing.T) {
 		t.Fatalf("Title = %q, want no raw tmux IDs", item.Title)
 	}
 	text := item.Title + "\n" + strings.Join(item.MetaLines, "\n")
-	for _, want := range []string{"codex-review", "Phase 1 picker", "codex", "12s ago", "Projmux", "repos-projmux"} {
+	for _, want := range []string{"codex-review", "12s ago", "Projmux", "repos-projmux"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("render text = %q, want %q", text, want)
 		}
+	}
+}
+
+func TestRecentWindowPickerItemShowsContextBadgeAsMetaLine(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:    "repos-projmux",
+		WindowID:   "@6",
+		WindowName: "projmux",
+		Project:    "Projmux",
+		PaneTitles: []string{"zsh"},
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+
+	if item.Title != "projmux" {
+		t.Fatalf("Title = %q, want readable window name", item.Title)
+	}
+	wantContext := "Projmux · repos-projmux"
+	found := false
+	for _, line := range item.MetaLines {
+		if line == wantContext {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("MetaLines = %#v, want context badge %q on its own line", item.MetaLines, wantContext)
+	}
+}
+
+func TestRecentWindowPickerItemFallsBackToNameNeverRawIDs(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	// No window name; should fall back through project/session/topic, never @id/%id.
+	snapshot := recentwindows.Snapshot{
+		Session:       "repos-projmux",
+		WindowID:      "@6",
+		LastPaneID:    "%54",
+		LastPaneTopic: "roadmap",
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+
+	if strings.Contains(item.Title, "@6") || strings.Contains(item.Title, "%54") {
+		t.Fatalf("Title = %q, want fallback name, never raw tmux IDs", item.Title)
+	}
+	if item.Title != "repos-projmux" {
+		t.Fatalf("Title = %q, want session fallback", item.Title)
+	}
+}
+
+func TestRecentWindowPickerItemJoinsAllPaneTitles(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:       "repos-projmux",
+		WindowID:      "@6",
+		WindowName:    "projmux",
+		LastPaneTitle: "zsh",
+		PaneTitles:    []string{"zsh", "Codex · [lead:roadmap] Projmux", "Claude Code"},
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+
+	want := "zsh | Codex · [lead:roadmap] Projmux | Claude Code"
+	found := false
+	for _, line := range item.MetaLines {
+		if line == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("MetaLines = %#v, want pane summary %q joined with ' | '", item.MetaLines, want)
+	}
+}
+
+func TestRecentWindowPickerItemFallsBackToLastPaneTitleSummary(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	// Older state file: no PaneTitles, only LastPaneTitle.
+	snapshot := recentwindows.Snapshot{
+		Session:       "repos-projmux",
+		WindowID:      "@6",
+		WindowName:    "projmux",
+		LastPaneTitle: "legacy-pane",
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+
+	if got := recentWindowPaneSummary(recentWindowCandidate(snapshot)); got != "legacy-pane" {
+		t.Fatalf("pane summary = %q, want LastPaneTitle fallback", got)
+	}
+	if !strings.Contains(strings.Join(item.MetaLines, "\n"), "legacy-pane") {
+		t.Fatalf("MetaLines = %#v, want LastPaneTitle in summary", item.MetaLines)
+	}
+}
+
+func TestRecentWindowPaneSummaryTruncatesStably(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("pane-title", 30) // far over the rune budget
+	snapshot := recentwindows.Snapshot{
+		Session:    "s",
+		WindowID:   "@1",
+		WindowName: "w",
+		PaneTitles: []string{long},
+	}
+	summary := recentWindowPaneSummary(recentWindowCandidate(snapshot))
+
+	runes := []rune(summary)
+	if len(runes) != recentWindowPaneSummaryMaxRunes {
+		t.Fatalf("summary rune len = %d, want %d", len(runes), recentWindowPaneSummaryMaxRunes)
+	}
+	if !strings.HasSuffix(summary, "…") {
+		t.Fatalf("summary = %q, want trailing ellipsis", summary)
+	}
+	// Stable: same input always truncates identically.
+	if again := recentWindowPaneSummary(recentWindowCandidate(snapshot)); again != summary {
+		t.Fatalf("summary not stable: %q vs %q", summary, again)
+	}
+}
+
+func TestRecentWindowTruncateIsRuneAware(t *testing.T) {
+	t.Parallel()
+
+	if got := recentWindowTruncate("héllo", 10); got != "héllo" {
+		t.Fatalf("recentWindowTruncate short = %q, want unchanged", got)
+	}
+	if got := recentWindowTruncate("héllo", 3); got != "hé…" {
+		t.Fatalf("recentWindowTruncate = %q, want rune-aware ellipsis", got)
+	}
+}
+
+func TestRecentWindowPickerItemLastVisitFormat(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:       "repos-projmux",
+		WindowID:      "@6",
+		WindowName:    "projmux",
+		LastFocusedAt: at,
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(3*time.Minute))
+
+	want := "last visit · 3m ago · 2026-06-18 01:02"
+	found := false
+	for _, line := range item.MetaLines {
+		if line == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("MetaLines = %#v, want last-visit line %q", item.MetaLines, want)
+	}
+}
+
+func TestRecentWindowPickerItemSearchTextIncludesPaneTitlesAndDate(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:       "repos-projmux",
+		WindowID:      "@6",
+		WindowName:    "projmux",
+		Project:       "Projmux",
+		PaneTitles:    []string{"zsh", "Claude Code", "Codex"},
+		LastPaneTopic: "roadmap",
+		LastCommand:   "codex",
+		LastFocusedAt: at,
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(time.Minute))
+
+	for _, want := range []string{"projmux", "Projmux", "repos-projmux", "zsh", "Claude Code", "Codex", "roadmap", "codex", "2026-06-18 01:02"} {
+		if !strings.Contains(item.SearchText, want) {
+			t.Fatalf("SearchText = %q, want substring %q", item.SearchText, want)
+		}
+	}
+}
+
+func TestRecentWindowPickerItemKeepsSelectionValue(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:    "repos-projmux",
+		WindowID:   "@6",
+		WindowName: "projmux",
+	}
+	candidate := recentWindowCandidate(snapshot)
+	items, byValue := recentWindowPickerItems([]recentwindows.Candidate{candidate}, at)
+
+	if len(items) != 1 {
+		t.Fatalf("items = %#v, want one", items)
+	}
+	wantValue := "repos-projmux" + recentWindowFieldSep + "@6"
+	if items[0].Value != wantValue {
+		t.Fatalf("Value = %q, want %q", items[0].Value, wantValue)
+	}
+	if _, ok := byValue[wantValue]; !ok {
+		t.Fatalf("byValue missing %q", wantValue)
 	}
 }
 
@@ -223,6 +425,7 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 			"codex",
 			filepath.Join(project, "internal", "app"),
 		}, recentWindowFieldSep) + "\n",
+		listPanesOutput: "codex-review\nClaude Code\nzsh\n",
 	}
 	store := &recentWindowStubStore{}
 	cmd := &recentWindowCommand{
@@ -248,6 +451,9 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 	}
 	if got.LastPaneID != "%54" || got.LastPaneTitle != "codex-review" || got.LastPaneTopic != "Phase 4 recorder" || got.LastCommand != "codex" {
 		t.Fatalf("snapshot pane metadata = %+v, want active pane metadata", got)
+	}
+	if !reflect.DeepEqual(got.PaneTitles, []string{"codex-review", "Claude Code", "zsh"}) {
+		t.Fatalf("snapshot pane titles = %+v, want all panes of the window", got.PaneTitles)
 	}
 	if got.Project != filepath.Base(project) {
 		t.Fatalf("snapshot project = %q, want %q", got.Project, filepath.Base(project))
@@ -473,10 +679,11 @@ func (o *recentWindowStubOpener) OpenSessionTarget(_ context.Context, sessionNam
 }
 
 type recentWindowFakeRunner struct {
-	currentOutput string
-	recordOutput  string
-	listOutputs   any
-	calls         []recentWindowCall
+	currentOutput   string
+	recordOutput    string
+	listPanesOutput string
+	listOutputs     any
+	calls           []recentWindowCall
 }
 
 type recentWindowCall struct {
@@ -491,6 +698,9 @@ func (r *recentWindowFakeRunner) Run(_ context.Context, name string, args ...str
 	}
 	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}", "#{window_name}", "#{pane_id}", "#{pane_title}", "#{@projmux_ai_topic}", "#{pane_current_command}", "#{pane_current_path}"}, recentWindowFieldSep)}) {
 		return []byte(r.recordOutput), nil
+	}
+	if name == "tmux" && len(args) == 5 && args[0] == "list-panes" && args[1] == "-t" && args[3] == "-F" && args[4] == "#{pane_title}" {
+		return []byte(r.listPanesOutput), nil
 	}
 	if name == "tmux" && reflect.DeepEqual(args, []string{"list-windows", "-a", "-F", strings.Join([]string{"#{session_name}", "#{window_id}"}, recentWindowFieldSep)}) {
 		switch outputs := r.listOutputs.(type) {
