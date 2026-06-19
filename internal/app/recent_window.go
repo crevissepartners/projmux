@@ -162,7 +162,7 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 	}
 
 	items, byValue, initialIndex := recentWindowPickerItems(candidates, c.currentTime(), c.recentWindowAIBadgeStyle())
-	result, err := c.nativePicker.Run(recentWindowPickerOptions(items, initialIndex))
+	result, err := c.nativePicker.Run(recentWindowPickerOptions(items, initialIndex, c.homeDir, c.lookupEnv))
 	if err != nil {
 		return fmt.Errorf("run recent windows picker: %w", err)
 	}
@@ -393,14 +393,14 @@ func (c *recentWindowCommand) currentTime() time.Time {
 // initialIndex lands the cursor on the first non-current row (the most recent
 // switch target) instead of the current-window row; a negative index means there
 // is no non-current row (current-only state), so the cursor stays on index 0.
-func recentWindowPickerOptions(items []intpicker.Item, initialIndex int) intpicker.Options {
+func recentWindowPickerOptions(items []intpicker.Item, initialIndex int, homeDir func() (string, error), lookupEnv func(string) string) intpicker.Options {
 	options := intpicker.Options{
 		UI:        "recent-windows",
 		Title:     "Recent Windows",
 		Prompt:    "› ",
 		Items:     items,
 		MultiLine: true,
-		Actions:   pickerCloseActionsForToggles(nil, nil, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "RecentWindows:Open", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+		Actions:   pickerCloseActionsForPopupToggleMode(homeDir, lookupEnv, "recent-windows", "esc", "ctrl-n"),
 	}
 	if initialIndex > 0 {
 		options.InitialIndex = initialIndex

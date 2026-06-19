@@ -16,6 +16,7 @@ import (
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	projmuxpicker "github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -625,7 +626,7 @@ func TestRecentWindowPickerItemsInitialIndexFirstNonCurrentRow(t *testing.T) {
 		t.Fatalf("initialIndex = %d, want 1 (first non-current row)", initialIndex)
 	}
 
-	options := recentWindowPickerOptions(make([]intpicker.Item, 3), initialIndex)
+	options := recentWindowPickerOptions(make([]intpicker.Item, 3), initialIndex, nil, nil)
 	if !options.InitialIndexSet || options.InitialIndex != 1 {
 		t.Fatalf("options InitialIndex = %d/%t, want 1/true", options.InitialIndex, options.InitialIndexSet)
 	}
@@ -646,9 +647,40 @@ func TestRecentWindowPickerItemsInitialIndexCurrentOnlyStaysOnCurrent(t *testing
 	}
 
 	// A negative index leaves the cursor on index 0 and does NOT set InitialIndexSet.
-	options := recentWindowPickerOptions(make([]intpicker.Item, 1), initialIndex)
+	options := recentWindowPickerOptions(make([]intpicker.Item, 1), initialIndex, nil, nil)
 	if options.InitialIndexSet || options.InitialIndex != 0 {
 		t.Fatalf("options InitialIndex = %d/%t, want 0/false (stay on current row)", options.InitialIndex, options.InitialIndexSet)
+	}
+}
+
+func TestRecentWindowPickerCloseBindingsUseRecentWindowsAlias(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte(`[bindings."RecentWindows:Open"]
+keys = ["M-r"]
+[bindings.AISplitPickerToggle]
+keys = ["M-a"]
+[bindings.new-window]
+keys = ["M-t"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	options := recentWindowPickerOptions(nil, -1, func() (string, error) { return home, nil }, func(string) string { return "" })
+	bindings := intpickercompat.OptionsFromPicker(options).Bindings
+	if !containsString(bindings, "alt-r:abort") {
+		t.Fatalf("recent windows bindings = %#v, want custom RecentWindows:Open alias close", bindings)
+	}
+	if containsString(bindings, "alt-a:abort") {
+		t.Fatalf("recent windows bindings = %#v, AI picker alias must not close recent windows popup", bindings)
+	}
+	if containsString(bindings, "alt-t:abort") {
+		t.Fatalf("recent windows bindings = %#v, direct command alias must not close popup", bindings)
 	}
 }
 

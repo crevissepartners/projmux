@@ -484,7 +484,7 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 		return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: ctx.Key, Value: ctx.Value, Query: ctx.Query}}, nil
 	}
 	actions := append(
-		pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"NotifySidebarToggle"}, "esc", "alt-2"),
+		pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, "notify-sidebar", "esc"),
 		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:FocusAndAck"}, []string{"enter"}), focusOrAckGroup)...,
 	)
 	actions = append(actions,

@@ -131,9 +131,6 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotRunnerOptions.Bindings, []string{
 		"esc:abort",
 		"ctrl-n:abort",
-		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
 		"left:execute-silent(exec '/tmp/projmux' 'switch' 'cycle-window' {2} 'prev')+refresh-preview",
 		"right:execute-silent(exec '/tmp/projmux' 'switch' 'cycle-window' {2} 'next')+refresh-preview",
 		"alt-up:execute-silent(exec '/tmp/projmux' 'switch' 'cycle-pane' {2} 'prev')+refresh-preview",
@@ -575,8 +572,6 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		"esc:abort",
 		"ctrl-n:abort",
 		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
 		"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
@@ -1043,8 +1038,6 @@ func TestSwitchCommandSidebarUsesContextSessionForInitialPosition(t *testing.T) 
 		"esc:abort",
 		"ctrl-n:abort",
 		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
 		"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
 		"start:pos(1)",
 	}; !equalStrings(got, want) {
@@ -1754,8 +1747,6 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		"esc:abort",
 		"ctrl-n:abort",
 		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
 		"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
 		"start:pos(4)",
 	}; !equalStrings(got, want) {

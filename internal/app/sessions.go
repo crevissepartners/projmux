@@ -166,7 +166,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			),
 			PreviewCommand: previewCommand,
 			PreviewWindow:  sessionsPreviewWindow(*ui),
-			Bindings: append(pickerCloseBindingsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "RecentWindows:Open", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+			Bindings: append(pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "session-popup", "esc", "ctrl-n"),
 				"left:execute-silent("+cycleWindowPrev+")+refresh-preview",
 				"right:execute-silent("+cycleWindowNext+")+refresh-preview",
 				"alt-up:execute-silent("+cyclePanePrev+")+refresh-preview",
@@ -221,7 +221,7 @@ func (c *sessionsCommand) runSessionStateOverview(sessionName string, summaries 
 		Prompt:        "Projects > Sessions > State > ",
 		Footer:        projmuxFooter("Session state overview is read-only here."),
 		ExpectKeys:    []string{"enter"},
-		Bindings:      pickerCloseBindingsForToggles(c.homeDir, c.lookupEnv, []string{"SessionPopupToggle"}, "esc", "alt-3"),
+		Bindings:      pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "session-popup", "esc"),
 		DisableSearch: true,
 	})
 	if err != nil {
