@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
@@ -385,32 +386,52 @@ func recentWindowPickerItems(candidates []recentwindows.Candidate, now time.Time
 	return items, byValue
 }
 
-const recentWindowPaneSummaryMaxRunes = 80
+const (
+	recentWindowPaneSummaryMaxRunes = 80
+	// Per-component construction-time budgets keep the readable window name and
+	// the age badge on line 1 even when project or window names are very long.
+	// TruncateANSI trims at render time for the real terminal width; these
+	// budgets only guarantee the high-priority fields are never pushed out by a
+	// single overlong component before truncation runs.
+	recentWindowProjectBadgeMaxRunes = 24
+	recentWindowNameMaxRunes         = 48
+	recentWindowTopicChipMaxRunes    = 48
+)
 
 func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time) intpicker.Item {
-	// Title is the readable window name only (never a raw @window_id/%pane_id).
-	// BuildLabel already falls back name -> project -> session -> pane/topic/cmd.
-	title := strings.TrimSpace(candidate.Label.Primary)
-	if title == "" {
-		title = recentWindowTargetLabel(candidate)
+	// The readable window name (never a raw @window_id/%pane_id). BuildLabel
+	// already falls back name -> project -> session -> pane/topic/cmd.
+	name := strings.TrimSpace(candidate.Label.Primary)
+	if name == "" {
+		name = recentWindowTargetLabel(candidate)
 	}
+	name = recentWindowTruncate(name, recentWindowNameMaxRunes)
 
 	age := recentWindowAge(candidate.LastFocusedAt, now)
 	lastVisit := recentWindowLastVisit(age, candidate.LastFocusedAt)
 
+	// Line 1: project badge -> readable window name -> last-focus age badge.
+	// Reuse the notify sidebar helpers so the badges match the notification
+	// sidebar palette and each badge terminates with theme.ANSIReset (so the
+	// selected-row background re-applies cleanly after every badge).
+	badgeText := recentWindowBadgeText(candidate)
+	title := notifySidebarProjectBadge(badgeText) + " " + name + " " + notifySidebarAge(age)
+
+	// Line 2: the window's pane topic/title summary (topic leads).
+	paneSummary := recentWindowPaneSummaryLine(candidate)
+
 	// Display-only context badge (project/session). Never a recency signal.
 	context := joinRecentWindowParts(candidate.Project, candidate.Session)
-	paneSummary := recentWindowPaneSummary(candidate)
 
 	meta := make([]string, 0, 3)
 	if paneSummary != "" {
 		meta = append(meta, paneSummary)
 	}
-	if context != "" && context != title {
-		meta = append(meta, context)
-	}
 	if lastVisit != "" {
 		meta = append(meta, lastVisit)
+	}
+	if context != "" && context != name {
+		meta = append(meta, notifySidebarDim(context))
 	}
 
 	search := joinRecentWindowParts(append([]string{
@@ -432,6 +453,18 @@ func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time) in
 	}
 }
 
+// recentWindowBadgeText picks the line-1 badge text: real project context when
+// available, else the session, so we show meaningful context instead of an
+// empty "project" placeholder. notifySidebarProjectBadge supplies the default
+// only when both are truly empty.
+func recentWindowBadgeText(candidate recentwindows.Candidate) string {
+	badge := strings.TrimSpace(candidate.Project)
+	if badge == "" {
+		badge = strings.TrimSpace(candidate.Session)
+	}
+	return recentWindowTruncate(badge, recentWindowProjectBadgeMaxRunes)
+}
+
 // recentWindowPaneTitles returns the pane-title list, falling back to the
 // single active pane title for snapshots recorded before PaneTitles existed.
 func recentWindowPaneTitles(candidate recentwindows.Candidate) []string {
@@ -449,14 +482,77 @@ func recentWindowPaneTitles(candidate recentwindows.Candidate) []string {
 	return titles
 }
 
-// recentWindowPaneSummary joins all pane titles with " | " and stably truncates
-// the result so a long summary never causes the row to shift layout.
+// recentWindowPaneSummary joins the window's pane topic/title summary with
+// " | " and stably truncates the plain result so it never shifts layout. Pane
+// topic leads (the user's work context) when present; otherwise pane titles,
+// falling back to LastPaneTitle then LastCommand via recentWindowPaneTitles.
 func recentWindowPaneSummary(candidate recentwindows.Candidate) string {
-	titles := recentWindowPaneTitles(candidate)
-	if len(titles) == 0 {
+	parts := recentWindowPaneSummaryParts(candidate)
+	if len(parts) == 0 {
 		return ""
 	}
-	return recentWindowTruncate(strings.Join(titles, " | "), recentWindowPaneSummaryMaxRunes)
+	return recentWindowTruncate(strings.Join(parts, " | "), recentWindowPaneSummaryMaxRunes)
+}
+
+// recentWindowPaneSummaryParts returns the ordered topic/title parts for the
+// pane summary, with the pane topic leading when set.
+func recentWindowPaneSummaryParts(candidate recentwindows.Candidate) []string {
+	titles := recentWindowPaneTitles(candidate)
+	topic := strings.TrimSpace(candidate.LastPaneTopic)
+	if topic == "" {
+		if len(titles) > 0 {
+			return titles
+		}
+		if cmd := strings.TrimSpace(candidate.LastCommand); cmd != "" {
+			return []string{cmd}
+		}
+		return nil
+	}
+	// Topic leads; append the remaining titles (excluding any that duplicate the
+	// topic) so the user's work context shows first.
+	parts := make([]string, 0, len(titles)+1)
+	parts = append(parts, topic)
+	for _, title := range titles {
+		if title != topic {
+			parts = append(parts, title)
+		}
+	}
+	return parts
+}
+
+// recentWindowPaneSummaryLine renders the line-2 pane summary with notify-level
+// visibility: the leading topic is wrapped in an active chip (like
+// notifySidebarTopicBadge) and the remaining pane titles are dimmed so they
+// read as secondary context rather than blending into plain meta text.
+func recentWindowPaneSummaryLine(candidate recentwindows.Candidate) string {
+	plain := recentWindowPaneSummary(candidate)
+	if plain == "" {
+		return ""
+	}
+	parts := strings.SplitN(plain, " | ", 2)
+	lead := parts[0]
+	rest := ""
+	if len(parts) == 2 {
+		rest = parts[1]
+	}
+	if strings.TrimSpace(candidate.LastPaneTopic) != "" {
+		chip := recentWindowTopicChip(lead)
+		if rest != "" {
+			return chip + " " + notifySidebarDim(rest)
+		}
+		return chip
+	}
+	return notifySidebarDim(plain)
+}
+
+// recentWindowTopicChip wraps the pane topic in the shared active chip palette,
+// terminating with theme.ANSIReset like notifySidebarTopicBadge.
+func recentWindowTopicChip(topic string) string {
+	topic = recentWindowTruncate(strings.TrimSpace(topic), recentWindowTopicChipMaxRunes)
+	if topic == "" {
+		return ""
+	}
+	return theme.ANSIChipActiveStart + " " + topic + " " + theme.ANSIReset
 }
 
 // recentWindowLastVisit labels the relative age so the row reads unambiguously

@@ -6,14 +6,25 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	projmuxpicker "github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
+
+var recentWindowANSIPattern = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// recentWindowStripANSI removes SGR escape sequences so tests can assert on the
+// visible content of badge-decorated rows.
+func recentWindowStripANSI(value string) string {
+	return recentWindowANSIPattern.ReplaceAllString(value, "")
+}
 
 func TestRecentWindowPickerItemEmphasizesNamesAndAge(t *testing.T) {
 	t.Parallel()
@@ -36,13 +47,29 @@ func TestRecentWindowPickerItemEmphasizesNamesAndAge(t *testing.T) {
 		Label:    recentwindows.BuildLabel(snapshot),
 	}, at.Add(12*time.Second))
 
-	if got, want := item.Title, "projmux"; got != want {
-		t.Fatalf("Title = %q, want %q", got, want)
+	// Line 1 reads: project badge -> readable window name -> age badge.
+	visibleTitle := recentWindowStripANSI(item.Title)
+	projectIdx := strings.Index(visibleTitle, "Projmux")
+	nameIdx := strings.Index(visibleTitle, "projmux")
+	ageIdx := strings.Index(visibleTitle, "12s ago")
+	if projectIdx < 0 || nameIdx <= projectIdx || ageIdx <= nameIdx {
+		t.Fatalf("line 1 visible = %q, want project badge -> window name -> age order", visibleTitle)
 	}
 	if strings.Contains(item.Title, "@6") || strings.Contains(item.Title, "%54") {
 		t.Fatalf("Title = %q, want no raw tmux IDs", item.Title)
 	}
-	text := item.Title + "\n" + strings.Join(item.MetaLines, "\n")
+	// Notify badge palette reuse: project + age start tokens, and every badge
+	// terminates with a reset so selected-row background re-applies.
+	if !strings.Contains(item.Title, theme.ANSINotifyProjectStart) {
+		t.Fatalf("Title = %q, want notify project badge palette", item.Title)
+	}
+	if !strings.Contains(item.Title, theme.ANSINotifyAgeStart) {
+		t.Fatalf("Title = %q, want notify age badge palette", item.Title)
+	}
+	if !strings.HasSuffix(item.Title, theme.ANSIReset) {
+		t.Fatalf("Title = %q, want trailing reset", item.Title)
+	}
+	text := recentWindowStripANSI(item.Title + "\n" + strings.Join(item.MetaLines, "\n"))
 	for _, want := range []string{"codex-review", "12s ago", "Projmux", "repos-projmux"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("render text = %q, want %q", text, want)
@@ -63,13 +90,13 @@ func TestRecentWindowPickerItemShowsContextBadgeAsMetaLine(t *testing.T) {
 	}
 	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
 
-	if item.Title != "projmux" {
-		t.Fatalf("Title = %q, want readable window name", item.Title)
+	if got := recentWindowStripANSI(item.Title); !strings.Contains(got, "projmux") {
+		t.Fatalf("line 1 visible = %q, want readable window name", got)
 	}
 	wantContext := "Projmux · repos-projmux"
 	found := false
 	for _, line := range item.MetaLines {
-		if line == wantContext {
+		if recentWindowStripANSI(line) == wantContext {
 			found = true
 		}
 	}
@@ -94,8 +121,8 @@ func TestRecentWindowPickerItemFallsBackToNameNeverRawIDs(t *testing.T) {
 	if strings.Contains(item.Title, "@6") || strings.Contains(item.Title, "%54") {
 		t.Fatalf("Title = %q, want fallback name, never raw tmux IDs", item.Title)
 	}
-	if item.Title != "repos-projmux" {
-		t.Fatalf("Title = %q, want session fallback", item.Title)
+	if got := recentWindowStripANSI(item.Title); !strings.Contains(got, "repos-projmux") {
+		t.Fatalf("line 1 visible = %q, want session fallback", got)
 	}
 }
 
@@ -115,7 +142,7 @@ func TestRecentWindowPickerItemJoinsAllPaneTitles(t *testing.T) {
 	want := "zsh | Codex · [lead:roadmap] Projmux | Claude Code"
 	found := false
 	for _, line := range item.MetaLines {
-		if line == want {
+		if recentWindowStripANSI(line) == want {
 			found = true
 		}
 	}
@@ -202,6 +229,102 @@ func TestRecentWindowPickerItemLastVisitFormat(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("MetaLines = %#v, want last-visit line %q", item.MetaLines, want)
+	}
+}
+
+func TestRecentWindowPickerItemPaneTopicLeadsSummary(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:       "repos-projmux",
+		WindowID:      "@6",
+		WindowName:    "projmux",
+		LastPaneTopic: "Phase 6 polish",
+		PaneTitles:    []string{"zsh", "Claude Code"},
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+
+	if len(item.MetaLines) == 0 {
+		t.Fatalf("MetaLines = %#v, want a pane summary line", item.MetaLines)
+	}
+	visible := recentWindowStripANSI(item.MetaLines[0])
+	topicIdx := strings.Index(visible, "Phase 6 polish")
+	zshIdx := strings.Index(visible, "zsh")
+	claudeIdx := strings.Index(visible, "Claude Code")
+	if topicIdx < 0 || zshIdx <= topicIdx || claudeIdx <= zshIdx {
+		t.Fatalf("pane summary line = %q, want topic-led order topic -> zsh -> Claude Code", visible)
+	}
+	if !strings.Contains(visible, "zsh | Claude Code") {
+		t.Fatalf("pane summary line = %q, want remaining titles joined with ' | '", visible)
+	}
+	// The leading topic is wrapped in the shared active chip palette.
+	if !strings.Contains(item.MetaLines[0], theme.ANSIChipActiveStart) {
+		t.Fatalf("pane summary line = %q, want topic chip palette", item.MetaLines[0])
+	}
+	if !strings.HasSuffix(item.MetaLines[0], theme.ANSIReset) {
+		t.Fatalf("pane summary line = %q, want trailing reset", item.MetaLines[0])
+	}
+}
+
+func TestRecentWindowPickerItemTruncatesLongComponentsKeepingNameAndAge(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:       "repos-projmux",
+		WindowID:      "@6",
+		WindowName:    strings.Repeat("window-name", 12),
+		Project:       strings.Repeat("project", 12),
+		LastFocusedAt: at,
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(2*time.Minute))
+
+	visible := recentWindowStripANSI(item.Title)
+	if !strings.Contains(visible, "2m ago") {
+		t.Fatalf("line 1 visible = %q, want age preserved", visible)
+	}
+	if !strings.Contains(visible, "…") {
+		t.Fatalf("line 1 visible = %q, want long components truncated with ellipsis", visible)
+	}
+	// The window name must remain present (truncated, not dropped).
+	if !strings.Contains(visible, "window-name") {
+		t.Fatalf("line 1 visible = %q, want window name preserved", visible)
+	}
+	// Component budgets bound each piece so the age survives.
+	if got := len([]rune(recentWindowBadgeText(recentWindowCandidate(snapshot)))); got > recentWindowProjectBadgeMaxRunes {
+		t.Fatalf("badge text rune len = %d, want <= %d", got, recentWindowProjectBadgeMaxRunes)
+	}
+}
+
+func TestRecentWindowPickerItemRowRendersWithoutStyleBleed(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:       "repos-projmux",
+		WindowID:      "@6",
+		WindowName:    "projmux",
+		Project:       "Projmux",
+		LastPaneTopic: "Phase 6 polish",
+		PaneTitles:    []string{"zsh"},
+		LastFocusedAt: at,
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(time.Minute))
+	row := projmuxpicker.Row{Label: item.Title, MetaLines: item.MetaLines}
+
+	for _, selected := range []bool{true, false} {
+		lines := projmuxpicker.InteractiveRowLinesWithTheme(projmuxpicker.DefaultTheme, row, selected, true)
+		if len(lines) == 0 {
+			t.Fatalf("selected=%v rendered no lines", selected)
+		}
+		line1 := lines[0]
+		if !strings.HasSuffix(line1, theme.ANSIReset) {
+			t.Fatalf("selected=%v line 1 = %q, want trailing reset (no orphaned styling)", selected, line1)
+		}
+		if !strings.Contains(recentWindowStripANSI(line1), "projmux") {
+			t.Fatalf("selected=%v line 1 visible = %q, want window name", selected, recentWindowStripANSI(line1))
+		}
 	}
 }
 
@@ -622,7 +745,7 @@ func TestRecentWindowGoneCandidatePrunedBeforePicker(t *testing.T) {
 	if err := cmd.Run(nil, nil, nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if len(pickerOptions.Items) != 1 || pickerOptions.Items[0].Title != "alive" {
+	if len(pickerOptions.Items) != 1 || !strings.Contains(recentWindowStripANSI(pickerOptions.Items[0].Title), "alive") {
 		t.Fatalf("picker items = %#v, want only alive candidate", pickerOptions.Items)
 	}
 	if opener.session != "alive" || opener.window != "@3" {
