@@ -112,7 +112,7 @@ The fzf compatibility surface for the native engine is tracked in
   the top border off screen.
 - Native preview panes normalize tabs and control bytes before horizontal
   clipping, preventing long preview rows from wrapping and consuming extra
-  vertical viewport rows in Alt-3/session popups.
+  vertical viewport rows in session popups.
 - Native sidebar list scrollbars use the fixed list viewport as their track and
   measure multi-line cards in rendered rows, so the thumb does not shrink or
   jump when card heights vary.
@@ -179,8 +179,9 @@ Manual UX checks for the Docker sandbox:
 - Alt-1 opens with the top border/title visible, not clipped.
 - Vertical borders stay continuous while moving Up/Down.
 - Alt-1 closes the sidebar immediately when pressed again.
-- Alt-2, Alt-3, Alt-4, and Alt-5 open their matching native popups and close
+- Alt-2, Alt-4, and Alt-5 open their matching native popups and close
   on the same Alt key immediately.
+- Alt-3 opens Recent Windows.
 - Arrow keys move selection without leaking `^[[` text into the query.
 
 `fzf` is intentionally not installed in the image.

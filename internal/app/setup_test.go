@@ -441,6 +441,10 @@ func TestDefaultProbeKeysCoverSpec(t *testing.T) {
 			t.Fatalf("default probe key[%d] = %q, want %q (full got=%v)", i, got[i], want[i], got)
 		}
 	}
+	alt3 := probeKeyByLabel(keys, "Alt-3")
+	if alt3.Action != "Recent windows" || alt3.ActionID != "RecentWindows:Open" || alt3.PlainChord != "M-3" {
+		t.Fatalf("Alt-3 probe = %#v, want RecentWindows:Open recent windows M-3 probe", alt3)
+	}
 	cmd := newSetupCommand()
 	cmd.defaultKeys = keys
 	cmd.lookupEnv = func(string) string { return "" }
@@ -454,4 +458,13 @@ func TestDefaultProbeKeysCoverSpec(t *testing.T) {
 			t.Fatalf("default probe key output should not include legacy route %q:\n%s", banned, out)
 		}
 	}
+}
+
+func probeKeyByLabel(keys []probeKey, label string) probeKey {
+	for _, key := range keys {
+		if key.Label == label {
+			return key
+		}
+	}
+	return probeKey{}
 }

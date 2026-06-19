@@ -14,7 +14,7 @@ func TestKeyBindingCatalogGuaranteedLaunchDefaultsAreOnlyAltOneThroughFive(t *te
 	want := map[string]string{
 		"ProjectSidebarToggle": "M-1",
 		"NotifySidebarToggle":  "M-2",
-		"SessionPopupToggle":   "M-3",
+		"RecentWindows:Open":   "M-3",
 		"AISplitPickerToggle":  "M-4",
 		"SettingsToggle":       "M-5",
 	}
@@ -33,7 +33,7 @@ func TestKeyBindingCatalogGuaranteedLaunchDefaultsAreOnlyAltOneThroughFive(t *te
 		}
 	}
 
-	for _, id := range []string{"ProjectSwitcherToggle", "new-window", "previous-window", "next-window", "rename-window", "rename-pane-topic"} {
+	for _, id := range []string{"SessionPopupToggle", "ProjectSwitcherToggle", "new-window", "previous-window", "next-window", "rename-window", "rename-pane-topic"} {
 		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), id)
 		if !ok {
 			t.Fatalf("missing action %s", id)
@@ -41,6 +41,41 @@ func TestKeyBindingCatalogGuaranteedLaunchDefaultsAreOnlyAltOneThroughFive(t *te
 		if action.Tier == keyBindingTierGuaranteedLaunchDefault {
 			t.Fatalf("%s tier = guaranteed launch default, want non-guaranteed tier", id)
 		}
+	}
+}
+
+func TestRecentWindowsOpenOwnsAltThreeDefault(t *testing.T) {
+	t.Parallel()
+
+	catalog := defaultKeyBindingCatalog()
+	recent, ok := keyBindingActionByID(catalog, "RecentWindows:Open")
+	if !ok {
+		t.Fatalf("catalog missing RecentWindows:Open")
+	}
+	if got, want := keyBindingDisplayName(recent), "Recent Windows"; got != want {
+		t.Fatalf("RecentWindows:Open display name = %q, want %q", got, want)
+	}
+	if got, want := keyBindingEffectivePlainChords(recent), []string{"M-3"}; !equalStrings(got, want) {
+		t.Fatalf("RecentWindows:Open keys = %#v, want %#v", got, want)
+	}
+	if recent.TmuxKind != tmuxBindingRunProjmux || recent.TmuxBody != "window recent" {
+		t.Fatalf("RecentWindows:Open tmux binding = (%s, %q), want run-projmux window recent", recent.TmuxKind, recent.TmuxBody)
+	}
+	for _, want := range []string{"Recent windows queue", "last-pane", "existing-session popup"} {
+		if !strings.Contains(recent.Description, want) {
+			t.Fatalf("RecentWindows:Open description = %q, want %q", recent.Description, want)
+		}
+	}
+
+	sessionPopup, ok := keyBindingActionByID(catalog, "SessionPopupToggle")
+	if !ok {
+		t.Fatalf("catalog missing SessionPopupToggle")
+	}
+	if sessionPopup.Tier == keyBindingTierGuaranteedLaunchDefault {
+		t.Fatalf("SessionPopupToggle tier = guaranteed launch default, want configurable non-guaranteed action")
+	}
+	if got := keyBindingEffectivePlainChords(sessionPopup); len(got) != 0 {
+		t.Fatalf("SessionPopupToggle keys = %#v, want no guaranteed M-3 default", got)
 	}
 }
 

@@ -1863,7 +1863,7 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 		Footer:         switchPickerFooter(plan.UI, plan.StatusMessage, c.homeDir, c.lookupEnv),
 		InitialQuery:   plan.InitialQuery,
 		DeferredUpdate: plan.DeferredUpdate,
-		Actions:        pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+		Actions:        pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "RecentWindows:Open", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
 	}
 	options.Actions = append(options.Actions, sidebarKillActions...)
 	options.Actions = append(options.Actions, intpicker.CustomActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:PinProject"}, []string{switchPinExpectKey})...)...)

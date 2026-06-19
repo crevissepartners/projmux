@@ -71,7 +71,7 @@ Inside the app:
 
 - `Alt-1` opens the project sidebar.
 - `Alt-2` opens the notification list.
-- `Alt-3` opens the existing-session picker.
+- `Alt-3` opens Recent Windows.
 - `Alt-4` opens the AI split picker.
 - `Alt-5` opens settings.
 

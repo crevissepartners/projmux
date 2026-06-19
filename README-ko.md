@@ -62,7 +62,7 @@ projmux shell
 
 - `Alt-1`: project sidebar.
 - `Alt-2`: notification list.
-- `Alt-3`: existing-session picker.
+- `Alt-3`: Recent Windows.
 - `Alt-4`: AI split picker.
 - `Alt-5`: settings.
 - `Alt-6`: project switcher popup.
