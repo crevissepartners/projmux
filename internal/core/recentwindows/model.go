@@ -28,6 +28,7 @@ type Snapshot struct {
 	Project       string    `json:"project,omitempty"`
 	LastPaneID    string    `json:"last_pane_id,omitempty"`
 	LastPaneTitle string    `json:"last_pane_title,omitempty"`
+	PaneTitles    []string  `json:"pane_titles,omitempty"`
 	LastPaneTopic string    `json:"last_pane_topic,omitempty"`
 	LastCommand   string    `json:"last_command,omitempty"`
 	LastFocusedAt time.Time `json:"last_focused_at"`
@@ -185,12 +186,29 @@ func normalizeSnapshot(snapshot Snapshot) Snapshot {
 	snapshot.Project = strings.TrimSpace(snapshot.Project)
 	snapshot.LastPaneID = strings.TrimSpace(snapshot.LastPaneID)
 	snapshot.LastPaneTitle = strings.TrimSpace(snapshot.LastPaneTitle)
+	snapshot.PaneTitles = normalizePaneTitles(snapshot.PaneTitles)
 	snapshot.LastPaneTopic = strings.TrimSpace(snapshot.LastPaneTopic)
 	snapshot.LastCommand = strings.TrimSpace(snapshot.LastCommand)
 	if !snapshot.LastFocusedAt.IsZero() {
 		snapshot.LastFocusedAt = snapshot.LastFocusedAt.UTC()
 	}
 	return snapshot
+}
+
+func normalizePaneTitles(titles []string) []string {
+	if len(titles) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(titles))
+	for _, title := range titles {
+		if title = strings.TrimSpace(title); title != "" {
+			out = append(out, title)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func normalizeKey(key WindowKey) WindowKey {

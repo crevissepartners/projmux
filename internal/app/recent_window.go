@@ -265,10 +265,35 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 		Project:       recentWindowProjectName(fields[8]),
 		LastPaneID:    fields[4],
 		LastPaneTitle: fields[5],
+		PaneTitles:    c.windowPaneTitles(ctx, fields[2]),
 		LastPaneTopic: fields[6],
 		LastCommand:   fields[7],
 		LastFocusedAt: c.currentTime().UTC(),
 	}, nil
+}
+
+// windowPaneTitles collects the pane titles of every pane in the given window
+// so the picker can render a multi-pane summary. Failures degrade gracefully:
+// an empty result falls back to LastPaneTitle at display time.
+func (c *recentWindowCommand) windowPaneTitles(ctx context.Context, windowID string) []string {
+	if c.runner == nil || strings.TrimSpace(windowID) == "" {
+		return nil
+	}
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-t", windowID, "-F", "#{pane_title}")
+	if err != nil {
+		return nil
+	}
+	rows := parseRecentWindowRows(output, 1)
+	titles := make([]string, 0, len(rows))
+	for _, fields := range rows {
+		if title := strings.TrimSpace(fields[0]); title != "" {
+			titles = append(titles, title)
+		}
+	}
+	if len(titles) == 0 {
+		return nil
+	}
+	return titles
 }
 
 func (c *recentWindowCommand) liveWindows(ctx context.Context, socket string) ([]recentwindows.LiveWindow, error) {
@@ -360,36 +385,115 @@ func recentWindowPickerItems(candidates []recentwindows.Candidate, now time.Time
 	return items, byValue
 }
 
+const recentWindowPaneSummaryMaxRunes = 80
+
 func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time) intpicker.Item {
+	// Title is the readable window name only (never a raw @window_id/%pane_id).
+	// BuildLabel already falls back name -> project -> session -> pane/topic/cmd.
 	title := strings.TrimSpace(candidate.Label.Primary)
 	if title == "" {
 		title = recentWindowTargetLabel(candidate)
 	}
+
 	age := recentWindowAge(candidate.LastFocusedAt, now)
+	lastVisit := recentWindowLastVisit(age, candidate.LastFocusedAt)
+
+	// Display-only context badge (project/session). Never a recency signal.
 	context := joinRecentWindowParts(candidate.Project, candidate.Session)
-	activity := joinRecentWindowParts(candidate.LastPaneTitle, candidate.LastPaneTopic, candidate.LastCommand, age)
-	meta := make([]string, 0, 2)
-	if activity != "" {
-		meta = append(meta, activity)
+	paneSummary := recentWindowPaneSummary(candidate)
+
+	meta := make([]string, 0, 3)
+	if paneSummary != "" {
+		meta = append(meta, paneSummary)
 	}
 	if context != "" && context != title {
 		meta = append(meta, context)
 	}
-	search := joinRecentWindowParts(
+	if lastVisit != "" {
+		meta = append(meta, lastVisit)
+	}
+
+	search := joinRecentWindowParts(append([]string{
 		candidate.WindowName,
 		candidate.Project,
 		candidate.Session,
-		candidate.LastPaneTitle,
+	}, append(recentWindowPaneTitles(candidate), []string{
 		candidate.LastPaneTopic,
 		candidate.LastCommand,
 		age,
+		recentWindowFocusDate(candidate.LastFocusedAt),
 		candidate.Label.Secondary,
-	)
+	}...)...)...)
+
 	return intpicker.Item{
 		Title:      title,
 		MetaLines:  meta,
 		SearchText: search,
 	}
+}
+
+// recentWindowPaneTitles returns the pane-title list, falling back to the
+// single active pane title for snapshots recorded before PaneTitles existed.
+func recentWindowPaneTitles(candidate recentwindows.Candidate) []string {
+	titles := make([]string, 0, len(candidate.PaneTitles))
+	for _, title := range candidate.PaneTitles {
+		if title = strings.TrimSpace(title); title != "" {
+			titles = append(titles, title)
+		}
+	}
+	if len(titles) == 0 {
+		if title := strings.TrimSpace(candidate.LastPaneTitle); title != "" {
+			titles = append(titles, title)
+		}
+	}
+	return titles
+}
+
+// recentWindowPaneSummary joins all pane titles with " | " and stably truncates
+// the result so a long summary never causes the row to shift layout.
+func recentWindowPaneSummary(candidate recentwindows.Candidate) string {
+	titles := recentWindowPaneTitles(candidate)
+	if len(titles) == 0 {
+		return ""
+	}
+	return recentWindowTruncate(strings.Join(titles, " | "), recentWindowPaneSummaryMaxRunes)
+}
+
+// recentWindowLastVisit labels the relative age so the row reads unambiguously
+// as a last-visit time rather than an Alt-1 sidebar entry.
+func recentWindowLastVisit(age string, focused time.Time) string {
+	age = strings.TrimSpace(age)
+	if age == "" {
+		return ""
+	}
+	if date := recentWindowFocusDate(focused); date != "" {
+		return "last visit · " + age + " · " + date
+	}
+	return "last visit · " + age
+}
+
+func recentWindowFocusDate(focused time.Time) string {
+	if focused.IsZero() {
+		return ""
+	}
+	return focused.UTC().Format("2006-01-02 15:04")
+}
+
+// recentWindowTruncate shortens value to at most maxRunes runes (rune-aware),
+// appending a single-rune ellipsis when truncation occurs. Distinct from the
+// package's plain truncateRunes (which hard-cuts without an ellipsis).
+func recentWindowTruncate(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	if maxRunes == 1 {
+		return "…"
+	}
+	return string(runes[:maxRunes-1]) + "…"
 }
 
 func recentWindowValue(candidate recentwindows.Candidate) string {

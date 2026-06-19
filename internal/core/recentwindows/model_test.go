@@ -3,6 +3,7 @@ package recentwindows
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -181,6 +182,65 @@ func TestBuildLabelUsesDebugOnlyAsFallback(t *testing.T) {
 	label = BuildLabel(Snapshot{WindowID: "@6", LastPaneID: "%54"})
 	if got, want := label.Primary, "win @6 pane %54"; got != want {
 		t.Fatalf("Primary = %q, want debug fallback %q", got, want)
+	}
+}
+
+func TestNormalizeSnapshotTrimsPaneTitles(t *testing.T) {
+	t.Parallel()
+
+	snapshot := normalizeSnapshot(Snapshot{
+		Session:    "s",
+		WindowID:   "@1",
+		PaneTitles: []string{"  zsh ", "", "   ", "Claude Code"},
+	})
+	if got, want := len(snapshot.PaneTitles), 2; got != want {
+		t.Fatalf("pane titles len = %d, want %d (empties dropped)", got, want)
+	}
+	if snapshot.PaneTitles[0] != "zsh" || snapshot.PaneTitles[1] != "Claude Code" {
+		t.Fatalf("pane titles = %#v, want trimmed non-empty", snapshot.PaneTitles)
+	}
+}
+
+func TestRecordPreservesPaneTitlesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	state, err := NewState(nil).Record(Snapshot{
+		Session:       "s",
+		WindowID:      "@1",
+		WindowName:    "main",
+		PaneTitles:    []string{"zsh", "Claude Code"},
+		LastFocusedAt: now,
+	}, 0)
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if got := state.Entries[0].PaneTitles; len(got) != 2 || got[0] != "zsh" || got[1] != "Claude Code" {
+		t.Fatalf("pane titles = %#v, want preserved", got)
+	}
+}
+
+func TestRecordWindowMRUDoesNotReorderBeyondWindowList(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	state := NewState([]Snapshot{
+		snap("/tmp/tmux", "alpha", "@1", "main", now),
+		snap("/tmp/tmux", "beta", "@2", "tests", now.Add(time.Second)),
+	})
+	// Recording a brand-new window only prepends that window candidate; the
+	// relative order of the other (session/project) entries is preserved.
+	updated, err := state.Record(snap("/tmp/tmux", "gamma", "@3", "docs", now.Add(2*time.Second)), 0)
+	if err != nil {
+		t.Fatalf("record gamma: %v", err)
+	}
+	gotOrder := []string{}
+	for _, e := range updated.Entries {
+		gotOrder = append(gotOrder, e.Session)
+	}
+	wantOrder := []string{"gamma", "alpha", "beta"}
+	if !reflect.DeepEqual(gotOrder, wantOrder) {
+		t.Fatalf("entry order = %v, want %v (window-only prepend, rest stable)", gotOrder, wantOrder)
 	}
 }
 
