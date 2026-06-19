@@ -437,7 +437,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Right: show child rows  |  Left: hide child rows  |  Enter: focus live group / clean stale-gone  |  a: ack child  |  A: ack group  |  x: clear non-critical  |  Ctrl-X: clear all"; got != want {
+	if got, want := picker.options.Footer, "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  x: clear non-critical  |  Ctrl-X: clear all"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
 	if got, want := picker.options.ExpectKeys, []string{"enter", "a", "A", "x", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
@@ -519,7 +519,7 @@ keys = ["C-y"]
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	want := "Right: show child rows  |  Left: hide child rows  |  Enter: focus live group / clean stale-gone  |  a: ack child  |  A: ack group  |  c: clear non-critical  |  Ctrl-Y: clear all"
+	want := "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  c: clear non-critical  |  Ctrl-Y: clear all"
 	if got := picker.options.Footer; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
@@ -636,7 +636,7 @@ func TestNotifySidebarLabelUsesKoreanFormatterOutput(t *testing.T) {
 	}, now, notifyDisplayStale, i18n.Locale("ko-KR"))
 
 	stripped := stripANSI(label)
-	for _, want := range []string{"36초 전", "오래됨", "창 1", "페인 42"} {
+	for _, want := range []string{"36초 전", "비활성", "창 1", "페인 42"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("label = %q, want localized formatter output %q", stripped, want)
 		}
@@ -900,7 +900,7 @@ func TestNotifySidebarGroupedReadModelUsesWorstSeverity(t *testing.T) {
 	}
 }
 
-func TestNotifySidebarGroupedReadModelDisplaysStaleAndGoneGroups(t *testing.T) {
+func TestNotifySidebarGroupedReadModelDisplaysInactiveAndGoneGroups(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -910,11 +910,11 @@ func TestNotifySidebarGroupedReadModelDisplaysStaleAndGoneGroups(t *testing.T) {
 	}
 	model := buildNotifySidebarReadModel(entries, now, map[string]notifyLivePane{}, i18n.FallbackLocale)
 	if len(model.Groups) != 2 {
-		t.Fatalf("groups = %#v, want stale and gone groups", model.Groups)
+		t.Fatalf("groups = %#v, want inactive and gone groups", model.Groups)
 	}
-	staleLines := strings.Split(stripANSI(model.Groups[0].Label), "\n")
-	if model.Groups[0].Display != notifyDisplayStale || len(staleLines) != 3 || strings.Contains(staleLines[0], "STALE") || strings.Contains(staleLines[0], "▸") || strings.Contains(staleLines[1], "+0") || !strings.Contains(staleLines[1], "STALE") {
-		t.Fatalf("stale group = %+v, want STALE display", model.Groups[0])
+	inactiveLines := strings.Split(stripANSI(model.Groups[0].Label), "\n")
+	if model.Groups[0].Display != notifyDisplayStale || len(inactiveLines) != 3 || strings.Contains(inactiveLines[0], "INACTIVE") || strings.Contains(inactiveLines[0], "▸") || strings.Contains(inactiveLines[1], "+0") || !strings.Contains(inactiveLines[1], "INACTIVE") {
+		t.Fatalf("inactive group = %+v, want INACTIVE display", model.Groups[0])
 	}
 	goneLines := strings.Split(stripANSI(model.Groups[1].Label), "\n")
 	if model.Groups[1].Display != notifyDisplayGone || len(goneLines) != 3 || strings.Contains(goneLines[0], "GONE") || strings.Contains(goneLines[0], "▸") || strings.Contains(goneLines[1], "+0") || !strings.Contains(goneLines[1], "GONE") {
@@ -922,7 +922,7 @@ func TestNotifySidebarGroupedReadModelDisplaysStaleAndGoneGroups(t *testing.T) {
 	}
 }
 
-func TestNotifySidebarGroupedReadModelDisplaysStaleAndGoneChildCounts(t *testing.T) {
+func TestNotifySidebarGroupedReadModelDisplaysInactiveAndGoneChildCounts(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -934,7 +934,7 @@ func TestNotifySidebarGroupedReadModelDisplaysStaleAndGoneChildCounts(t *testing
 	}
 	model := buildNotifySidebarReadModel(entries, now, map[string]notifyLivePane{}, i18n.FallbackLocale)
 	if len(model.Groups) != 2 {
-		t.Fatalf("groups = %#v, want stale and gone groups", model.Groups)
+		t.Fatalf("groups = %#v, want inactive and gone groups", model.Groups)
 	}
 	for _, group := range model.Groups {
 		label := stripANSI(notifySidebarGroupEntry(group, false).Label)
@@ -947,15 +947,15 @@ func TestNotifySidebarGroupedReadModelDisplaysStaleAndGoneChildCounts(t *testing
 		}
 		switch group.Display {
 		case notifyDisplayStale:
-			if !strings.Contains(lines[1], "STALE") || strings.Contains(lines[0], "STALE") {
-				t.Fatalf("stale label = %q, want stale metadata on second line", label)
+			if !strings.Contains(lines[1], "INACTIVE") || strings.Contains(lines[0], "INACTIVE") {
+				t.Fatalf("inactive label = %q, want inactive metadata on second line", label)
 			}
 		case notifyDisplayGone:
 			if !strings.Contains(lines[1], "GONE") || strings.Contains(lines[0], "GONE") {
 				t.Fatalf("gone label = %q, want gone metadata on second line", label)
 			}
 		default:
-			t.Fatalf("group = %+v, want stale/gone display", group)
+			t.Fatalf("group = %+v, want inactive/gone display", group)
 		}
 	}
 }
@@ -1416,7 +1416,7 @@ func TestNotifyListSidebarEnterOnGroupTargetGoneCleansVisibleGroupWithoutFocus(t
 	}
 }
 
-func TestNotifyListSidebarEnterOnGroupStaleCleansVisibleGroupWithoutFocus(t *testing.T) {
+func TestNotifyListSidebarEnterOnGroupStaleRoutableFocusesAndAcks(t *testing.T) {
 	t.Parallel()
 
 	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
@@ -1444,16 +1444,20 @@ func TestNotifyListSidebarEnterOnGroupStaleCleansVisibleGroupWithoutFocus(t *tes
 		t.Fatalf("Run error = %v", err)
 	}
 	if got, want := store.ackedIDs, []string{"ai:main:%2", "ai:main:%2:critical"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("ackedIDs = %#v, want stale group cleanup including critical %#v", got, want)
+		t.Fatalf("ackedIDs = %#v, want inactive group focus+ack including critical %#v", got, want)
 	}
-	if focusCalls := filterFocusCalls(runner.calls); len(focusCalls) != 0 {
-		t.Fatalf("focus calls = %#v, want none when group target is stale", focusCalls)
+	focusCalls := filterFocusCalls(runner.calls)
+	if len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one focus call when inactive target is routable", focusCalls)
 	}
-	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify stale group cleaned"}) {
-		t.Fatalf("runner calls = %#v, want clear stale cleanup message", runner.calls)
+	if !sliceContainsPair(focusCalls[0].args, "--target", "main:@1.%2") {
+		t.Fatalf("focus args = %#v, want inactive routable target", focusCalls[0].args)
+	}
+	if hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify inactive group cleaned"}) {
+		t.Fatalf("runner calls = %#v, did not expect inactive cleanup message", runner.calls)
 	}
 	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != notifySidebarEmptyValue {
-		t.Fatalf("updates = %#v, want empty state after stale group cleanup", picker.updates)
+		t.Fatalf("updates = %#v, want empty state after inactive group focus+ack", picker.updates)
 	}
 }
 
@@ -1494,7 +1498,7 @@ func TestNotifyListSidebarEnterOnGroupPrefersLiveRepresentativeOverNewerStaleRow
 	if !sliceContainsPair(focusCalls[0].args, "--target", "main:@1.%2") {
 		t.Fatalf("focus args = %#v, want live representative target", focusCalls[0].args)
 	}
-	if hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify stale group cleaned"}) {
+	if hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify inactive group cleaned"}) {
 		t.Fatalf("runner calls = %#v, did not expect stale cleanup display message", runner.calls)
 	}
 	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != notifySidebarEmptyValue {
@@ -1875,8 +1879,8 @@ func TestNotifyListSidebarAAckRefreshesLiveStateEachLoop(t *testing.T) {
 	if len(second) != 1 || second[0].Value != groupValue {
 		t.Fatalf("second picker entries = %#v, want only ai:main:%%3", second)
 	}
-	if !strings.Contains(second[0].Label, "STALE") {
-		t.Fatalf("second label = %q, want refreshed stale state", second[0].Label)
+	if !strings.Contains(second[0].Label, "INACTIVE") {
+		t.Fatalf("second label = %q, want refreshed inactive state", second[0].Label)
 	}
 }
 
@@ -2050,6 +2054,16 @@ func TestNotifyListLiveJSONExplainsQueueAndLiveStates(t *testing.T) {
 		if !states[state] {
 			t.Fatalf("missing state %q in rows: %+v", state, report.Rows)
 		}
+	}
+	var staleExplanation string
+	for _, row := range report.Rows {
+		if row.State == "queue-stale" {
+			staleExplanation = row.Explanation
+			break
+		}
+	}
+	if !strings.Contains(staleExplanation, "target is inactive") || !strings.Contains(staleExplanation, "reply+agent") || !strings.Contains(staleExplanation, "may still be focusable") {
+		t.Fatalf("queue-stale explanation = %q, want inactive live reply+agent mismatch explanation with routable focus hint", staleExplanation)
 	}
 	if len(report.Queue) != 2 {
 		t.Fatalf("queue len = %d, want 2", len(report.Queue))

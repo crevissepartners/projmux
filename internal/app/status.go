@@ -494,10 +494,10 @@ const (
 	notifyBadgeInfoOpen = "#[bg=" + tmuxStateProgressFg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
 	notifyBadgeWarnOpen = "#[bg=" + tmuxStateWarningFg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
 	notifyBadgeCritOpen = "#[bg=" + tmuxStateCriticalFg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
-	// Stale/gone badges share a muted palette so the ack-only state is
+	// Inactive/gone badges share a muted palette so target-state hints are
 	// visually distinct from the active NEED/INFO/WARN/CRIT badges without
 	// stealing focus. The colours land in the same neutral grey family the
-	// sidebar uses so users learn a single ack-only affordance.
+	// sidebar uses so users learn one visual language for target state.
 	notifyBadgeStaleOpen = "#[bg=" + theme.TmuxMutedBg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
 	notifyBadgeGoneOpen  = "#[bg=" + theme.TmuxGoneBg + ",fg=" + theme.TmuxPrimaryFg + ",dim]"
 	notifyAgentOpen      = "#[bg=" + tmuxAccentAIBg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
@@ -685,6 +685,9 @@ func renderNotifyBadge(label, severity string) string {
 }
 
 func renderNotifyStatusMiddleBadge(n notify.Notification, text string, display notifyRowDisplayState) string {
+	if display != notifyDisplayLive {
+		return renderNotifyStateBadgeFor(n, text, display)
+	}
 	if n.Source == notify.SourceAI {
 		return renderNotifyTopicBadge(n)
 	}
@@ -725,9 +728,9 @@ func notifyAIStatusBodyTextLocale(n notify.Notification, text string, locale i18
 }
 
 // renderNotifyStateBadgeFor renders the head-entry state badge using the
-// 3-rune short label (STL/GON) when the entry is stale/gone, and the legacy
+// 3-rune short label (INA/GON) when the entry is inactive/gone, and the legacy
 // 4-rune NEED/INFO/WARN/CRIT label otherwise. The palette is overridden for
-// stale/gone so the ack-only condition stands out before the user clicks.
+// inactive/gone so target state stands out before the user clicks.
 func renderNotifyStateBadgeFor(n notify.Notification, text string, display notifyRowDisplayState) string {
 	open := notifyDisplayStateOpen(display)
 	if open == "" {
@@ -799,8 +802,8 @@ func notifyStateLabel(n notify.Notification, text string) string {
 }
 
 // notifyStateLabelFor renders the long-form state badge label. When the
-// classifier reports STALE/GONE it overrides the severity-derived label so
-// the ack-only condition is visible before the user clicks. Unknown display
+// classifier reports inactive/gone it overrides the severity-derived label so
+// target state is visible before the user clicks. Unknown display
 // states fall through to the live-row classification.
 func notifyStateLabelFor(n notify.Notification, text string, display notifyRowDisplayState) string {
 	if override := notifyDisplayStateLabel(display); override != "" {
@@ -829,7 +832,7 @@ func notifyStateLabelFor(n notify.Notification, text string, display notifyRowDi
 func notifyStateLabelForLocale(n notify.Notification, text string, display notifyRowDisplayState, locale i18n.Locale) string {
 	switch display {
 	case notifyDisplayStale:
-		return i18n.FormatStatusToken(i18n.StatusTokenStale, locale, i18n.FormatCompact)
+		return i18n.FormatStatusToken(i18n.StatusTokenStale, locale, i18n.FormatFull)
 	case notifyDisplayGone:
 		return i18n.FormatStatusToken(i18n.StatusTokenGone, locale, i18n.FormatCompact)
 	default:
@@ -838,7 +841,7 @@ func notifyStateLabelForLocale(n notify.Notification, text string, display notif
 }
 
 // notifyStateShortLabel returns the statusbar abbreviation (3 runes) for the
-// resolved label. STALE/GONE collapse to `STL` / `GON` so the segment stays
+// resolved label. Inactive/gone collapse to `INA` / `GON` so the segment stays
 // inside its width budget.
 func notifyStateShortLabel(n notify.Notification, text string, display notifyRowDisplayState) string {
 	if override := notifyDisplayStateShortLabel(display); override != "" {

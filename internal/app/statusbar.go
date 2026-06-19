@@ -568,27 +568,22 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		Window:  head.Window,
 		Pane:    head.Pane,
 	})
-	if strings.TrimSpace(target) == "" {
-		return c.runTmux(stderr, "display-message", "notification has no routable target")
-	}
 
-	// Stale/gone fast path: when we can read live tmux state and the head
-	// entry classifies as ack-only, skip the focus subprocess entirely. Round-
-	// tripping through `projmux focus` would only re-derive the same answer
-	// and toast the same message — short-circuiting saves a fork+exec and
-	// keeps the badge contract consistent (a STALE/GONE click toasts, never
-	// "succeeds").
+	// Gone fast path: when the head entry has no routable target, skip the
+	// focus subprocess entirely. Inactive/stale entries still try to focus
+	// because their pane can exist even though it no longer matches live
+	// reply+agent state.
 	//
 	// The fast path STILL acks the entry: "ack-only" means we skip the focus
 	// round-trip, *not* that we leave the row in the queue. Without the ack
-	// here the next click would re-classify the same head entry as stale/gone
+	// here the next click would re-classify the same head entry as gone
 	// and the user would be stuck repeatedly toasting the same row. The toast
 	// remains as a UX signal that the focus side of the click was skipped.
-	if display := c.classifyHeadDisplayBestEffort(head); display != notifyDisplayLive {
+	if display := c.classifyHeadDisplayBestEffort(head); display == notifyDisplayGone || strings.TrimSpace(target) == "" {
 		if ackErr := ackFocusedNotification(store, head, entries); ackErr != nil {
-			return c.runTmux(stderr, "display-message", fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(display), focusFailureSummary(ackErr)))
+			return c.runTmux(stderr, "display-message", fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(notifyDisplayGone), focusFailureSummary(ackErr)))
 		}
-		return c.runTmux(stderr, "display-message", notifyAckOnlyToast(display))
+		return c.runTmux(stderr, "display-message", notifyAckOnlyToast(notifyDisplayGone))
 	}
 
 	binaryPath, err := c.resolveBinary()
@@ -643,8 +638,9 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 // failure mode inside the docker e2e harness, which talks to a default tmux
 // socket with no projmux options registered server-side). Without this
 // nil/empty unification an `ai:`-prefixed head entry would be falsely tagged
-// STALE on every click, the focus round-trip would be skipped, and the entry
-// would never ack — exactly the regression the e2e smoke test guards against.
+// inactive on every click. Phase 6 still lets inactive entries attempt focus,
+// but the nil/empty unification also avoids showing an inactive target-state
+// hint when live data is unavailable.
 // The sidebar/`--live` surfaces keep their stricter contract (empty live map
 // means "no panes are in reply state, so anything ai-prefixed *is* stale")
 // because they have richer context and are not on the click critical path.
@@ -664,15 +660,13 @@ func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notificatio
 }
 
 // notifyAckOnlyToast renders the fast-path toast surfaced when a click lands
-// on a stale or gone head entry. The message stays inside tmux's
+// on a gone head entry. The message stays inside tmux's
 // display-message length budget so the segment never overflows the status
 // line.
 func notifyAckOnlyToast(display notifyRowDisplayState) string {
 	switch display {
 	case notifyDisplayGone:
 		return "notify target gone; cleared"
-	case notifyDisplayStale:
-		return "notify pane no longer in reply state; cleared"
 	}
 	return "notify ack-only; cleared"
 }

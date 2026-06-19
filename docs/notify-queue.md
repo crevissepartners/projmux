@@ -122,10 +122,12 @@ foldable groups inside the native sidebar only; this fold state is
 session-local and is not persisted. Right on a childless group refreshes
 without adding rows. Enter on a group row, whether folded or expanded, focuses
 the group's representative pane and acknowledges every visible notification in
-that group only after focus succeeds. If the
-representative target is stale or gone, Enter treats the selected pane inbox as
-explicit cleanup and acknowledges/prunes the visible group without focusing,
-including critical notifications. If a live-looking representative target
+that group only after focus succeeds. Inactive means an `ai:` queue entry points
+to a pane that no longer matches live reply+agent state; it is not a time-age
+TTL state, and Enter still focuses the target when it is routable. If the
+representative target is gone/unroutable, Enter treats the selected pane inbox
+as explicit cleanup and acknowledges/prunes the visible group without focusing,
+including critical notifications. If a live- or inactive-looking representative target
 disappears during focus, Enter uses the same gone-group cleanup policy. Other
 focus failures keep the group pending, show a clear message, and refresh/prune
 the list. Expanded child notification rows are compact event rows with age,
@@ -167,11 +169,12 @@ output becomes `{queue, live, rows, errors}`. Typical states:
   queue entry.
 - `live-ai-reply-missing-queue` — a live AI reply pane lacks the derived
   queue entry; run `projmux notify reconcile` to back-fill it.
-- `queue-stale` — an `ai:` queue entry exists, but the live pane no longer
-  matches reply+agent state; it remains pending until explicit ack. Surfaced
-  in the sidebar/statusbar as `STALE` / `STL`.
-- `queue-gone` — a queue entry has no routable target (empty session); it
-  can only be ack'd. Surfaced as `GONE` / `GON`.
+- `queue-stale` — preserved machine-readable state for an inactive target:
+  an `ai:` queue entry exists, but the live pane no longer matches reply+agent
+  state. It is not TTL/time age. Surfaced in the sidebar/statusbar as
+  `INACTIVE` / `INA`; Enter still focuses and acks if the target is routable.
+- `queue-gone` — a queue entry has no routable target (empty session). Surfaced
+  as `GONE` / `GON`, and Enter/ack cleans it up without focusing.
 - `queue-only` — a non-AI/external queue entry is pending and has no live AI
   reply-pane requirement.
 
@@ -201,7 +204,8 @@ path), then:
 - pushes/refreshes one `ai:<session>:<pane>` entry for every pane
   whose attention state is `reply` AND whose agent option is non-empty;
 - reports every existing queue entry whose id starts with `ai:` and whose
-  pane no longer matches that condition as stale, without acking it.
+  pane no longer matches that condition as inactive/`queue-stale`, without
+  acking it.
 
 Successful backfill pushes publish the same best-effort open-sidebar refresh
 event as other pending queue additions.

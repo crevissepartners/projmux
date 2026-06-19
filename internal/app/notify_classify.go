@@ -9,10 +9,9 @@ import (
 // notifyRowDisplayState classifies how a queue entry should be rendered in
 // user-facing surfaces (sidebar row, statusbar segment, `--live` diagnostics).
 //
-// The state is a *display* concept: it does not mutate the queue. Entries that
-// resolve to anything other than [notifyDisplayLive] are ack-only — focus
-// round-trips will not succeed, so we want to communicate that to the user
-// before they click.
+// The state is a *display* concept: it does not mutate the queue. Inactive
+// entries are live reply+agent mismatches that may still be routable; only
+// gone entries are cleanup-only.
 type notifyRowDisplayState int
 
 const (
@@ -27,7 +26,7 @@ const (
 
 	// notifyDisplayGone means the entry has no routable target (typically the
 	// session field is empty after trimming). Focus would exit with
-	// `focusExitNotResolved`, so the segment should ack-only.
+	// `focusExitNotResolved`, so the segment should clean up without focusing.
 	notifyDisplayGone
 )
 
@@ -77,7 +76,7 @@ func notifyEntryIsRoutable(entry notify.Notification) bool {
 func notifyDisplayStateLabel(state notifyRowDisplayState) string {
 	switch state {
 	case notifyDisplayStale:
-		return "STALE"
+		return "INACTIVE"
 	case notifyDisplayGone:
 		return "GONE"
 	}
@@ -89,7 +88,7 @@ func notifyDisplayStateLabel(state notifyRowDisplayState) string {
 func notifyDisplayStateShortLabel(state notifyRowDisplayState) string {
 	switch state {
 	case notifyDisplayStale:
-		return "STL"
+		return "INA"
 	case notifyDisplayGone:
 		return "GON"
 	}

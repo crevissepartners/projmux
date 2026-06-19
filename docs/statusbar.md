@@ -150,9 +150,12 @@ not render as strongly foldable. Right/Left show and hide child rows locally
 inside the native sidebar; Right on a childless group refreshes without adding
 rows. Enter on a group row, whether folded or expanded, focuses the group's
 representative pane and acknowledges every visible notification in that group
-only after focus succeeds. If the representative target is stale or gone,
-Enter cleans up the selected group without focusing and acknowledges every
-visible notification in that group, including critical notifications. A
+only after focus succeeds. Inactive means an `ai:` queue entry no longer
+matches live reply+agent state, not that the row is old; if the target remains
+routable, Enter and statusbar clicks still focus and then ack. If the
+representative target is gone/unroutable, Enter cleans up the selected group
+without focusing and acknowledges every visible notification in that group,
+including critical notifications. A
 target-gone focus race follows the same cleanup policy; other focus failures
 keep the group pending and show a clear message before refresh/prune. Enter on
 a child notification preserves the existing focus and ack-one behavior.
@@ -194,6 +197,8 @@ them as `display-message` toasts:
 
 - `notify` click whose focus dispatch exits 2 (target unresolved):
   ack the entry, toast `notify target gone; cleared`.
+- `notify` click whose AI target is inactive because it no longer matches live
+  reply+agent state: focus and ack when the target is still routable.
 - Any other focus failure: keep the entry, toast `focus failed:
   <reason>`.
 - `session`, `kube`, or `git` popup launch failure: toast
