@@ -4965,7 +4965,7 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:capture"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:capture"}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 5:
@@ -5043,7 +5043,7 @@ func TestSettingsHubKeybindingsRejectsUnsafeRawCapture(t *testing.T) {
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:capture"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:capture"}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 5:
@@ -5091,7 +5091,7 @@ func TestSettingsHubKeybindingsCaptureTimeoutDoesNotSaveOrReload(t *testing.T) {
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:capture"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:capture"}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 5:
@@ -5149,7 +5149,7 @@ func TestSettingsHubKeybindingsDoesNotExposeDisableDefault(t *testing.T) {
 	if hasEntryLabelContaining(entries, "Disable default") {
 		t.Fatalf("detail entries = %#v, did not want Disable default", entries)
 	}
-	if op, ok := parseKeymapDetailAction(settingsActionPrefixKeymap+"sessionizer-sidebar:disable", "ProjectSidebarToggle"); ok || op != "" {
+	if op, ok := parseKeymapDetailAction(settingsActionPrefixKeymap+"ProjectSidebarToggle:disable", "ProjectSidebarToggle"); ok || op != "" {
 		t.Fatalf("parse disable = %q, %v; want rejected", op, ok)
 	}
 }
@@ -5169,7 +5169,7 @@ func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
 		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "sessionizer-sidebar:reset"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:reset"}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 5:

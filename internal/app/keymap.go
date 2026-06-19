@@ -116,13 +116,6 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 	if current.Bindings == nil {
 		current.Bindings = map[string]keymapOverride{}
 	}
-	for _, legacy := range action.LegacyIDs {
-		if existing, ok := current.Bindings[legacy]; ok {
-			override = existing
-			delete(current.Bindings, legacy)
-			break
-		}
-	}
 	defaultValue := action.PlainChord
 	if field == "prefix" {
 		defaultValue = action.PrefixChord
@@ -207,13 +200,6 @@ func resetKeymapKeys(store keymapStore, actionID string) (string, error) {
 	override := current.Bindings[actionID]
 	if current.Bindings == nil {
 		current.Bindings = map[string]keymapOverride{}
-	}
-	for _, legacy := range action.LegacyIDs {
-		if existing, ok := current.Bindings[legacy]; ok {
-			override = existing
-			delete(current.Bindings, legacy)
-			break
-		}
 	}
 	override.Plain = nil
 	override.Keys = nil
@@ -533,7 +519,11 @@ func mergeKeymapOverrides(actions []keyBindingAction, keymap keymapFile) ([]keyB
 	for id, override := range keymap.Bindings {
 		idx, ok := byID[id]
 		if !ok {
-			return nil, fmt.Errorf("keymap binding %q: unknown action id", id)
+			// Unknown/dropped action ids are tolerated and ignored
+			// (graceful), per the hard-drop policy: an old keymap.toml
+			// referencing a since-removed legacy id must not error or
+			// crash — we simply skip the binding and keep defaults.
+			continue
 		}
 		if override.KeysSet {
 			keys := override.Keys
