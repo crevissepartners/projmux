@@ -286,6 +286,7 @@ func TestDesktopNotifyModeNormalizesInvalidValues(t *testing.T) {
 		t.Fatalf("LoadDesktopNotifyModeFile() = %q, want %q", got, DefaultDesktopNotifyMode)
 	}
 
+	// "none" is a dropped legacy alias; it now absorbs into the default.
 	if err := SaveDesktopNotifyModeFile(path, DesktopNotifyMode("none")); err != nil {
 		t.Fatalf("SaveDesktopNotifyModeFile() error = %v", err)
 	}
@@ -293,8 +294,8 @@ func TestDesktopNotifyModeNormalizesInvalidValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
 	}
-	if got != DesktopNotifyModeOff {
-		t.Fatalf("LoadDesktopNotifyModeFile() after save = %q, want %q", got, DesktopNotifyModeOff)
+	if got != DefaultDesktopNotifyMode {
+		t.Fatalf("LoadDesktopNotifyModeFile() after save = %q, want %q", got, DefaultDesktopNotifyMode)
 	}
 }
 
@@ -444,9 +445,11 @@ func TestSessionStateToggleRoundtrip(t *testing.T) {
 	}
 }
 
-func TestSessionStateToggleNormalizesBooleanValues(t *testing.T) {
+func TestSessionStateToggleDropsBooleanAliases(t *testing.T) {
 	t.Parallel()
 
+	// "false" was a legacy boolean-ish alias; it is now dropped and absorbs
+	// into the default (On).
 	path := filepath.Join(t.TempDir(), SessionStateAutosaveFileName)
 	if err := os.WriteFile(path, []byte("false\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -455,8 +458,20 @@ func TestSessionStateToggleNormalizesBooleanValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSessionStateToggleFile() error = %v", err)
 	}
+	if got != SessionStateToggleOn {
+		t.Fatalf("LoadSessionStateToggleFile(false) = %q, want %q", got, SessionStateToggleOn)
+	}
+
+	// The canonical "off" value still resolves to Off.
+	if err := os.WriteFile(path, []byte("off\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadSessionStateToggleFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionStateToggleFile() error = %v", err)
+	}
 	if got != SessionStateToggleOff {
-		t.Fatalf("LoadSessionStateToggleFile() = %q, want %q", got, SessionStateToggleOff)
+		t.Fatalf("LoadSessionStateToggleFile(off) = %q, want %q", got, SessionStateToggleOff)
 	}
 }
 
@@ -538,8 +553,9 @@ func TestAIBadgeStyleNormalizesInvalidValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAIBadgeStyleFile() error = %v", err)
 	}
-	if got != AIBadgeStyleOff {
-		t.Fatalf("LoadAIBadgeStyleFile(minimal) = %q, want %q", got, AIBadgeStyleOff)
+	// "minimal" is a dropped legacy alias; it now absorbs into the default (dot).
+	if got != AIBadgeStyleDot {
+		t.Fatalf("LoadAIBadgeStyleFile(minimal) = %q, want %q", got, AIBadgeStyleDot)
 	}
 
 	if err := SaveAIBadgeStyleFile(path, AIBadgeStyle("also-broken")); err != nil {

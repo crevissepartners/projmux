@@ -40,7 +40,7 @@ func NormalizeStyle(style string) string {
 	switch strings.ToLower(strings.TrimSpace(style)) {
 	case StyleEmoji:
 		return StyleEmoji
-	case StyleOff, "minimal":
+	case StyleOff:
 		return StyleOff
 	default:
 		return StyleDot

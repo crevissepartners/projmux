@@ -70,8 +70,7 @@ view-first layout:
   edit catalog `install` values or run agent install/remove commands.
 - `Settings > Session State > Sidebar startup picker` controls the Alt-1
   project-open startup selector. The saved file remains
-  `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`, and the
-  stale `labs:sidebar-startup-picker` action opens this Session State detail.
+  `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`.
 - `Settings > Labs` keeps experimental toggles, but keybindings no longer have a
   visible Labs row. The hidden compatibility action redirects to the
   `Settings > Keybindings` action list, not to a diagnostic default.

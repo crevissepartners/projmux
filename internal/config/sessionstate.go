@@ -28,7 +28,7 @@ type SessionStateProjectToggle string
 
 func NormalizeSessionStateToggle(value string) SessionStateToggle {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "0", "false", "no", "off", "disabled", "disable":
+	case string(SessionStateToggleOff):
 		return SessionStateToggleOff
 	default:
 		return SessionStateToggleOn
@@ -41,9 +41,9 @@ func (t SessionStateToggle) Enabled() bool {
 
 func NormalizeSessionStateProjectToggle(value string) SessionStateProjectToggle {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes", "on", "enabled", "enable":
+	case string(SessionStateProjectOn):
 		return SessionStateProjectOn
-	case "0", "false", "no", "off", "disabled", "disable":
+	case string(SessionStateProjectOff):
 		return SessionStateProjectOff
 	default:
 		return SessionStateProjectInherit

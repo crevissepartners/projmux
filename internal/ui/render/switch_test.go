@@ -260,8 +260,8 @@ func TestSwitchBadgeEmojiStyleCompatibilityGlyphs(t *testing.T) {
 			t.Fatalf("Glyph(%q, emoji) = %q, want %q", kind, got, want)
 		}
 	}
-	if got := aibadge.Glyph(aibadge.ApprovalRequired, "minimal"); got != " " {
-		t.Fatalf("Glyph(approval_required, minimal) = %q, want blank alignment glyph", got)
+	if got := aibadge.Glyph(aibadge.ApprovalRequired, aibadge.StyleOff); got != " " {
+		t.Fatalf("Glyph(approval_required, off) = %q, want blank alignment glyph", got)
 	}
 }
 

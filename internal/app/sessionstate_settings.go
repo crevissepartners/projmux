@@ -74,7 +74,7 @@ func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error
 			}, stdout, stderr); err != nil {
 				return err
 			}
-		case settingsSessionStateSidebarStartupPickerDetail, settingsCompatSidebarStartupPicker:
+		case settingsSessionStateSidebarStartupPickerDetail:
 			if err := c.runSidebarStartupPickerDetail(stdout, stderr); err != nil {
 				return err
 			}
