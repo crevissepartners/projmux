@@ -27,6 +27,14 @@ user-facing; failure and skipped states include diagnostic terms such as
 clear. If Settings is run outside tmux, the running-session stage is skipped and
 the recovery/sync action is `projmux tmux apply`. Raw escape payloads, Windows
 Terminal `sendInput` strings, and tmux User keys are rejected as action keys.
+Settings capture diagnostics split the observed result into logical key, raw
+bytes, and the tmux key name that can be saved. Diagnostic states distinguish
+keys that did not arrive, ambiguous bytes such as Enter/Ctrl-M, and keys that
+need a supported terminal adapter. Safe direct keys are logical tmux names such
+as `M-a`, `M-1`, `C-r`, `C-Space`, function/navigation names, or printable
+keys. Raw escape bytes, CSI-u, xterm modified-key payloads, and tmux
+UserKey/UserSequence names stay diagnostic-only and are not promoted into
+`keymap.toml`.
 
 ## Quick Start
 
@@ -60,10 +68,14 @@ Custom, Available, and Unbound. Each action detail shows the action label,
 state, a flat Keys list with `+ Add key`, Options, and a collapsed
 Troubleshooting row with Test key delivery and Advanced... entry points. Key
 rows open key detail for Remove key and Test key. Add key opens Press a key by
-default; Enter key name and raw diagnostics live under Advanced. Options covers
-unbinding the action and reset/use-default flows. Diagnostic/probe/init
-workflows are not first-class Settings tabs; use `projmux setup` and
-`projmux init` from the terminal when key delivery needs remediation.
+default; Enter key name, the safe direct key pool, risky/reserved key copy, and
+raw diagnostics live under Advanced. Advanced delivery is still owned by the
+selected Projmux action: supported Ghostty and Windows Terminal mappings are
+previewed/applied through `projmux init`, not by storing raw sequences in the
+primary keymap. Options covers unbinding the action and reset/use-default
+flows. Diagnostic/probe/init workflows are not first-class Settings tabs; use
+`projmux setup` and `projmux init` from the terminal when key delivery needs
+remediation.
 
 Optional direct keys can be added for actions such as:
 
@@ -193,6 +205,16 @@ terminal delivery diagnostic.
 | `OK plain` | The terminal forwarded the expected bytes, such as `\x1b1` for `Alt-1`; tmux can bind this directly. |
 | `MISS timeout` | No bytes arrived because the terminal swallowed the key. |
 | `MISS unknown` | Bytes arrived, but they do not match the expected plain sequence. |
+
+Settings capture uses the same underlying probe but reports a read model with
+separate fields:
+
+| Field | Meaning |
+| --- | --- |
+| Logical key | The key the user intended to press, such as `Alt-1`. |
+| Raw bytes | The bytes captured from the terminal, shown escaped. |
+| tmux received key | The logical tmux key name that can be saved, or a diagnostic placeholder when none is safe. |
+| Delivery status | `delivered`, `key-did-not-arrive`, `ambiguous-key`, or `adapter-needed`. |
 
 Useful flags:
 

@@ -4289,6 +4289,57 @@ func TestSettingsHubKeybindingsUsesReadableKeyLabels(t *testing.T) {
 	}
 }
 
+func TestSettingsKeybindingDeliveryDiagnosticsReadModelDistinguishesStates(t *testing.T) {
+	t.Parallel()
+
+	expectedAltOne := probeKey{Label: "Alt-1", Plain: "\x1b1", PlainChord: "M-1"}
+	missing := keybindingDeliveryDiagnosticForProbe(classifyProbeInput(expectedAltOne, nil))
+	if missing.Status != keybindingDeliveryMissing || missing.RawBytes != "(none)" || !strings.Contains(missing.Summary, "did not arrive") {
+		t.Fatalf("missing diagnostic = %#v, want key-did-not-arrive with no raw bytes", missing)
+	}
+
+	ambiguous := keybindingDeliveryDiagnosticForProbe(classifyProbeInput(probeKey{Label: "Ctrl-M", Plain: "\r", PlainChord: "C-m"}, []byte("\r")))
+	if ambiguous.Status != keybindingDeliveryAmbiguous || ambiguous.TmuxReceivedKey != "Enter / C-m" {
+		t.Fatalf("ambiguous diagnostic = %#v, want ambiguous Enter/C-m", ambiguous)
+	}
+
+	adapterNeeded := keybindingDeliveryDiagnosticForProbe(classifyProbeInput(expectedAltOne, []byte("\x1b[49;3u")))
+	if adapterNeeded.Status != keybindingDeliveryAdapterNeeded || adapterNeeded.RawBytes != `\x1b[49;3u` || !strings.Contains(adapterNeeded.Summary, "adapter-needed") {
+		t.Fatalf("adapter diagnostic = %#v, want adapter-needed with raw CSI-u bytes", adapterNeeded)
+	}
+
+	capturedSafe := keybindingDeliveryDiagnosticForProbe(classifyProbeInput(probeKey{Label: "custom key"}, []byte("\x1ba")))
+	if capturedSafe.Status != keybindingDeliveryDelivered || capturedSafe.TmuxReceivedKey != "M-a" {
+		t.Fatalf("captured safe diagnostic = %#v, want delivered M-a", capturedSafe)
+	}
+	lines := strings.Join(renderKeybindingDeliveryDiagnostic(classifyProbeInput(expectedAltOne, []byte("\x1b1"))), "\n")
+	for _, want := range []string{"logical key: Alt-1", `raw bytes: \x1b1`, "tmux received key: M-1", "delivery status: delivered"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("rendered diagnostic = %q, want %q", lines, want)
+		}
+	}
+}
+
+func TestSettingsKeybindingDetailStaysLogicalKeyActionCentered(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{}
+	detailEntries, _, err := cmd.keybindingDetailEntries("previous-window")
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries(previous-window) error = %v", err)
+	}
+	for _, want := range []string{"Previous Window", "Keys", "Alt-Shift-Left", "M-S-Left"} {
+		if !hasEntryLabelContaining(detailEntries, want) {
+			t.Fatalf("detail entries = %#v, want logical action/key copy %q", detailEntries, want)
+		}
+	}
+	for _, absent := range []string{`raw bytes`, `\x1b[1;4D`, "CSI-u", "UserKey", "UserSequence", "sendInput"} {
+		if hasEntryLabelContaining(detailEntries, absent) {
+			t.Fatalf("detail entries = %#v, did not want diagnostic payload copy %q in action detail", detailEntries, absent)
+		}
+	}
+}
+
 func TestSettingsKeybindingsActionListIsPreviewOnly(t *testing.T) {
 	t.Parallel()
 
@@ -4450,6 +4501,44 @@ func TestSettingsKeybindingsMutationLivesInDetailNotList(t *testing.T) {
 	}
 	if !hasEntryValue(detailEntries, prefix+"key:M-a") || !hasEntryValue(detailEntries, prefix+"key:M-b") {
 		t.Fatalf("detail entries = %#v, want a flat per-key row for each active chord", detailEntries)
+	}
+}
+
+func TestSettingsKeybindingAdvancedDeliveryCopyIsProjmuxOwned(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{}
+	entries, _, err := cmd.keybindingAddAdvancedEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingAddAdvancedEntries(ProjectSidebarToggle) error = %v", err)
+	}
+	for _, want := range []string{
+		"Safe direct keys",
+		"M-letter/M-number",
+		"Risky/reserved keys",
+		"raw escape",
+		"CSI-u",
+		"xterm modified-key",
+		"UserKey/UserSequence",
+		"Advanced delivery",
+		"projmux init ghostty",
+		"projmux init windows-terminal",
+		"Projmux-owned snippets",
+	} {
+		if !hasEntryLabelContaining(entries, want) {
+			t.Fatalf("advanced entries = %#v, want %q", entries, want)
+		}
+	}
+	if hasEntryValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:"+`User4`) {
+		t.Fatalf("advanced entries = %#v, did not want UserKey/UserSequence as keymap action value", entries)
+	}
+
+	noAdapter, _, err := cmd.keybindingAddAdvancedEntries("last-pane")
+	if err != nil {
+		t.Fatalf("keybindingAddAdvancedEntries(last-pane) error = %v", err)
+	}
+	if !hasEntryLabelContaining(noAdapter, "no supported adapter snippet for this Projmux action") {
+		t.Fatalf("last-pane advanced entries = %#v, want explicit no-adapter copy", noAdapter)
 	}
 }
 
