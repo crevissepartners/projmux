@@ -337,6 +337,44 @@ func TestRecordPreservesPaneTopicsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNormalizeSnapshotPaneCommands(t *testing.T) {
+	t.Parallel()
+
+	snapshot := normalizeSnapshot(Snapshot{
+		Session:      "s",
+		WindowID:     "@1",
+		PaneTitles:   []string{"a", "b", "c"},
+		PaneCommands: []string{" zsh ", "", "codex"},
+	})
+	if got := snapshot.PaneCommands; len(got) != 3 || got[0] != "zsh" || got[1] != "" || got[2] != "codex" {
+		t.Fatalf("pane commands = %#v, want empty slot preserved and commands trimmed", got)
+	}
+
+	if got := normalizeSnapshot(Snapshot{Session: "s", WindowID: "@1", PaneCommands: []string{"", "  "}}).PaneCommands; got != nil {
+		t.Fatalf("pane commands = %#v, want nil for all-empty", got)
+	}
+}
+
+func TestRecordPreservesPaneCommandsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	state, err := NewState(nil).Record(Snapshot{
+		Session:       "s",
+		WindowID:      "@1",
+		WindowName:    "main",
+		PaneTitles:    []string{"branch title", "Codex"},
+		PaneCommands:  []string{"zsh", "codex"},
+		LastFocusedAt: now,
+	}, 0)
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if got := state.Entries[0].PaneCommands; len(got) != 2 || got[0] != "zsh" || got[1] != "codex" {
+		t.Fatalf("pane commands = %#v, want preserved round-trip", got)
+	}
+}
+
 func TestRecordWindowMRUDoesNotReorderBeyondWindowList(t *testing.T) {
 	t.Parallel()
 

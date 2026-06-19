@@ -38,7 +38,11 @@ type Snapshot struct {
 	// PaneTopics carries each pane's own AI topic parallel to PaneTitles (same
 	// length/order when available). Additive and backward compatible: old state
 	// files omit it, so the picker falls back to pane title then command.
-	PaneTopics    []string  `json:"pane_topics,omitempty"`
+	PaneTopics []string `json:"pane_topics,omitempty"`
+	// PaneCommands carries each pane's current command parallel to PaneTitles.
+	// It lets UI previews mirror the app pane-border visible label rule for
+	// interactive shell panes instead of relying on stale raw pane titles.
+	PaneCommands  []string  `json:"pane_commands,omitempty"`
 	LastPaneTopic string    `json:"last_pane_topic,omitempty"`
 	LastCommand   string    `json:"last_command,omitempty"`
 	LastFocusedAt time.Time `json:"last_focused_at"`
@@ -198,6 +202,7 @@ func normalizeSnapshot(snapshot Snapshot) Snapshot {
 	snapshot.PaneTitles = normalizePaneTitles(snapshot.PaneTitles)
 	snapshot.PaneBadgeKinds = normalizePaneBadgeKinds(snapshot.PaneBadgeKinds)
 	snapshot.PaneTopics = normalizePaneTopics(snapshot.PaneTopics)
+	snapshot.PaneCommands = normalizePaneCommands(snapshot.PaneCommands)
 	snapshot.LastPaneTopic = strings.TrimSpace(snapshot.LastPaneTopic)
 	snapshot.LastCommand = strings.TrimSpace(snapshot.LastCommand)
 	if !snapshot.LastFocusedAt.IsZero() {
@@ -257,6 +262,28 @@ func normalizePaneTopics(topics []string) []string {
 	last := -1
 	for i, topic := range topics {
 		trimmed := strings.TrimSpace(topic)
+		out[i] = trimmed
+		if trimmed != "" {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil
+	}
+	return out[:last+1]
+}
+
+// normalizePaneCommands trims each per-pane command while keeping positional
+// alignment with PaneTitles. Empty commands keep empty slots, trailing empties
+// are trimmed, and an all-empty slice collapses to nil.
+func normalizePaneCommands(commands []string) []string {
+	if len(commands) == 0 {
+		return nil
+	}
+	out := make([]string, len(commands))
+	last := -1
+	for i, command := range commands {
+		trimmed := strings.TrimSpace(command)
 		out[i] = trimmed
 		if trimmed != "" {
 			last = i

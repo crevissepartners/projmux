@@ -97,6 +97,9 @@ Projmux keeps visible naming separate from source metadata:
 - **Pane border label** is the primary visible pane name. In the app tmux
   config it resolves to AI topic first, known interactive shell command
   (`zsh`, `bash`, `fish`, `sh`, `nu`, `xonsh`) second, and raw pane title last.
+  The active pane border uses a foreground marker and the shared visible label
+  rather than a filled background chip; tmux renders split borders as shared
+  cells, so large title chips can make the active border look clipped.
 - **Window tab name** follows the active pane's visible pane label through the
   same tmux format expression used by the pane border. Historically the app
   config used raw `#{pane_title}` for `automatic-rename-format`, which let shell
