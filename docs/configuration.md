@@ -169,26 +169,35 @@ configured key opens and closes the popup.
 
 ## Theme Resolver Foundation
 
-Theme settings are resolved against the same project/global axes as
-declarative hooks and project recipe fields:
+The Phase 0 target theme contract is a global user theme plus a built-in
+fallback. Theme settings resolve from:
 
 ```text
-<project>/.projmux/config.toml
 ~/.config/projmux/config.toml
+built-in fallback preset
 ```
 
-Settings can edit the global `[theme]` in `~/.config/projmux/config.toml` and
-the current project override in `<project>/.projmux/config.toml`. The Effective
-theme view shows the final project > global > built-in fallback value for each
-field with source labels: `project`, `global`, or `fallback`.
+Settings can edit the global `[theme]` in `~/.config/projmux/config.toml`. The
+Effective theme view shows the final global > built-in fallback value for each
+field with source labels: `global` or `fallback`.
+
+Project `.projmux/config.toml` `[theme]` is deprecated migration data and is
+removed from the intended effective theme source. It should be ignored by the
+future resolver contract rather than surfaced as a warning path. Phase 1
+Settings cleanup should remove the Project theme tab, project override editor,
+project theme reset action, and project/source labels from theme UI.
 
 Renderer adapters can apply an already resolved `EffectiveTheme` to native
 picker frame background/foreground SGR and tmux status/window `colourN`
-background tokens. Settings and native project picker surfaces load global and
-project `[theme]` values through the shared effective-theme source. Native
-picker frames also apply the built-in fallback `background`/`foreground` tokens
-so picker-owned padding, empty rows, footer rows, and preview gaps do not
-inherit the terminal default background.
+background tokens. Settings and native project picker surfaces load global
+`[theme]` values through the shared effective-theme source. Native picker
+frames also apply the built-in fallback `background`/`foreground` tokens so
+picker-owned padding, empty rows, footer rows, and preview gaps do not inherit
+the terminal default background.
+
+Active pane focus affordance belongs to Theme app chrome Phase 2, not the
+resolver foundation. That work must preserve `pane-border-status top`, pane
+topics, AI badges, and visible pane labels.
 
 Native picker popups launched through `projmux tmux popup-toggle` also pass a
 per-popup tmux 3.4 `display-popup -s` body style using the effective theme

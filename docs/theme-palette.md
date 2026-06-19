@@ -1,14 +1,17 @@
 # Theme Palette
 
-This document records the built-in fallback palette that native projmux UI
-surfaces use before project or global theme settings exist. The source of
-truth in code is `internal/theme/palette.go`.
+This document records the Phase 0 target theme contract and the built-in
+fallback palette that native projmux UI surfaces use when no global user theme
+is configured. The source of truth for current fallback values in code is
+`internal/theme/palette.go`.
 
 ## Scope
 
-The fallback palette is a semantic token layer. Theme settings resolve project
-and global config into the resolver-facing token inventory below, then fall
-back to the built-in values from `internal/theme/palette.go`.
+The fallback palette is a semantic token layer. The intended theme contract is
+a global user theme resolved from `~/.config/projmux/config.toml`, followed by
+the built-in fallback values from `internal/theme/palette.go`. Phase 0 records
+that product contract for later implementation phases; it does not require a
+product-code change by itself.
 
 - Native picker truecolor SGR tokens.
 - Native sidebar and chip-strip 256-color SGR tokens.
@@ -19,8 +22,9 @@ Renderer adapters apply resolver-backed background/foreground colors to native
 picker frame chrome and to tmux status/window background tokens when an
 `EffectiveTheme` is supplied by the caller. Fallback-sourced fields still
 render through the historical constants so built-in default output remains
-byte-identical. Settings and native project picker surfaces load `[theme]`
-values from global and project config through the shared effective-theme source.
+byte-identical. Project `.projmux/config.toml` `[theme]` is deprecated and is
+removed from the intended effective theme source; future resolver and Settings
+work should treat it as ignored migration data rather than as a target source.
 Theme marketplace/import/export and Visual palette reselection remain out of
 scope.
 
@@ -88,24 +92,23 @@ Rules:
 
 ## Resolver Contract
 
-Theme resolution is field-by-field after validating each layer:
+The Phase 0 target contract resolves theme fields from:
 
-1. Project `.projmux/config.toml`
-2. Global `~/.config/projmux/config.toml`
-3. Built-in fallback preset `projmux-dark`
+1. Global `~/.config/projmux/config.toml`
+2. Built-in fallback preset `projmux-dark`
 
 Rules:
 
-- Project values override global values for the same field.
-- Missing or `inherit` project values fall back to global values.
 - Missing global values fall back to built-in values.
-- A preset fills missing color tokens in its own layer.
-- Explicit color tokens in the same layer override preset colors.
-- An unknown preset invalidates only that layer and emits a warning.
-- An invalid color, `font_family`, or `font_size` invalidates only that layer
-  and emits a warning.
-- Every effective field reports `project`, `global`, or `fallback` as its
-  source label.
+- A preset fills missing color tokens in the global layer.
+- Explicit global color tokens override preset colors.
+- An unknown preset invalidates only the global layer.
+- An invalid color, `font_family`, or `font_size` invalidates only the global
+  layer.
+- Every effective field reports `global` or `fallback` as its source label.
+
+Historical project `[theme]` values in `.projmux/config.toml` are migration
+data only. They are not a current or target source in this contract.
 
 Built-in preset config values are:
 
