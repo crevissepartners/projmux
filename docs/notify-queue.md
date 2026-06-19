@@ -170,11 +170,19 @@ output becomes `{queue, live, rows, errors}`. Typical states:
 - `live-ai-reply-missing-queue` — a live AI reply pane lacks the derived
   queue entry; run `projmux notify reconcile` to back-fill it.
 - `queue-stale` — preserved machine-readable state for an inactive target:
-  an `ai:` queue entry exists, but the live pane no longer matches reply+agent
-  state. It is not TTL/time age. Surfaced in the sidebar/statusbar as
-  `INACTIVE` / `INA`; Enter still focuses and acks if the target is routable.
-- `queue-gone` — a queue entry has no routable target (empty session). Surfaced
-  as `GONE` / `GON`, and Enter/ack cleans it up without focusing.
+  an `ai:` queue entry whose pane still EXISTS in the live tmux pane inventory,
+  but no longer matches reply+agent state. It is not TTL/time age. Surfaced in
+  the sidebar/statusbar as `INACTIVE` / `INA`; Enter still focuses and acks if
+  the target is routable.
+- `queue-gone` — the queue entry's target is gone. This is now determined two
+  ways: (a) the entry has no routable target (empty session), or (b) the entry
+  carries a pane target whose pane id is absent from the real tmux live pane
+  inventory (`tmux list-panes -a`). Surfaced as `GONE` / `GON`, and Enter/ack
+  cleans it up without focusing. The inventory check is best-effort: when the
+  pane inventory cannot be read (tmux error, or an empty/unrecognized reply),
+  membership-based GONE is skipped so a missing tmux server never falsely
+  dims/gones every row, and only pane-target rows are eligible (window/session-
+  only rows keep the empty-session check only).
 - `queue-only` — a non-AI/external queue entry is pending and has no live AI
   reply-pane requirement.
 

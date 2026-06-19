@@ -218,9 +218,11 @@ projmux notify reconcile [--json]
   `--live` adds a non-mutating explanation table (or JSON report) that
   compares queued entries with live pane attention. It calls out manual
   reply badges that do not queue because no AI agent is attached, live AI
-  reply panes missing a queue entry, matched AI reply entries, and inactive
-  (`queue-stale`) queue entries whose live pane no longer matches reply+agent
-  state. `--ui=sidebar` opens the compact interactive notify list where Enter
+  reply panes missing a queue entry, matched AI reply entries, inactive
+  (`queue-stale`) queue entries whose live pane EXISTS but no longer matches
+  reply+agent state, and gone (`queue-gone`) entries whose pane is absent from
+  the real tmux live pane inventory (or which have no routable target).
+  `--ui=sidebar` opens the compact interactive notify list where Enter
   focuses and acks live or inactive-routable targets, cleans gone/unroutable
   targets without focusing, `a` acks the selected row, `x` clears non-critical
   rows, and `Ctrl-X` clears all; opening or navigating the sidebar does not ack.

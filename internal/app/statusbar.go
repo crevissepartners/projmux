@@ -646,17 +646,22 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 // because they have richer context and are not on the click critical path.
 func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notification) notifyRowDisplayState {
 	if c == nil || c.runner == nil {
-		return classifyNotifyRowState(head, nil)
+		return classifyNotifyRowState(head, nil, nil)
 	}
-	panes, err := (&notifyCommand{runner: c.runner}).listNotifyLivePanes()
+	panes, paneSet, err := (&notifyCommand{runner: c.runner}).listNotifyLivePanesAndSet()
 	if err != nil {
-		return classifyNotifyRowState(head, nil)
+		return classifyNotifyRowState(head, nil, nil)
 	}
+	// Real pane-inventory GONE is honoured even when no panes are in reply
+	// state: a click on a head whose pane truly disappeared takes the ack-only
+	// fast path. newNotifyLivePaneSet already returns nil for an empty/
+	// unrecognized tmux reply, so passing paneSet through preserves the
+	// docker-e2e best-effort fallback (nil paneSet ⇒ no membership GONE).
 	liveByID := notifyLiveShouldQueueByID(panes)
 	if len(liveByID) == 0 {
-		return classifyNotifyRowState(head, nil)
+		return classifyNotifyRowState(head, nil, paneSet)
 	}
-	return classifyNotifyRowState(head, liveByID)
+	return classifyNotifyRowState(head, liveByID, paneSet)
 }
 
 // notifyAckOnlyToast renders the fast-path toast surfaced when a click lands

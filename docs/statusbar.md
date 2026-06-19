@@ -151,8 +151,13 @@ inside the native sidebar; Right on a childless group refreshes without adding
 rows. Enter on a group row, whether folded or expanded, focuses the group's
 representative pane and acknowledges every visible notification in that group
 only after focus succeeds. Inactive means an `ai:` queue entry no longer
-matches live reply+agent state, not that the row is old; if the target remains
-routable, Enter and statusbar clicks still focus and then ack. If the
+matches live reply+agent state (its pane still EXISTS in tmux), not that the
+row is old; if the target remains routable, Enter and statusbar clicks still
+focus and then ack. Gone means the target is unroutable (empty session) or the
+row's pane id is absent from the real tmux live pane inventory
+(`tmux list-panes -a`). The inventory check is best-effort: an unreadable or
+empty/unrecognized tmux reply is treated as "unavailable", so a missing tmux
+server never falsely gones routable rows. If the
 representative target is gone/unroutable, Enter cleans up the selected group
 without focusing and acknowledges every visible notification in that group,
 including critical notifications. A
