@@ -473,7 +473,7 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 	raw := strings.TrimSpace(fs.Arg(0))
 	client := strings.TrimSpace(*clientKey)
 	switch raw {
-	case "session-popup", "sessionizer", "sessionizer-sidebar", "notify-sidebar", "ai-split-settings":
+	case "session-popup", "sessionizer", "sessionizer-sidebar", "notify-sidebar", "recent-windows", "ai-split-settings":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: raw, ClientKey: client}, nil
 	case "ai-split-picker-right":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client}, nil
@@ -781,7 +781,7 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux popup-preview <session>")
 	fmt.Fprintln(w, "  projmux tmux popup-switch")
 	fmt.Fprintln(w, "  projmux tmux popup-sessions")
-	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
+	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
 	fmt.Fprintln(w, "  projmux tmux rebalance-panes")
 	fmt.Fprintln(w, "  projmux tmux rename-pane <pane> <title>")
 	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
@@ -1013,6 +1013,10 @@ func buildPopupToggleWithPickerBackendAndStyle(mode tmuxPopupToggleMode, binaryP
 		if client := strings.TrimSpace(ctx.TargetClient); client != "" {
 			commandArgs = append(commandArgs, "--client", client)
 		}
+	case "recent-windows":
+		options.Width = popupSize(ctx.ClientWidth, 80, 120)
+		options.Height = popupSize(ctx.ClientHeight, 70, 28)
+		commandArgs = []string{"window", "recent"}
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 96)
 		options.Height = popupSize(ctx.ClientHeight, 45, 20)
@@ -1085,6 +1089,8 @@ func nativeLaunchKeyForPopupMode(mode string) string {
 		return "alt-1"
 	case "notify-sidebar":
 		return "alt-2"
+	case "recent-windows":
+		return "alt-3"
 	case "ai-split-picker-right", "ai-split-picker-down":
 		return "alt-4"
 	case "ai-split-settings":
