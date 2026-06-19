@@ -794,7 +794,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 		Prompt:     "AI Setting > ",
 		Footer:     projmuxFooter("Choose the default split mode for future AI launches."),
 		ExpectKeys: []string{"enter"},
-		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-5", "ctrl-alt-s", "alt-4"),
+		Bindings:   pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "ai-split-settings", "esc", "ctrl-c", "ctrl-alt-s"),
 	})
 	if err != nil {
 		if isNoSelectionExit(err) {
@@ -819,8 +819,15 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 		Prompt:     "AI Launch > ",
 		Footer:     projmuxFooter("Choose an agent or shell target to launch."),
 		ExpectKeys: []string{"enter"},
-		Bindings:   pickerCloseBindings("esc", "ctrl-c", "alt-4", "alt-5", "ctrl-alt-s"),
+		Bindings:   pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiSplitPickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
 	})
+}
+
+func aiSplitPickerPopupMode(direction string) string {
+	if direction == "down" {
+		return "ai-split-picker-down"
+	}
+	return "ai-split-picker-right"
 }
 
 func (c *aiCommand) settingsRows() []intpickercompat.Entry {

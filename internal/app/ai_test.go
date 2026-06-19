@@ -103,6 +103,40 @@ func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	}
 }
 
+func TestAISplitPickerCloseBindingsUseAISplitPickerAlias(t *testing.T) {
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte(`[bindings.AISplitPickerToggle]
+keys = ["M-a"]
+[bindings.SettingsToggle]
+keys = ["M-s"]
+[bindings.new-window]
+keys = ["M-t"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("right"); err != nil {
+		t.Fatalf("runAgentPicker() error = %v", err)
+	}
+	if !containsString(runner.options.Bindings, "alt-a:abort") {
+		t.Fatalf("AI picker bindings = %#v, want custom AISplitPickerToggle alias close", runner.options.Bindings)
+	}
+	if containsString(runner.options.Bindings, "alt-s:abort") {
+		t.Fatalf("AI picker bindings = %#v, SettingsToggle alias must not close AI picker", runner.options.Bindings)
+	}
+	if containsString(runner.options.Bindings, "alt-t:abort") {
+		t.Fatalf("AI picker bindings = %#v, direct command alias must not close popup", runner.options.Bindings)
+	}
+}
+
 func TestAISettingsRowsHideDisabledAgentDefaults(t *testing.T) {
 	home := t.TempDir()
 	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {

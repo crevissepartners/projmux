@@ -103,6 +103,151 @@ keys = ["M-1", "M-a"]
 	}
 }
 
+func TestPopupToggleModeActionMappingCoversCatalog(t *testing.T) {
+	t.Parallel()
+
+	want := map[string][]string{
+		"ProjectSidebarToggle":  {"sessionizer-sidebar"},
+		"NotifySidebarToggle":   {"notify-sidebar"},
+		"RecentWindows:Open":    {"recent-windows"},
+		"AISplitPickerToggle":   {"ai-split-picker-right", "ai-split-picker-down"},
+		"SettingsToggle":        {"ai-split-settings"},
+		"ProjectSwitcherToggle": {"sessionizer"},
+		"SessionPopupToggle":    {"session-popup"},
+	}
+	catalog := defaultKeyBindingCatalog()
+	var gotIDs []string
+	for _, action := range catalog {
+		if keyBindingActionIsPopupToggle(action) {
+			gotIDs = append(gotIDs, action.ID)
+		}
+	}
+	if got := uniqueNonEmptyStrings(gotIDs); len(got) != len(want) {
+		t.Fatalf("popup toggle action ids = %#v, want exactly %#v", got, want)
+	}
+	for id, modes := range want {
+		action, ok := keyBindingActionByID(catalog, id)
+		if !ok {
+			t.Fatalf("catalog missing popup toggle action %s", id)
+		}
+		if !keyBindingActionIsPopupToggle(action) {
+			t.Fatalf("%s metadata = kind %s tmux %s toggleable %v, want catalog popup toggle", id, action.Kind, action.TmuxKind, action.Toggleable)
+		}
+		if got := popupToggleModesForAction(action); !equalStrings(got, modes) {
+			t.Fatalf("%s popup modes = %#v, want %#v", id, got, modes)
+		}
+		for _, mode := range modes {
+			got, ok := popupToggleActionIDForMode(mode)
+			if !ok || got != id {
+				t.Fatalf("popupToggleActionIDForMode(%q) = %q, %v; want %s, true", mode, got, ok, id)
+			}
+		}
+	}
+}
+
+func TestKeymapPopupToggleAliasesEmitTmuxBindingsForCatalogActions(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := parseKeymapFile("/tmp/keymap.toml", `[bindings.ProjectSidebarToggle]
+keys = ["M-a"]
+[bindings.NotifySidebarToggle]
+keys = ["M-b"]
+[bindings."RecentWindows:Open"]
+keys = ["M-c"]
+[bindings.AISplitPickerToggle]
+keys = ["M-d"]
+[bindings.SettingsToggle]
+keys = ["M-e"]
+[bindings.ProjectSwitcherToggle]
+keys = ["M-f"]
+[bindings.SessionPopupToggle]
+keys = ["M-g"]
+`)
+	if err != nil {
+		t.Fatalf("parseKeymapFile() error = %v", err)
+	}
+	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	if err != nil {
+		t.Fatalf("mergeKeymapOverrides() error = %v", err)
+	}
+	lines := strings.Join(tmuxBindLines("/bin/projmux", keyBindingCatalogForScopeFrom(merged, keyBindingScopeStandalone)), "\n")
+	for chord, mode := range map[string]string{
+		"M-a": "sessionizer-sidebar",
+		"M-b": "notify-sidebar",
+		"M-c": "recent-windows",
+		"M-d": "ai-split-picker-right",
+		"M-e": "ai-split-settings",
+		"M-f": "sessionizer",
+		"M-g": "session-popup",
+	} {
+		for _, want := range []string{"bind-key -n " + chord + " run-shell", "tmux popup-toggle --client #{client_tty} " + mode} {
+			if !strings.Contains(lines, want) {
+				t.Fatalf("tmux bind lines =\n%s\nwant %q", lines, want)
+			}
+		}
+	}
+}
+
+func TestPopupToggleModeCloseKeysUseMappedActionKeymapAndIgnoreDirectCommands(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte(`[bindings."RecentWindows:Open"]
+keys = ["M-r"]
+[bindings.AISplitPickerToggle]
+keys = ["M-a"]
+[bindings.SettingsToggle]
+keys = ["M-s"]
+[bindings.ProjectSidebarToggle]
+keys = ["M-p"]
+[bindings.NotifySidebarToggle]
+keys = ["M-n"]
+[bindings.ProjectSwitcherToggle]
+keys = ["M-j"]
+[bindings.SessionPopupToggle]
+keys = ["M-u"]
+[bindings.new-window]
+keys = ["M-t"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	homeDir := func() (string, error) { return home, nil }
+	lookupEnv := func(string) string { return "" }
+	for _, tc := range []struct {
+		mode string
+		want string
+	}{
+		{mode: "sessionizer-sidebar", want: "alt-p"},
+		{mode: "notify-sidebar", want: "alt-n"},
+		{mode: "recent-windows", want: "alt-r"},
+		{mode: "ai-split-picker-right", want: "alt-a"},
+		{mode: "ai-split-picker-down", want: "alt-a"},
+		{mode: "ai-split-settings", want: "alt-s"},
+		{mode: "sessionizer", want: "alt-j"},
+		{mode: "session-popup", want: "alt-u"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			keys := effectivePickerKeysForPopupToggleMode(homeDir, lookupEnv, tc.mode, []string{"esc"})
+			if !containsString(keys, "esc") || !containsString(keys, tc.want) {
+				t.Fatalf("%s close keys = %#v, want esc and %s", tc.mode, keys, tc.want)
+			}
+			for _, leaked := range []string{"alt-p", "alt-n", "alt-r", "alt-a", "alt-s", "alt-j", "alt-u", "alt-t"} {
+				if leaked == tc.want {
+					continue
+				}
+				if containsString(keys, leaked) {
+					t.Fatalf("%s close keys = %#v, did not want leaked key %s", tc.mode, keys, leaked)
+				}
+			}
+		})
+	}
+}
+
 func TestKeymapTransportAliasesKeepDefaultTransportChord(t *testing.T) {
 	t.Parallel()
 

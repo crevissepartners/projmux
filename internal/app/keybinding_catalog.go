@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -57,10 +58,11 @@ type keyBindingAction struct {
 	PlainChords []string
 	PrefixChord string
 
-	TmuxKind       tmuxBindingKind
-	TmuxBody       string
-	TmuxPromptArgs string
-	Toggleable     bool
+	TmuxKind        tmuxBindingKind
+	TmuxBody        string
+	TmuxBodyAliases []string
+	TmuxPromptArgs  string
+	Toggleable      bool
 
 	PlainBindOrder  int
 	PrefixBindOrder int
@@ -167,28 +169,29 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:     "\x1b3",
 		},
 		{
-			ID:             "AISplitPickerToggle",
-			Description:    "Toggle the popup picker for choosing an AI split mode",
-			DisplayName:    "Toggle AI Split Picker Popup",
-			Kind:           keyBindingActionTogglePopup,
-			Tier:           keyBindingTierGuaranteedLaunchDefault,
-			Scope:          keyBindingScopeStandalone,
-			PlainChord:     "M-4",
-			TmuxKind:       tmuxBindingPopupToggle,
-			TmuxBody:       "ai-split-picker-right",
-			Toggleable:     true,
-			PlainBindOrder: 40,
-			GhosttyTrigger: "alt+4",
-			GhosttyAction:  `text:\x1b4`,
-			GhosttyOrder:   40,
-			WTID:           "User.projmuxAIPicker",
-			WTKeys:         "alt+4",
-			WTInput:        "\x1b4",
-			WTOrder:        40,
-			ProbeOrder:     40,
-			ProbeLabel:     "Alt-4",
-			ProbeAction:    "AI split picker right",
-			ProbePlain:     "\x1b4",
+			ID:              "AISplitPickerToggle",
+			Description:     "Toggle the popup picker for choosing an AI split mode",
+			DisplayName:     "Toggle AI Split Picker Popup",
+			Kind:            keyBindingActionTogglePopup,
+			Tier:            keyBindingTierGuaranteedLaunchDefault,
+			Scope:           keyBindingScopeStandalone,
+			PlainChord:      "M-4",
+			TmuxKind:        tmuxBindingPopupToggle,
+			TmuxBody:        "ai-split-picker-right",
+			TmuxBodyAliases: []string{"ai-split-picker-down"},
+			Toggleable:      true,
+			PlainBindOrder:  40,
+			GhosttyTrigger:  "alt+4",
+			GhosttyAction:   `text:\x1b4`,
+			GhosttyOrder:    40,
+			WTID:            "User.projmuxAIPicker",
+			WTKeys:          "alt+4",
+			WTInput:         "\x1b4",
+			WTOrder:         40,
+			ProbeOrder:      40,
+			ProbeLabel:      "Alt-4",
+			ProbeAction:     "AI split picker right",
+			ProbePlain:      "\x1b4",
 		},
 		{
 			ID:             "SettingsToggle",
@@ -719,6 +722,37 @@ func isDigitASCII(r rune) bool {
 
 func keyBindingActionAliases(action keyBindingAction) []string {
 	return []string{action.ID}
+}
+
+func keyBindingActionIsPopupToggle(action keyBindingAction) bool {
+	return action.Kind == keyBindingActionTogglePopup &&
+		action.TmuxKind == tmuxBindingPopupToggle &&
+		action.Toggleable
+}
+
+func popupToggleModesForAction(action keyBindingAction) []string {
+	if !keyBindingActionIsPopupToggle(action) {
+		return nil
+	}
+	modes := append([]string{action.TmuxBody}, action.TmuxBodyAliases...)
+	return uniqueNonEmptyStrings(modes)
+}
+
+func popupToggleActionIDByModeFromCatalog(actions []keyBindingAction, mode string) (string, bool) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return "", false
+	}
+	for _, action := range actions {
+		if slices.Contains(popupToggleModesForAction(action), mode) {
+			return action.ID, true
+		}
+	}
+	return "", false
+}
+
+func popupToggleActionIDForMode(mode string) (string, bool) {
+	return popupToggleActionIDByModeFromCatalog(defaultKeyBindingCatalog(), mode)
 }
 
 func keyBindingEditable(action keyBindingAction) bool {

@@ -128,6 +128,17 @@ uppercase `A`, distinct from `NotifySidebar:Ack` on lowercase `a`.
 Runtime picker footers render key guides from the merged keymap, using the
 first active key as the representative key.
 
+In Settings > Keybindings, **Add key** appends a key to the selected action's
+`keys = [...]` list. For catalog popup toggle actions, those keys are used both
+by generated tmux open bindings and by popup-internal close bindings, so the
+same key can close the corresponding already-open popup. This same-key close
+behavior is only for actions cataloged as popup toggles, such as
+`ProjectSidebarToggle`, `NotifySidebarToggle`, `RecentWindows:Open`,
+`AISplitPickerToggle`, `SettingsToggle`, `ProjectSwitcherToggle`, and
+`SessionPopupToggle`. Direct command actions such as `new-window`, pane/window
+navigation, and direct AI split actions remain command bindings and are not
+treated as popup close keys.
+
 ## Keymap File
 
 Settings writes the action-centered multi-alias schema:

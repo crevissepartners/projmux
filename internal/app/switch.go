@@ -1863,7 +1863,7 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 		Footer:         switchPickerFooter(plan.UI, plan.StatusMessage, c.homeDir, c.lookupEnv),
 		InitialQuery:   plan.InitialQuery,
 		DeferredUpdate: plan.DeferredUpdate,
-		Actions:        pickerCloseActionsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "RecentWindows:Open", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+		Actions:        pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, popupToggleModeForSwitchUI(plan.UI), "esc", "ctrl-n"),
 	}
 	options.Actions = append(options.Actions, sidebarKillActions...)
 	options.Actions = append(options.Actions, intpicker.CustomActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:PinProject"}, []string{switchPinExpectKey})...)...)
@@ -2080,16 +2080,19 @@ func pickerCloseBindings(keys ...string) []string {
 	return bindings
 }
 
-func pickerCloseActionsForToggles(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback ...string) []intpicker.Action {
-	return pickerCloseActions(effectivePickerKeysForActions(homeDir, lookupEnv, actionIDs, fallback)...)
+func pickerCloseActionsForPopupToggleMode(homeDir func() (string, error), lookupEnv func(string) string, mode string, fallback ...string) []intpicker.Action {
+	return pickerCloseActions(effectivePickerKeysForPopupToggleMode(homeDir, lookupEnv, mode, fallback)...)
 }
 
-func pickerCloseBindingsForToggle(homeDir func() (string, error), lookupEnv func(string) string, actionID string, fallback ...string) []string {
-	return pickerCloseBindings(effectivePickerKeysForActions(homeDir, lookupEnv, []string{actionID}, fallback)...)
+func pickerCloseBindingsForPopupToggleMode(homeDir func() (string, error), lookupEnv func(string) string, mode string, fallback ...string) []string {
+	return pickerCloseBindings(effectivePickerKeysForPopupToggleMode(homeDir, lookupEnv, mode, fallback)...)
 }
 
-func pickerCloseBindingsForToggles(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback ...string) []string {
-	return pickerCloseBindings(effectivePickerKeysForActions(homeDir, lookupEnv, actionIDs, fallback)...)
+func popupToggleModeForSwitchUI(ui string) string {
+	if ui == switchUISidebar {
+		return "sessionizer-sidebar"
+	}
+	return "sessionizer"
 }
 
 func pickerKeyMatchesAction(homeDir func() (string, error), lookupEnv func(string) string, key, actionID string, fallback ...string) bool {
@@ -2098,6 +2101,14 @@ func pickerKeyMatchesAction(homeDir func() (string, error), lookupEnv func(strin
 		return false
 	}
 	return slices.Contains(effectivePickerKeysForActions(homeDir, lookupEnv, []string{actionID}, fallback), key)
+}
+
+func effectivePickerKeysForPopupToggleMode(homeDir func() (string, error), lookupEnv func(string) string, mode string, fallback []string) []string {
+	actionID, ok := popupToggleActionIDForMode(mode)
+	if !ok {
+		return uniqueNonEmptyStrings(fallback)
+	}
+	return effectivePickerKeysForActions(homeDir, lookupEnv, []string{actionID}, fallback)
 }
 
 func effectivePickerKeysForActions(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback []string) []string {

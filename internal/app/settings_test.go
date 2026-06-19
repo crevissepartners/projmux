@@ -98,7 +98,7 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 	if got, want := options.ExpectKeys, []string{"enter", "ctrl-g", "ctrl-p", "alt-shift-left", "alt-shift-right"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings expect keys = %#v, want %#v", got, want)
 	}
-	if got, want := options.Bindings, []string{"esc:abort", "ctrl-c:abort", "alt-5:abort", "ctrl-alt-s:abort"}; !reflect.DeepEqual(got, want) {
+	if got, want := options.Bindings, []string{"esc:abort", "ctrl-c:abort", "ctrl-alt-s:abort", "alt-5:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings close bindings = %#v, want %#v", got, want)
 	}
 	if got, want := entryValues(options.Entries), []string{
@@ -114,6 +114,40 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 		settingsSectionAbout,
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings entry order = %#v, want %#v", got, want)
+	}
+}
+
+func TestSettingsCloseBindingsUseSettingsToggleAlias(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte(`[bindings.SettingsToggle]
+keys = ["M-s"]
+[bindings.AISplitPickerToggle]
+keys = ["M-a"]
+[bindings.new-window]
+keys = ["M-t"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+
+	options := cmd.rootOptions(settingsRootTabGlobal)
+	if !containsString(options.Bindings, "alt-s:abort") {
+		t.Fatalf("settings bindings = %#v, want custom SettingsToggle alias close", options.Bindings)
+	}
+	if containsString(options.Bindings, "alt-a:abort") {
+		t.Fatalf("settings bindings = %#v, AI picker alias must not close settings popup", options.Bindings)
+	}
+	if containsString(options.Bindings, "alt-t:abort") {
+		t.Fatalf("settings bindings = %#v, direct command alias must not close popup", options.Bindings)
 	}
 }
 

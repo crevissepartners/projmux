@@ -472,7 +472,7 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 		Header:     settingsRootContextHeader(tab, ctx),
 		Footer:     localizeText(locale, i18n.KeySettingsRootFooter, "Open rows or click a scope chip to switch tabs."),
 		ExpectKeys: []string{"enter", "ctrl-g", "ctrl-p", "alt-shift-left", "alt-shift-right"},
-		Bindings:   settingsCloseBindings(),
+		Bindings:   c.settingsCloseBindings(),
 	}
 }
 
@@ -895,7 +895,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > AI Settings > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionNotifications:
 		return intpickercompat.Options{
@@ -905,7 +905,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > Notifications > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionGlobalHooks:
 		return intpickercompat.Options{
@@ -915,7 +915,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > Hooks > ",
 			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionProjectHooks:
 		ctx := c.resolveSettingsProjectContext()
@@ -926,7 +926,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > Project > Hooks > ",
 			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionProject:
 		return intpickercompat.Options{
@@ -936,7 +936,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > Project Picker > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionStatusbar:
 		ctx := c.resolveSettingsProjectContext()
@@ -948,7 +948,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > Appearance > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionSessionState:
 		return intpickercompat.Options{
@@ -958,7 +958,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > Session State > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionProjectSessionState:
 		return intpickercompat.Options{
@@ -968,7 +968,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > Project > Session State > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionKeybindings:
 		return c.keybindingsOptions(settingsKeybindingsBindings), nil
@@ -980,7 +980,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > Labs > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionAbout:
 		return intpickercompat.Options{
@@ -990,7 +990,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Prompt:     "Settings > About > ",
 			Footer:     projmuxFooter("Enter: action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	default:
 		return intpickercompat.Options{}, fmt.Errorf("unknown settings section: %s", section)
@@ -1076,7 +1076,7 @@ func (c *settingsCommand) runAddProject(stdout, stderr io.Writer) error {
 		Prompt:     "Settings > Project Picker > Add Project > ",
 		Footer:     projmuxFooter("Enter: add  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
-		Bindings:   settingsCloseBindings(),
+		Bindings:   c.settingsCloseBindings(),
 	})
 	if err != nil {
 		return err
@@ -1105,7 +1105,7 @@ func (c *settingsCommand) runProjectRootSettings(stdout, stderr io.Writer) error
 			Prompt:     "Settings > Project Picker > Project Root > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -1147,7 +1147,7 @@ func (c *settingsCommand) runSetProjectRootTyped(stdout, stderr io.Writer) error
 		Prompt:       "Type project root path > ",
 		Footer:       projmuxFooter("Enter: save "),
 		ExpectKeys:   []string{"enter"},
-		Bindings:     settingsCloseBindings(),
+		Bindings:     c.settingsCloseBindings(),
 	})
 	if err != nil {
 		return err
@@ -1207,7 +1207,7 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 		Prompt:     "Settings > Project Picker > Add Workdir > ",
 		Footer:     projmuxFooter("Enter: add  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
-		Bindings:   settingsCloseBindings(),
+		Bindings:   c.settingsCloseBindings(),
 	})
 	if err != nil {
 		return err
@@ -1257,7 +1257,7 @@ func (c *settingsCommand) runAddWorkdirTyped(stdout, stderr io.Writer) error {
 		Prompt:      "Type workdir path > ",
 		Footer:      projmuxFooter("Enter: add "),
 		ExpectKeys:  []string{"enter"},
-		Bindings:    settingsCloseBindings(),
+		Bindings:    c.settingsCloseBindings(),
 	})
 	if err != nil {
 		return err
@@ -1327,7 +1327,7 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 			Prompt:     "Settings > Project Picker > Workdirs > ",
 			Footer:     projmuxFooter("Enter: open/add/remove  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -1417,7 +1417,7 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 			Prompt:     "Settings > Project Picker > Pinned Projects > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -1746,7 +1746,7 @@ func (c *settingsCommand) runAIEnabledAgentsSection(stdout, stderr io.Writer) er
 			Prompt:     "Settings > AI Settings > Enabled agents > ",
 			Footer:     projmuxFooter("Enter: toggle  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -1821,7 +1821,7 @@ func (c *settingsCommand) runNotificationsAIDedupeSection(stdout, stderr io.Writ
 			Prompt:     "Settings > Notifications > AI dedupe > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -1864,7 +1864,7 @@ func (c *settingsCommand) runNotificationsAIDedupeCustom(stdout, stderr io.Write
 		Prompt:       "AI dedupe seconds > ",
 		Footer:       projmuxFooter("Enter: save  |  Example: 120 "),
 		ExpectKeys:   []string{"enter"},
-		Bindings:     settingsCloseBindings(),
+		Bindings:     c.settingsCloseBindings(),
 	})
 	if err != nil {
 		return err
@@ -1890,7 +1890,7 @@ func (c *settingsCommand) runNotificationsDesktopSection(stdout, stderr io.Write
 			Prompt:     settingsNotificationsDesktopPrompt(locale),
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -1923,7 +1923,7 @@ func (c *settingsCommand) runAIDefaultModeSection(stdout, stderr io.Writer) erro
 			Prompt:     "Settings > AI Settings > Default split mode > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -2038,7 +2038,7 @@ func (c *settingsCommand) runNotificationsHookActionsSection(stdout, stderr io.W
 			Prompt:     "Settings > Notifications > Hook quiet policy > ",
 			Footer:     projmuxFooter("Enter: view hooks  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -2072,7 +2072,7 @@ func (c *settingsCommand) runAIHookProviderActionSection(provider string, stdout
 			Prompt:     "Settings > Notifications > Hook quiet policy > " + aiHookProviderLabel(provider) + " > ",
 			Footer:     projmuxFooter("Enter: change action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -2109,7 +2109,7 @@ func (c *settingsCommand) runAIHookEventActionSection(provider, event string, st
 			Prompt:     "Settings > Notifications > Hook quiet policy > " + aiHookProviderLabel(provider) + " > " + event + " > ",
 			Footer:     projmuxFooter("Enter: save  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -2153,7 +2153,7 @@ func (c *settingsCommand) runNotificationsDeliverySourcesSection(stdout, stderr 
 			Prompt:     "Settings > Notifications > Delivery sources > ",
 			Footer:     projmuxFooter("Enter: view details  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -2195,7 +2195,7 @@ func (c *settingsCommand) runAINotifyDiagnosticDetail(id string, stderr io.Write
 			Prompt:     "Settings > Notifications > Delivery sources > " + diag.Name + " > ",
 			Footer:     projmuxFooter("Enter: copy command  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -2716,7 +2716,7 @@ func (c *settingsCommand) aiBadgeStyleOptions() intpickercompat.Options {
 		Prompt:     "Settings > Appearance > AI badge style > ",
 		Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
-		Bindings:   settingsCloseBindings(),
+		Bindings:   c.settingsCloseBindings(),
 	}
 }
 
@@ -2832,7 +2832,7 @@ func (c *settingsCommand) statusbarDecorationTargetOptions(target statusbarDecor
 		Prompt:     "Settings > Appearance > " + meta.Name + " > ",
 		Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
-		Bindings:   settingsCloseBindings(),
+		Bindings:   c.settingsCloseBindings(),
 	}, nil
 }
 
@@ -2969,7 +2969,7 @@ func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Opti
 		Prompt:     "Settings > Keybindings > ",
 		Footer:     projmuxFooter("Actions show their active keys and current state."),
 		ExpectKeys: []string{"enter"},
-		Bindings:   settingsCloseBindings(),
+		Bindings:   c.settingsCloseBindings(),
 	}
 }
 
@@ -3026,7 +3026,7 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 			Prompt:     "Settings > Keybindings > Action > ",
 			Footer:     projmuxFooter("Manage the active keys for this action."),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -3128,7 +3128,7 @@ func (c *settingsCommand) runKeybindingAdd(actionID string, stdout, stderr io.Wr
 			Prompt:     "Settings > Keybindings > Action > Add key > ",
 			Footer:     projmuxFooter("Press a key to add it to this action."),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -3177,7 +3177,7 @@ func (c *settingsCommand) runKeybindingAddAdvanced(actionID string, stdout, stde
 			Prompt:     "Settings > Keybindings > Action > Add key > Advanced > ",
 			Footer:     projmuxFooter("Typed key names and raw diagnostics stay advanced."),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return false, err
@@ -3218,7 +3218,7 @@ func (c *settingsCommand) runKeybindingKeyDetail(actionID, chord string, stdout,
 			Prompt:     "Settings > Keybindings > Action > Key > ",
 			Footer:     projmuxFooter("Manage this active key."),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -3309,7 +3309,7 @@ func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdo
 		Prompt:        "Enter key > ",
 		Footer:        projmuxFooter("Enter a key such as C-r, M-a, M-S-Left, or C-Space."),
 		ExpectKeys:    []string{"enter"},
-		Bindings:      settingsCloseBindings(),
+		Bindings:      c.settingsCloseBindings(),
 		AcceptQuery:   true,
 		DisableSearch: true,
 	})
@@ -4133,7 +4133,7 @@ func (c *settingsCommand) runLabsProjectHooksSection(stdout, stderr io.Writer) e
 			Prompt:     "Settings > Labs > Project Hooks > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
+			Bindings:   c.settingsCloseBindings(),
 		})
 		if err != nil {
 			return err
@@ -4938,7 +4938,7 @@ func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options
 		Prompt:        settingsCatalogTextLocale(locale, "Settings") + " > " + settingsCatalogTextLocale(locale, "About") + " > " + settingsCatalogTextLocale(locale, "Welcome") + " > ",
 		Footer:        projmuxFooter("Back row: About  |  Esc: close settings"),
 		DisableSearch: true,
-		Bindings:      settingsCloseBindings(),
+		Bindings:      c.settingsCloseBindings(),
 	}
 }
 
@@ -4953,8 +4953,15 @@ func settingsBackEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	}
 }
 
+func (c *settingsCommand) settingsCloseBindings() []string {
+	if c == nil {
+		return settingsCloseBindings()
+	}
+	return pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "ai-split-settings", "esc", "ctrl-c", "ctrl-alt-s")
+}
+
 func settingsCloseBindings() []string {
-	return pickerCloseBindings("esc", "ctrl-c", "alt-5", "ctrl-alt-s")
+	return pickerCloseBindingsForPopupToggleMode(nil, nil, "ai-split-settings", "esc", "ctrl-c", "ctrl-alt-s")
 }
 
 func printSettingsUsage(w io.Writer) {
