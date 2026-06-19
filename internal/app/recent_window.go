@@ -713,7 +713,7 @@ func recentWindowFocusDate(focused time.Time) string {
 	if focused.IsZero() {
 		return ""
 	}
-	return focused.UTC().Format("2006-01-02 15:04")
+	return focused.Local().Format("2006-01-02 15:04")
 }
 
 // recentWindowTruncate shortens value to at most maxRunes runes (rune-aware),

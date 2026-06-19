@@ -234,7 +234,8 @@ func TestRecentWindowPickerItemLastVisitFormat(t *testing.T) {
 	}
 	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(3*time.Minute), aibadge.StyleDot)
 
-	want := "last visit · 3m ago · 2026-06-18 01:02"
+	wantDate := at.Local().Format("2006-01-02 15:04")
+	want := "last visit · 3m ago · " + wantDate
 	found := false
 	for _, line := range item.MetaLines {
 		if line == want {
@@ -243,6 +244,23 @@ func TestRecentWindowPickerItemLastVisitFormat(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("MetaLines = %#v, want last-visit line %q", item.MetaLines, want)
+	}
+}
+
+func TestRecentWindowFocusDateUsesLocalTimezone(t *testing.T) {
+	// No t.Parallel(): this mutates the global time.Local.
+	loc, err := time.LoadLocation("Asia/Seoul")
+	if err != nil {
+		t.Skipf("Asia/Seoul tzdata unavailable: %v", err)
+	}
+	orig := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = orig })
+
+	// 01:02 UTC == 10:02 KST.
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	if got, want := recentWindowFocusDate(at), "2026-06-18 10:02"; got != want {
+		t.Fatalf("recentWindowFocusDate(%s) = %q, want %q (local TZ)", at, got, want)
 	}
 }
 
@@ -556,7 +574,8 @@ func TestRecentWindowPickerItemSearchTextIncludesPaneTitlesAndDate(t *testing.T)
 	}
 	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(time.Minute), aibadge.StyleDot)
 
-	for _, want := range []string{"projmux", "Projmux", "repos-projmux", "zsh", "Claude Code", "Codex", "roadmap", "codex", "2026-06-18 01:02"} {
+	wantDate := at.Local().Format("2006-01-02 15:04")
+	for _, want := range []string{"projmux", "Projmux", "repos-projmux", "zsh", "Claude Code", "Codex", "roadmap", "codex", wantDate} {
 		if !strings.Contains(item.SearchText, want) {
 			t.Fatalf("SearchText = %q, want substring %q", item.SearchText, want)
 		}
@@ -1037,6 +1056,13 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 	}
 	if got.LastFocusedAt != now {
 		t.Fatalf("snapshot time = %s, want %s", got.LastFocusedAt, now)
+	}
+	// Persisted state must stay UTC regardless of display-time local conversion.
+	if loc := got.LastFocusedAt.Location(); loc != time.UTC {
+		t.Fatalf("snapshot time location = %v, want UTC", loc)
+	}
+	if formatted := got.LastFocusedAt.Format(time.RFC3339); !strings.HasSuffix(formatted, "Z") {
+		t.Fatalf("snapshot time RFC3339 = %q, want UTC 'Z' suffix", formatted)
 	}
 	if got, want := store.recordLimits[0], recentwindows.DefaultLimit; got != want {
 		t.Fatalf("record limit = %d, want %d", got, want)
