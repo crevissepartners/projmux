@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -201,6 +203,135 @@ func TestParseRecentWindowRowsAcceptsEscapedDelimiter(t *testing.T) {
 	}
 }
 
+func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatalf("create marker: %v", err)
+	}
+	now := time.Date(2026, 6, 19, 1, 2, 3, 0, time.UTC)
+	runner := &recentWindowFakeRunner{
+		recordOutput: strings.Join([]string{
+			"/tmp/tmux-1000/projmux",
+			"repos-projmux",
+			"@6",
+			"agent",
+			"%54",
+			"codex-review",
+			"Phase 4 recorder",
+			"codex",
+			filepath.Join(project, "internal", "app"),
+		}, recentWindowFieldSep) + "\n",
+	}
+	store := &recentWindowStubStore{}
+	cmd := &recentWindowCommand{
+		runner: runner,
+		storeFactory: func(socket string) (recentWindowStore, error) {
+			if socket != "/tmp/tmux-1000/projmux" {
+				t.Fatalf("store socket = %q, want tmux socket", socket)
+			}
+			return store, nil
+		},
+		now: func() time.Time { return now },
+	}
+
+	if err := cmd.RunRecord(nil, nil, nil); err != nil {
+		t.Fatalf("RunRecord() error = %v", err)
+	}
+	if got, want := len(store.records), 1; got != want {
+		t.Fatalf("records len = %d, want %d", got, want)
+	}
+	got := store.records[0]
+	if got.Socket != "/tmp/tmux-1000/projmux" || got.Session != "repos-projmux" || got.WindowID != "@6" || got.WindowName != "agent" {
+		t.Fatalf("snapshot identity = %+v, want current window identity", got)
+	}
+	if got.LastPaneID != "%54" || got.LastPaneTitle != "codex-review" || got.LastPaneTopic != "Phase 4 recorder" || got.LastCommand != "codex" {
+		t.Fatalf("snapshot pane metadata = %+v, want active pane metadata", got)
+	}
+	if got.Project != filepath.Base(project) {
+		t.Fatalf("snapshot project = %q, want %q", got.Project, filepath.Base(project))
+	}
+	if got.LastFocusedAt != now {
+		t.Fatalf("snapshot time = %s, want %s", got.LastFocusedAt, now)
+	}
+	if got, want := store.recordLimits[0], recentwindows.DefaultLimit; got != want {
+		t.Fatalf("record limit = %d, want %d", got, want)
+	}
+}
+
+func TestRecentWindowRecordParsesEscapedSnapshotSeparators(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	runner := &recentWindowFakeRunner{
+		recordOutput: strings.Join([]string{
+			"/tmp/tmux",
+			"current",
+			"@1",
+			"main",
+			"%1",
+			"shell",
+			"topic",
+			"zsh",
+			"/repo/projmux",
+		}, recentWindowEscapedFieldSep) + "\n",
+	}
+	store := &recentWindowStubStore{}
+	cmd := &recentWindowCommand{
+		runner: runner,
+		storeFactory: func(string) (recentWindowStore, error) {
+			return store, nil
+		},
+		now: func() time.Time { return time.Unix(0, 0) },
+	}
+
+	if err := cmd.RunRecord(nil, nil, nil); err != nil {
+		t.Fatalf("RunRecord() error = %v", err)
+	}
+	if got := store.records[0]; got.Session != "current" || got.WindowID != "@1" || got.LastPaneTopic != "topic" {
+		t.Fatalf("recorded snapshot = %+v, want escaped fields parsed", got)
+	}
+}
+
+func TestRecentWindowRecordRepeatedSameWindowDoesNotGrowQueue(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	stateStore := recentwindows.NewStore(filepath.Join(t.TempDir(), "recent.json"))
+	runner := &recentWindowFakeRunner{
+		recordOutput: strings.Join([]string{
+			"/tmp/tmux",
+			"current",
+			"@1",
+			"main",
+			"%1",
+			"shell",
+			"",
+			"zsh",
+			"/repo/projmux",
+		}, recentWindowFieldSep) + "\n",
+	}
+	cmd := &recentWindowCommand{
+		runner: runner,
+		storeFactory: func(string) (recentWindowStore, error) {
+			return stateStore, nil
+		},
+		now: func() time.Time { return time.Unix(10, 0) },
+	}
+
+	for i := range 3 {
+		if err := cmd.RunRecord(nil, nil, nil); err != nil {
+			t.Fatalf("RunRecord(%d) error = %v", i, err)
+		}
+	}
+	state, err := stateStore.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got, want := len(state.Entries), 1; got != want {
+		t.Fatalf("entries len = %d, want no duplicate growth", got)
+	}
+}
+
 func TestRecentWindowSwitchFailureRefreshesAndPrunesQueue(t *testing.T) {
 	t.Parallel()
 
@@ -308,15 +439,23 @@ func recentWindowCandidate(snapshot recentwindows.Snapshot) recentwindows.Candid
 }
 
 type recentWindowStubStore struct {
-	candidates []recentwindows.Candidate
-	currents   []recentwindows.WindowKey
-	lives      [][]recentwindows.LiveWindow
+	candidates   []recentwindows.Candidate
+	currents     []recentwindows.WindowKey
+	lives        [][]recentwindows.LiveWindow
+	records      []recentwindows.Snapshot
+	recordLimits []int
 }
 
 func (s *recentWindowStubStore) Candidates(current recentwindows.WindowKey, live []recentwindows.LiveWindow, _ int) ([]recentwindows.Candidate, error) {
 	s.currents = append(s.currents, current)
 	s.lives = append(s.lives, append([]recentwindows.LiveWindow(nil), live...))
 	return s.candidates, nil
+}
+
+func (s *recentWindowStubStore) Record(snapshot recentwindows.Snapshot, limit int) (recentwindows.State, error) {
+	s.records = append(s.records, snapshot)
+	s.recordLimits = append(s.recordLimits, limit)
+	return recentwindows.NewState(s.records), nil
 }
 
 type recentWindowStubOpener struct {
@@ -335,6 +474,7 @@ func (o *recentWindowStubOpener) OpenSessionTarget(_ context.Context, sessionNam
 
 type recentWindowFakeRunner struct {
 	currentOutput string
+	recordOutput  string
 	listOutputs   any
 	calls         []recentWindowCall
 }
@@ -348,6 +488,9 @@ func (r *recentWindowFakeRunner) Run(_ context.Context, name string, args ...str
 	r.calls = append(r.calls, recentWindowCall{name: name, args: append([]string(nil), args...)})
 	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}"}, recentWindowFieldSep)}) {
 		return []byte(r.currentOutput), nil
+	}
+	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}", "#{window_name}", "#{pane_id}", "#{pane_title}", "#{@projmux_ai_topic}", "#{pane_current_command}", "#{pane_current_path}"}, recentWindowFieldSep)}) {
+		return []byte(r.recordOutput), nil
 	}
 	if name == "tmux" && reflect.DeepEqual(args, []string{"list-windows", "-a", "-F", strings.Join([]string{"#{session_name}", "#{window_id}"}, recentWindowFieldSep)}) {
 		switch outputs := r.listOutputs.(type) {

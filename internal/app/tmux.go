@@ -1354,6 +1354,9 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryP
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
 		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
 		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
+	)
+	lines = append(lines, tmuxRecentWindowRecordHookLines(bin)...)
+	lines = append(lines,
 		"set -g window-status-format "+tmuxConfigQuote(windowStatusFormat),
 		"set -g window-status-current-format "+tmuxConfigQuote(windowStatusCurrentFormat),
 		"set -g status 2",
@@ -1379,6 +1382,16 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryP
 	lines = append(lines, tmuxBindLines(binaryPath, standaloneKeyBindings)...)
 	lines = append(lines, tmuxStatusbarKeyBindings(binaryPath)...)
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func tmuxRecentWindowRecordHookLines(bin string) []string {
+	command := bin + " window record >/dev/null 2>&1 || true"
+	body := "run-shell -b " + tmuxConfigQuote(command)
+	return []string{
+		"set-hook -g after-select-window " + tmuxConfigQuote(body),
+		"set-hook -g client-session-changed " + tmuxConfigQuote(body),
+		"run-shell -b " + tmuxConfigQuote(command),
+	}
 }
 
 func tmuxAppConfig(binaryPath, defaultShell string, decoration config.StatusbarDecoration) string {
