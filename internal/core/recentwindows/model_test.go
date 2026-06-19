@@ -91,7 +91,7 @@ func TestRecordRequiresWindowKey(t *testing.T) {
 	}
 }
 
-func TestCandidatesExcludeCurrentAndRetainCrossSession(t *testing.T) {
+func TestCandidatesIncludeCurrentAsMarkedRowAndRetainCrossSession(t *testing.T) {
 	t.Parallel()
 
 	state := NewState([]Snapshot{
@@ -106,14 +106,44 @@ func TestCandidatesExcludeCurrentAndRetainCrossSession(t *testing.T) {
 	}
 
 	candidates, pruned := state.Candidates(WindowKey{Socket: "/tmp/tmux", Session: "current", WindowID: "@1"}, live, 0)
-	if got, want := len(candidates), 2; got != want {
+	if got, want := len(candidates), 3; got != want {
 		t.Fatalf("candidates len = %d, want %d", got, want)
 	}
-	if candidates[0].Session != "other-project" || candidates[1].Session != "third-project" {
-		t.Fatalf("candidates = %+v, want cross-session entries retained", candidates)
+	if candidates[0].Session != "current" || candidates[1].Session != "other-project" || candidates[2].Session != "third-project" {
+		t.Fatalf("candidates = %+v, want MRU order [current, other-project, third-project]", candidates)
+	}
+	if !candidates[0].IsCurrent {
+		t.Fatalf("candidates[0] = %+v, want IsCurrent true for the current window", candidates[0])
+	}
+	if candidates[1].IsCurrent || candidates[2].IsCurrent {
+		t.Fatalf("candidates = %+v, want only the current row marked IsCurrent", candidates)
 	}
 	if got, want := len(pruned.Entries), 3; got != want {
 		t.Fatalf("pruned len = %d, want %d", got, want)
+	}
+}
+
+func TestCandidatesIncludeCurrentForSameSessionMultiWindow(t *testing.T) {
+	t.Parallel()
+
+	state := NewState([]Snapshot{
+		snap("/tmp/tmux", "repos-projmux", "@9", "zsh", time.Unix(2, 0)),
+		snap("/tmp/tmux", "repos-projmux", "@6", "projmux", time.Unix(1, 0)),
+	})
+	live := []LiveWindow{
+		{Socket: "/tmp/tmux", Session: "repos-projmux", WindowID: "@9"},
+		{Socket: "/tmp/tmux", Session: "repos-projmux", WindowID: "@6"},
+	}
+
+	candidates, _ := state.Candidates(WindowKey{Socket: "/tmp/tmux", Session: "repos-projmux", WindowID: "@6"}, live, 0)
+	if got, want := len(candidates), 2; got != want {
+		t.Fatalf("candidates len = %d, want %d (same-session multi-window history retained)", got, want)
+	}
+	if candidates[0].WindowID != "@9" || candidates[0].IsCurrent {
+		t.Fatalf("candidates[0] = %+v, want @9 as a normal (non-current) switch target", candidates[0])
+	}
+	if candidates[1].WindowID != "@6" || !candidates[1].IsCurrent {
+		t.Fatalf("candidates[1] = %+v, want @6 marked IsCurrent", candidates[1])
 	}
 }
 
@@ -135,6 +165,9 @@ func TestCandidatesPruneGoneWindowsAgainstSameSocketInventory(t *testing.T) {
 	}
 	if candidates[0].WindowName != "alive" {
 		t.Fatalf("candidate = %+v, want alive", candidates[0])
+	}
+	if candidates[0].IsCurrent {
+		t.Fatalf("candidate = %+v, want IsCurrent false when no current window is given", candidates[0])
 	}
 	if got, want := len(pruned.Entries), 1; got != want {
 		t.Fatalf("pruned len = %d, want %d", got, want)

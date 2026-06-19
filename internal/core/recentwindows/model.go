@@ -53,7 +53,8 @@ type Label struct {
 
 type Candidate struct {
 	Snapshot
-	Label Label
+	Label     Label
+	IsCurrent bool
 }
 
 func NewState(entries []Snapshot) State {
@@ -89,12 +90,10 @@ func (s State) Candidates(current WindowKey, live []LiveWindow, limit int) ([]Ca
 			continue
 		}
 		kept = append(kept, entry)
-		if key == current {
-			continue
-		}
 		candidates = append(candidates, Candidate{
-			Snapshot: entry,
-			Label:    BuildLabel(entry),
+			Snapshot:  entry,
+			Label:     BuildLabel(entry),
+			IsCurrent: key == current,
 		})
 	}
 	return candidates, State{Version: Version, Entries: kept}

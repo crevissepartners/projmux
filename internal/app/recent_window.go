@@ -161,6 +161,12 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 	if !ok {
 		return fmt.Errorf("recent window selection is not recognized: %s", value)
 	}
+	if selected.IsCurrent {
+		// Staying on the current window is a no-op / stay-current: the picker
+		// closes and tmux keeps the user where they already are. Never a switch
+		// or an error.
+		return nil
+	}
 	if err := c.openRecentWindow(ctx, selected); err != nil {
 		c.displayMessage(ctx, stderr, "recent window unavailable: "+recentWindowTargetLabel(selected))
 		c.refreshCandidates(ctx, current, store)
@@ -416,6 +422,9 @@ func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time) in
 	// selected-row background re-applies cleanly after every badge).
 	badgeText := recentWindowBadgeText(candidate)
 	title := notifySidebarProjectBadge(badgeText) + " " + name + " " + notifySidebarAge(age)
+	if candidate.IsCurrent {
+		title = recentWindowCurrentBadge() + " " + title
+	}
 
 	// Line 2: the window's pane topic/title summary (topic leads).
 	paneSummary := recentWindowPaneSummaryLine(candidate)
@@ -434,17 +443,21 @@ func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time) in
 		meta = append(meta, notifySidebarDim(context))
 	}
 
-	search := joinRecentWindowParts(append([]string{
-		candidate.WindowName,
-		candidate.Project,
-		candidate.Session,
-	}, append(recentWindowPaneTitles(candidate), []string{
+	searchTail := []string{
 		candidate.LastPaneTopic,
 		candidate.LastCommand,
 		age,
 		recentWindowFocusDate(candidate.LastFocusedAt),
 		candidate.Label.Secondary,
-	}...)...)...)
+	}
+	if candidate.IsCurrent {
+		searchTail = append(searchTail, recentWindowCurrentBadgeLabel)
+	}
+	search := joinRecentWindowParts(append([]string{
+		candidate.WindowName,
+		candidate.Project,
+		candidate.Session,
+	}, append(recentWindowPaneTitles(candidate), searchTail...)...)...)
 
 	return intpicker.Item{
 		Title:      title,
@@ -553,6 +566,16 @@ func recentWindowTopicChip(topic string) string {
 		return ""
 	}
 	return theme.ANSIChipActiveStart + " " + topic + " " + theme.ANSIReset
+}
+
+const recentWindowCurrentBadgeLabel = "CURRENT"
+
+// recentWindowCurrentBadge marks the row the user is already on. It uses the
+// notify info palette (bold dark text on a bright background) so it reads as a
+// distinct "you are here" marker, terminating with theme.ANSIReset like the
+// other badges so the selected-row background re-applies cleanly.
+func recentWindowCurrentBadge() string {
+	return theme.ANSINotifyInfoStart + " " + recentWindowCurrentBadgeLabel + " " + theme.ANSIReset
 }
 
 // recentWindowLastVisit labels the relative age so the row reads unambiguously

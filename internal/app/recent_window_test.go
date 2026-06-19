@@ -375,6 +375,155 @@ func TestRecentWindowPickerItemKeepsSelectionValue(t *testing.T) {
 	}
 }
 
+func TestRecentWindowPickerItemMarksCurrentRow(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:    "repos-projmux",
+		WindowID:   "@6",
+		WindowName: "projmux",
+		Project:    "Projmux",
+	}
+	current := recentwindows.Candidate{
+		Snapshot:  snapshot,
+		Label:     recentwindows.BuildLabel(snapshot),
+		IsCurrent: true,
+	}
+	item := recentWindowPickerItem(current, at)
+
+	visible := recentWindowStripANSI(item.Title)
+	currentIdx := strings.Index(visible, "CURRENT")
+	nameIdx := strings.Index(visible, "projmux")
+	if currentIdx < 0 {
+		t.Fatalf("Title visible = %q, want CURRENT marker", visible)
+	}
+	if nameIdx <= currentIdx {
+		t.Fatalf("Title visible = %q, want CURRENT marker before the window name", visible)
+	}
+	if !strings.Contains(item.Title, theme.ANSINotifyInfoStart) {
+		t.Fatalf("Title = %q, want notify info palette for the current badge", item.Title)
+	}
+	if !strings.HasSuffix(item.Title, theme.ANSIReset) {
+		t.Fatalf("Title = %q, want trailing reset", item.Title)
+	}
+	for _, want := range []string{"CURRENT", "Projmux", "repos-projmux", "projmux"} {
+		if !strings.Contains(item.SearchText, want) {
+			t.Fatalf("SearchText = %q, want substring %q", item.SearchText, want)
+		}
+	}
+
+	// A non-current candidate must not carry the CURRENT marker.
+	plain := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+	if strings.Contains(recentWindowStripANSI(plain.Title), "CURRENT") {
+		t.Fatalf("non-current Title = %q, want no CURRENT marker", plain.Title)
+	}
+}
+
+func TestRecentWindowRunCurrentRowIsNoOp(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	currentCandidate := recentwindows.Candidate{
+		Snapshot: recentwindows.Snapshot{
+			Socket:     "/tmp/tmux",
+			Session:    "current",
+			WindowID:   "@1",
+			WindowName: "current-window",
+		},
+		Label:     recentwindows.BuildLabel(recentwindows.Snapshot{Session: "current", WindowID: "@1", WindowName: "current-window"}),
+		IsCurrent: true,
+	}
+	store := &recentWindowStubStore{candidates: []recentwindows.Candidate{currentCandidate}}
+	runner := &recentWindowFakeRunner{
+		currentOutput: "/tmp/tmux" + recentWindowFieldSep + "current" + recentWindowFieldSep + "@1\n",
+		listOutputs:   "current" + recentWindowFieldSep + "@1\n",
+	}
+	opener := &recentWindowStubOpener{}
+	cmd := &recentWindowCommand{
+		runner: runner,
+		opener: opener,
+		storeFactory: func(string) (recentWindowStore, error) {
+			return store, nil
+		},
+		nativePicker: pickerRunnerFunc(func(intpicker.Options) (intpicker.Result, error) {
+			return intpicker.Result{Key: "enter", Value: recentWindowValue(currentCandidate)}, nil
+		}),
+		now: func() time.Time { return time.Unix(0, 0) },
+	}
+
+	if err := cmd.Run(nil, nil, nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, call := range runner.calls {
+		if call.name == "tmux" && len(call.args) >= 1 && call.args[0] == "switch-client" {
+			t.Fatalf("calls = %#v, want no switch-client for the current row", runner.calls)
+		}
+	}
+	if opener.session != "" || opener.window != "" {
+		t.Fatalf("opener = %q %q, want opener never called for the current row", opener.session, opener.window)
+	}
+	if runner.sawDisplayMessage("recent window unavailable: " + recentWindowTargetLabel(currentCandidate)) {
+		t.Fatalf("calls = %#v, want no unavailable display-message for the current row", runner.calls)
+	}
+}
+
+func TestRecentWindowRunCurrentOnlyStateOpensPicker(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	currentCandidate := recentwindows.Candidate{
+		Snapshot: recentwindows.Snapshot{
+			Socket:     "/tmp/tmux",
+			Session:    "current",
+			WindowID:   "@1",
+			WindowName: "current-window",
+		},
+		Label:     recentwindows.BuildLabel(recentwindows.Snapshot{Session: "current", WindowID: "@1", WindowName: "current-window"}),
+		IsCurrent: true,
+	}
+	store := &recentWindowStubStore{candidates: []recentwindows.Candidate{currentCandidate}}
+	runner := &recentWindowFakeRunner{
+		currentOutput: "/tmp/tmux" + recentWindowFieldSep + "current" + recentWindowFieldSep + "@1\n",
+		listOutputs:   "current" + recentWindowFieldSep + "@1\n",
+	}
+	opener := &recentWindowStubOpener{}
+	var pickerOptions intpicker.Options
+	var pickerCalled bool
+	cmd := &recentWindowCommand{
+		runner: runner,
+		opener: opener,
+		storeFactory: func(string) (recentWindowStore, error) {
+			return store, nil
+		},
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			pickerCalled = true
+			pickerOptions = options
+			return intpicker.Result{Key: "enter", Value: recentWindowValue(currentCandidate)}, nil
+		}),
+		now: func() time.Time { return time.Unix(0, 0) },
+	}
+
+	if err := cmd.Run(nil, nil, nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !pickerCalled {
+		t.Fatal("picker was not called for the current-only state")
+	}
+	if len(pickerOptions.Items) != 1 {
+		t.Fatalf("picker items = %#v, want exactly the current candidate", pickerOptions.Items)
+	}
+	if runner.sawDisplayMessage("no recent windows") {
+		t.Fatalf("calls = %#v, want no 'no recent windows' message for current-only state", runner.calls)
+	}
+	for _, call := range runner.calls {
+		if call.name == "tmux" && len(call.args) >= 1 && call.args[0] == "switch-client" {
+			t.Fatalf("calls = %#v, want no switch for the current-only state", runner.calls)
+		}
+	}
+	if opener.session != "" {
+		t.Fatalf("opener = %q, want opener never called", opener.session)
+	}
+}
+
 func TestRecentWindowRunEmptyQueueShowsMessage(t *testing.T) {
 	t.Parallel()
 
