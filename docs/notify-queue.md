@@ -112,13 +112,17 @@ flat; the sidebar builds a read-only grouped view for display. The first screen
 shows collapsed group rows keyed by pane when available, then window, then
 session/external fallback. Each group row is a fixed three-line card: line 1
 keeps project/session plus agent/provider with newest age, line 2 keeps
-topic/pane-title/task context plus count and severity/live-state aggregate
+topic/pane-title/task context plus severity/live-state aggregate
 metadata, and line 3 keeps the latest notification preview. Collapsed group
-cards do not promote window/pane ids as primary information. Right/Left unfold
-and fold the selected group inside the native sidebar only; this fold state is
-session-local and is not persisted. Enter on a group row, whether folded or
-expanded, focuses the group's representative pane and acknowledges every
-visible notification in that group only after focus succeeds. If the
+cards do not promote window/pane ids as primary information. A `+N` badge is
+shown only when the group can unfold, and `N` is the number of child
+notification rows that will appear; one-notification group headers omit both
+the count badge and strong fold marker. Right/Left show and hide child rows for
+foldable groups inside the native sidebar only; this fold state is
+session-local and is not persisted. Right on a childless group refreshes
+without adding rows. Enter on a group row, whether folded or expanded, focuses
+the group's representative pane and acknowledges every visible notification in
+that group only after focus succeeds. If the
 representative target is stale or gone, Enter treats the selected pane inbox as
 explicit cleanup and acknowledges/prunes the visible group without focusing,
 including critical notifications. If a live-looking representative target

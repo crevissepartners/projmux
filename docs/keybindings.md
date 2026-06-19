@@ -116,9 +116,9 @@ by different picker surfaces, while conflicts inside one surface are rejected.
 | `SessionPopup:CyclePreviewPanePrev` / `SessionPopup:CyclePreviewPaneNext` | Preview panes |
 | `NotifySidebar:Ack` / `NotifySidebar:AckGroup` / `NotifySidebar:ClearNonCritical` / `NotifySidebar:ClearAll` | Manage notifications |
 
-Notify sidebar Right/Left group fold navigation is picker-local and is not part
-of the Settings action catalog. `NotifySidebar:AckGroup` defaults to uppercase
-`A`, distinct from `NotifySidebar:Ack` on lowercase `a`.
+Notify sidebar Right/Left child-row show/hide behavior is picker-local and is
+not part of the Settings action catalog. `NotifySidebar:AckGroup` defaults to
+uppercase `A`, distinct from `NotifySidebar:Ack` on lowercase `a`.
 
 Runtime picker footers render key guides from the merged keymap, using the
 first active key as the representative key.
