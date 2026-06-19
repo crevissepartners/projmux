@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 )
 
 const (
@@ -21,17 +23,21 @@ type WindowKey struct {
 }
 
 type Snapshot struct {
-	Socket        string    `json:"socket"`
-	Session       string    `json:"session"`
-	WindowID      string    `json:"window_id"`
-	WindowName    string    `json:"window_name,omitempty"`
-	Project       string    `json:"project,omitempty"`
-	LastPaneID    string    `json:"last_pane_id,omitempty"`
-	LastPaneTitle string    `json:"last_pane_title,omitempty"`
-	PaneTitles    []string  `json:"pane_titles,omitempty"`
-	LastPaneTopic string    `json:"last_pane_topic,omitempty"`
-	LastCommand   string    `json:"last_command,omitempty"`
-	LastFocusedAt time.Time `json:"last_focused_at"`
+	Socket        string   `json:"socket"`
+	Session       string   `json:"session"`
+	WindowID      string   `json:"window_id"`
+	WindowName    string   `json:"window_name,omitempty"`
+	Project       string   `json:"project,omitempty"`
+	LastPaneID    string   `json:"last_pane_id,omitempty"`
+	LastPaneTitle string   `json:"last_pane_title,omitempty"`
+	PaneTitles    []string `json:"pane_titles,omitempty"`
+	// PaneBadgeKinds carries the per-pane AI badge kind parallel to PaneTitles
+	// (same length/order when available). Additive and backward compatible: old
+	// state files omit it, so the picker falls back to titles-only rendering.
+	PaneBadgeKinds []string  `json:"pane_badge_kinds,omitempty"`
+	LastPaneTopic  string    `json:"last_pane_topic,omitempty"`
+	LastCommand    string    `json:"last_command,omitempty"`
+	LastFocusedAt  time.Time `json:"last_focused_at"`
 }
 
 type State struct {
@@ -186,6 +192,7 @@ func normalizeSnapshot(snapshot Snapshot) Snapshot {
 	snapshot.LastPaneID = strings.TrimSpace(snapshot.LastPaneID)
 	snapshot.LastPaneTitle = strings.TrimSpace(snapshot.LastPaneTitle)
 	snapshot.PaneTitles = normalizePaneTitles(snapshot.PaneTitles)
+	snapshot.PaneBadgeKinds = normalizePaneBadgeKinds(snapshot.PaneBadgeKinds)
 	snapshot.LastPaneTopic = strings.TrimSpace(snapshot.LastPaneTopic)
 	snapshot.LastCommand = strings.TrimSpace(snapshot.LastCommand)
 	if !snapshot.LastFocusedAt.IsZero() {
@@ -208,6 +215,29 @@ func normalizePaneTitles(titles []string) []string {
 		return nil
 	}
 	return out
+}
+
+// normalizePaneBadgeKinds normalizes each per-pane AI badge kind while keeping
+// positional alignment with PaneTitles: a pane with no/unknown badge keeps an
+// empty slot rather than shifting later panes. Trailing empties are trimmed and
+// an all-empty slice collapses to nil so backward-compatible state stays clean.
+func normalizePaneBadgeKinds(kinds []string) []string {
+	if len(kinds) == 0 {
+		return nil
+	}
+	out := make([]string, len(kinds))
+	last := -1
+	for i, kind := range kinds {
+		normalized := aibadge.Normalize(kind)
+		out[i] = normalized
+		if normalized != "" {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil
+	}
+	return out[:last+1]
 }
 
 func normalizeKey(key WindowKey) WindowKey {

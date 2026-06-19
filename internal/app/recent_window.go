@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -85,6 +86,7 @@ type recentWindowCommand struct {
 	storeFactory recentWindowStoreFactory
 	nativePicker intpicker.Runner
 	lookupEnv    func(string) string
+	homeDir      func() (string, error)
 	now          func() time.Time
 }
 
@@ -96,8 +98,19 @@ func newRecentWindowCommand() *recentWindowCommand {
 		storeFactory: defaultRecentWindowStore,
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		lookupEnv:    os.Getenv,
+		homeDir:      os.UserHomeDir,
 		now:          time.Now,
 	}
+}
+
+// recentWindowAIBadgeStyle resolves the configured AI badge glyph style for the
+// picker, mirroring how switch.go reads it. It falls back to the dot style when
+// the home dir resolver is unset (e.g. in tests that do not exercise badges).
+func (c *recentWindowCommand) recentWindowAIBadgeStyle() string {
+	if c.homeDir == nil {
+		return aibadge.StyleDot
+	}
+	return aibadge.NormalizeStyle(string(loadAIBadgeStyle(c.homeDir, c.lookupEnv)))
 }
 
 func defaultRecentWindowStore(socket string) (recentWindowStore, error) {
@@ -148,7 +161,7 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 		return fmt.Errorf("native picker is not configured")
 	}
 
-	items, byValue := recentWindowPickerItems(candidates, c.currentTime())
+	items, byValue := recentWindowPickerItems(candidates, c.currentTime(), c.recentWindowAIBadgeStyle())
 	result, err := c.nativePicker.Run(recentWindowPickerOptions(items))
 	if err != nil {
 		return fmt.Errorf("run recent windows picker: %w", err)
@@ -264,43 +277,52 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 	if len(fields) != 9 || fields[1] == "" || fields[2] == "" {
 		return recentwindows.Snapshot{}, fmt.Errorf("snapshot current tmux window: tmux returned incomplete metadata")
 	}
+	titles, badgeKinds := c.windowPaneMetadata(ctx, fields[2])
 	return recentwindows.Snapshot{
-		Socket:        fields[0],
-		Session:       fields[1],
-		WindowID:      fields[2],
-		WindowName:    fields[3],
-		Project:       recentWindowProjectName(fields[8]),
-		LastPaneID:    fields[4],
-		LastPaneTitle: fields[5],
-		PaneTitles:    c.windowPaneTitles(ctx, fields[2]),
-		LastPaneTopic: fields[6],
-		LastCommand:   fields[7],
-		LastFocusedAt: c.currentTime().UTC(),
+		Socket:         fields[0],
+		Session:        fields[1],
+		WindowID:       fields[2],
+		WindowName:     fields[3],
+		Project:        recentWindowProjectName(fields[8]),
+		LastPaneID:     fields[4],
+		LastPaneTitle:  fields[5],
+		PaneTitles:     titles,
+		PaneBadgeKinds: badgeKinds,
+		LastPaneTopic:  fields[6],
+		LastCommand:    fields[7],
+		LastFocusedAt:  c.currentTime().UTC(),
 	}, nil
 }
 
-// windowPaneTitles collects the pane titles of every pane in the given window
-// so the picker can render a multi-pane summary. Failures degrade gracefully:
-// an empty result falls back to LastPaneTitle at display time.
-func (c *recentWindowCommand) windowPaneTitles(ctx context.Context, windowID string) []string {
+// windowPaneMetadata collects every pane's title and AI badge kind for the given
+// window so the picker can render a multi-pane summary with per-pane status. The
+// returned slices are positionally aligned. Failures degrade gracefully: an
+// empty result falls back to LastPaneTitle at display time, and missing badge
+// kinds simply render the title without a status glyph.
+func (c *recentWindowCommand) windowPaneMetadata(ctx context.Context, windowID string) (titles, badgeKinds []string) {
 	if c.runner == nil || strings.TrimSpace(windowID) == "" {
-		return nil
+		return nil, nil
 	}
-	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-t", windowID, "-F", "#{pane_title}")
+	format := strings.Join([]string{"#{pane_title}", "#{@projmux_ai_badge_kind}"}, recentWindowFieldSep)
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-t", windowID, "-F", format)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	rows := parseRecentWindowRows(output, 1)
-	titles := make([]string, 0, len(rows))
+	rows := parseRecentWindowRows(output, 2)
+	titles = make([]string, 0, len(rows))
+	badgeKinds = make([]string, 0, len(rows))
 	for _, fields := range rows {
-		if title := strings.TrimSpace(fields[0]); title != "" {
-			titles = append(titles, title)
+		title := strings.TrimSpace(fields[0])
+		if title == "" {
+			continue
 		}
+		titles = append(titles, title)
+		badgeKinds = append(badgeKinds, strings.TrimSpace(fields[1]))
 	}
 	if len(titles) == 0 {
-		return nil
+		return nil, nil
 	}
-	return titles
+	return titles, badgeKinds
 }
 
 func (c *recentWindowCommand) liveWindows(ctx context.Context, socket string) ([]recentwindows.LiveWindow, error) {
@@ -376,7 +398,7 @@ func recentWindowPickerOptions(items []intpicker.Item) intpicker.Options {
 	return options
 }
 
-func recentWindowPickerItems(candidates []recentwindows.Candidate, now time.Time) ([]intpicker.Item, map[string]recentwindows.Candidate) {
+func recentWindowPickerItems(candidates []recentwindows.Candidate, now time.Time, badgeStyle string) ([]intpicker.Item, map[string]recentwindows.Candidate) {
 	items := make([]intpicker.Item, 0, len(candidates))
 	byValue := make(map[string]recentwindows.Candidate, len(candidates))
 	for _, candidate := range candidates {
@@ -384,7 +406,7 @@ func recentWindowPickerItems(candidates []recentwindows.Candidate, now time.Time
 		if value == "" {
 			continue
 		}
-		item := recentWindowPickerItem(candidate, now)
+		item := recentWindowPickerItem(candidate, now, badgeStyle)
 		item.Value = value
 		items = append(items, item)
 		byValue[value] = candidate
@@ -402,9 +424,12 @@ const (
 	recentWindowProjectBadgeMaxRunes = 24
 	recentWindowNameMaxRunes         = 48
 	recentWindowTopicChipMaxRunes    = 48
+	// recentWindowMaxPanes caps how many pane titles render on line 2 before the
+	// remainder collapses into a compact "+N" count (the Alt-1 sidebar pattern).
+	recentWindowMaxPanes = 3
 )
 
-func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time) intpicker.Item {
+func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time, badgeStyle string) intpicker.Item {
 	// The readable window name (never a raw @window_id/%pane_id). BuildLabel
 	// already falls back name -> project -> session -> pane/topic/cmd.
 	name := strings.TrimSpace(candidate.Label.Primary)
@@ -419,28 +444,23 @@ func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time) in
 	// Line 1: project badge -> readable window name -> last-focus age badge.
 	// Reuse the notify sidebar helpers so the badges match the notification
 	// sidebar palette and each badge terminates with theme.ANSIReset (so the
-	// selected-row background re-applies cleanly after every badge).
+	// selected-row background re-applies cleanly after every badge). The current
+	// window stays in history as a normal card with NO CURRENT badge.
 	badgeText := recentWindowBadgeText(candidate)
 	title := notifySidebarProjectBadge(badgeText) + " " + name + " " + notifySidebarAge(age)
-	if candidate.IsCurrent {
-		title = recentWindowCurrentBadge() + " " + title
-	}
 
-	// Line 2: the window's pane topic/title summary (topic leads).
-	paneSummary := recentWindowPaneSummaryLine(candidate)
+	// Line 2: the window's pane topic/title summary (topic leads, per-pane AI
+	// badges). Line 3: last-visit metadata. We deliberately do NOT add a context
+	// (project · session) line: the project already leads line 1 and the session
+	// unique id stays in SearchText/debug only.
+	paneSummary := recentWindowPaneSummaryLine(candidate, badgeStyle)
 
-	// Display-only context badge (project/session). Never a recency signal.
-	context := joinRecentWindowParts(candidate.Project, candidate.Session)
-
-	meta := make([]string, 0, 3)
+	meta := make([]string, 0, 2)
 	if paneSummary != "" {
 		meta = append(meta, paneSummary)
 	}
 	if lastVisit != "" {
 		meta = append(meta, lastVisit)
-	}
-	if context != "" && context != name {
-		meta = append(meta, notifySidebarDim(context))
 	}
 
 	searchTail := []string{
@@ -450,9 +470,8 @@ func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time) in
 		recentWindowFocusDate(candidate.LastFocusedAt),
 		candidate.Label.Secondary,
 	}
-	if candidate.IsCurrent {
-		searchTail = append(searchTail, recentWindowCurrentBadgeLabel)
-	}
+	// SearchText still carries the session unique id and pane metadata even though
+	// they are dropped from the visible card lines, so search stays comprehensive.
 	search := joinRecentWindowParts(append([]string{
 		candidate.WindowName,
 		candidate.Project,
@@ -533,29 +552,144 @@ func recentWindowPaneSummaryParts(candidate recentwindows.Candidate) []string {
 	return parts
 }
 
+// recentWindowPaneCell pairs a pane title with its own AI badge kind so the two
+// never desync as the summary is reordered (topic-prepend), deduped, or
+// overflow-collapsed. The topic chip is NOT a paneCell: it leads the line as a
+// chip with no per-pane badge.
+type recentWindowPaneCell struct {
+	title string
+	kind  string
+}
+
 // recentWindowPaneSummaryLine renders the line-2 pane summary with notify-level
 // visibility: the leading topic is wrapped in an active chip (like
-// notifySidebarTopicBadge) and the remaining pane titles are dimmed so they
-// read as secondary context rather than blending into plain meta text.
-func recentWindowPaneSummaryLine(candidate recentwindows.Candidate) string {
-	plain := recentWindowPaneSummary(candidate)
-	if plain == "" {
+// notifySidebarTopicBadge), each remaining pane title is prefixed with ITS OWN
+// per-pane AI badge glyph (when available) and dimmed, and panes beyond
+// recentWindowMaxPanes collapse into a compact "+N" count. Layout stays stable
+// because every visible pane title is rune-truncated identically to the plain
+// recentWindowPaneSummary path.
+func recentWindowPaneSummaryLine(candidate recentwindows.Candidate, badgeStyle string) string {
+	// recentWindowPaneSummary owns the canonical plain text (and its stable
+	// truncation); bail early when there is nothing to render so the no-summary
+	// path matches exactly.
+	if recentWindowPaneSummary(candidate) == "" {
 		return ""
 	}
-	parts := strings.SplitN(plain, " | ", 2)
-	lead := parts[0]
-	rest := ""
-	if len(parts) == 2 {
-		rest = parts[1]
-	}
-	if strings.TrimSpace(candidate.LastPaneTopic) != "" {
-		chip := recentWindowTopicChip(lead)
-		if rest != "" {
-			return chip + " " + notifySidebarDim(rest)
+
+	topic := strings.TrimSpace(candidate.LastPaneTopic)
+	cells := recentWindowPaneCells(candidate)
+
+	chip := ""
+	if topic != "" {
+		chip = recentWindowTopicChip(topic)
+		// The topic leads as a chip; drop any pane title that merely duplicates it
+		// so the same context is not shown twice. The badge kind travels with each
+		// title, so dropping a cell never shifts the remaining title↔badge binding.
+		filtered := cells[:0]
+		for _, cell := range cells {
+			if cell.title == topic {
+				continue
+			}
+			filtered = append(filtered, cell)
 		}
-		return chip
+		cells = filtered
 	}
-	return notifySidebarDim(plain)
+
+	visible := cells
+	overflow := 0
+	if len(cells) > recentWindowMaxPanes {
+		visible = cells[:recentWindowMaxPanes]
+		overflow = len(cells) - recentWindowMaxPanes
+	}
+
+	// Pane cells join with " | " so the visible separator survives ANSI stripping;
+	// the topic chip (when present) leads the line with a plain space gap.
+	rendered := make([]string, 0, len(visible)+1)
+	for _, cell := range visible {
+		// Truncate identically to the plain summary path so layout never shifts.
+		title := recentWindowTruncate(cell.title, recentWindowPaneSummaryMaxRunes)
+		body := notifySidebarDim(title)
+		if glyph := recentWindowPaneKindGlyph(cell.kind, badgeStyle); glyph != "" {
+			body = glyph + " " + body
+		}
+		rendered = append(rendered, body)
+	}
+	if overflow > 0 {
+		rendered = append(rendered, notifySidebarDim(fmt.Sprintf("+%d", overflow)))
+	}
+
+	body := strings.Join(rendered, " | ")
+	switch {
+	case chip != "" && body != "":
+		return chip + " " + body
+	case chip != "":
+		return chip
+	default:
+		return body
+	}
+}
+
+// recentWindowPaneCells builds the per-pane (title, badge kind) units, keeping
+// each title bound to its own kind regardless of later reordering or dedup. It
+// mirrors recentWindowPaneTitles' fallbacks: when no PaneTitles exist it falls
+// back to a single LastPaneTitle (then LastCommand) cell with no badge kind.
+func recentWindowPaneCells(candidate recentwindows.Candidate) []recentWindowPaneCell {
+	kinds := candidate.PaneBadgeKinds
+	cells := make([]recentWindowPaneCell, 0, len(candidate.PaneTitles))
+	for i, title := range candidate.PaneTitles {
+		if title = strings.TrimSpace(title); title == "" {
+			continue
+		}
+		kind := ""
+		if i < len(kinds) {
+			kind = strings.TrimSpace(kinds[i])
+		}
+		cells = append(cells, recentWindowPaneCell{title: title, kind: kind})
+	}
+	if len(cells) == 0 {
+		if title := strings.TrimSpace(candidate.LastPaneTitle); title != "" {
+			cells = append(cells, recentWindowPaneCell{title: title})
+		} else if cmd := strings.TrimSpace(candidate.LastCommand); cmd != "" {
+			cells = append(cells, recentWindowPaneCell{title: cmd})
+		}
+	}
+	return cells
+}
+
+// recentWindowPaneKindGlyph renders the themed AI badge glyph for a single
+// pane's badge kind, honoring the configured style (dot/emoji/off). It
+// terminates with theme.ANSIReset so the selected-row background re-applies
+// cleanly. Returns "" when the kind is unrecognized or the style is off.
+func recentWindowPaneKindGlyph(kind, badgeStyle string) string {
+	kind = aibadge.Normalize(kind)
+	if kind == "" {
+		return ""
+	}
+	glyph := aibadge.Glyph(kind, badgeStyle)
+	if strings.TrimSpace(glyph) == "" {
+		return ""
+	}
+	style := recentWindowAIBadgeKindStart(kind)
+	if style == "" {
+		return ""
+	}
+	return style + glyph + theme.ANSIReset
+}
+
+// recentWindowAIBadgeKindStart maps an AI badge kind to its themed ANSI start
+// sequence, mirroring the sidebar's ansiAIBadgeKindStart so the picker reuses
+// the same per-role palette.
+func recentWindowAIBadgeKindStart(kind string) string {
+	switch aibadge.ThemeRole(kind) {
+	case aibadge.RoleActionRequired:
+		return theme.ANSIAIBadgeActionRequiredStart
+	case aibadge.RoleSuccess:
+		return theme.ANSIAIBadgeSuccessStart
+	case aibadge.RoleProgress:
+		return theme.ANSIAIBadgeProgressStart
+	default:
+		return ""
+	}
 }
 
 // recentWindowTopicChip wraps the pane topic in the shared active chip palette,
@@ -566,16 +700,6 @@ func recentWindowTopicChip(topic string) string {
 		return ""
 	}
 	return theme.ANSIChipActiveStart + " " + topic + " " + theme.ANSIReset
-}
-
-const recentWindowCurrentBadgeLabel = "CURRENT"
-
-// recentWindowCurrentBadge marks the row the user is already on. It uses the
-// notify info palette (bold dark text on a bright background) so it reads as a
-// distinct "you are here" marker, terminating with theme.ANSIReset like the
-// other badges so the selected-row background re-applies cleanly.
-func recentWindowCurrentBadge() string {
-	return theme.ANSINotifyInfoStart + " " + recentWindowCurrentBadgeLabel + " " + theme.ANSIReset
 }
 
 // recentWindowLastVisit labels the relative age so the row reads unambiguously
