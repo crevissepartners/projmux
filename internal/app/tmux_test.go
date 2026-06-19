@@ -1763,7 +1763,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g pane-border-style \"fg=colour236\"",
 		"set -g pane-active-border-style \"fg=colour51,bold\"",
 		"set -g pane-border-status top",
-		"set -g pane-border-format \"#{?pane_active,#[bold#,fg=colour51] > #[default]",
+		"set -g pane-border-format \"#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > ",
 		"#[bold#,fg=" + tmuxAIBadgeProgressFg + "] ● ",
 		"#[bold#,fg=" + tmuxAIBadgeSuccessFg + "] ● ",
 		"#[bold#,fg=" + tmuxAIBadgeActionRequiredFg + "] ● ",
@@ -1926,12 +1926,9 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	if !strings.Contains(paneBorder, tmuxStyledVisiblePaneLabelFormatFor(tmuxAIBadgeActionRequiredFg)) {
 		t.Fatalf("pane border format = %q, want prompt-styled visible label", paneBorder)
 	}
-	activePaneBorderPrefix := "#{?pane_active,#[bold#,fg=" + theme.TmuxPaneActiveBorderFg + "] > #[default]" + visibleLabel
+	activePaneBorderPrefix := "#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > " + visibleLabel
 	if !strings.Contains(paneBorder, activePaneBorderPrefix) {
-		t.Fatalf("pane border format = %q, want active pane label to use foreground marker without a background chip %q", paneBorder, activePaneBorderPrefix)
-	}
-	if strings.Contains(paneBorder, "bg="+theme.TmuxPaneActiveBg) {
-		t.Fatalf("pane border format = %q, active pane label must not use a background chip", paneBorder)
+		t.Fatalf("pane border format = %q, want active pane label to keep block chip surface %q", paneBorder, activePaneBorderPrefix)
 	}
 	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxAIBadgeProgressFg+"] ● ") {
 		t.Fatalf("pane border format = %q, want busy marker to use state.progress", paneBorder)
