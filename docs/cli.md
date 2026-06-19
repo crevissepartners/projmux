@@ -658,9 +658,13 @@ accepted by `popup-toggle` mirror the historical sessionizer surface:
 `session-popup`, `sessionizer`, `sessionizer-sidebar`,
 `notify-sidebar`, `recent-windows`, `ai-split-picker-right`,
 `ai-split-picker-down`, `ai-split-settings`.
-`apply` reloads the live `-L projmux` server's config without restarting
-it; `make install` and `projmux upgrade` invoke it after replacing the
-binary.
+`apply` regenerates the app tmux config and reloads the live `-L projmux`
+server without restarting it. `make install` and `projmux upgrade` invoke it
+after replacing the binary. Settings > Keybindings normally runs the same
+save/config/reload flow automatically; use `projmux tmux apply` as the CLI
+recovery or sync path after hand-editing `keymap.toml`, after saving Settings
+outside tmux, or after resolving a reported config-generation or live-reload
+failure.
 
 ## update
 
@@ -775,7 +779,10 @@ flags with the top-level `switch` UX:
   switcher's saved workdirs list, Labs (experimental), Settings > Keybindings,
   and About/Update status. The keybinding flow is a single
   `Settings > Keybindings` action list with simplified action details for
-  aliases and reset. Terminal diagnostics and terminal mapping application stay
+  aliases and reset. Key save/reset automatically writes the key list,
+  regenerates the app config, and reloads the running tmux session when
+  possible; skipped or failed stages show `projmux tmux apply` as the recovery
+  or sync command. Terminal diagnostics and terminal mapping application stay
   in the `projmux shell` -> `projmux setup` -> `projmux init` remediation path.
   The About section includes the `Welcome` entry. In Project
   Picker, `Project Root` manages the saved

@@ -4073,20 +4073,133 @@ func keymapOverrideForAction(keymap keymapFile, action keyBindingAction) (keymap
 }
 
 func (c *settingsCommand) finishKeymapApply(path string, err error, stdout io.Writer) error {
+	report := keymapApplyReport{
+		Saved:    keymapApplyStage{Status: keymapApplyOK},
+		Prepared: keymapApplyStage{Status: keymapApplySkipped, Detail: "waiting for saved keybinding"},
+		Live:     keymapApplyStage{Status: keymapApplySkipped, Detail: "waiting for prepared config"},
+	}
+	if strings.TrimSpace(path) != "" {
+		report.Saved.Detail = "keymap.toml: " + path
+	}
 	if err != nil {
+		report.Saved = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("keymap.toml", err)}
+		report.Prepared = keymapApplyStage{Status: keymapApplySkipped, Detail: "keybinding was not saved"}
+		report.Live = keymapApplyStage{Status: keymapApplySkipped, Detail: "keybinding was not saved"}
+		_ = writeKeymapApplyReport(stdout, report)
 		return fmt.Errorf("save keybinding: %w", err)
 	}
 	configPath, err := c.writeTmuxAppConfig()
 	if err != nil {
+		report.Prepared = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("generated tmux config", err)}
+		report.Live = keymapApplyStage{Status: keymapApplySkipped, Detail: "generated tmux config failed"}
+		_ = writeKeymapApplyReport(stdout, report)
 		return fmt.Errorf("update keybinding runtime config: %w", err)
+	}
+	report.Prepared = keymapApplyStage{Status: keymapApplyOK, Detail: "generated tmux config: " + configPath}
+	if c.lookupEnv == nil || strings.TrimSpace(c.lookupEnv("TMUX")) == "" {
+		report.Live = keymapApplyStage{Status: keymapApplySkipped, Detail: "Settings is not running inside tmux"}
+		return writeKeymapApplyReport(stdout, report)
+	}
+	if c.runCommand == nil {
+		report.Live = keymapApplyStage{Status: keymapApplySkipped, Detail: "tmux command runner is not configured"}
+		return writeKeymapApplyReport(stdout, report)
 	}
 	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
 		if err := c.runCommand("tmux", "source-file", configPath); err != nil {
+			report.Live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux reload", err)}
+			_ = writeKeymapApplyReport(stdout, report)
 			return fmt.Errorf("reload active tmux keybindings: %w", err)
 		}
 	}
-	_, err = fmt.Fprintf(stdout, "saved keybinding\n")
-	return err
+	report.Live = keymapApplyStage{Status: keymapApplyOK}
+	return writeKeymapApplyReport(stdout, report)
+}
+
+type keymapApplyStatus string
+
+const (
+	keymapApplyOK      keymapApplyStatus = "ok"
+	keymapApplySkipped keymapApplyStatus = "skipped"
+	keymapApplyFailed  keymapApplyStatus = "failed"
+)
+
+type keymapApplyStage struct {
+	Status keymapApplyStatus
+	Detail string
+}
+
+type keymapApplyReport struct {
+	Saved    keymapApplyStage
+	Prepared keymapApplyStage
+	Live     keymapApplyStage
+}
+
+func keymapApplyDiagnostic(stage string, err error) string {
+	if err == nil {
+		return stage
+	}
+	return stage + ": " + err.Error()
+}
+
+func writeKeymapApplyReport(w io.Writer, report keymapApplyReport) error {
+	if w == nil {
+		return nil
+	}
+	if report.Saved.Status == keymapApplyOK && report.Prepared.Status == keymapApplyOK && report.Live.Status == keymapApplyOK {
+		if _, err := fmt.Fprintln(w, "keybinding saved and applied"); err != nil {
+			return err
+		}
+		for _, line := range []string{
+			keymapApplyLine("Saved", report.Saved, false),
+			keymapApplyLine("Prepared", report.Prepared, false),
+			keymapApplyLine("Running session", report.Live, false),
+		} {
+			if _, err := fmt.Fprintln(w, line); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if _, err := fmt.Fprintln(w, "keybinding apply status"); err != nil {
+		return err
+	}
+	for _, line := range []string{
+		keymapApplyLine("Saved", report.Saved, true),
+		keymapApplyLine("Prepared", report.Prepared, true),
+		keymapApplyLine("Running session", report.Live, true),
+	} {
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	switch {
+	case report.Saved.Status == keymapApplyFailed:
+		_, err := fmt.Fprintln(w, "Recovery: fix the keymap.toml problem, then try the Settings change again.")
+		return err
+	case report.Prepared.Status == keymapApplyFailed:
+		_, err := fmt.Fprintln(w, "Recovery: resolve the generated tmux config error, then run `projmux tmux apply`.")
+		return err
+	case report.Live.Status == keymapApplyFailed:
+		_, err := fmt.Fprintln(w, "Recovery: fix the live tmux reload issue, then run `projmux tmux apply`.")
+		return err
+	case report.Live.Status == keymapApplySkipped:
+		_, err := fmt.Fprintln(w, "Next: run `projmux tmux apply` to sync a running projmux tmux server.")
+		return err
+	default:
+		return nil
+	}
+}
+
+func keymapApplyLine(label string, stage keymapApplyStage, includeDetail bool) string {
+	line := "  " + label + ": " + string(stage.Status)
+	if includeDetail && strings.TrimSpace(stage.Detail) != "" {
+		line += " (" + strings.TrimSpace(stage.Detail) + ")"
+	}
+	if !includeDetail && label == "Running session" && stage.Status == keymapApplyOK {
+		line += " (updated)"
+	}
+	return line
 }
 
 func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {

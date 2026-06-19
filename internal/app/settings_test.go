@@ -5041,8 +5041,169 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
 		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
 	}
-	if got := stdout.String(); !strings.Contains(got, "saved keybinding\n") || strings.Contains(got, "reloaded tmux config") {
-		t.Fatalf("stdout = %q, want simplified saved-keybinding success copy", got)
+	if got := stdout.String(); !strings.Contains(got, "keybinding saved and applied\n") ||
+		!strings.Contains(got, "  Saved: ok\n") ||
+		!strings.Contains(got, "  Prepared: ok\n") ||
+		!strings.Contains(got, "  Running session: ok (updated)\n") ||
+		strings.Contains(got, "keymap.toml") ||
+		strings.Contains(got, "generated tmux config") ||
+		strings.Contains(got, "live tmux reload") {
+		t.Fatalf("stdout = %q, want success apply status without diagnostic internals", got)
+	}
+}
+
+func TestSettingsHubKeybindingsApplyOutsideTmuxShowsSkippedLiveState(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &stdout); err != nil {
+		t.Fatalf("saveKeymapKeysAndApply() error = %v", err)
+	}
+	if len(tmuxCalls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none outside tmux", tmuxCalls)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-a\"]\n") {
+		t.Fatalf("keymap = %q, want saved binding", keymap)
+	}
+	configText := readFile(t, filepath.Join(home, ".config", "projmux", "tmux.conf"))
+	if !strings.Contains(configText, "bind-key -n M-a") {
+		t.Fatalf("tmux config = %q, want regenerated binding", configText)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"keybinding apply status\n",
+		"  Saved: ok (keymap.toml: ",
+		"  Prepared: ok (generated tmux config: ",
+		"  Running session: skipped (Settings is not running inside tmux)\n",
+		"Next: run `projmux tmux apply` to sync a running projmux tmux server.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestSettingsHubKeybindingsApplyReportsInvalidKeymapRecovery(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), `[bindings.ProjectSidebarToggle]
+keys = [bad]
+`)
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+
+	var stdout bytes.Buffer
+	err := cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &stdout)
+	if err == nil || !strings.Contains(err.Error(), "save keybinding:") {
+		t.Fatalf("saveKeymapKeysAndApply() error = %v, want save failure", err)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"keybinding apply status\n",
+		"  Saved: failed (keymap.toml: ",
+		"  Prepared: skipped (keybinding was not saved)\n",
+		"  Running session: skipped (keybinding was not saved)\n",
+		"Recovery: fix the keymap.toml problem, then try the Settings change again.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestSettingsHubKeybindingsApplyReportsConfigGenerationFailure(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	homeCalls := 0
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) {
+			homeCalls++
+			if homeCalls > 1 {
+				return "", errors.New("home unavailable")
+			}
+			return home, nil
+		},
+		lookupEnv: func(string) string { return "" },
+	}
+
+	var stdout bytes.Buffer
+	err := cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &stdout)
+	if err == nil || !strings.Contains(err.Error(), "update keybinding runtime config:") {
+		t.Fatalf("saveKeymapKeysAndApply() error = %v, want config generation failure", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-a\"]\n") {
+		t.Fatalf("keymap = %q, want saved binding before config failure", keymap)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"keybinding apply status\n",
+		"  Saved: ok (keymap.toml: ",
+		"  Prepared: failed (generated tmux config: resolve home directory: home unavailable)\n",
+		"  Running session: skipped (generated tmux config failed)\n",
+		"Recovery: resolve the generated tmux config error, then run `projmux tmux apply`.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestSettingsHubKeybindingsApplyReportsLiveReloadFailure(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux,1,0"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return errors.New("source-file failed")
+		},
+	}
+
+	var stdout bytes.Buffer
+	err := cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &stdout)
+	if err == nil || !strings.Contains(err.Error(), "reload active tmux keybindings: source-file failed") {
+		t.Fatalf("saveKeymapKeysAndApply() error = %v, want live reload failure", err)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
+		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"keybinding apply status\n",
+		"  Saved: ok (keymap.toml: ",
+		"  Prepared: ok (generated tmux config: ",
+		"  Running session: failed (live tmux reload: source-file failed)\n",
+		"Recovery: fix the live tmux reload issue, then run `projmux tmux apply`.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
 	}
 }
 
@@ -5216,12 +5377,29 @@ func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
 		}
 	})
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
 	if strings.Contains(keymap, "[bindings.ProjectSidebarToggle]") || strings.Contains(keymap, "plain =") {
 		t.Fatalf("keymap = %q, want override removed", keymap)
+	}
+	configText := readFile(t, filepath.Join(home, ".config", "projmux", "tmux.conf"))
+	if !strings.Contains(configText, "bind-key -n M-1") {
+		t.Fatalf("tmux config = %q, want regenerated default binding after reset", configText)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"keybinding apply status\n",
+		"  Saved: ok (keymap.toml: ",
+		"  Prepared: ok (generated tmux config: ",
+		"  Running session: skipped (Settings is not running inside tmux)\n",
+		"Next: run `projmux tmux apply` to sync a running projmux tmux server.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
 	}
 }
 

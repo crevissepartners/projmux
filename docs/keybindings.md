@@ -18,10 +18,15 @@ The recommended path when a key does not fire:
 4. For unsupported terminals, configure plain Meta bytes or add a custom key in
    Settings > Keybindings.
 
-Settings saves safe tmux plain chords for actions. Successful saves use simple
-confirmation copy; if saving, runtime config update, or active tmux reload
-fails, the error names the failed stage. Raw escape payloads, Windows Terminal
-`sendInput` strings, and tmux User keys are rejected as action keys.
+Settings saves safe tmux plain chords for actions and automatically applies the
+change to the app config and the running tmux session when Settings is opened
+from inside tmux. After each save/reset it shows the three outcomes together:
+saved, prepared, and running session. Successful in-tmux saves keep those labels
+user-facing; failure and skipped states include diagnostic terms such as
+`keymap.toml`, generated tmux config, or live tmux reload so the broken stage is
+clear. If Settings is run outside tmux, the running-session stage is skipped and
+the recovery/sync action is `projmux tmux apply`. Raw escape payloads, Windows
+Terminal `sendInput` strings, and tmux User keys are rejected as action keys.
 
 ## Quick Start
 
@@ -138,6 +143,12 @@ behavior is only for actions cataloged as popup toggles, such as
 `SessionPopupToggle`. Direct command actions such as `new-window`, pane/window
 navigation, and direct AI split actions remain command bindings and are not
 treated as popup close keys.
+
+Settings is the default apply path for key edits: it writes the key list,
+refreshes the generated config, and reloads the running tmux session when
+possible. Use `projmux tmux apply` as a CLI recovery/sync command after editing
+the keymap file by hand, after an outside-tmux Settings save, or after resolving
+a reported generated-config or live-reload failure.
 
 ## Keymap File
 
