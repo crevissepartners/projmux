@@ -201,9 +201,12 @@ func TestKeyBindingCatalogPhase0UserBindableCoverage(t *testing.T) {
 	}
 }
 
-func TestKeymapLegacyActionIDAndQuotedInternalIDMergeToCanonicalActions(t *testing.T) {
+func TestKeymapQuotedInternalIDMergesAndDroppedLegacyIDIgnored(t *testing.T) {
 	t.Parallel()
 
+	// session-popup is a hard-dropped legacy id (Phase 4): it must be
+	// silently ignored rather than merged onto SessionPopupToggle. The
+	// real quoted internal id (Sidebar:PinProject) still merges.
 	parsed, err := parseKeymapFile("/tmp/keymap.toml", `[bindings.session-popup]
 keys = ["M-s"]
 
@@ -221,8 +224,11 @@ keys = ["p"]
 	if !ok {
 		t.Fatalf("missing canonical SessionPopupToggle")
 	}
-	if got, want := keyBindingEffectivePlainChords(sessionPopup), []string{"M-s"}; !equalStrings(got, want) {
-		t.Fatalf("SessionPopupToggle keys = %#v, want %#v", got, want)
+	if got := keyBindingEffectivePlainChords(sessionPopup); len(got) != 0 {
+		t.Fatalf("SessionPopupToggle keys = %#v, want default (dropped legacy id ignored)", got)
+	}
+	if _, ok := keyBindingActionByID(merged, "session-popup"); ok {
+		t.Fatalf("dropped legacy id session-popup should not resolve to any action")
 	}
 	pinProject, ok := keyBindingActionByID(merged, "Sidebar:PinProject")
 	if !ok {
@@ -230,6 +236,54 @@ keys = ["p"]
 	}
 	if got, want := keyBindingEffectivePlainChords(pinProject), []string{"p"}; !equalStrings(got, want) {
 		t.Fatalf("Sidebar:PinProject keys = %#v, want %#v", got, want)
+	}
+}
+
+func TestKeyBindingCatalogDropsLegacyIDsAndPrefixRemnants(t *testing.T) {
+	t.Parallel()
+
+	catalog := defaultKeyBindingCatalog()
+
+	// The 6 hard-dropped legacy ids must no longer resolve to any action.
+	for _, legacy := range []string{
+		"sessionizer-sidebar",
+		"notify-sidebar",
+		"session-popup",
+		"ai-split-picker-right",
+		"ai-split-settings",
+		"sessionizer",
+	} {
+		if _, ok := keyBindingActionByID(catalog, legacy); ok {
+			t.Fatalf("dropped legacy id %q should not resolve to any action", legacy)
+		}
+	}
+
+	// The 7 prefix remnants must have an empty PrefixChord.
+	for _, id := range []string{
+		"SessionPopupToggle",
+		"ProjectSwitcherToggle",
+		"rename-window",
+		"ai-split-right",
+		"ai-split-down",
+		"current-project-session",
+		"toggle-mouse",
+	} {
+		action, ok := keyBindingActionByID(catalog, id)
+		if !ok {
+			t.Fatalf("missing action %q", id)
+		}
+		if action.PrefixChord != "" {
+			t.Fatalf("action %q PrefixChord = %q, want empty", id, action.PrefixChord)
+		}
+	}
+
+	// ProjectSidebarToggle intentionally retains its prefix binding.
+	sidebar, ok := keyBindingActionByID(catalog, "ProjectSidebarToggle")
+	if !ok {
+		t.Fatalf("missing ProjectSidebarToggle")
+	}
+	if sidebar.PrefixChord != "F" {
+		t.Fatalf("ProjectSidebarToggle PrefixChord = %q, want %q", sidebar.PrefixChord, "F")
 	}
 }
 

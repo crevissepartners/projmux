@@ -1253,7 +1253,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} notify-sidebar",
 		"bind-key -n M-3 run-shell",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} recent-windows",
-		"unbind-key -q R",
+		"unbind-key -q F",
 		"set-hook -g pane-focus-out",
 		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane}",
 		"set-hook -g pane-focus-in",
@@ -1467,7 +1467,7 @@ func TestTmuxPrintConfigKeymapOverrideChangesBindAndUnbindsStaleDefault(t *testi
 	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keymapPath, []byte("[bindings.sessionizer-sidebar]\nplain = \"M-a\"\nprefix = \"A\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(keymapPath, []byte("[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\nprefix = \"A\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := &tmuxCommand{
@@ -1514,13 +1514,8 @@ func TestTmuxPrintConfigInvalidKeymapReportsUsefulErrors(t *testing.T) {
 		want string
 	}{
 		{
-			name: "unknown action",
-			body: "[bindings.no-such-action]\nplain = \"M-a\"\n",
-			want: "unknown action id",
-		},
-		{
 			name: "invalid chord",
-			body: "[bindings.sessionizer-sidebar]\nplain = \"M x\"\n",
+			body: "[bindings.ProjectSidebarToggle]\nplain = \"M x\"\n",
 			want: "contains unsupported tmux config characters",
 		},
 	}
@@ -1547,6 +1542,43 @@ func TestTmuxPrintConfigInvalidKeymapReportsUsefulErrors(t *testing.T) {
 				t.Fatalf("Run() error = %v, want %q with keymap path", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestTmuxPrintConfigGracefullyIgnoresDroppedLegacyIDs(t *testing.T) {
+	t.Parallel()
+
+	// An old keymap.toml referencing only hard-dropped legacy ids must not
+	// error or crash; the dropped bindings are silently ignored and the
+	// defaults are emitted unchanged.
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte("[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n\n[bindings.session-popup]\nplain = \"M-s\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want no error for dropped legacy ids", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "bind-key -n M-1 run-shell") {
+		t.Fatalf("print-config output = %q, want default M-1 sidebar binding", output)
+	}
+	if strings.Contains(output, "bind-key -n M-a") {
+		t.Fatalf("print-config output = %q, did not expect dropped legacy override M-a", output)
+	}
+	if strings.Contains(output, "bind-key -n M-s") {
+		t.Fatalf("print-config output = %q, did not expect dropped legacy override M-s", output)
 	}
 }
 
@@ -1738,8 +1770,6 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"#[fg=colour244] ",
 		"#{@projmux_ai_topic}",
 		"#{pane_current_command},#{pane_title}",
-		"unbind-key -q R",
-		"unbind-key -q M",
 		"bind-key -n M-Left select-pane -L",
 		"bind-key -n M-Right select-pane -R",
 		"bind-key -n M-Up select-pane -U",
@@ -2292,7 +2322,7 @@ func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing
 	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keymapPath, []byte("[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n\n[bindings.new-window]\nplain = \"C-t\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(keymapPath, []byte("[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\n\n[bindings.new-window]\nplain = \"C-t\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := &tmuxCommand{
