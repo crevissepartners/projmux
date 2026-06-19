@@ -133,8 +133,11 @@ func TestFormatStatusTokenVariants(t *testing.T) {
 	}{
 		{name: "english full", token: StatusTokenError, locale: FallbackLocale, variant: FormatFull, want: "error"},
 		{name: "english compact", token: StatusTokenError, locale: FallbackLocale, variant: FormatCompact, want: "err"},
+		{name: "english stale full is inactive", token: StatusTokenStale, locale: FallbackLocale, variant: FormatFull, want: "inactive"},
+		{name: "english stale compact is INA", token: StatusTokenStale, locale: FallbackLocale, variant: FormatCompact, want: "ina"},
 		{name: "korean full", token: StatusTokenBusy, locale: Locale("ko-KR"), variant: FormatFull, want: "작업 중"},
 		{name: "korean compact", token: StatusTokenBusy, locale: Locale("ko-KR"), variant: FormatCompact, want: "작업"},
+		{name: "korean stale full is inactive", token: StatusTokenStale, locale: Locale("ko-KR"), variant: FormatFull, want: "비활성"},
 	}
 
 	for _, tt := range tests {

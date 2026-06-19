@@ -533,7 +533,7 @@ func notifySidebarMutableActions(keys []string, mutate func(intpicker.ActionCont
 
 func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string) string {
 	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
-		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live group / clean stale-gone"},
+		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live/inactive / clean gone"},
 		{ActionID: "NotifySidebar:Ack", Label: "ack child"},
 		{ActionID: "NotifySidebar:AckGroup", Label: "ack group"},
 		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
@@ -660,7 +660,7 @@ func (c *notifyCommand) focusAndAckNotifySidebarGroup(store notifyStore, entries
 		c.displayNotifySidebarMessage("notify group already gone")
 		return nil
 	}
-	if display != notifyDisplayLive {
+	if display == notifyDisplayGone {
 		if err := ackNotifySidebarGroup(store, entries, groupKey); err != nil {
 			return err
 		}
@@ -712,8 +712,6 @@ func notifySidebarGroupFocusBlockedMessage(display notifyRowDisplayState, err er
 	switch display {
 	case notifyDisplayGone:
 		return notifySidebarGroupCleanupMessage(display)
-	case notifyDisplayStale:
-		return notifySidebarGroupCleanupMessage(display)
 	}
 	if isFocusTargetUnresolved(err) {
 		return notifySidebarGroupCleanupMessage(notifyDisplayGone)
@@ -723,8 +721,6 @@ func notifySidebarGroupFocusBlockedMessage(display notifyRowDisplayState, err er
 
 func notifySidebarGroupCleanupMessage(display notifyRowDisplayState) string {
 	switch display {
-	case notifyDisplayStale:
-		return "notify stale group cleaned"
 	case notifyDisplayGone:
 		return "notify gone group cleaned"
 	default:
@@ -1256,7 +1252,7 @@ func notifySidebarShowTargetParts(e notify.Notification) bool {
 }
 
 // notifySidebarDimText wraps the row's body text in the dim foreground so
-// STALE/GONE rows visibly recede from active ones.
+// inactive/gone rows visibly recede from active ones.
 func notifySidebarDimText(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -1292,9 +1288,9 @@ const (
 	notifySidebarInfo    = theme.ANSINotifyInfoStart
 	notifySidebarWarn    = theme.ANSINotifyWarnStart
 	notifySidebarCrit    = theme.ANSINotifyCritStart
-	// Stale/gone badges share a muted grey palette so the ack-only state is
+	// Inactive/gone badges share a muted grey palette so target-state hints are
 	// visually distinct from active rows without competing for attention.
-	// STALE keeps the dim italic-equivalent (no italic SGR is universally
+	// INACTIVE keeps the dim italic-equivalent (no italic SGR is universally
 	// supported on tmux palettes, so we lean on the dim attribute), while
 	// GONE adds strikethrough to telegraph "the target no longer exists".
 	notifySidebarStale = theme.ANSINotifyStaleStart
@@ -1365,7 +1361,7 @@ func notifySidebarStateBadgeForDisplay(label string, display notifyRowDisplaySta
 		open = notifySidebarStale
 	case display == notifyDisplayGone:
 		open = notifySidebarGone
-	case label == "STALE":
+	case label == "INACTIVE":
 		open = notifySidebarStale
 	case label == "GONE":
 		open = notifySidebarGone
@@ -1734,9 +1730,9 @@ func notifyLiveExplanationKey(state string) (i18n.Key, string) {
 	case "live-ai-reply-missing-queue":
 		return i18n.KeyNotifyLiveAIReplyMissingQueue, "live AI reply pane has no matching queue entry; run `projmux notify reconcile` to back-fill it"
 	case "queue-stale":
-		return i18n.KeyNotifyLiveQueueStale, "queue entry exists but live pane no longer matches reply+agent state; it remains pending until explicit ack"
+		return i18n.KeyNotifyLiveQueueStale, "queue entry target is inactive: the live pane no longer matches reply+agent state; it may still be focusable if the target is routable"
 	case "queue-gone":
-		return i18n.KeyNotifyLiveQueueGone, "queue entry has no routable target; it can only be ack'd"
+		return i18n.KeyNotifyLiveQueueGone, "queue entry target is gone: no routable target exists; Enter/ack cleans it up without focusing"
 	default:
 		return i18n.KeyNotifyLiveQueuePending, "queue entry is pending; no matching live AI reply pane was found"
 	}

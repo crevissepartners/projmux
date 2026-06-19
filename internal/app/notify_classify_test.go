@@ -13,7 +13,7 @@ import (
 
 // TestClassifyNotifyRowStateMatchesLiveReport pins the contract that the new
 // display classifier and the long-standing `--live` row state machine agree
-// on STALE/GONE/LIVE for every queue entry. Drift here means a sidebar/status
+// on inactive/gone/live for every queue entry. Drift here means a sidebar/status
 // badge that disagrees with `projmux notify list --live`.
 func TestClassifyNotifyRowStateMatchesLiveReport(t *testing.T) {
 	t.Parallel()
@@ -77,7 +77,7 @@ func TestClassifyNotifyRowStateMatchesLiveReport(t *testing.T) {
 	}{
 		// AI entry matched to a live ShouldQueue pane → live both ways.
 		{"ai:main:%2", notifyDisplayLive, "live-ai-reply-queued"},
-		// AI entry without a live match → STALE both ways.
+		// AI entry without a live match → inactive display/queue-stale state.
 		{"ai:gone:%9", notifyDisplayStale, "queue-stale"},
 		// External entry with a routable target stays live.
 		{"ext:1", notifyDisplayLive, "queue-only"},
@@ -123,15 +123,15 @@ func TestClassifyNotifyRowStateFallsBackToLiveWhenLiveUnavailable(t *testing.T) 
 	}
 }
 
-// TestNotifySidebarStateBadgeStaleAndGonePalette pins the sidebar badge
-// renderer: STALE/GONE land in the muted grey palette so users can tell them
+// TestNotifySidebarStateBadgeInactiveAndGonePalette pins the sidebar badge
+// renderer: inactive/gone land in the muted grey palette so users can tell them
 // apart from the active info/warn/crit badges at a glance.
-func TestNotifySidebarStateBadgeStaleAndGonePalette(t *testing.T) {
+func TestNotifySidebarStateBadgeInactiveAndGonePalette(t *testing.T) {
 	t.Parallel()
 
-	stale := notifySidebarStateBadge("STALE")
-	if !strings.HasPrefix(stale, notifySidebarStale) || !strings.Contains(stale, " STALE ") {
-		t.Fatalf("STALE badge = %q, want stale palette + label", stale)
+	inactive := notifySidebarStateBadge("INACTIVE")
+	if !strings.HasPrefix(inactive, notifySidebarStale) || !strings.Contains(inactive, " INACTIVE ") {
+		t.Fatalf("INACTIVE badge = %q, want inactive palette + label", inactive)
 	}
 	gone := notifySidebarStateBadge("GONE")
 	if !strings.HasPrefix(gone, notifySidebarGone) || !strings.Contains(gone, " GONE ") {
@@ -176,9 +176,9 @@ func TestNotifySidebarAgeUsesBluePalette(t *testing.T) {
 	}
 }
 
-// TestNotifySidebarLabelDimsStaleAndGoneText pins that stale/gone rows
+// TestNotifySidebarLabelDimsInactiveAndGoneText pins that inactive/gone rows
 // render their body text inside the dim escape so they visually recede.
-func TestNotifySidebarLabelDimsStaleAndGoneText(t *testing.T) {
+func TestNotifySidebarLabelDimsInactiveAndGoneText(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -195,7 +195,7 @@ func TestNotifySidebarLabelDimsStaleAndGoneText(t *testing.T) {
 	}
 
 	live := notifySidebarLabelFor(entry, now, notifyDisplayLive)
-	stale := notifySidebarLabelFor(entry, now, notifyDisplayStale)
+	inactive := notifySidebarLabelFor(entry, now, notifyDisplayStale)
 	gone := notifySidebarLabelFor(entry, now, notifyDisplayGone)
 
 	if !strings.Contains(live, " NEED ") {
@@ -204,8 +204,8 @@ func TestNotifySidebarLabelDimsStaleAndGoneText(t *testing.T) {
 	if strings.Contains(live, notifySidebarDimOpen+"Ready") {
 		t.Fatalf("live label = %q, must not dim its text", live)
 	}
-	if !strings.Contains(stale, " STALE ") || !strings.Contains(stale, notifySidebarDimOpen) {
-		t.Fatalf("stale label = %q, want STALE badge + dim body", stale)
+	if !strings.Contains(inactive, " INACTIVE ") || !strings.Contains(inactive, notifySidebarDimOpen) {
+		t.Fatalf("inactive label = %q, want INACTIVE badge + dim body", inactive)
 	}
 	if !strings.Contains(gone, " GONE ") || !strings.Contains(gone, notifySidebarDimOpen) {
 		t.Fatalf("gone label = %q, want GONE badge + dim body", gone)
@@ -234,15 +234,15 @@ func TestNotifySidebarEntriesWithLivePassesClassification(t *testing.T) {
 	if !strings.Contains(out[0].Label, " NEED ") {
 		t.Fatalf("live entry label = %q, want NEED badge", out[0].Label)
 	}
-	if !strings.Contains(out[1].Label, " STALE ") {
-		t.Fatalf("stale entry label = %q, want STALE badge", out[1].Label)
+	if !strings.Contains(out[1].Label, " INACTIVE ") {
+		t.Fatalf("inactive entry label = %q, want INACTIVE badge", out[1].Label)
 	}
 }
 
-// TestFormatStatusNotifyWithLiveHidesAIStaleBadge pins that the statusbar
-// keeps AI rows to project/topic/body metadata instead of adding STL/NEED
-// state badges.
-func TestFormatStatusNotifyWithLiveHidesAIStaleBadge(t *testing.T) {
+// TestFormatStatusNotifyWithLiveSubstitutesInactiveBadge pins that the
+// statusbar uses INA as the short inactive target-state hint when a queued AI
+// row no longer matches live reply+agent state.
+func TestFormatStatusNotifyWithLiveSubstitutesInactiveBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
@@ -257,11 +257,14 @@ func TestFormatStatusNotifyWithLiveHidesAIStaleBadge(t *testing.T) {
 		CreatedAt: now.Add(-30 * time.Second),
 	}}
 	out := formatStatusNotifyWithLive(entries, 80, now, map[string]notifyLivePane{})
-	if !strings.Contains(out, renderNotifyTopicBadge(entries[0])) {
-		t.Fatalf("stale status segment = %q, want topic badge", out)
+	if !strings.Contains(out, " INA ") {
+		t.Fatalf("inactive status segment = %q, want INA abbreviation", out)
 	}
-	if strings.Contains(out, " STL ") || strings.Contains(out, " NEED ") || strings.Contains(out, " codex ") {
-		t.Fatalf("stale AI status segment must not carry state/agent badges: %q", out)
+	if !strings.Contains(out, notifyBadgeStaleOpen) {
+		t.Fatalf("inactive status segment = %q, want inactive palette", out)
+	}
+	if strings.Contains(out, " NEED ") || strings.Contains(out, " codex ") {
+		t.Fatalf("inactive AI status segment must not carry live state/agent badges: %q", out)
 	}
 }
 
@@ -311,24 +314,22 @@ func TestFormatStatusNotifyLiveAIEntryUsesTopicBadge(t *testing.T) {
 	if !strings.Contains(out, renderNotifyTopicBadge(entries[0])) {
 		t.Fatalf("live status segment = %q, want topic badge", out)
 	}
-	if strings.Contains(out, " NEED ") || strings.Contains(out, " STL ") || strings.Contains(out, " GON ") || strings.Contains(out, " claude ") {
+	if strings.Contains(out, " NEED ") || strings.Contains(out, " INA ") || strings.Contains(out, " GON ") || strings.Contains(out, " claude ") {
 		t.Fatalf("live AI status segment must not carry state/agent abbreviations: %q", out)
 	}
 }
 
-// TestStatusbarClickNotifyStaleHeadSkipsFocus pins the click fast path:
-// when the head entry classifies as STALE the statusbar emits the ack-only
-// toast, skips the `projmux focus` subprocess, and still acks the entry so
-// the same row does not re-toast on the next click. The fast-path contract
-// is "skip the focus round-trip", not "leave the row pending forever" —
-// leaving it pending strands the user on a row they can no longer route to.
+// TestStatusbarClickNotifyStaleHeadStillFocuses pins the Phase 6 split:
+// inactive/queue-stale means live reply+agent mismatch, not an unroutable
+// target. The statusbar must still run the normal focus subprocess and only
+// ack after focus succeeds.
 //
 // We force the stale classification with a non-empty live response that
 // excludes the head entry. An empty live result is intentionally treated as
 // "no live data; fall back to live" by classifyHeadDisplayBestEffort (the
 // docker e2e harness hits that fallback), so we have to seed at least one
 // unrelated reply-state pane to keep the live map non-empty here.
-func TestStatusbarClickNotifyStaleHeadSkipsFocus(t *testing.T) {
+func TestStatusbarClickNotifyStaleHeadStillFocuses(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{
@@ -392,25 +393,29 @@ func TestStatusbarClickNotifyStaleHeadSkipsFocus(t *testing.T) {
 	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	var focusCalls []statusbarFakeCall
 	for _, call := range runner.calls {
 		if call.name == "/usr/local/bin/projmux" {
-			t.Fatalf("focus subprocess was invoked despite stale head; call = %#v", call)
+			focusCalls = append(focusCalls, call)
 		}
 	}
-	if !sawTmuxDisplayMessage(runner.calls, notifyAckOnlyToast(notifyDisplayStale)) {
-		t.Fatalf("missing stale ack-only toast; calls = %#v", runner.calls)
+	if len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one focus subprocess for inactive head", focusCalls)
+	}
+	if !sliceContainsPair(focusCalls[0].args, "--target", "main:1.%2") {
+		t.Fatalf("focus args = %#v, want inactive routable target", focusCalls[0].args)
+	}
+	if sawTmuxDisplayMessage(runner.calls, notifyAckOnlyToast(notifyDisplayGone)) {
+		t.Fatalf("runner calls = %#v, did not expect gone ack-only toast for inactive target", runner.calls)
 	}
 	wantAcked := []string{"ai:main:%2", "ai:main:%2:older-info"}
 	if !equalStringSlices(store.ackedIDs, wantAcked) {
-		t.Fatalf("ackedIDs = %#v, want %#v (stale fast path must clear selected row and older same-pane non-critical AI rows)", store.ackedIDs, wantAcked)
+		t.Fatalf("ackedIDs = %#v, want %#v (inactive target should ack after focus and clear older same-pane non-critical AI rows)", store.ackedIDs, wantAcked)
 	}
 }
 
-// TestStatusbarClickNotifyGoneHeadSkipsFocus pins the same fast path for
-// the GONE classification (unroutable head). The legacy "target empty"
-// guard short-circuits with its own toast before the fast path runs; that
-// pre-existing toast does not ack, so we keep its semantics untouched here.
-// The new-style fast path is exercised by other tests.
+// TestStatusbarClickNotifyGoneHeadSkipsFocus pins the ack-only fast path for
+// the GONE classification (unroutable head).
 func TestStatusbarClickNotifyGoneHeadSkipsFocus(t *testing.T) {
 	t.Parallel()
 
@@ -430,13 +435,19 @@ func TestStatusbarClickNotifyGoneHeadSkipsFocus(t *testing.T) {
 			t.Fatalf("focus subprocess was invoked despite gone head; call = %#v", call)
 		}
 	}
+	if store.ackedID != "ext:orphan" {
+		t.Fatalf("store.ackedID = %q, want ext:orphan", store.ackedID)
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "notify target gone; cleared") {
+		t.Fatalf("missing gone cleanup toast; calls = %#v", runner.calls)
+	}
 }
 
 // TestStatusbarClickNotifyEmptyLiveResultFallsBackToFocus pins the
 // best-effort safety net: when the live-pane probe returns *no* panes
 // (the docker e2e harness with a default tmux socket and no projmux
 // options registered server-side hits this shape), `ai:`-prefixed head
-// entries must NOT be falsely tagged STALE. Instead the click must
+// entries must NOT be falsely tagged inactive. Instead the click must
 // proceed through the normal focus subprocess → ack flow so the user's
 // queue actually drains.
 func TestStatusbarClickNotifyEmptyLiveResultFallsBackToFocus(t *testing.T) {

@@ -306,7 +306,7 @@ func englishStatusToken(token StatusToken, variant FormatVariant) string {
 		case StatusTokenError:
 			return "err"
 		case StatusTokenStale:
-			return "stale"
+			return "ina"
 		case StatusTokenGone:
 			return "gone"
 		case StatusTokenUnknown:
@@ -326,7 +326,7 @@ func englishStatusToken(token StatusToken, variant FormatVariant) string {
 	case StatusTokenError:
 		return "error"
 	case StatusTokenStale:
-		return "stale"
+		return "inactive"
 	case StatusTokenGone:
 		return "gone"
 	case StatusTokenUnknown:
@@ -348,7 +348,7 @@ func koreanStatusToken(token StatusToken, variant FormatVariant) string {
 		case StatusTokenError:
 			return "오류"
 		case StatusTokenStale:
-			return "오래됨"
+			return "비활성"
 		case StatusTokenGone:
 			return "없음"
 		case StatusTokenUnknown:
@@ -368,7 +368,7 @@ func koreanStatusToken(token StatusToken, variant FormatVariant) string {
 	case StatusTokenError:
 		return "오류"
 	case StatusTokenStale:
-		return "오래됨"
+		return "비활성"
 	case StatusTokenGone:
 		return "없음"
 	case StatusTokenUnknown:

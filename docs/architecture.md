@@ -139,13 +139,14 @@ does not own the truth of every live badge.
   TTL is not a removal condition. `projmux notify list --live` adds a
   read-only comparison against live pane state, explaining manual reply
   badges without queue entries, live AI replies with/missing queue entries,
-  and stale `ai:` entries.
+  and inactive (`queue-stale`) `ai:` entries.
 - **Ack** — `projmux notify ack <id>` removes one entry; `--all`
-  flushes everything. Focus/click handlers do not ack rows.
+  flushes everything. Interactive focus/click handlers ack after successful
+  focus, and gone/unroutable targets clean up without focusing.
 - **Reconcile** — `projmux notify reconcile` walks
   `tmux list-panes -a` and back-fills entries for panes whose
   attention state is `reply` AND whose AI agent option is set,
-  reporting stale `ai:` entries that no longer match a live pane without
+  reporting inactive `ai:` entries that no longer match a live reply+agent pane without
   acking them.
   `make install` and `projmux upgrade` invoke it so the queue
   recovers from any drift introduced by a lost daemon.
