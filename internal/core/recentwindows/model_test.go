@@ -253,6 +253,48 @@ func TestRecordPreservesPaneTitlesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNormalizeSnapshotPaneBadgeKinds(t *testing.T) {
+	t.Parallel()
+
+	// Per-pane badge kinds keep positional alignment with PaneTitles: an
+	// unrecognized or empty kind becomes an empty slot rather than shifting later
+	// panes, and trailing empties are trimmed.
+	snapshot := normalizeSnapshot(Snapshot{
+		Session:        "s",
+		WindowID:       "@1",
+		PaneTitles:     []string{"a", "b", "c"},
+		PaneBadgeKinds: []string{"", "  in_progress ", "bogus"},
+	})
+	if got := snapshot.PaneBadgeKinds; len(got) != 2 || got[0] != "" || got[1] != "in_progress" {
+		t.Fatalf("pane badge kinds = %#v, want empty slot preserved, kind kept, unknown/trailing trimmed", got)
+	}
+
+	// An all-empty/unknown slice collapses to nil for backward-compatible state.
+	if got := normalizeSnapshot(Snapshot{Session: "s", WindowID: "@1", PaneBadgeKinds: []string{"", "nope"}}).PaneBadgeKinds; got != nil {
+		t.Fatalf("pane badge kinds = %#v, want nil for all-empty", got)
+	}
+}
+
+func TestRecordPreservesPaneBadgeKindsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	state, err := NewState(nil).Record(Snapshot{
+		Session:        "s",
+		WindowID:       "@1",
+		WindowName:     "main",
+		PaneTitles:     []string{"zsh", "Claude Code"},
+		PaneBadgeKinds: []string{"", "in_progress"},
+		LastFocusedAt:  now,
+	}, 0)
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if got := state.Entries[0].PaneBadgeKinds; len(got) != 2 || got[0] != "" || got[1] != "in_progress" {
+		t.Fatalf("pane badge kinds = %#v, want preserved round-trip", got)
+	}
+}
+
 func TestRecordWindowMRUDoesNotReorderBeyondWindowList(t *testing.T) {
 	t.Parallel()
 

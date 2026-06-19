@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -45,7 +46,7 @@ func TestRecentWindowPickerItemEmphasizesNamesAndAge(t *testing.T) {
 	item := recentWindowPickerItem(recentwindows.Candidate{
 		Snapshot: snapshot,
 		Label:    recentwindows.BuildLabel(snapshot),
-	}, at.Add(12*time.Second))
+	}, at.Add(12*time.Second), aibadge.StyleDot)
 
 	// Line 1 reads: project badge -> readable window name -> age badge.
 	visibleTitle := recentWindowStripANSI(item.Title)
@@ -70,14 +71,22 @@ func TestRecentWindowPickerItemEmphasizesNamesAndAge(t *testing.T) {
 		t.Fatalf("Title = %q, want trailing reset", item.Title)
 	}
 	text := recentWindowStripANSI(item.Title + "\n" + strings.Join(item.MetaLines, "\n"))
-	for _, want := range []string{"codex-review", "12s ago", "Projmux", "repos-projmux"} {
+	for _, want := range []string{"codex-review", "12s ago", "Projmux"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("render text = %q, want %q", text, want)
 		}
 	}
+	// The session unique id is dropped from the visible card (deduped against the
+	// project badge) but must remain searchable.
+	if strings.Contains(text, "repos-projmux") {
+		t.Fatalf("render text = %q, want no visible session id line", text)
+	}
+	if !strings.Contains(item.SearchText, "repos-projmux") {
+		t.Fatalf("SearchText = %q, want session id searchable", item.SearchText)
+	}
 }
 
-func TestRecentWindowPickerItemShowsContextBadgeAsMetaLine(t *testing.T) {
+func TestRecentWindowPickerItemHasNoContextLine(t *testing.T) {
 	t.Parallel()
 
 	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
@@ -88,20 +97,25 @@ func TestRecentWindowPickerItemShowsContextBadgeAsMetaLine(t *testing.T) {
 		Project:    "Projmux",
 		PaneTitles: []string{"zsh"},
 	}
-	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
 
 	if got := recentWindowStripANSI(item.Title); !strings.Contains(got, "projmux") {
 		t.Fatalf("line 1 visible = %q, want readable window name", got)
 	}
-	wantContext := "Projmux · repos-projmux"
-	found := false
-	for _, line := range item.MetaLines {
-		if recentWindowStripANSI(line) == wantContext {
-			found = true
-		}
+	// The default card ends at three lines: title + at most two MetaLines (pane
+	// preview, last-visit). The deduped "project · session" context line and any
+	// session-id line must be gone.
+	if len(item.MetaLines) > 2 {
+		t.Fatalf("MetaLines = %#v, want at most two lines (pane preview, last visit)", item.MetaLines)
 	}
-	if !found {
-		t.Fatalf("MetaLines = %#v, want context badge %q on its own line", item.MetaLines, wantContext)
+	for _, line := range item.MetaLines {
+		visible := recentWindowStripANSI(line)
+		if visible == "Projmux · repos-projmux" {
+			t.Fatalf("MetaLines = %#v, want no repeated project/session context line", item.MetaLines)
+		}
+		if strings.Contains(visible, "repos-projmux") {
+			t.Fatalf("MetaLines = %#v, want no visible session id", item.MetaLines)
+		}
 	}
 }
 
@@ -116,7 +130,7 @@ func TestRecentWindowPickerItemFallsBackToNameNeverRawIDs(t *testing.T) {
 		LastPaneID:    "%54",
 		LastPaneTopic: "roadmap",
 	}
-	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
 
 	if strings.Contains(item.Title, "@6") || strings.Contains(item.Title, "%54") {
 		t.Fatalf("Title = %q, want fallback name, never raw tmux IDs", item.Title)
@@ -137,7 +151,7 @@ func TestRecentWindowPickerItemJoinsAllPaneTitles(t *testing.T) {
 		LastPaneTitle: "zsh",
 		PaneTitles:    []string{"zsh", "Codex · [lead:roadmap] Projmux", "Claude Code"},
 	}
-	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
 
 	want := "zsh | Codex · [lead:roadmap] Projmux | Claude Code"
 	found := false
@@ -162,7 +176,7 @@ func TestRecentWindowPickerItemFallsBackToLastPaneTitleSummary(t *testing.T) {
 		WindowName:    "projmux",
 		LastPaneTitle: "legacy-pane",
 	}
-	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
 
 	if got := recentWindowPaneSummary(recentWindowCandidate(snapshot)); got != "legacy-pane" {
 		t.Fatalf("pane summary = %q, want LastPaneTitle fallback", got)
@@ -218,7 +232,7 @@ func TestRecentWindowPickerItemLastVisitFormat(t *testing.T) {
 		WindowName:    "projmux",
 		LastFocusedAt: at,
 	}
-	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(3*time.Minute))
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(3*time.Minute), aibadge.StyleDot)
 
 	want := "last visit · 3m ago · 2026-06-18 01:02"
 	found := false
@@ -243,7 +257,7 @@ func TestRecentWindowPickerItemPaneTopicLeadsSummary(t *testing.T) {
 		LastPaneTopic: "Phase 6 polish",
 		PaneTitles:    []string{"zsh", "Claude Code"},
 	}
-	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
 
 	if len(item.MetaLines) == 0 {
 		t.Fatalf("MetaLines = %#v, want a pane summary line", item.MetaLines)
@@ -267,6 +281,192 @@ func TestRecentWindowPickerItemPaneTopicLeadsSummary(t *testing.T) {
 	}
 }
 
+func TestRecentWindowPickerItemRendersPerPaneAIBadges(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:        "repos-projmux",
+		WindowID:       "@6",
+		WindowName:     "projmux",
+		PaneTitles:     []string{"Claude Code", "Codex", "zsh"},
+		PaneBadgeKinds: []string{"in_progress", "response_complete", ""},
+	}
+
+	// Dot style: recognized kinds render a themed "●" glyph in front of the pane.
+	dot := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
+	if len(dot.MetaLines) == 0 {
+		t.Fatalf("MetaLines = %#v, want a pane summary line", dot.MetaLines)
+	}
+	line := dot.MetaLines[0]
+	if !strings.Contains(line, theme.ANSIAIBadgeProgressStart+"●") {
+		t.Fatalf("pane summary = %q, want in_progress dot badge", line)
+	}
+	if !strings.Contains(line, theme.ANSIAIBadgeSuccessStart+"●") {
+		t.Fatalf("pane summary = %q, want response_complete dot badge", line)
+	}
+	visible := recentWindowStripANSI(line)
+	if !strings.Contains(visible, "Claude Code") || !strings.Contains(visible, "Codex") || !strings.Contains(visible, "zsh") {
+		t.Fatalf("pane summary visible = %q, want all pane titles", visible)
+	}
+
+	// Emoji style: recognized kinds render their emoji glyph instead of the dot.
+	emoji := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleEmoji)
+	emojiLine := recentWindowStripANSI(emoji.MetaLines[0])
+	if !strings.Contains(emojiLine, "🔄") || !strings.Contains(emojiLine, "✅") {
+		t.Fatalf("pane summary emoji = %q, want in_progress and response_complete emoji glyphs", emojiLine)
+	}
+
+	// Off style: no glyph is rendered, only the plain dimmed titles.
+	off := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleOff)
+	offVisible := recentWindowStripANSI(off.MetaLines[0])
+	if strings.ContainsAny(offVisible, "●🔄✅") {
+		t.Fatalf("pane summary off = %q, want no badge glyphs", offVisible)
+	}
+	if want := "Claude Code | Codex | zsh"; !strings.Contains(offVisible, want) {
+		t.Fatalf("pane summary off = %q, want plain titles %q", offVisible, want)
+	}
+}
+
+// recentWindowPaneCellFor splits the ANSI-stripped pane summary line on " | "
+// and returns the cell containing substr, so tests can assert badge↔pane
+// correspondence per cell.
+func recentWindowPaneCellFor(t *testing.T, line, substr string) string {
+	t.Helper()
+	for cell := range strings.SplitSeq(recentWindowStripANSI(line), " | ") {
+		if strings.Contains(cell, substr) {
+			return cell
+		}
+	}
+	t.Fatalf("pane summary line = %q, want a cell containing %q", line, substr)
+	return ""
+}
+
+func TestRecentWindowPickerItemBindsBadgeToOwnPaneWithLeadingTopic(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	// The bug: with a leading topic, the in_progress dot was painted on "zsh"
+	// (pane 0) instead of "Codex" (pane 1) because the badge lookup used a +1
+	// offset against a positionally-aligned slice. Each pane title must carry its
+	// own badge kind through the topic-prepend/dedup logic.
+	snapshot := recentwindows.Snapshot{
+		Session:        "repos-projmux",
+		WindowID:       "@6",
+		WindowName:     "projmux",
+		PaneTitles:     []string{"zsh", "Codex"},
+		PaneBadgeKinds: []string{"", "in_progress"},
+		LastPaneTopic:  "Phase 8",
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
+	if len(item.MetaLines) == 0 {
+		t.Fatalf("MetaLines = %#v, want a pane summary line", item.MetaLines)
+	}
+	line := item.MetaLines[0]
+
+	// Topic chip leads, then the pane cells in order.
+	visible := recentWindowStripANSI(line)
+	topicIdx := strings.Index(visible, "Phase 8")
+	zshIdx := strings.Index(visible, "zsh")
+	codexIdx := strings.Index(visible, "Codex")
+	if topicIdx < 0 || zshIdx <= topicIdx || codexIdx <= zshIdx {
+		t.Fatalf("pane summary line = %q, want order topic -> zsh -> Codex", visible)
+	}
+
+	// The in_progress themed glyph belongs to Codex, NOT zsh.
+	dot := theme.ANSIAIBadgeProgressStart + "●"
+	codexCell := recentWindowPaneCellFor(t, line, "Codex")
+	zshCell := recentWindowPaneCellFor(t, line, "zsh")
+	// Operate on the ANSI-bearing cells to confirm the themed glyph placement.
+	codexFull, zshFull := "", ""
+	for cell := range strings.SplitSeq(line, " | ") {
+		switch {
+		case strings.Contains(recentWindowStripANSI(cell), "Codex"):
+			codexFull = cell
+		case strings.Contains(recentWindowStripANSI(cell), "zsh"):
+			zshFull = cell
+		}
+	}
+	if !strings.Contains(codexFull, dot) {
+		t.Fatalf("Codex cell = %q, want in_progress dot %q before Codex", codexFull, dot)
+	}
+	if strings.Contains(zshFull, dot) || strings.Contains(zshCell, "●") {
+		t.Fatalf("zsh cell = %q, want NO badge glyph", zshFull)
+	}
+	if strings.Contains(codexCell, "●") == false {
+		t.Fatalf("Codex cell (stripped) = %q, want a ● glyph", codexCell)
+	}
+}
+
+func TestRecentWindowPickerItemTopicDedupKeepsBadgeBinding(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	// A pane title equal to the topic is deduped (dropped) from the cells. The
+	// remaining pane's badge must stay bound to it and not shift.
+	snapshot := recentwindows.Snapshot{
+		Session:        "repos-projmux",
+		WindowID:       "@6",
+		WindowName:     "projmux",
+		PaneTitles:     []string{"Phase 8", "Codex"},
+		PaneBadgeKinds: []string{"", "in_progress"},
+		LastPaneTopic:  "Phase 8",
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
+	if len(item.MetaLines) == 0 {
+		t.Fatalf("MetaLines = %#v, want a pane summary line", item.MetaLines)
+	}
+	line := item.MetaLines[0]
+
+	// "Phase 8" appears once (as the leading chip), not duplicated as a pane cell.
+	visible := recentWindowStripANSI(line)
+	if strings.Count(visible, "Phase 8") != 1 {
+		t.Fatalf("pane summary line = %q, want topic shown once (chip), pane title deduped", visible)
+	}
+
+	dot := theme.ANSIAIBadgeProgressStart + "●"
+	codexFull := ""
+	for cell := range strings.SplitSeq(line, " | ") {
+		if strings.Contains(recentWindowStripANSI(cell), "Codex") {
+			codexFull = cell
+		}
+	}
+	if !strings.Contains(codexFull, dot) {
+		t.Fatalf("Codex cell = %q, want in_progress dot %q to stay bound after dedup", codexFull, dot)
+	}
+}
+
+func TestRecentWindowPickerItemCollapsesExtraPanesIntoCount(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	snapshot := recentwindows.Snapshot{
+		Session:    "repos-projmux",
+		WindowID:   "@6",
+		WindowName: "projmux",
+		PaneTitles: []string{"one", "two", "three", "four", "five"},
+	}
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
+
+	if len(item.MetaLines) == 0 {
+		t.Fatalf("MetaLines = %#v, want a pane summary line", item.MetaLines)
+	}
+	visible := recentWindowStripANSI(item.MetaLines[0])
+	// First recentWindowMaxPanes (3) render; the remaining two collapse into "+2".
+	if want := "one | two | three | +2"; !strings.Contains(visible, want) {
+		t.Fatalf("pane summary = %q, want first %d panes then %q", visible, recentWindowMaxPanes, "+2")
+	}
+	if strings.Contains(visible, "four") || strings.Contains(visible, "five") {
+		t.Fatalf("pane summary = %q, want overflow panes collapsed, not listed", visible)
+	}
+	// All pane titles must still be searchable even when collapsed on screen.
+	for _, want := range []string{"four", "five"} {
+		if !strings.Contains(item.SearchText, want) {
+			t.Fatalf("SearchText = %q, want overflow pane %q searchable", item.SearchText, want)
+		}
+	}
+}
+
 func TestRecentWindowPickerItemTruncatesLongComponentsKeepingNameAndAge(t *testing.T) {
 	t.Parallel()
 
@@ -278,7 +478,7 @@ func TestRecentWindowPickerItemTruncatesLongComponentsKeepingNameAndAge(t *testi
 		Project:       strings.Repeat("project", 12),
 		LastFocusedAt: at,
 	}
-	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(2*time.Minute))
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(2*time.Minute), aibadge.StyleDot)
 
 	visible := recentWindowStripANSI(item.Title)
 	if !strings.Contains(visible, "2m ago") {
@@ -310,7 +510,7 @@ func TestRecentWindowPickerItemRowRendersWithoutStyleBleed(t *testing.T) {
 		PaneTitles:    []string{"zsh"},
 		LastFocusedAt: at,
 	}
-	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(time.Minute))
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(time.Minute), aibadge.StyleDot)
 	row := projmuxpicker.Row{Label: item.Title, MetaLines: item.MetaLines}
 
 	for _, selected := range []bool{true, false} {
@@ -342,7 +542,7 @@ func TestRecentWindowPickerItemSearchTextIncludesPaneTitlesAndDate(t *testing.T)
 		LastCommand:   "codex",
 		LastFocusedAt: at,
 	}
-	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(time.Minute))
+	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at.Add(time.Minute), aibadge.StyleDot)
 
 	for _, want := range []string{"projmux", "Projmux", "repos-projmux", "zsh", "Claude Code", "Codex", "roadmap", "codex", "2026-06-18 01:02"} {
 		if !strings.Contains(item.SearchText, want) {
@@ -361,7 +561,7 @@ func TestRecentWindowPickerItemKeepsSelectionValue(t *testing.T) {
 		WindowName: "projmux",
 	}
 	candidate := recentWindowCandidate(snapshot)
-	items, byValue := recentWindowPickerItems([]recentwindows.Candidate{candidate}, at)
+	items, byValue := recentWindowPickerItems([]recentwindows.Candidate{candidate}, at, aibadge.StyleDot)
 
 	if len(items) != 1 {
 		t.Fatalf("items = %#v, want one", items)
@@ -375,7 +575,7 @@ func TestRecentWindowPickerItemKeepsSelectionValue(t *testing.T) {
 	}
 }
 
-func TestRecentWindowPickerItemMarksCurrentRow(t *testing.T) {
+func TestRecentWindowPickerItemHasNoCurrentBadge(t *testing.T) {
 	t.Parallel()
 
 	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
@@ -390,31 +590,29 @@ func TestRecentWindowPickerItemMarksCurrentRow(t *testing.T) {
 		Label:     recentwindows.BuildLabel(snapshot),
 		IsCurrent: true,
 	}
-	item := recentWindowPickerItem(current, at)
+	item := recentWindowPickerItem(current, at, aibadge.StyleDot)
 
-	visible := recentWindowStripANSI(item.Title)
-	currentIdx := strings.Index(visible, "CURRENT")
-	nameIdx := strings.Index(visible, "projmux")
-	if currentIdx < 0 {
-		t.Fatalf("Title visible = %q, want CURRENT marker", visible)
+	// Agreed policy: the current window stays in history as a normal card with NO
+	// CURRENT badge — neither in the visible Title nor in SearchText.
+	if strings.Contains(recentWindowStripANSI(item.Title), "CURRENT") {
+		t.Fatalf("current Title = %q, want no CURRENT marker", item.Title)
 	}
-	if nameIdx <= currentIdx {
-		t.Fatalf("Title visible = %q, want CURRENT marker before the window name", visible)
+	if strings.Contains(item.SearchText, "CURRENT") {
+		t.Fatalf("current SearchText = %q, want no CURRENT marker", item.SearchText)
 	}
-	if !strings.Contains(item.Title, theme.ANSINotifyInfoStart) {
-		t.Fatalf("Title = %q, want notify info palette for the current badge", item.Title)
+	// The card still renders the readable window name and stays searchable by the
+	// session unique id.
+	if !strings.Contains(recentWindowStripANSI(item.Title), "projmux") {
+		t.Fatalf("current Title = %q, want readable window name", item.Title)
 	}
-	if !strings.HasSuffix(item.Title, theme.ANSIReset) {
-		t.Fatalf("Title = %q, want trailing reset", item.Title)
-	}
-	for _, want := range []string{"CURRENT", "Projmux", "repos-projmux", "projmux"} {
+	for _, want := range []string{"Projmux", "repos-projmux", "projmux"} {
 		if !strings.Contains(item.SearchText, want) {
 			t.Fatalf("SearchText = %q, want substring %q", item.SearchText, want)
 		}
 	}
 
-	// A non-current candidate must not carry the CURRENT marker.
-	plain := recentWindowPickerItem(recentWindowCandidate(snapshot), at)
+	// A non-current candidate also carries no CURRENT marker.
+	plain := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
 	if strings.Contains(recentWindowStripANSI(plain.Title), "CURRENT") {
 		t.Fatalf("non-current Title = %q, want no CURRENT marker", plain.Title)
 	}
@@ -697,7 +895,9 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 			"codex",
 			filepath.Join(project, "internal", "app"),
 		}, recentWindowFieldSep) + "\n",
-		listPanesOutput: "codex-review\nClaude Code\nzsh\n",
+		listPanesOutput: strings.Join([]string{"codex-review", "in_progress"}, recentWindowFieldSep) + "\n" +
+			strings.Join([]string{"Claude Code", "response_complete"}, recentWindowFieldSep) + "\n" +
+			strings.Join([]string{"zsh", ""}, recentWindowFieldSep) + "\n",
 	}
 	store := &recentWindowStubStore{}
 	cmd := &recentWindowCommand{
@@ -726,6 +926,9 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.PaneTitles, []string{"codex-review", "Claude Code", "zsh"}) {
 		t.Fatalf("snapshot pane titles = %+v, want all panes of the window", got.PaneTitles)
+	}
+	if !reflect.DeepEqual(got.PaneBadgeKinds, []string{"in_progress", "response_complete", ""}) {
+		t.Fatalf("snapshot pane badge kinds = %+v, want per-pane AI badge kinds aligned with titles", got.PaneBadgeKinds)
 	}
 	if got.Project != filepath.Base(project) {
 		t.Fatalf("snapshot project = %q, want %q", got.Project, filepath.Base(project))
@@ -971,7 +1174,7 @@ func (r *recentWindowFakeRunner) Run(_ context.Context, name string, args ...str
 	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}", "#{window_name}", "#{pane_id}", "#{pane_title}", "#{@projmux_ai_topic}", "#{pane_current_command}", "#{pane_current_path}"}, recentWindowFieldSep)}) {
 		return []byte(r.recordOutput), nil
 	}
-	if name == "tmux" && len(args) == 5 && args[0] == "list-panes" && args[1] == "-t" && args[3] == "-F" && args[4] == "#{pane_title}" {
+	if name == "tmux" && len(args) == 5 && args[0] == "list-panes" && args[1] == "-t" && args[3] == "-F" && args[4] == strings.Join([]string{"#{pane_title}", "#{@projmux_ai_badge_kind}"}, recentWindowFieldSep) {
 		return []byte(r.listPanesOutput), nil
 	}
 	if name == "tmux" && reflect.DeepEqual(args, []string{"list-windows", "-a", "-F", strings.Join([]string{"#{session_name}", "#{window_id}"}, recentWindowFieldSep)}) {
