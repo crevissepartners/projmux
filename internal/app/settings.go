@@ -116,7 +116,6 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsNotificationsHookOverride:  {Name: "Notification hook override", Axis: settingsAxisGlobal},
 	settingsAppearanceLanguage:         {Name: "Language / Locale", Axis: settingsAxisGlobal},
 	settingsLabsProjectHooks:           {Name: "Project Hooks", Axis: settingsAxisGlobal},
-	settingsCompatSidebarStartupPicker: {Name: "Sidebar startup picker", Axis: settingsAxisGlobal},
 	settingsSessionStateDelete:         {Name: "Delete session snapshot", Axis: settingsAxisGlobal},
 	settingsLabKeybindings:             {Name: "Keybindings", Axis: settingsAxisGlobal},
 	settingsUpdateApply:                {Name: "Update Now", Axis: settingsAxisGlobal},
@@ -244,7 +243,6 @@ const (
 	settingsNotificationsHookOverride      = "notifications:hook-override"
 	settingsAppearanceLanguage             = "appearance:language"
 	settingsLabsProjectHooks               = "labs:project-hooks"
-	settingsCompatSidebarStartupPicker     = "labs:sidebar-startup-picker"
 	settingsLabKeybindings                 = "labs:keybindings"
 	settingsSessionStateDelete             = "sessionstate:delete"
 	settingsWelcomeShow                    = "welcome:show"
@@ -4117,8 +4115,6 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 			}
 		case action == settingsLabsProjectHooks:
 			return c.runLabsProjectHooksSection(stdout, stderr)
-		case action == settingsCompatSidebarStartupPicker:
-			return c.runSidebarStartupPickerDetail(stdout, stderr)
 		case strings.HasPrefix(action, settingsActionPrefixHooks):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err

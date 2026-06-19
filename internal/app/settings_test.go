@@ -1581,8 +1581,7 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	if !hasEntryValue(labsOptions.Entries, settingsLabsProjectHooks) {
 		t.Fatalf("labs settings entries = %#v, want project hooks overview row", labsOptions.Entries)
 	}
-	if hasEntryLabelContaining(labsOptions.Entries, "Sidebar startup picker") ||
-		hasEntryValue(labsOptions.Entries, settingsCompatSidebarStartupPicker) {
+	if hasEntryLabelContaining(labsOptions.Entries, "Sidebar startup picker") {
 		t.Fatalf("labs settings entries = %#v, want sidebar startup picker moved to Session State", labsOptions.Entries)
 	}
 	if hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:off") ||
@@ -3482,48 +3481,6 @@ func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *t
 	}
 	if got := filepath.Base(paths.SidebarStartupPickerFile()); got != config.SidebarStartupPickerFileName {
 		t.Fatalf("sidebar startup picker file name = %q, want %q", got, config.SidebarStartupPickerFileName)
-	}
-}
-
-func TestSettingsLabsSidebarStartupPickerRedirectsToSessionStateDetail(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	var calls int
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			if got, want := options.UI, "settings-labs"; got != want {
-				t.Fatalf("labs UI = %q, want %q", got, want)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsCompatSidebarStartupPicker}, nil
-		case 2:
-			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
-				t.Fatalf("redirect detail UI = %q, want %q", got, want)
-			}
-			if strings.Contains(options.Title, "Labs") || strings.Contains(options.Prompt, "Labs") {
-				t.Fatalf("redirect detail chrome = title %q prompt %q, want Session State path", options.Title, options.Prompt)
-			}
-			if got, want := options.Title, "Session State - Sidebar startup picker"; got != want {
-				t.Fatalf("redirect detail title = %q, want %q", got, want)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		default:
-			t.Fatalf("unexpected picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd := &settingsCommand{
-		nativePicker: nativePickerFromCompatRunner(runner),
-		homeDir:      func() (string, error) { return home, nil },
-		lookupEnv:    func(string) string { return "" },
-	}
-
-	if err := cmd.runLabsSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runLabsSection() error = %v", err)
 	}
 }
 

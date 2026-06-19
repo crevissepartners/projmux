@@ -46,11 +46,11 @@ func (p Paths) DesktopNotifyModeFile() string {
 
 func NormalizeDesktopNotifyMode(value string) DesktopNotifyMode {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case string(DesktopNotifyModeOff), "none", "disabled":
+	case string(DesktopNotifyModeOff):
 		return DesktopNotifyModeOff
-	case string(DesktopNotifyModeRaise), "auto-raise", "autoraise":
+	case string(DesktopNotifyModeRaise):
 		return DesktopNotifyModeRaise
-	case string(DesktopNotifyModeNotify), "toast":
+	case string(DesktopNotifyModeNotify):
 		return DesktopNotifyModeNotify
 	default:
 		return DefaultDesktopNotifyMode

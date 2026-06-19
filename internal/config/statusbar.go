@@ -39,7 +39,7 @@ func NormalizeAIBadgeStyle(value string) AIBadgeStyle {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case string(AIBadgeStyleEmoji):
 		return AIBadgeStyleEmoji
-	case string(AIBadgeStyleOff), "minimal":
+	case string(AIBadgeStyleOff):
 		return AIBadgeStyleOff
 	default:
 		return AIBadgeStyleDot

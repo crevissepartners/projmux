@@ -31,8 +31,18 @@ func TestAggregatePriorityContract(t *testing.T) {
 func TestStyleAndThemeRoleContracts(t *testing.T) {
 	t.Parallel()
 
-	if got := NormalizeStyle("minimal"); got != StyleOff {
-		t.Fatalf("NormalizeStyle(minimal) = %q, want %q", got, StyleOff)
+	// "minimal" is a dropped legacy alias; it now absorbs into the default (dot).
+	if got := NormalizeStyle("minimal"); got != StyleDot {
+		t.Fatalf("NormalizeStyle(minimal) = %q, want %q", got, StyleDot)
+	}
+	if got := NormalizeStyle("off"); got != StyleOff {
+		t.Fatalf("NormalizeStyle(off) = %q, want %q", got, StyleOff)
+	}
+	if got := NormalizeStyle("emoji"); got != StyleEmoji {
+		t.Fatalf("NormalizeStyle(emoji) = %q, want %q", got, StyleEmoji)
+	}
+	if got := NormalizeStyle("dot"); got != StyleDot {
+		t.Fatalf("NormalizeStyle(dot) = %q, want %q", got, StyleDot)
 	}
 	if got := NormalizeStyle("unknown"); got != StyleDot {
 		t.Fatalf("NormalizeStyle(unknown) = %q, want %q", got, StyleDot)
