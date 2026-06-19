@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -451,7 +450,11 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 			return intpicker.DeferredUpdate{}, err
 		}
 		if groupKey := notifySidebarSelectedGroupKey(current, ctx.Value); groupKey != "" {
-			expanded[groupKey] = true
+			if notifySidebarGroupCanUnfold(current, groupKey) {
+				expanded[groupKey] = true
+			} else {
+				delete(expanded, groupKey)
+			}
 		}
 		return refresh()
 	}
@@ -530,13 +533,13 @@ func notifySidebarMutableActions(keys []string, mutate func(intpicker.ActionCont
 
 func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string) string {
 	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
-		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live / clean stale-gone group"},
-		{ActionID: "NotifySidebar:Ack", Label: "ack"},
+		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live group / clean stale-gone"},
+		{ActionID: "NotifySidebar:Ack", Label: "ack child"},
 		{ActionID: "NotifySidebar:AckGroup", Label: "ack group"},
 		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
 		{ActionID: "NotifySidebar:ClearAll", Label: "clear all"},
 	})
-	local := keybindingReadableChord("Right") + ": unfold  |  " + keybindingReadableChord("Left") + ": fold"
+	local := keybindingReadableChord("Right") + ": show child rows  |  " + keybindingReadableChord("Left") + ": hide child rows"
 	if guide == "" {
 		return local
 	}
@@ -743,13 +746,30 @@ func pruneNotifySidebarExpanded(expanded map[string]bool, model notifySidebarRea
 	}
 	visible := make(map[string]bool, len(model.Groups))
 	for _, group := range model.Groups {
-		visible[group.Key] = true
+		visible[group.Key] = group.HasChildRows()
 	}
 	for key := range expanded {
 		if !visible[key] {
 			delete(expanded, key)
 		}
 	}
+}
+
+func notifySidebarGroupCanUnfold(entries []notify.Notification, groupKey string) bool {
+	if strings.TrimSpace(groupKey) == "" {
+		return false
+	}
+	count := 0
+	for _, entry := range entries {
+		if notifySidebarGroupKey(entry) != groupKey {
+			continue
+		}
+		count++
+		if count > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpickercompat.Entry {
@@ -809,7 +829,7 @@ func (m notifySidebarReadModel) ExpandedEntries(expanded map[string]bool) []intp
 	}
 	out := make([]intpickercompat.Entry, 0, len(m.Groups))
 	for _, group := range m.Groups {
-		isExpanded := expanded[group.Key]
+		isExpanded := expanded[group.Key] && group.HasChildRows()
 		out = append(out, notifySidebarGroupEntry(group, isExpanded))
 		if !isExpanded {
 			continue
@@ -821,22 +841,40 @@ func (m notifySidebarReadModel) ExpandedEntries(expanded map[string]bool) []intp
 	return out
 }
 
+func (group notifySidebarGroup) ChildCount() int {
+	if len(group.Rows) <= 1 {
+		return 0
+	}
+	return len(group.Rows)
+}
+
+func (group notifySidebarGroup) HasChildRows() bool {
+	return group.ChildCount() > 0
+}
+
 func notifySidebarGroupEntry(group notifySidebarGroup, expanded bool) intpickercompat.Entry {
 	return intpickercompat.Entry{
-		Label: notifySidebarGroupLabelWithMarker(group.Label, expanded),
+		Label: notifySidebarGroupLabelWithMarker(group.Label, expanded, group.HasChildRows()),
 		Value: notifySidebarGroupValue(group.Key),
 	}
 }
 
-func notifySidebarGroupLabelWithMarker(label string, expanded bool) string {
+func notifySidebarGroupLabelWithMarker(label string, expanded, hasChildren bool) string {
+	if !hasChildren {
+		return notifySidebarGroupLabelWithoutMarker(label)
+	}
 	marker := "▸ "
 	if expanded {
 		marker = "▾ "
 	}
+	return marker + notifySidebarGroupLabelWithoutMarker(label)
+}
+
+func notifySidebarGroupLabelWithoutMarker(label string) string {
 	if strings.HasPrefix(label, "▸ ") || strings.HasPrefix(label, "▾ ") {
-		return marker + label[len("▸ "):]
+		return label[len("▸ "):]
 	}
-	return marker + label
+	return label
 }
 
 func notifySidebarEmptyEntries() []intpickercompat.Entry {
@@ -978,22 +1016,24 @@ func notifySidebarGroupLabel(group notifySidebarGroup, liveByID map[string]notif
 	stateBadge := notifySidebarStateBadgeForDisplay(notifyStateLabelForLocale(stateEntry, preview, group.Display, locale), group.Display)
 
 	aggregateParts := make([]string, 0, 2)
-	if extra := notifySidebarGroupExtraCount(group.Count); extra != "" {
-		aggregateParts = append(aggregateParts, notifySidebarDim(extra))
+	if childCount := notifySidebarGroupChildCount(group.ChildCount()); childCount != "" {
+		aggregateParts = append(aggregateParts, notifySidebarDim(childCount))
 	}
 	aggregateParts = append(aggregateParts, stateBadge)
 
 	lines := []string{
-		"▸ " + notifySidebarProjectBadge(project) + " · " + provider + "  " + notifySidebarAge(age),
+		notifySidebarProjectBadge(project) + " · " + provider + "  " + notifySidebarAge(age),
 		"  " + context + "  " + strings.Join(aggregateParts, " "),
 		"  " + preview,
 	}
 	return strings.Join(lines, "\n")
 }
 
-func notifySidebarGroupExtraCount(count int) string {
-	extra := max(count-1, 0)
-	return "+" + strconv.Itoa(extra)
+func notifySidebarGroupChildCount(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("+%d", count)
 }
 
 func notifySidebarGroupPreview(entry notify.Notification, locale i18n.Locale) string {

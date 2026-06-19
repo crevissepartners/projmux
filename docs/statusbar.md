@@ -144,17 +144,21 @@ The notification HUD detail surface opens the right-side notification popup
 through the notify sidebar action, showing the grouped pane/session inbox with
 collapsed group rows and the same attention-tinted title. When notification
 icon decoration is `symbol` or `emoji`, the bell appears before the title text.
-Right/Left fold and unfold groups locally inside the native sidebar. Enter on a
-group row, whether folded or expanded, focuses the group's representative pane
-and acknowledges every visible notification in that group only after focus
-succeeds. If the representative target is stale or gone, Enter cleans up the
-selected group without focusing and acknowledges every visible notification in
-that group, including critical notifications. A target-gone focus race follows
-the same cleanup policy; other focus failures keep the group pending and show a
-clear message before refresh/prune. Enter on a child notification preserves the
-existing focus and ack-one behavior. `NotifySidebar:AckGroup` remains the
-explicit group ack action and acknowledges every visible notification in the
-selected group, including critical notifications.
+Foldable group rows show `+N`, where `N` is the number of child notification
+rows shown after Right. One-notification group headers omit the count and do
+not render as strongly foldable. Right/Left show and hide child rows locally
+inside the native sidebar; Right on a childless group refreshes without adding
+rows. Enter on a group row, whether folded or expanded, focuses the group's
+representative pane and acknowledges every visible notification in that group
+only after focus succeeds. If the representative target is stale or gone,
+Enter cleans up the selected group without focusing and acknowledges every
+visible notification in that group, including critical notifications. A
+target-gone focus race follows the same cleanup policy; other focus failures
+keep the group pending and show a clear message before refresh/prune. Enter on
+a child notification preserves the existing focus and ack-one behavior.
+`NotifySidebar:AckGroup` remains the explicit group ack action and acknowledges
+every visible notification in the selected group, including critical
+notifications.
 Internal notify commands use `NotifySidebar:*` IDs in `keymap.toml`; runtime
 footers render key guides from the merged keymap and prefer the default alias
 when it is still configured.
