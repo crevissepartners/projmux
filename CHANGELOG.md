@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.7.0](https://github.com/crevissepartners/projmux/compare/v0.6.7...v0.7.0) (2026-06-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **legacy:** Old keymap.toml entries using the dropped legacy action ids (sessionizer-sidebar, notify-sidebar, session-popup, ai-split-picker-right, ai-split-settings, sessionizer) no longer bind and are silently ignored; rebind under the canonical action ids. The catalog PrefixChord remnants for SessionPopupToggle (b), ProjectSwitcherToggle (f), rename-window (R), ai-split-right (r), ai-split-down (l), current-project-session (g), and toggle-mouse (M) are removed.
+
+### Features
+
+* add notify sidebar group fold and ack ([#413](https://github.com/crevissepartners/projmux/issues/413)) ([8da417a](https://github.com/crevissepartners/projmux/commit/8da417a09c5cc8561939742dead6664d3365b190))
+* add recent windows phase 0 model ([#415](https://github.com/crevissepartners/projmux/issues/415)) ([c9795fa](https://github.com/crevissepartners/projmux/commit/c9795faa10ca977d999cdede1ba36419106ec050))
+* add recent windows picker ([#418](https://github.com/crevissepartners/projmux/issues/418)) ([6f46cc5](https://github.com/crevissepartners/projmux/commit/6f46cc5ed965909e52fa1436c885e95601a54cb0))
+* clean stale notify groups on enter ([#417](https://github.com/crevissepartners/projmux/issues/417)) ([a26b03c](https://github.com/crevissepartners/projmux/commit/a26b03c684ac63d4bf3a1f8841491f44c3997321))
+* flatten settings keybinding keys ([#410](https://github.com/crevissepartners/projmux/issues/410)) ([5271b50](https://github.com/crevissepartners/projmux/commit/5271b50e2a341c954cf573c8ae8354ab1bb1f4bb))
+* focus and ack notify groups on enter ([#416](https://github.com/crevissepartners/projmux/issues/416)) ([940d2b1](https://github.com/crevissepartners/projmux/commit/940d2b155074921ea0cb356dfb9a6938b65a6a3e))
+* group notify sidebar by pane ([#411](https://github.com/crevissepartners/projmux/issues/411)) ([df41ceb](https://github.com/crevissepartners/projmux/commit/df41cebb44ee899996fd0b8b0c68310c908552a6))
+* **keybindings:** clean up settings edit keys coverage ([#407](https://github.com/crevissepartners/projmux/issues/407)) ([15596da](https://github.com/crevissepartners/projmux/commit/15596da0f802b17ffeae295d46833b2d0d833bc4))
+* **keybindings:** make Alt-3 open recent windows ([#420](https://github.com/crevissepartners/projmux/issues/420)) ([b95755a](https://github.com/crevissepartners/projmux/commit/b95755a047bba8ea0826a0fc75fdbdcf499aff23))
+* **keybindings:** preview-only action list hierarchy (Phase 0.7) ([#433](https://github.com/crevissepartners/projmux/issues/433)) ([dcca408](https://github.com/crevissepartners/projmux/commit/dcca40899d00e250809f7721349fd9646c5dddb2))
+* polish notify grouped sidebar card IA ([#412](https://github.com/crevissepartners/projmux/issues/412)) ([f100ef9](https://github.com/crevissepartners/projmux/commit/f100ef9fc67edd4b5c728021509546a9b9d3f8d8))
+* **recent-windows:** Alt-3 card badge visibility and visual polish (Phase 6) ([#426](https://github.com/crevissepartners/projmux/issues/426)) ([a8d123e](https://github.com/crevissepartners/projmux/commit/a8d123e114ea07428244f0cb4fab1ec393af9ade))
+* **recent-windows:** current window visible CURRENT no-op row (Phase 7) ([#427](https://github.com/crevissepartners/projmux/issues/427)) ([137dbc0](https://github.com/crevissepartners/projmux/commit/137dbc0501b4dbe8ad54e85e231be901489f4ab6))
+* **recent-windows:** default cursor to first non-current row, flat line-2 perceived titles (Phase 9) ([#429](https://github.com/crevissepartners/projmux/issues/429)) ([8a8c3e6](https://github.com/crevissepartners/projmux/commit/8a8c3e632edcb9c11ba48b37ea472298adbbbe85))
+* **recent-windows:** drop CURRENT badge, dedupe card context, richer pane preview (Phase 8) ([#428](https://github.com/crevissepartners/projmux/issues/428)) ([ddadc72](https://github.com/crevissepartners/projmux/commit/ddadc724ae2cb089c07277daf057fbabc9d110a2))
+* **recent-windows:** polish Alt-3 card badge visibility (Phase 6) ([a8d123e](https://github.com/crevissepartners/projmux/commit/a8d123e114ea07428244f0cb4fab1ec393af9ade))
+* **recent-windows:** polish Alt-3 picker card information hierarchy ([#425](https://github.com/crevissepartners/projmux/issues/425)) ([4f14ac2](https://github.com/crevissepartners/projmux/commit/4f14ac27d8bcee98f76489364eb58eac91be2c67))
+* **recent-windows:** show current window as CURRENT no-op row (Phase 7) ([137dbc0](https://github.com/crevissepartners/projmux/commit/137dbc0501b4dbe8ad54e85e231be901489f4ab6))
+* record recent windows at runtime ([#423](https://github.com/crevissepartners/projmux/issues/423)) ([0dfd859](https://github.com/crevissepartners/projmux/commit/0dfd85961263a7016addc991dce7c5d1e4c5dae6))
+
+
+### Bug Fixes
+
+* **notify:** clarify sidebar child counts ([#419](https://github.com/crevissepartners/projmux/issues/419)) ([4ab591e](https://github.com/crevissepartners/projmux/commit/4ab591e3ae7f52f1333d35cd4001639b875b4026))
+* **notify:** classify gone targets from real tmux inventory ([#424](https://github.com/crevissepartners/projmux/issues/424)) ([a4003e8](https://github.com/crevissepartners/projmux/commit/a4003e853c6d0face5ab3d6c200ce214ea5bd031))
+* **notify:** focus inactive targets ([#422](https://github.com/crevissepartners/projmux/issues/422)) ([b5c793f](https://github.com/crevissepartners/projmux/commit/b5c793fff0e3094d06fecab5c21b487fadc938c7))
+* **recent-windows:** show last-visit absolute time in local timezone (Phase 0) ([#432](https://github.com/crevissepartners/projmux/issues/432)) ([845e70e](https://github.com/crevissepartners/projmux/commit/845e70eda14d3213400c09b72badc230a1259320))
+* route recent windows through popup toggle ([#421](https://github.com/crevissepartners/projmux/issues/421)) ([fa36de8](https://github.com/crevissepartners/projmux/commit/fa36de8b1587f2b680b3fe059fd5d4479a228d61))
+* **settings:** simplify keybinding action detail UI ([#409](https://github.com/crevissepartners/projmux/issues/409)) ([c7ee35e](https://github.com/crevissepartners/projmux/commit/c7ee35e86496dca8224f10d473ba42ec16a75884))
+* stabilize notify sidebar group cards ([#414](https://github.com/crevissepartners/projmux/issues/414)) ([2d8a3f2](https://github.com/crevissepartners/projmux/commit/2d8a3f246588933900892ea0bdc847f94f1d6be2))
+
+
+### Miscellaneous Chores
+
+* **legacy:** drop keybinding LegacyIDs + PrefixChord remnants (Phase 4) ([#434](https://github.com/crevissepartners/projmux/issues/434)) ([0bf3819](https://github.com/crevissepartners/projmux/commit/0bf381972fd001c562382f5c883075ca7b45baa2))
+
 ## [0.6.7](https://github.com/crevissepartners/projmux/compare/v0.6.6...v0.6.7) (2026-06-04)
 
 
