@@ -33,11 +33,6 @@ const (
 	WindowWeekly Window = "weekly"
 )
 
-// AllWindows returns the canonical ordered window list used by the CLI.
-func AllWindows() []Window {
-	return []Window{Window5h, WindowWeekly}
-}
-
 // Duration is the rolling window length used when describing windows. The
 // weekly window's duration is approximate — actual rollover follows the
 // vendor's published reset cadence (Anthropic returns an explicit

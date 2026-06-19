@@ -21,6 +21,10 @@ and humans run the same entrypoints.
   `test/e2e/linux-smoke.sh`. It validates a minimal real-tmux workflow:
   sessions, panes, config sourcing, reply-state notify reconciliation, focus
   notify fallback, and status notify rendering.
+- `make deadcode` runs `go tool deadcode` (pinned via the go.mod tool
+  directive) over the module and reports unreachable functions, filtering out
+  the intentional/MUST-KEEP baseline in `.deadcode-allowlist.txt`; it fails
+  only on NEW dead code, and `make fix` runs it after `go fix`.
 
 ## Docker-Covered Checks
 
