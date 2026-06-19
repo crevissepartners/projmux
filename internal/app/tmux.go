@@ -1085,8 +1085,6 @@ func nativeLaunchKeyForPopupMode(mode string) string {
 		return "alt-1"
 	case "notify-sidebar":
 		return "alt-2"
-	case "session-popup":
-		return "alt-3"
 	case "ai-split-picker-right", "ai-split-picker-down":
 		return "alt-4"
 	case "ai-split-settings":

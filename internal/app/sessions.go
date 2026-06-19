@@ -166,7 +166,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			),
 			PreviewCommand: previewCommand,
 			PreviewWindow:  sessionsPreviewWindow(*ui),
-			Bindings: append(pickerCloseBindingsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+			Bindings: append(pickerCloseBindingsForToggles(c.homeDir, c.lookupEnv, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "RecentWindows:Open", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
 				"left:execute-silent("+cycleWindowPrev+")+refresh-preview",
 				"right:execute-silent("+cycleWindowNext+")+refresh-preview",
 				"alt-up:execute-silent("+cyclePanePrev+")+refresh-preview",

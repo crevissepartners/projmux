@@ -4282,6 +4282,20 @@ func TestSettingsHubKeybindingsUsesReadableKeyLabels(t *testing.T) {
 			t.Fatalf("detail entries = %#v, did not want always-visible %q section", detailEntries, absent)
 		}
 	}
+
+	recentDetail, recentTitle, err := cmd.keybindingDetailEntries("RecentWindows:Open")
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries(RecentWindows:Open) error = %v", err)
+	}
+	if got, want := recentTitle, "Keybinding - Recent Windows"; got != want {
+		t.Fatalf("recent windows detail title = %q, want %q", got, want)
+	}
+	if !hasEntryLabelContainingAll(recentDetail, "Keys", "Alt-3", "M-3") {
+		t.Fatalf("recent windows detail entries = %#v, want readable default key with tmux chord", recentDetail)
+	}
+	if !hasEntryLabelContainingAll(recentDetail, "Recent Windows", "Default") {
+		t.Fatalf("recent windows detail entries = %#v, want default action state", recentDetail)
+	}
 }
 
 func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
@@ -4310,6 +4324,7 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 		{settingsActionPrefixKeymap + "Settings:SwitchTabNext", "Next Settings Tab", []string{"Alt-Shift-Right", "M-S-Right", "state Default"}, "Next Settings Tab"},
 		{settingsActionPrefixKeymap + "previous-window", "Previous Window", []string{"Alt-Shift-Left", "M-S-Left", "state Default"}, "Previous Window"},
 		{settingsActionPrefixKeymap + "next-window", "Next Window", []string{"Alt-Shift-Right", "M-S-Right", "state Default"}, "Next Window"},
+		{settingsActionPrefixKeymap + "RecentWindows:Open", "Recent Windows", []string{"Alt-3", "M-3", "state Default"}, "Recent windows queue"},
 		{settingsActionPrefixKeymap + "select-pane-left", "Select Pane Left", []string{"Alt-Left", "M-Left", "state Default"}, "Select Pane Left"},
 		{settingsActionPrefixKeymap + "select-pane-right", "Select Pane Right", []string{"Alt-Right", "M-Right", "state Default"}, "Select Pane Right"},
 		{settingsActionPrefixKeymap + "select-pane-up", "Select Pane Up", []string{"Alt-Up", "M-Up", "state Default"}, "Select Pane Up"},
@@ -4767,6 +4782,7 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 		"NotifySidebar:ClearAll":    "Notify Sidebar: Clear All",
 		"NotifySidebar:FocusAndAck": "Notify Sidebar: Focus and Acknowledge",
 		"Settings:SwitchTabPrev":    "Previous Settings Tab",
+		"RecentWindows:Open":        "Recent Windows",
 		"rename-window":             "Rename Window",
 		"current-project-session":   "Current Project Session",
 		"ai-split-right":            "Open AI Split Right",

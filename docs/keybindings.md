@@ -31,9 +31,13 @@ These shortcuts are the guaranteed launch defaults. They need no tmux prefix.
 | --- | --- |
 | `Alt-1` | Project sidebar |
 | `Alt-2` | Notify sidebar |
-| `Alt-3` | Existing session popup |
+| `Alt-3` | Recent Windows |
 | `Alt-4` | AI split popup picker |
 | `Alt-5` | Settings |
+
+`RecentWindows:Open` opens the cross-project recent windows queue. It switches
+to the selected live tmux window using that window's current active pane; it is
+separate from `last-pane` and from the existing-session popup.
 
 The tmux prefix remains the upstream default `Ctrl-b`. Inside a running
 session, `Ctrl-b ?` lists the live tmux bindings.
@@ -60,6 +64,7 @@ Optional direct keys can be added for actions such as:
 
 | Canonical action | Meaning |
 | --- | --- |
+| `RecentWindows:Open` | Recent windows queue across projects |
 | `ProjectSwitcherToggle` | Project switcher popup |
 | `AISplitPickerToggle` | AI split popup picker; pressing again closes the picker popup |
 | `ai-split-right` | Open a new direct AI split to the right |
@@ -227,7 +232,7 @@ previous/next window:
   "actions": [
     { "command": { "action": "sendInput", "input": "\u001b1" }, "id": "User.projmuxSidebar" },
     { "command": { "action": "sendInput", "input": "\u001b2" }, "id": "User.projmuxNotifySidebar" },
-    { "command": { "action": "sendInput", "input": "\u001b3" }, "id": "User.projmuxSessions" },
+    { "command": { "action": "sendInput", "input": "\u001b3" }, "id": "User.projmuxRecentWindows" },
     { "command": { "action": "sendInput", "input": "\u001b4" }, "id": "User.projmuxAIPicker" },
     { "command": { "action": "sendInput", "input": "\u001b5" }, "id": "User.projmuxSettings" },
     { "command": { "action": "sendInput", "input": "\u0002r" }, "id": "User.projmuxAISplitRight" },
