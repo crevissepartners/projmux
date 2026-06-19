@@ -860,6 +860,10 @@ func tmuxRetiredKeyUnbindLines() []string {
 		// Historical direct defaults removed during the keybinding surface
 		// cleanup. Keep unbinding them so a live tmux server sourced from an
 		// older projmux build does not retain stale behavior after reload.
+		// Legacy: retained for cleaning stale tmux keybindings from live tmux
+		// after reload; sunset when retired bindings from the 0.7/keybinding
+		// cleanup era have aged out and live stale-binding cleanup is
+		// intentionally stopped.
 		"unbind-key -q -n M-6",
 		"unbind-key -q -n C-n",
 		"unbind-key -q -n M-r",

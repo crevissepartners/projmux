@@ -16,6 +16,9 @@ import (
 
 const (
 	// Version is the current on-disk session snapshot schema version.
+	// Legacy: retained for validating and reading persisted session-state
+	// snapshots; sunset when a schema version bump plus migration window makes
+	// v1 snapshot compatibility intentionally droppable.
 	Version = 1
 
 	sessionDirName = "sessions"
