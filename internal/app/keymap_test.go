@@ -58,8 +58,11 @@ func TestRecentWindowsOpenOwnsAltThreeDefault(t *testing.T) {
 	if got, want := keyBindingEffectivePlainChords(recent), []string{"M-3"}; !equalStrings(got, want) {
 		t.Fatalf("RecentWindows:Open keys = %#v, want %#v", got, want)
 	}
-	if recent.TmuxKind != tmuxBindingRunProjmux || recent.TmuxBody != "window recent" {
-		t.Fatalf("RecentWindows:Open tmux binding = (%s, %q), want run-projmux window recent", recent.TmuxKind, recent.TmuxBody)
+	if recent.Kind != keyBindingActionTogglePopup || !recent.Toggleable {
+		t.Fatalf("RecentWindows:Open kind/toggleable = (%s, %v), want toggle-popup true", recent.Kind, recent.Toggleable)
+	}
+	if recent.TmuxKind != tmuxBindingPopupToggle || recent.TmuxBody != "recent-windows" {
+		t.Fatalf("RecentWindows:Open tmux binding = (%s, %q), want popup-toggle recent-windows", recent.TmuxKind, recent.TmuxBody)
 	}
 	for _, want := range []string{"Recent windows queue", "last-pane", "existing-session popup"} {
 		if !strings.Contains(recent.Description, want) {

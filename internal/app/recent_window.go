@@ -16,7 +16,10 @@ import (
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
-const recentWindowFieldSep = "\x1f"
+const (
+	recentWindowFieldSep        = "\x1f"
+	recentWindowEscapedFieldSep = "\\037"
+)
 
 type recentWindowStore interface {
 	Candidates(current recentwindows.WindowKey, live []recentwindows.LiveWindow, limit int) ([]recentwindows.Candidate, error)
@@ -260,7 +263,7 @@ func recentWindowPickerOptions(items []intpicker.Item) intpicker.Options {
 		Prompt:    "› ",
 		Items:     items,
 		MultiLine: true,
-		Actions:   pickerCloseActionsForToggles(nil, nil, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+		Actions:   pickerCloseActionsForToggles(nil, nil, []string{"ProjectSidebarToggle", "NotifySidebarToggle", "RecentWindows:Open", "SessionPopupToggle"}, "esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
 	}
 	options = fallbackRenderThemeSource().pickerOptions(options)
 	return options
@@ -392,7 +395,7 @@ func parseRecentWindowRows(output []byte, count int) [][]string {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		fields := strings.Split(line, recentWindowFieldSep)
+		fields := splitRecentWindowFields(line, count)
 		if len(fields) < count {
 			continue
 		}
@@ -405,4 +408,14 @@ func parseRecentWindowRows(output []byte, count int) [][]string {
 		rows = append(rows, fields)
 	}
 	return rows
+}
+
+func splitRecentWindowFields(line string, count int) []string {
+	for _, sep := range []string{recentWindowFieldSep, recentWindowEscapedFieldSep, "\t"} {
+		fields := strings.SplitN(line, sep, count)
+		if len(fields) == count || len(fields) > 1 {
+			return fields
+		}
+	}
+	return []string{line}
 }

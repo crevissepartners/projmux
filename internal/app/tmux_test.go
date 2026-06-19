@@ -744,6 +744,92 @@ func TestAppRunTmuxPopupToggleOpensSettingsHub(t *testing.T) {
 	}
 }
 
+func TestAppRunTmuxPopupToggleOpensRecentWindows(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-recent-windows"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "recent-windows")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":    clientKey,
+		"#{pane_id}":       "%1",
+		"#{client_width}":  "200",
+		"#{client_height}": "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "recent-windows"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	wantPrefix := []string{
+		"display-popup",
+		"-t", "%1",
+		"-E",
+		"-B",
+		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-3",
+		"-e", "PROJMUX_PICKER_BACKEND=native",
+		"-w", "160",
+		"-h", "35",
+	}
+	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
+	}
+	command := got.args[len(got.args)-1]
+	if !strings.Contains(command, "'/tmp/projmux' 'window' 'recent'") {
+		t.Fatalf("popup command = %q, want recent windows command", command)
+	}
+	if strings.Contains(command, "tmux popup-toggle") {
+		t.Fatalf("popup command = %q, want popup body to run native picker command directly", command)
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker error = %v", err)
+	}
+	if got, want := string(content), "%1\n"; got != want {
+		t.Fatalf("marker content = %q, want %q", got, want)
+	}
+}
+
+func TestAppRunTmuxPopupToggleClosesRecentWindowsWithClientMarker(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-recent-close"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "recent-windows")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}": clientKey,
+		"#{pane_id}":    "%active",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "recent-windows"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	want := recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-t", "%original", "-C"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("close call = %#v, want %#v", got, want)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want not exist", err)
+	}
+}
+
 func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
 	t.Parallel()
 
@@ -957,6 +1043,7 @@ func TestNativeLaunchKeyForPopupMode(t *testing.T) {
 	}{
 		{mode: "sessionizer-sidebar", want: "alt-1"},
 		{mode: "notify-sidebar", want: "alt-2"},
+		{mode: "recent-windows", want: "alt-3"},
 		{mode: "session-popup", want: ""},
 		{mode: "ai-split-picker-right", want: "alt-4"},
 		{mode: "ai-split-picker-down", want: "alt-4"},
@@ -1165,7 +1252,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"bind-key -n M-2 run-shell",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} notify-sidebar",
 		"bind-key -n M-3 run-shell",
-		"'/tmp/proj mux/bin/projmux' window recent",
+		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} recent-windows",
 		"unbind-key -q R",
 		"set-hook -g pane-focus-out",
 		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane}",
@@ -1216,6 +1303,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set -g status-format[2] \"",
 		"tmux autosave-session-state --quiet",
 		"bind-key R command-prompt",
+		"'/tmp/proj mux/bin/projmux' window recent",
 		"bind-key -n M-3 run-shell \"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} session-popup\"",
 		"set -s user-keys",
 		"bind-key -n User",

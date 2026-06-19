@@ -146,6 +146,61 @@ func TestRecentWindowRunSwitchesCrossSessionWindowWithoutPaneRestore(t *testing.
 	}
 }
 
+func TestRecentWindowRunParsesEscapedCurrentAndListWindowSeparators(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	target := recentWindowCandidate(recentwindows.Snapshot{
+		Socket:     "/tmp/tmux",
+		Session:    "other-project",
+		WindowID:   "@2",
+		WindowName: "agent",
+	})
+	store := &recentWindowStubStore{candidates: []recentwindows.Candidate{target}}
+	runner := &recentWindowFakeRunner{
+		currentOutput: strings.Join([]string{"/tmp/tmux", "current", "@1"}, recentWindowEscapedFieldSep) + "\n",
+		listOutputs: strings.Join([]string{"current", "@1"}, recentWindowEscapedFieldSep) + "\n" +
+			strings.Join([]string{"other-project", "@2"}, recentWindowEscapedFieldSep) + "\n",
+	}
+	cmd := &recentWindowCommand{
+		runner: runner,
+		opener: inttmux.NewClient(runner),
+		storeFactory: func(string) (recentWindowStore, error) {
+			return store, nil
+		},
+		nativePicker: pickerRunnerFunc(func(intpicker.Options) (intpicker.Result, error) {
+			return intpicker.Result{Key: "enter", Value: recentWindowValue(target)}, nil
+		}),
+		now: func() time.Time { return time.Unix(0, 0) },
+	}
+
+	if err := cmd.Run(nil, nil, nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !runner.sawCall("tmux", "switch-client", "-t", "=other-project:@2") {
+		t.Fatalf("calls = %#v, want switch-client to selected escaped-delimiter window", runner.calls)
+	}
+	if got, want := store.currents[0], (recentwindows.WindowKey{Socket: "/tmp/tmux", Session: "current", WindowID: "@1"}); got != want {
+		t.Fatalf("store current = %+v, want %+v", got, want)
+	}
+	if got := store.lives[0]; !reflect.DeepEqual(got, []recentwindows.LiveWindow{
+		{Socket: "/tmp/tmux", Session: "current", WindowID: "@1"},
+		{Socket: "/tmp/tmux", Session: "other-project", WindowID: "@2"},
+	}) {
+		t.Fatalf("store live windows = %+v", got)
+	}
+}
+
+func TestParseRecentWindowRowsAcceptsEscapedDelimiter(t *testing.T) {
+	t.Parallel()
+
+	output := []byte("current\\037@1\nother\\037@2\n")
+	got := parseRecentWindowRows(output, 2)
+	want := [][]string{{"current", "@1"}, {"other", "@2"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseRecentWindowRows() = %#v, want %#v", got, want)
+	}
+}
+
 func TestRecentWindowSwitchFailureRefreshesAndPrunesQueue(t *testing.T) {
 	t.Parallel()
 
