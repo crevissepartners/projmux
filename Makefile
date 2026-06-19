@@ -14,7 +14,9 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './.git/*' \
 	-not -path './.wt/*')
 
-.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-install-smoke test-e2e e2e verify
+DEADCODE_ALLOWLIST ?= .deadcode-allowlist.txt
+
+.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-install-smoke test-e2e e2e verify deadcode
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -56,6 +58,36 @@ fmt-check:
 
 fix:
 	$(GO) fix ./...
+	@$(MAKE) --no-print-directory deadcode
+
+# deadcode runs golang.org/x/tools/cmd/deadcode (pinned via the go.mod tool
+# directive) over the module and filters findings against an allowlist of
+# intentional / MUST-KEEP symbols. It exits non-zero only when a NEW
+# (non-allowlisted) unreachable function appears, so the checked-in baseline
+# stays green while genuinely new dead code is surfaced.
+deadcode:
+	@findings="$$( $(GO) tool deadcode ./... )"; \
+	if [ -z "$$findings" ]; then \
+		echo ">> deadcode: no unreachable functions reported"; \
+		exit 0; \
+	fi; \
+	allow="$$(mktemp)"; \
+	grep -v '^[[:space:]]*#' $(DEADCODE_ALLOWLIST) | grep -v '^[[:space:]]*$$' > "$$allow"; \
+	remaining="$$( printf '%s\n' "$$findings" | while IFS= read -r line; do \
+		sym="$${line##*unreachable func: }"; \
+		if grep -Fxq -- "$$sym" "$$allow"; then \
+			continue; \
+		fi; \
+		printf '%s\n' "$$line"; \
+	done )"; \
+	rm -f "$$allow"; \
+	if [ -n "$$remaining" ]; then \
+		echo ">> deadcode: NEW unreachable functions (not in $(DEADCODE_ALLOWLIST)):"; \
+		printf '%s\n' "$$remaining"; \
+		exit 1; \
+	fi; \
+	echo ">> deadcode: clean (all findings allowlisted in $(DEADCODE_ALLOWLIST))"; \
+	exit 0
 
 test:
 	$(GO) test ./...
