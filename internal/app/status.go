@@ -437,8 +437,8 @@ func (c *statusCommand) runNotify(args []string, stdout, stderr io.Writer) error
 	if c.now != nil {
 		now = c.now()
 	}
-	liveByID := c.notifyLiveByIDBestEffort()
-	out := formatStatusNotifyWithLiveLocale(entries, *maxWidth, now, liveByID, c.locale())
+	liveByID, paneSet := c.notifyLiveStateBestEffort()
+	out := formatStatusNotifyWithLiveLocale(entries, *maxWidth, now, liveByID, paneSet, c.locale())
 	if out == "" {
 		return nil
 	}
@@ -460,6 +460,18 @@ func (c *statusCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
 		return nil
 	}
 	return notifyLiveShouldQueueByID(panes)
+}
+
+// notifyLiveStateBestEffort reads the live reply+agent index and the full pane
+// inventory from a single tmux subprocess, swallowing errors into nil/nil. A
+// nil set means "inventory unavailable" so the head entry is never falsely
+// classified GONE during a tmux outage.
+func (c *statusCommand) notifyLiveStateBestEffort() (map[string]notifyLivePane, notifyLivePaneSet) {
+	if c == nil || c.readCommand == nil {
+		return nil, nil
+	}
+	runner := statusCommandRunnerAdapter{read: c.readCommand}
+	return (&notifyCommand{runner: runner}).notifyLiveStateBestEffort()
 }
 
 // statusCommandRunnerAdapter wraps statusCommand.readCommand so the existing
@@ -545,17 +557,20 @@ func formatStatusNotify(entries []notify.Notification, maxWidth int, now time.Ti
 // the caller could not read live tmux pane state; in that case the segment
 // degrades to the legacy NEED/INFO/WARN/CRIT badge set.
 func formatStatusNotifyWithLive(entries []notify.Notification, maxWidth int, now time.Time, liveByID map[string]notifyLivePane) string {
-	return formatStatusNotifyWithLiveLocale(entries, maxWidth, now, liveByID, i18n.FallbackLocale)
+	return formatStatusNotifyWithLiveLocale(entries, maxWidth, now, liveByID, nil, i18n.FallbackLocale)
 }
 
-func formatStatusNotifyWithLiveLocale(entries []notify.Notification, maxWidth int, now time.Time, liveByID map[string]notifyLivePane, locale i18n.Locale) string {
+// formatStatusNotifyWithLiveLocale renders the status segment. `paneSet` is the
+// full live tmux pane inventory used for real GONE classification of the head
+// entry; pass nil when unavailable (membership-based GONE is then skipped).
+func formatStatusNotifyWithLiveLocale(entries []notify.Notification, maxWidth int, now time.Time, liveByID map[string]notifyLivePane, paneSet notifyLivePaneSet, locale i18n.Locale) string {
 	if len(entries) == 0 {
 		return ""
 	}
 	head := entries[0]
 	extras := len(entries) - 1
 
-	display := classifyNotifyRowState(head, liveByID)
+	display := classifyNotifyRowState(head, liveByID, paneSet)
 	agent, text := splitAgentPrefix(head)
 	if head.Source == notify.SourceAI {
 		text = notifyAIStatusBodyTextLocale(head, text, locale)

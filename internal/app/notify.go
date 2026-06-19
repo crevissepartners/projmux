@@ -503,8 +503,8 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 	}
 
 	now := c.clock()
-	liveByID := c.notifyLiveByIDBestEffort()
-	model := buildNotifySidebarReadModel(entries, now, liveByID, locale)
+	liveByID, paneSet := c.notifyLiveStateBestEffort()
+	model := buildNotifySidebarReadModel(entries, now, liveByID, paneSet, locale)
 	return intpicker.Options{
 		UI:             "notify-sidebar",
 		MultiLine:      true,
@@ -552,8 +552,8 @@ func (c *notifyCommand) notifySidebarDeferredUpdate(store notifyStore, severitie
 		return intpicker.DeferredUpdate{}, err
 	}
 	now := c.clock()
-	liveByID := c.notifyLiveByIDBestEffort()
-	model := buildNotifySidebarReadModel(entries, now, liveByID, locale)
+	liveByID, paneSet := c.notifyLiveStateBestEffort()
+	model := buildNotifySidebarReadModel(entries, now, liveByID, paneSet, locale)
 	pruneNotifySidebarExpanded(expanded, model)
 	return intpicker.DeferredUpdate{
 		Items: notifySidebarPickerItems(model.ExpandedEntries(expanded)),
@@ -650,7 +650,8 @@ func ackNotifySidebarGroup(store notifyStore, entries []notify.Notification, gro
 }
 
 func (c *notifyCommand) focusAndAckNotifySidebarGroup(store notifyStore, entries []notify.Notification, groupKey, clientTTY string, locale i18n.Locale) error {
-	group, ok := notifySidebarGroupByKey(entries, c.clock(), c.notifyLiveByIDBestEffort(), groupKey, locale)
+	liveByID, paneSet := c.notifyLiveStateBestEffort()
+	group, ok := notifySidebarGroupByKey(entries, c.clock(), liveByID, paneSet, groupKey, locale)
 	if !ok {
 		c.displayNotifySidebarMessage("notify group already gone")
 		return nil
@@ -681,12 +682,12 @@ func (c *notifyCommand) focusAndAckNotifySidebarGroup(store notifyStore, entries
 	return ackNotifySidebarGroup(store, entries, groupKey)
 }
 
-func notifySidebarGroupByKey(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, groupKey string, locale i18n.Locale) (notifySidebarGroup, bool) {
+func notifySidebarGroupByKey(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, paneSet notifyLivePaneSet, groupKey string, locale i18n.Locale) (notifySidebarGroup, bool) {
 	groupKey = strings.TrimSpace(groupKey)
 	if groupKey == "" {
 		return notifySidebarGroup{}, false
 	}
-	model := buildNotifySidebarReadModel(entries, now, liveByID, locale)
+	model := buildNotifySidebarReadModel(entries, now, liveByID, paneSet, locale)
 	for _, group := range model.Groups {
 		if group.Key == groupKey {
 			return group, true
@@ -773,7 +774,10 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpic
 }
 
 func notifySidebarEntriesWithLiveLocale(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, locale i18n.Locale) []intpickercompat.Entry {
-	return buildNotifySidebarReadModel(entries, now, liveByID, locale).CollapsedEntries()
+	// Legacy collapsed-entry helper: the modern sidebar path builds the read
+	// model directly (with the pane inventory). These helpers keep nil paneSet
+	// (inventory unavailable) so behavior is unchanged for their callers.
+	return buildNotifySidebarReadModel(entries, now, liveByID, nil, locale).CollapsedEntries()
 }
 
 // notifySidebarEntriesWithLive renders sidebar rows with awareness of
@@ -880,7 +884,7 @@ func notifySidebarEmptyEntries() []intpickercompat.Entry {
 	}}
 }
 
-func buildNotifySidebarReadModel(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, locale i18n.Locale) notifySidebarReadModel {
+func buildNotifySidebarReadModel(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, paneSet notifyLivePaneSet, locale i18n.Locale) notifySidebarReadModel {
 	type groupBuild struct {
 		group notifySidebarGroup
 	}
@@ -898,7 +902,7 @@ func buildNotifySidebarReadModel(entries []notify.Notification, now time.Time, l
 			builders[key] = builder
 			order = append(order, key)
 		}
-		display := classifyNotifyRowState(entry, liveByID)
+		display := classifyNotifyRowState(entry, liveByID, paneSet)
 		label := notifySidebarChildLabelForLocale(entry, now, display, locale)
 		builder.group.Rows = append(builder.group.Rows, notifySidebarRow{
 			GroupKey: key,
@@ -1635,7 +1639,7 @@ func (c *notifyCommand) buildNotifyLiveReportLocale(entries []notify.Notificatio
 		Errors: []string{},
 	}
 
-	panes, err := c.listNotifyLivePanes()
+	panes, paneSet, err := c.listNotifyLivePanesAndSet()
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
 		for _, entry := range entries {
@@ -1700,7 +1704,7 @@ func (c *notifyCommand) buildNotifyLiveReportLocale(entries []notify.Notificatio
 			continue
 		}
 		state := "queue-only"
-		switch classifyNotifyRowState(entry, liveByID) {
+		switch classifyNotifyRowState(entry, liveByID, paneSet) {
 		case notifyDisplayStale:
 			state = "queue-stale"
 		case notifyDisplayGone:
@@ -1753,6 +1757,21 @@ func (c *notifyCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
 	return notifyLiveShouldQueueByID(panes)
 }
 
+// notifyLiveStateBestEffort reads the attention pane rows once and returns
+// both the reply+agent index (for stale detection) and the full pane inventory
+// (for gone detection), swallowing any tmux error into nil/nil. Sidebar
+// renders use this so a single `list-panes` subprocess feeds both classifiers.
+func (c *notifyCommand) notifyLiveStateBestEffort() (map[string]notifyLivePane, notifyLivePaneSet) {
+	if c == nil || c.runner == nil {
+		return nil, nil
+	}
+	panes, paneSet, err := c.listNotifyLivePanesAndSet()
+	if err != nil {
+		return nil, nil
+	}
+	return notifyLiveShouldQueueByID(panes), paneSet
+}
+
 // notifyLiveShouldQueueByID indexes the subset of live panes that satisfy
 // AI reply+agent state (i.e. ShouldQueue). This is the same condition
 // [notifyCommand.buildNotifyLiveReport] uses to decide which queue entries
@@ -1767,12 +1786,82 @@ func notifyLiveShouldQueueByID(panes []notifyLivePane) map[string]notifyLivePane
 	return out
 }
 
+// notifyLivePaneSet is the full live tmux pane inventory (every pane on the
+// server), used to decide whether a queue row's pane target still exists.
+//
+// A nil notifyLivePaneSet means "inventory unavailable" (the tmux read failed
+// or returned an empty/unrecognized result); callers MUST treat nil as
+// best-effort and skip membership-based GONE classification rather than
+// goneing every row. An empty (non-nil) set is also treated as unavailable by
+// the constructor below: it returns nil when no live panes were parsed, which
+// is the same docker-e2e degradation [statusbarCommand.classifyHeadDisplayBestEffort]
+// guards against.
+type notifyLivePaneSet map[string]struct{}
+
+// notifyLivePaneSetKey builds the membership key for a pane target. The notify
+// queue is pane-centric, so we key by pane id scoped within its session: two
+// different sessions can each have a `%0`. Pane ids are unique per tmux server,
+// so session+pane is sufficient.
+//
+// Socket is deliberately NOT part of the key. The notify producer records a
+// socket path, but user-edited and reconciled rows frequently omit it while the
+// tmux-reported pane always carries one; including socket in the key would
+// cause false-gone on socket-empty rows. The (session, pane) pair is precise
+// enough in practice and errs toward "present" (no false gone) when sockets
+// disagree.
+func notifyLivePaneSetKey(session, pane string) string {
+	return strings.TrimSpace(session) + "\x00" + strings.TrimSpace(pane)
+}
+
+// newNotifyLivePaneSet builds a pane-inventory set from the full (unfiltered)
+// attention pane rows. It returns nil when no rows have a usable pane target,
+// so callers uniformly read nil as "inventory unavailable".
+func newNotifyLivePaneSet(rows []attentionPaneRow) notifyLivePaneSet {
+	set := make(notifyLivePaneSet, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.Pane) == "" {
+			continue
+		}
+		set[notifyLivePaneSetKey(row.Session, row.Pane)] = struct{}{}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
+// Has reports whether the entry's pane target is present in the live
+// inventory. It is only meaningful for pane-target rows; window/session-only
+// rows should not be tested for membership (see classifyNotifyRowState).
+func (s notifyLivePaneSet) Has(entry notify.Notification) bool {
+	if s == nil {
+		return false
+	}
+	_, ok := s[notifyLivePaneSetKey(entry.Session, entry.Pane)]
+	return ok
+}
+
+// listNotifyLivePanesAndSet reads the attention pane rows once and returns both
+// the attention/reply-filtered notifyLivePane slice (for stale detection) and
+// the full pane-inventory set (for GONE detection), avoiding a second tmux
+// subprocess.
+func (c *notifyCommand) listNotifyLivePanesAndSet() ([]notifyLivePane, notifyLivePaneSet, error) {
+	rows, err := (&attentionCommand{runner: c.runner}).listAttentionPanes()
+	if err != nil {
+		return nil, nil, err
+	}
+	return notifyLivePanesFromRows(rows), newNotifyLivePaneSet(rows), nil
+}
+
 func (c *notifyCommand) listNotifyLivePanes() ([]notifyLivePane, error) {
 	rows, err := (&attentionCommand{runner: c.runner}).listAttentionPanes()
 	if err != nil {
 		return nil, err
 	}
+	return notifyLivePanesFromRows(rows), nil
+}
 
+func notifyLivePanesFromRows(rows []attentionPaneRow) []notifyLivePane {
 	out := make([]notifyLivePane, 0, len(rows))
 	for _, row := range rows {
 		live := notifyLivePane{
@@ -1797,7 +1886,7 @@ func (c *notifyCommand) listNotifyLivePanes() ([]notifyLivePane, error) {
 			out = append(out, live)
 		}
 	}
-	return out, nil
+	return out
 }
 
 func nonNilNotifications(entries []notify.Notification) []notify.Notification {

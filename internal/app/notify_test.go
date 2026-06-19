@@ -652,7 +652,7 @@ func TestNotifySidebarGroupedReadModelConstructsCollapsedPaneRows(t *testing.T) 
 		{ID: "old", Text: "background update", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: now.Add(-5 * time.Minute)},
 	}
 
-	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	model := buildNotifySidebarReadModel(entries, now, nil, nil, i18n.FallbackLocale)
 	if len(model.Groups) != 1 {
 		t.Fatalf("groups = %#v, want one pane group", model.Groups)
 	}
@@ -720,7 +720,7 @@ func TestNotifySidebarGroupedReadModelTitleUsesOlderRowMetadata(t *testing.T) {
 		{ID: "older", Text: "older rich update", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Socket: "sock", Session: "main", Window: "@1", Pane: "%2", CreatedAt: now.Add(-2 * time.Minute)},
 	}
 
-	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	model := buildNotifySidebarReadModel(entries, now, nil, nil, i18n.FallbackLocale)
 	collapsed := model.CollapsedEntries()
 	if len(collapsed) != 1 || collapsed[0].Value != notifySidebarGroupValue(model.Groups[0].Key) {
 		t.Fatalf("collapsed entries = %#v, want group value", collapsed)
@@ -740,7 +740,7 @@ func TestNotifySidebarGroupedReadModelReducesDuplicateLabelPreview(t *testing.T)
 		{ID: "latest", Text: "worker loop", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Session: "main", Pane: "%2", CreatedAt: now},
 	}
 
-	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	model := buildNotifySidebarReadModel(entries, now, nil, nil, i18n.FallbackLocale)
 	collapsed := model.CollapsedEntries()
 	if len(collapsed) != 1 {
 		t.Fatalf("collapsed entries = %#v, want one group row", collapsed)
@@ -782,7 +782,7 @@ func TestNotifySidebarGroupedReadModelKeepsProjectSlotWhenTopicContainsProject(t
 				{ID: "latest", Text: "done", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": tt.topic}, Session: "team-main", Pane: "%2", CreatedAt: now},
 			}
 
-			model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+			model := buildNotifySidebarReadModel(entries, now, nil, nil, i18n.FallbackLocale)
 			label := stripANSI(model.CollapsedEntries()[0].Label)
 			lines := strings.Split(label, "\n")
 			if len(lines) != 3 {
@@ -805,7 +805,7 @@ func TestNotifySidebarGroupedReadModelSelectionMarkerKeepsFieldShape(t *testing.
 	model := buildNotifySidebarReadModel([]notify.Notification{
 		{ID: "latest", Text: "done", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Session: "main", Pane: "%2", CreatedAt: now},
 		{ID: "older", Text: "older", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Session: "main", Pane: "%2", CreatedAt: now.Add(-1 * time.Minute)},
-	}, now, nil, i18n.FallbackLocale)
+	}, now, nil, nil, i18n.FallbackLocale)
 	group := model.Groups[0]
 	folded := stripANSI(notifySidebarGroupEntry(group, false).Label)
 	expanded := stripANSI(notifySidebarGroupEntry(group, true).Label)
@@ -830,7 +830,7 @@ func TestNotifySidebarGroupedReadModelChildlessGroupHasNoFoldMarkerOrCount(t *te
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	model := buildNotifySidebarReadModel([]notify.Notification{
 		{ID: "latest", Text: "done", Severity: notify.SeverityWarn, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Session: "main", Pane: "%2", CreatedAt: now},
-	}, now, nil, i18n.FallbackLocale)
+	}, now, nil, nil, i18n.FallbackLocale)
 	group := model.Groups[0]
 	collapsed := stripANSI(notifySidebarGroupEntry(group, false).Label)
 	expanded := stripANSI(notifySidebarGroupEntry(group, true).Label)
@@ -859,7 +859,7 @@ func TestNotifySidebarExpandedChildRowsStayCompactAndPreserveWarnCritical(t *tes
 		{ID: "warn", Text: "tests failed", Severity: notify.SeverityWarn, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "topic": "worker loop"}, Session: "main", Pane: "%2", CreatedAt: now.Add(-1 * time.Minute)},
 	}
 
-	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	model := buildNotifySidebarReadModel(entries, now, nil, nil, i18n.FallbackLocale)
 	expanded := model.ExpandedEntries(map[string]bool{model.Groups[0].Key: true})
 	if len(expanded) != 3 {
 		t.Fatalf("expanded entries = %#v, want group plus two compact child rows", expanded)
@@ -891,7 +891,7 @@ func TestNotifySidebarGroupedReadModelUsesWorstSeverity(t *testing.T) {
 		{ID: "latest", Text: "minor update", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Session: "main", Pane: "%2", CreatedAt: now},
 		{ID: "critical", Text: "approval required", Severity: notify.SeverityCritical, Source: notify.SourceExternal, Session: "main", Pane: "%2", CreatedAt: now.Add(-1 * time.Minute)},
 	}
-	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	model := buildNotifySidebarReadModel(entries, now, nil, nil, i18n.FallbackLocale)
 	if got := model.Groups[0].Worst; got != notify.SeverityCritical {
 		t.Fatalf("worst severity = %q, want critical", got)
 	}
@@ -908,7 +908,7 @@ func TestNotifySidebarGroupedReadModelDisplaysInactiveAndGoneGroups(t *testing.T
 		{ID: "ai:main:%2", Text: "Ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"}, Session: "main", Pane: "%2", CreatedAt: now},
 		{ID: "external", Text: "orphaned", Severity: notify.SeverityWarn, Source: notify.SourceExternal, Session: "", CreatedAt: now.Add(-1 * time.Minute)},
 	}
-	model := buildNotifySidebarReadModel(entries, now, map[string]notifyLivePane{}, i18n.FallbackLocale)
+	model := buildNotifySidebarReadModel(entries, now, map[string]notifyLivePane{}, nil, i18n.FallbackLocale)
 	if len(model.Groups) != 2 {
 		t.Fatalf("groups = %#v, want inactive and gone groups", model.Groups)
 	}
@@ -932,7 +932,7 @@ func TestNotifySidebarGroupedReadModelDisplaysInactiveAndGoneChildCounts(t *test
 		{ID: "gone-new", Text: "new gone", Severity: notify.SeverityInfo, Source: notify.SourceExternal, CreatedAt: now.Add(-2 * time.Minute)},
 		{ID: "gone-old", Text: "old gone", Severity: notify.SeverityCritical, Source: notify.SourceExternal, CreatedAt: now.Add(-3 * time.Minute)},
 	}
-	model := buildNotifySidebarReadModel(entries, now, map[string]notifyLivePane{}, i18n.FallbackLocale)
+	model := buildNotifySidebarReadModel(entries, now, map[string]notifyLivePane{}, nil, i18n.FallbackLocale)
 	if len(model.Groups) != 2 {
 		t.Fatalf("groups = %#v, want inactive and gone groups", model.Groups)
 	}
@@ -960,6 +960,40 @@ func TestNotifySidebarGroupedReadModelDisplaysInactiveAndGoneChildCounts(t *test
 	}
 }
 
+// TestNotifySidebarReadModelPaneInventoryGoneVsStale pins Phase 7 in the
+// sidebar: a pane-target row whose pane is ABSENT from the live inventory shows
+// the GONE group (cleanup-only), while a pane that EXISTS but no longer matches
+// reply+agent shows the INACTIVE group (focus+ack affordance retained).
+func TestNotifySidebarReadModelPaneInventoryGoneVsStale(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.June, 19, 12, 0, 0, 0, time.UTC)
+	entries := []notify.Notification{
+		// %84 exists in tmux but is not reply+agent → INACTIVE/stale.
+		{ID: "ai:repos-test-sample:%84", Text: "Ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "category": "response_complete"}, Session: "repos-test-sample", Window: "@13", Pane: "%84", CreatedAt: now},
+		// %83 is absent from tmux → GONE.
+		{ID: "ai:repos-test-sample:%83", Text: "Ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "category": "response_complete"}, Session: "repos-test-sample", Window: "@13", Pane: "%83", CreatedAt: now.Add(-1 * time.Minute)},
+	}
+	paneSet := newNotifyLivePaneSet([]attentionPaneRow{
+		{Session: "repos-test-sample", Window: "@13", Pane: "%84"},
+		{Session: "repos-test-sample", Window: "@13", Pane: "%85"},
+	})
+	model := buildNotifySidebarReadModel(entries, now, map[string]notifyLivePane{}, paneSet, i18n.FallbackLocale)
+
+	byPane := map[string]notifyRowDisplayState{}
+	for _, group := range model.Groups {
+		for _, row := range group.Rows {
+			byPane[row.Notify.Pane] = row.Display
+		}
+	}
+	if byPane["%83"] != notifyDisplayGone {
+		t.Fatalf("pane %%83 display = %v, want GONE (absent from inventory)", byPane["%83"])
+	}
+	if byPane["%84"] != notifyDisplayStale {
+		t.Fatalf("pane %%84 display = %v, want INACTIVE/stale (present but not reply+agent)", byPane["%84"])
+	}
+}
+
 func TestNotifySidebarGroupedReadModelPaneLessFallbackKeys(t *testing.T) {
 	t.Parallel()
 
@@ -969,7 +1003,7 @@ func TestNotifySidebarGroupedReadModelPaneLessFallbackKeys(t *testing.T) {
 		{ID: "session", Text: "session scoped", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Socket: "sock", Session: "main", CreatedAt: now.Add(-1 * time.Minute)},
 		{ID: "external", Text: "external scoped", Severity: notify.SeverityInfo, Source: notify.SourceExternal, Socket: "sock", CreatedAt: now.Add(-2 * time.Minute)},
 	}
-	model := buildNotifySidebarReadModel(entries, now, nil, i18n.FallbackLocale)
+	model := buildNotifySidebarReadModel(entries, now, nil, nil, i18n.FallbackLocale)
 	got := []string{model.Groups[0].Key, model.Groups[1].Key, model.Groups[2].Key}
 	want := []string{"window\x00sock\x00main\x00@1", "session\x00sock\x00main", "external\x00sock"}
 	if !reflect.DeepEqual(got, want) {
@@ -2005,12 +2039,16 @@ func TestNotifyListLiveJSONExplainsQueueAndLiveStates(t *testing.T) {
 				ExpiresAt: now.Add(time.Hour),
 			},
 			{
-				ID:        "ai:gone:%9",
+				// Pane %5 EXISTS in the inventory below but is title-only
+				// attention (not reply+agent), so this queue row is INACTIVE /
+				// queue-stale, not gone.
+				ID:        "ai:title:%5",
 				Text:      "stale",
 				Severity:  notify.SeverityInfo,
 				Source:    notify.SourceAI,
-				Session:   "gone",
-				Pane:      "%9",
+				Session:   "title",
+				Window:    "@4",
+				Pane:      "%5",
 				CreatedAt: now,
 				ExpiresAt: now.Add(time.Hour),
 			},

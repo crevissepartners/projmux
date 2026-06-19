@@ -411,7 +411,7 @@ func TestStatusNotifyLocaleFormatsAgeAITextAndCount(t *testing.T) {
 			Session:   "s",
 			CreatedAt: now.Add(-2 * time.Minute),
 		},
-	}, 80, now, nil, i18n.Locale("ko-KR"))
+	}, 80, now, nil, nil, i18n.Locale("ko-KR"))
 
 	for _, want := range []string{
 		renderNotifyProjectBadge("s"),
