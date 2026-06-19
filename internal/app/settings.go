@@ -3717,7 +3717,7 @@ func keybindingListKeysSummary(action keyBindingAction) string {
 	}
 	summary := keybindingChordDisplay(keys[0])
 	if len(keys) > 1 {
-		summary += fmt.Sprintf(" +%d", len(keys)-1)
+		summary += fmt.Sprintf(", +%d", len(keys)-1)
 	}
 	return summary
 }
@@ -3734,16 +3734,15 @@ func keybindingActionsSummary(keymap keymapFile, action, defaultAction keyBindin
 		return "view only"
 	}
 	var actions []string
-	actions = append(actions, "Add key")
-	if len(removableKeybindingKeys(keymap, action, defaultAction)) != 0 {
-		actions = append(actions, "Remove key")
-	}
 	if len(keybindingVisibleChords(action)) != 0 {
 		actions = append(actions, "Unbind")
 	}
 	state := keybindingState(keymap, action, defaultAction)
 	if keybindingShowResetAction(state) {
 		actions = append(actions, keybindingResetActionLabel(state, defaultAction))
+	}
+	if len(actions) == 0 {
+		return "no action-level options"
 	}
 	return strings.Join(actions, ", ")
 }

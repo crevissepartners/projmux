@@ -4255,6 +4255,170 @@ func TestSettingsHubKeybindingsUsesReadableKeyLabels(t *testing.T) {
 	}
 }
 
+func TestSettingsKeybindingsActionListIsPreviewOnly(t *testing.T) {
+	t.Parallel()
+
+	// (a) Action LIST rows expose no mutation: every navigable row is a plain
+	// keymap:<actionID> link with no mutation suffix, and no row label carries a
+	// mutation verb. The list can only navigate into detail.
+	cmd := &settingsCommand{}
+	listEntries, err := cmd.keybindingEntries()
+	if err != nil {
+		t.Fatalf("keybindingEntries() error = %v", err)
+	}
+
+	mutationSuffixes := []string{":add", ":capture", ":type", ":advanced", ":unbind", ":reset", ":key:", ":remove:", ":test:"}
+	var navigableRows int
+	for _, entry := range listEntries {
+		value := entry.Value
+		if value == settingsBackValue || value == settingsNoopValue || value == "" {
+			continue
+		}
+		if !strings.HasPrefix(value, settingsActionPrefixKeymap) {
+			t.Fatalf("list row value = %q, want %s<actionID> link", value, settingsActionPrefixKeymap)
+		}
+		navigableRows++
+		actionID := strings.TrimPrefix(value, settingsActionPrefixKeymap)
+		if want := settingsActionPrefixKeymap + actionID; value != want {
+			t.Fatalf("list row value = %q, want exactly %q (no mutation suffix)", value, want)
+		}
+		for _, suffix := range mutationSuffixes {
+			if strings.Contains(value, suffix) {
+				t.Fatalf("list row value = %q, must not contain mutation marker %q", value, suffix)
+			}
+		}
+	}
+	if navigableRows == 0 {
+		t.Fatalf("keybinding list = %#v, want at least one navigable action row", listEntries)
+	}
+	for _, mutationWord := range []string{"Add key", "Remove", "Unbind", "Reset"} {
+		if hasEntryLabelContaining(listEntries, mutationWord) {
+			t.Fatalf("list entries = %#v, must not surface mutation word %q in a row label", listEntries, mutationWord)
+		}
+	}
+
+	// (d) Phase 0.6 invariants preserved in the list: no primary/alias/additional
+	// role labels reintroduced.
+	for _, role := range []string{"Primary", "Alias", "Additional"} {
+		if hasEntryLabelContaining(listEntries, role) {
+			t.Fatalf("list entries = %#v, must not surface role word %q", listEntries, role)
+		}
+	}
+}
+
+func TestSettingsKeybindingsListKeysPreviewCompression(t *testing.T) {
+	t.Parallel()
+
+	// (b) Keys preview compression: a multi-key custom binding renders as
+	// "<first key>, +N" with the comma; an unbound action shows "Not bound".
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"),
+		"[bindings.ProjectSidebarToggle]\nkeys = [\"M-a\", \"M-b\"]\n[bindings.NotifySidebarToggle]\nplain = \"\"\n")
+
+	cmd := testKeybindingSettingsCommand(t, home, func(intpickercompat.Options) (intpickercompat.Result, error) {
+		return intpickercompat.Result{}, nil
+	})
+
+	entries, err := cmd.keybindingEntries()
+	if err != nil {
+		t.Fatalf("keybindingEntries() error = %v", err)
+	}
+
+	idx := entryIndexValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle")
+	if idx < 0 {
+		t.Fatalf("entries = %#v, want ProjectSidebarToggle row", entries)
+	}
+	if got := entries[idx].Label; !strings.Contains(got, "Alt-A (M-a), +1") {
+		t.Fatalf("multi-key row label = %q, want compressed %q form", got, "Alt-A (M-a), +1")
+	}
+
+	notifyIdx := entryIndexValue(entries, settingsActionPrefixKeymap+"NotifySidebarToggle")
+	if notifyIdx < 0 {
+		t.Fatalf("entries = %#v, want NotifySidebarToggle row", entries)
+	}
+	if got := entries[notifyIdx].Label; !strings.Contains(got, "Not bound") {
+		t.Fatalf("unbound row label = %q, want %q", got, "Not bound")
+	}
+}
+
+func TestSettingsKeybindingsMutationLivesInDetailNotList(t *testing.T) {
+	t.Parallel()
+
+	// (c) Mutating values appear only in detail / key-detail / add-key entry
+	// sets, never in the action list. ProjectSidebarToggle is an editable plain
+	// action with a custom multi-key binding so every mutation row is present.
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"),
+		"[bindings.ProjectSidebarToggle]\nkeys = [\"M-a\", \"M-b\"]\n")
+	cmd := testKeybindingSettingsCommand(t, home, func(intpickercompat.Options) (intpickercompat.Result, error) {
+		return intpickercompat.Result{}, nil
+	})
+
+	const actionID = "ProjectSidebarToggle"
+	prefix := settingsActionPrefixKeymap + actionID + ":"
+
+	listEntries, err := cmd.keybindingEntries()
+	if err != nil {
+		t.Fatalf("keybindingEntries() error = %v", err)
+	}
+	detailEntries, _, err := cmd.keybindingDetailEntries(actionID)
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries() error = %v", err)
+	}
+	keyDetailEntries, _, err := cmd.keybindingKeyDetailEntries(actionID, "M-a")
+	if err != nil {
+		t.Fatalf("keybindingKeyDetailEntries() error = %v", err)
+	}
+	addEntries, _, err := cmd.keybindingAddEntries(actionID)
+	if err != nil {
+		t.Fatalf("keybindingAddEntries() error = %v", err)
+	}
+	addAdvancedEntries, _, err := cmd.keybindingAddAdvancedEntries(actionID)
+	if err != nil {
+		t.Fatalf("keybindingAddAdvancedEntries() error = %v", err)
+	}
+
+	// Action-level mutations live in detail.
+	for _, value := range []string{prefix + "add", prefix + "unbind", prefix + "key:M-a"} {
+		if !hasEntryValue(detailEntries, value) {
+			t.Fatalf("detail entries = %#v, want mutation/navigation value %q", detailEntries, value)
+		}
+		if hasEntryValue(listEntries, value) {
+			t.Fatalf("list entries must not contain detail value %q", value)
+		}
+	}
+	// Key removal lives in key detail.
+	if !hasEntryValue(keyDetailEntries, prefix+"remove:M-a") {
+		t.Fatalf("key detail entries = %#v, want remove value %q", keyDetailEntries, prefix+"remove:M-a")
+	}
+	if hasEntryValue(listEntries, prefix+"remove:M-a") {
+		t.Fatalf("list entries must not contain key-remove value")
+	}
+	// Capture/type live in the add-key flow.
+	if !hasEntryValue(addEntries, prefix+"capture") {
+		t.Fatalf("add entries = %#v, want capture value %q", addEntries, prefix+"capture")
+	}
+	if !hasEntryValue(addAdvancedEntries, prefix+"type") {
+		t.Fatalf("add advanced entries = %#v, want type value %q", addAdvancedEntries, prefix+"type")
+	}
+	for _, value := range []string{prefix + "capture", prefix + "type"} {
+		if hasEntryValue(listEntries, value) {
+			t.Fatalf("list entries must not contain add-flow value %q", value)
+		}
+	}
+
+	// (d) Phase 0.6 invariants preserved in detail: no role words, flat key
+	// list (a per-key navigable row exists, no nested grouping copy).
+	for _, role := range []string{"Primary", "Alias", "Additional"} {
+		if hasEntryLabelContaining(detailEntries, role) {
+			t.Fatalf("detail entries = %#v, must not surface role word %q", detailEntries, role)
+		}
+	}
+	if !hasEntryValue(detailEntries, prefix+"key:M-a") || !hasEntryValue(detailEntries, prefix+"key:M-b") {
+		t.Fatalf("detail entries = %#v, want a flat per-key row for each active chord", detailEntries)
+	}
+}
+
 func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 	t.Parallel()
 
