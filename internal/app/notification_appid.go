@@ -13,6 +13,11 @@ package app
 //     shortcut and the AppUserModelID registry key tied to the legacy
 //     value. Keeping the constant alongside the new one makes the
 //     migration footprint discoverable in one place.
+//
+// Legacy: retained for Windows AppUserModelID migration and idempotent stale
+// marker cleanup; sunset when a post-0.7 review after two minor releases or 90
+// days confirms stale tmux markers from pre-cleanup installs are no longer
+// supported.
 
 const (
 	desktopAppID       = "com.crevisse.projmux"

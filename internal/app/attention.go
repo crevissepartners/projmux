@@ -376,6 +376,9 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 }
 
 func (c *attentionCommand) legacyWindowAttentionRows(windowID string) []attentionWindowRow {
+	// Legacy: retained for old pane option format fallback; sunset when the
+	// new window-attention format has a versioned migration/expiry policy and
+	// old pane options are intentionally dropped.
 	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
 		Target: windowID,
 		Formats: []string{

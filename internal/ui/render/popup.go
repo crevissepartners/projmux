@@ -374,6 +374,9 @@ func highlightPreviewLine(line string) string {
 }
 
 func formatLegacyPaneSummary(model preview.PopupReadModel) string {
+	// Legacy: retained for old popup pane summary formatting shim; sunset when
+	// popup state/summary producers no longer emit the legacy shape and the
+	// compatibility window is closed.
 	pane := sanitizeCell(model.SelectedPaneIndex)
 	if pane == "" {
 		pane = "?"

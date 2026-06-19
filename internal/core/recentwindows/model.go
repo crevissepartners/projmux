@@ -10,6 +10,9 @@ import (
 )
 
 const (
+	// Legacy: retained for persisted recent-windows state; sunset when a schema
+	// version bump plus migration window makes v1 compatibility intentionally
+	// droppable.
 	Version      = 1
 	DefaultLimit = 20
 )
