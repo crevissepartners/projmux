@@ -34,10 +34,14 @@ type Snapshot struct {
 	// PaneBadgeKinds carries the per-pane AI badge kind parallel to PaneTitles
 	// (same length/order when available). Additive and backward compatible: old
 	// state files omit it, so the picker falls back to titles-only rendering.
-	PaneBadgeKinds []string  `json:"pane_badge_kinds,omitempty"`
-	LastPaneTopic  string    `json:"last_pane_topic,omitempty"`
-	LastCommand    string    `json:"last_command,omitempty"`
-	LastFocusedAt  time.Time `json:"last_focused_at"`
+	PaneBadgeKinds []string `json:"pane_badge_kinds,omitempty"`
+	// PaneTopics carries each pane's own AI topic parallel to PaneTitles (same
+	// length/order when available). Additive and backward compatible: old state
+	// files omit it, so the picker falls back to pane title then command.
+	PaneTopics    []string  `json:"pane_topics,omitempty"`
+	LastPaneTopic string    `json:"last_pane_topic,omitempty"`
+	LastCommand   string    `json:"last_command,omitempty"`
+	LastFocusedAt time.Time `json:"last_focused_at"`
 }
 
 type State struct {
@@ -193,6 +197,7 @@ func normalizeSnapshot(snapshot Snapshot) Snapshot {
 	snapshot.LastPaneTitle = strings.TrimSpace(snapshot.LastPaneTitle)
 	snapshot.PaneTitles = normalizePaneTitles(snapshot.PaneTitles)
 	snapshot.PaneBadgeKinds = normalizePaneBadgeKinds(snapshot.PaneBadgeKinds)
+	snapshot.PaneTopics = normalizePaneTopics(snapshot.PaneTopics)
 	snapshot.LastPaneTopic = strings.TrimSpace(snapshot.LastPaneTopic)
 	snapshot.LastCommand = strings.TrimSpace(snapshot.LastCommand)
 	if !snapshot.LastFocusedAt.IsZero() {
@@ -231,6 +236,29 @@ func normalizePaneBadgeKinds(kinds []string) []string {
 		normalized := aibadge.Normalize(kind)
 		out[i] = normalized
 		if normalized != "" {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil
+	}
+	return out[:last+1]
+}
+
+// normalizePaneTopics trims each per-pane AI topic while keeping positional
+// alignment with PaneTitles: a pane with no topic keeps an empty slot rather
+// than shifting later panes. Trailing empties are trimmed and an all-empty
+// slice collapses to nil so backward-compatible state stays clean.
+func normalizePaneTopics(topics []string) []string {
+	if len(topics) == 0 {
+		return nil
+	}
+	out := make([]string, len(topics))
+	last := -1
+	for i, topic := range topics {
+		trimmed := strings.TrimSpace(topic)
+		out[i] = trimmed
+		if trimmed != "" {
 			last = i
 		}
 	}

@@ -295,6 +295,48 @@ func TestRecordPreservesPaneBadgeKindsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNormalizeSnapshotPaneTopics(t *testing.T) {
+	t.Parallel()
+
+	// Per-pane topics keep positional alignment with PaneTitles: an empty topic
+	// becomes an empty slot rather than shifting later panes, and trailing empties
+	// are trimmed.
+	snapshot := normalizeSnapshot(Snapshot{
+		Session:    "s",
+		WindowID:   "@1",
+		PaneTitles: []string{"a", "b", "c"},
+		PaneTopics: []string{"", "  Phase 9 ", ""},
+	})
+	if got := snapshot.PaneTopics; len(got) != 2 || got[0] != "" || got[1] != "Phase 9" {
+		t.Fatalf("pane topics = %#v, want empty slot preserved, topic trimmed, trailing trimmed", got)
+	}
+
+	// An all-empty slice collapses to nil for backward-compatible state.
+	if got := normalizeSnapshot(Snapshot{Session: "s", WindowID: "@1", PaneTopics: []string{"", "  "}}).PaneTopics; got != nil {
+		t.Fatalf("pane topics = %#v, want nil for all-empty", got)
+	}
+}
+
+func TestRecordPreservesPaneTopicsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
+	state, err := NewState(nil).Record(Snapshot{
+		Session:       "s",
+		WindowID:      "@1",
+		WindowName:    "main",
+		PaneTitles:    []string{"zsh", "Claude Code"},
+		PaneTopics:    []string{"", "Phase 9 polish"},
+		LastFocusedAt: now,
+	}, 0)
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if got := state.Entries[0].PaneTopics; len(got) != 2 || got[0] != "" || got[1] != "Phase 9 polish" {
+		t.Fatalf("pane topics = %#v, want preserved round-trip", got)
+	}
+}
+
 func TestRecordWindowMRUDoesNotReorderBeyondWindowList(t *testing.T) {
 	t.Parallel()
 
