@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 
 type recentWindowStore interface {
 	Candidates(current recentwindows.WindowKey, live []recentwindows.LiveWindow, limit int) ([]recentwindows.Candidate, error)
+	Record(snapshot recentwindows.Snapshot, limit int) (recentwindows.State, error)
 }
 
 type recentWindowStoreFactory func(socket string) (recentWindowStore, error)
@@ -55,6 +57,8 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch fs.Arg(0) {
+	case "record":
+		return c.recent.RunRecord(fs.Args()[1:], stdout, stderr)
 	case "recent":
 		return c.recent.Run(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
@@ -70,6 +74,7 @@ func printWindowUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: projmux window <command>")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  record  Record the active tmux window in the recent queue")
 	fmt.Fprintln(w, "  recent  Pick a recent tmux window across projects")
 }
 
@@ -167,6 +172,40 @@ func printWindowRecentUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: projmux window recent")
 }
 
+func (c *recentWindowCommand) RunRecord(args []string, _ io.Writer, stderr io.Writer) error {
+	fs := flag.NewFlagSet("window record", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printWindowRecordUsage(stderr)
+	}
+	if err := fs.Parse(args); err != nil {
+		printWindowRecordUsage(stderr)
+		return err
+	}
+	if fs.NArg() != 0 {
+		printWindowRecordUsage(stderr)
+		return fmt.Errorf("window record does not accept positional arguments")
+	}
+
+	ctx := context.Background()
+	snapshot, err := c.currentSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	store, err := c.recentStore(snapshot.Socket)
+	if err != nil {
+		return err
+	}
+	if _, err := store.Record(snapshot, recentwindows.DefaultLimit); err != nil {
+		return fmt.Errorf("record recent window: %w", err)
+	}
+	return nil
+}
+
+func printWindowRecordUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage: projmux window record")
+}
+
 func (c *recentWindowCommand) recentStore(socket string) (recentWindowStore, error) {
 	if c.storeFactory == nil {
 		return nil, fmt.Errorf("recent window store is not configured")
@@ -194,6 +233,42 @@ func (c *recentWindowCommand) currentWindow(ctx context.Context) (recentwindows.
 		return recentwindows.WindowKey{}, fmt.Errorf("resolve current tmux window: tmux returned incomplete metadata")
 	}
 	return recentwindows.WindowKey{Socket: fields[0], Session: fields[1], WindowID: fields[2]}, nil
+}
+
+func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindows.Snapshot, error) {
+	if c.runner == nil {
+		return recentwindows.Snapshot{}, fmt.Errorf("tmux runner is not configured")
+	}
+	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-F", strings.Join([]string{
+		"#{socket_path}",
+		"#{session_name}",
+		"#{window_id}",
+		"#{window_name}",
+		"#{pane_id}",
+		"#{pane_title}",
+		"#{@projmux_ai_topic}",
+		"#{pane_current_command}",
+		"#{pane_current_path}",
+	}, recentWindowFieldSep))
+	if err != nil {
+		return recentwindows.Snapshot{}, fmt.Errorf("snapshot current tmux window: %w", err)
+	}
+	fields := parseRecentWindowFields(output, 9)
+	if len(fields) != 9 || fields[1] == "" || fields[2] == "" {
+		return recentwindows.Snapshot{}, fmt.Errorf("snapshot current tmux window: tmux returned incomplete metadata")
+	}
+	return recentwindows.Snapshot{
+		Socket:        fields[0],
+		Session:       fields[1],
+		WindowID:      fields[2],
+		WindowName:    fields[3],
+		Project:       recentWindowProjectName(fields[8]),
+		LastPaneID:    fields[4],
+		LastPaneTitle: fields[5],
+		LastPaneTopic: fields[6],
+		LastCommand:   fields[7],
+		LastFocusedAt: c.currentTime().UTC(),
+	}, nil
 }
 
 func (c *recentWindowCommand) liveWindows(ctx context.Context, socket string) ([]recentwindows.LiveWindow, error) {
@@ -374,6 +449,22 @@ func joinRecentWindowParts(values ...string) string {
 		parts = append(parts, value)
 	}
 	return strings.Join(parts, " · ")
+}
+
+func recentWindowProjectName(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	root := nearestProjectMarker(path, os.TempDir())
+	if root == "" {
+		root = path
+	}
+	name := filepath.Base(filepath.Clean(root))
+	if name == "." || name == string(filepath.Separator) {
+		return ""
+	}
+	return name
 }
 
 func parseRecentWindowFields(output []byte, count int) []string {

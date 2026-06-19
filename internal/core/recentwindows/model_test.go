@@ -2,6 +2,7 @@ package recentwindows
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -53,6 +54,30 @@ func TestRecordAppliesQueueLimit(t *testing.T) {
 	}
 	if state.Entries[0].Session != "three" || state.Entries[1].Session != "two" {
 		t.Fatalf("entries = %+v, want three then two", state.Entries)
+	}
+}
+
+func TestRecordDefaultLimitCapsQueueAtTwenty(t *testing.T) {
+	t.Parallel()
+
+	state := NewState(nil)
+	for i := range DefaultLimit + 5 {
+		var err error
+		session := fmt.Sprintf("session-%c", 'a'+i)
+		state, err = state.Record(snap("", session, "@"+session, session, time.Unix(int64(i), 0)), 0)
+		if err != nil {
+			t.Fatalf("record %s: %v", session, err)
+		}
+	}
+
+	if got, want := len(state.Entries), DefaultLimit; got != want {
+		t.Fatalf("len = %d, want DefaultLimit %d", got, want)
+	}
+	if got, want := state.Entries[0].Session, "session-y"; got != want {
+		t.Fatalf("head session = %q, want newest %q", got, want)
+	}
+	if got, want := state.Entries[len(state.Entries)-1].Session, "session-f"; got != want {
+		t.Fatalf("tail session = %q, want oldest retained %q", got, want)
 	}
 }
 
