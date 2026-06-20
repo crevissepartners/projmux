@@ -65,7 +65,7 @@ func TestRendererRenderFrameWithTitleKeepsDefaultWhenTitleEmpty(t *testing.T) {
 func TestThemeFromEffectiveFallbackPaintsFrameBackground(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
 	themed := NewRenderer(ThemeFromEffective(effective))
 	layout := Layout{Rows: 8, Cols: 32}
 	listRow := RenderableListLine(InteractiveRowLines(Row{
@@ -121,19 +121,13 @@ func TestThemeFromEffectiveFallbackPaintsFrameBackground(t *testing.T) {
 	}
 }
 
-func TestThemeFromEffectiveProjectDoesNotLeakGlobalBackgroundForeground(t *testing.T) {
+func TestThemeFromEffectiveAppliesGlobalBackgroundForeground(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(
-		theme.ThemeConfig{
-			Background: "#112233",
-			Foreground: "#445566",
-		},
-		theme.ThemeConfig{
-			Background: "#010203",
-			Foreground: "#aabbcc",
-		},
-	)
+	effective := theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#010203",
+		Foreground: "#aabbcc",
+	})
 	renderer := NewRenderer(ThemeFromEffective(effective))
 	var out bytes.Buffer
 	renderer.RenderFrameWithTitle(&out, "api", "Projects", Layout{Rows: 5, Cols: 18})
@@ -141,20 +135,20 @@ func TestThemeFromEffectiveProjectDoesNotLeakGlobalBackgroundForeground(t *testi
 
 	for _, want := range []string{"\x1b[48;2;1;2;3m", "\x1b[38;2;170;187;204m"} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("rendered frame = %q, want project SGR %q", rendered, want)
+			t.Fatalf("rendered frame = %q, want global SGR %q", rendered, want)
 		}
 	}
 	for _, banned := range []string{"\x1b[48;2;17;34;51m", "\x1b[38;2;68;85;102m"} {
 		if strings.Contains(rendered, banned) {
-			t.Fatalf("rendered frame = %q, must not contain global SGR %q", rendered, banned)
+			t.Fatalf("rendered frame = %q, must not contain unrelated SGR %q", rendered, banned)
 		}
 	}
 }
 
-func TestThemeFromEffectiveProjectMapsSemanticRoles(t *testing.T) {
+func TestThemeFromEffectiveMapsSemanticRoles(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{
+	effective := theme.ResolveTheme(theme.ThemeConfig{
 		SurfaceActive: "#010203",
 		Foreground:    "#111213",
 		Muted:         "#212223",

@@ -1,10 +1,8 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,16 +12,14 @@ import (
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
-type themeLayer string
+// Theme is a global user preference. Settings only edits the global [theme] in
+// ~/.config/projmux/config.toml and shows the resolved global > built-in
+// fallback effective values. Project-local [theme] is deprecated migration
+// data and is not editable or resolvable here.
 
-const (
-	themeLayerGlobal  themeLayer = "global"
-	themeLayerProject themeLayer = "project"
-)
-
-func (c *settingsCommand) runThemeLayerSection(layer themeLayer, stdout, stderr io.Writer) error {
+func (c *settingsCommand) runThemeSection(stdout, stderr io.Writer) error {
 	for {
-		options, err := c.themeLayerOptions(layer)
+		options, err := c.themeOptions()
 		if err != nil {
 			return err
 		}
@@ -40,28 +36,28 @@ func (c *settingsCommand) runThemeLayerSection(layer themeLayer, stdout, stderr 
 			return nil
 		case action == settingsNoopValue:
 			continue
-		case action == themeAction(layer, "preset"):
-			if err := c.runThemePresetSection(layer, stdout, stderr); err != nil {
+		case action == themeAction("preset"):
+			if err := c.runThemePresetSection(stdout, stderr); err != nil {
 				return err
 			}
-		case strings.HasPrefix(action, themeAction(layer, "color:")):
-			token, ok := parseThemeColorAction(strings.TrimPrefix(action, themeAction(layer, "color:")))
+		case strings.HasPrefix(action, themeAction("color:")):
+			token, ok := parseThemeColorAction(strings.TrimPrefix(action, themeAction("color:")))
 			if !ok {
 				return fmt.Errorf("unknown theme color action: %s", action)
 			}
-			if err := c.runThemeColorSection(layer, token, stdout, stderr); err != nil {
+			if err := c.runThemeColorSection(token, stdout, stderr); err != nil {
 				return err
 			}
-		case action == themeAction(layer, "font-family"):
-			if err := c.runThemeStringField(layer, "font_family", stdout, stderr); err != nil {
+		case action == themeAction("font-family"):
+			if err := c.runThemeStringField("font_family", stdout, stderr); err != nil {
 				return err
 			}
-		case action == themeAction(layer, "font-size"):
-			if err := c.runThemeStringField(layer, "font_size", stdout, stderr); err != nil {
+		case action == themeAction("font-size"):
+			if err := c.runThemeStringField("font_size", stdout, stderr); err != nil {
 				return err
 			}
-		case action == themeAction(layer, "reset"):
-			if err := c.resetThemeLayer(layer, stdout); err != nil {
+		case action == themeAction("reset"):
+			if err := c.resetTheme(stdout); err != nil {
 				return err
 			}
 		default:
@@ -70,89 +66,66 @@ func (c *settingsCommand) runThemeLayerSection(layer themeLayer, stdout, stderr 
 	}
 }
 
-func (c *settingsCommand) themeLayerOptions(layer themeLayer) (intpickercompat.Options, error) {
-	entries, err := c.themeLayerEntries(layer)
+func (c *settingsCommand) themeOptions() (intpickercompat.Options, error) {
+	entries, err := c.themeEntries()
 	if err != nil {
 		return intpickercompat.Options{}, err
 	}
-	title := "Theme - Global values"
-	prompt := "Settings > Theme > Global > "
-	ui := "settings-theme-global"
-	active := settingsRootTabGlobal
-	if layer == themeLayerProject {
-		title = "Theme - Project overrides"
-		prompt = "Settings > Project > Theme override > "
-		ui = "settings-theme-project"
-		active = settingsRootTabProject
-	}
 	return intpickercompat.Options{
-		UI:         ui,
+		UI:         "settings-theme-global",
 		Entries:    entries,
-		Title:      title,
-		TitleChips: settingsPassiveRootTabChipsLocale(active, c.resolveSettingsProjectContext().hasProject(), c.locale()),
-		Prompt:     prompt,
+		Title:      "Theme - Global values",
+		TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
+		Prompt:     "Settings > Theme > Global > ",
 		Footer:     projmuxFooter("Enter: open/apply  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}, nil
 }
 
-func (c *settingsCommand) themeLayerEntries(layer themeLayer) ([]intpickercompat.Entry, error) {
-	cfg, err := c.themeLayerConfig(layer)
+func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
+	cfg, err := c.currentGlobalProjectConfig()
 	if err != nil {
 		return nil, err
 	}
 	entries := []intpickercompat.Entry{c.backEntry()}
-	if layer == themeLayerProject {
-		ctx := c.resolveSettingsProjectContext()
-		if !ctx.hasProject() {
-			return append(entries, intpickercompat.Entry{
-				Label: c.rowLabelDim("Project theme", "disabled - no project context"),
-				Value: settingsNoopValue,
-			}), nil
-		}
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabelInfo("Project", ctx.Name, filepath.Join(ctx.Path, ".projmux", "config.toml")),
-			Value: settingsNoopValue,
-		})
-	}
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, "Preset selector", themePresetSummary(layer, cfg.Theme)),
-		Value:     themeAction(layer, "preset"),
+		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, "Preset selector", themePresetSummary(cfg.Theme)),
+		Value:     themeAction("preset"),
 		SearchKey: "theme preset selector swatch colors",
 	})
 	for _, token := range theme.ResolverColorTokens {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), themeColorSummary(layer, cfg.Theme, token)),
-			Value:     themeAction(layer, "color:"+string(token)),
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), themeColorSummary(cfg.Theme, token)),
+			Value:     themeAction("color:" + string(token)),
 			SearchKey: "theme color swatch hex input " + string(token),
 		})
 	}
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Font family", themeStringSummary(layer, cfg.Theme.FontFamily, "font_family")),
-			Value: themeAction(layer, "font-family"),
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Font family", themeStringSummary(cfg.Theme.FontFamily, "font_family")),
+			Value: themeAction("font-family"),
 		},
 		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Font size", themeStringSummary(layer, cfg.Theme.FontSize, "font_size")),
-			Value: themeAction(layer, "font-size"),
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Font size", themeStringSummary(cfg.Theme.FontSize, "font_size")),
+			Value: themeAction("font-size"),
 		},
 		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Reset theme values", themeResetDescription(layer)),
-			Value: themeAction(layer, "reset"),
+			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Reset theme values", "remove only global theme values"),
+			Value: themeAction("reset"),
 		},
 	)
 	return entries, nil
 }
 
-func (c *settingsCommand) runThemePresetSection(layer themeLayer, stdout, stderr io.Writer) error {
+func (c *settingsCommand) runThemePresetSection(stdout, stderr io.Writer) error {
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-theme-preset",
-			Entries:    c.themePresetEntries(layer),
+			Entries:    c.themePresetEntries(),
 			Title:      "Theme - Preset selector",
-			TitleChips: settingsPassiveRootTabChipsLocale(themeLayerTab(layer), c.resolveSettingsProjectContext().hasProject(), c.locale()),
-			Prompt:     themeLayerPrompt(layer) + "Preset > ",
+			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
+			Prompt:     "Settings > Theme > Global > Preset > ",
 			Footer:     projmuxFooter("Enter: apply preset  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -169,9 +142,9 @@ func (c *settingsCommand) runThemePresetSection(layer themeLayer, stdout, stderr
 			return nil
 		case action == settingsNoopValue:
 			continue
-		case strings.HasPrefix(action, themeAction(layer, "preset:set:")):
-			preset := strings.TrimPrefix(action, themeAction(layer, "preset:set:"))
-			if err := c.setThemePreset(layer, preset, stdout); err != nil {
+		case strings.HasPrefix(action, themeAction("preset:set:")):
+			preset := strings.TrimPrefix(action, themeAction("preset:set:"))
+			if err := c.setThemePreset(preset, stdout); err != nil {
 				return err
 			}
 		default:
@@ -180,20 +153,10 @@ func (c *settingsCommand) runThemePresetSection(layer themeLayer, stdout, stderr
 	}
 }
 
-func (c *settingsCommand) themePresetEntries(layer themeLayer) []intpickercompat.Entry {
-	cfg, _ := c.themeLayerConfig(layer)
+func (c *settingsCommand) themePresetEntries() []intpickercompat.Entry {
+	cfg, _ := c.currentGlobalProjectConfig()
 	current := strings.TrimSpace(cfg.Theme.Preset)
 	entries := []intpickercompat.Entry{c.backEntry()}
-	if layer == themeLayerProject {
-		glyph, color := settingsGlyphInactive, settingsColorDim
-		if strings.EqualFold(current, "inherit") || current == "" {
-			glyph, color = settingsGlyphToggle, settingsColorAdd
-		}
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabel(glyph, color, "Inherit global preset", "explicitly follow global/fallback preset"),
-			Value: themeAction(layer, "preset:set:inherit"),
-		})
-	}
 	for _, preset := range theme.PresetNames() {
 		glyph, color := settingsGlyphInactive, settingsColorDim
 		if strings.EqualFold(current, preset) {
@@ -201,27 +164,25 @@ func (c *settingsCommand) themePresetEntries(layer themeLayer) []intpickercompat
 		}
 		entries = append(entries, intpickercompat.Entry{
 			Label:     c.rowLabel(glyph, color, preset, themePresetSwatches(preset)),
-			Value:     themeAction(layer, "preset:set:"+preset),
+			Value:     themeAction("preset:set:" + preset),
 			SearchKey: "theme preset " + preset,
 		})
 	}
-	if layer == themeLayerGlobal {
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Clear global preset", "remove only global preset value"),
-			Value: themeAction(layer, "preset:set:"),
-		})
-	}
+	entries = append(entries, intpickercompat.Entry{
+		Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Clear global preset", "remove only global preset value"),
+		Value: themeAction("preset:set:"),
+	})
 	return entries
 }
 
-func (c *settingsCommand) runThemeColorSection(layer themeLayer, token theme.ColorToken, stdout, stderr io.Writer) error {
+func (c *settingsCommand) runThemeColorSection(token theme.ColorToken, stdout, stderr io.Writer) error {
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-theme-color",
-			Entries:    c.themeColorEntries(layer, token),
+			Entries:    c.themeColorEntries(token),
 			Title:      "Theme - " + themeColorLabel(token),
-			TitleChips: settingsPassiveRootTabChipsLocale(themeLayerTab(layer), c.resolveSettingsProjectContext().hasProject(), c.locale()),
-			Prompt:     themeLayerPrompt(layer) + themeColorLabel(token) + " > ",
+			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
+			Prompt:     "Settings > Theme > Global > " + themeColorLabel(token) + " > ",
 			Footer:     projmuxFooter("Enter: apply swatch or open hex input  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -238,13 +199,13 @@ func (c *settingsCommand) runThemeColorSection(layer themeLayer, token theme.Col
 			return nil
 		case action == settingsNoopValue:
 			continue
-		case action == themeAction(layer, "color-type:"+string(token)):
-			if err := c.runThemeColorHexInput(layer, token, stdout, stderr); err != nil {
+		case action == themeAction("color-type:"+string(token)):
+			if err := c.runThemeColorHexInput(token, stdout, stderr); err != nil {
 				return err
 			}
-		case strings.HasPrefix(action, themeAction(layer, "color-set:"+string(token)+":")):
-			value := strings.TrimPrefix(action, themeAction(layer, "color-set:"+string(token)+":"))
-			if err := c.setThemeColor(layer, token, value, stdout); err != nil {
+		case strings.HasPrefix(action, themeAction("color-set:"+string(token)+":")):
+			value := strings.TrimPrefix(action, themeAction("color-set:"+string(token)+":"))
+			if err := c.setThemeColor(token, value, stdout); err != nil {
 				return err
 			}
 		default:
@@ -253,27 +214,21 @@ func (c *settingsCommand) runThemeColorSection(layer themeLayer, token theme.Col
 	}
 }
 
-func (c *settingsCommand) themeColorEntries(layer themeLayer, token theme.ColorToken) []intpickercompat.Entry {
-	cfg, _ := c.themeLayerConfig(layer)
+func (c *settingsCommand) themeColorEntries(token theme.ColorToken) []intpickercompat.Entry {
+	cfg, _ := c.currentGlobalProjectConfig()
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
-		{Label: c.rowLabelInfo("Current", themeColorCurrentValue(layer, cfg.Theme, token), themeColorSummary(layer, cfg.Theme, token)), Value: settingsNoopValue},
-	}
-	if layer == themeLayerProject {
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphToggle, settingsColorAdd, "Inherit global", "store inherit for this project field"),
-			Value: themeAction(layer, "color-set:"+string(token)+":inherit"),
-		})
+		{Label: c.rowLabelInfo("Current", themeColorCurrentValue(cfg.Theme, token), themeColorSummary(cfg.Theme, token)), Value: settingsNoopValue},
 	}
 	if inheritedPreset := strings.TrimSpace(cfg.Theme.Preset); inheritedPreset != "" && !strings.EqualFold(inheritedPreset, "inherit") {
 		entries = append(entries, intpickercompat.Entry{
 			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Use preset value", "clear explicit token override"),
-			Value: themeAction(layer, "color-set:"+string(token)+":"),
+			Value: themeAction("color-set:" + string(token) + ":"),
 		})
 	}
 	entries = append(entries, intpickercompat.Entry{
 		Label: c.rowLabel(settingsGlyphType, settingsColorType, "Type hex value...", "swatch + #RRGGBB input"),
-		Value: themeAction(layer, "color-type:"+string(token)),
+		Value: themeAction("color-type:" + string(token)),
 	})
 	for _, preset := range theme.PresetNames() {
 		hex, ok := theme.PresetColorHex(preset, token)
@@ -282,18 +237,18 @@ func (c *settingsCommand) themeColorEntries(layer themeLayer, token theme.ColorT
 		}
 		entries = append(entries, intpickercompat.Entry{
 			Label:     c.rowLabel(settingsGlyphAdd, settingsColorAdd, "Set "+preset, themeSwatch(hex)+" "+hex),
-			Value:     themeAction(layer, "color-set:"+string(token)+":"+hex),
+			Value:     themeAction("color-set:" + string(token) + ":" + hex),
 			SearchKey: "theme swatch " + preset + " " + string(token) + " " + hex,
 		})
 	}
 	return entries
 }
 
-func (c *settingsCommand) runThemeColorHexInput(layer themeLayer, token theme.ColorToken, stdout, stderr io.Writer) error {
-	cfg, _ := c.themeLayerConfig(layer)
+func (c *settingsCommand) runThemeColorHexInput(token theme.ColorToken, stdout, stderr io.Writer) error {
+	cfg, _ := c.currentGlobalProjectConfig()
 	result, err := c.runPicker(intpickercompat.Options{
 		UI:           "settings-theme-color-hex",
-		Entries:      []intpickercompat.Entry{{Label: c.rowLabelInfo("Swatch", themeSwatch(themeColorCurrentValue(layer, cfg.Theme, token)), "current")}},
+		Entries:      []intpickercompat.Entry{{Label: c.rowLabelInfo("Swatch", themeSwatch(themeColorCurrentValue(cfg.Theme, token)), "current")}},
 		AcceptQuery:  true,
 		InitialQuery: themeColorInitialQuery(cfg.Theme, token),
 		Title:        "Theme - " + themeColorLabel(token) + " hex input",
@@ -313,30 +268,27 @@ func (c *settingsCommand) runThemeColorHexInput(layer themeLayer, token theme.Co
 		fmt.Fprintf(stderr, "invalid theme color %q: use #RRGGBB\n", strings.TrimSpace(result.Query))
 		return nil
 	}
-	return c.setThemeColor(layer, token, hex, stdout)
+	return c.setThemeColor(token, hex, stdout)
 }
 
-func (c *settingsCommand) runThemeStringField(layer themeLayer, field string, stdout, stderr io.Writer) error {
-	cfg, err := c.themeLayerConfig(layer)
+func (c *settingsCommand) runThemeStringField(field string, stdout, stderr io.Writer) error {
+	cfg, err := c.currentGlobalProjectConfig()
 	if err != nil {
 		return err
 	}
 	initial := themeStringFieldValue(cfg.Theme, field)
-	if layer == themeLayerProject && initial == "" {
-		initial = "inherit"
-	}
 	value, ok, err := c.runProjectConfigTyped("Theme - "+field, field+" > ", initial)
 	if err != nil || !ok {
 		return err
 	}
 	value = strings.TrimSpace(value)
-	if field == "font_size" && value != "" && !strings.EqualFold(value, "inherit") {
+	if field == "font_size" && value != "" {
 		if _, err := strconv.Atoi(value); err != nil {
-			fmt.Fprintf(stderr, "invalid font_size %q: use an integer or inherit\n", value)
+			fmt.Fprintf(stderr, "invalid font_size %q: use an integer\n", value)
 			return nil
 		}
 	}
-	return c.updateThemeLayer(layer, stdout, func(themeCfg *theme.ThemeConfig) {
+	return c.updateTheme(stdout, func(themeCfg *theme.ThemeConfig) {
 		setThemeStringField(themeCfg, field, value)
 	})
 }
@@ -348,8 +300,8 @@ func (c *settingsCommand) runEffectiveThemeSection(stdout, stderr io.Writer) err
 			UI:         "settings-theme-effective",
 			Entries:    c.effectiveThemeEntries(),
 			Title:      "Theme - Effective values",
-			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabProject, c.resolveSettingsProjectContext().hasProject(), c.locale()),
-			Prompt:     "Settings > Project > Effective theme > ",
+			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
+			Prompt:     "Settings > Theme > Effective > ",
 			Footer:     projmuxFooter("Enter: back  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -374,19 +326,11 @@ func (c *settingsCommand) runEffectiveThemeSection(stdout, stderr io.Writer) err
 
 func (c *settingsCommand) effectiveThemeEntries() []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{c.backEntry()}
-	ctx := c.resolveSettingsProjectContext()
-	if !ctx.hasProject() {
-		return append(entries, intpickercompat.Entry{Label: c.rowLabelDim("Effective theme", "disabled - no project context"), Value: settingsNoopValue})
-	}
 	globalCfg, globalErr := c.currentGlobalProjectConfig()
-	projectCfg, projectErr := c.currentProjectConfigForTheme()
 	if globalErr != nil {
 		entries = append(entries, intpickercompat.Entry{Label: c.rowLabelDim("Global parse error", globalErr.Error()), Value: settingsNoopValue})
 	}
-	if projectErr != nil {
-		entries = append(entries, intpickercompat.Entry{Label: c.rowLabelDim("Project parse error", projectErr.Error()), Value: settingsNoopValue})
-	}
-	effective := theme.ResolveTheme(globalCfg.Theme, projectCfg.Theme)
+	effective := theme.ResolveTheme(globalCfg.Theme)
 	for _, field := range effective.Fields() {
 		value := field.Value
 		if strings.TrimSpace(value) == "" {
@@ -409,56 +353,35 @@ func (c *settingsCommand) effectiveThemeEntries() []intpickercompat.Entry {
 	return entries
 }
 
-func (c *settingsCommand) themeLayerConfig(layer themeLayer) (hooks.ProjectConfig, error) {
-	if layer == themeLayerProject {
-		ctx := c.resolveSettingsProjectContext()
-		if !ctx.hasProject() {
-			return hooks.ProjectConfig{}, nil
-		}
-		return hooks.LoadProjectConfigFile(settingsProjectConfigPath(ctx))
-	}
-	return c.currentGlobalProjectConfig()
-}
-
-func (c *settingsCommand) setThemePreset(layer themeLayer, preset string, stdout io.Writer) error {
-	return c.updateThemeLayer(layer, stdout, func(themeCfg *theme.ThemeConfig) {
+func (c *settingsCommand) setThemePreset(preset string, stdout io.Writer) error {
+	return c.updateTheme(stdout, func(themeCfg *theme.ThemeConfig) {
 		themeCfg.Preset = strings.TrimSpace(preset)
 	})
 }
 
-func (c *settingsCommand) setThemeColor(layer themeLayer, token theme.ColorToken, value string, stdout io.Writer) error {
+func (c *settingsCommand) setThemeColor(token theme.ColorToken, value string, stdout io.Writer) error {
 	value = strings.TrimSpace(value)
-	if value != "" && !strings.EqualFold(value, "inherit") {
+	if value != "" {
 		hex, ok := theme.NormalizeHexColor(value)
 		if !ok {
 			return fmt.Errorf("invalid theme color %q", value)
 		}
 		value = hex
 	}
-	return c.updateThemeLayer(layer, stdout, func(themeCfg *theme.ThemeConfig) {
+	return c.updateTheme(stdout, func(themeCfg *theme.ThemeConfig) {
 		setThemeColorField(themeCfg, token, value)
 	})
 }
 
-func (c *settingsCommand) resetThemeLayer(layer themeLayer, stdout io.Writer) error {
-	return c.updateThemeLayer(layer, stdout, func(themeCfg *theme.ThemeConfig) {
+func (c *settingsCommand) resetTheme(stdout io.Writer) error {
+	return c.updateTheme(stdout, func(themeCfg *theme.ThemeConfig) {
 		*themeCfg = theme.ThemeConfig{}
 	})
 }
 
-func (c *settingsCommand) updateThemeLayer(layer themeLayer, stdout io.Writer, update func(*theme.ThemeConfig)) error {
+func (c *settingsCommand) updateTheme(stdout io.Writer, update func(*theme.ThemeConfig)) error {
 	if update == nil {
 		return nil
-	}
-	if layer == themeLayerProject {
-		ctx := c.resolveSettingsProjectContext()
-		if !ctx.hasProject() {
-			return errors.New("project theme requires a project context")
-		}
-		return c.saveProjectConfig(ctx, stdout, func(cfg *hooks.ProjectConfig) error {
-			update(&cfg.Theme)
-			return nil
-		})
 	}
 	path, err := c.globalConfigPath()
 	if err != nil {
@@ -476,22 +399,8 @@ func (c *settingsCommand) updateThemeLayer(layer themeLayer, stdout io.Writer, u
 	return err
 }
 
-func themeAction(layer themeLayer, action string) string {
-	return settingsActionPrefixTheme + string(layer) + ":" + action
-}
-
-func themeLayerTab(layer themeLayer) settingsRootTab {
-	if layer == themeLayerProject {
-		return settingsRootTabProject
-	}
-	return settingsRootTabGlobal
-}
-
-func themeLayerPrompt(layer themeLayer) string {
-	if layer == themeLayerProject {
-		return "Settings > Project > Theme override > "
-	}
-	return "Settings > Theme > Global > "
+func themeAction(action string) string {
+	return settingsActionPrefixTheme + action
 }
 
 func parseThemeColorAction(raw string) (theme.ColorToken, bool) {
@@ -506,26 +415,20 @@ func themeColorLabel(token theme.ColorToken) string {
 	return strings.ReplaceAll(string(token), "_", " ")
 }
 
-func themePresetSummary(layer themeLayer, cfg theme.ThemeConfig) string {
+func themePresetSummary(cfg theme.ThemeConfig) string {
 	value := strings.TrimSpace(cfg.Preset)
-	if layer == themeLayerProject && (value == "" || strings.EqualFold(value, "inherit")) {
-		return "inherit global"
-	}
 	if value == "" {
 		return "unset - fallback preset fills missing colors"
 	}
 	state := "set override"
-	if themeLayerHasCustomColors(cfg) {
+	if themeHasCustomColors(cfg) {
 		state = "custom from " + value
 	}
 	return value + " - " + state
 }
 
-func themeColorSummary(layer themeLayer, cfg theme.ThemeConfig, token theme.ColorToken) string {
+func themeColorSummary(cfg theme.ThemeConfig, token theme.ColorToken) string {
 	value := themeColorFieldValue(cfg, token)
-	if layer == themeLayerProject && (value == "" || strings.EqualFold(value, "inherit")) {
-		return "inherit global"
-	}
 	if value == "" {
 		if cfg.Preset != "" {
 			return "from preset " + cfg.Preset
@@ -543,9 +446,9 @@ func themeColorSummary(layer themeLayer, cfg theme.ThemeConfig, token theme.Colo
 	return themeSwatch(value) + " " + value + " - set override"
 }
 
-func themeColorCurrentValue(layer themeLayer, cfg theme.ThemeConfig, token theme.ColorToken) string {
+func themeColorCurrentValue(cfg theme.ThemeConfig, token theme.ColorToken) string {
 	value := themeColorFieldValue(cfg, token)
-	if value != "" && !strings.EqualFold(value, "inherit") {
+	if value != "" {
 		return value
 	}
 	if cfg.Preset != "" && !strings.EqualFold(cfg.Preset, "inherit") {
@@ -553,15 +456,12 @@ func themeColorCurrentValue(layer themeLayer, cfg theme.ThemeConfig, token theme
 			return hex
 		}
 	}
-	if layer == themeLayerProject {
-		return "inherit"
-	}
 	return "(unset)"
 }
 
 func themeColorInitialQuery(cfg theme.ThemeConfig, token theme.ColorToken) string {
 	value := themeColorFieldValue(cfg, token)
-	if value != "" && !strings.EqualFold(value, "inherit") {
+	if value != "" {
 		return value
 	}
 	if cfg.Preset != "" && !strings.EqualFold(cfg.Preset, "inherit") {
@@ -572,22 +472,12 @@ func themeColorInitialQuery(cfg theme.ThemeConfig, token theme.ColorToken) strin
 	return "#"
 }
 
-func themeStringSummary(layer themeLayer, value, field string) string {
+func themeStringSummary(value, field string) string {
 	value = strings.TrimSpace(value)
-	if layer == themeLayerProject && (value == "" || strings.EqualFold(value, "inherit")) {
-		return "inherit global"
-	}
 	if value == "" {
 		return "unset"
 	}
 	return value + " - set override " + field
-}
-
-func themeResetDescription(layer themeLayer) string {
-	if layer == themeLayerProject {
-		return "remove only project theme override values"
-	}
-	return "remove only global theme values"
 }
 
 func themeSwatch(hex string) string {
@@ -614,7 +504,7 @@ func themePresetSwatches(preset string) string {
 	return strings.Join(parts, " ")
 }
 
-func themeLayerHasCustomColors(cfg theme.ThemeConfig) bool {
+func themeHasCustomColors(cfg theme.ThemeConfig) bool {
 	for _, token := range theme.ResolverColorTokens {
 		if strings.TrimSpace(themeColorFieldValue(cfg, token)) != "" {
 			return true

@@ -823,7 +823,7 @@ func waitForNativeOutput(t *testing.T, out *lockedBuffer, wants ...string) {
 func TestNativeInteractiveUsesOptionsThemeForFrame(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{
+	effective := theme.ResolveTheme(theme.ThemeConfig{
 		Background: "#010203",
 		Foreground: "#aabbcc",
 	})
@@ -1183,7 +1183,7 @@ func TestNativeLineModeExplicitLocaleOverridesEnvironmentPrompt(t *testing.T) {
 func TestNativeInteractiveSettingsAIBadgeStyleLongPreviewClampsFrameRows(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
 	frameStyle := nativeFrameStyleForTest(t, effective)
 	label := "◉  " + theme.ANSIAccentActionStart + "Preview emoji" + theme.ANSIReset +
 		"  " + theme.ANSITextDimStart + "⏳ ✅ 🔄" + theme.ANSIReset
@@ -1245,7 +1245,7 @@ func TestNativeInteractiveSettingsAIBadgeStyleLongPreviewClampsFrameRows(t *test
 func TestNativeInteractiveSettingsAppearanceParentLongPreviewRowsClampFrame(t *testing.T) {
 	t.Setenv("LANG", "ko_KR.UTF-8")
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
 	items := []Item{
 		{
 			Label: nativeSettingsAppearanceRowForTest("AI badge style", "emoji - ⏳ prompt ✅ complete 🔄 working extra tail that clamps"),
@@ -1323,7 +1323,7 @@ func settingsAppearanceParentRowForTest(plain string) bool {
 func TestNativeInteractiveNoFooterBlankRowsUseThemeBackground(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
 	frameStyle := nativeFrameStyleForTest(t, effective)
 	items := []Item{{Title: "\x1b[31mapi\x1b[0m", Value: "/repo/api"}}
 	frame := nativeInteractiveFrame(Options{
@@ -1358,7 +1358,7 @@ func TestNativeInteractiveNoFooterBlankRowsUseThemeBackground(t *testing.T) {
 func TestNativeInteractiveSplitPreviewGapsUseThemeBackground(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
 	frameStyle := nativeFrameStyleForTest(t, effective)
 	items := []Item{
 		{Title: "api", Value: "/repo/api", PreviewTarget: "/repo/api"},

@@ -83,8 +83,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsSectionProjectTrust:        {Name: "Trust", Axis: settingsAxisProject},
 	settingsSectionEffectiveMerge:      {Name: "Effective merge view", Axis: settingsAxisProject},
 	settingsSectionGlobalTheme:         {Name: "Theme", Axis: settingsAxisGlobal},
-	settingsSectionProjectTheme:        {Name: "Theme override", Axis: settingsAxisProject},
-	settingsSectionEffectiveTheme:      {Name: "Effective theme", Axis: settingsAxisProject},
+	settingsSectionEffectiveTheme:      {Name: "Effective theme", Axis: settingsAxisGlobal},
 	settingsSectionProjectSessionState: {Name: "Session State", Axis: settingsAxisProject},
 	settingsSectionAI:                  {Name: "AI Settings", Axis: settingsAxisGlobal},
 	settingsSectionNotifications:       {Name: "Notifications", Axis: settingsAxisGlobal},
@@ -181,7 +180,6 @@ const (
 	settingsSectionProjectTrust            = "section:project-trust"
 	settingsSectionEffectiveMerge          = "section:effective-merge"
 	settingsSectionGlobalTheme             = "section:theme-global"
-	settingsSectionProjectTheme            = "section:theme-project"
 	settingsSectionEffectiveTheme          = "section:theme-effective"
 	settingsSectionProjectSessionState     = "section:project-sessionstate"
 	settingsSectionKeybindings             = "section:keybindings"
@@ -338,10 +336,7 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 		return c.runEffectiveMergeSection(stdout, stderr)
 	}
 	if section == settingsSectionGlobalTheme {
-		return c.runThemeLayerSection(themeLayerGlobal, stdout, stderr)
-	}
-	if section == settingsSectionProjectTheme {
-		return c.runThemeLayerSection(themeLayerProject, stdout, stderr)
+		return c.runThemeSection(stdout, stderr)
 	}
 	if section == settingsSectionEffectiveTheme {
 		return c.runEffectiveThemeSection(stdout, stderr)
@@ -621,6 +616,10 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 			Value: settingsSectionGlobalTheme,
 		},
 		{
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Effective theme", "final resolved global > fallback values with source labels"),
+			Value: settingsSectionEffectiveTheme,
+		},
+		{
 			Label: c.sessionStateSettingsRootLabelLocale(locale),
 			Value: settingsSectionSessionState,
 		},
@@ -746,14 +745,6 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 				Label: settingsRootLabelDim("Effective merge view", "disabled - no project context"),
 				Value: settingsNoopValue,
 			},
-			{
-				Label: settingsRootLabelDim("Theme override", "disabled - no project context"),
-				Value: settingsNoopValue,
-			},
-			{
-				Label: settingsRootLabelDim("Effective theme", "disabled - no project context"),
-				Value: settingsNoopValue,
-			},
 		}
 	}
 
@@ -773,14 +764,6 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 			Label:     settingsRootLabel(settingsGlyphOpen, "Project recipe", "declare env, kube, startup"),
 			Value:     settingsSectionProjectConfig,
 			SearchKey: "Project recipe config.toml project config env kube startup",
-		},
-		{
-			Label: settingsRootLabel(settingsGlyphOpen, "Theme override", "project preset, colors, and inherit global fields"),
-			Value: settingsSectionProjectTheme,
-		},
-		{
-			Label: settingsRootLabel(settingsGlyphOpen, "Effective theme", "final resolved values with source labels"),
-			Value: settingsSectionEffectiveTheme,
 		},
 		{
 			Label: settingsRootLabel(settingsGlyphOpen, "Effective merge view", "global + project merge with source labels"),

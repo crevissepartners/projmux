@@ -5,7 +5,7 @@ import "testing"
 func TestEvaluateFontApplicationUnsupportedIsNotApplied(t *testing.T) {
 	t.Parallel()
 
-	effective := ResolveTheme(ThemeConfig{}, ThemeConfig{
+	effective := ResolveTheme(ThemeConfig{
 		FontFamily: "Cascadia Mono",
 		FontSize:   "12",
 	})
@@ -25,7 +25,7 @@ func TestEvaluateFontApplicationUnsupportedIsNotApplied(t *testing.T) {
 func TestEvaluateFontApplicationUnsetIsNotRequested(t *testing.T) {
 	t.Parallel()
 
-	got := EvaluateFontApplication(ResolveTheme(ThemeConfig{}, ThemeConfig{}), NoFontCapability())
+	got := EvaluateFontApplication(ResolveTheme(ThemeConfig{}), NoFontCapability())
 
 	if got.Status != FontApplyNotRequested {
 		t.Fatalf("font apply status = %q, want %q", got.Status, FontApplyNotRequested)
