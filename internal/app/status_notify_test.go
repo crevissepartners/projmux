@@ -197,16 +197,17 @@ func TestCriticalNotifySeverityDoesNotDriveAIStatusBadgePalette(t *testing.T) {
 	if got := notifyBadgeOpen(entry.Severity); got != notifyBadgeCritOpen {
 		t.Fatalf("notify severity palette = %q, want critical queue palette %q", got, notifyBadgeCritOpen)
 	}
-	if got := tmuxAIBadgeKindFg(aiBadgeKindApprovalRequired); got != theme.TmuxAIBadgeActionRequiredFg {
+	fallbackRoles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	if got := tmuxAIBadgeKindFg(aiBadgeKindApprovalRequired, fallbackRoles); got != theme.TmuxAIBadgeActionRequiredFg {
 		t.Fatalf("approval-required status badge fg = %q, want action-required %q", got, theme.TmuxAIBadgeActionRequiredFg)
 	}
-	if got := tmuxAIBadgeKindFg(aiBadgeKindApprovalRequired); got == tmuxStateCriticalFg {
+	if got := tmuxAIBadgeKindFg(aiBadgeKindApprovalRequired, fallbackRoles); got == tmuxStateCriticalFg {
 		t.Fatalf("approval-required status badge fg = %q, must not follow critical notify severity", got)
 	}
-	if got := tmuxAIBadgeKindFg(aiBadgeKindResponseComplete); got != theme.TmuxAIBadgeSuccessFg {
+	if got := tmuxAIBadgeKindFg(aiBadgeKindResponseComplete, fallbackRoles); got != theme.TmuxAIBadgeSuccessFg {
 		t.Fatalf("response-complete status badge fg = %q, want success %q", got, theme.TmuxAIBadgeSuccessFg)
 	}
-	if got := tmuxAIBadgeKindFg(aiBadgeKindInProgress); got != theme.TmuxAIBadgeProgressFg {
+	if got := tmuxAIBadgeKindFg(aiBadgeKindInProgress, fallbackRoles); got != theme.TmuxAIBadgeProgressFg {
 		t.Fatalf("in-progress status badge fg = %q, want progress %q", got, theme.TmuxAIBadgeProgressFg)
 	}
 }

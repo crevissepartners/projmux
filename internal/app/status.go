@@ -499,13 +499,8 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 // carries a notification-colored background; badges are stronger blocks on top
 // of that same line instead of separate outline glyphs.
 const (
-	notifyLineOpen      = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateProgressFg + "]"
-	notifyLineDimOpen   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + theme.TmuxStateAheadFg + "]"
-	notifyLineCountOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateProgressFg + ",bold]"
-	notifyProjectOpen   = "#[bg=" + theme.TmuxAttentionProjectBg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
-	notifyBadgeInfoOpen = "#[bg=" + tmuxStateProgressFg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
-	notifyBadgeWarnOpen = "#[bg=" + tmuxStateWarningFg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
-	notifyBadgeCritOpen = "#[bg=" + tmuxStateCriticalFg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
+	notifyLineDimOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + theme.TmuxStateAheadFg + "]"
+	notifyProjectOpen = "#[bg=" + theme.TmuxAttentionProjectBg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
 	// Inactive/gone badges share a muted palette so target-state hints are
 	// visually distinct from the active NEED/INFO/WARN/CRIT badges without
 	// stealing focus. The colours land in the same neutral grey family the
@@ -515,13 +510,29 @@ const (
 	notifyAgentOpen      = "#[bg=" + tmuxAccentAIBg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
 	notifyAgentClaude    = notifyAgentOpen
 	notifyAgentCodex     = notifyAgentOpen
-	notifySeverityInfo   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateProgressFg + "]"
-	notifySeverityWarn   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateWarningFg + "]"
-	notifySeverityCrit   = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateCriticalFg + ",bold]"
 	notifyIcon           = "●"
 	notifyMidDot         = "·"
 	notifyEllipsis       = "…"
 	notifyReset          = "#[default]"
+)
+
+// State/severity-colored notify tokens. These source their state colors from
+// the semantic role map (single source shared with statusbar/usage HUD) instead
+// of the bare tmux literal aliases. The status/notify render path carries no
+// explicit EffectiveTheme today, so the fallback role map is used here; full
+// subprocess theme plumbing is a later phase. The fallback role values equal the
+// historical literals, so the generated strings are byte-identical.
+var (
+	notifyStateRoles = theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+
+	notifyLineOpen      = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateProgress + "]"
+	notifyLineCountOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateProgress + ",bold]"
+	notifyBadgeInfoOpen = "#[bg=" + notifyStateRoles.StateProgress + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
+	notifyBadgeWarnOpen = "#[bg=" + notifyStateRoles.StateWarning + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
+	notifyBadgeCritOpen = "#[bg=" + notifyStateRoles.StateCritical + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
+	notifySeverityInfo  = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateProgress + "]"
+	notifySeverityWarn  = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateWarning + "]"
+	notifySeverityCrit  = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateCritical + ",bold]"
 )
 
 // known agent prefixes recognised when stripping a leading `<agent>:` from

@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const (
@@ -243,7 +244,7 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 			_, err := fmt.Fprint(stdout, " ")
 			return err
 		}
-		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAIBadgeKindFg(badgeKind)+"]"+glyph)
+		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAIBadgeKindFg(badgeKind, theme.RenderRolesFromEffective(theme.EffectiveTheme{}))+"]"+glyph)
 		return err
 	}
 	_, err = fmt.Fprint(stdout, " ")
@@ -437,16 +438,16 @@ func isResponseCompleteLiveBadgeKind(kind string) bool {
 	return normalizeAIBadgeKind(kind) == aiBadgeKindResponseComplete || kind == "response_ready"
 }
 
-func tmuxAIBadgeKindFg(kind string) string {
+func tmuxAIBadgeKindFg(kind string, roles theme.RenderRoles) string {
 	switch aibadge.ThemeRole(kind) {
 	case aibadge.RoleActionRequired:
-		return tmuxAIBadgeActionRequiredFg
+		return roles.AIActionRequired
 	case aibadge.RoleSuccess:
-		return tmuxAIBadgeSuccessFg
+		return roles.AISuccess
 	case aibadge.RoleProgress:
-		return tmuxAIBadgeProgressFg
+		return roles.AIProgress
 	default:
-		return tmuxAIBadgeProgressFg
+		return roles.AIProgress
 	}
 }
 

@@ -824,8 +824,13 @@ func renderTextPair(m modelDisplay, label string) string {
 // renderHUDPair renders a single `<window> [bar] N%` substring with color
 // escapes. Used for both 5h and weekly pairs in the HUD tiers.
 func renderHUDPair(window string, pct float64) string {
-	color := usage.BarColorForPct(pct)
-	bar := usage.RenderColoredBar(pct, color, usage.BarEmptyColor)
+	// State/severity colors come from the semantic role map (single source
+	// shared with notify/statusbar). The status subprocess does not yet thread
+	// an explicit EffectiveTheme, so the fallback role map is used here; full
+	// runtime theme plumbing for the usage HUD is a later phase.
+	roles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	color := usage.BarColorForPct(pct, roles)
+	bar := usage.RenderColoredBar(pct, color, usage.BarEmptyColorForRoles(roles))
 	// `#[default]` after the bar restores label fg before the weekly text. The
 	// percent number then re-applies the same color as the bar fill so the
 	// numeric matches visually (a red bar's 90% reads red too).

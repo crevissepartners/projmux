@@ -3,6 +3,8 @@ package usage
 import (
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 func TestBarFillCountBoundaryCases(t *testing.T) {
@@ -93,10 +95,40 @@ func TestBarColorForPctRamp(t *testing.T) {
 		{101, "colour160,bold"},
 		{300, "colour160,bold"},
 	}
+	roles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
 	for _, tc := range cases {
-		if got := BarColorForPct(tc.pct); got != tc.want {
+		if got := BarColorForPct(tc.pct, roles); got != tc.want {
 			t.Fatalf("BarColorForPct(%v) = %q, want %q", tc.pct, got, tc.want)
 		}
+	}
+}
+
+func TestBarColorForPctRepaintsFromExplicitThemeWarningCritical(t *testing.T) {
+	t.Parallel()
+
+	fallback := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	explicit := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{
+		Warning:  "#00ff00",
+		Critical: "#0000ff",
+	}))
+
+	// Warning ramp (80-95%) follows the explicit warning token.
+	if BarColorForPct(85, explicit) == BarColorForPct(85, fallback) {
+		t.Fatalf("usage warning color did not repaint from explicit theme")
+	}
+	if BarColorForPct(85, explicit) != explicit.StateWarning {
+		t.Fatalf("usage warning color = %q, want explicit state.warning %q", BarColorForPct(85, explicit), explicit.StateWarning)
+	}
+	// Critical ramp (95%+) follows the explicit critical token.
+	if BarColorForPct(96, explicit) == BarColorForPct(96, fallback) {
+		t.Fatalf("usage critical color did not repaint from explicit theme")
+	}
+	if BarColorForPct(96, explicit) != explicit.StateCritical {
+		t.Fatalf("usage critical color = %q, want explicit state.critical %q", BarColorForPct(96, explicit), explicit.StateCritical)
+	}
+	// Over-limit keeps the ,bold suffix on the repainted critical.
+	if BarColorForPct(150, explicit) != explicit.StateCritical+",bold" {
+		t.Fatalf("usage over-limit color = %q, want explicit critical,bold", BarColorForPct(150, explicit))
 	}
 }
 

@@ -87,23 +87,31 @@ func RenderColoredBar(pct float64, fillColor, emptyColor string) string {
 }
 
 // BarColorForPct returns the tmux color spec for the bar fill at the
-// supplied percentage. Ramps:
+// supplied percentage, sourced from the semantic state role map (single
+// source shared with the notify/statusbar severity cluster). Ramps:
 //
-//	<80%   → muted teal
-//	80-95% → amber warning
-//	95%+   → red critical
-//	>100%  → red,bold (over-limit)
-func BarColorForPct(pct float64) string {
+//	<80%   → state.success (muted teal)
+//	80-95% → state.warning (amber)
+//	95%+   → state.critical (red)
+//	>100%  → state.critical,bold (over-limit)
+func BarColorForPct(pct float64, roles theme.RenderRoles) string {
 	switch {
 	case pct > 100:
-		return theme.TmuxUsageCriticalBoldFg
+		return roles.StateCritical + ",bold"
 	case pct >= 95:
-		return theme.TmuxUsageCriticalFg
+		return roles.StateCritical
 	case pct >= 80:
-		return theme.TmuxUsageWarningFg
+		return roles.StateWarning
 	default:
-		return theme.TmuxUsageOKFg
+		return roles.StateSuccess
 	}
+}
+
+// BarEmptyColorForRoles returns the tmux color used for empty bar cells. It is
+// the muted/gone bg literal (TmuxUsageEmptyFg = TmuxGoneBg) carried as the
+// usage-empty role; not yet runtime-derived (Phase 6 candidate).
+func BarEmptyColorForRoles(_ theme.RenderRoles) string {
+	return theme.TmuxUsageEmptyFg
 }
 
 // BarEmptyColor is the tmux color used for empty bar cells across the HUD.
