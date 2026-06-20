@@ -562,6 +562,22 @@ func (c *tmuxCommand) runPopupSessions(args []string, stderr io.Writer) error {
 	return nil
 }
 
+// appConfigThemeSource resolves the global user theme for generated tmux
+// config (standalone snippet and app config alike) so an explicit global
+// `[theme]` actually repaints tmux chrome — status/window styles, pane and
+// active-pane borders, and the active-pane background tint. It degrades to the
+// built-in fallback when the global config cannot be read, mirroring the
+// per-popup body-style path, so config generation never fails on a missing or
+// malformed user config. Theme is a global preference, so no project path
+// participates.
+func (c *tmuxCommand) appConfigThemeSource() renderThemeSource {
+	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, "")
+	if err != nil {
+		return fallbackRenderThemeSource()
+	}
+	return source
+}
+
 func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) error {
 	binaryPath, err := c.parseConfigBinary(args, "tmux print-config", stderr)
 	if err != nil {
@@ -571,7 +587,7 @@ func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, fallbackRenderThemeSource().tmuxStandaloneConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, c.appConfigThemeSource().tmuxStandaloneConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -584,7 +600,7 @@ func (c *tmuxCommand) runPrintAppConfig(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -625,7 +641,7 @@ func (c *tmuxCommand) runInstall(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	if err := c.writeFile(include, []byte(fallbackRenderThemeSource().tmuxStandaloneConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(include, []byte(c.appConfigThemeSource().tmuxStandaloneConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return fmt.Errorf("write tmux standalone config: %w", err)
 	}
 
@@ -681,7 +697,7 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 	if err != nil {
 		return "", err
 	}
-	if err := c.writeFile(config, []byte(fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(config, []byte(c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return "", fmt.Errorf("write tmux app config: %w", err)
 	}
 	return config, nil
