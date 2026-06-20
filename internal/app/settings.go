@@ -4478,12 +4478,12 @@ func (c *settingsCommand) setAIBadgeStyle(value string) error {
 		if err := c.runCommand("tmux", "set-option", "-g", aiBadgeStyleTmuxOption, string(style)); err != nil {
 			return fmt.Errorf("set live tmux AI badge style option: %w", err)
 		}
-		if err := c.runCommand("tmux", "set-option", "-g", "pane-border-format", tmuxPaneBorderFormatWithAIBadgeStyle(style)); err != nil {
-			return fmt.Errorf("set live tmux pane border format: %w", err)
-		}
 		source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, c.resolveSettingsProjectContext().Path)
 		if err != nil {
 			return fmt.Errorf("resolve live tmux theme: %w", err)
+		}
+		if err := c.runCommand("tmux", "set-option", "-g", "pane-border-format", tmuxPaneBorderFormatWithAIBadgeStyle(style, theme.RenderRolesFromEffective(source.effective))); err != nil {
+			return fmt.Errorf("set live tmux pane border format: %w", err)
 		}
 		binaryPath, err := os.Executable()
 		if err != nil {
