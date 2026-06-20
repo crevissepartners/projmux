@@ -44,14 +44,22 @@ onto these stable names:
 | `accent` | pointer, primary action, highlight, active affordance | native picker pointer/highlight, settings actions, chips |
 | `critical` | destructive/error/critical state | settings remove/quit, notify critical badge, statusbar critical usage |
 | `warning` | progress, pending, warning, busy state | AI busy/thinking indicators, notify pending title, usage warning |
+| `progress` | in-progress / working state color | AI progress badge, statusbar progress, state.progress |
+| `success` | completed / success state color | AI success badge, state.success |
+| `action_required` | AI needs-input/approval badge color | AI action-required badge (independent of `critical`) |
+| `pane_active_bg` | active-pane background tint | active-pane window-active-style tint (tmux pane chrome) |
+| `focus` | active-pane border color | active-pane border (tmux pane chrome) |
 
-AI semantic status badges use renderer-only state roles layered on top of that
-inventory: `progress`, `success`, and `action_required`. The fallback contract
-is progress yellow, success green, action-required amber-orange. These roles are
-separate from notify queue severity and desktop notification urgency; an AI
-approval row can be `critical` in the notify queue while the live status badge
-uses `action_required`, not red. `critical` remains reserved for error, failure,
-destructive, over-limit, or risk states.
+`progress`, `success`, and `action_required` are now **public** `[theme]` keys
+(Phase 6), no longer renderer-only candidates. The fallback contract is progress
+yellow, success green, action-required amber-orange. These roles are separate
+from notify queue severity and desktop notification urgency; an AI approval row
+can be `critical` in the notify queue while the live status badge uses
+`action_required`, not red. `action_required` is independent of `critical`:
+repainting `critical` never changes it. `critical` remains reserved for error,
+failure, destructive, over-limit, or risk states. `pane_active_bg` and `focus`
+are also public keys driving the active-pane tint and border (tmux-only pane
+chrome, with no ANSI/native role).
 
 Renderer-only role names such as `accent.ai`, `state.progress`, `git.branch`,
 and trust colors remain in `internal/theme/palette.go` until Phase 2+ maps each

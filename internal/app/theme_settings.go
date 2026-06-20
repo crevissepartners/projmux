@@ -94,9 +94,10 @@ func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 		Value:     themeAction("preset"),
 		SearchKey: "theme preset selector swatch colors",
 	})
+	effective := theme.ResolveTheme(cfg.Theme)
 	for _, token := range theme.ResolverColorTokens {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), themeColorSummary(cfg.Theme, token)),
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), themeColorSummaryEffective(cfg.Theme, effective, token)),
 			Value:     themeAction("color:" + string(token)),
 			SearchKey: "theme color swatch hex input " + string(token),
 		})
@@ -107,6 +108,14 @@ func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 			Value: themeAction("reset"),
 		},
 	)
+	// Surface resolver warnings inline (the removed Effective theme view used to
+	// show these). Dim info rows after the token rows.
+	for _, warning := range effective.Warnings {
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabelDim("Warning "+string(warning.Source)+" "+warning.Field, warning.Message),
+			Value: settingsNoopValue,
+		})
+	}
 	return entries, nil
 }
 
@@ -263,66 +272,6 @@ func (c *settingsCommand) runThemeColorHexInput(token theme.ColorToken, stdout, 
 	return c.setThemeColor(token, hex, stdout)
 }
 
-func (c *settingsCommand) runEffectiveThemeSection(stdout, stderr io.Writer) error {
-	_ = stdout
-	for {
-		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings-theme-effective",
-			Entries:    c.effectiveThemeEntries(),
-			Title:      "Theme - Effective values",
-			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
-			Prompt:     "Settings > Theme > Effective > ",
-			Footer:     projmuxFooter("Enter: back  |  Back row: parent "),
-			ExpectKeys: []string{"enter"},
-			Bindings:   settingsCloseBindings(),
-		})
-		if err != nil {
-			return err
-		}
-		action := strings.TrimSpace(result.Value)
-		if result.Key != "enter" || action == "" {
-			return errSettingsClosed
-		}
-		switch action {
-		case settingsBackValue:
-			return nil
-		case settingsNoopValue:
-			continue
-		default:
-			return fmt.Errorf("unknown effective theme action: %s", action)
-		}
-	}
-}
-
-func (c *settingsCommand) effectiveThemeEntries() []intpickercompat.Entry {
-	entries := []intpickercompat.Entry{c.backEntry()}
-	globalCfg, globalErr := c.currentGlobalProjectConfig()
-	if globalErr != nil {
-		entries = append(entries, intpickercompat.Entry{Label: c.rowLabelDim("Global parse error", globalErr.Error()), Value: settingsNoopValue})
-	}
-	effective := theme.ResolveTheme(globalCfg.Theme)
-	for _, field := range effective.Fields() {
-		value := field.Value
-		if strings.TrimSpace(value) == "" {
-			value = "(unset)"
-		}
-		if isThemeColorField(field.Name) {
-			value = themeSwatch(value) + " " + value
-		}
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabelInfo(field.Name, value, string(field.Source)),
-			Value: settingsNoopValue,
-		})
-	}
-	for _, warning := range effective.Warnings {
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabelDim("Warning "+string(warning.Source)+" "+warning.Field, warning.Message),
-			Value: settingsNoopValue,
-		})
-	}
-	return entries
-}
-
 func (c *settingsCommand) setThemePreset(preset string, stdout io.Writer) error {
 	return c.updateTheme(stdout, func(themeCfg *theme.ThemeConfig) {
 		themeCfg.Preset = strings.TrimSpace(preset)
@@ -416,6 +365,63 @@ func themeColorSummary(cfg theme.ThemeConfig, token theme.ColorToken) string {
 	return themeSwatch(value) + " " + value + " - set override"
 }
 
+// themeColorSummaryEffective renders the Global-view summary for a token. When
+// the token is set globally (explicit value or via a global preset) it keeps the
+// standard set/override/preset summary. When the token is UNSET globally it shows
+// the resolved fallback value with a DIM swatch, a "(fallback)" label, and the
+// "fallback" source so the merged Global view surfaces the effective value inline
+// (replacing the removed Effective theme view).
+func themeColorSummaryEffective(cfg theme.ThemeConfig, effective theme.EffectiveTheme, token theme.ColorToken) string {
+	if themeColorFieldValue(cfg, token) != "" || strings.TrimSpace(cfg.Preset) != "" {
+		return themeColorSummary(cfg, token)
+	}
+	field := effectiveColorField(effective, token)
+	value := strings.TrimSpace(field.Value.Hex)
+	if value == "" {
+		return "unset"
+	}
+	return settingsDim(themeSwatch(value)+" "+value+" (fallback)") + " - " + string(field.Source)
+}
+
+// settingsDim wraps text in the SGR dim attribute so fallback rows read as muted
+// in the Global theme view.
+func settingsDim(s string) string {
+	return "\x1b[2m" + s + "\x1b[0m"
+}
+
+func effectiveColorField(effective theme.EffectiveTheme, token theme.ColorToken) theme.ColorField {
+	switch token {
+	case theme.TokenBackground:
+		return effective.Background
+	case theme.TokenSurface:
+		return effective.Surface
+	case theme.TokenSurfaceActive:
+		return effective.SurfaceActive
+	case theme.TokenForeground:
+		return effective.Foreground
+	case theme.TokenMuted:
+		return effective.Muted
+	case theme.TokenAccent:
+		return effective.Accent
+	case theme.TokenCritical:
+		return effective.Critical
+	case theme.TokenWarning:
+		return effective.Warning
+	case theme.TokenProgress:
+		return effective.Progress
+	case theme.TokenSuccess:
+		return effective.Success
+	case theme.TokenActionRequired:
+		return effective.ActionRequired
+	case theme.TokenPaneActiveBg:
+		return effective.PaneActiveBg
+	case theme.TokenFocus:
+		return effective.Focus
+	default:
+		return theme.ColorField{}
+	}
+}
+
 func themeColorCurrentValue(cfg theme.ThemeConfig, token theme.ColorToken) string {
 	value := themeColorFieldValue(cfg, token)
 	if value != "" {
@@ -493,6 +499,16 @@ func themeColorFieldValue(cfg theme.ThemeConfig, token theme.ColorToken) string 
 		return strings.TrimSpace(cfg.Critical)
 	case theme.TokenWarning:
 		return strings.TrimSpace(cfg.Warning)
+	case theme.TokenProgress:
+		return strings.TrimSpace(cfg.Progress)
+	case theme.TokenSuccess:
+		return strings.TrimSpace(cfg.Success)
+	case theme.TokenActionRequired:
+		return strings.TrimSpace(cfg.ActionRequired)
+	case theme.TokenPaneActiveBg:
+		return strings.TrimSpace(cfg.PaneActiveBg)
+	case theme.TokenFocus:
+		return strings.TrimSpace(cfg.Focus)
 	default:
 		return ""
 	}
@@ -516,14 +532,15 @@ func setThemeColorField(cfg *theme.ThemeConfig, token theme.ColorToken, value st
 		cfg.Critical = value
 	case theme.TokenWarning:
 		cfg.Warning = value
+	case theme.TokenProgress:
+		cfg.Progress = value
+	case theme.TokenSuccess:
+		cfg.Success = value
+	case theme.TokenActionRequired:
+		cfg.ActionRequired = value
+	case theme.TokenPaneActiveBg:
+		cfg.PaneActiveBg = value
+	case theme.TokenFocus:
+		cfg.Focus = value
 	}
-}
-
-func isThemeColorField(name string) bool {
-	for _, token := range theme.ResolverColorTokens {
-		if name == string(token) {
-			return true
-		}
-	}
-	return false
 }

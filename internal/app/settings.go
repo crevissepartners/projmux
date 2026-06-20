@@ -83,7 +83,6 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsSectionProjectTrust:        {Name: "Trust", Axis: settingsAxisProject},
 	settingsSectionEffectiveMerge:      {Name: "Effective merge view", Axis: settingsAxisProject},
 	settingsSectionGlobalTheme:         {Name: "Theme", Axis: settingsAxisGlobal},
-	settingsSectionEffectiveTheme:      {Name: "Effective theme", Axis: settingsAxisGlobal},
 	settingsSectionProjectSessionState: {Name: "Session State", Axis: settingsAxisProject},
 	settingsSectionAI:                  {Name: "AI Settings", Axis: settingsAxisGlobal},
 	settingsSectionNotifications:       {Name: "Notifications", Axis: settingsAxisGlobal},
@@ -180,7 +179,6 @@ const (
 	settingsSectionProjectTrust            = "section:project-trust"
 	settingsSectionEffectiveMerge          = "section:effective-merge"
 	settingsSectionGlobalTheme             = "section:theme-global"
-	settingsSectionEffectiveTheme          = "section:theme-effective"
 	settingsSectionProjectSessionState     = "section:project-sessionstate"
 	settingsSectionKeybindings             = "section:keybindings"
 	settingsSectionProject                 = "section:project-picker"
@@ -338,9 +336,6 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionGlobalTheme {
 		return c.runThemeSection(stdout, stderr)
-	}
-	if section == settingsSectionEffectiveTheme {
-		return c.runEffectiveThemeSection(stdout, stderr)
 	}
 	if section == settingsSectionProjectSessionState {
 		return c.runProjectSessionStateSection(stdout, stderr)
@@ -615,10 +610,6 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 		{
 			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Theme", "global preset, color tokens, and font hints"),
 			Value: settingsSectionGlobalTheme,
-		},
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Effective theme", "final resolved global > fallback values with source labels"),
-			Value: settingsSectionEffectiveTheme,
 		},
 		{
 			Label: c.sessionStateSettingsRootLabelLocale(locale),

@@ -25,14 +25,19 @@ const (
 type ColorToken string
 
 const (
-	TokenBackground    ColorToken = "background"
-	TokenSurface       ColorToken = "surface"
-	TokenSurfaceActive ColorToken = "surface_active"
-	TokenForeground    ColorToken = "foreground"
-	TokenMuted         ColorToken = "muted"
-	TokenAccent        ColorToken = "accent"
-	TokenCritical      ColorToken = "critical"
-	TokenWarning       ColorToken = "warning"
+	TokenBackground     ColorToken = "background"
+	TokenSurface        ColorToken = "surface"
+	TokenSurfaceActive  ColorToken = "surface_active"
+	TokenForeground     ColorToken = "foreground"
+	TokenMuted          ColorToken = "muted"
+	TokenAccent         ColorToken = "accent"
+	TokenCritical       ColorToken = "critical"
+	TokenWarning        ColorToken = "warning"
+	TokenProgress       ColorToken = "progress"
+	TokenSuccess        ColorToken = "success"
+	TokenActionRequired ColorToken = "action_required"
+	TokenPaneActiveBg   ColorToken = "pane_active_bg"
+	TokenFocus          ColorToken = "focus"
 )
 
 // ResolverColorTokens is the stable display/serialization order for theme
@@ -46,21 +51,31 @@ var ResolverColorTokens = []ColorToken{
 	TokenAccent,
 	TokenCritical,
 	TokenWarning,
+	TokenProgress,
+	TokenSuccess,
+	TokenActionRequired,
+	TokenPaneActiveBg,
+	TokenFocus,
 }
 
 // ThemeConfig is the user-configurable theme section from global or project
 // config.toml. Values are intentionally raw: validation belongs to the
 // resolver so an invalid layer can warn and fall through to the next source.
 type ThemeConfig struct {
-	Preset        string
-	Background    string
-	Surface       string
-	SurfaceActive string
-	Foreground    string
-	Muted         string
-	Accent        string
-	Critical      string
-	Warning       string
+	Preset         string
+	Background     string
+	Surface        string
+	SurfaceActive  string
+	Foreground     string
+	Muted          string
+	Accent         string
+	Critical       string
+	Warning        string
+	Progress       string
+	Success        string
+	ActionRequired string
+	PaneActiveBg   string
+	Focus          string
 }
 
 // HasContent reports whether the config carries any theme override.
@@ -75,6 +90,11 @@ func (c ThemeConfig) HasContent() bool {
 		c.Accent,
 		c.Critical,
 		c.Warning,
+		c.Progress,
+		c.Success,
+		c.ActionRequired,
+		c.PaneActiveBg,
+		c.Focus,
 	} {
 		if strings.TrimSpace(value) != "" {
 			return true
@@ -95,6 +115,11 @@ func (c *ThemeConfig) Normalize() {
 	c.Accent = strings.TrimSpace(c.Accent)
 	c.Critical = strings.TrimSpace(c.Critical)
 	c.Warning = strings.TrimSpace(c.Warning)
+	c.Progress = strings.TrimSpace(c.Progress)
+	c.Success = strings.TrimSpace(c.Success)
+	c.ActionRequired = strings.TrimSpace(c.ActionRequired)
+	c.PaneActiveBg = strings.TrimSpace(c.PaneActiveBg)
+	c.Focus = strings.TrimSpace(c.Focus)
 }
 
 // ColorSpec carries both terminal-native truecolor and tmux 256-color forms.
@@ -150,16 +175,21 @@ type Warning struct {
 }
 
 type EffectiveTheme struct {
-	Preset        StringField
-	Background    ColorField
-	Surface       ColorField
-	SurfaceActive ColorField
-	Foreground    ColorField
-	Muted         ColorField
-	Accent        ColorField
-	Critical      ColorField
-	Warning       ColorField
-	Warnings      []Warning
+	Preset         StringField
+	Background     ColorField
+	Surface        ColorField
+	SurfaceActive  ColorField
+	Foreground     ColorField
+	Muted          ColorField
+	Accent         ColorField
+	Critical       ColorField
+	Warning        ColorField
+	Progress       ColorField
+	Success        ColorField
+	ActionRequired ColorField
+	PaneActiveBg   ColorField
+	Focus          ColorField
+	Warnings       []Warning
 }
 
 // RenderRoles is the semantic role -> tmux color map that app chrome consumes
@@ -190,34 +220,34 @@ type RenderRoles struct {
 
 	// pane / focus chrome.
 	PaneBorder string // pane.border          Tier A <- muted-ish (colour236)
-	// focus.border — dedicated role decoupled from accent. Tier C renderer-only:
-	// carries the literal colour51, independently tunable from the topic chip /
-	// pointer / action that still share accent. Fallback colour51 (no visual
-	// change). Phase 6 public-token candidate (focus / border).
+	// focus.border — dedicated role decoupled from accent. Tier A (public token
+	// `focus`): derives from the explicit focus token, falling back to the
+	// literal colour51 when unset so the active-pane border is unchanged. Tunable
+	// independently of the topic chip / pointer / action that still share accent.
 	FocusBorder     string
 	PaneTopicChipBg string // pane.topic_chip_bg   Tier A <- accent    (colour45)
 	PaneTopicChipFg string // pane.topic_chip_fg   Tier B <- contrastFg (colour16)
 
 	// focus.pane_active_bg — active-pane window-active-style tint. Decoupled from
-	// surface_active: a dedicated Tier C renderer-only DARK tint one tone darker
-	// than surface.base, carrying the literal colour234 (fallback colour234).
-	// surface_active is a LIGHT tone (colour240) and was the wrong direction.
-	// Phase 6 public-token candidate (pane_active_bg / surface_subtle).
+	// surface_active: a dedicated DARK tint one tone darker than surface.base.
+	// Tier A (public token `pane_active_bg`): derives from the explicit token,
+	// falling back to the literal colour234 when unset. surface_active is a LIGHT
+	// tone (colour240) and was the wrong direction for this role.
 	FocusPaneActiveBg string
 
 	// state / severity cluster (Phase 3). Single source for the notify HUD,
 	// usage HUD, and statusbar severity tints on the tmux side.
 	StateWarning  string // state.warning  Tier A <- warning   (colour214)
 	StateCritical string // state.critical Tier A <- critical  (colour160)
-	StateProgress string // state.progress Tier C renderer-only (colour220) — Phase 6 candidate, carries literal
-	StateSuccess  string // state.success  Tier C renderer-only (colour72)  — Phase 6 candidate, carries literal
+	StateProgress string // state.progress Tier A <- progress (colour220 fallback)
+	StateSuccess  string // state.success  Tier A <- success  (colour72 fallback)
 
 	// AI-status cluster (Phase 3). One logical color per AI badge role.
 	// AIProgress/AISuccess reuse the state.progress/success colors; action
 	// required is kept as its OWN role and must NEVER merge into critical.
-	AIProgress       string // ai.progress        <- StateProgress (colour220)
-	AISuccess        string // ai.success         <- StateSuccess  (colour72)
-	AIActionRequired string // ai.action_required Tier C renderer-only (colour214) — Phase 6 candidate; independent of critical
+	AIProgress       string // ai.progress        Tier A <- progress (colour220 fallback)
+	AISuccess        string // ai.success         Tier A <- success  (colour72 fallback)
+	AIActionRequired string // ai.action_required Tier A <- action_required (colour214 fallback); independent of critical
 
 	// statusbar git segment cluster (Phase 4). The segment foreground is the
 	// only foreground-derived role here; the segment bg and the staged/dirty/
@@ -263,33 +293,34 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		StatusFg:         tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
 
 		PaneBorder: tmuxColorOrFallback(effective.Muted, TmuxPaneBorderFg),
-		// Tier C: focus.border decoupled from accent — carries the literal so the
-		// active-pane border is tunable independently of the topic chip / pointer
-		// / action that still derive from accent. No derivation; colour51.
-		FocusBorder:     TmuxPaneActiveBorderFg,
+		// Tier A: focus.border follows the explicit `focus` public token, falling
+		// back to the literal colour51 so the active-pane border is unchanged when
+		// unset. Tunable independently of the topic chip / pointer / action that
+		// still derive from accent.
+		FocusBorder:     tmuxColorOrFallback(effective.Focus, TmuxPaneActiveBorderFg),
 		PaneTopicChipBg: tmuxColorOrFallback(effective.Accent, TmuxPaneActiveBg),
 		PaneTopicChipFg: tmuxContrastFgOrFallback(effective.Accent, TmuxPaneActiveFg),
 
-		// Tier C: dedicated dark active-pane tint, decoupled from surface_active.
-		// Carries the literal colour234 (one tone darker than surface.base) so the
-		// active pane is visibly tinted; no derivation until Phase 6.
-		FocusPaneActiveBg: TmuxPaneActiveTintBg,
+		// Tier A: dedicated dark active-pane tint, decoupled from surface_active.
+		// Follows the explicit `pane_active_bg` public token, falling back to the
+		// literal colour234 (one tone darker than surface.base) when unset.
+		FocusPaneActiveBg: tmuxColorOrFallback(effective.PaneActiveBg, TmuxPaneActiveTintBg),
 
 		// Tier A: warning/critical follow the explicit public token so an
 		// explicit theme repaints the notify/usage/statusbar severity tints.
 		StateWarning:  tmuxColorOrFallback(effective.Warning, TmuxStateWarningFg),
 		StateCritical: tmuxColorOrFallback(effective.Critical, TmuxStateCriticalFg),
-		// Tier C: renderer-only state colors with no public token yet. The
-		// literal is carried under the role; no derivation until Phase 6.
-		StateProgress: TmuxStateProgressFg,
-		StateSuccess:  TmuxStateSuccessFg,
+		// Tier A: progress/success follow the explicit public tokens, falling
+		// back to the historical literals (colour220/colour72) when unset.
+		StateProgress: tmuxColorOrFallback(effective.Progress, TmuxStateProgressFg),
+		StateSuccess:  tmuxColorOrFallback(effective.Success, TmuxStateSuccessFg),
 
-		// AI-status: progress/success reuse the state colors (same logical
-		// color). action_required is its OWN Tier C role — keep it independent
-		// of StateCritical; never merge.
-		AIProgress:       TmuxStateProgressFg,
-		AISuccess:        TmuxStateSuccessFg,
-		AIActionRequired: TmuxAIBadgeActionRequiredFg,
+		// AI-status: progress/success reuse the progress/success public tokens
+		// (same logical color). action_required is its OWN Tier A role —
+		// keep it independent of StateCritical; never merge.
+		AIProgress:       tmuxColorOrFallback(effective.Progress, TmuxStateProgressFg),
+		AISuccess:        tmuxColorOrFallback(effective.Success, TmuxStateSuccessFg),
+		AIActionRequired: tmuxColorOrFallback(effective.ActionRequired, TmuxAIBadgeActionRequiredFg),
 
 		// statusbar git segment: only the segment fg follows the public
 		// foreground token (Tier A). The segment bg and state colors are
@@ -362,6 +393,11 @@ func (t EffectiveTheme) Fields() []EffectiveField {
 		{Name: string(TokenAccent), Value: t.Accent.Value.Hex, Source: t.Accent.Source},
 		{Name: string(TokenCritical), Value: t.Critical.Value.Hex, Source: t.Critical.Source},
 		{Name: string(TokenWarning), Value: t.Warning.Value.Hex, Source: t.Warning.Source},
+		{Name: string(TokenProgress), Value: t.Progress.Value.Hex, Source: t.Progress.Source},
+		{Name: string(TokenSuccess), Value: t.Success.Value.Hex, Source: t.Success.Source},
+		{Name: string(TokenActionRequired), Value: t.ActionRequired.Value.Hex, Source: t.ActionRequired.Source},
+		{Name: string(TokenPaneActiveBg), Value: t.PaneActiveBg.Value.Hex, Source: t.PaneActiveBg.Source},
+		{Name: string(TokenFocus), Value: t.Focus.Value.Hex, Source: t.Focus.Source},
 	}
 }
 
@@ -400,14 +436,19 @@ var builtinPresets = map[string]preset{
 	"projmux-dark": {
 		Name: "projmux-dark",
 		Colors: map[ColorToken]ColorSpec{
-			TokenBackground:    {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
-			TokenSurface:       {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
-			TokenSurfaceActive: {Hex: "#2c383d", Tmux: TmuxWindowActiveBg},
-			TokenForeground:    {Hex: "#d8e0e4", Tmux: TmuxPrimaryFg},
-			TokenMuted:         {Hex: "#75848c", Tmux: TmuxMutedFg},
-			TokenAccent:        {Hex: "#7ac7ad", Tmux: TmuxActionBg},
-			TokenCritical:      {Hex: "#ff6b6b", Tmux: TmuxStateCriticalFg},
-			TokenWarning:       {Hex: "#ffcc66", Tmux: TmuxStateProgressFg},
+			TokenBackground:     {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
+			TokenSurface:        {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
+			TokenSurfaceActive:  {Hex: "#2c383d", Tmux: TmuxWindowActiveBg},
+			TokenForeground:     {Hex: "#d8e0e4", Tmux: TmuxPrimaryFg},
+			TokenMuted:          {Hex: "#75848c", Tmux: TmuxMutedFg},
+			TokenAccent:         {Hex: "#7ac7ad", Tmux: TmuxActionBg},
+			TokenCritical:       {Hex: "#ff6b6b", Tmux: TmuxStateCriticalFg},
+			TokenWarning:        {Hex: "#ffcc66", Tmux: TmuxStateProgressFg},
+			TokenProgress:       {Hex: "#ffcc66", Tmux: TmuxStateProgressFg},
+			TokenSuccess:        {Hex: "#5faf87", Tmux: TmuxStateSuccessFg},
+			TokenActionRequired: {Hex: "#ffaf00", Tmux: TmuxAIBadgeActionRequiredFg},
+			TokenPaneActiveBg:   {Hex: "#1c1c1c", Tmux: TmuxPaneActiveTintBg},
+			TokenFocus:          {Hex: "#00ffff", Tmux: TmuxPaneActiveBorderFg},
 		},
 	},
 	"midnight": {
@@ -416,6 +457,8 @@ var builtinPresets = map[string]preset{
 			TokenBackground: "#101820", TokenSurface: "#16242d", TokenSurfaceActive: "#253844",
 			TokenForeground: "#e7eef2", TokenMuted: "#8296a1", TokenAccent: "#7bd3c6",
 			TokenCritical: "#ff6b7a", TokenWarning: "#ffd166",
+			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
+			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
 		}),
 	},
 	"forest": {
@@ -424,6 +467,8 @@ var builtinPresets = map[string]preset{
 			TokenBackground: "#14201a", TokenSurface: "#1b2b22", TokenSurfaceActive: "#2b4335",
 			TokenForeground: "#e0ebe4", TokenMuted: "#8fa196", TokenAccent: "#9bcf8f",
 			TokenCritical: "#ff7a70", TokenWarning: "#e5c45f",
+			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
+			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
 		}),
 	},
 	"rose": {
@@ -432,6 +477,8 @@ var builtinPresets = map[string]preset{
 			TokenBackground: "#20151c", TokenSurface: "#2b1d27", TokenSurfaceActive: "#412b3a",
 			TokenForeground: "#f0e3ea", TokenMuted: "#aa8d9c", TokenAccent: "#e12672",
 			TokenCritical: "#ff6b6b", TokenWarning: "#f0c36a",
+			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
+			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
 		}),
 	},
 	"high-contrast": {
@@ -440,6 +487,8 @@ var builtinPresets = map[string]preset{
 			TokenBackground: "#000000", TokenSurface: "#101010", TokenSurfaceActive: "#303030",
 			TokenForeground: "#ffffff", TokenMuted: "#b8b8b8", TokenAccent: "#00ffd0",
 			TokenCritical: "#ff4040", TokenWarning: "#ffd700",
+			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
+			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
 		}),
 	},
 }
@@ -505,6 +554,11 @@ func ResolveTheme(global ThemeConfig) EffectiveTheme {
 	result.Accent = resolveColor(valid, TokenAccent)
 	result.Critical = resolveColor(valid, TokenCritical)
 	result.Warning = resolveColor(valid, TokenWarning)
+	result.Progress = resolveColor(valid, TokenProgress)
+	result.Success = resolveColor(valid, TokenSuccess)
+	result.ActionRequired = resolveColor(valid, TokenActionRequired)
+	result.PaneActiveBg = resolveColor(valid, TokenPaneActiveBg)
+	result.Focus = resolveColor(valid, TokenFocus)
 	return result
 }
 
@@ -550,6 +604,11 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 		{TokenAccent, cfg.Accent},
 		{TokenCritical, cfg.Critical},
 		{TokenWarning, cfg.Warning},
+		{TokenProgress, cfg.Progress},
+		{TokenSuccess, cfg.Success},
+		{TokenActionRequired, cfg.ActionRequired},
+		{TokenPaneActiveBg, cfg.PaneActiveBg},
+		{TokenFocus, cfg.Focus},
 	} {
 		if !hasThemeValue(item.value) {
 			continue

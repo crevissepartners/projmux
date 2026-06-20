@@ -45,8 +45,18 @@ removal); they simply have no effect.
 
 To restore your previous look, copy the values into the global
 `~/.config/projmux/config.toml` `[theme]` section, or edit them through
-Settings > Theme. Settings no longer exposes a Project theme editor; the global
-theme editor and the Effective theme view both live under the Global tab.
+Settings > Theme. Settings no longer exposes a Project theme editor, and the
+separate Effective theme view has been merged into the Global theme view: each
+token row now shows its resolved value inline, with unset tokens shown as their
+dimmed `(fallback)` value.
+
+### New public theme keys
+
+Five new public `[theme]` keys are now available: `progress`, `success`,
+`action_required` (AI/status colors), `pane_active_bg` (active-pane tint), and
+`focus` (active-pane border). Leaving a key unset keeps the historical built-in
+color; setting it repaints the matching chrome. `action_required` is independent
+of `critical`. A full migration write-up follows in a later phase.
 
 ### Theme font keys removed
 

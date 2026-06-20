@@ -253,6 +253,16 @@ func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lin
 		cfg.Critical = value
 	case "warning":
 		cfg.Warning = value
+	case "progress":
+		cfg.Progress = value
+	case "success":
+		cfg.Success = value
+	case "action_required":
+		cfg.ActionRequired = value
+	case "pane_active_bg":
+		cfg.PaneActiveBg = value
+	case "focus":
+		cfg.Focus = value
 	case "font_family", "font_size":
 		// Deprecated theme font keys (removed in Phase 1b). They never applied
 		// to the terminal, so leftover keys are accepted for backward
@@ -458,6 +468,11 @@ func renderThemeConfigSection(cfg theme.ThemeConfig) string {
 		{"accent", cfg.Accent},
 		{"critical", cfg.Critical},
 		{"warning", cfg.Warning},
+		{"progress", cfg.Progress},
+		{"success", cfg.Success},
+		{"action_required", cfg.ActionRequired},
+		{"pane_active_bg", cfg.PaneActiveBg},
+		{"focus", cfg.Focus},
 	} {
 		if field.value == "" {
 			continue
