@@ -48,6 +48,13 @@ view-first layout:
   first-class row, action rows use human-readable labels, internal IDs appear
   only in detail/source/keymap contexts, and runtime footers are status hints,
   not key discovery.
+- `Settings > Theme` (Global) is the single theme view. There is no separate
+  `Effective theme` item: the Global theme view shows each color token's value
+  inline. A token set globally (explicit value or via a global preset) shows its
+  set/override/preset summary; an UNSET token shows the resolved fallback value
+  with a dim swatch, a `(fallback)` label, and a `fallback` source. Resolver
+  warnings render as dim info rows after the token rows. Project `.projmux`
+  `[theme]` is never resolved or shown here.
 - `Settings > Notifications` owns notification delivery IA. Desktop notification
   mode, AI desktop notification dedupe duration, delivery source diagnostics,
   AI hook quiet policy, in-app queue status, and

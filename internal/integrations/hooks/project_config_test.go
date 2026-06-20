@@ -77,6 +77,49 @@ locale = "ko-KR"
 	}
 }
 
+func TestProjectThemeConfigRoundTripsPhase6Keys(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig(`
+[theme]
+progress = "#112233"
+success = "#445566"
+action_required = "#778899"
+pane_active_bg = "#0a0b0c"
+focus = "#0d0e0f"
+`)
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.Theme.Progress != "#112233" || cfg.Theme.Success != "#445566" ||
+		cfg.Theme.ActionRequired != "#778899" || cfg.Theme.PaneActiveBg != "#0a0b0c" ||
+		cfg.Theme.Focus != "#0d0e0f" {
+		t.Fatalf("Theme = %#v, want all phase-6 keys parsed", cfg.Theme)
+	}
+
+	rendered := renderThemeConfigSection(cfg.Theme)
+	for _, want := range []string{
+		`progress = "#112233"`,
+		`success = "#445566"`,
+		`action_required = "#778899"`,
+		`pane_active_bg = "#0a0b0c"`,
+		`focus = "#0d0e0f"`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered theme section %q missing %q", rendered, want)
+		}
+	}
+
+	// Round-trip: re-parse the rendered output and confirm equality.
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.Theme != cfg.Theme {
+		t.Fatalf("re-parsed theme = %#v, want %#v", reparsed.Theme, cfg.Theme)
+	}
+}
+
 func TestParseProjectConfigRejectsInternalTmuxHooks(t *testing.T) {
 	t.Parallel()
 

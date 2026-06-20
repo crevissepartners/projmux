@@ -33,17 +33,16 @@ func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
 
 	cmd := &settingsCommand{}
 	want := map[string]settingsEntryMeta{
-		settingsSectionProject:        {Name: "Project Picker", Axis: settingsAxisGlobal},
-		settingsSectionGlobalHooks:    {Name: "Hooks", Axis: settingsAxisGlobal},
-		settingsSectionAI:             {Name: "AI Settings", Axis: settingsAxisGlobal},
-		settingsSectionNotifications:  {Name: "Notifications", Axis: settingsAxisGlobal},
-		settingsSectionStatusbar:      {Name: "Appearance", Axis: settingsAxisGlobal},
-		settingsSectionGlobalTheme:    {Name: "Theme", Axis: settingsAxisGlobal},
-		settingsSectionEffectiveTheme: {Name: "Effective theme", Axis: settingsAxisGlobal},
-		settingsSectionSessionState:   {Name: "Session State", Axis: settingsAxisGlobal},
-		settingsSectionKeybindings:    {Name: "Keybindings", Axis: settingsAxisGlobal},
-		settingsSectionLabs:           {Name: "Labs", Axis: settingsAxisGlobal},
-		settingsSectionAbout:          {Name: "About", Axis: settingsAxisGlobal},
+		settingsSectionProject:       {Name: "Project Picker", Axis: settingsAxisGlobal},
+		settingsSectionGlobalHooks:   {Name: "Hooks", Axis: settingsAxisGlobal},
+		settingsSectionAI:            {Name: "AI Settings", Axis: settingsAxisGlobal},
+		settingsSectionNotifications: {Name: "Notifications", Axis: settingsAxisGlobal},
+		settingsSectionStatusbar:     {Name: "Appearance", Axis: settingsAxisGlobal},
+		settingsSectionGlobalTheme:   {Name: "Theme", Axis: settingsAxisGlobal},
+		settingsSectionSessionState:  {Name: "Session State", Axis: settingsAxisGlobal},
+		settingsSectionKeybindings:   {Name: "Keybindings", Axis: settingsAxisGlobal},
+		settingsSectionLabs:          {Name: "Labs", Axis: settingsAxisGlobal},
+		settingsSectionAbout:         {Name: "About", Axis: settingsAxisGlobal},
 	}
 
 	seen := map[string]bool{}
@@ -109,7 +108,6 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 		settingsSectionGlobalHooks,
 		settingsSectionStatusbar,
 		settingsSectionGlobalTheme,
-		settingsSectionEffectiveTheme,
 		settingsSectionSessionState,
 		settingsSectionKeybindings,
 		settingsSectionLabs,
@@ -1393,7 +1391,6 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 		settingsSectionGlobalHooks,
 		settingsSectionStatusbar,
 		settingsSectionGlobalTheme,
-		settingsSectionEffectiveTheme,
 		settingsSectionSessionState,
 		settingsSectionKeybindings,
 		settingsSectionLabs,
@@ -2082,7 +2079,7 @@ background = "#20151c"
 	}
 }
 
-func TestSettingsEffectiveThemeShowsGlobalAndFallbackOnly(t *testing.T) {
+func TestSettingsGlobalThemeViewShowsSetAndFallbackTokens(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -2092,8 +2089,8 @@ func TestSettingsEffectiveThemeShowsGlobalAndFallbackOnly(t *testing.T) {
 [theme]
 foreground = "#eeeeee"
 `)
-	// Project [theme] is ignored: its background must not appear as an
-	// effective value or carry a "project" source label.
+	// Project [theme] is ignored: its background must not appear as a resolved
+	// value or carry a "project" source label in the Global view.
 	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
 [theme]
 background = "#010203"
@@ -2108,21 +2105,25 @@ background = "#010203"
 		},
 	}
 
-	entries := cmd.effectiveThemeEntries()
-	if !hasEntryLabelContainingAll(entries, "foreground", "#eeeeee", "global") {
-		t.Fatalf("effective theme entries = %#v, want global foreground source", entries)
+	entries, err := cmd.themeEntries()
+	if err != nil {
+		t.Fatalf("themeEntries error: %v", err)
 	}
-	if !hasEntryLabelContainingAll(entries, "background", "fallback") {
-		t.Fatalf("effective theme entries = %#v, want fallback background source", entries)
+	// A globally-set token keeps its set/override summary.
+	if !hasEntryLabelContainingAll(entries, "foreground", "#eeeeee", "set override") {
+		t.Fatalf("global theme entries = %#v, want set-override foreground summary", entries)
 	}
-	if !hasEntryLabelContainingAll(entries, "accent", "fallback") {
-		t.Fatalf("effective theme entries = %#v, want fallback accent source", entries)
+	// An UNSET token shows the resolved fallback value with a (fallback) label
+	// and a fallback source.
+	if !hasEntryLabelContainingAll(entries, "accent", "(fallback)", "fallback") {
+		t.Fatalf("global theme entries = %#v, want fallback accent summary", entries)
 	}
+	// Project [theme] background is ignored: must not leak or carry "project".
 	if hasEntryLabelContaining(entries, "#010203") {
-		t.Fatalf("effective theme entries = %#v, leaked ignored project background", entries)
+		t.Fatalf("global theme entries = %#v, leaked ignored project background", entries)
 	}
 	if hasEntryLabelContaining(entries, "project") {
-		t.Fatalf("effective theme entries = %#v, want no project source label", entries)
+		t.Fatalf("global theme entries = %#v, want no project source label", entries)
 	}
 }
 

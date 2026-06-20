@@ -222,7 +222,20 @@ muted = "#75848c"
 accent = "#7ac7ad"
 critical = "#ff6b6b"
 warning = "#ffcc66"
+progress = "#ffcc66"
+success = "#5faf87"
+action_required = "#ffaf00"
+pane_active_bg = "#1c1c1c"
+focus = "#00ffff"
 ```
+
+`progress`, `success`, and `action_required` are the AI/status colors (progress
+yellow, success green, action-required amber-orange). `action_required` is the
+AI "needs input/approval" badge color and is intentionally independent of
+`critical` — repainting `critical` never changes it. `pane_active_bg` is the
+active-pane background tint, and `focus` is the active-pane border color. Each
+of these is a public token: leave it unset to keep the historical built-in
+color, or set it to repaint the matching chrome.
 
 Supported presets are `projmux-dark`, `midnight`, `forest`, `rose`, and
 `high-contrast`. A preset fills missing color tokens, and explicit color tokens

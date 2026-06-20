@@ -44,7 +44,7 @@ type ANSIRoles struct {
 	// state / severity. Tier A reuse warning/critical; rest Tier C.
 	StateWarning  string // state.warning  Tier A <- warning  (ANSIStateProgressStart) — switch "working/needs review"
 	StateCritical string // state.critical Tier A <- critical (ANSIStateDangerStart) — settings "remove"
-	StateProgress string // state.progress Tier C renderer-only (ANSIStateProgressStart)
+	StateProgress string // state.progress Tier A <- progress (ANSIStateProgressStart fallback)
 	StateExisting string // state.existing Tier C renderer-only (ANSIStateExistingStart \x1b[32m)
 	StateTagged   string // state.tagged   Tier C renderer-only (ANSIStateTaggedStart \x1b[31m)
 	StatePinned   string // state.pinned   Tier C renderer-only (ANSIStatePinnedStart \x1b[33m)
@@ -55,10 +55,11 @@ type ANSIRoles struct {
 	ChipActive   string // chip.active   Tier C renderer-only (ANSIChipActiveStart)
 	ChipDisabled string // chip.disabled Tier C renderer-only (ANSIChipDisabledStart)
 
-	// AI badge cluster. Tier C renderer-only (brand teal/severity).
-	AIBadgeProgress       string // ai.progress         (ANSIAIBadgeProgressStart)
-	AIBadgeSuccess        string // ai.success          (ANSIAIBadgeSuccessStart)
-	AIBadgeActionRequired string // ai.action_required  (ANSIAIBadgeActionRequiredStart)
+	// AI badge cluster. Tier A (public tokens progress/success/action_required);
+	// action_required stays independent of critical.
+	AIBadgeProgress       string // ai.progress         Tier A <- progress (ANSIAIBadgeProgressStart fallback)
+	AIBadgeSuccess        string // ai.success          Tier A <- success  (ANSIAIBadgeSuccessStart fallback)
+	AIBadgeActionRequired string // ai.action_required  Tier A <- action_required (ANSIAIBadgeActionRequiredStart fallback); independent of critical
 
 	// trust cluster. Tier C renderer-only.
 	TrustTrusted   string // trust.trusted   (ANSITrustTrustedStart)
@@ -120,7 +121,7 @@ func ANSIRolesFromEffective(effective EffectiveTheme) ANSIRoles {
 		// RenderRoles StateWarning/StateCritical); the rest are Tier C literals.
 		StateWarning:  ansiFGOrLiteral(effective.Warning, ANSIStateProgressStart),
 		StateCritical: ansiFGOrLiteral(effective.Critical, ANSIStateDangerStart),
-		StateProgress: ANSIStateProgressStart,
+		StateProgress: ansiFGOrLiteral(effective.Progress, ANSIStateProgressStart),
 		StateExisting: ANSIStateExistingStart,
 		StateTagged:   ANSIStateTaggedStart,
 		StatePinned:   ANSIStatePinnedStart,
@@ -132,10 +133,12 @@ func ANSIRolesFromEffective(effective EffectiveTheme) ANSIRoles {
 		ChipActive:   ANSIChipActiveStart,
 		ChipDisabled: ANSIChipDisabledStart,
 
-		// AI badge — brand teal/severity literals (Tier C).
-		AIBadgeProgress:       ANSIAIBadgeProgressStart,
-		AIBadgeSuccess:        ANSIAIBadgeSuccessStart,
-		AIBadgeActionRequired: ANSIAIBadgeActionRequiredStart,
+		// AI badge — Tier A: progress/success/action_required follow the public
+		// tokens, falling back to the historical brand/severity literals when
+		// unset. action_required stays independent of critical.
+		AIBadgeProgress:       ansiFGOrLiteral(effective.Progress, ANSIAIBadgeProgressStart),
+		AIBadgeSuccess:        ansiFGOrLiteral(effective.Success, ANSIAIBadgeSuccessStart),
+		AIBadgeActionRequired: ansiFGOrLiteral(effective.ActionRequired, ANSIAIBadgeActionRequiredStart),
 
 		// trust — brand literals (Tier C).
 		TrustTrusted:   ANSITrustTrustedStart,
