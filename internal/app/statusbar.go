@@ -1013,16 +1013,20 @@ func dimANSI(value string) string {
 	return projmuxpicker.MutedStart + value + projmuxpicker.Reset
 }
 
+// amberANSI/redANSI/tealANSI tint the native usage statusbar text from the
+// semantic state role map (single source shared with the notify/usage tmux
+// severity cluster). ANSI256FgStart adapts the role's tmux colourN to the
+// 256-color SGR; the fallback role values keep this byte-identical.
 func amberANSI(value string) string {
-	return theme.ANSI256FgStart(theme.TmuxStateWarningFg) + value + projmuxpicker.Reset
+	return theme.ANSI256FgStart(theme.RenderRolesFromEffective(theme.EffectiveTheme{}).StateWarning) + value + projmuxpicker.Reset
 }
 
 func redANSI(value string) string {
-	return theme.ANSI256FgStart(theme.TmuxStateCriticalFg) + value + projmuxpicker.Reset
+	return theme.ANSI256FgStart(theme.RenderRolesFromEffective(theme.EffectiveTheme{}).StateCritical) + value + projmuxpicker.Reset
 }
 
 func tealANSI(value string) string {
-	return theme.ANSI256FgStart(theme.TmuxStateSuccessFg) + value + projmuxpicker.Reset
+	return theme.ANSI256FgStart(theme.RenderRolesFromEffective(theme.EffectiveTheme{}).StateSuccess) + value + projmuxpicker.Reset
 }
 
 func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path string) statusbarPathMetadata {

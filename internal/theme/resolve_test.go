@@ -87,9 +87,87 @@ func TestRenderRolesFallbackPreservesBuiltInPalette(t *testing.T) {
 		PaneTopicChipBg:   TmuxPaneActiveBg,
 		PaneTopicChipFg:   TmuxPaneActiveFg,
 		FocusPaneActiveBg: TmuxWindowInactiveBg, // spike-fixed colour235
+		StateWarning:      TmuxStateWarningFg,
+		StateCritical:     TmuxStateCriticalFg,
+		StateProgress:     TmuxStateProgressFg,
+		StateSuccess:      TmuxStateSuccessFg,
+		AIProgress:        TmuxStateProgressFg,
+		AISuccess:         TmuxStateSuccessFg,
+		AIActionRequired:  TmuxAIBadgeActionRequiredFg,
 	}
 	if got != want {
 		t.Fatalf("fallback render roles = %#v, want %#v", got, want)
+	}
+}
+
+func TestRenderRolesStateAIFallbackEqualHistoricalLiterals(t *testing.T) {
+	t.Parallel()
+
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	// State/severity cluster fallback must equal the historical palette
+	// literals so generated fallback output stays byte-identical.
+	if got.StateWarning != "colour214" {
+		t.Fatalf("state.warning = %q, want colour214", got.StateWarning)
+	}
+	if got.StateCritical != "colour160" {
+		t.Fatalf("state.critical = %q, want colour160", got.StateCritical)
+	}
+	if got.StateProgress != "colour220" {
+		t.Fatalf("state.progress = %q, want colour220", got.StateProgress)
+	}
+	if got.StateSuccess != "colour72" {
+		t.Fatalf("state.success = %q, want colour72", got.StateSuccess)
+	}
+
+	// AI cluster: progress/success reuse the state colors; action_required is
+	// its OWN role and must remain colour214 (NOT merged into critical).
+	if got.AIProgress != got.StateProgress {
+		t.Fatalf("ai.progress = %q, want = state.progress %q", got.AIProgress, got.StateProgress)
+	}
+	if got.AISuccess != got.StateSuccess {
+		t.Fatalf("ai.success = %q, want = state.success %q", got.AISuccess, got.StateSuccess)
+	}
+	if got.AIActionRequired != "colour214" {
+		t.Fatalf("ai.action_required = %q, want colour214", got.AIActionRequired)
+	}
+	if got.AIActionRequired == got.StateCritical {
+		t.Fatalf("ai.action_required = %q must never equal state.critical %q", got.AIActionRequired, got.StateCritical)
+	}
+}
+
+func TestRenderRolesExplicitThemeRepaintsStateTierAButNotTierC(t *testing.T) {
+	t.Parallel()
+
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{
+		Warning:  "#00ff00",
+		Critical: "#0000ff",
+		Accent:   "#ffff00",
+	}))
+	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	// Tier A: warning/critical repaint from the explicit public tokens.
+	if got.StateWarning == fallback.StateWarning {
+		t.Fatalf("state.warning = %q, want repainted from explicit warning, not literal", got.StateWarning)
+	}
+	if got.StateCritical == fallback.StateCritical {
+		t.Fatalf("state.critical = %q, want repainted from explicit critical, not literal", got.StateCritical)
+	}
+
+	// Tier C: progress/success/action_required have no public token yet, so
+	// they must NOT change. This also proves action_required is independent of
+	// critical — an explicit critical never bleeds into action_required.
+	if got.StateProgress != fallback.StateProgress {
+		t.Fatalf("state.progress = %q, want unchanged literal %q (Tier C)", got.StateProgress, fallback.StateProgress)
+	}
+	if got.StateSuccess != fallback.StateSuccess {
+		t.Fatalf("state.success = %q, want unchanged literal %q (Tier C)", got.StateSuccess, fallback.StateSuccess)
+	}
+	if got.AIActionRequired != fallback.AIActionRequired {
+		t.Fatalf("ai.action_required = %q, want unchanged literal %q (independent of critical)", got.AIActionRequired, fallback.AIActionRequired)
+	}
+	if got.AIActionRequired == got.StateCritical {
+		t.Fatalf("ai.action_required = %q must never equal repainted state.critical %q", got.AIActionRequired, got.StateCritical)
 	}
 }
 

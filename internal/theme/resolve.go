@@ -198,6 +198,20 @@ type RenderRoles struct {
 	// tint(surface_active) / blend(background, surface_active). Fallback is the
 	// spike-decided colour235 (window-active-style tint).
 	FocusPaneActiveBg string
+
+	// state / severity cluster (Phase 3). Single source for the notify HUD,
+	// usage HUD, and statusbar severity tints on the tmux side.
+	StateWarning  string // state.warning  Tier A <- warning   (colour214)
+	StateCritical string // state.critical Tier A <- critical  (colour160)
+	StateProgress string // state.progress Tier C renderer-only (colour220) — Phase 6 candidate, carries literal
+	StateSuccess  string // state.success  Tier C renderer-only (colour72)  — Phase 6 candidate, carries literal
+
+	// AI-status cluster (Phase 3). One logical color per AI badge role.
+	// AIProgress/AISuccess reuse the state.progress/success colors; action
+	// required is kept as its OWN role and must NEVER merge into critical.
+	AIProgress       string // ai.progress        <- StateProgress (colour220)
+	AISuccess        string // ai.success         <- StateSuccess  (colour72)
+	AIActionRequired string // ai.action_required Tier C renderer-only (colour214) — Phase 6 candidate; independent of critical
 }
 
 // RenderRolesFromEffective derives the semantic role map from an effective
@@ -221,6 +235,22 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		// colour235 (matching surface.base / window-inactive bg) so the
 		// generated window-active-style line is byte-stable.
 		FocusPaneActiveBg: tmuxColorOrFallback(effective.SurfaceActive, TmuxWindowInactiveBg),
+
+		// Tier A: warning/critical follow the explicit public token so an
+		// explicit theme repaints the notify/usage/statusbar severity tints.
+		StateWarning:  tmuxColorOrFallback(effective.Warning, TmuxStateWarningFg),
+		StateCritical: tmuxColorOrFallback(effective.Critical, TmuxStateCriticalFg),
+		// Tier C: renderer-only state colors with no public token yet. The
+		// literal is carried under the role; no derivation until Phase 6.
+		StateProgress: TmuxStateProgressFg,
+		StateSuccess:  TmuxStateSuccessFg,
+
+		// AI-status: progress/success reuse the state colors (same logical
+		// color). action_required is its OWN Tier C role — keep it independent
+		// of StateCritical; never merge.
+		AIProgress:       TmuxStateProgressFg,
+		AISuccess:        TmuxStateSuccessFg,
+		AIActionRequired: TmuxAIBadgeActionRequiredFg,
 	}
 }
 

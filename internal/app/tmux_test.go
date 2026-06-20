@@ -1954,6 +1954,32 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 	}
 }
 
+func TestTmuxPaneBorderAIBadgeRepaintsFromExplicitThemeKeepingActionRequiredSeparate(t *testing.T) {
+	t.Parallel()
+
+	fallbackRoles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	fallbackBorder := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot, fallbackRoles)
+
+	// Fallback border keeps the historical literals (byte-identity).
+	if !strings.Contains(fallbackBorder, "#[bold#,fg="+fallbackRoles.AIProgress+"]") {
+		t.Fatalf("fallback pane border = %q, want progress role %q", fallbackBorder, fallbackRoles.AIProgress)
+	}
+
+	// An explicit critical/warning theme must NOT repaint action_required
+	// (Tier C, independent of critical) — its color stays the literal.
+	explicitRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{
+		Critical: "#0000ff",
+		Warning:  "#00ff00",
+	}))
+	if explicitRoles.AIActionRequired != fallbackRoles.AIActionRequired {
+		t.Fatalf("ai.action_required repainted to %q, must stay independent of critical at %q", explicitRoles.AIActionRequired, fallbackRoles.AIActionRequired)
+	}
+	explicitBorder := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot, explicitRoles)
+	if !strings.Contains(explicitBorder, "#[bold#,fg="+fallbackRoles.AIActionRequired+"]") {
+		t.Fatalf("explicit pane border = %q, want action_required marker to keep literal %q", explicitBorder, fallbackRoles.AIActionRequired)
+	}
+}
+
 func TestTmuxAppShellTitlePolicyDisablesProgramWindowRename(t *testing.T) {
 	t.Parallel()
 
