@@ -197,13 +197,20 @@ frames also apply the built-in fallback `background`/`foreground` tokens so
 picker-owned padding, empty rows, footer rows, and preview gaps do not inherit
 the terminal default background.
 
-Active pane focus affordance belongs to Theme app chrome Phase 2, not the
-resolver foundation. That work must preserve `pane-border-status top`, pane
-topics, AI badges, and visible pane labels.
+Active pane focus is part of the theme app chrome. The active pane is marked by
+an active border (`pane-active-border-style`, fallback cyan `colour51`, the
+public `focus` token) and a subtle dark background tint (`window-active-style`,
+fallback `colour234`, the public `pane_active_bg` token); inactive panes follow
+the public `background` token (tmux `window-style`, unset keeps `bg=default`).
+tmux draws a single shared border between adjacent panes, so a full active-pane
+rectangle is not guaranteed; focus is reinforced by the tint plus the
+`pane-border-status top` topic line. This chrome preserves `pane-border-status
+top`, pane topics, AI badges, and visible pane labels.
 
 Native picker popups launched through `projmux tmux popup-toggle` also pass a
 per-popup tmux 3.4 `display-popup -s` body style using the effective theme
-`background`/`foreground` tmux tokens. This styles only the tmux popup body
+`surface`/`foreground` tmux tokens (popup/chrome backgrounds follow `surface`,
+Phase 6b). This styles only the tmux popup body
 before the native renderer draws. It does not set global `popup-style` or
 `popup-border-style`, and it does not change shell pane backgrounds,
 `default-style`, `window-style`, OSC terminal backgrounds, or the general

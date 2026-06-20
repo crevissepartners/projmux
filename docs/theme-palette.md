@@ -1,17 +1,19 @@
 # Theme Palette
 
-This document records the Phase 0 target theme contract and the built-in
+This document records the implemented theme contract and the built-in
 fallback palette that native projmux UI surfaces use when no global user theme
 is configured. The source of truth for current fallback values in code is
-`internal/theme/palette.go`.
+`internal/theme/palette.go`, and the source of truth for the resolver and the
+semantic role map is `internal/theme/resolve.go`.
 
 ## Scope
 
-The fallback palette is a semantic token layer. The intended theme contract is
-a global user theme resolved from `~/.config/projmux/config.toml`, followed by
-the built-in fallback values from `internal/theme/palette.go`. Phase 0 records
-that product contract for later implementation phases; it does not require a
-product-code change by itself.
+The fallback palette is a semantic token layer. The effective theme is a global
+user theme resolved from `~/.config/projmux/config.toml`, followed by the
+built-in fallback values from `internal/theme/palette.go`. The resolver derives
+a semantic role map (`RenderRoles` for tmux chrome, `ANSIRoles` for native ANSI
+surfaces) from the effective theme, and renderers consume those roles instead of
+bare palette literals.
 
 - Native picker truecolor SGR tokens.
 - Native sidebar and chip-strip 256-color SGR tokens.
@@ -22,11 +24,10 @@ Renderer adapters apply resolver-backed background/foreground colors to native
 picker frame chrome and to tmux status/window background tokens when an
 `EffectiveTheme` is supplied by the caller. Fallback-sourced fields still
 render through the historical constants so built-in default output remains
-byte-identical. Project `.projmux/config.toml` `[theme]` is deprecated and is
-removed from the intended effective theme source; future resolver and Settings
-work should treat it as ignored migration data rather than as a target source.
-Theme marketplace/import/export and Visual palette reselection remain out of
-scope.
+byte-identical. Project `.projmux/config.toml` `[theme]` is deprecated and
+ignored: it is not an effective theme source, and the resolver and Settings
+treat any leftover project `[theme]` keys as inert migration data. Theme
+marketplace/import/export and Visual palette reselection remain out of scope.
 
 ## Resolver Token Inventory
 
@@ -99,7 +100,7 @@ Rules:
 
 ## Resolver Contract
 
-The Phase 0 target contract resolves theme fields from:
+The effective theme resolves theme fields from:
 
 1. Global `~/.config/projmux/config.toml`
 2. Built-in fallback preset `projmux-dark`
@@ -167,9 +168,21 @@ Surface-specific tokens:
 Active-pane focus: tmux draws a single shared border between adjacent panes, so
 a full active-pane rectangle (e.g. tinting the whole active pane edge-to-edge)
 is not guaranteed. Active focus is instead reinforced by the `pane-border-status
-top` topic line plus a subtle background tint applied via `window-active-style`
-(fallback `colour235`); inactive panes keep the default background via
-`window-style "bg=default"`.
+top` topic line, an active-pane border (`pane-active-border-style`, fallback
+cyan `colour51`, the public `focus` token), and a subtle dark background tint
+applied via `window-active-style` (fallback `colour234` — one tone darker than
+the base `colour235` so the active pane visibly sinks; the public `pane_active_bg`
+token). Inactive panes keep the terminal default background via `window-style
+"bg=default"` unless the public `background` token is set.
+
+Pane body vs popup background (Phase 6b): the general (pane) background and the
+popup/chrome background are derived from separate public tokens. The pane body
+follows `background` (tmux `window-style`; unset keeps `bg=default`), while the
+status bar, native popup bodies, and the settings/notify/recent/picker frames
+follow `surface` (via the `StatusBg` role; unset keeps `colour235`). Because the
+`surface` fallback equals `background`, leaving both unset is byte-identical with
+earlier releases; setting them apart lets popups read as a distinct surface from
+the pane body.
 
 ## Current Literal Inventory
 
