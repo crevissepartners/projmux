@@ -1458,9 +1458,11 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, de
 		"set -g pane-border-status top",
 		// Active-pane tint (Phase 2 spike decision: window-active-style tint,
 		// not a label chip). tmux only tints the active window's panes via
-		// window-active-style; window-style restores the default bg for the
-		// rest so inactive panes are untouched.
-		"set -g window-style \"bg=default\"",
+		// window-active-style; window-style sets the inactive-pane body bg.
+		// Phase 6b: window-style now follows the `background` token via
+		// PaneInactiveBg (fallback "default" → unset stays byte-identical),
+		// separating the general pane body from the surface-driven popup chrome.
+		"set -g window-style \"bg=" + roles.PaneInactiveBg + "\"",
 		"set -g window-active-style \"bg=" + roles.FocusPaneActiveBg + "\"",
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}

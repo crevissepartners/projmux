@@ -1403,6 +1403,62 @@ func TestTmuxConfigThemeUsesGlobal256ColorBackgroundWithoutFallbackLeak(t *testi
 	}
 }
 
+// Phase 6b: an explicit `background` (surface unset) must repaint the inactive
+// pane body (window-style follows PaneInactiveBg ← background) while the
+// surface-driven popup/chrome bg (status-style ← StatusBg) stays at the
+// fallback literal — proving pane body and popup bg are separated.
+func TestTmuxConfigExplicitBackgroundRepaintsWindowStyleNotStatus(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{Background: "#010203"})
+	roles := theme.RenderRolesFromEffective(effective)
+	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+
+	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+
+	// Pane body repaints: window-style carries the background-derived color,
+	// not the historical "bg=default".
+	if roles.PaneInactiveBg == "default" {
+		t.Fatalf("PaneInactiveBg = %q, want background-derived color", roles.PaneInactiveBg)
+	}
+	if want := "set -g window-style \"bg=" + roles.PaneInactiveBg + "\""; !strings.Contains(output, want) {
+		t.Fatalf("themed app config missing %q\n%s", want, output)
+	}
+	if strings.Contains(output, "set -g window-style \"bg=default\"") {
+		t.Fatalf("window-style still bg=default with explicit background\n%s", output)
+	}
+	// Popup/chrome bg does NOT follow background: status-style keeps the surface
+	// fallback literal.
+	if want := "set -g status-style \"bg=" + fallbackRoles.StatusBg + ",fg="; !strings.Contains(output, want) {
+		t.Fatalf("status-style should keep surface fallback bg %q (popup must not follow background)\n%s", fallbackRoles.StatusBg, output)
+	}
+}
+
+// Phase 6b: an explicit `surface` (background unset) must repaint the popup/
+// chrome bg (status-style ← StatusBg ← surface) while the general pane body
+// (window-style) stays at the historical "bg=default".
+func TestTmuxConfigExplicitSurfaceRepaintsStatusNotWindowStyle(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{Surface: "#ff00ff"})
+	roles := theme.RenderRolesFromEffective(effective)
+	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+
+	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+
+	// Popup repaints: status-style follows surface, not the fallback.
+	if roles.StatusBg == fallbackRoles.StatusBg {
+		t.Fatalf("StatusBg = %q, want repainted from explicit surface", roles.StatusBg)
+	}
+	if want := "set -g status-style \"bg=" + roles.StatusBg + ",fg="; !strings.Contains(output, want) {
+		t.Fatalf("themed app config missing surface-driven status-style %q\n%s", want, output)
+	}
+	// Pane body untouched: window-style stays bg=default.
+	if want := "set -g window-style \"bg=default\""; !strings.Contains(output, want) {
+		t.Fatalf("window-style should stay bg=default with background unset\n%s", output)
+	}
+}
+
 func TestTmuxPrintConfigNilHomeDirIgnoresRelativeKeymap(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
