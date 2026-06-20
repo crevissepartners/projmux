@@ -378,7 +378,7 @@ func TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend(t *testing.T) 
 	}
 }
 
-func TestAppRunTmuxPopupToggleUsesNativePopupBodyStyleFromEffectiveTheme(t *testing.T) {
+func TestAppRunTmuxPopupToggleUsesNativePopupBodyStyleFromGlobalTheme(t *testing.T) {
 	t.Setenv("PROJMUX_PICKER_BACKEND", "native")
 
 	home := t.TempDir()
@@ -418,24 +418,24 @@ foreground = "#aabbcc"
 		t.Fatalf("Run() error = %v", err)
 	}
 
+	// Theme is global-only: the popup body style derives from the global
+	// theme and the project-local [theme] must be ignored.
 	wantStyle := nativePickerPopupBodyStyleFromEffective(theme.ResolveTheme(
 		theme.ThemeConfig{Background: "#ff0000", Foreground: "#00ff00"},
+	))
+	projectStyle := nativePickerPopupBodyStyleFromEffective(theme.ResolveTheme(
 		theme.ThemeConfig{Background: "#010203", Foreground: "#aabbcc"},
 	))
-	globalStyle := nativePickerPopupBodyStyleFromEffective(theme.ResolveTheme(
-		theme.ThemeConfig{Background: "#ff0000", Foreground: "#00ff00"},
-		theme.ThemeConfig{},
-	))
-	if wantStyle == "" || wantStyle == globalStyle {
-		t.Fatalf("test styles not distinct: project=%q global=%q", wantStyle, globalStyle)
+	if wantStyle == "" || wantStyle == projectStyle {
+		t.Fatalf("test styles not distinct: global=%q project=%q", wantStyle, projectStyle)
 	}
 
 	got := runner.calls[len(runner.calls)-1]
 	if !containsTmuxArgPair(got.args, "-s", wantStyle) {
-		t.Fatalf("display call = %#v, want native popup body style %q", got, wantStyle)
+		t.Fatalf("display call = %#v, want native popup body style from global theme %q", got, wantStyle)
 	}
-	if containsTmuxArgPair(got.args, "-s", globalStyle) {
-		t.Fatalf("display call = %#v, leaked global popup body style %q", got, globalStyle)
+	if containsTmuxArgPair(got.args, "-s", projectStyle) {
+		t.Fatalf("display call = %#v, leaked ignored project popup body style %q", got, projectStyle)
 	}
 }
 
@@ -1366,7 +1366,7 @@ func TestTmuxPrintConfigMissingKeymapKeepsDefaultOutput(t *testing.T) {
 func TestTmuxConfigWithFallbackEffectiveThemeMatchesDefaultOutput(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
 	got := tmuxStandaloneConfigWithKeymapTheme("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
 	want := tmuxStandaloneConfigWithKeymap("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
 	if got != want {
@@ -1380,22 +1380,16 @@ func TestTmuxConfigWithFallbackEffectiveThemeMatchesDefaultOutput(t *testing.T) 
 	}
 }
 
-func TestTmuxConfigThemeUsesProject256ColorBackgroundWithoutGlobalLeak(t *testing.T) {
+func TestTmuxConfigThemeUsesGlobal256ColorBackgroundWithoutFallbackLeak(t *testing.T) {
 	t.Parallel()
 
 	globalCfg := theme.ThemeConfig{
-		Background:    "#ff0000",
-		SurfaceActive: "#0000ff",
-		Foreground:    "#00ff00",
-	}
-	projectCfg := theme.ThemeConfig{
 		Background:    "#010203",
 		SurfaceActive: "#040506",
 		Foreground:    "#aabbcc",
 	}
-	effective := theme.ResolveTheme(globalCfg, projectCfg)
+	effective := theme.ResolveTheme(globalCfg)
 	tokens := theme.TmuxRenderTokensFromEffective(effective)
-	globalTokens := theme.TmuxRenderTokensFromEffective(theme.ResolveTheme(theme.ThemeConfig{}, globalCfg))
 
 	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
 	for _, want := range []string{
@@ -1405,15 +1399,6 @@ func TestTmuxConfigThemeUsesProject256ColorBackgroundWithoutGlobalLeak(t *testin
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("themed app config missing %q\n%s", want, output)
-		}
-	}
-	for _, banned := range []string{
-		"bg=" + globalTokens.StatusBg + ",fg=" + globalTokens.StatusFg,
-		"fg=" + globalTokens.WindowInactiveFg + ",bg=" + globalTokens.WindowInactiveBg,
-		"fg=" + globalTokens.WindowActiveFg + ",bg=" + globalTokens.WindowActiveBg,
-	} {
-		if strings.Contains(output, banned) {
-			t.Fatalf("themed app config leaked global token %q\n%s", banned, output)
 		}
 	}
 }

@@ -1,9 +1,6 @@
 package app
 
 import (
-	"path/filepath"
-	"strings"
-
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -18,7 +15,7 @@ type renderThemeSource struct {
 }
 
 func fallbackRenderThemeSource() renderThemeSource {
-	return renderThemeSource{effective: theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{})}
+	return renderThemeSource{effective: theme.ResolveTheme(theme.ThemeConfig{})}
 }
 
 func newRenderThemeSource(effective theme.EffectiveTheme) renderThemeSource {
@@ -33,7 +30,13 @@ func configRenderThemeSource(homeDir func() (string, error), lookupEnv func(stri
 	return newRenderThemeSource(effective), nil
 }
 
+// effectiveThemeFromConfig resolves the effective theme from the global user
+// config alone. Theme is a global preference: a project's
+// .projmux/config.toml [theme] is deprecated migration data and is no longer
+// read here. projectPath is retained for caller-signature stability but does
+// not participate in theme resolution.
 func effectiveThemeFromConfig(homeDir func() (string, error), lookupEnv func(string) string, projectPath string) (theme.EffectiveTheme, error) {
+	_ = projectPath
 	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
 	if err != nil {
 		return theme.EffectiveTheme{}, err
@@ -42,18 +45,7 @@ func effectiveThemeFromConfig(homeDir func() (string, error), lookupEnv func(str
 	if err != nil {
 		return theme.EffectiveTheme{}, err
 	}
-	projectCfg := hooks.ProjectConfig{}
-	if projectPath = strings.TrimSpace(projectPath); projectPath != "" {
-		if root := nearestSettingsProjectRoot(projectPath, ""); root != "" {
-			projectPath = root
-		}
-		cfg, err := hooks.LoadProjectConfigFile(filepath.Join(projectPath, ".projmux", "config.toml"))
-		if err != nil {
-			return theme.EffectiveTheme{}, err
-		}
-		projectCfg = cfg
-	}
-	return theme.ResolveTheme(globalCfg.Theme, projectCfg.Theme), nil
+	return theme.ResolveTheme(globalCfg.Theme), nil
 }
 
 func (s renderThemeSource) pickerOptions(options intpicker.Options) intpicker.Options {

@@ -169,23 +169,25 @@ configured key opens and closes the popup.
 
 ## Theme Resolver Foundation
 
-The Phase 0 target theme contract is a global user theme plus a built-in
-fallback. Theme settings resolve from:
+Theme is a global user preference. The effective theme resolves from the global
+user theme plus a built-in fallback only:
 
 ```text
 ~/.config/projmux/config.toml
 built-in fallback preset
 ```
 
-Settings can edit the global `[theme]` in `~/.config/projmux/config.toml`. The
+Settings edits the global `[theme]` in `~/.config/projmux/config.toml`. The
 Effective theme view shows the final global > built-in fallback value for each
 field with source labels: `global` or `fallback`.
 
-Project `.projmux/config.toml` `[theme]` is deprecated migration data and is
-removed from the intended effective theme source. It should be ignored by the
-future resolver contract rather than surfaced as a warning path. Phase 1
-Settings cleanup should remove the Project theme tab, project override editor,
-project theme reset action, and project/source labels from theme UI.
+Project `.projmux/config.toml` `[theme]` is **deprecated and ignored**: it is no
+longer an effective theme source and does not influence the native picker,
+statusbar, popup, or any tmux chrome. Settings has no Project theme tab, project
+override editor, project theme reset action, or `project` source label — both
+the global theme editor and the effective theme view live under the Global tab.
+See `docs/upgrading.md` for the migration note for existing project `[theme]`
+users.
 
 Renderer adapters can apply an already resolved `EffectiveTheme` to native
 picker frame background/foreground SGR and tmux status/window `colourN`
@@ -225,12 +227,13 @@ font_size = 12
 ```
 
 Supported presets are `projmux-dark`, `midnight`, `forest`, `rose`, and
-`high-contrast`. A preset fills missing color tokens in its own layer, and
-explicit color tokens override preset values. Missing or `inherit` values fall
-through to the next layer.
+`high-contrast`. A preset fills missing color tokens, and explicit color tokens
+override preset values. Tokens the global theme leaves unset fall through to the
+built-in fallback preset.
 
-Unknown presets and invalid color/font values invalidate only their own theme
-layer and produce resolver warnings; the next source still resolves normally.
+Unknown presets and invalid color/font values invalidate only the global theme
+source and produce resolver warnings; the built-in fallback still resolves
+normally.
 Colors are `#RRGGBB`. Settings edits colors through a preset selector, swatch
 rows, and a hex input page. Truecolor renderers use exact RGB SGR tokens, and
 tmux surfaces use the stored or nearest xterm 256-color `colourN` mapping. Font

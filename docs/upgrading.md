@@ -30,6 +30,24 @@ the current latest release tag in `update-skip.json`; the prompt appears again
 when the cached latest tag changes. For `source` and unknown installer sources,
 Upgrade prints guidance and continues shell entry without applying anything.
 
+## Behavior Changes
+
+### Theme is now global-only
+
+Theme is a global user preference. The effective theme resolves from the global
+`[theme]` in `~/.config/projmux/config.toml` plus a built-in fallback preset.
+
+If you previously set a `[theme]` section in a project's `.projmux/config.toml`,
+it is now **deprecated and ignored** — it no longer overrides the global theme
+and does not affect the native picker, statusbar, popups, or any tmux chrome.
+The project `[theme]` keys are left in the file untouched (no warning, no
+removal); they simply have no effect.
+
+To restore your previous look, copy the values into the global
+`~/.config/projmux/config.toml` `[theme]` section, or edit them through
+Settings > Theme. Settings no longer exposes a Project theme editor; the global
+theme editor and the Effective theme view both live under the Global tab.
+
 ## npm Installs
 
 The recommended install path is:

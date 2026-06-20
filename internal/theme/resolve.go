@@ -10,11 +10,12 @@ import (
 	"strings"
 )
 
-// Source identifies the layer that supplied an effective theme field.
+// Source identifies the layer that supplied an effective theme field. Theme
+// is a global user preference: the resolver only knows the global user theme
+// and the built-in fallback. Project-local theme is no longer a source.
 type Source string
 
 const (
-	SourceProject  Source = "project"
 	SourceGlobal   Source = "global"
 	SourceFallback Source = "fallback"
 )
@@ -304,10 +305,12 @@ func NormalizeHexColor(value string) (string, bool) {
 	return normalizeHexColor(value)
 }
 
-// ResolveTheme computes project > global > fallback effective theme values.
-func ResolveTheme(global, project ThemeConfig) EffectiveTheme {
+// ResolveTheme computes global > built-in fallback effective theme values.
+// Theme is a global user preference; project-local [theme] is intentionally
+// not a source. The fallback preset fills any token the global theme leaves
+// unset.
+func ResolveTheme(global ThemeConfig) EffectiveTheme {
 	layers := []layerInput{
-		{source: SourceProject, config: project},
 		{source: SourceGlobal, config: global},
 		{source: SourceFallback, config: ThemeConfig{Preset: "projmux-dark"}},
 	}

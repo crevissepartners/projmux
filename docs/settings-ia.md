@@ -90,7 +90,7 @@ view-first layout:
   `Change` page for icon decoration.
 - `Settings > Appearance` also shows a read-only `Theme font` status row.
   `font_family` and `font_size` are desired values from the effective
-  project/global theme, and unsupported terminal paths must say `not applied`
+  global theme, and unsupported terminal paths must say `not applied`
   instead of implying tmux changed the font.
 - `Settings > Appearance > Language / Locale` is the global/user language
   detail. The root row shows the saved `[ui].locale` value and the currently

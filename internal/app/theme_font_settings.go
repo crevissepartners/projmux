@@ -29,11 +29,7 @@ func (c *settingsCommand) currentThemeFontApplication() (theme.FontApplication, 
 	if err != nil {
 		return theme.FontApplication{}, "", err
 	}
-	projectCfg, err := c.currentProjectConfigForTheme()
-	if err != nil {
-		return theme.FontApplication{}, "", err
-	}
-	effective := theme.ResolveTheme(globalCfg.Theme, projectCfg.Theme)
+	effective := theme.ResolveTheme(globalCfg.Theme)
 	source := themeFontSourceSummary(effective)
 	return theme.EvaluateFontApplication(effective, theme.NoFontCapability()), source, nil
 }
@@ -44,14 +40,6 @@ func (c *settingsCommand) currentGlobalProjectConfig() (hooks.ProjectConfig, err
 		return hooks.ProjectConfig{}, err
 	}
 	return hooks.LoadGlobalConfig(path)
-}
-
-func (c *settingsCommand) currentProjectConfigForTheme() (hooks.ProjectConfig, error) {
-	ctx := c.resolveSettingsProjectContext()
-	if !ctx.hasProject() {
-		return hooks.ProjectConfig{}, nil
-	}
-	return hooks.LoadProjectConfigFile(settingsProjectConfigPath(ctx))
 }
 
 func themeFontSourceSummary(effective theme.EffectiveTheme) string {

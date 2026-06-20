@@ -186,7 +186,7 @@ func TestRunPickerOptionBackendPopulatesFallbackTheme(t *testing.T) {
 func TestRunPickerOptionBackendPreservesSuppliedTheme(t *testing.T) {
 	t.Parallel()
 
-	supplied := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{
+	supplied := theme.ResolveTheme(theme.ThemeConfig{
 		Background: "#010203",
 		Foreground: "#aabbcc",
 	})
@@ -207,7 +207,7 @@ func TestRunPickerOptionBackendPreservesSuppliedTheme(t *testing.T) {
 		t.Fatal("native picker Theme = nil, want supplied effective theme")
 	}
 	if gotTheme.Background.Value.Hex != "#010203" || gotTheme.Foreground.Value.Hex != "#aabbcc" {
-		t.Fatalf("native picker Theme = %#v, want supplied project theme", gotTheme)
+		t.Fatalf("native picker Theme = %#v, want supplied effective theme", gotTheme)
 	}
 }
 
@@ -325,7 +325,7 @@ func TestPickerOptionsFromCompatPickerMapsCandidatesWhenEntriesAreEmpty(t *testi
 func TestPickerOptionsFromCompatPickerPreservesTheme(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{}, theme.ThemeConfig{Background: "#010203"})
+	effective := theme.ResolveTheme(theme.ThemeConfig{Background: "#010203"})
 	options := pickerOptionsFromCompatPicker(intpickercompat.Options{Theme: &effective})
 	if options.Theme != &effective {
 		t.Fatalf("Theme = %p, want %p", options.Theme, &effective)
