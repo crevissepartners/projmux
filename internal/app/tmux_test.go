@@ -439,6 +439,73 @@ foreground = "#aabbcc"
 	}
 }
 
+func TestTmuxPrintAppConfigAppliesGlobalThemeToPaneChrome(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+	// Global theme drives tmux pane chrome; the project-local [theme] is
+	// global-only-ignored migration data and must not leak into the config.
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#0000ff"
+pane_active_bg = "#41eb3a"
+focus = "#ff0000"
+`)
+	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
+[theme]
+background = "#102030"
+pane_active_bg = "#abcdef"
+focus = "#fedcba"
+`)
+
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := stdout.String()
+
+	globalRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#0000ff", PaneActiveBg: "#41eb3a", Focus: "#ff0000",
+	}))
+	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+	projectRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#102030", PaneActiveBg: "#abcdef", Focus: "#fedcba",
+	}))
+
+	// The global theme must repaint the active-pane border, the active-pane
+	// tint, and the inactive pane body — these used to be hardcoded to the
+	// fallback because config generation ignored the global config entirely.
+	for _, want := range []string{
+		"set -g pane-active-border-style \"fg=" + globalRoles.FocusBorder + ",bold\"",
+		"set -g window-active-style \"bg=" + globalRoles.FocusPaneActiveBg + "\"",
+		"set -g window-style \"bg=" + globalRoles.PaneInactiveBg + "\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("print-app-config missing global-theme chrome line %q\n--- got ---\n%s", want, got)
+		}
+	}
+
+	// Guard against regression to the fallback chrome and against the ignored
+	// project theme leaking in.
+	for _, unwanted := range []string{
+		"set -g window-active-style \"bg=" + fallbackRoles.FocusPaneActiveBg + "\"",
+		"set -g pane-active-border-style \"fg=" + fallbackRoles.FocusBorder + ",bold\"",
+		"set -g window-active-style \"bg=" + projectRoles.FocusPaneActiveBg + "\"",
+		"set -g pane-active-border-style \"fg=" + projectRoles.FocusBorder + ",bold\"",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("print-app-config leaked fallback/project chrome line %q\n--- got ---\n%s", unwanted, got)
+		}
+	}
+}
+
 func TestBuildPopupToggleWithPickerBackendStylesNativeOnly(t *testing.T) {
 	t.Parallel()
 
@@ -1769,7 +1836,14 @@ func TestTmuxRenamePaneEmptyClearsManualAITopic(t *testing.T) {
 func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 	t.Parallel()
 
-	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/projmux", nil }}
+	// Isolate HOME so generated chrome derives from the built-in fallback, not
+	// from a developer's real global ~/.config/projmux/config.toml [theme].
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
