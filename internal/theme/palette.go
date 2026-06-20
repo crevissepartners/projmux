@@ -127,6 +127,7 @@ const (
 	TmuxPaneActiveBorderFg = "colour51"
 	TmuxPaneActiveBg       = "colour45"
 	TmuxPaneActiveFg       = "colour16"
+	TmuxPaneActiveTintBg   = "colour234" // active-pane window-active-style tint; one tone darker than surface.base (colour235)
 	TmuxMessageBg          = "colour208"
 	TmuxMessageFg          = "colour16"
 

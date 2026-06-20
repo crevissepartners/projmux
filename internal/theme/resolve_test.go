@@ -86,7 +86,7 @@ func TestRenderRolesFallbackPreservesBuiltInPalette(t *testing.T) {
 		FocusBorder:       TmuxPaneActiveBorderFg,
 		PaneTopicChipBg:   TmuxPaneActiveBg,
 		PaneTopicChipFg:   TmuxPaneActiveFg,
-		FocusPaneActiveBg: TmuxWindowInactiveBg, // spike-fixed colour235
+		FocusPaneActiveBg: TmuxPaneActiveTintBg, // dedicated dark tint colour234
 		StateWarning:      TmuxStateWarningFg,
 		StateCritical:     TmuxStateCriticalFg,
 		StateProgress:     TmuxStateProgressFg,
@@ -198,17 +198,13 @@ func TestRenderRolesExplicitThemeRepaintsTierABChromeRoles(t *testing.T) {
 	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
 
 	// Tier A/B chrome roles must follow the explicit theme, not the literal.
+	// (focus.border and focus.pane_active_bg are now dedicated Tier C roles that
+	// carry their literal verbatim, so they are intentionally not asserted here.)
 	if got.PaneBorder == fallback.PaneBorder {
 		t.Fatalf("pane.border = %q, want derived from muted, not literal", got.PaneBorder)
 	}
-	if got.FocusBorder == fallback.FocusBorder {
-		t.Fatalf("focus.border = %q, want derived from accent, not literal", got.FocusBorder)
-	}
 	if got.PaneTopicChipBg == fallback.PaneTopicChipBg {
 		t.Fatalf("pane.topic_chip_bg = %q, want derived from accent", got.PaneTopicChipBg)
-	}
-	if got.FocusPaneActiveBg == fallback.FocusPaneActiveBg {
-		t.Fatalf("focus.pane_active_bg = %q, want derived from surface_active", got.FocusPaneActiveBg)
 	}
 	// contrastFg: yellow accent is light -> dark fg.
 	if got.PaneTopicChipFg != "colour16" {

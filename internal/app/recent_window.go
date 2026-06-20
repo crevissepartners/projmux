@@ -413,7 +413,11 @@ func recentWindowPickerOptions(items []intpicker.Item, initialIndex int, homeDir
 		options.InitialIndex = initialIndex
 		options.InitialIndexSet = true
 	}
-	options = fallbackRenderThemeSource().pickerOptions(options)
+	if source, err := configRenderThemeSource(homeDir, lookupEnv, ""); err == nil {
+		options = source.pickerOptions(options)
+	} else {
+		options = fallbackRenderThemeSource().pickerOptions(options)
+	}
 	return options
 }
 
