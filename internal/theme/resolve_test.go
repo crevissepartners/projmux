@@ -87,6 +87,7 @@ func TestRenderRolesFallbackPreservesBuiltInPalette(t *testing.T) {
 		PaneTopicChipBg:   TmuxPaneActiveBg,
 		PaneTopicChipFg:   TmuxPaneActiveFg,
 		FocusPaneActiveBg: TmuxPaneActiveTintBg, // dedicated dark tint colour234
+		PaneInactiveBg:    "default",            // Phase 6b: terminal default literal so window-style stays bg=default when unset
 		StateWarning:      TmuxStateWarningFg,
 		StateCritical:     TmuxStateCriticalFg,
 		StateProgress:     TmuxStateProgressFg,
@@ -219,6 +220,7 @@ func TestTmuxRenderTokensUseGlobalNearest256ColorsWithoutFallbackLeak(t *testing
 
 	got := TmuxRenderTokensFromEffective(ResolveTheme(ThemeConfig{
 		Background:    "#ff0000",
+		Surface:       "#ff00ff",
 		SurfaceActive: "#0000ff",
 		Foreground:    "#00ff00",
 	}))
@@ -230,8 +232,64 @@ func TestTmuxRenderTokensUseGlobalNearest256ColorsWithoutFallbackLeak(t *testing
 	if got.WindowInactiveBg == fallback.WindowInactiveBg || got.WindowInactiveFg == fallback.WindowInactiveFg || got.WindowActiveBg == fallback.WindowActiveBg || got.WindowActiveFg == fallback.WindowActiveFg {
 		t.Fatalf("global tmux render tokens = %#v, must not reuse fallback tokens %#v", got, fallback)
 	}
-	if got.StatusBg != got.WindowInactiveBg || got.StatusFg != got.WindowInactiveFg {
-		t.Fatalf("status tokens = bg %q fg %q, want inactive window bg/fg %#v", got.StatusBg, got.StatusFg, got)
+	// Phase 6b: StatusBg follows `surface` (popup/chrome group), not `background`.
+	// With both set to different colors, StatusBg must derive from the explicit
+	// surface (no fallback leak) and must NOT equal the background-driven
+	// WindowInactiveBg — proving the popup/chrome bg is separated from the pane
+	// body bg.
+	if got.StatusBg == "" {
+		t.Fatalf("status tokens = %#v, want populated StatusBg", got)
+	}
+	if got.StatusBg == fallback.StatusBg {
+		t.Fatalf("status bg = %q, want derived from explicit surface, not fallback literal %q", got.StatusBg, fallback.StatusBg)
+	}
+	if got.StatusBg == got.WindowInactiveBg {
+		t.Fatalf("status bg = %q must not equal background-driven window inactive bg %q (surface ≠ background)", got.StatusBg, got.WindowInactiveBg)
+	}
+	if got.StatusFg != got.WindowInactiveFg {
+		t.Fatalf("status fg = %q, want inactive window fg %q", got.StatusFg, got.WindowInactiveFg)
+	}
+}
+
+// Phase 6b: an explicit `background` (surface unset) repaints the general pane
+// body (PaneInactiveBg → tmux window-style) but must NOT drag the popup/chrome
+// bg with it — StatusBg follows `surface`, which stays at the fallback literal.
+func TestRenderRolesExplicitBackgroundRepaintsPaneBodyNotPopup(t *testing.T) {
+	t.Parallel()
+
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Background: "#ff0000"}))
+	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	// Pane body repaints: PaneInactiveBg follows the explicit background and is
+	// no longer the terminal default literal.
+	if got.PaneInactiveBg == "default" {
+		t.Fatalf("pane.inactive_bg = %q, want repainted from explicit background, not \"default\"", got.PaneInactiveBg)
+	}
+	if got.PaneInactiveBg != got.WindowInactiveBg {
+		t.Fatalf("pane.inactive_bg = %q, want background-derived (= WindowInactiveBg %q)", got.PaneInactiveBg, got.WindowInactiveBg)
+	}
+	// Popup does NOT follow background: StatusBg stays at the surface fallback.
+	if got.StatusBg != fallback.StatusBg {
+		t.Fatalf("status bg = %q, want surface fallback %q (popup must not follow background)", got.StatusBg, fallback.StatusBg)
+	}
+}
+
+// Phase 6b: an explicit `surface` (background unset) repaints the popup/chrome
+// bg (StatusBg) but must NOT touch the general pane body — PaneInactiveBg stays
+// at the terminal default literal so the generated window-style is "bg=default".
+func TestRenderRolesExplicitSurfaceRepaintsPopupNotPaneBody(t *testing.T) {
+	t.Parallel()
+
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Surface: "#ff00ff"}))
+	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	// Popup repaints: StatusBg follows the explicit surface, not the fallback.
+	if got.StatusBg == fallback.StatusBg {
+		t.Fatalf("status bg = %q, want repainted from explicit surface, not fallback literal %q", got.StatusBg, fallback.StatusBg)
+	}
+	// Pane body untouched: PaneInactiveBg stays "default" (unset background).
+	if got.PaneInactiveBg != "default" {
+		t.Fatalf("pane.inactive_bg = %q, want \"default\" when background unset (pane body must not follow surface)", got.PaneInactiveBg)
 	}
 }
 

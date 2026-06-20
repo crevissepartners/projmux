@@ -215,8 +215,14 @@ type RenderRoles struct {
 	WindowInactiveFg string // text on inactive    <- foreground      (colour245 fallback)
 	WindowActiveBg   string // surface.active      <- surface_active  (colour240)
 	WindowActiveFg   string // text on active      <- foreground      (colour231 fallback)
-	StatusBg         string // status bar bg       <- background      (colour235)
-	StatusFg         string // status bar fg       <- foreground      (colour245 fallback)
+	// status bar bg — popup/chrome group (Phase 6b). Follows `surface`, NOT
+	// `background`: status-style, the native popup body, and the settings/notify/
+	// recent/picker frames all route through StatusBg, so deriving it from
+	// `surface` separates popup/chrome bg from the general pane body (which now
+	// follows `background` via PaneInactiveBg). Fallback stays the colour235
+	// literal so unset surface (≈ background) is byte-identical with before.
+	StatusBg string // status bar bg       <- surface         (colour235)
+	StatusFg string // status bar fg       <- foreground      (colour245 fallback)
 
 	// pane / focus chrome.
 	PaneBorder string // pane.border          Tier A <- muted-ish (colour236)
@@ -234,6 +240,15 @@ type RenderRoles struct {
 	// falling back to the literal colour234 when unset. surface_active is a LIGHT
 	// tone (colour240) and was the wrong direction for this role.
 	FocusPaneActiveBg string
+
+	// general/pane-body inactive bg — general (pane) bg group (Phase 6b). Tier A
+	// (public token `background`): drives tmux `window-style` for inactive panes.
+	// Fallback is the terminal default literal "default" (NOT a colour literal),
+	// so an unset background stays byte-identical with the historical
+	// `window-style "bg=default"`; an explicit background repaints the pane body.
+	// Separated from StatusBg (now surface-driven) so the pane body and popup/
+	// chrome bg can be tuned independently.
+	PaneInactiveBg string
 
 	// state / severity cluster (Phase 3). Single source for the notify HUD,
 	// usage HUD, and statusbar severity tints on the tmux side.
@@ -289,8 +304,11 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		WindowInactiveFg: tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
 		WindowActiveBg:   tmuxColorOrFallback(effective.SurfaceActive, TmuxWindowActiveBg),
 		WindowActiveFg:   tmuxColorOrFallback(effective.Foreground, TmuxWindowActiveFg),
-		StatusBg:         tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
-		StatusFg:         tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
+		// Popup/chrome group (Phase 6b): StatusBg follows `surface`, not
+		// `background`. Fallback stays the colour235 literal so unset surface is
+		// byte-identical with before (surface fallback ≈ background).
+		StatusBg: tmuxColorOrFallback(effective.Surface, TmuxWindowInactiveBg),
+		StatusFg: tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
 
 		PaneBorder: tmuxColorOrFallback(effective.Muted, TmuxPaneBorderFg),
 		// Tier A: focus.border follows the explicit `focus` public token, falling
@@ -305,6 +323,12 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		// Follows the explicit `pane_active_bg` public token, falling back to the
 		// literal colour234 (one tone darker than surface.base) when unset.
 		FocusPaneActiveBg: tmuxColorOrFallback(effective.PaneActiveBg, TmuxPaneActiveTintBg),
+
+		// General/pane bg group (Phase 6b): inactive-pane window-style follows the
+		// explicit `background` public token, falling back to the terminal default
+		// literal "default" (not a colour) so unset background keeps the historical
+		// `window-style "bg=default"` byte-identical.
+		PaneInactiveBg: tmuxColorOrFallback(effective.Background, "default"),
 
 		// Tier A: warning/critical follow the explicit public token so an
 		// explicit theme repaints the notify/usage/statusbar severity tints.
