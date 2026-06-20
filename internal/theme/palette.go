@@ -95,13 +95,11 @@ const (
 	TmuxMutedBg     = "colour240"
 	TmuxGoneBg      = "colour238"
 
-	TmuxAccentAttentionBg       = "colour53"
-	TmuxAccentAttentionFg       = "colour225"
-	TmuxAccentAttentionDimFg    = "colour183"
-	TmuxAccentAttentionStrongBg = "colour204"
-	TmuxAttentionProjectBg      = "colour90"
-	TmuxAccentAIBg              = "colour37"
-	TmuxAccentAIFg              = "colour121"
+	TmuxAccentAttentionBg  = "colour53"
+	TmuxAccentAttentionFg  = "colour225"
+	TmuxAttentionProjectBg = "colour90"
+	TmuxAccentAIBg         = "colour37"
+	TmuxAccentAIFg         = "colour121"
 
 	TmuxStateProgressFg = "colour220"
 	TmuxStateWarningFg  = "colour214"

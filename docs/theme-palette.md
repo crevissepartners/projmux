@@ -60,12 +60,11 @@ native picker, frame titlebar, chips, statusbar, notify sidebar, and settings
 popup all consume a shared effective token set instead of independently
 choosing colors.
 
-Font is not part of this universal token inventory. `font_family` and
-`font_size` are resolved as terminal capability/profile hints: projmux can
-store and display the desired value, but tmux/ANSI rendering cannot force a
-font family or size across terminal emulators. In environments without a
-supported terminal font adapter, projmux reports the desired font as
-`not applied` instead of treating storage as a successful font change.
+Font is not part of this token inventory. The earlier `font_family` and
+`font_size` theme keys were removed in Phase 1b: tmux/ANSI rendering cannot
+force a font family or size across terminal emulators, so the values never
+applied to the terminal. Leftover font keys in an existing config are accepted
+but ignored. See `docs/upgrading.md`.
 
 ## Mapping Policy
 
@@ -103,8 +102,7 @@ Rules:
 - A preset fills missing color tokens in the global layer.
 - Explicit global color tokens override preset colors.
 - An unknown preset invalidates only the global layer.
-- An invalid color, `font_family`, or `font_size` invalidates only the global
-  layer.
+- An invalid color invalidates only the global layer.
 - Every effective field reports `global` or `fallback` as its source label.
 
 Historical project `[theme]` values in `.projmux/config.toml` are migration

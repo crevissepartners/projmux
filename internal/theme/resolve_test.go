@@ -54,24 +54,6 @@ func TestResolveThemeExplicitColorOverridesPreset(t *testing.T) {
 	}
 }
 
-func TestResolveThemeFontDesiredValuesUseGlobalThenFallback(t *testing.T) {
-	t.Parallel()
-
-	got := ResolveTheme(ThemeConfig{FontFamily: "JetBrains Mono", FontSize: "12"})
-
-	if got.FontFamily.Value != "JetBrains Mono" || got.FontFamily.Source != SourceGlobal {
-		t.Fatalf("font family = %#v, want global JetBrains Mono", got.FontFamily)
-	}
-	if got.FontSize.Value != 12 || got.FontSize.Source != SourceGlobal {
-		t.Fatalf("font size = %#v, want global 12", got.FontSize)
-	}
-
-	unset := ResolveTheme(ThemeConfig{})
-	if unset.FontFamily.Value != "" || unset.FontFamily.Source != SourceFallback {
-		t.Fatalf("unset font family = %#v, want fallback empty", unset.FontFamily)
-	}
-}
-
 func TestTmuxRenderTokensFallbackPreservesBuiltInPalette(t *testing.T) {
 	t.Parallel()
 
@@ -130,31 +112,6 @@ func TestResolveThemeInvalidColorIgnoresGlobalAndWarns(t *testing.T) {
 		t.Fatalf("background = %#v, want fallback after invalid global color", got.Background)
 	}
 	requireThemeWarning(t, got, SourceGlobal, "background")
-}
-
-func TestResolveThemeInvalidFontIgnoresGlobalAndWarns(t *testing.T) {
-	t.Parallel()
-
-	got := ResolveTheme(ThemeConfig{FontFamily: "JetBrains Mono", FontSize: "0"})
-
-	if got.FontFamily.Value != "" || got.FontFamily.Source != SourceFallback {
-		t.Fatalf("font family = %#v, want fallback after invalid global font size", got.FontFamily)
-	}
-	if got.FontSize.Value != 0 || got.FontSize.Source != SourceFallback {
-		t.Fatalf("font size = %#v, want fallback after invalid global font size", got.FontSize)
-	}
-	requireThemeWarning(t, got, SourceGlobal, "font_size")
-}
-
-func TestResolveThemeInvalidFontFamilyIgnoresGlobalAndWarns(t *testing.T) {
-	t.Parallel()
-
-	got := ResolveTheme(ThemeConfig{FontFamily: "Bad\x7fFont"})
-
-	if got.FontFamily.Value != "" || got.FontFamily.Source != SourceFallback {
-		t.Fatalf("font family = %#v, want fallback after invalid global font family", got.FontFamily)
-	}
-	requireThemeWarning(t, got, SourceGlobal, "font_family")
 }
 
 func TestResolveThemeEveryEffectiveFieldHasGlobalOrFallbackSource(t *testing.T) {
