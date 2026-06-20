@@ -21,6 +21,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -761,8 +762,15 @@ func settingsEnglishChromeResidue(visible string) (string, bool) {
 func TestSettingsRootRowsUsePhase0ChromePalette(t *testing.T) {
 	t.Parallel()
 
-	if settingsColorType != "\x1b[38;2;141;205;142m" || settingsColorDim != "\x1b[90m" || settingsColorInfo != "\x1b[38;2;216;224;228m" {
-		t.Fatalf("shared settings colors changed: type=%q dim=%q info=%q", settingsColorType, settingsColorDim, settingsColorInfo)
+	// The settings chrome colors are now theme-derived package vars (Phase 5);
+	// the Phase 0 chrome palette is the built-in *fallback* mapping. Assert it
+	// through the pure adapter so the literals are explicit and independent of
+	// the package-global role vars. (Under `go test` the config-read apply path
+	// is gated off, so the role vars also stay at the fallback literals — see
+	// theme_render_native.go.)
+	fallbackRoles := theme.ANSIRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+	if fallbackRoles.AccentAction != "\x1b[38;2;141;205;142m" || fallbackRoles.TextDim != "\x1b[90m" || fallbackRoles.TextPrimary != "\x1b[38;2;216;224;228m" {
+		t.Fatalf("fallback chrome colors changed: type=%q dim=%q info=%q", fallbackRoles.AccentAction, fallbackRoles.TextDim, fallbackRoles.TextPrimary)
 	}
 	options := (&settingsCommand{}).rootOptions(settingsRootTabGlobal)
 	if got := options.TitleChips; len(got) != 2 || !got[0].Active || !got[1].Disabled {

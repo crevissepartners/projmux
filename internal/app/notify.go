@@ -262,6 +262,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	}
 
 	locale := c.locale()
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	if *ui == "sidebar" {
 		return c.runSidebar(store, severities, sources, *limit, stdout, stderr, c.notifyOriginClient(*clientTTY), locale)
 	}
@@ -508,7 +509,7 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 	return intpicker.Options{
 		UI:             "notify-sidebar",
 		MultiLine:      true,
-		Title:          theme.ANSINotifyTitleStart + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications" + theme.ANSIReset,
+		Title:          notifySidebarTitle + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications" + theme.ANSIReset,
 		Prompt:         "Notify > ",
 		Header:         "Newest first",
 		Footer:         notifySidebarFooter(c.homeDir, c.lookupEnv),
@@ -1285,20 +1286,27 @@ func notifySidebarTarget(e notify.Notification) string {
 	}))
 }
 
-const (
-	notifySidebarReset   = theme.ANSIReset
-	notifySidebarDimOpen = theme.ANSINotifyDimStart
-	notifySidebarProject = theme.ANSINotifyProjectStart
-	notifySidebarInfo    = theme.ANSINotifyInfoStart
-	notifySidebarWarn    = theme.ANSINotifyWarnStart
-	notifySidebarCrit    = theme.ANSINotifyCritStart
-	// Inactive/gone badges share a muted grey palette so target-state hints are
-	// visually distinct from active rows without competing for attention.
-	// INACTIVE keeps the dim italic-equivalent (no italic SGR is universally
-	// supported on tmux palettes, so we lean on the dim attribute), while
-	// GONE adds strikethrough to telegraph "the target no longer exists".
-	notifySidebarStale = theme.ANSINotifyStaleStart
-	notifySidebarGone  = theme.ANSINotifyGoneStart
+const notifySidebarReset = theme.ANSIReset
+
+// notify sidebar role escapes default to fallback literals; applyNativeUITheme
+// repoints them for an explicit global theme (see theme_render_native.go).
+// Inactive/gone badges share a muted grey palette so target-state hints are
+// visually distinct from active rows without competing for attention. INACTIVE
+// keeps the dim italic-equivalent (no italic SGR is universally supported on
+// tmux palettes, so we lean on the dim attribute), while GONE adds
+// strikethrough to telegraph "the target no longer exists".
+var (
+	notifySidebarDimOpen        = theme.ANSINotifyDimStart
+	notifySidebarProject        = theme.ANSINotifyProjectStart
+	notifySidebarInfo           = theme.ANSINotifyInfoStart
+	notifySidebarWarn           = theme.ANSINotifyWarnStart
+	notifySidebarCrit           = theme.ANSINotifyCritStart
+	notifySidebarStale          = theme.ANSINotifyStaleStart
+	notifySidebarGone           = theme.ANSINotifyGoneStart
+	notifySidebarTitle          = theme.ANSINotifyTitleStart
+	notifySidebarAgeOpen        = theme.ANSINotifyAgeStart
+	notifySidebarTopicOpen      = theme.ANSIChipActiveStart
+	notifySidebarAgentOpenStyle = theme.ANSINotifyAgentStart
 )
 
 func notifySidebarAge(age string) string {
@@ -1306,7 +1314,7 @@ func notifySidebarAge(age string) string {
 	if age == "" {
 		age = "just now"
 	}
-	return theme.ANSINotifyAgeStart + " " + age + " " + notifySidebarReset
+	return notifySidebarAgeOpen + " " + age + " " + notifySidebarReset
 }
 
 func notifySidebarProjectBadge(project string) string {
@@ -1325,7 +1333,7 @@ func notifySidebarTopicBadge(e notify.Notification) string {
 	if topic == "" {
 		return ""
 	}
-	return theme.ANSIChipActiveStart + " " + topic + " " + notifySidebarReset
+	return notifySidebarTopicOpen + " " + topic + " " + notifySidebarReset
 }
 
 func notifySidebarTargetPart(label, value string, locale i18n.Locale) string {
@@ -1388,11 +1396,11 @@ func notifySidebarAgentBadge(agent string) string {
 func notifySidebarAgentOpen(agent string) string {
 	switch strings.ToLower(strings.TrimSpace(agent)) {
 	case "claude":
-		return theme.ANSINotifyAgentStart
+		return notifySidebarAgentOpenStyle
 	case "codex":
-		return theme.ANSINotifyAgentStart
+		return notifySidebarAgentOpenStyle
 	default:
-		return theme.ANSINotifyAgentStart
+		return notifySidebarAgentOpenStyle
 	}
 }
 

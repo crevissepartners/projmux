@@ -25,15 +25,23 @@ const (
 	settingsGlyphOpen     = "▸" // ▸ open / navigate
 )
 
-// ANSI color sequences mapped per the design system.
-const (
+// ANSI color sequences mapped per the design system. These default to the
+// historical fallback literals so a fallback theme renders byte-identically;
+// applyNativeUITheme (theme_render_native.go) repoints them at a resolved
+// effective theme at command entry so an explicit global theme repaints the
+// settings/trust surfaces. settingsColorActive/Reset are pure attributes (no
+// color) and stay constant.
+var (
 	settingsColorAdd    = theme.ANSIAccentActionStart  // additive / primary action
 	settingsColorType   = theme.ANSIAccentActionStart  // edit / navigate action
 	settingsColorRemove = theme.ANSIStateDangerStart   // destructive
 	settingsColorBack   = theme.ANSITextSecondaryStart // back / cancel
-	settingsColorActive = theme.ANSIBold               // active / current value
 	settingsColorDim    = theme.ANSITextDimStart       // descriptions, secondary text
 	settingsColorInfo   = theme.ANSITextPrimaryStart   // info / read-only label
+)
+
+const (
+	settingsColorActive = theme.ANSIBold // active / current value
 	settingsColorReset  = theme.ANSIReset
 )
 

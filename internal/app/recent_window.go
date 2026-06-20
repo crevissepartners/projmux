@@ -135,6 +135,7 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 		printWindowRecentUsage(stderr)
 		return fmt.Errorf("window recent does not accept positional arguments")
 	}
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 
 	ctx := context.Background()
 	current, err := c.currentWindow(ctx)
@@ -713,11 +714,11 @@ func recentWindowPaneKindGlyph(kind, badgeStyle string) string {
 func recentWindowAIBadgeKindStart(kind string) string {
 	switch aibadge.ThemeRole(kind) {
 	case aibadge.RoleActionRequired:
-		return theme.ANSIAIBadgeActionRequiredStart
+		return appAIBadgeActionRequired
 	case aibadge.RoleSuccess:
-		return theme.ANSIAIBadgeSuccessStart
+		return appAIBadgeSuccess
 	case aibadge.RoleProgress:
-		return theme.ANSIAIBadgeProgressStart
+		return appAIBadgeProgress
 	default:
 		return ""
 	}

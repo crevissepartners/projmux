@@ -73,8 +73,9 @@ func trustBadgeAppearance(state hooks.ProjectConfigTrustState) (string, string, 
 }
 
 // Trust states use their own small palette so stale/untrusted/trusted rows do
-// not borrow warning, danger, action, or muted tones.
-const (
+// not borrow warning, danger, action, or muted tones. They default to fallback
+// literals; applyNativeUITheme repoints them (see theme_render_native.go).
+var (
 	settingsColorTrustTrusted   = theme.ANSITrustTrustedStart
 	settingsColorTrustStale     = theme.ANSITrustStaleStart
 	settingsColorTrustUntrusted = theme.ANSITrustUntrustedStart
