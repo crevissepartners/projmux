@@ -56,7 +56,23 @@ Five new public `[theme]` keys are now available: `progress`, `success`,
 `action_required` (AI/status colors), `pane_active_bg` (active-pane tint), and
 `focus` (active-pane border). Leaving a key unset keeps the historical built-in
 color; setting it repaints the matching chrome. `action_required` is independent
-of `critical`. A full migration write-up follows in a later phase.
+of `critical` — repainting `critical` never changes it. The full public token
+set is documented in `docs/configuration.md` and `docs/theme-palette.md`.
+
+The active-pane tint (`pane_active_bg`) defaults to `colour234`, one tone darker
+than the base background so the active pane visibly sinks; the active-pane
+border (`focus`) defaults to cyan `colour51`. Both apply only to tmux pane
+chrome.
+
+### Pane body vs popup backgrounds
+
+The general (pane) background and the popup/chrome background are now driven by
+separate public tokens. The pane body follows `background` (unset keeps the
+terminal default), while the status bar, native popup bodies, and the
+settings/notify/recent/picker frames follow `surface`. Because the `surface`
+fallback equals `background`, leaving both unset looks exactly as before; set
+them to different values to make popups read as a distinct surface from the pane
+body.
 
 ### Theme font keys removed
 
