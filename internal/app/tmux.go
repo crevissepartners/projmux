@@ -1416,6 +1416,7 @@ func tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell string
 func tmuxAppConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
 	tokens := theme.TmuxRenderTokensFromEffective(effective)
+	roles := theme.RenderRolesFromEffective(effective)
 	shell := tmuxConfigQuote(nonEmpty(strings.TrimSpace(defaultShell), fallbackInteractiveShell))
 	paneLabelFormat := tmuxVisiblePaneLabelFormat()
 	paneBorderFormat := tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle)
@@ -1455,9 +1456,15 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, de
 		"set -g status-style \"bg=" + tokens.StatusBg + ",fg=" + tokens.StatusFg + "\"",
 		"set -g message-style \"bg=" + theme.TmuxMessageBg + ",fg=" + theme.TmuxMessageFg + ",bold\"",
 		"set -g message-command-style \"bg=" + theme.TmuxMessageBg + ",fg=" + theme.TmuxMessageFg + ",bold\"",
-		"set -g pane-border-style \"fg=" + theme.TmuxPaneBorderFg + "\"",
-		"set -g pane-active-border-style \"fg=" + theme.TmuxPaneActiveBorderFg + ",bold\"",
+		"set -g pane-border-style \"fg=" + roles.PaneBorder + "\"",
+		"set -g pane-active-border-style \"fg=" + roles.FocusBorder + ",bold\"",
 		"set -g pane-border-status top",
+		// Active-pane tint (Phase 2 spike decision: window-active-style tint,
+		// not a label chip). tmux only tints the active window's panes via
+		// window-active-style; window-style restores the default bg for the
+		// rest so inactive panes are untouched.
+		"set -g window-style \"bg=default\"",
+		"set -g window-active-style \"bg=" + roles.FocusPaneActiveBg + "\"",
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}
 	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, decorations, badgeStyle, desktopNotifyMode, catalog, keymapPresent, effective)), "\n")[1:]...)

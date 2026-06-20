@@ -71,6 +71,58 @@ func TestTmuxRenderTokensFallbackPreservesBuiltInPalette(t *testing.T) {
 	}
 }
 
+func TestRenderRolesFallbackPreservesBuiltInPalette(t *testing.T) {
+	t.Parallel()
+
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+	want := RenderRoles{
+		WindowInactiveBg:  TmuxWindowInactiveBg,
+		WindowInactiveFg:  TmuxWindowInactiveFg,
+		WindowActiveBg:    TmuxWindowActiveBg,
+		WindowActiveFg:    TmuxWindowActiveFg,
+		StatusBg:          TmuxWindowInactiveBg,
+		StatusFg:          TmuxWindowInactiveFg,
+		PaneBorder:        TmuxPaneBorderFg,
+		FocusBorder:       TmuxPaneActiveBorderFg,
+		PaneTopicChipBg:   TmuxPaneActiveBg,
+		PaneTopicChipFg:   TmuxPaneActiveFg,
+		FocusPaneActiveBg: TmuxWindowInactiveBg, // spike-fixed colour235
+	}
+	if got != want {
+		t.Fatalf("fallback render roles = %#v, want %#v", got, want)
+	}
+}
+
+func TestRenderRolesExplicitThemeRepaintsTierABChromeRoles(t *testing.T) {
+	t.Parallel()
+
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{
+		Background:    "#ff0000",
+		SurfaceActive: "#0000ff",
+		Muted:         "#00ff00",
+		Accent:        "#ffff00",
+	}))
+	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	// Tier A/B chrome roles must follow the explicit theme, not the literal.
+	if got.PaneBorder == fallback.PaneBorder {
+		t.Fatalf("pane.border = %q, want derived from muted, not literal", got.PaneBorder)
+	}
+	if got.FocusBorder == fallback.FocusBorder {
+		t.Fatalf("focus.border = %q, want derived from accent, not literal", got.FocusBorder)
+	}
+	if got.PaneTopicChipBg == fallback.PaneTopicChipBg {
+		t.Fatalf("pane.topic_chip_bg = %q, want derived from accent", got.PaneTopicChipBg)
+	}
+	if got.FocusPaneActiveBg == fallback.FocusPaneActiveBg {
+		t.Fatalf("focus.pane_active_bg = %q, want derived from surface_active", got.FocusPaneActiveBg)
+	}
+	// contrastFg: yellow accent is light -> dark fg.
+	if got.PaneTopicChipFg != "colour16" {
+		t.Fatalf("pane.topic_chip_fg = %q, want dark contrast fg colour16 on light accent", got.PaneTopicChipFg)
+	}
+}
+
 func TestTmuxRenderTokensUseGlobalNearest256ColorsWithoutFallbackLeak(t *testing.T) {
 	t.Parallel()
 
