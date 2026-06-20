@@ -225,6 +225,7 @@ func newDefaultSwitchTagStore() (switchTagStore, error) {
 // Run resolves the first sessionizer candidate list and opens the first
 // interactive picker surface.
 func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
 		case "toggle-tag":

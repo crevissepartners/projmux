@@ -10,26 +10,67 @@ import (
 )
 
 const (
-	ansiReset    = theme.ANSIReset
-	ansiBold     = theme.ANSIBold
-	ansiDim      = theme.ANSIDim
+	ansiReset = theme.ANSIReset
+	ansiBold  = theme.ANSIBold
+	ansiDim   = theme.ANSIDim
+)
+
+// ANSI role escapes consumed by the switch list renderer. They default to the
+// historical fallback literals (see internal/theme/palette.go) so a fallback
+// theme renders byte-identically. ApplyTheme repoints them at a resolved
+// effective theme so an explicit global theme repaints the switch surface.
+//
+// These are package-level vars rather than threaded parameters because the
+// switch formatter functions are called from 30+ stateless call sites; a
+// parameter thread would be far more invasive. The switch/recent CLI render is
+// single-threaded so there is no data race: ApplyTheme runs once at command
+// entry before any render.
+var (
 	ansiRed      = theme.ANSIStateTaggedStart
 	ansiBlue     = theme.ANSIStateInfoStart
 	ansiGreen    = theme.ANSIStateExistingStart
 	ansiYellow   = theme.ANSIStatePinnedStart
 	ansiProgress = theme.ANSIStateProgressStart
 	ansiCyan     = theme.ANSIAccentSettingsStart
-)
+	ansiWarning  = theme.ANSIAIBadgeActionRequiredStart
 
-var ansiWarning = theme.ANSIAIBadgeActionRequiredStart
-
-const (
 	ansiStatusPath        = theme.ANSISwitchPathStart
 	ansiStatusGitActive   = theme.ANSISwitchGitActiveStart
 	ansiStatusGitInactive = theme.ANSISwitchGitInactiveStart
 	ansiTabActive         = theme.ANSISwitchWindowTabActiveStart
 	ansiTabInactive       = theme.ANSISwitchWindowTabStart
+
+	ansiAIBadgeSuccess        = theme.ANSIAIBadgeSuccessStart
+	ansiAIBadgeActionRequired = theme.ANSIAIBadgeActionRequiredStart
+	ansiAIBadgeProgress       = theme.ANSIAIBadgeProgressStart
+	ansiAttentionNeeds        = theme.ANSISwitchAttentionNeedsStart
+	ansiAttentionReady        = theme.ANSISwitchAttentionReadyStart
 )
+
+// ApplyTheme repoints the switch renderer's ANSI role escapes at a resolved
+// effective theme. It must be called once at command entry, before any switch
+// row is formatted. Passing a fallback-sourced ANSIRoles restores byte-identity.
+func ApplyTheme(roles theme.ANSIRoles) {
+	ansiRed = roles.StateTagged
+	ansiBlue = roles.StateInfo
+	ansiGreen = roles.StateExisting
+	ansiYellow = roles.StatePinned
+	ansiProgress = roles.StateProgress
+	ansiCyan = roles.AccentSettings
+	ansiWarning = roles.AIBadgeActionRequired
+
+	ansiStatusPath = roles.SwitchPath
+	ansiStatusGitActive = roles.SwitchGitActive
+	ansiStatusGitInactive = roles.SwitchGitInactive
+	ansiTabActive = roles.SwitchWindowTabActive
+	ansiTabInactive = roles.SwitchWindowTab
+
+	ansiAIBadgeSuccess = roles.AIBadgeSuccess
+	ansiAIBadgeActionRequired = roles.AIBadgeActionRequired
+	ansiAIBadgeProgress = roles.AIBadgeProgress
+	ansiAttentionNeeds = roles.SwitchAttentionNeeds
+	ansiAttentionReady = roles.SwitchAttentionReady
+}
 
 const (
 	switchBranchBadgeMax     = 16
@@ -347,7 +388,7 @@ func formatSwitchCardStatusBadge(badges []string) string {
 		case "needs review":
 			parts = append(parts, ansiProgress+"●"+ansiReset)
 		case "ready":
-			parts = append(parts, theme.ANSIAIBadgeSuccessStart+"●"+ansiReset)
+			parts = append(parts, ansiAIBadgeSuccess+"●"+ansiReset)
 		case "tagged":
 			parts = append(parts, ansiRed+"x"+ansiReset)
 		case "pinned":
@@ -367,9 +408,9 @@ func formatInlineAttentionBadge(kind string, rank int, badgeStyle string) string
 	}
 	switch rank {
 	case 2:
-		return theme.ANSISwitchAttentionNeedsStart + "● " + ansiReset
+		return ansiAttentionNeeds + "● " + ansiReset
 	case 1:
-		return theme.ANSISwitchAttentionReadyStart + "● " + ansiReset
+		return ansiAttentionReady + "● " + ansiReset
 	default:
 		return ""
 	}
@@ -540,11 +581,11 @@ func switchAttentionBadgeName(kind string, rank int) string {
 func ansiAIBadgeKindStart(kind string) string {
 	switch aibadge.ThemeRole(kind) {
 	case aibadge.RoleActionRequired:
-		return theme.ANSIAIBadgeActionRequiredStart
+		return ansiAIBadgeActionRequired
 	case aibadge.RoleSuccess:
-		return theme.ANSIAIBadgeSuccessStart
+		return ansiAIBadgeSuccess
 	case aibadge.RoleProgress:
-		return theme.ANSIAIBadgeProgressStart
+		return ansiAIBadgeProgress
 	default:
 		return ""
 	}

@@ -276,6 +276,7 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if c.nativePicker == nil {
 		return errors.New("native picker is not configured")
 	}
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, c.resolveSettingsProjectContext().Path)()
 
 	tab := settingsRootTabGlobal
 	for {
@@ -647,7 +648,9 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 	return entries
 }
 
-const (
+// settingsRootColorOpen/Dim default to fallback literals; applyNativeUITheme
+// repoints them for an explicit global theme. See theme_render_native.go.
+var (
 	settingsRootColorOpen = theme.ANSIAccentActionStrongStart
 	settingsRootColorDim  = theme.ANSITextMutedStart
 )
