@@ -1862,8 +1862,9 @@ func TestTmuxPrintConfigUsesSavedAIBadgeStyle(t *testing.T) {
 func TestTmuxAIBadgeStyleOffPreservesPaneBorderSpacing(t *testing.T) {
 	t.Parallel()
 
-	dot := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot)
-	off := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleOff)
+	roles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	dot := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot, roles)
+	off := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleOff, roles)
 
 	for _, banned := range []string{" ● ", "⏳", "✅", "🔄"} {
 		if strings.Contains(off, banned) {

@@ -156,6 +156,13 @@ Surface-specific tokens:
 | Settings | add/type/open action, destructive remove/quit, back/cancel, info/read-only, dim description, root action/dim rows, trust trusted/stale/untrusted |
 | Switch picker cards | path metadata, active/inactive git branch badges aligned with statusbar git branch block colors, statusbar-like window tabs, inline attention/progress dots |
 
+Active-pane focus: tmux draws a single shared border between adjacent panes, so
+a full active-pane rectangle (e.g. tinting the whole active pane edge-to-edge)
+is not guaranteed. Active focus is instead reinforced by the `pane-border-status
+top` topic line plus a subtle background tint applied via `window-active-style`
+(fallback `colour235`); inactive panes keep the default background via
+`window-style "bg=default"`.
+
 ## Current Literal Inventory
 
 After the Phase 3 token pass, raw color values intentionally remain in:

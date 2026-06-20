@@ -162,8 +162,71 @@ type EffectiveTheme struct {
 	Warnings      []Warning
 }
 
+// RenderRoles is the semantic role -> tmux color map that app chrome consumes
+// instead of bare palette literals. It is the Phase 2 foundation ("골대"): the
+// renderer asks for a role, not a colourN constant, so an explicit global theme
+// can repaint chrome by repointing the role's derivation.
+//
+// Each role is classified by a derivation tier (see the Phase 2 role-map design
+// note ~/Obsidian/.../Theme semantic role map 토큰 조합 설계):
+//
+//   - Tier A: the role uses one of the 8 public tokens directly.
+//   - Tier B: the role transforms a public token (contrast fg, tint/blend),
+//     with the transform tuned so the fallback equals the historical literal.
+//   - Tier C: renderer-only brand/state color not yet reducible to a public
+//     token; the literal is carried under a role name but not derived.
+//
+// Phase 2 only WIRES the window/status/pane chrome roles below. Other clusters
+// (state/AI/git/usage/notify/decoration/kube/native-UI) keep consuming literals
+// directly and are intentionally absent here until later phases promote them.
+type RenderRoles struct {
+	// surface — base chrome. Tier A.
+	WindowInactiveBg string // surface.base       <- background      (colour235)
+	WindowInactiveFg string // text on inactive    <- foreground      (colour245 fallback)
+	WindowActiveBg   string // surface.active      <- surface_active  (colour240)
+	WindowActiveFg   string // text on active      <- foreground      (colour231 fallback)
+	StatusBg         string // status bar bg       <- background      (colour235)
+	StatusFg         string // status bar fg       <- foreground      (colour245 fallback)
+
+	// pane / focus chrome.
+	PaneBorder      string // pane.border          Tier A <- muted-ish (colour236)
+	FocusBorder     string // focus.border         Tier A <- accent    (colour51)
+	PaneTopicChipBg string // pane.topic_chip_bg   Tier A <- accent    (colour45)
+	PaneTopicChipFg string // pane.topic_chip_fg   Tier B <- contrastFg (colour16)
+
+	// focus.pane_active_bg — Phase 2 spike-gated NEW role. Tier B:
+	// tint(surface_active) / blend(background, surface_active). Fallback is the
+	// spike-decided colour235 (window-active-style tint).
+	FocusPaneActiveBg string
+}
+
+// RenderRolesFromEffective derives the semantic role map from an effective
+// theme. Fallback-sourced roles deliberately reproduce the historical palette
+// literals so generated fallback config stays byte-identical.
+func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
+	return RenderRoles{
+		WindowInactiveBg: tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
+		WindowInactiveFg: tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
+		WindowActiveBg:   tmuxColorOrFallback(effective.SurfaceActive, TmuxWindowActiveBg),
+		WindowActiveFg:   tmuxColorOrFallback(effective.Foreground, TmuxWindowActiveFg),
+		StatusBg:         tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
+		StatusFg:         tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
+
+		PaneBorder:      tmuxColorOrFallback(effective.Muted, TmuxPaneBorderFg),
+		FocusBorder:     tmuxColorOrFallback(effective.Accent, TmuxPaneActiveBorderFg),
+		PaneTopicChipBg: tmuxColorOrFallback(effective.Accent, TmuxPaneActiveBg),
+		PaneTopicChipFg: tmuxContrastFgOrFallback(effective.Accent, TmuxPaneActiveFg),
+
+		// Tier B: tint(surface_active). The spike fixed the fallback at
+		// colour235 (matching surface.base / window-inactive bg) so the
+		// generated window-active-style line is byte-stable.
+		FocusPaneActiveBg: tmuxColorOrFallback(effective.SurfaceActive, TmuxWindowInactiveBg),
+	}
+}
+
 // TmuxRenderTokens adapts the resolver's semantic colors to the tmux 256-color
-// roles currently used by generated status/window chrome.
+// roles currently used by generated status/window chrome. It is a stable subset
+// view over RenderRoles kept for existing consumers.
 type TmuxRenderTokens struct {
 	WindowInactiveBg string
 	WindowInactiveFg string
@@ -175,15 +238,17 @@ type TmuxRenderTokens struct {
 
 // TmuxRenderTokensFromEffective maps an EffectiveTheme into tmux colourN
 // tokens. Fallback-sourced fields deliberately keep the historical palette
-// constants so generated fallback config remains byte-identical.
+// constants so generated fallback config remains byte-identical. It is built on
+// top of the role map so the two views never diverge.
 func TmuxRenderTokensFromEffective(effective EffectiveTheme) TmuxRenderTokens {
+	roles := RenderRolesFromEffective(effective)
 	return TmuxRenderTokens{
-		WindowInactiveBg: tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
-		WindowInactiveFg: tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
-		WindowActiveBg:   tmuxColorOrFallback(effective.SurfaceActive, TmuxWindowActiveBg),
-		WindowActiveFg:   tmuxColorOrFallback(effective.Foreground, TmuxWindowActiveFg),
-		StatusBg:         tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
-		StatusFg:         tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
+		WindowInactiveBg: roles.WindowInactiveBg,
+		WindowInactiveFg: roles.WindowInactiveFg,
+		WindowActiveBg:   roles.WindowActiveBg,
+		WindowActiveFg:   roles.WindowActiveFg,
+		StatusBg:         roles.StatusBg,
+		StatusFg:         roles.StatusFg,
 	}
 }
 
@@ -207,6 +272,25 @@ func tmuxColorOrFallback(field ColorField, fallback string) string {
 		return fallback
 	}
 	return field.Value.Tmux
+}
+
+// tmuxContrastFgOrFallback implements the Tier B contrastFg transform: for an
+// explicit theme it picks a dark (colour16) or light (colour231) foreground by
+// the background's luminance; for a fallback theme it returns the historical
+// literal verbatim so generated config stays byte-identical.
+func tmuxContrastFgOrFallback(bg ColorField, fallback string) string {
+	if bg.Source == SourceFallback || strings.TrimSpace(bg.Value.Hex) == "" {
+		return fallback
+	}
+	r, g, b, ok := parseHexRGB(bg.Value.Hex)
+	if !ok {
+		return fallback
+	}
+	// Rec. 601 luma; threshold mid-range -> dark fg on light bg, light on dark.
+	if 0.299*float64(r)+0.587*float64(g)+0.114*float64(b) >= 140 {
+		return "colour16"
+	}
+	return "colour231"
 }
 
 type preset struct {
