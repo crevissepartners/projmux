@@ -94,6 +94,21 @@ func TestRenderRolesFallbackPreservesBuiltInPalette(t *testing.T) {
 		AIProgress:        TmuxStateProgressFg,
 		AISuccess:         TmuxStateSuccessFg,
 		AIActionRequired:  TmuxAIBadgeActionRequiredFg,
+		GitSegmentFg:      TmuxGitSegmentFg,
+		GitSegmentBg:      TmuxGitSegmentBg,
+		GitStaged:         TmuxStateStagedFg,
+		GitDirty:          TmuxStateDirtyFg,
+		GitAhead:          TmuxStateAheadFg,
+		GitBehind:         TmuxStateBehindFg,
+		DecorationCwd:     TmuxDecorationCwdFg,
+		DecorationGitLab:  TmuxDecorationGitLabFg,
+		KubeContext:       TmuxKubeContextFg,
+		KubeNamespace:     TmuxKubeNamespaceFg,
+		IdentityBg:        TmuxIdentityBg,
+		IdentityFg:        TmuxIdentityFg,
+		ActionBg:          TmuxActionBg,
+		ActionFg:          TmuxActionFg,
+		DividerFg:         TmuxDividerFg,
 	}
 	if got != want {
 		t.Fatalf("fallback render roles = %#v, want %#v", got, want)

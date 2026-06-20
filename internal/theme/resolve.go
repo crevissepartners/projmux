@@ -212,6 +212,36 @@ type RenderRoles struct {
 	AIProgress       string // ai.progress        <- StateProgress (colour220)
 	AISuccess        string // ai.success         <- StateSuccess  (colour72)
 	AIActionRequired string // ai.action_required Tier C renderer-only (colour214) — Phase 6 candidate; independent of critical
+
+	// statusbar git segment cluster (Phase 4). The segment foreground is the
+	// only foreground-derived role here; the segment bg and the staged/dirty/
+	// ahead/behind state colors are renderer-only literals carried verbatim.
+	GitSegmentFg string // git.segment_fg Tier A <- foreground (colour231 fallback)
+	GitSegmentBg string // git.segment_bg Tier C renderer-only (colour30)
+	GitStaged    string // git.staged     Tier C renderer-only (colour151)
+	GitDirty     string // git.dirty      Tier C renderer-only (colour222)
+	GitAhead     string // git.ahead      Tier C renderer-only (colour153) — also the github-decoration source
+	GitBehind    string // git.behind     Tier C renderer-only (colour181)
+
+	// statusbar decoration cluster (Phase 4). cwd keeps its OWN role even though
+	// it shares colour220 with state.progress; the github/generic-git decoration
+	// colors reuse GitAhead/GitStaged (single source) and so have no field here.
+	DecorationCwd    string // decoration.cwd    Tier C renderer-only (colour220) — independent of state.progress
+	DecorationGitLab string // decoration.gitlab Tier C renderer-only (colour215)
+
+	// statusbar kube cluster (Phase 4). tmux named colors carried verbatim for
+	// output compatibility with the existing segment.
+	KubeContext   string // kube.context   Tier C renderer-only ("red")
+	KubeNamespace string // kube.namespace Tier C renderer-only ("blue")
+
+	// statusbar identity/action chrome (Phase 4). Renderer-only literals.
+	IdentityBg string // identity.bg Tier C renderer-only (colour60)
+	IdentityFg string // identity.fg Tier C renderer-only (colour254)
+	ActionBg   string // action.bg   Tier C renderer-only (colour29)
+	ActionFg   string // action.fg   Tier C renderer-only (colour230)
+
+	// statusbar divider (Phase 4). Renderer-only literal; kept simple, not derived.
+	DividerFg string // divider.fg Tier C renderer-only (colour239)
 }
 
 // RenderRolesFromEffective derives the semantic role map from an effective
@@ -251,6 +281,35 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		AIProgress:       TmuxStateProgressFg,
 		AISuccess:        TmuxStateSuccessFg,
 		AIActionRequired: TmuxAIBadgeActionRequiredFg,
+
+		// statusbar git segment: only the segment fg follows the public
+		// foreground token (Tier A). The segment bg and state colors are
+		// Tier C renderer-only literals carried verbatim.
+		GitSegmentFg: tmuxColorOrFallback(effective.Foreground, TmuxGitSegmentFg),
+		GitSegmentBg: TmuxGitSegmentBg,
+		GitStaged:    TmuxStateStagedFg,
+		GitDirty:     TmuxStateDirtyFg,
+		GitAhead:     TmuxStateAheadFg,
+		GitBehind:    TmuxStateBehindFg,
+
+		// statusbar decoration: cwd is its OWN Tier C role (independent of
+		// state.progress). github/generic-git decorations reuse GitAhead/
+		// GitStaged above, so only cwd/gitlab carry their own literal here.
+		DecorationCwd:    TmuxDecorationCwdFg,
+		DecorationGitLab: TmuxDecorationGitLabFg,
+
+		// kube: tmux named colors carried verbatim (Tier C).
+		KubeContext:   TmuxKubeContextFg,
+		KubeNamespace: TmuxKubeNamespaceFg,
+
+		// identity/action chrome: Tier C renderer-only literals.
+		IdentityBg: TmuxIdentityBg,
+		IdentityFg: TmuxIdentityFg,
+		ActionBg:   TmuxActionBg,
+		ActionFg:   TmuxActionFg,
+
+		// divider: Tier C renderer-only literal.
+		DividerFg: TmuxDividerFg,
 	}
 }
 

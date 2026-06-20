@@ -33,10 +33,6 @@ const (
 	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
 	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
 	tmuxWindowTitleWidth = 10
-	tmuxIdentityBg       = theme.TmuxIdentityBg
-	tmuxIdentityFg       = theme.TmuxIdentityFg
-	tmuxActionBg         = theme.TmuxActionBg
-	tmuxActionFg         = theme.TmuxActionFg
 	tmuxSecondaryFg      = theme.TmuxSecondaryFg
 
 	tmuxAccentAttentionBg = theme.TmuxAccentAttentionBg
@@ -1199,7 +1195,7 @@ func tmuxStandaloneConfig(binaryPath string, decoration config.StatusbarDecorati
 const statusbarSettingsIcon = ""
 
 func statusbarSettingsButton(label string) string {
-	return "#[bold,fg=" + tmuxActionFg + ",bg=" + tmuxActionBg + "]#[range=user|settings]" + statusbarSettingsButtonBody(label) + "#[norange]#[default]"
+	return "#[bold,fg=" + statusSegmentRoles.ActionFg + ",bg=" + statusSegmentRoles.ActionBg + "]#[range=user|settings]" + statusbarSettingsButtonBody(label) + "#[norange]#[default]"
 }
 
 func statusbarSettingsButtonBody(label string) string {
@@ -1214,11 +1210,11 @@ func statusbarSettingsButtonBody(label string) string {
 }
 
 func statusbarStandaloneSessionLeftFormat() string {
-	return "#[range=user|session]#[bold,fg=" + tmuxIdentityFg + ",bg=" + tmuxIdentityBg + "] [#S] #[default]#[norange] "
+	return "#[range=user|session]#[bold,fg=" + statusSegmentRoles.IdentityFg + ",bg=" + statusSegmentRoles.IdentityBg + "] [#S] #[default]#[norange] "
 }
 
 func statusbarAppSessionLeftFormat() string {
-	return "#[range=user|session]#[bold,fg=" + tmuxIdentityFg + ",bg=" + tmuxIdentityBg + "] #{s|^[^-]*-||:session_name} #[default]#[norange] "
+	return "#[range=user|session]#[bold,fg=" + statusSegmentRoles.IdentityFg + ",bg=" + statusSegmentRoles.IdentityBg + "] #{s|^[^-]*-||:session_name} #[default]#[norange] "
 }
 
 func statusbarAuxLineFormat(bin string, autosave bool) string {
@@ -1337,6 +1333,7 @@ func tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath string, decor
 
 func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
+	roles := theme.RenderRolesFromEffective(effective)
 	windowStatusFormat, windowStatusCurrentFormat := tmuxWindowStatusFormats(binaryPath, effective)
 	defaultStandaloneKeyBindings := keyBindingCatalogForScope(keyBindingScopeStandalone)
 	standaloneKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeStandalone)
@@ -1366,7 +1363,7 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryP
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
 		"set -g status-left "+tmuxConfigQuote(statusbarStandaloneSessionLeftFormat()),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+theme.TmuxDividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
 		// Two-line status bar: line 0 is the notify/HUD control row; line 1 is
 		// tmux's native session/window/path row. Setting both rows explicitly is
 		// required because tmux's built-in row otherwise stays at index 0.
@@ -1486,7 +1483,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, de
 	lines = append(lines,
 		"set -g status 2",
 		"set -g status-left "+tmuxConfigQuote(statusbarAppSessionLeftFormat()),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+theme.TmuxDividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
 		"set -g status-format[0] "+tmuxConfigQuote(statusbarAuxLineFormat(bin, true)),
 		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[2]",
