@@ -48,6 +48,19 @@ To restore your previous look, copy the values into the global
 Settings > Theme. Settings no longer exposes a Project theme editor; the global
 theme editor and the Effective theme view both live under the Global tab.
 
+### Theme font keys removed
+
+The `[theme]` `font_family` and `font_size` keys were removed. They never
+applied to the terminal — tmux/ANSI rendering cannot force a font family or
+size across terminal emulators — so they only stored and displayed a desired
+value that was always reported as `not applied`.
+
+Leftover `font_family` / `font_size` keys in a global or project
+`config.toml` are accepted but ignored: they no longer parse into the theme,
+appear in Settings, or affect any surface. You can delete them at your
+convenience. Set your terminal font through your terminal emulator's own
+profile settings instead.
+
 ## npm Installs
 
 The recommended install path is:

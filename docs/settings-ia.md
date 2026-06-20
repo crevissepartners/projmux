@@ -88,10 +88,6 @@ view-first layout:
   and `Notify icon` details. Each detail shows the current mode plus
   immediately selectable off/symbol/emoji preview rows. There is no separate
   `Change` page for icon decoration.
-- `Settings > Appearance` also shows a read-only `Theme font` status row.
-  `font_family` and `font_size` are desired values from the effective
-  global theme, and unsupported terminal paths must say `not applied`
-  instead of implying tmux changed the font.
 - `Settings > Appearance > Language / Locale` is the global/user language
   detail. The root row shows the saved `[ui].locale` value and the currently
   effective locale. The detail shows `Current`, `[ui].locale`, optional

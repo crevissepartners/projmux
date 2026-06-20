@@ -253,10 +253,10 @@ func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lin
 		cfg.Critical = value
 	case "warning":
 		cfg.Warning = value
-	case "font_family":
-		cfg.FontFamily = value
-	case "font_size":
-		cfg.FontSize = value
+	case "font_family", "font_size":
+		// Deprecated theme font keys (removed in Phase 1b). They never applied
+		// to the terminal, so leftover keys are accepted for backward
+		// compatibility but ignored rather than stored or resolved.
 	default:
 		return fmt.Errorf("line %d: unsupported theme key %q", lineNo, key)
 	}
@@ -265,6 +265,9 @@ func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lin
 
 func parseProjectConfigValue(section, key, value string) (string, error) {
 	if section == "theme" && key == "font_size" && !strings.HasPrefix(strings.TrimSpace(value), "\"") {
+		// font_size is a deprecated, ignored key (Phase 1b). It used to be
+		// written as a bare integer, so tolerate that form here to keep old
+		// configs loadable; applyProjectThemeConfigValue discards the value.
 		value = strings.TrimSpace(value)
 		if value == "" {
 			return "", fmt.Errorf("value must be a quoted string or integer")
@@ -455,7 +458,6 @@ func renderThemeConfigSection(cfg theme.ThemeConfig) string {
 		{"accent", cfg.Accent},
 		{"critical", cfg.Critical},
 		{"warning", cfg.Warning},
-		{"font_family", cfg.FontFamily},
 	} {
 		if field.value == "" {
 			continue
@@ -463,15 +465,6 @@ func renderThemeConfigSection(cfg theme.ThemeConfig) string {
 		b.WriteString(field.key)
 		b.WriteString(" = ")
 		b.WriteString(strconv.Quote(field.value))
-		b.WriteString("\n")
-	}
-	if cfg.FontSize != "" {
-		b.WriteString("font_size = ")
-		if _, err := strconv.Atoi(cfg.FontSize); err == nil {
-			b.WriteString(cfg.FontSize)
-		} else {
-			b.WriteString(strconv.Quote(cfg.FontSize))
-		}
 		b.WriteString("\n")
 	}
 	return b.String()

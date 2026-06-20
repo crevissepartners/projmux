@@ -222,8 +222,6 @@ muted = "#75848c"
 accent = "#7ac7ad"
 critical = "#ff6b6b"
 warning = "#ffcc66"
-font_family = "Cascadia Mono"
-font_size = 12
 ```
 
 Supported presets are `projmux-dark`, `midnight`, `forest`, `rose`, and
@@ -231,16 +229,15 @@ Supported presets are `projmux-dark`, `midnight`, `forest`, `rose`, and
 override preset values. Tokens the global theme leaves unset fall through to the
 built-in fallback preset.
 
-Unknown presets and invalid color/font values invalidate only the global theme
+Unknown presets and invalid color values invalidate only the global theme
 source and produce resolver warnings; the built-in fallback still resolves
 normally.
 Colors are `#RRGGBB`. Settings edits colors through a preset selector, swatch
 rows, and a hex input page. Truecolor renderers use exact RGB SGR tokens, and
-tmux surfaces use the stored or nearest xterm 256-color `colourN` mapping. Font
-values are desired terminal profile hints, not universal tmux or ANSI renderer
-tokens. Without a supported terminal font adapter, Settings reports the
-effective desired font as `not applied`; projmux does not create or modify
-terminal profiles in this phase.
+tmux surfaces use the stored or nearest xterm 256-color `colourN` mapping. The
+theme has no font keys: `font_family` and `font_size` were removed in Phase 1b
+because tmux/ANSI rendering cannot force a terminal font. Leftover font keys in
+an existing config are accepted but ignored. See `docs/upgrading.md`.
 
 ## UI Locale
 

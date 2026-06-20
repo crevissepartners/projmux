@@ -61,8 +61,6 @@ type ThemeConfig struct {
 	Accent        string
 	Critical      string
 	Warning       string
-	FontFamily    string
-	FontSize      string
 }
 
 // HasContent reports whether the config carries any theme override.
@@ -77,8 +75,6 @@ func (c ThemeConfig) HasContent() bool {
 		c.Accent,
 		c.Critical,
 		c.Warning,
-		c.FontFamily,
-		c.FontSize,
 	} {
 		if strings.TrimSpace(value) != "" {
 			return true
@@ -99,8 +95,6 @@ func (c *ThemeConfig) Normalize() {
 	c.Accent = strings.TrimSpace(c.Accent)
 	c.Critical = strings.TrimSpace(c.Critical)
 	c.Warning = strings.TrimSpace(c.Warning)
-	c.FontFamily = strings.TrimSpace(c.FontFamily)
-	c.FontSize = strings.TrimSpace(c.FontSize)
 }
 
 // ColorSpec carries both terminal-native truecolor and tmux 256-color forms.
@@ -140,11 +134,6 @@ type StringField struct {
 	Source Source
 }
 
-type IntField struct {
-	Value  int
-	Source Source
-}
-
 type EffectiveField struct {
 	Name   string
 	Value  string
@@ -170,8 +159,6 @@ type EffectiveTheme struct {
 	Accent        ColorField
 	Critical      ColorField
 	Warning       ColorField
-	FontFamily    StringField
-	FontSize      IntField
 	Warnings      []Warning
 }
 
@@ -212,8 +199,6 @@ func (t EffectiveTheme) Fields() []EffectiveField {
 		{Name: string(TokenAccent), Value: t.Accent.Value.Hex, Source: t.Accent.Source},
 		{Name: string(TokenCritical), Value: t.Critical.Value.Hex, Source: t.Critical.Source},
 		{Name: string(TokenWarning), Value: t.Warning.Value.Hex, Source: t.Warning.Source},
-		{Name: "font_family", Value: t.FontFamily.Value, Source: t.FontFamily.Source},
-		{Name: "font_size", Value: formatOptionalInt(t.FontSize.Value), Source: t.FontSize.Source},
 	}
 }
 
@@ -338,8 +323,6 @@ func ResolveTheme(global ThemeConfig) EffectiveTheme {
 	result.Accent = resolveColor(valid, TokenAccent)
 	result.Critical = resolveColor(valid, TokenCritical)
 	result.Warning = resolveColor(valid, TokenWarning)
-	result.FontFamily = resolveString(valid, func(l resolvedLayer) (string, bool) { return l.fontFamily, l.hasFontFamily })
-	result.FontSize = resolveInt(valid, func(l resolvedLayer) (int, bool) { return l.fontSize, l.hasFontSize })
 	return result
 }
 
@@ -349,13 +332,9 @@ type layerInput struct {
 }
 
 type resolvedLayer struct {
-	source        Source
-	preset        string
-	colors        map[ColorToken]ColorSpec
-	fontFamily    string
-	hasFontFamily bool
-	fontSize      int
-	hasFontSize   bool
+	source Source
+	preset string
+	colors map[ColorToken]ColorSpec
 }
 
 func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
@@ -405,27 +384,6 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 	}
 
 	layer := resolvedLayer{source: input.source, preset: presetName, colors: colors}
-	if hasThemeValue(cfg.FontFamily) {
-		if !validFontFamily(cfg.FontFamily) {
-			return resolvedLayer{}, []Warning{{
-				Source: input.source, Field: "font_family", Value: cfg.FontFamily,
-				Message: "invalid font family; ignored this theme layer",
-			}}, false
-		}
-		layer.fontFamily = cfg.FontFamily
-		layer.hasFontFamily = true
-	}
-	if hasThemeValue(cfg.FontSize) {
-		size, ok := parseFontSize(cfg.FontSize)
-		if !ok {
-			return resolvedLayer{}, []Warning{{
-				Source: input.source, Field: "font_size", Value: cfg.FontSize,
-				Message: "invalid font size; ignored this theme layer",
-			}}, false
-		}
-		layer.fontSize = size
-		layer.hasFontSize = true
-	}
 	return layer, nil, true
 }
 
@@ -445,15 +403,6 @@ func resolveString(layers []resolvedLayer, value func(resolvedLayer) (string, bo
 		}
 	}
 	return StringField{Source: SourceFallback}
-}
-
-func resolveInt(layers []resolvedLayer, value func(resolvedLayer) (int, bool)) IntField {
-	for _, layer := range layers {
-		if v, ok := value(layer); ok {
-			return IntField{Value: v, Source: layer.source}
-		}
-	}
-	return IntField{Source: SourceFallback}
 }
 
 func hasThemeValue(value string) bool {
@@ -480,27 +429,6 @@ func parseHexRGB(hex string) (int, int, int, bool) {
 	g, _ := strconv.ParseInt(hex[3:5], 16, 0)
 	b, _ := strconv.ParseInt(hex[5:7], 16, 0)
 	return int(r), int(g), int(b), true
-}
-
-func validFontFamily(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	for _, r := range value {
-		if r < 0x20 || r == 0x7f {
-			return false
-		}
-	}
-	return true
-}
-
-func parseFontSize(value string) (int, bool) {
-	size, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || size < 1 || size > 256 {
-		return 0, false
-	}
-	return size, true
 }
 
 func presetColors(values map[ColorToken]string) map[ColorToken]ColorSpec {
@@ -558,11 +486,4 @@ func colorDistance(r1, g1, b1, r2, g2, b2 int) float64 {
 	dg := float64(g1 - g2)
 	db := float64(b1 - b2)
 	return dr*dr + dg*dg + db*db
-}
-
-func formatOptionalInt(value int) string {
-	if value == 0 {
-		return ""
-	}
-	return strconv.Itoa(value)
 }

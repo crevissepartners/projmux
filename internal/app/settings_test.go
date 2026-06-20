@@ -1850,7 +1850,7 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 			if got, want := statusbarOptions.UI, "settings-statusbar"; got != want {
 				t.Fatalf("statusbar settings UI = %q, want %q", got, want)
 			}
-			if got, want := statusbarOptions.Title, "Appearance - Theme font and icon decoration"; got != want {
+			if got, want := statusbarOptions.Title, "Appearance - AI badge and icon decoration"; got != want {
 				t.Fatalf("statusbar settings title = %q, want %q", got, want)
 			}
 			if got, want := statusbarOptions.Prompt, "Settings > Appearance > "; got != want {
@@ -2024,44 +2024,6 @@ func TestSettingsHubSetsAIBadgeStyle(t *testing.T) {
 	}
 	if !reflect.DeepEqual(tmuxCalls[4], []string{"tmux", "display-message", "AI badge style: emoji"}) {
 		t.Fatalf("fifth tmux call = %#v", tmuxCalls[4])
-	}
-}
-
-func TestSettingsAppearanceShowsThemeFontNotApplied(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	project := filepath.Join(home, "source", "repos", "app")
-	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
-[theme]
-font_family = "Cascadia Mono"
-font_size = 12
-`)
-	// Project [theme] font is deprecated and ignored: the global font wins.
-	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
-[theme]
-font_family = "JetBrains Mono"
-`)
-
-	cmd := &settingsCommand{
-		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{}),
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "PROJMUX_CWD" {
-				return project
-			}
-			return ""
-		},
-		runCommand: func(string, ...string) error { return nil },
-	}
-
-	entries := cmd.statusbarEntries()
-	if !hasEntryLabelContainingAll(entries, "Theme font", "Cascadia Mono 12", "not applied") {
-		t.Fatalf("appearance entries = %#v, want theme font not-applied row", entries)
-	}
-	if !hasEntryLabelContainingAll(entries, "Theme font", "font_family global", "font_size global") {
-		t.Fatalf("appearance entries = %#v, want global font source labels", entries)
 	}
 }
 

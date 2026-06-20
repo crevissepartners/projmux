@@ -48,14 +48,6 @@ func (c *settingsCommand) runThemeSection(stdout, stderr io.Writer) error {
 			if err := c.runThemeColorSection(token, stdout, stderr); err != nil {
 				return err
 			}
-		case action == themeAction("font-family"):
-			if err := c.runThemeStringField("font_family", stdout, stderr); err != nil {
-				return err
-			}
-		case action == themeAction("font-size"):
-			if err := c.runThemeStringField("font_size", stdout, stderr); err != nil {
-				return err
-			}
 		case action == themeAction("reset"):
 			if err := c.resetTheme(stdout); err != nil {
 				return err
@@ -83,6 +75,14 @@ func (c *settingsCommand) themeOptions() (intpickercompat.Options, error) {
 	}, nil
 }
 
+func (c *settingsCommand) currentGlobalProjectConfig() (hooks.ProjectConfig, error) {
+	path, err := c.globalConfigPath()
+	if err != nil {
+		return hooks.ProjectConfig{}, err
+	}
+	return hooks.LoadGlobalConfig(path)
+}
+
 func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 	cfg, err := c.currentGlobalProjectConfig()
 	if err != nil {
@@ -102,14 +102,6 @@ func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 		})
 	}
 	entries = append(entries,
-		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Font family", themeStringSummary(cfg.Theme.FontFamily, "font_family")),
-			Value: themeAction("font-family"),
-		},
-		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Font size", themeStringSummary(cfg.Theme.FontSize, "font_size")),
-			Value: themeAction("font-size"),
-		},
 		intpickercompat.Entry{
 			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Reset theme values", "remove only global theme values"),
 			Value: themeAction("reset"),
@@ -269,28 +261,6 @@ func (c *settingsCommand) runThemeColorHexInput(token theme.ColorToken, stdout, 
 		return nil
 	}
 	return c.setThemeColor(token, hex, stdout)
-}
-
-func (c *settingsCommand) runThemeStringField(field string, stdout, stderr io.Writer) error {
-	cfg, err := c.currentGlobalProjectConfig()
-	if err != nil {
-		return err
-	}
-	initial := themeStringFieldValue(cfg.Theme, field)
-	value, ok, err := c.runProjectConfigTyped("Theme - "+field, field+" > ", initial)
-	if err != nil || !ok {
-		return err
-	}
-	value = strings.TrimSpace(value)
-	if field == "font_size" && value != "" {
-		if _, err := strconv.Atoi(value); err != nil {
-			fmt.Fprintf(stderr, "invalid font_size %q: use an integer\n", value)
-			return nil
-		}
-	}
-	return c.updateTheme(stdout, func(themeCfg *theme.ThemeConfig) {
-		setThemeStringField(themeCfg, field, value)
-	})
 }
 
 func (c *settingsCommand) runEffectiveThemeSection(stdout, stderr io.Writer) error {
@@ -472,14 +442,6 @@ func themeColorInitialQuery(cfg theme.ThemeConfig, token theme.ColorToken) strin
 	return "#"
 }
 
-func themeStringSummary(value, field string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "unset"
-	}
-	return value + " - set override " + field
-}
-
 func themeSwatch(hex string) string {
 	if normalized, ok := theme.NormalizeHexColor(hex); ok {
 		return "\x1b[48;2;" + hexRGBSGR(normalized) + "m  \x1b[0m"
@@ -554,26 +516,6 @@ func setThemeColorField(cfg *theme.ThemeConfig, token theme.ColorToken, value st
 		cfg.Critical = value
 	case theme.TokenWarning:
 		cfg.Warning = value
-	}
-}
-
-func themeStringFieldValue(cfg theme.ThemeConfig, field string) string {
-	switch field {
-	case "font_family":
-		return strings.TrimSpace(cfg.FontFamily)
-	case "font_size":
-		return strings.TrimSpace(cfg.FontSize)
-	default:
-		return ""
-	}
-}
-
-func setThemeStringField(cfg *theme.ThemeConfig, field, value string) {
-	switch field {
-	case "font_family":
-		cfg.FontFamily = value
-	case "font_size":
-		cfg.FontSize = value
 	}
 }
 

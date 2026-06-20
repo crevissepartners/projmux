@@ -8,8 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 func TestAttentionToggleMarksPlainPane(t *testing.T) {
@@ -371,11 +369,6 @@ func TestAttentionWindowShowsReplyBadge(t *testing.T) {
 	}
 	if got, want := stdout.String(), "#[fg="+tmuxAIBadgeSuccessFg+"]●"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
-	}
-	for _, disallowed := range []string{theme.TmuxAccentAttentionStrongBg} {
-		if strings.Contains(stdout.String(), disallowed) {
-			t.Fatalf("stdout = %q, did not expect critical attention token %q", stdout.String(), disallowed)
-		}
 	}
 }
 

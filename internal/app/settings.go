@@ -926,7 +926,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 		return intpickercompat.Options{
 			UI:         "settings-statusbar",
 			Entries:    c.statusbarEntries(),
-			Title:      "Appearance - Theme font and icon decoration",
+			Title:      "Appearance - AI badge and icon decoration",
 			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, ctx.hasProject(), c.locale()),
 			Prompt:     "Settings > Appearance > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
@@ -2553,7 +2553,6 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 	entries := make([]intpickercompat.Entry, 0, len(targets)+3)
 	entries = append(entries, settingsBackEntryLocale(locale))
 	entries = append(entries, c.localeSettingsEntry())
-	entries = append(entries, c.themeFontStatusEntry())
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "AI badge style", string(badgeStyle)+" - "+aiBadgeStylePreview(badgeStyle)),
 		Value:     settingsActionPrefixAIBadgeStyle,

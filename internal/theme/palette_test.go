@@ -24,7 +24,7 @@ func TestFallbackPalettePreservesPhaseBaselineTokens(t *testing.T) {
 			t.Fatalf("%s token is empty", name)
 		}
 	}
-	if TmuxAccentAttentionStrongBg == TmuxAccentAIBg || TmuxAccentAttentionStrongBg == TmuxActionBg {
+	if TmuxAccentAttentionBg == TmuxAccentAIBg || TmuxAccentAttentionBg == TmuxActionBg {
 		t.Fatalf("attention, ai, and action tokens must remain visually distinct")
 	}
 	if ANSIStateDangerStart == ANSIAccentActionStart || ANSIStateDangerStart == ANSITextDimStart {
