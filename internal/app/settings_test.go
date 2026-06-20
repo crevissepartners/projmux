@@ -5219,6 +5219,230 @@ func TestSettingsHubKeybindingsApplyReportsLiveReloadFailure(t *testing.T) {
 	}
 }
 
+func TestSettingsThemeColorSetLiveAppliesInsideTmux(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux,1,0"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.setThemeColor(theme.TokenBackground, "#0000ff", &stdout); err != nil {
+		t.Fatalf("setThemeColor() error = %v", err)
+	}
+
+	configToml := readFile(t, filepath.Join(home, ".config", "projmux", "config.toml"))
+	if !strings.Contains(configToml, "#0000ff") {
+		t.Fatalf("config.toml = %q, want saved background", configToml)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	configText := readFile(t, configPath)
+	globalRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{Background: "#0000ff"}))
+	if !strings.Contains(configText, "set -g window-style \"bg="+globalRoles.PaneInactiveBg+"\"") {
+		t.Fatalf("generated tmux config = %q, want regenerated themed window-style", configText)
+	}
+	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
+		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "theme saved and applied\n") ||
+		!strings.Contains(got, "  Saved: ok\n") ||
+		!strings.Contains(got, "  Prepared: ok\n") ||
+		!strings.Contains(got, "  Running session: ok (updated)\n") {
+		t.Fatalf("stdout = %q, want success theme apply status", got)
+	}
+}
+
+func TestSettingsThemeColorSetOutsideTmuxShowsFollowUp(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.setThemeColor(theme.TokenBackground, "#0000ff", &stdout); err != nil {
+		t.Fatalf("setThemeColor() error = %v", err)
+	}
+	if len(tmuxCalls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none outside tmux", tmuxCalls)
+	}
+	configToml := readFile(t, filepath.Join(home, ".config", "projmux", "config.toml"))
+	if !strings.Contains(configToml, "#0000ff") {
+		t.Fatalf("config.toml = %q, want saved background", configToml)
+	}
+	configText := readFile(t, filepath.Join(home, ".config", "projmux", "tmux.conf"))
+	if !strings.Contains(configText, "set -g @projmux_app 1") {
+		t.Fatalf("generated tmux config = %q, want regenerated app config", configText)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"theme apply status\n",
+		"  Saved: ok (config.toml: ",
+		"  Prepared: ok (generated tmux config: ",
+		"  Running session: skipped (Settings is not running inside tmux)\n",
+		"Next: run `projmux tmux apply` to sync a running projmux tmux server.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestSettingsThemeResetLiveAppliesInsideTmux(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#0000ff"
+`)
+	var tmuxCalls [][]string
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux,1,0"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+			return nil
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.resetTheme(&stdout); err != nil {
+		t.Fatalf("resetTheme() error = %v", err)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
+		t.Fatalf("tmux calls = %#v, want source-file app config after reset", tmuxCalls)
+	}
+	// After reset the generated config returns to the fallback chrome.
+	configText := readFile(t, configPath)
+	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+	if !strings.Contains(configText, "set -g window-style \"bg="+fallbackRoles.PaneInactiveBg+"\"") {
+		t.Fatalf("generated tmux config = %q, want fallback window-style after reset", configText)
+	}
+	if !strings.Contains(stdout.String(), "theme saved and applied\n") {
+		t.Fatalf("stdout = %q, want success theme apply status", stdout.String())
+	}
+}
+
+func TestSettingsThemeColorSetReportsLiveReloadFailure(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux,1,0"
+			}
+			return ""
+		},
+		runCommand: func(string, ...string) error {
+			return errors.New("source-file failed")
+		},
+	}
+
+	var stdout bytes.Buffer
+	err := cmd.setThemeColor(theme.TokenBackground, "#0000ff", &stdout)
+	if err == nil || !strings.Contains(err.Error(), "reload active tmux theme: source-file failed") {
+		t.Fatalf("setThemeColor() error = %v, want live reload failure", err)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"theme apply status\n",
+		"  Saved: ok (config.toml: ",
+		"  Prepared: ok (generated tmux config: ",
+		"  Running session: failed (live tmux reload: source-file failed)\n",
+		"Recovery: fix the live tmux reload issue, then run `projmux tmux apply`.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestSettingsThemeColorSetDefaultSentinelStoresDefault(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.setThemeColor(theme.TokenBackground, theme.ThemeDefaultSentinel, &stdout); err != nil {
+		t.Fatalf("setThemeColor(default) error = %v", err)
+	}
+	cfg, err := cmd.currentGlobalProjectConfig()
+	if err != nil {
+		t.Fatalf("currentGlobalProjectConfig() error = %v", err)
+	}
+	if cfg.Theme.Background != theme.ThemeDefaultSentinel {
+		t.Fatalf("stored background = %q, want sentinel %q", cfg.Theme.Background, theme.ThemeDefaultSentinel)
+	}
+	// The generated config must emit bg=default for the inactive pane body.
+	configText := readFile(t, filepath.Join(home, ".config", "projmux", "tmux.conf"))
+	if !strings.Contains(configText, "set -g window-style \"bg=default\"") {
+		t.Fatalf("generated tmux config = %q, want bg=default window-style", configText)
+	}
+}
+
+func TestSettingsThemeColorSetDefaultSentinelRejectedForNonSurfaceToken(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+	if err := cmd.setThemeColor(theme.TokenForeground, theme.ThemeDefaultSentinel, &bytes.Buffer{}); err == nil {
+		t.Fatalf("setThemeColor(foreground, default) error = nil, want invalid color error")
+	}
+}
+
+func TestSettingsThemeColorEntriesOfferTerminalDefaultForSurfaceTokens(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(string) string { return "" },
+	}
+	bgEntries := cmd.themeColorEntries(theme.TokenBackground)
+	if !hasEntryValue(bgEntries, themeAction("color-set:"+string(theme.TokenBackground)+":"+theme.ThemeDefaultSentinel)) {
+		t.Fatalf("background entries = %#v, want Terminal default choice", bgEntries)
+	}
+	fgEntries := cmd.themeColorEntries(theme.TokenForeground)
+	if hasEntryValue(fgEntries, themeAction("color-set:"+string(theme.TokenForeground)+":"+theme.ThemeDefaultSentinel)) {
+		t.Fatalf("foreground entries = %#v, must not offer Terminal default", fgEntries)
+	}
+}
+
 func TestSettingsHubKeybindingsDirectActionsHideTypedFallback(t *testing.T) {
 	t.Parallel()
 

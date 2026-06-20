@@ -199,10 +199,15 @@ func ansi256FGOrLiteral(field ColorField, literal string) string {
 }
 
 // ansiBGFGOrLiteral pairs an explicit background field with a fixed foreground
-// escape; fallback returns the literal verbatim.
+// escape; fallback returns the literal verbatim. When the background field is the
+// terminal-default sentinel it emits the foreground escape only, so the surface
+// inherits the terminal background (no 48;2 sequence).
 func ansiBGFGOrLiteral(bg ColorField, fg, literal string) string {
 	if bg.Source == SourceFallback {
 		return literal
+	}
+	if IsThemeDefaultSpec(bg.Value) {
+		return fg
 	}
 	if b := bg.Value.TruecolorBG(); b != "" {
 		return "\x1b[" + b + "m" + fg
@@ -219,8 +224,17 @@ func ansiBGFieldFGFieldOrLiteral(bg, fg ColorField, literal string) string {
 	if bg.Source == SourceFallback && fg.Source == SourceFallback {
 		return literal
 	}
-	b := bg.Value.TruecolorBG()
 	f := fg.Value.TruecolorFG()
+	// Terminal-default sentinel background: emit the foreground escape only so the
+	// surface inherits the terminal background (no 48;2 sequence). Fall back to a
+	// foreground-token escape when the fg side is itself a fallback.
+	if IsThemeDefaultSpec(bg.Value) {
+		if f != "" {
+			return "\x1b[" + f + "m"
+		}
+		return literal
+	}
+	b := bg.Value.TruecolorBG()
 	if b == "" || f == "" {
 		return literal
 	}

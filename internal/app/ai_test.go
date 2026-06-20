@@ -19,6 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -134,6 +135,78 @@ keys = ["M-t"]
 	}
 	if containsString(runner.options.Bindings, "alt-t:abort") {
 		t.Fatalf("AI picker bindings = %#v, direct command alias must not close popup", runner.options.Bindings)
+	}
+}
+
+func TestAIPickerAppliesGlobalThemeSurface(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#0000ff"
+surface = "#112233"
+foreground = "#ffffff"
+`)
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("right"); err != nil {
+		t.Fatalf("runAgentPicker() error = %v", err)
+	}
+	if runner.options.Theme == nil {
+		t.Fatalf("AI picker options.Theme = nil, want global theme filled")
+	}
+	if got := runner.options.Theme.Background.Source; got != theme.SourceGlobal {
+		t.Fatalf("AI picker background source = %q, want global", got)
+	}
+	if got, want := runner.options.Theme.Surface.Value.Hex, "#112233"; got != want {
+		t.Fatalf("AI picker surface hex = %q, want %q", got, want)
+	}
+}
+
+func TestAISettingsAppliesGlobalThemeSurface(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#0000ff"
+surface = "#112233"
+`)
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "esc"}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if err := cmd.Run([]string{"settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run settings picker error = %v", err)
+	}
+	if runner.options.Theme == nil {
+		t.Fatalf("AI settings options.Theme = nil, want global theme filled")
+	}
+	if got := runner.options.Theme.Background.Source; got != theme.SourceGlobal {
+		t.Fatalf("AI settings background source = %q, want global", got)
+	}
+}
+
+func TestAIPickerUnsetThemeMatchesFallback(t *testing.T) {
+	home := t.TempDir()
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("right"); err != nil {
+		t.Fatalf("runAgentPicker() error = %v", err)
+	}
+	if runner.options.Theme == nil {
+		t.Fatalf("AI picker options.Theme = nil, want fallback theme filled")
+	}
+	want := theme.ResolveTheme(theme.ThemeConfig{})
+	if got := runner.options.Theme.Background.Source; got != want.Background.Source {
+		t.Fatalf("AI picker unset background source = %q, want fallback %q", got, want.Background.Source)
+	}
+	if got := runner.options.Theme.Surface.Value.Hex; got != want.Surface.Value.Hex {
+		t.Fatalf("AI picker unset surface hex = %q, want fallback %q", got, want.Surface.Value.Hex)
 	}
 }
 

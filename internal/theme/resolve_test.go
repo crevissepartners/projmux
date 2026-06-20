@@ -54,6 +54,92 @@ func TestResolveThemeExplicitColorOverridesPreset(t *testing.T) {
 	}
 }
 
+func TestResolveThemeDefaultSentinelOverridesPresetForBackground(t *testing.T) {
+	t.Parallel()
+
+	got := ResolveTheme(ThemeConfig{Preset: "forest", Background: "default", Surface: "default"})
+
+	if !IsThemeDefaultSpec(got.Background.Value) || got.Background.Source != SourceGlobal {
+		t.Fatalf("background = %#v, want global terminal-default sentinel", got.Background)
+	}
+	if !IsThemeDefaultSpec(got.Surface.Value) || got.Surface.Source != SourceGlobal {
+		t.Fatalf("surface = %#v, want global terminal-default sentinel", got.Surface)
+	}
+	// SurfaceActive was not set to default, so it keeps the preset fill.
+	if got.SurfaceActive.Value.Hex == "" || got.SurfaceActive.Source != SourceGlobal {
+		t.Fatalf("surface_active = %#v, want preset-filled value, not default", got.SurfaceActive)
+	}
+}
+
+func TestResolveThemeDefaultSentinelEmitsTmuxDefaultRole(t *testing.T) {
+	t.Parallel()
+
+	roles := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Preset: "forest", Background: "default", Surface: "default"}))
+	if roles.PaneInactiveBg != "default" {
+		t.Fatalf("PaneInactiveBg = %q, want default (sentinel beats preset)", roles.PaneInactiveBg)
+	}
+	if roles.StatusBg != "default" {
+		t.Fatalf("StatusBg = %q, want default (surface sentinel)", roles.StatusBg)
+	}
+}
+
+func TestResolveThemeDefaultSentinelOnlyValidForBackgroundSurface(t *testing.T) {
+	t.Parallel()
+
+	// "default" on a non-surface token (foreground) is treated as invalid hex and
+	// drops that global layer, so resolution falls back to the built-in preset.
+	got := ResolveTheme(ThemeConfig{Foreground: "default"})
+	if got.Foreground.Source != SourceFallback {
+		t.Fatalf("foreground = %#v, want fallback (default invalid for non-surface tokens)", got.Foreground)
+	}
+	if len(got.Warnings) == 0 {
+		t.Fatalf("warnings = %#v, want a warning for default on a non-surface token", got.Warnings)
+	}
+}
+
+func TestResolveThemeDefaultSentinelANSIResetsSurface(t *testing.T) {
+	t.Parallel()
+
+	ansi := ANSIRolesFromEffective(ResolveTheme(ThemeConfig{Preset: "forest", Surface: "default", Foreground: "#ffffff"}))
+	// SurfaceRaised must not contain a background sequence (48;2) when surface is
+	// the terminal-default sentinel; the foreground escape is still present.
+	if containsBGSequence(ansi.SurfaceRaised) {
+		t.Fatalf("SurfaceRaised = %q, want no background sequence for terminal-default surface", ansi.SurfaceRaised)
+	}
+}
+
+func containsBGSequence(s string) bool {
+	for _, marker := range []string{"48;2;", "48;5;"} {
+		if indexOf(s, marker) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestResolveThemeUnsetByteIdenticalWithoutSentinel(t *testing.T) {
+	t.Parallel()
+
+	// Sentinel handling must not perturb the unset/default resolution.
+	got := ResolveTheme(ThemeConfig{})
+	want := RenderRolesFromEffective(got)
+	if want.PaneInactiveBg != "default" {
+		t.Fatalf("unset PaneInactiveBg = %q, want historical default literal", want.PaneInactiveBg)
+	}
+	if got.Background.Source != SourceFallback {
+		t.Fatalf("unset background source = %q, want fallback", got.Background.Source)
+	}
+}
+
 func TestTmuxRenderTokensFallbackPreservesBuiltInPalette(t *testing.T) {
 	t.Parallel()
 

@@ -367,10 +367,25 @@ func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.writeFile(path, []byte(fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(path, []byte(c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return fmt.Errorf("write shell app config: %w", err)
 	}
 	return nil
+}
+
+// appConfigThemeSource resolves the global user theme for the shell-start writer,
+// mirroring tmuxCommand.appConfigThemeSource: an explicit global `[theme]`
+// repaints the generated tmux chrome on `projmux shell` start instead of
+// clobbering a themed config with the built-in fallback. It degrades to the
+// fallback when the global config cannot be read so shell start never fails on a
+// missing or malformed user config. Theme is global-only, so no project path
+// participates.
+func (c *shellCommand) appConfigThemeSource() renderThemeSource {
+	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, "")
+	if err != nil {
+		return fallbackRenderThemeSource()
+	}
+	return source
 }
 
 func (c *shellCommand) writePSMuxAppConfig(path, binaryPath string) error {

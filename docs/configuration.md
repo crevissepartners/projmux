@@ -179,7 +179,20 @@ built-in fallback preset
 
 Settings edits the global `[theme]` in `~/.config/projmux/config.toml`. The
 Effective theme view shows the final global > built-in fallback value for each
-field with source labels: `global` or `fallback`.
+field with source labels: `global` or `fallback`. Saving or resetting a theme
+value live-applies it: projmux regenerates the generated tmux config and, when
+Settings runs inside tmux, `tmux source-file`-reloads it so a running server
+repaints immediately. Outside tmux the save still succeeds and the report
+prints `Next: run \`projmux tmux apply\`` to sync a running server.
+
+The `background`, `surface`, and `surface_active` tokens additionally accept the
+value `default` ("Terminal default" in Settings) to keep that surface at the
+terminal background. Priority is **explicit `default` > preset fill > unset
+(fallback)**, so picking a preset and then setting (for example)
+`background = "default"` keeps every other token preset-filled while the pane
+body stays at the terminal default (`window-style "bg=default"`); popup/ANSI
+surfaces emit no background sequence. `default` is only valid on these three
+tokens. See `docs/theme-palette.md` for the full sentinel contract.
 
 Project `.projmux/config.toml` `[theme]` is **deprecated and ignored**: it is no
 longer an effective theme source and does not influence the native picker,

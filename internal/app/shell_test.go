@@ -17,6 +17,7 @@ import (
 
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -117,6 +118,95 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		if strings.HasPrefix(env, "TMUX=") {
 			t.Fatalf("runner env contains TMUX: %#v", recorder.env)
 		}
+	}
+}
+
+func TestShellWriteAppConfigAppliesGlobalThemeToPaneChrome(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#0000ff"
+pane_active_bg = "#41eb3a"
+focus = "#ff0000"
+`)
+	cmd := &shellCommand{
+		lookupEnv: func(name string) string {
+			if name == "HOME" {
+				return home
+			}
+			return ""
+		},
+		homeDir:   func() (string, error) { return home, nil },
+		readFile:  os.ReadFile,
+		writeFile: os.WriteFile,
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if err := cmd.writeAppConfig(configPath, "/tmp/projmux"); err != nil {
+		t.Fatalf("writeAppConfig() error = %v", err)
+	}
+	got := readFile(t, configPath)
+
+	globalRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#0000ff", PaneActiveBg: "#41eb3a", Focus: "#ff0000",
+	}))
+	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+	for _, want := range []string{
+		"set -g pane-active-border-style \"fg=" + globalRoles.FocusBorder + ",bold\"",
+		"set -g window-active-style \"bg=" + globalRoles.FocusPaneActiveBg + "\"",
+		"set -g window-style \"bg=" + globalRoles.PaneInactiveBg + "\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("shell app config missing global-theme chrome line %q\n--- got ---\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"set -g window-active-style \"bg=" + fallbackRoles.FocusPaneActiveBg + "\"",
+		"set -g pane-active-border-style \"fg=" + fallbackRoles.FocusBorder + ",bold\"",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("shell app config leaked fallback chrome line %q\n--- got ---\n%s", unwanted, got)
+		}
+	}
+}
+
+func TestShellWriteAppConfigUnsetThemeMatchesFallback(t *testing.T) {
+	home := t.TempDir()
+	cmd := &shellCommand{
+		lookupEnv: func(name string) string {
+			if name == "HOME" {
+				return home
+			}
+			return ""
+		},
+		homeDir:   func() (string, error) { return home, nil },
+		readFile:  os.ReadFile,
+		writeFile: os.WriteFile,
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if err := cmd.writeAppConfig(configPath, "/tmp/projmux"); err != nil {
+		t.Fatalf("writeAppConfig() error = %v", err)
+	}
+	got := readFile(t, configPath)
+
+	// With no global theme, the shell-start writer must be byte-identical to the
+	// built-in fallback render (the pre-change behavior).
+	catalog, present, err := loadMergedKeyBindingCatalog(keymapLoader{
+		homeDir:   cmd.homeDir,
+		lookupEnv: cmd.lookupEnv,
+		readFile:  cmd.readFile,
+	})
+	if err != nil {
+		t.Fatalf("loadMergedKeyBindingCatalog() error = %v", err)
+	}
+	want := fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(
+		"/tmp/projmux", cmd.defaultShell(),
+		loadStatusbarDecorationSet(cmd.homeDir, cmd.lookupEnv),
+		loadAIBadgeStyle(cmd.homeDir, cmd.lookupEnv),
+		loadDesktopNotifyModeForTmuxConfig(cmd.homeDir, cmd.lookupEnv),
+		catalog, present,
+	)
+	if got != want {
+		t.Fatalf("shell app config unset theme is not byte-identical to fallback\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }
 
