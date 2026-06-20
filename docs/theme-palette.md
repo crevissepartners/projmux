@@ -114,6 +114,24 @@ Rules:
 - An invalid color invalidates only the global layer.
 - Every effective field reports `global` or `fallback` as its source label.
 
+### Terminal default sentinel
+
+The `background`, `surface`, and `surface_active` tokens accept the special value
+`default` ("Terminal default" in Settings). It pins that surface to the terminal
+background instead of a concrete color, even when a preset is selected:
+
+- Priority is **explicit `default` > preset fill > unset (fallback)**. Setting a
+  token to `default` overrides the preset's color for that token while leaving
+  every other token preset-filled.
+- On the tmux side the derived roles emit `bg=default` (for example
+  `window-style "bg=default"` from `background`, and the surface-driven
+  `StatusBg`).
+- On the ANSI side the corresponding surface emits no background sequence (no
+  `48;2;…` / `48;5;…`), so the terminal background shows through.
+- `default` is only valid on `background` / `surface` / `surface_active`. On any
+  other token it is treated as an invalid hex color and invalidates the global
+  layer (same as any other invalid color).
+
 Historical project `[theme]` values in `.projmux/config.toml` are migration
 data only. They are not a current or target source in this contract.
 

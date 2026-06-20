@@ -787,7 +787,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	if c.nativePicker == nil {
 		return errors.New("native picker is not configured")
 	}
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
+	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
 		UI:         "ai-settings",
 		Entries:    c.settingsRows(),
 		Title:      "AI Settings - Default split mode",
@@ -795,7 +795,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 		Footer:     projmuxFooter("Choose the default split mode for future AI launches."),
 		ExpectKeys: []string{"enter"},
 		Bindings:   pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "ai-split-settings", "esc", "ctrl-c", "ctrl-alt-s"),
-	})
+	}))
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return nil
@@ -812,7 +812,7 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 	if c.nativePicker == nil {
 		return intpickercompat.Result{}, errors.New("native picker is not configured")
 	}
-	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
+	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
 		UI:         "ai-picker",
 		Entries:    c.agentRows(),
 		Title:      "AI Launch - Split direction: " + direction,
@@ -820,7 +820,23 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 		Footer:     projmuxFooter("Choose an agent or shell target to launch."),
 		ExpectKeys: []string{"enter"},
 		Bindings:   pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiSplitPickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
-	})
+	}))
+}
+
+// themedPickerOptions fills options.Theme with the global theme source so AI
+// split-picker and AI settings popups paint the themed surface/background
+// instead of the runPickerOptionBackend fallback default. It degrades to the
+// built-in fallback theme on a config read error, matching the switch.go /
+// notify.go sidebar pattern. Theme is global-only, so no project path
+// participates.
+func (c *aiCommand) themedPickerOptions(options intpickercompat.Options) intpickercompat.Options {
+	if options.Theme != nil {
+		return options
+	}
+	if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, ""); err == nil {
+		return source.pickerCompatOptions(options)
+	}
+	return fallbackRenderThemeSource().pickerCompatOptions(options)
 }
 
 func aiSplitPickerPopupMode(direction string) string {

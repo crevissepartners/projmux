@@ -231,6 +231,13 @@ func (c *settingsCommand) themeColorEntries(token theme.ColorToken) []intpickerc
 		Label: c.rowLabel(settingsGlyphType, settingsColorType, "Type hex value...", "swatch + #RRGGBB input"),
 		Value: themeAction("color-type:" + string(token)),
 	})
+	if theme.TokenSupportsDefaultSentinel(token) {
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabel(settingsGlyphAdd, settingsColorAdd, "Terminal default", "keep "+themeColorLabel(token)+" at the terminal background"),
+			Value:     themeAction("color-set:" + string(token) + ":" + theme.ThemeDefaultSentinel),
+			SearchKey: "theme terminal default background " + string(token),
+		})
+	}
 	for _, preset := range theme.PresetNames() {
 		hex, ok := theme.PresetColorHex(preset, token)
 		if !ok {
@@ -280,7 +287,14 @@ func (c *settingsCommand) setThemePreset(preset string, stdout io.Writer) error 
 
 func (c *settingsCommand) setThemeColor(token theme.ColorToken, value string, stdout io.Writer) error {
 	value = strings.TrimSpace(value)
-	if value != "" {
+	switch {
+	case value == "":
+		// clear / use preset value
+	case strings.EqualFold(value, theme.ThemeDefaultSentinel) && theme.TokenSupportsDefaultSentinel(token):
+		// terminal-default sentinel: store the normalized sentinel string verbatim
+		// so the resolver can pin the pane/popup background to the terminal default.
+		value = theme.ThemeDefaultSentinel
+	default:
 		hex, ok := theme.NormalizeHexColor(value)
 		if !ok {
 			return fmt.Errorf("invalid theme color %q", value)
@@ -310,12 +324,98 @@ func (c *settingsCommand) updateTheme(stdout io.Writer, update func(*theme.Theme
 		update(&cfg.Theme)
 		return nil
 	}); err != nil {
+		return c.finishThemeApply("", err, stdout)
+	}
+	return c.finishThemeApply(path, nil, stdout)
+}
+
+// finishThemeApply mirrors finishKeymapApply for the global theme path: after the
+// durable config.toml save it regenerates the generated tmux app config and
+// `tmux source-file`-reloads it via the shared regenerateAndReloadTmuxConfig
+// core, then emits a staged Saved/Prepared/Running session report with the same
+// graceful no-server tone ("Next: run `projmux tmux apply` ...") as the keymap
+// path. This is what makes a Settings color set/reset live-apply without a
+// manual `projmux tmux apply`.
+func (c *settingsCommand) finishThemeApply(path string, saveErr error, stdout io.Writer) error {
+	report := keymapApplyReport{
+		Saved:    keymapApplyStage{Status: keymapApplyOK},
+		Prepared: keymapApplyStage{Status: keymapApplySkipped, Detail: "waiting for saved theme"},
+		Live:     keymapApplyStage{Status: keymapApplySkipped, Detail: "waiting for prepared config"},
+	}
+	if strings.TrimSpace(path) != "" {
+		report.Saved.Detail = "config.toml: " + path
+	}
+	if saveErr != nil {
+		report.Saved = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("config.toml", saveErr)}
+		report.Prepared = keymapApplyStage{Status: keymapApplySkipped, Detail: "theme was not saved"}
+		report.Live = keymapApplyStage{Status: keymapApplySkipped, Detail: "theme was not saved"}
+		_ = writeThemeApplyReport(stdout, report)
+		return fmt.Errorf("save theme: %w", saveErr)
+	}
+	prepared, live, applyErr := c.regenerateAndReloadTmuxConfig()
+	report.Prepared = prepared
+	report.Live = live
+	if applyErr != nil {
+		_ = writeThemeApplyReport(stdout, report)
+		if prepared.Status == keymapApplyFailed {
+			return fmt.Errorf("update theme runtime config: %w", applyErr)
+		}
+		return fmt.Errorf("reload active tmux theme: %w", applyErr)
+	}
+	return writeThemeApplyReport(stdout, report)
+}
+
+// writeThemeApplyReport renders the theme apply staging report. It reuses the
+// keymap report stage/line helpers for identical formatting but with
+// theme-appropriate headline and recovery wording.
+func writeThemeApplyReport(w io.Writer, report keymapApplyReport) error {
+	if w == nil {
+		return nil
+	}
+	if report.Saved.Status == keymapApplyOK && report.Prepared.Status == keymapApplyOK && report.Live.Status == keymapApplyOK {
+		if _, err := fmt.Fprintln(w, "theme saved and applied"); err != nil {
+			return err
+		}
+		for _, line := range []string{
+			keymapApplyLine("Saved", report.Saved, false),
+			keymapApplyLine("Prepared", report.Prepared, false),
+			keymapApplyLine("Running session", report.Live, false),
+		} {
+			if _, err := fmt.Fprintln(w, line); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if _, err := fmt.Fprintln(w, "theme apply status"); err != nil {
 		return err
 	}
-	if stdout != nil {
-		_, err = fmt.Fprintf(stdout, "wrote %s\n", path)
+	for _, line := range []string{
+		keymapApplyLine("Saved", report.Saved, true),
+		keymapApplyLine("Prepared", report.Prepared, true),
+		keymapApplyLine("Running session", report.Live, true),
+	} {
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
 	}
-	return err
+	switch {
+	case report.Saved.Status == keymapApplyFailed:
+		_, err := fmt.Fprintln(w, "Recovery: fix the config.toml problem, then try the Settings change again.")
+		return err
+	case report.Prepared.Status == keymapApplyFailed:
+		_, err := fmt.Fprintln(w, "Recovery: resolve the generated tmux config error, then run `projmux tmux apply`.")
+		return err
+	case report.Live.Status == keymapApplyFailed:
+		_, err := fmt.Fprintln(w, "Recovery: fix the live tmux reload issue, then run `projmux tmux apply`.")
+		return err
+	case report.Live.Status == keymapApplySkipped:
+		_, err := fmt.Fprintln(w, "Next: run `projmux tmux apply` to sync a running projmux tmux server.")
+		return err
+	default:
+		return nil
+	}
 }
 
 func themeAction(action string) string {
@@ -354,6 +454,9 @@ func themeColorSummary(cfg theme.ThemeConfig, token theme.ColorToken) string {
 		}
 		return "unset"
 	}
+	if strings.EqualFold(value, theme.ThemeDefaultSentinel) {
+		return "Terminal default - overrides preset fill"
+	}
 	if cfg.Preset != "" && !strings.EqualFold(cfg.Preset, "inherit") {
 		if presetHex, ok := theme.PresetColorHex(cfg.Preset, token); ok {
 			if strings.EqualFold(value, presetHex) {
@@ -372,6 +475,9 @@ func themeColorSummary(cfg theme.ThemeConfig, token theme.ColorToken) string {
 // "fallback" source so the merged Global view surfaces the effective value inline
 // (replacing the removed Effective theme view).
 func themeColorSummaryEffective(cfg theme.ThemeConfig, effective theme.EffectiveTheme, token theme.ColorToken) string {
+	if strings.EqualFold(themeColorFieldValue(cfg, token), theme.ThemeDefaultSentinel) {
+		return "Terminal default - overrides preset fill"
+	}
 	if themeColorFieldValue(cfg, token) != "" || strings.TrimSpace(cfg.Preset) != "" {
 		return themeColorSummary(cfg, token)
 	}
@@ -424,6 +530,9 @@ func effectiveColorField(effective theme.EffectiveTheme, token theme.ColorToken)
 
 func themeColorCurrentValue(cfg theme.ThemeConfig, token theme.ColorToken) string {
 	value := themeColorFieldValue(cfg, token)
+	if strings.EqualFold(value, theme.ThemeDefaultSentinel) {
+		return "Terminal default"
+	}
 	if value != "" {
 		return value
 	}
@@ -437,6 +546,11 @@ func themeColorCurrentValue(cfg theme.ThemeConfig, token theme.ColorToken) strin
 
 func themeColorInitialQuery(cfg theme.ThemeConfig, token theme.ColorToken) string {
 	value := themeColorFieldValue(cfg, token)
+	if strings.EqualFold(value, theme.ThemeDefaultSentinel) {
+		// The sentinel is not a hex value; start the hex input empty so the user
+		// can type a color (Terminal default is set via its own row).
+		return "#"
+	}
 	if value != "" {
 		return value
 	}

@@ -4174,31 +4174,49 @@ func (c *settingsCommand) finishKeymapApply(path string, err error, stdout io.Wr
 		_ = writeKeymapApplyReport(stdout, report)
 		return fmt.Errorf("save keybinding: %w", err)
 	}
-	configPath, err := c.writeTmuxAppConfig()
-	if err != nil {
-		report.Prepared = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("generated tmux config", err)}
-		report.Live = keymapApplyStage{Status: keymapApplySkipped, Detail: "generated tmux config failed"}
+	prepared, live, applyErr := c.regenerateAndReloadTmuxConfig()
+	report.Prepared = prepared
+	report.Live = live
+	if applyErr != nil {
+		if prepared.Status == keymapApplyFailed {
+			_ = writeKeymapApplyReport(stdout, report)
+			return fmt.Errorf("update keybinding runtime config: %w", applyErr)
+		}
 		_ = writeKeymapApplyReport(stdout, report)
-		return fmt.Errorf("update keybinding runtime config: %w", err)
+		return fmt.Errorf("reload active tmux keybindings: %w", applyErr)
 	}
-	report.Prepared = keymapApplyStage{Status: keymapApplyOK, Detail: "generated tmux config: " + configPath}
+	return writeKeymapApplyReport(stdout, report)
+}
+
+// regenerateAndReloadTmuxConfig is the shared post-save apply core used by both
+// the keybinding and theme Settings paths: it regenerates the generated tmux app
+// config and, when running inside tmux with a configured command runner,
+// `tmux source-file`-reloads it. It returns the Prepared and Live stages plus a
+// fatal error when either stage fails. The no-server / not-inside-tmux cases are
+// graceful (Live becomes skipped, err is nil) so the durable save still
+// succeeds and callers can surface the "run `projmux tmux apply`" follow-up.
+func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyStage, live keymapApplyStage, err error) {
+	configPath, genErr := c.writeTmuxAppConfig()
+	if genErr != nil {
+		prepared = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("generated tmux config", genErr)}
+		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "generated tmux config failed"}
+		return prepared, live, genErr
+	}
+	prepared = keymapApplyStage{Status: keymapApplyOK, Detail: "generated tmux config: " + configPath}
 	if c.lookupEnv == nil || strings.TrimSpace(c.lookupEnv("TMUX")) == "" {
-		report.Live = keymapApplyStage{Status: keymapApplySkipped, Detail: "Settings is not running inside tmux"}
-		return writeKeymapApplyReport(stdout, report)
+		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "Settings is not running inside tmux"}
+		return prepared, live, nil
 	}
 	if c.runCommand == nil {
-		report.Live = keymapApplyStage{Status: keymapApplySkipped, Detail: "tmux command runner is not configured"}
-		return writeKeymapApplyReport(stdout, report)
+		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "tmux command runner is not configured"}
+		return prepared, live, nil
 	}
-	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
-		if err := c.runCommand("tmux", "source-file", configPath); err != nil {
-			report.Live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux reload", err)}
-			_ = writeKeymapApplyReport(stdout, report)
-			return fmt.Errorf("reload active tmux keybindings: %w", err)
-		}
+	if reloadErr := c.runCommand("tmux", "source-file", configPath); reloadErr != nil {
+		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux reload", reloadErr)}
+		return prepared, live, reloadErr
 	}
-	report.Live = keymapApplyStage{Status: keymapApplyOK}
-	return writeKeymapApplyReport(stdout, report)
+	live = keymapApplyStage{Status: keymapApplyOK}
+	return prepared, live, nil
 }
 
 type keymapApplyStatus string

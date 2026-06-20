@@ -637,6 +637,25 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 		if !hasThemeValue(item.value) {
 			continue
 		}
+		// "terminal default" sentinel: only background/surface(/surface_active)
+		// support pinning the pane/popup background to the terminal default. This
+		// is treated as a real explicit value so it overrides the preset fill
+		// within the global layer (explicit default > preset). It must be
+		// intercepted BEFORE normalizeHexColor, which would reject "default" and
+		// drop the whole layer. A ColorSpec with no Hex and Tmux="default" makes
+		// the tmux roles emit `bg=default` and the ANSI surfaces fall back to the
+		// terminal background (no 48;2 / 48;5 sequence).
+		if isThemeDefaultSentinel(item.value) {
+			if tokenSupportsDefaultSentinel(item.token) {
+				colors[item.token] = ColorSpec{Tmux: ThemeDefaultSentinel}
+				continue
+			}
+			warnings = append(warnings, Warning{
+				Source: input.source, Field: string(item.token), Value: item.value,
+				Message: "terminal default is only valid for background/surface; ignored this theme layer",
+			})
+			return resolvedLayer{}, warnings, false
+		}
 		hex, ok := normalizeHexColor(item.value)
 		if !ok {
 			warnings = append(warnings, Warning{
@@ -673,6 +692,43 @@ func resolveString(layers []resolvedLayer, value func(resolvedLayer) (string, bo
 func hasThemeValue(value string) bool {
 	value = strings.TrimSpace(value)
 	return value != "" && strings.EqualFold(value, "inherit") == false
+}
+
+// ThemeDefaultSentinel is the explicit "terminal default" value a user can set
+// on the background/surface(/surface_active) tokens. It pins the pane/popup
+// background to the terminal default even when a preset is chosen
+// (explicit default > preset fill > unset/fallback). On the tmux side it surfaces
+// as `bg=default`; on the ANSI side it produces no background sequence so the
+// terminal background shows through.
+const ThemeDefaultSentinel = "default"
+
+// isThemeDefaultSentinel reports whether value is the terminal-default sentinel.
+func isThemeDefaultSentinel(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), ThemeDefaultSentinel)
+}
+
+// tokenSupportsDefaultSentinel restricts the "default" sentinel to the
+// background/surface family. Other tokens treat "default" as an invalid hex.
+func tokenSupportsDefaultSentinel(token ColorToken) bool {
+	switch token {
+	case TokenBackground, TokenSurface, TokenSurfaceActive:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsThemeDefaultSpec reports whether a resolved ColorSpec is the terminal-default
+// sentinel (no Hex, Tmux == "default"). Renderers use this to emit a terminal
+// reset / `bg=default` instead of a concrete color.
+func IsThemeDefaultSpec(spec ColorSpec) bool {
+	return strings.TrimSpace(spec.Hex) == "" && spec.Tmux == ThemeDefaultSentinel
+}
+
+// TokenSupportsDefaultSentinel is the exported predicate Settings uses to decide
+// whether to offer the "Terminal default" choice for a token.
+func TokenSupportsDefaultSentinel(token ColorToken) bool {
+	return tokenSupportsDefaultSentinel(token)
 }
 
 var hexColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
