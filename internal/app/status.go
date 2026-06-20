@@ -21,13 +21,22 @@ import (
 const (
 	defaultKubeCacheTTL     = 5 * time.Second
 	defaultKubeCommandLimit = 400 * time.Millisecond
+)
 
-	tmuxGitSegmentBg = theme.TmuxGitSegmentBg
-	tmuxGitSegmentFg = theme.TmuxGitSegmentFg
-	tmuxGitDirtyFg   = theme.TmuxStateDirtyFg
-	tmuxGitStagedFg  = theme.TmuxStateStagedFg
-	tmuxGitAheadFg   = theme.TmuxStateAheadFg
-	tmuxGitBehindFg  = theme.TmuxStateBehindFg
+// statusbar git segment / kube colors source from the semantic role map
+// (single source shared with the decoration renderer) instead of bare tmux
+// literals. The status segment render path carries no explicit EffectiveTheme
+// today, so the fallback role map is used here; the fallback role values equal
+// the historical literals, so the generated strings are byte-identical.
+var (
+	statusSegmentRoles = theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+
+	tmuxGitSegmentBg = statusSegmentRoles.GitSegmentBg
+	tmuxGitSegmentFg = statusSegmentRoles.GitSegmentFg
+	tmuxGitDirtyFg   = statusSegmentRoles.GitDirty
+	tmuxGitStagedFg  = statusSegmentRoles.GitStaged
+	tmuxGitAheadFg   = statusSegmentRoles.GitAhead
+	tmuxGitBehindFg  = statusSegmentRoles.GitBehind
 )
 
 type statusCommand struct {
@@ -243,7 +252,7 @@ func (c *statusCommand) kubeSegment(sessionName string) string {
 	if ns == "" {
 		ns = "default"
 	}
-	segment := fmt.Sprintf("⎈ #[fg=%s]%s#[default]/#[fg=%s]%s#[default]", theme.TmuxKubeContextFg, ctx, theme.TmuxKubeNamespaceFg, ns)
+	segment := fmt.Sprintf("⎈ #[fg=%s]%s#[default]/#[fg=%s]%s#[default]", statusSegmentRoles.KubeContext, ctx, statusSegmentRoles.KubeNamespace, ns)
 	_ = os.MkdirAll(filepath.Dir(cacheFile), 0o755)
 	_ = os.WriteFile(cacheFile, []byte(segment), 0o644)
 	return segment

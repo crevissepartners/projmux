@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const (
@@ -135,7 +134,7 @@ func statusbarCwdSegmentFormat() string {
 }
 
 func statusbarCwdDecoratorFormat() string {
-	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=" + theme.TmuxDecorationCwdFg + "] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=" + theme.TmuxDecorationCwdFg + "]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=" + theme.TmuxDecorationCwdFg + "] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=" + theme.TmuxDecorationCwdFg + "]📁 ,}}}"
+	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=" + statusSegmentRoles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=" + statusSegmentRoles.DecorationCwd + "]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=" + statusSegmentRoles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=" + statusSegmentRoles.DecorationCwd + "]📁 ,}}}"
 }
 
 type gitRemoteProvider string
@@ -151,18 +150,18 @@ func statusbarGitDecorator(mode config.StatusbarDecoration, remoteURL string) st
 	case config.StatusbarDecorationSymbol:
 		switch provider {
 		case gitRemoteProviderGitLab:
-			return "#[fg=" + theme.TmuxDecorationGitLabFg + "] #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + statusSegmentRoles.DecorationGitLab + "] #[fg=" + tmuxGitSegmentFg + "]"
 		default:
-			return "#[fg=" + theme.TmuxDecorationGitHubFg + "] #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + statusSegmentRoles.GitAhead + "] #[fg=" + tmuxGitSegmentFg + "]"
 		}
 	case config.StatusbarDecorationEmoji:
 		switch provider {
 		case gitRemoteProviderGitHub:
-			return "#[fg=" + theme.TmuxDecorationGitHubFg + "]🐱 #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + statusSegmentRoles.GitAhead + "]🐱 #[fg=" + tmuxGitSegmentFg + "]"
 		case gitRemoteProviderGitLab:
-			return "#[fg=" + theme.TmuxDecorationGitLabFg + "]🦊 #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + statusSegmentRoles.DecorationGitLab + "]🦊 #[fg=" + tmuxGitSegmentFg + "]"
 		default:
-			return "#[fg=" + theme.TmuxDecorationGenericGitFg + "]🌿 #[fg=" + tmuxGitSegmentFg + "]"
+			return "#[fg=" + statusSegmentRoles.GitStaged + "]🌿 #[fg=" + tmuxGitSegmentFg + "]"
 		}
 	default:
 		return ""
