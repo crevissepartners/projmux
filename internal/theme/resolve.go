@@ -189,14 +189,20 @@ type RenderRoles struct {
 	StatusFg         string // status bar fg       <- foreground      (colour245 fallback)
 
 	// pane / focus chrome.
-	PaneBorder      string // pane.border          Tier A <- muted-ish (colour236)
-	FocusBorder     string // focus.border         Tier A <- accent    (colour51)
+	PaneBorder string // pane.border          Tier A <- muted-ish (colour236)
+	// focus.border — dedicated role decoupled from accent. Tier C renderer-only:
+	// carries the literal colour51, independently tunable from the topic chip /
+	// pointer / action that still share accent. Fallback colour51 (no visual
+	// change). Phase 6 public-token candidate (focus / border).
+	FocusBorder     string
 	PaneTopicChipBg string // pane.topic_chip_bg   Tier A <- accent    (colour45)
 	PaneTopicChipFg string // pane.topic_chip_fg   Tier B <- contrastFg (colour16)
 
-	// focus.pane_active_bg — Phase 2 spike-gated NEW role. Tier B:
-	// tint(surface_active) / blend(background, surface_active). Fallback is the
-	// spike-decided colour235 (window-active-style tint).
+	// focus.pane_active_bg — active-pane window-active-style tint. Decoupled from
+	// surface_active: a dedicated Tier C renderer-only DARK tint one tone darker
+	// than surface.base, carrying the literal colour234 (fallback colour234).
+	// surface_active is a LIGHT tone (colour240) and was the wrong direction.
+	// Phase 6 public-token candidate (pane_active_bg / surface_subtle).
 	FocusPaneActiveBg string
 
 	// state / severity cluster (Phase 3). Single source for the notify HUD,
@@ -256,15 +262,18 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		StatusBg:         tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
 		StatusFg:         tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
 
-		PaneBorder:      tmuxColorOrFallback(effective.Muted, TmuxPaneBorderFg),
-		FocusBorder:     tmuxColorOrFallback(effective.Accent, TmuxPaneActiveBorderFg),
+		PaneBorder: tmuxColorOrFallback(effective.Muted, TmuxPaneBorderFg),
+		// Tier C: focus.border decoupled from accent — carries the literal so the
+		// active-pane border is tunable independently of the topic chip / pointer
+		// / action that still derive from accent. No derivation; colour51.
+		FocusBorder:     TmuxPaneActiveBorderFg,
 		PaneTopicChipBg: tmuxColorOrFallback(effective.Accent, TmuxPaneActiveBg),
 		PaneTopicChipFg: tmuxContrastFgOrFallback(effective.Accent, TmuxPaneActiveFg),
 
-		// Tier B: tint(surface_active). The spike fixed the fallback at
-		// colour235 (matching surface.base / window-inactive bg) so the
-		// generated window-active-style line is byte-stable.
-		FocusPaneActiveBg: tmuxColorOrFallback(effective.SurfaceActive, TmuxWindowInactiveBg),
+		// Tier C: dedicated dark active-pane tint, decoupled from surface_active.
+		// Carries the literal colour234 (one tone darker than surface.base) so the
+		// active pane is visibly tinted; no derivation until Phase 6.
+		FocusPaneActiveBg: TmuxPaneActiveTintBg,
 
 		// Tier A: warning/critical follow the explicit public token so an
 		// explicit theme repaints the notify/usage/statusbar severity tints.

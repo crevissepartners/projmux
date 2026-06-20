@@ -317,7 +317,11 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		options.DeferredUpdate = nil
 	}
 	if options.Theme == nil {
-		options = fallbackRenderThemeSource().pickerOptions(options)
+		if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, ""); err == nil {
+			options = source.pickerOptions(options)
+		} else {
+			options = fallbackRenderThemeSource().pickerOptions(options)
+		}
 	}
 	result, err := c.native.Run(options)
 	if err != nil {
