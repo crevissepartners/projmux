@@ -166,10 +166,13 @@ Built-in preset config values are:
 - `terminal-cool` / `terminal-warm` — terminal-native variants that also use
   the `default` sentinel for `background`/`surface`, with cooler or warmer
   foreground/accent/state palettes.
-- `blue-hour` / `blue-hour-terminal` — blue-forward dark theme pair; the
-  terminal variant keeps pane and popup backgrounds at the terminal default.
+- `blue-hour` / `blue-hour-terminal` — dark theme pair tuned around a terminal
+  blue accent; `blue-hour` uses a dark blue-tinted inactive pane body, while
+  the terminal variant keeps pane and popup backgrounds at the terminal
+  default. Both keep the active pane tint black.
 - `carbon-violet` / `carbon-violet-terminal` — charcoal/violet dark theme pair;
-  the terminal variant keeps pane and popup backgrounds at the terminal default.
+  the terminal variant keeps pane and popup backgrounds at the terminal
+  default. Both keep the active pane tint black.
 
 ## Fallback Inventory
 
