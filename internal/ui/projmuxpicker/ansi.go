@@ -49,11 +49,12 @@ const (
 )
 
 // ThemeFromEffective adapts resolver-backed colors to the native picker frame.
-// Even fallback-sourced fields are concrete app theme tokens, so native popup
-// rows paint the picker background instead of inheriting the terminal default.
+// Even fallback-sourced fields are concrete app theme tokens. Native popup rows
+// paint the surface token, keeping pane-body background separate from popup
+// chrome.
 func ThemeFromEffective(effective theme.EffectiveTheme) Theme {
 	out := DefaultTheme
-	if bg := effective.Background.Value.TruecolorBG(); bg != "" {
+	if bg := effective.Surface.Value.TruecolorBG(); bg != "" {
 		out.Background = "\x1b[" + bg + "m"
 	}
 	if fg := effective.ChromeForeground.Value.TruecolorFG(); fg != "" {

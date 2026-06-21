@@ -132,8 +132,9 @@ func (c *ThemeConfig) Normalize() {
 	c.Focus = strings.TrimSpace(c.Focus)
 }
 
-// ColorSpec carries both terminal-native truecolor and tmux 256-color forms.
-// Explicit hex values keep exact truecolor and are approximated for tmux.
+// ColorSpec carries exact truecolor plus a nearest xterm-256 approximation.
+// Tmux style roles prefer Hex for explicit values; the 256-color form remains
+// for renderer paths that intentionally need colourN/ANSI-256 compatibility.
 type ColorSpec struct {
 	Hex  string
 	Tmux string
@@ -389,9 +390,10 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 	}
 }
 
-// TmuxRenderTokens adapts the resolver's semantic colors to the tmux 256-color
-// roles currently used by generated status/window chrome. It is a stable subset
-// view over RenderRoles kept for existing consumers.
+// TmuxRenderTokens adapts the resolver's semantic colors to the tmux style roles
+// currently used by generated status/window chrome. Explicit theme values use
+// exact #RRGGBB colors; fallback values keep historical colourN literals. It is
+// a stable subset view over RenderRoles kept for existing consumers.
 type TmuxRenderTokens struct {
 	WindowInactiveBg string
 	WindowInactiveFg string
@@ -401,10 +403,10 @@ type TmuxRenderTokens struct {
 	StatusFg         string
 }
 
-// TmuxRenderTokensFromEffective maps an EffectiveTheme into tmux colourN
-// tokens. Fallback-sourced fields deliberately keep the historical palette
-// constants so generated fallback config remains byte-identical. It is built on
-// top of the role map so the two views never diverge.
+// TmuxRenderTokensFromEffective maps an EffectiveTheme into tmux style tokens.
+// Fallback-sourced fields deliberately keep the historical palette constants so
+// generated fallback config remains byte-identical. It is built on top of the
+// role map so the two views never diverge.
 func TmuxRenderTokensFromEffective(effective EffectiveTheme) TmuxRenderTokens {
 	roles := RenderRolesFromEffective(effective)
 	return TmuxRenderTokens{
@@ -440,7 +442,13 @@ func (t EffectiveTheme) Fields() []EffectiveField {
 }
 
 func tmuxColorOrFallback(field ColorField, fallback string) string {
-	if field.Source == SourceFallback || strings.TrimSpace(field.Value.Tmux) == "" {
+	if field.Source == SourceFallback {
+		return fallback
+	}
+	if hex := strings.TrimSpace(field.Value.Hex); hex != "" {
+		return hex
+	}
+	if strings.TrimSpace(field.Value.Tmux) == "" {
 		return fallback
 	}
 	return field.Value.Tmux
@@ -504,7 +512,7 @@ var builtinPresets = map[string]preset{
 	"blue-hour": {
 		Name: "blue-hour",
 		Colors: presetColors(map[ColorToken]string{
-			TokenBackground: "#1d2433", TokenSurface: "#2d4a6e", TokenSurfaceActive: "#4a5878",
+			TokenBackground: "#1e1e2e", TokenSurface: "#2d4a6e", TokenSurfaceActive: "#4a5878",
 			TokenChromeForeground: "#acb6bf", TokenTextPrimary: "#acb6bf", TokenForeground: "#acb6bf", TokenMuted: "#4a5878", TokenAccent: "#3d8fd1",
 			TokenCritical: "#ec6a88", TokenWarning: "#efb472",
 			TokenProgress: "#5ca7e4", TokenSuccess: "#3fdaa4", TokenActionRequired: "#ffca85",
@@ -588,7 +596,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#ffffff", TokenTextPrimary: "#ffffff", TokenForeground: "#ffffff", TokenMuted: "#bfbfbf", TokenAccent: "#00ffff",
 			TokenCritical: "#ff0000", TokenWarning: "#ffff00",
 			TokenProgress: "#00bfff", TokenSuccess: "#00ff66", TokenActionRequired: "#ffaf00",
-			TokenPaneActiveBg: "#000000", TokenFocus: "#ffffff",
+			TokenPaneActiveBg: "#080808", TokenFocus: "#00ffff",
 		}),
 	},
 	// terminal: a terminal-native preset. background/surface ride the terminal's

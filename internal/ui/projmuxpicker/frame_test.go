@@ -83,7 +83,7 @@ func TestThemeFromEffectiveFallbackPaintsFrameBackground(t *testing.T) {
 	DefaultRenderer().RenderFrame(&defaultFrame, content, layout)
 	themed.RenderFrame(&themedFrame, content, layout)
 	if got, want := themedFrame.String(), defaultFrame.String(); got == want {
-		t.Fatalf("fallback themed frame = default frame, want app background SGR")
+		t.Fatalf("fallback themed frame = default frame, want app surface SGR")
 	}
 
 	var defaultTitle bytes.Buffer
@@ -91,7 +91,7 @@ func TestThemeFromEffectiveFallbackPaintsFrameBackground(t *testing.T) {
 	DefaultRenderer().RenderFrameWithTitle(&defaultTitle, content, "Projects", layout)
 	themed.RenderFrameWithTitle(&themedTitle, content, "Projects", layout)
 	if got, want := themedTitle.String(), defaultTitle.String(); got == want {
-		t.Fatalf("fallback themed title frame = default frame, want app background SGR")
+		t.Fatalf("fallback themed title frame = default frame, want app surface SGR")
 	}
 
 	chips := []Chip{{Label: "Projects", Active: true}, {Label: "Settings"}}
@@ -100,17 +100,17 @@ func TestThemeFromEffectiveFallbackPaintsFrameBackground(t *testing.T) {
 	DefaultRenderer().RenderFrameWithChips(&defaultChips, content, chips, layout)
 	themed.RenderFrameWithChips(&themedChips, content, chips, layout)
 	if got, want := themedChips.String(), defaultChips.String(); got == want {
-		t.Fatalf("fallback themed chip frame = default frame, want app background SGR")
+		t.Fatalf("fallback themed chip frame = default frame, want app surface SGR")
 	}
 
 	fallbackTheme := ThemeFromEffective(effective)
 	style := fallbackTheme.Background + fallbackTheme.Foreground
 	if style == "" {
-		t.Fatal("fallback frame style empty, want app background/chrome_foreground SGR")
+		t.Fatal("fallback frame style empty, want app surface/chrome_foreground SGR")
 	}
 	for _, rendered := range []string{themedFrame.String(), themedTitle.String(), themedChips.String()} {
 		if !strings.Contains(rendered, style) {
-			t.Fatalf("fallback themed frame = %q, want fallback background/chrome_foreground SGR %q", rendered, style)
+			t.Fatalf("fallback themed frame = %q, want fallback surface/chrome_foreground SGR %q", rendered, style)
 		}
 		for line := range strings.SplitSeq(rendered, "\r\n") {
 			if !strings.HasPrefix(line, style) {
@@ -121,11 +121,12 @@ func TestThemeFromEffectiveFallbackPaintsFrameBackground(t *testing.T) {
 	}
 }
 
-func TestThemeFromEffectiveAppliesGlobalBackgroundForeground(t *testing.T) {
+func TestThemeFromEffectiveAppliesGlobalSurfaceForeground(t *testing.T) {
 	t.Parallel()
 
 	effective := theme.ResolveTheme(theme.ThemeConfig{
 		Background: "#010203",
+		Surface:    "#040506",
 		Foreground: "#aabbcc",
 	})
 	renderer := NewRenderer(ThemeFromEffective(effective))
@@ -133,15 +134,32 @@ func TestThemeFromEffectiveAppliesGlobalBackgroundForeground(t *testing.T) {
 	renderer.RenderFrameWithTitle(&out, "api", "Projects", Layout{Rows: 5, Cols: 18})
 	rendered := out.String()
 
-	for _, want := range []string{"\x1b[48;2;1;2;3m", "\x1b[38;2;170;187;204m"} {
+	for _, want := range []string{"\x1b[48;2;4;5;6m", "\x1b[38;2;170;187;204m"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered frame = %q, want global SGR %q", rendered, want)
 		}
+	}
+	if banned := "\x1b[48;2;1;2;3m"; strings.Contains(rendered, banned) {
+		t.Fatalf("rendered frame = %q, must not use pane background SGR %q", rendered, banned)
 	}
 	for _, banned := range []string{"\x1b[48;2;17;34;51m", "\x1b[38;2;68;85;102m"} {
 		if strings.Contains(rendered, banned) {
 			t.Fatalf("rendered frame = %q, must not contain unrelated SGR %q", rendered, banned)
 		}
+	}
+}
+
+func TestThemeFromEffectiveBackgroundOnlyDoesNotRepaintPickerSurface(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{Background: "#010203"})
+	renderer := NewRenderer(ThemeFromEffective(effective))
+	var out bytes.Buffer
+	renderer.RenderFrameWithTitle(&out, "api", "Projects", Layout{Rows: 5, Cols: 18})
+	rendered := out.String()
+
+	if banned := "\x1b[48;2;1;2;3m"; strings.Contains(rendered, banned) {
+		t.Fatalf("rendered frame = %q, must not use pane background SGR %q", rendered, banned)
 	}
 }
 
