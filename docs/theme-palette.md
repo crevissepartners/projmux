@@ -142,6 +142,12 @@ Built-in preset config values are:
 - `forest`
 - `rose`
 - `high-contrast`
+- `terminal` — terminal-native: `background`/`surface` ride the terminal's own
+  background via the `default` sentinel (no colour literal), so projmux only
+  paints foreground/accent/state chrome on top. Foreground does not support the
+  sentinel, so the foreground, muted, and selection-tint values are tuned for a
+  dark terminal (the common projmux host); on a light terminal, set those tokens
+  explicitly or pick another preset.
 
 ## Fallback Inventory
 

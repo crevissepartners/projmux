@@ -24,22 +24,30 @@ func TestPresetTokensSatisfyDesignRubric(t *testing.T) {
 	stateTokens := []ColorToken{TokenProgress, TokenWarning, TokenCritical, TokenSuccess, TokenActionRequired}
 	exemptStateDistinct := map[string]bool{"projmux-dark": true}
 
-	colourOf := func(t *testing.T, preset string, tok ColorToken) string {
+	colourOf := func(t *testing.T, preset string, tok ColorToken) (string, bool) {
 		t.Helper()
 		hex, ok := PresetColorHex(preset, tok)
 		if !ok {
 			t.Fatalf("%s: token %s unset; every preset must define all tokens", preset, tok)
 		}
-		return nearestTmuxColor(hex)
+		// A terminal-default-sentinel token (background/surface family) carries no
+		// fixed hex: it rides the terminal background, so there is no colourN to
+		// compare. Report it as a sentinel so the caller skips bg-relative rules.
+		if hex == "" {
+			return "", true
+		}
+		return nearestTmuxColor(hex), false
 	}
 
 	for _, preset := range PresetNames() {
 
-		// (a) state colors mutually distinct.
+		// (a) state colors mutually distinct. State tokens never use the
+		// terminal-default sentinel (it is restricted to the background/surface
+		// family), so all five always resolve to a concrete colourN.
 		if !exemptStateDistinct[preset] {
 			seen := map[string]ColorToken{}
 			for _, tok := range stateTokens {
-				cn := colourOf(t, preset, tok)
+				cn, _ := colourOf(t, preset, tok)
 				if prev, dup := seen[cn]; dup {
 					t.Errorf("%s: state colors %s and %s both resolve to %s; the five state colors must be distinguishable", preset, prev, tok, cn)
 				}
@@ -47,19 +55,21 @@ func TestPresetTokensSatisfyDesignRubric(t *testing.T) {
 			}
 		}
 
-		// (b) muted distinct from foreground and background.
-		muted := colourOf(t, preset, TokenMuted)
-		fg := colourOf(t, preset, TokenForeground)
-		bg := colourOf(t, preset, TokenBackground)
+		muted, _ := colourOf(t, preset, TokenMuted)
+		fg, fgSentinel := colourOf(t, preset, TokenForeground)
+		bg, bgSentinel := colourOf(t, preset, TokenBackground)
+
+		// (b) muted distinct from foreground and (when fixed) background.
 		if muted == fg {
 			t.Errorf("%s: muted (%s) equals foreground; low-signal text would be indistinguishable", preset, muted)
 		}
-		if muted == bg {
+		if !bgSentinel && muted == bg {
 			t.Errorf("%s: muted (%s) equals background; muted text would be invisible", preset, muted)
 		}
 
-		// (c) foreground != background.
-		if fg == bg {
+		// (c) foreground != background. Vacuous when background rides the terminal
+		// default (no fixed background to clash with).
+		if !bgSentinel && !fgSentinel && fg == bg {
 			t.Errorf("%s: foreground equals background (%s)", preset, fg)
 		}
 	}
