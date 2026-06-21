@@ -60,8 +60,8 @@ func TestBlueHourTargetsInactivePaneBlueTint(t *testing.T) {
 	if got, want := fixed.Accent.Value.Hex, "#3d8fd1"; got != want {
 		t.Fatalf("blue-hour accent = %q, want terminal blue %q", got, want)
 	}
-	if got, want := fixed.PaneActiveBg.Value.Hex, "#1d2433"; got != want {
-		t.Fatalf("blue-hour pane_active_bg = %q, want terminal palette black %q", got, want)
+	if got, want := fixed.PaneActiveBg.Value.Hex, "#000000"; got != want {
+		t.Fatalf("blue-hour pane_active_bg = %q, want true black %q", got, want)
 	}
 
 	terminal := ResolveTheme(ThemeConfig{Preset: "blue-hour-terminal"})
@@ -77,8 +77,8 @@ func TestInspiredPresetPairsUseBlackActivePaneTint(t *testing.T) {
 	t.Parallel()
 
 	for preset, want := range map[string]string{
-		"blue-hour":              "#1d2433",
-		"blue-hour-terminal":     "#1d2433",
+		"blue-hour":              "#000000",
+		"blue-hour-terminal":     "#000000",
 		"carbon-violet":          "#000000",
 		"carbon-violet-terminal": "#000000",
 	} {
@@ -90,5 +90,33 @@ func TestInspiredPresetPairsUseBlackActivePaneTint(t *testing.T) {
 				t.Fatalf("%s pane_active_bg = %q, want palette black %q", preset, got, want)
 			}
 		})
+	}
+}
+
+func TestHighContrastPresetUsesStrongContrastPalette(t *testing.T) {
+	t.Parallel()
+
+	effective := ResolveTheme(ThemeConfig{Preset: "high-contrast"})
+	for name, field := range map[string]ColorField{
+		"background":        effective.Background,
+		"surface":           effective.Surface,
+		"pane_active_bg":    effective.PaneActiveBg,
+		"foreground":        effective.Foreground,
+		"chrome_foreground": effective.ChromeForeground,
+		"text_primary":      effective.TextPrimary,
+	} {
+		want := "#000000"
+		if name == "foreground" || name == "chrome_foreground" || name == "text_primary" {
+			want = "#ffffff"
+		}
+		if got := field.Value.Hex; got != want {
+			t.Fatalf("high-contrast %s = %q, want %q", name, got, want)
+		}
+	}
+	if got, want := effective.SurfaceActive.Value.Hex, "#005fff"; got != want {
+		t.Fatalf("high-contrast surface_active = %q, want vivid active surface %q", got, want)
+	}
+	if got, want := effective.Focus.Value.Hex, "#ffffff"; got != want {
+		t.Fatalf("high-contrast focus = %q, want white focus %q", got, want)
 	}
 }
