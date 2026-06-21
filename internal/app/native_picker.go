@@ -14,7 +14,18 @@ func runPickerOptionBackend(homeDir func() (string, error), lookupEnv func(strin
 	}
 	options = localizePickerOptions(homeDir, lookupEnv, options)
 	if options.Theme == nil {
-		options = fallbackRenderThemeSource().pickerCompatOptions(options)
+		// Theme-by-default: a picker that does not pre-resolve its own theme
+		// still gets the global `[theme]` so explicit background/surface reaches
+		// every popup, not just the surfaces (switch/notify/ai/settings/recent)
+		// that inject configRenderThemeSource themselves. Degrade to the built-in
+		// fallback only when the global config cannot be read, so an unset theme
+		// stays byte-identical with the historical fallback output. Theme is
+		// global-only, so no project path participates.
+		if source, err := configRenderThemeSource(homeDir, lookupEnv, ""); err == nil {
+			options = source.pickerCompatOptions(options)
+		} else {
+			options = fallbackRenderThemeSource().pickerCompatOptions(options)
+		}
 	}
 	result, err := native.Run(intpickercompat.PickerOptions(options))
 	return intpickercompat.ResultFromPicker(result), err
