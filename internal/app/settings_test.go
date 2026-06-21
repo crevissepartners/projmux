@@ -5443,6 +5443,88 @@ func TestSettingsThemeColorEntriesOfferTerminalDefaultForSurfaceTokens(t *testin
 	}
 }
 
+func TestSettingsThemeColorEntriesIncludeColorGridRow(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(string) string { return "" },
+	}
+	entries := cmd.themeColorEntries(theme.TokenBackground)
+	if !hasEntryValue(entries, themeAction("color-grid:"+string(theme.TokenBackground))) {
+		t.Fatalf("entries = %#v, want color-grid row", entries)
+	}
+}
+
+func TestSettingsRunThemeColorGridEnterAppliesHex(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var gotColorGrid bool
+	cmd := &settingsCommand{
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		runCommand: func(string, ...string) error { return nil },
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			gotColorGrid = options.ColorGrid
+			return intpickercompat.Result{Key: "enter", Value: "#0000ff"}, nil
+		})),
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.runThemeColorGrid(theme.TokenBackground, &stdout, &stderr); err != nil {
+		t.Fatalf("runThemeColorGrid() error = %v", err)
+	}
+	if !gotColorGrid {
+		t.Fatalf("picker options ColorGrid = false, want grid mode threaded through")
+	}
+	configToml := readFile(t, filepath.Join(home, ".config", "projmux", "config.toml"))
+	if !strings.Contains(configToml, "#0000ff") {
+		t.Fatalf("config.toml = %q, want saved background from grid selection", configToml)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestSettingsRunThemeColorGridHexKeyOpensHexInput(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	cmd := &settingsCommand{
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		runCommand: func(string, ...string) error { return nil },
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				// grid mode -> request hex input fallback
+				return intpickercompat.Result{Key: "hex"}, nil
+			case 2:
+				// hex input -> type a value and accept
+				return intpickercompat.Result{Key: "enter", Query: "#00ff00"}, nil
+			default:
+				t.Fatalf("unexpected picker call %d", calls)
+				return intpickercompat.Result{}, nil
+			}
+		})),
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.runThemeColorGrid(theme.TokenBackground, &stdout, &stderr); err != nil {
+		t.Fatalf("runThemeColorGrid() error = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("picker calls = %d, want grid then hex input", calls)
+	}
+	configToml := readFile(t, filepath.Join(home, ".config", "projmux", "config.toml"))
+	if !strings.Contains(configToml, "#00ff00") {
+		t.Fatalf("config.toml = %q, want saved background from hex fallback", configToml)
+	}
+}
+
 func TestSettingsHubKeybindingsDirectActionsHideTypedFallback(t *testing.T) {
 	t.Parallel()
 

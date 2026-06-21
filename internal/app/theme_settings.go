@@ -243,6 +243,10 @@ func (c *settingsCommand) runThemeColorSection(token theme.ColorToken, stdout, s
 			if err := c.runThemeColorHexInput(token, stdout, stderr); err != nil {
 				return err
 			}
+		case action == themeAction("color-grid:"+string(token)):
+			if err := c.runThemeColorGrid(token, stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, themeAction("color-set:"+string(token)+":")):
 			value := strings.TrimPrefix(action, themeAction("color-set:"+string(token)+":"))
 			if err := c.setThemeColor(token, value, stdout); err != nil {
@@ -269,6 +273,11 @@ func (c *settingsCommand) themeColorEntries(token theme.ColorToken) []intpickerc
 	entries = append(entries, intpickercompat.Entry{
 		Label: c.rowLabel(settingsGlyphType, settingsColorType, "Type hex value...", "swatch + #RRGGBB input"),
 		Value: themeAction("color-type:" + string(token)),
+	})
+	entries = append(entries, intpickercompat.Entry{
+		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, "Pick from 256-color grid...", "browse swatches with a live preview"),
+		Value:     themeAction("color-grid:" + string(token)),
+		SearchKey: "theme color grid 256 swatch picker " + string(token),
 	})
 	if theme.TokenSupportsDefaultSentinel(token) {
 		entries = append(entries, intpickercompat.Entry{
@@ -316,6 +325,33 @@ func (c *settingsCommand) runThemeColorHexInput(token theme.ColorToken, stdout, 
 		return nil
 	}
 	return c.setThemeColor(token, hex, stdout)
+}
+
+func (c *settingsCommand) runThemeColorGrid(token theme.ColorToken, stdout, stderr io.Writer) error {
+	result, err := c.runPicker(intpickercompat.Options{
+		UI:        "settings-theme-color-grid",
+		ColorGrid: true,
+		Title:     "Theme - " + themeColorLabel(token) + " color grid",
+		Header:    "Arrows: move  |  Enter: pick swatch  |  h: hex input",
+		Footer:    projmuxFooter("Enter: pick swatch  |  h: hex input  |  Esc: back "),
+		Bindings:  settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+	switch result.Key {
+	case "enter":
+		hex, ok := theme.NormalizeHexColor(result.Value)
+		if !ok {
+			fmt.Fprintf(stderr, "invalid theme color %q: use #RRGGBB\n", strings.TrimSpace(result.Value))
+			return nil
+		}
+		return c.setThemeColor(token, hex, stdout)
+	case "hex":
+		return c.runThemeColorHexInput(token, stdout, stderr)
+	default:
+		return nil
+	}
 }
 
 func (c *settingsCommand) setThemePreset(preset string, stdout io.Writer) error {

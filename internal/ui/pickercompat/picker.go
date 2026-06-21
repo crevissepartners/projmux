@@ -30,6 +30,7 @@ func OptionsFromPicker(options picker.Options) Options {
 		InitialQuery:   options.InitialQuery,
 		DisableSearch:  options.DisableSearch,
 		AcceptQuery:    options.AcceptQuery,
+		ColorGrid:      options.ColorGrid,
 		PreviewCommand: options.Preview.Command,
 		PreviewWindow:  options.Preview.Window,
 		Theme:          options.Theme,
@@ -88,6 +89,7 @@ func PickerOptions(options Options) picker.Options {
 		InitialIndexSet: initialIndexSet,
 		DisableSearch:   options.DisableSearch,
 		AcceptQuery:     options.AcceptQuery,
+		ColorGrid:       options.ColorGrid,
 		MultiLine:       options.Read0,
 	}
 }

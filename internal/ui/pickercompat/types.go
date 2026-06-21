@@ -27,6 +27,9 @@ type Options struct {
 	DisableSearch bool
 	// AcceptQuery surfaces the user-typed query alongside any selection.
 	AcceptQuery bool
+	// ColorGrid renders the native picker as an xterm-256 swatch grid with a
+	// live preview instead of a filtered list.
+	ColorGrid bool
 }
 
 type Entry struct {
