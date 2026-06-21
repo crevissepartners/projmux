@@ -472,7 +472,7 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 // handling so a primary-button click on the chip resolves through the
 // same tab-resolution path as the keyboard chord.
 func settingsRootTabChips(active settingsRootTab, hasProject bool) []projmuxpicker.Chip {
-	return settingsRootTabChipsLocale(active, hasProject, settingsLocaleFromEnv())
+	return settingsRootTabChipsLocale(active, hasProject, settingsLocale())
 }
 
 func settingsRootTabChipsLocale(active settingsRootTab, hasProject bool, locale i18n.Locale) []projmuxpicker.Chip {
@@ -492,7 +492,7 @@ func settingsRootTabChipsLocale(active settingsRootTab, hasProject bool, locale 
 }
 
 func settingsPassiveRootTabChips(active settingsRootTab, hasProject bool) []projmuxpicker.Chip {
-	chips := settingsPassiveRootTabChipsLocale(active, hasProject, settingsLocaleFromEnv())
+	chips := settingsPassiveRootTabChipsLocale(active, hasProject, settingsLocale())
 	return chips
 }
 
@@ -518,7 +518,7 @@ func settingsRootContextHeader(tab settingsRootTab, ctx settingsProjectContext) 
 }
 
 func settingsRootPrompt(tab settingsRootTab) string {
-	return settingsRootPromptLocale(tab, settingsLocaleFromEnv())
+	return settingsRootPromptLocale(tab, settingsLocale())
 }
 
 func settingsRootPromptLocale(tab settingsRootTab, locale i18n.Locale) string {
@@ -568,7 +568,7 @@ func (c *settingsCommand) rootEntries() []intpickercompat.Entry {
 }
 
 func (c *settingsCommand) rootEntriesForTab(tab settingsRootTab) []intpickercompat.Entry {
-	return c.rootEntriesForTabLocale(tab, settingsLocaleFromEnv())
+	return c.rootEntriesForTabLocale(tab, settingsLocale())
 }
 
 func (c *settingsCommand) rootEntriesForTabLocale(tab settingsRootTab, locale i18n.Locale) []intpickercompat.Entry {
@@ -579,7 +579,7 @@ func (c *settingsCommand) rootEntriesForTabLocale(tab settingsRootTab, locale i1
 }
 
 func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompat.Entry {
-	return c.rootEntriesForAxisLocale(axis, settingsLocaleFromEnv())
+	return c.rootEntriesForAxisLocale(axis, settingsLocale())
 }
 
 func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18n.Locale) []intpickercompat.Entry {
@@ -644,7 +644,7 @@ var (
 )
 
 func settingsRootLabel(glyph, name, description string) string {
-	return settingsRootLabelLocale(settingsLocaleFromEnv(), glyph, name, description)
+	return settingsRootLabelLocale(settingsLocale(), glyph, name, description)
 }
 
 func settingsRootLabelLocale(locale i18n.Locale, glyph, name, description string) string {
@@ -652,11 +652,11 @@ func settingsRootLabelLocale(locale i18n.Locale, glyph, name, description string
 }
 
 func settingsRootLabelDim(name, description string) string {
-	return settingsRootLabelWithColorLocale(settingsLocaleFromEnv(), settingsGlyphInfo, settingsRootColorDim, name, description)
+	return settingsRootLabelWithColorLocale(settingsLocale(), settingsGlyphInfo, settingsRootColorDim, name, description)
 }
 
 func settingsRootLabelWithColor(glyph, color, name, description string) string {
-	return settingsRootLabelWithColorLocale(settingsLocaleFromEnv(), glyph, color, name, description)
+	return settingsRootLabelWithColorLocale(settingsLocale(), glyph, color, name, description)
 }
 
 func settingsRootLabelWithColorLocale(locale i18n.Locale, glyph, color, name, description string) string {
@@ -682,7 +682,7 @@ func settingsRootLabelWithColorLocale(locale i18n.Locale, glyph, color, name, de
 }
 
 func (c *settingsCommand) sessionStateSettingsRootLabel() string {
-	return c.sessionStateSettingsRootLabelLocale(settingsLocaleFromEnv())
+	return c.sessionStateSettingsRootLabelLocale(settingsLocale())
 }
 
 func (c *settingsCommand) sessionStateSettingsRootLabelLocale(locale i18n.Locale) string {
@@ -1203,7 +1203,7 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 // bypasses the filesystem scan and lets the user type an absolute path
 // directly. Useful for heavy WSL mounts (/mnt/c/Users/...), large NFS, etc.
 func settingsWorkdirTypedEntry() intpickercompat.Entry {
-	return settingsWorkdirTypedEntryLocale(settingsLocaleFromEnv())
+	return settingsWorkdirTypedEntryLocale(settingsLocale())
 }
 
 func settingsWorkdirTypedEntryLocale(locale i18n.Locale) intpickercompat.Entry {
@@ -1463,7 +1463,7 @@ func (c *settingsCommand) projectRootEntryLocale(locale i18n.Locale) intpickerco
 }
 
 func (c *settingsCommand) projectRootHintEntry() intpickercompat.Entry {
-	return c.projectRootHintEntryLocale(settingsLocaleFromEnv())
+	return c.projectRootHintEntryLocale(settingsLocale())
 }
 
 func (c *settingsCommand) projectRootHintEntryLocale(locale i18n.Locale) intpickercompat.Entry {
@@ -2267,7 +2267,7 @@ func (c *settingsCommand) aiNotifyDiagnosticByID(id string) (doctorAINotifyInteg
 }
 
 func aiNotifyDiagnosticEntry(diag doctorAINotifyIntegration) intpickercompat.Entry {
-	return aiNotifyDiagnosticEntryLocale(settingsLocaleFromEnv(), diag)
+	return aiNotifyDiagnosticEntryLocale(settingsLocale(), diag)
 }
 
 func aiNotifyDiagnosticEntryLocale(locale i18n.Locale, diag doctorAINotifyIntegration) intpickercompat.Entry {
@@ -2301,7 +2301,7 @@ func aiNotifyDiagnosticTone(status doctorAINotifyStatus) (string, string) {
 }
 
 func aiNotifyDiagnosticDetailEntries(diag doctorAINotifyIntegration) []intpickercompat.Entry {
-	return aiNotifyDiagnosticDetailEntriesLocale(settingsLocaleFromEnv(), diag)
+	return aiNotifyDiagnosticDetailEntriesLocale(settingsLocale(), diag)
 }
 
 func aiNotifyDiagnosticDetailEntriesLocale(locale i18n.Locale, diag doctorAINotifyIntegration) []intpickercompat.Entry {
@@ -2331,7 +2331,7 @@ func aiNotifyDiagnosticDetailEntriesLocale(locale i18n.Locale, diag doctorAINoti
 }
 
 func aiNotifyDiagnosticCommandEntry(diag doctorAINotifyIntegration, kind, label, command string) intpickercompat.Entry {
-	return aiNotifyDiagnosticCommandEntryLocale(settingsLocaleFromEnv(), diag, kind, label, command)
+	return aiNotifyDiagnosticCommandEntryLocale(settingsLocale(), diag, kind, label, command)
 }
 
 func aiNotifyDiagnosticCommandEntryLocale(locale i18n.Locale, diag doctorAINotifyIntegration, kind, label, command string) intpickercompat.Entry {
@@ -5157,7 +5157,7 @@ func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options
 }
 
 func settingsBackEntry() intpickercompat.Entry {
-	return settingsBackEntryLocale(settingsLocaleFromEnv())
+	return settingsBackEntryLocale(settingsLocale())
 }
 
 func settingsBackEntryLocale(locale i18n.Locale) intpickercompat.Entry {

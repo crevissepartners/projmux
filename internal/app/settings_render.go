@@ -54,7 +54,7 @@ const settingsLabelNameWidth = 24
 // without a glyph align with rows that use a single-cell glyph (followed by
 // the standard two-space gap before the name column).
 func settingsLabel(glyph, color, name, description string) string {
-	return settingsLabelLocale(settingsLocaleFromEnv(), glyph, color, name, description)
+	return settingsLabelLocale(settingsLocale(), glyph, color, name, description)
 }
 
 func settingsLabelLocale(locale i18n.Locale, glyph, color, name, description string) string {
@@ -91,7 +91,7 @@ func settingsLabelLocale(locale i18n.Locale, glyph, color, name, description str
 // is wrapped in the dim color so it visually recedes, and no action color
 // is applied to the name column.
 func settingsLabelDim(name, description string) string {
-	return settingsLabelDimLocale(settingsLocaleFromEnv(), name, description)
+	return settingsLabelDimLocale(settingsLocale(), name, description)
 }
 
 func settingsLabelDimLocale(locale i18n.Locale, name, description string) string {
@@ -120,7 +120,7 @@ func settingsLabelDimLocale(locale i18n.Locale, name, description string) string
 // name is a static label, the value is the resolved data, and the source
 // annotation explains where the value came from.
 func settingsLabelInfo(name, value, source string) string {
-	return settingsLabelInfoLocale(settingsLocaleFromEnv(), name, value, source)
+	return settingsLabelInfoLocale(settingsLocale(), name, value, source)
 }
 
 func settingsLabelInfoLocale(locale i18n.Locale, name, value, source string) string {
