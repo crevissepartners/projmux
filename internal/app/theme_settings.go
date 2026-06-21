@@ -17,6 +17,33 @@ import (
 // fallback effective values. Project-local [theme] is deprecated migration
 // data and is not editable or resolvable here.
 
+// themeTokenGroup is a Settings presentation grouping for the color tokens.
+type themeTokenGroup struct {
+	Label  string
+	Desc   string
+	Tokens []theme.ColorToken
+}
+
+// themeTokenGroups orders the theme editor's color rows by how often users
+// touch them and by semantic cluster, instead of the flat serialization order.
+// It is a DISPLAY concern only — theme.ResolverColorTokens stays the stable
+// serialization/storage order. Every ResolverColorTokens entry must appear here
+// exactly once; TestThemeTokenGroupsCoverAllTokens guards that invariant.
+var themeTokenGroups = []themeTokenGroup{
+	{Label: "Core", Desc: "background, foreground, accent", Tokens: []theme.ColorToken{
+		theme.TokenBackground, theme.TokenForeground, theme.TokenAccent,
+	}},
+	{Label: "Surfaces", Desc: "panels, selected rows, muted text", Tokens: []theme.ColorToken{
+		theme.TokenSurface, theme.TokenSurfaceActive, theme.TokenMuted,
+	}},
+	{Label: "State", Desc: "severity and AI status colors", Tokens: []theme.ColorToken{
+		theme.TokenCritical, theme.TokenWarning, theme.TokenProgress, theme.TokenSuccess, theme.TokenActionRequired,
+	}},
+	{Label: "App chrome", Desc: "active-pane tint and focus border", Tokens: []theme.ColorToken{
+		theme.TokenPaneActiveBg, theme.TokenFocus,
+	}},
+}
+
 func (c *settingsCommand) runThemeSection(stdout, stderr io.Writer) error {
 	for {
 		options, err := c.themeOptions()
@@ -95,12 +122,24 @@ func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 		SearchKey: "theme preset selector swatch colors",
 	})
 	effective := theme.ResolveTheme(cfg.Theme)
-	for _, token := range theme.ResolverColorTokens {
+	// Present the color tokens grouped by priority/meaning (Core → Surfaces →
+	// State → App chrome) rather than the flat serialization order. This is a
+	// display concern only: ResolverColorTokens (the serialization/storage order)
+	// is unchanged, and themeTokenGroups covers it exactly once (guarded by a
+	// test). Each group emits a dim, non-actionable header row.
+	for _, group := range themeTokenGroups {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), themeColorSummaryEffective(cfg.Theme, effective, token)),
-			Value:     themeAction("color:" + string(token)),
-			SearchKey: "theme color swatch hex input " + string(token),
+			Label:     c.rowLabelDim(group.Label, group.Desc),
+			Value:     settingsNoopValue,
+			SearchKey: "theme group " + group.Label,
 		})
+		for _, token := range group.Tokens {
+			entries = append(entries, intpickercompat.Entry{
+				Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), themeColorSummaryEffective(cfg.Theme, effective, token)),
+				Value:     themeAction("color:" + string(token)),
+				SearchKey: "theme color swatch hex input " + string(token),
+			})
+		}
 	}
 	entries = append(entries,
 		intpickercompat.Entry{
