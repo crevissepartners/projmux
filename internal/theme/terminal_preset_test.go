@@ -9,8 +9,11 @@ func TestBlueHourTargetsInactivePaneBlueTint(t *testing.T) {
 	if got, want := fixed.Background.Value.Hex, "#1e1e2e"; got != want {
 		t.Fatalf("blue-hour background = %q, want terminal palette background %q", got, want)
 	}
-	if got, want := fixed.Surface.Value.Hex, "#2d4a6e"; got != want {
-		t.Fatalf("blue-hour surface = %q, want terminal palette selection background %q", got, want)
+	if got, want := fixed.Surface.Value.Hex, "#16242d"; got != want {
+		t.Fatalf("blue-hour surface = %q, want midnight popup surface %q", got, want)
+	}
+	if got, want := fixed.StatusBackground.Value.Hex, "#132b38"; got != want {
+		t.Fatalf("blue-hour status_background = %q, want ocean status surface %q", got, want)
 	}
 	if got, want := fixed.Accent.Value.Hex, "#3d8fd1"; got != want {
 		t.Fatalf("blue-hour accent = %q, want terminal blue %q", got, want)
@@ -19,6 +22,21 @@ func TestBlueHourTargetsInactivePaneBlueTint(t *testing.T) {
 		t.Fatalf("blue-hour pane_active_bg = %q, want true black %q", got, want)
 	}
 
+}
+
+func TestCarbonVioletUsesReadablePopupAndStatusSurfaces(t *testing.T) {
+	t.Parallel()
+
+	effective := ResolveTheme(ThemeConfig{Preset: "carbon-violet"})
+	if got, want := effective.Surface.Value.Hex, "#23212b"; got != want {
+		t.Fatalf("carbon-violet surface = %q, want darker readable popup surface %q", got, want)
+	}
+	if got, want := effective.StatusBackground.Value.Hex, "#1a1822"; got != want {
+		t.Fatalf("carbon-violet status_background = %q, want darker status surface %q", got, want)
+	}
+	if got, want := effective.PaneActiveBg.Value.Hex, "#000000"; got != want {
+		t.Fatalf("carbon-violet pane_active_bg = %q, want true black %q", got, want)
+	}
 }
 
 func TestInspiredPresetPairsUseBlackActivePaneTint(t *testing.T) {
