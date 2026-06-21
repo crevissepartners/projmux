@@ -17,7 +17,8 @@ func TestRenderThemeSourceFeedsPickerAndTmuxFromSameEffectiveTheme(t *testing.T)
 
 	globalCfg := theme.ThemeConfig{
 		Background:    "#010203",
-		SurfaceActive: "#040506",
+		Surface:       "#040506",
+		SurfaceActive: "#070809",
 		Foreground:    "#aabbcc",
 	}
 	source := newRenderThemeSource(theme.ResolveTheme(globalCfg))
@@ -30,10 +31,13 @@ func TestRenderThemeSourceFeedsPickerAndTmuxFromSameEffectiveTheme(t *testing.T)
 	projmuxpicker.NewRenderer(projmuxpicker.ThemeFromEffective(*pickerOptions.Theme)).
 		RenderFrameWithTitle(&frame, "api", pickerOptions.Title, projmuxpicker.Layout{Rows: 5, Cols: 20})
 	renderedPicker := frame.String()
-	for _, want := range []string{"\x1b[48;2;1;2;3m", "\x1b[38;2;170;187;204m"} {
+	for _, want := range []string{"\x1b[48;2;4;5;6m", "\x1b[38;2;170;187;204m"} {
 		if !strings.Contains(renderedPicker, want) {
 			t.Fatalf("picker frame = %q, want global token %q", renderedPicker, want)
 		}
+	}
+	if banned := "\x1b[48;2;1;2;3m"; strings.Contains(renderedPicker, banned) {
+		t.Fatalf("picker frame = %q, must not use pane background token %q", renderedPicker, banned)
 	}
 
 	tmuxTokens := theme.TmuxRenderTokensFromEffective(*pickerOptions.Theme)
@@ -69,6 +73,7 @@ func TestConfigRenderThemeSourceIgnoresProjectTheme(t *testing.T) {
 	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
 [theme]
 background = "#ff0000"
+surface = "#0000ff"
 foreground = "#00ff00"
 `)
 	// A project-local [theme] is deprecated migration data: it must not bleed
@@ -77,6 +82,7 @@ foreground = "#00ff00"
 [theme]
 preset = "forest"
 background = "#010203"
+surface = "#040506"
 foreground = "#aabbcc"
 `)
 
@@ -98,15 +104,21 @@ foreground = "#aabbcc"
 	if got, want := options.Theme.Background.Source, theme.SourceGlobal; got != want {
 		t.Fatalf("picker theme background source = %q, want %q", got, want)
 	}
+	if got, want := options.Theme.Surface.Value.Hex, "#0000ff"; got != want {
+		t.Fatalf("picker theme surface = %q, want global %q (project [theme] ignored)", got, want)
+	}
 
 	var frame bytes.Buffer
 	projmuxpicker.NewRenderer(projmuxpicker.ThemeFromEffective(*options.Theme)).
 		RenderFrameWithTitle(&frame, "api", options.Title, projmuxpicker.Layout{Rows: 5, Cols: 20})
 	rendered := frame.String()
-	if !strings.Contains(rendered, "\x1b[48;2;255;0;0m") || !strings.Contains(rendered, "\x1b[38;2;0;255;0m") {
-		t.Fatalf("popup frame = %q, want global theme background/chrome_foreground SGR", rendered)
+	if !strings.Contains(rendered, "\x1b[48;2;0;0;255m") || !strings.Contains(rendered, "\x1b[38;2;0;255;0m") {
+		t.Fatalf("popup frame = %q, want global theme surface/chrome_foreground SGR", rendered)
 	}
-	if strings.Contains(rendered, "\x1b[48;2;1;2;3m") || strings.Contains(rendered, "\x1b[38;2;170;187;204m") {
+	if strings.Contains(rendered, "\x1b[48;2;255;0;0m") {
+		t.Fatalf("popup frame = %q, must not use pane background token", rendered)
+	}
+	if strings.Contains(rendered, "\x1b[48;2;4;5;6m") || strings.Contains(rendered, "\x1b[38;2;170;187;204m") {
 		t.Fatalf("popup frame = %q, leaked ignored project theme", rendered)
 	}
 }

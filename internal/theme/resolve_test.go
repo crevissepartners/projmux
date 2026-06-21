@@ -365,7 +365,7 @@ func TestChromeForegroundRepaintsTmuxChromeRoles(t *testing.T) {
 	}
 }
 
-func TestTmuxRenderTokensUseGlobalNearest256ColorsWithoutFallbackLeak(t *testing.T) {
+func TestTmuxRenderTokensUseGlobalTruecolorWithoutFallbackLeak(t *testing.T) {
 	t.Parallel()
 
 	got := TmuxRenderTokensFromEffective(ResolveTheme(ThemeConfig{
@@ -377,10 +377,13 @@ func TestTmuxRenderTokensUseGlobalNearest256ColorsWithoutFallbackLeak(t *testing
 	fallback := TmuxRenderTokensFromEffective(ResolveTheme(ThemeConfig{}))
 
 	if got.WindowInactiveBg == "" || got.WindowInactiveFg == "" || got.WindowActiveBg == "" || got.WindowActiveFg == "" {
-		t.Fatalf("global tmux render tokens = %#v, want populated colourN tokens", got)
+		t.Fatalf("global tmux render tokens = %#v, want populated truecolor tokens", got)
 	}
 	if got.WindowInactiveBg == fallback.WindowInactiveBg || got.WindowInactiveFg == fallback.WindowInactiveFg || got.WindowActiveBg == fallback.WindowActiveBg || got.WindowActiveFg == fallback.WindowActiveFg {
 		t.Fatalf("global tmux render tokens = %#v, must not reuse fallback tokens %#v", got, fallback)
+	}
+	if got.WindowInactiveBg != "#ff0000" || got.StatusBg != "#ff00ff" || got.WindowActiveBg != "#0000ff" || got.WindowInactiveFg != "#00ff00" {
+		t.Fatalf("global tmux render tokens = %#v, want exact hex truecolor tokens", got)
 	}
 	// Phase 6b: StatusBg follows `surface` (popup/chrome group), not `background`.
 	// With both set to different colors, StatusBg must derive from the explicit
@@ -407,13 +410,16 @@ func TestTmuxRenderTokensUseGlobalNearest256ColorsWithoutFallbackLeak(t *testing
 func TestRenderRolesExplicitBackgroundRepaintsPaneBodyNotPopup(t *testing.T) {
 	t.Parallel()
 
-	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Background: "#ff0000"}))
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Background: "#1e1e2e"}))
 	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
 
 	// Pane body repaints: PaneInactiveBg follows the explicit background and is
 	// no longer the terminal default literal.
 	if got.PaneInactiveBg == "default" {
 		t.Fatalf("pane.inactive_bg = %q, want repainted from explicit background, not \"default\"", got.PaneInactiveBg)
+	}
+	if got.PaneInactiveBg != "#1e1e2e" {
+		t.Fatalf("pane.inactive_bg = %q, want exact hex truecolor #1e1e2e", got.PaneInactiveBg)
 	}
 	if got.PaneInactiveBg != got.WindowInactiveBg {
 		t.Fatalf("pane.inactive_bg = %q, want background-derived (= WindowInactiveBg %q)", got.PaneInactiveBg, got.WindowInactiveBg)
@@ -486,7 +492,7 @@ func TestColorSpecEncodesTruecolorAndTmuxMapping(t *testing.T) {
 		t.Fatalf("accent truecolor fg = %q, want exact RGB SGR token", got.Accent.Value.TruecolorFG())
 	}
 	if got.Accent.Value.Tmux == "" {
-		t.Fatalf("accent tmux token empty, want nearest colourN mapping")
+		t.Fatalf("accent 256-color approximation empty, want nearest colourN mapping")
 	}
 }
 

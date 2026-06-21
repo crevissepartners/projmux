@@ -825,6 +825,7 @@ func TestNativeInteractiveUsesOptionsThemeForFrame(t *testing.T) {
 
 	effective := theme.ResolveTheme(theme.ThemeConfig{
 		Background: "#010203",
+		Surface:    "#040506",
 		Foreground: "#aabbcc",
 	})
 	var out bytes.Buffer
@@ -840,10 +841,13 @@ func TestNativeInteractiveUsesOptionsThemeForFrame(t *testing.T) {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
 	rendered := out.String()
-	for _, want := range []string{"\x1b[48;2;1;2;3m", "\x1b[38;2;170;187;204m"} {
+	for _, want := range []string{"\x1b[48;2;4;5;6m", "\x1b[38;2;170;187;204m"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("native interactive output = %q, want themed frame SGR %q", rendered, want)
 		}
+	}
+	if banned := "\x1b[48;2;1;2;3m"; strings.Contains(rendered, banned) {
+		t.Fatalf("native interactive output = %q, must not use pane background SGR %q", rendered, banned)
 	}
 }
 

@@ -37,8 +37,8 @@ onto these stable names:
 
 | Token | Meaning | Shared surfaces |
 | --- | --- | --- |
-| `background` | base popup/sidebar/status surface background | native picker, frame titlebar, notify sidebar, settings popup, statusbar |
-| `surface` | raised or inactive chrome surface | frame titlebar, chips, switch cards, settings popup |
+| `background` | inactive pane body background | tmux inactive panes via `window-style` |
+| `surface` | popup/status/native frame base background | tmux status/popup body, native picker rows, frame titlebar/rule, settings popup |
 | `surface_active` | selected/current row or active chip surface | native picker current row, frame chips, statusbar active window |
 | `chrome_foreground` | app chrome readable text | native picker frame/title/search chrome, tmux status/window foregrounds, popup body style |
 | `text_primary` | primary content text | settings/info rows and native terminal-rendered content text |
@@ -85,18 +85,19 @@ but ignored. See `docs/upgrading.md`.
 ## Mapping Policy
 
 Native picker rows can emit truecolor SGR, while tmux statusbar/config strings
-must use tmux color specs. The resolver therefore carries both forms for each
-color token.
+accept tmux style color specs. The resolver therefore carries exact hex plus a
+256-color approximation for renderer paths that still need it.
 
 Rules:
 
 - Truecolor tokens keep exact `#RRGGBB` values and can be converted to
   foreground/background SGR fragments such as `38;2;R;G;B` or `48;2;R;G;B`.
-- Tmux tokens keep `colourN` strings where tmux owns rendering.
+- Tmux style roles use exact `#RRGGBB` for explicit theme/preset colors and
+  keep historical `colourN` strings only for fallback literals.
 - The built-in `projmux-dark` fallback uses the established ANSI and tmux
   tokens from `internal/theme/palette.go` to preserve current output.
-- Explicit `#RRGGBB` overrides keep exact truecolor and derive the closest
-  xterm 256-color `colourN` token for tmux surfaces.
+- Explicit `#RRGGBB` overrides also retain the closest xterm 256-color
+  `colourN` token for 256-color-only renderer roles.
 - Native chip/sidebar badge tokens use 256-color SGR when they intentionally
   mirror tmux colors.
 - Output compatibility wins inside this baseline. For example, the kube
@@ -168,13 +169,16 @@ Built-in preset config values are:
   foreground/accent/state palettes.
 - `blue-hour` / `blue-hour-terminal` — dark theme pair tuned around a terminal
   blue accent; `blue-hour` uses a dark blue-tinted inactive pane body, while
-  the terminal variant keeps pane and popup backgrounds at the terminal
-  default. Both keep the active pane tint true black.
+  the terminal variant changes only inactive pane and popup/native frame
+  backgrounds to the terminal default. All other tokens match `blue-hour`.
+  Both keep the active pane tint true black.
 - `carbon-violet` / `carbon-violet-terminal` — charcoal/violet dark theme pair;
-  the terminal variant keeps pane and popup backgrounds at the terminal
-  default. Both keep the active pane tint black.
+  the terminal variant changes only inactive pane and popup/native frame
+  backgrounds to the terminal default. All other tokens match `carbon-violet`.
+  Both keep the active pane tint black.
 - `high-contrast` — black surfaces, white text, a vivid blue active surface,
-  and bright cyan/yellow/red/green state colors.
+  near-black active pane tint, vivid cyan focus, and bright
+  cyan/yellow/red/green state colors.
 
 ## Fallback Inventory
 

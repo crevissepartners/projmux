@@ -190,9 +190,10 @@ value `default` ("Terminal default" in Settings) to keep that surface at the
 terminal background. Priority is **explicit `default` > preset fill > unset
 (fallback)**, so picking a preset and then setting (for example)
 `background = "default"` keeps every other token preset-filled while the pane
-body stays at the terminal default (`window-style "bg=default"`); popup/ANSI
-surfaces emit no background sequence. `default` is only valid on these three
-tokens. See `docs/theme-palette.md` for the full sentinel contract.
+body stays at the terminal default (`window-style "bg=default"`). Set
+`surface = "default"` separately when popup/status/native frame backgrounds
+should also inherit the terminal background. `default` is only valid on these
+three tokens. See `docs/theme-palette.md` for the full sentinel contract.
 
 Project `.projmux/config.toml` `[theme]` is **deprecated and ignored**: it is no
 longer an effective theme source and does not influence the native picker,
@@ -203,12 +204,12 @@ See `docs/upgrading.md` for the migration note for existing project `[theme]`
 users.
 
 Renderer adapters can apply an already resolved `EffectiveTheme` to native
-picker frame background / `chrome_foreground` SGR and tmux status/window
-`colourN` background tokens. Settings and native project picker surfaces load
-global `[theme]` values through the shared effective-theme source. Native picker
-frames also apply the built-in fallback `background` / `chrome_foreground`
-tokens so picker-owned padding, empty rows, footer rows, and preview gaps do not
-inherit the terminal default background.
+picker frame `surface` / `chrome_foreground` SGR and tmux status/window
+`colourN` tokens. Settings and native project picker surfaces load global
+`[theme]` values through the shared effective-theme source. Native picker frames
+also apply the built-in fallback `surface` / `chrome_foreground` tokens so
+picker-owned padding, empty rows, footer rows, and preview gaps do not inherit
+the terminal default background.
 
 Active pane focus is part of the theme app chrome. The active pane is marked by
 an active border (`pane-active-border-style`, fallback cyan `colour51`, the
@@ -275,18 +276,20 @@ unset fall through to the built-in fallback preset. The `terminal`,
 `terminal-cool`, `terminal-warm`, `blue-hour-terminal`, and
 `carbon-violet-terminal` presets are terminal-native: their `background`/
 `surface` use the `default` sentinel so the terminal's own background shows
-through, with text/chrome foreground, accent, and state colors tuned for dark
-terminals.
+through. Pair variants such as `blue-hour-terminal` and
+`carbon-violet-terminal` otherwise keep the same token values as their
+non-terminal base preset.
 
 Unknown presets and invalid color values invalidate only the global theme
 source and produce resolver warnings; the built-in fallback still resolves
 normally.
 Colors are `#RRGGBB`. Settings edits colors through a preset selector, swatch
-rows, and a hex input page. Truecolor renderers use exact RGB SGR tokens, and
-tmux surfaces use the stored or nearest xterm 256-color `colourN` mapping. The
-theme has no font keys: `font_family` and `font_size` were removed in Phase 1b
-because tmux/ANSI rendering cannot force a terminal font. Leftover font keys in
-an existing config are accepted but ignored. See `docs/upgrading.md`.
+rows, and a hex input page. Native truecolor renderers and tmux style roles use
+the exact hex value; 256-color mappings are retained only for renderer paths
+that explicitly require xterm `colourN`/ANSI-256 colors. The theme has no font
+keys: `font_family` and `font_size` were removed in Phase 1b because tmux/ANSI
+rendering cannot force a terminal font. Leftover font keys in an existing
+config are accepted but ignored. See `docs/upgrading.md`.
 
 ## UI Locale
 
