@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.7.1](https://github.com/crevissepartners/projmux/compare/v0.7.0...v0.7.1) (2026-06-21)
+
+
+### Features
+
+* add keybinding delivery diagnostics ([#440](https://github.com/crevissepartners/projmux/issues/440)) ([b601433](https://github.com/crevissepartners/projmux/commit/b6014334d62ca43225dcb4f40a14bc019bcc6370))
+* **i18n:** complete localization coverage for pickers and project settings ([#455](https://github.com/crevissepartners/projmux/issues/455)) ([dc2a8c1](https://github.com/crevissepartners/projmux/commit/dc2a8c10885dfa3a634c5a96ba687a2a393ad91c))
+* **theme:** 256-color grid picker with live preview (P4) ([#462](https://github.com/crevissepartners/projmux/issues/462)) ([8e90270](https://github.com/crevissepartners/projmux/commit/8e902702ca3bb34291f2445def37ae5c47d397dc))
+* **theme:** active pane & popup chrome correction (Phase 5.5) ([#449](https://github.com/crevissepartners/projmux/issues/449)) ([06eb530](https://github.com/crevissepartners/projmux/commit/06eb5307c3cb4f1ab7106d6f6862180335dcb6aa))
+* **theme:** add inspired preset pairs ([#465](https://github.com/crevissepartners/projmux/issues/465)) ([bf39737](https://github.com/crevissepartners/projmux/commit/bf3973743e0a0bb6878c7da38cd2d137f5f58035))
+* **theme:** add terminal and fixed background presets ([#464](https://github.com/crevissepartners/projmux/issues/464)) ([ea0ff8a](https://github.com/crevissepartners/projmux/commit/ea0ff8abfc89e3e6500e48e53aa4a78ad93032f3))
+* **theme:** add terminal-native preset using default backgrounds (P2) ([#460](https://github.com/crevissepartners/projmux/issues/460)) ([d192b0e](https://github.com/crevissepartners/projmux/commit/d192b0e746bc32dc8943a2d5ff0ea241bbff013c))
+* **theme:** close theme apply-path gaps and add terminal-default option ([#454](https://github.com/crevissepartners/projmux/issues/454)) ([20dac90](https://github.com/crevissepartners/projmux/commit/20dac90ee9c8163018e59378e9dce791e0d360e0))
+* **theme:** group theme editor tokens by priority (P3) ([#461](https://github.com/crevissepartners/projmux/issues/461)) ([2d1e914](https://github.com/crevissepartners/projmux/commit/2d1e91420469a869d91c67586006e1d6236f1fcc))
+* **theme:** migrate state/severity + AI status cluster to role map (Phase 3) ([1dc6fd8](https://github.com/crevissepartners/projmux/commit/1dc6fd8a7ce8d5aeac0ddf3ffde00dba2d827495))
+* **theme:** native UI semantic consolidation (Phase 5) ([#448](https://github.com/crevissepartners/projmux/issues/448)) ([8caf8b3](https://github.com/crevissepartners/projmux/commit/8caf8b36105b543b6cbaa5e92e476200baa9158f))
+* **theme:** pane vs popup background separation (Phase 6b) ([#451](https://github.com/crevissepartners/projmux/issues/451)) ([1d6926a](https://github.com/crevissepartners/projmux/commit/1d6926a91ce12c4e04afab8b2c951f0b4ced85b6))
+* **theme:** preset design rubric + fix midnight state-color collision (P1) ([#459](https://github.com/crevissepartners/projmux/issues/459)) ([e974e46](https://github.com/crevissepartners/projmux/commit/e974e46e59ee59596d01c8d92288e65350149205))
+* **theme:** public schema expansion + Settings merge (Phase 6) ([#450](https://github.com/crevissepartners/projmux/issues/450)) ([a3e195f](https://github.com/crevissepartners/projmux/commit/a3e195f9b196f86fd7248131ae7b68aefb379e60))
+* **theme:** semantic role map foundation + active pane tint (Phase 2) ([#445](https://github.com/crevissepartners/projmux/issues/445)) ([24146b0](https://github.com/crevissepartners/projmux/commit/24146b09773b02b1b52a4edc252841564ca4c604))
+* **theme:** split foreground theme roles ([#463](https://github.com/crevissepartners/projmux/issues/463)) ([80c213e](https://github.com/crevissepartners/projmux/commit/80c213eae28beb37307184e7e6b68d7a5d935169))
+* **theme:** split status background defaults ([#469](https://github.com/crevissepartners/projmux/issues/469)) ([0ae6e9d](https://github.com/crevissepartners/projmux/commit/0ae6e9d9875a59d4b5f92da16be3bee062843780))
+* **theme:** state/severity + AI status role migration (Phase 3) ([#446](https://github.com/crevissepartners/projmux/issues/446)) ([1dc6fd8](https://github.com/crevissepartners/projmux/commit/1dc6fd8a7ce8d5aeac0ddf3ffde00dba2d827495))
+* **theme:** statusbar segment role migration (Phase 4) ([#447](https://github.com/crevissepartners/projmux/issues/447)) ([68a8f77](https://github.com/crevissepartners/projmux/commit/68a8f7770f98d8731a847e7c1e95bb371ab198aa))
+* **theme:** theme remaining pickers by default at the choke point ([#458](https://github.com/crevissepartners/projmux/issues/458)) ([4a72eca](https://github.com/crevissepartners/projmux/commit/4a72ecab615a11771dfed023c32d92f08b6d1e6c))
+
+
+### Bug Fixes
+
+* couple settings keymap saves to tmux apply ([#437](https://github.com/crevissepartners/projmux/issues/437)) ([cb9317e](https://github.com/crevissepartners/projmux/commit/cb9317e4db63a4a4f660b46277a350a494428e65))
+* derive popup close aliases from keybinding catalog ([#435](https://github.com/crevissepartners/projmux/issues/435)) ([02404f3](https://github.com/crevissepartners/projmux/commit/02404f3211a81ff872b5ebb910fd499ad96f4a2f))
+* **i18n:** honor global config [ui] locale in picker chrome localization ([#456](https://github.com/crevissepartners/projmux/issues/456)) ([cbb6903](https://github.com/crevissepartners/projmux/commit/cbb6903527d514d23400fa5873215d5b2a671143))
+* **i18n:** settingsLocale honors global config [ui] locale (footers/labels) ([#457](https://github.com/crevissepartners/projmux/issues/457)) ([bf377f7](https://github.com/crevissepartners/projmux/commit/bf377f7039dda9869d1297f620916b865b64483c))
+* **theme:** apply global theme to generated tmux chrome ([#453](https://github.com/crevissepartners/projmux/issues/453)) ([b3399b6](https://github.com/crevissepartners/projmux/commit/b3399b68b2d97860949ffd2efa3c4aca5ec57131))
+* **theme:** clarify preset contrast intent ([#467](https://github.com/crevissepartners/projmux/issues/467)) ([bcd1c3e](https://github.com/crevissepartners/projmux/commit/bcd1c3e7924b47a2f581a65582547eae9a37c978))
+* **theme:** darken active surfaces ([#472](https://github.com/crevissepartners/projmux/issues/472)) ([fe33715](https://github.com/crevissepartners/projmux/commit/fe33715a32d4aea4e78a38788a7c905445770a07))
+* **theme:** darken readable preset surfaces ([#470](https://github.com/crevissepartners/projmux/issues/470)) ([3c98f4d](https://github.com/crevissepartners/projmux/commit/3c98f4d5134eab30491ed268ac03adbc7f87c8ba))
+* **theme:** retune blue hour pane contrast ([#471](https://github.com/crevissepartners/projmux/issues/471)) ([69f2178](https://github.com/crevissepartners/projmux/commit/69f2178fe51fd2a280d832ab6ffed02e9c105dc6))
+* **theme:** separate picker surface from pane background ([#468](https://github.com/crevissepartners/projmux/issues/468)) ([b8a8283](https://github.com/crevissepartners/projmux/commit/b8a82832b8b1822cf1f8c3a2589a4182a2d94069))
+* **theme:** tune inspired preset pane colors ([#466](https://github.com/crevissepartners/projmux/issues/466)) ([18808df](https://github.com/crevissepartners/projmux/commit/18808df033b672a4fe3869078e61fda11222db5e))
+* **ui:** align pane labels in tmux and recent windows ([#438](https://github.com/crevissepartners/projmux/issues/438)) ([75279ae](https://github.com/crevissepartners/projmux/commit/75279ae39af3dc92a6a218771f60925519c9c415))
+* **ui:** restore active pane border chip ([#439](https://github.com/crevissepartners/projmux/issues/439)) ([024711e](https://github.com/crevissepartners/projmux/commit/024711e0a958097639decf287a2430c865bdde0c))
+
 ## [0.7.0](https://github.com/crevissepartners/projmux/compare/v0.6.7...v0.7.0) (2026-06-19)
 
 
