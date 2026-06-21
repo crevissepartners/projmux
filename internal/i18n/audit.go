@@ -57,7 +57,14 @@ type StringAuditOptions struct {
 	IncludeIgnored           bool
 	DisableKoreanCandidates  bool
 	DisableEnglishCandidates bool
-	PathFilter               func(path string) bool
+	// RestrictEnglishToPickerChrome narrows English candidates to literals that
+	// sit in a user-facing picker-chrome context (a Title/Prompt/Header/Footer
+	// composite-literal field, or a projmuxFooter(...) argument). This is the
+	// Phase 3 governance guard: it catches new hardcoded English picker chrome
+	// that bypasses the catalog without flooding the audit with the many benign
+	// English data/format literals elsewhere in the codebase.
+	RestrictEnglishToPickerChrome bool
+	PathFilter                    func(path string) bool
 }
 
 // RuntimeKoreanStringAuditOptions returns the Phase 6 guard used by tests:
@@ -80,6 +87,39 @@ func RuntimeKoreanStringAuditOptions() StringAuditOptions {
 			default:
 				return true
 			}
+		},
+	}
+}
+
+// PickerChromeStringAuditOptions returns the Phase 3 governance guard for
+// user-facing picker chrome. It keeps only English literals that sit in a
+// picker-chrome field context (Title/Prompt/Header/Footer or projmuxFooter)
+// within the migrated picker/footer/label surfaces, so newly hardcoded English
+// chrome that bypasses the catalog is flagged while data/log/debug literals and
+// the rest of the codebase stay exempt.
+//
+// The set of registered literals (uiTextKeys) is filtered out by the caller,
+// which lives in the app package and owns that registry.
+func PickerChromeStringAuditOptions() StringAuditOptions {
+	scoped := map[string]bool{
+		"internal/app/notify.go":                true,
+		"internal/app/switch.go":                true,
+		"internal/app/sessions.go":              true,
+		"internal/app/session_state.go":         true,
+		"internal/app/sessionstate_settings.go": true,
+		"internal/app/trust.go":                 true,
+		"internal/app/ai.go":                    true,
+		"internal/app/hookmaker.go":             true,
+	}
+	return StringAuditOptions{
+		DisableKoreanCandidates:       true,
+		RestrictEnglishToPickerChrome: true,
+		PathFilter: func(path string) bool {
+			path = filepath.ToSlash(path)
+			if strings.HasSuffix(path, "_test.go") {
+				return false
+			}
+			return scoped[path]
 		},
 	}
 }
@@ -192,7 +232,13 @@ func shouldKeepStringAuditFinding(finding StringAuditFinding, opts StringAuditOp
 	case StringAuditKoreanCandidate:
 		return !opts.DisableKoreanCandidates
 	case StringAuditEnglishCandidate:
-		return !opts.DisableEnglishCandidates
+		if opts.DisableEnglishCandidates {
+			return false
+		}
+		if opts.RestrictEnglishToPickerChrome {
+			return finding.Reason == pickerChromeReason
+		}
+		return true
 	default:
 		return opts.IncludeIgnored
 	}
@@ -231,9 +277,45 @@ func classifyStringLiteral(value string, stack []ast.Node) (StringAuditClassific
 		return StringAuditKoreanCandidate, "Korean user-facing candidate"
 	}
 	if isEnglishUserFacingCandidate(trimmed) {
+		if isPickerChromeFieldContext(stack) {
+			return StringAuditEnglishCandidate, pickerChromeReason
+		}
 		return StringAuditEnglishCandidate, "English user-facing candidate"
 	}
 	return StringAuditIgnoredData, "not natural-language UI text"
+}
+
+// pickerChromeReason tags an English candidate that sits in a user-facing
+// picker-chrome context so the audit can scope the English guard to those
+// surfaces only.
+const pickerChromeReason = "English picker-chrome candidate"
+
+// pickerChromeFieldNames are the user-facing Options chrome fields whose string
+// literals must resolve through the catalog rather than being hardcoded.
+var pickerChromeFieldNames = map[string]bool{
+	"Title":  true,
+	"Prompt": true,
+	"Header": true,
+	"Footer": true,
+}
+
+// isPickerChromeFieldContext reports whether the literal is the value of a
+// picker-chrome composite-literal field (Title/Prompt/Header/Footer) or an
+// argument to projmuxFooter(...).
+func isPickerChromeFieldContext(stack []ast.Node) bool {
+	for i := len(stack) - 1; i >= 0; i-- {
+		switch node := stack[i].(type) {
+		case *ast.KeyValueExpr:
+			if ident, ok := node.Key.(*ast.Ident); ok && pickerChromeFieldNames[ident.Name] {
+				return true
+			}
+		case *ast.CallExpr:
+			if strings.EqualFold(callName(node.Fun), "projmuxFooter") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isDebugStringContext(stack []ast.Node) bool {

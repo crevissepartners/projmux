@@ -403,17 +403,14 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 	return result, nil
 }
 
+// localizeSettingsOptions resolves the Settings-scoped locale (which honors the
+// global config override via c.homeDir) and then delegates the field
+// translation to the shared picker choke point. Because options.Locale is set
+// here, the choke point reuses this locale rather than re-resolving from the
+// environment, and translation is idempotent so there is no double-translation.
 func (c *settingsCommand) localizeSettingsOptions(options intpickercompat.Options) intpickercompat.Options {
-	locale := c.locale()
-	options.Locale = locale
-	options.Title = settingsCatalogTextLocale(locale, options.Title)
-	options.Prompt = settingsCatalogTextLocale(locale, options.Prompt)
-	options.Header = settingsCatalogTextLocale(locale, options.Header)
-	options.Footer = settingsCatalogTextLocale(locale, options.Footer)
-	for i := range options.TitleChips {
-		options.TitleChips[i].Label = settingsCatalogTextLocale(locale, options.TitleChips[i].Label)
-	}
-	return options
+	options.Locale = c.locale()
+	return localizePickerOptions(c.lookupEnv, options)
 }
 
 func (c *settingsCommand) locale() i18n.Locale {

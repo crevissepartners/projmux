@@ -815,7 +815,7 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
 		UI:         "ai-picker",
 		Entries:    c.agentRows(),
-		Title:      "AI Launch - Split direction: " + direction,
+		Title:      localizeUIText(appLocale(c.homeDir, c.lookupEnv), "AI Launch - Split direction: ") + direction,
 		Prompt:     "AI Launch > ",
 		Footer:     projmuxFooter("Choose an agent or shell target to launch."),
 		ExpectKeys: []string{"enter"},

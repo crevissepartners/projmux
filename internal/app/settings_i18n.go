@@ -7,7 +7,15 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 )
 
-var settingsTextKeys = map[string]i18n.Key{
+// uiTextKeys maps a user-facing English literal to its catalog key. It is the
+// single shared registry behind both the Settings localization helpers and the
+// common picker choke point (runPickerOptionBackend), so every picker title,
+// prompt, footer, header, and static row label resolves through the catalog.
+//
+// Adding an entry here is necessary but not sufficient: the key must also exist
+// in internal/i18n/default_catalog.go for both en-US (FallbackLocale) and
+// ko-KR. The coverage tests enforce both halves.
+var uiTextKeys = map[string]i18n.Key{
 	"Settings": "settings.root.title",
 	"Global":   "settings.root.tab.global",
 	"Project":  "settings.root.tab.project",
@@ -418,10 +426,67 @@ var settingsTextKeys = map[string]i18n.Key{
 	"Press a key to add it to this action.":                                   "settings.footer.keybindings_add_key",
 	"Typed key names and raw diagnostics stay advanced.":                      "settings.footer.keybindings_add_key_advanced",
 	"Manage this active key.":                                                 "settings.footer.keybindings_key_detail",
+
+	// --- Non-settings picker chrome (notify, switch pins, hookmaker) -------
+	// These render through the shared picker choke point or source-level
+	// localization. Keys live under the settings.* / picker.* namespaces so
+	// the existing ko-KR coverage test enforces translations.
+	"Notify > ":                        "picker.notify.prompt",
+	"Newest first":                     "picker.notify.header_newest_first",
+	"No pending notifications":         "picker.notify.empty",
+	"focus live/inactive / clean gone": "picker.notify.action.focus_clean",
+	"ack child":                        "picker.notify.action.ack_child",
+	"ack group":                        "picker.notify.action.ack_group",
+	"clear non-critical":               "picker.notify.action.clear_non_critical",
+	"clear all":                        "picker.notify.action.clear_all",
+	"show child rows":                  "picker.notify.action.show_child_rows",
+	"hide child rows":                  "picker.notify.action.hide_child_rows",
+
+	"pin project":         "picker.switch.action.pin_project",
+	"kill session":        "picker.switch.action.kill_session",
+	"+ Add pin...":        "picker.switch.pin.add_interactive",
+	"+ Add current pin  ": "picker.switch.pin.add_current",
+	"x Clear all pins":    "picker.switch.pin.clear_all",
+	"x Remove  ":          "picker.switch.pin.remove",
+
+	"Defined in":       "settings.text.hook_defined_in",
+	"run":              "settings.text.hook_run",
+	"Read-only":        "settings.text.hook_read_only",
+	"Project override": "settings.text.hook_project_override",
+
+	// Breadcrumb/path and title segments surfaced by the picker-chrome audit
+	// as bypassing the catalog. Registering the static segments lets the
+	// composed path/`-`-split resolver translate the full prompt/title.
+	"AI Setting":                    "picker.ai.crumb_setting",
+	"AI Launch":                     "picker.ai.crumb_launch",
+	"AI Launch - Split direction: ": "picker.ai.launch_split_direction_title",
+	"Read-only hook":                "picker.hook.read_only_hook",
+	"Projects":                      "picker.crumb.projects",
+	"Sessions":                      "picker.crumb.sessions",
+	"State":                         "picker.crumb.state",
+	"Session state opens read-only; destructive actions keep the current confirmation policy.": "picker.sessions.state_readonly_note",
 }
+
+// settingsTextKeys preserves the historical name for the shared registry so
+// existing tests and call sites keep compiling. New code should reference
+// uiTextKeys / localizeUIText directly.
+var settingsTextKeys = uiTextKeys
 
 func settingsLocaleFromEnv() i18n.Locale {
 	return appLocale(nil, os.Getenv)
+}
+
+// localizeUIText is the shared UI localization entry point. Given the active
+// locale and an English fallback literal, it resolves the literal through the
+// catalog (exact, then composed/path/prefix forms) and returns the localized
+// string, or the fallback verbatim when no key matches.
+//
+// It is idempotent for already-translated strings: a Korean string is not a
+// registered English literal, so it never matches a key and is returned as-is.
+// This is what lets the common picker choke point localize without
+// double-translating strings that Settings already localized.
+func localizeUIText(locale i18n.Locale, fallback string) string {
+	return settingsCatalogTextLocale(locale, fallback)
 }
 
 func settingsCatalogText(fallback string) string {
@@ -439,9 +504,9 @@ func settingsCatalogTextLocale(locale i18n.Locale, fallback string) string {
 }
 
 func settingsCatalogExactTextLocale(locale i18n.Locale, fallback string) (string, bool) {
-	key, ok := settingsTextKeys[fallback]
+	key, ok := uiTextKeys[fallback]
 	if !ok {
-		key, ok = settingsTextKeys[strings.TrimSpace(fallback)]
+		key, ok = uiTextKeys[strings.TrimSpace(fallback)]
 	}
 	if !ok {
 		return "", false

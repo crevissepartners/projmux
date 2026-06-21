@@ -2224,6 +2224,7 @@ func pickerActionKeyGuide(homeDir func() (string, error), lookupEnv func(string)
 			actions = merged
 		}
 	}
+	locale := appLocale(homeDir, lookupEnv)
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
 		chord := pickerActionGuideChord(actions, item.ActionID)
@@ -2234,6 +2235,7 @@ func pickerActionKeyGuide(homeDir func() (string, error), lookupEnv func(string)
 		if label == "" {
 			label = item.ActionID
 		}
+		label = localizeUIText(locale, label)
 		parts = append(parts, pickerActionGuideReadableChord(chord)+": "+label)
 	}
 	return strings.Join(parts, "  |  ")
@@ -2853,27 +2855,28 @@ func (c *switchCommand) settingsEntries() ([]intpickercompat.Entry, error) {
 	}
 	repoRoot := c.switchRepoRoot(homeDir)
 
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	entries := make([]intpickercompat.Entry, 0, len(pins)+3)
 	entries = append(entries, intpickercompat.Entry{
-		Label: "+ Add pin...",
+		Label: localizeUIText(locale, "+ Add pin..."),
 		Value: "add-interactive",
 	})
 	currentTarget, err := c.resolveSwitchTarget(nil, "switch settings")
 	if err == nil && currentTarget != "" && currentTarget != switchSettingsSentinel && !containsString(pins, currentTarget) {
 		entries = append(entries, intpickercompat.Entry{
-			Label: "+ Add current pin  " + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
+			Label: localizeUIText(locale, "+ Add current pin  ") + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
 			Value: "add:" + currentTarget,
 		})
 	}
 	if len(pins) != 0 {
 		entries = append(entries, intpickercompat.Entry{
-			Label: "x Clear all pins",
+			Label: localizeUIText(locale, "x Clear all pins"),
 			Value: "clear",
 		})
 	}
 	for _, pin := range pins {
 		entries = append(entries, intpickercompat.Entry{
-			Label: "x Remove  " + intrender.PrettyPath(pin, homeDir, repoRoot),
+			Label: localizeUIText(locale, "x Remove  ") + intrender.PrettyPath(pin, homeDir, repoRoot),
 			Value: "pin:" + pin,
 		})
 	}
