@@ -501,6 +501,26 @@ var builtinPresets = map[string]preset{
 			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
 		}),
 	},
+	"ocean": {
+		Name: "ocean",
+		Colors: presetColors(map[ColorToken]string{
+			TokenBackground: "#0e1f2a", TokenSurface: "#132b38", TokenSurfaceActive: "#21465a",
+			TokenChromeForeground: "#d9eef7", TokenTextPrimary: "#d9eef7", TokenForeground: "#d9eef7", TokenMuted: "#7f9aaa", TokenAccent: "#5fd7ff",
+			TokenCritical: "#ff005f", TokenWarning: "#d7af00",
+			TokenProgress: "#5fafff", TokenSuccess: "#5faf5f", TokenActionRequired: "#ff8700",
+			TokenPaneActiveBg: "#102834", TokenFocus: "#5fd7ff",
+		}),
+	},
+	"ember": {
+		Name: "ember",
+		Colors: presetColors(map[ColorToken]string{
+			TokenBackground: "#211816", TokenSurface: "#2b201c", TokenSurfaceActive: "#473026",
+			TokenChromeForeground: "#f3e4d7", TokenTextPrimary: "#f3e4d7", TokenForeground: "#f3e4d7", TokenMuted: "#b09282", TokenAccent: "#ff9f5f",
+			TokenCritical: "#ff5f5f", TokenWarning: "#d7af00",
+			TokenProgress: "#ffd75f", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
+			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#ffaf5f",
+		}),
+	},
 	"forest": {
 		Name: "forest",
 		Colors: presetColors(map[ColorToken]string{
@@ -546,6 +566,26 @@ var builtinPresets = map[string]preset{
 			TokenCritical: "#ff5f5f", TokenWarning: "#d7af5f",
 			TokenProgress: "#ffd75f", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
 			TokenPaneActiveBg: "#262626", TokenFocus: "#00ffff",
+		}, TokenBackground, TokenSurface),
+	},
+	"terminal-cool": {
+		Name: "terminal-cool",
+		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
+			TokenSurfaceActive:    "#26343f",
+			TokenChromeForeground: "#d8eef2", TokenTextPrimary: "#d8eef2", TokenForeground: "#d8eef2", TokenMuted: "#8aa4ad", TokenAccent: "#5fd7d7",
+			TokenCritical: "#ff005f", TokenWarning: "#d7af00",
+			TokenProgress: "#5fafff", TokenSuccess: "#5faf5f", TokenActionRequired: "#ff8700",
+			TokenPaneActiveBg: "#262626", TokenFocus: "#5fffff",
+		}, TokenBackground, TokenSurface),
+	},
+	"terminal-warm": {
+		Name: "terminal-warm",
+		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
+			TokenSurfaceActive:    "#3a3028",
+			TokenChromeForeground: "#f0dfcf", TokenTextPrimary: "#f0dfcf", TokenForeground: "#f0dfcf", TokenMuted: "#a79080", TokenAccent: "#ffaf87",
+			TokenCritical: "#ff5f5f", TokenWarning: "#d7af00",
+			TokenProgress: "#ffd75f", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
+			TokenPaneActiveBg: "#262626", TokenFocus: "#ffaf87",
 		}, TokenBackground, TokenSurface),
 	},
 }

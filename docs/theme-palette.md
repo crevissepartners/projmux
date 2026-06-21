@@ -148,6 +148,8 @@ Built-in preset config values are:
 
 - `projmux-dark`
 - `midnight`
+- `ocean`
+- `ember`
 - `forest`
 - `rose`
 - `high-contrast`
@@ -157,6 +159,9 @@ Built-in preset config values are:
   tokens do not support the sentinel, so the text/chrome foreground, muted, and
   selection-tint values are tuned for a dark terminal (the common projmux host);
   on a light terminal, set those tokens explicitly or pick another preset.
+- `terminal-cool` / `terminal-warm` — terminal-native variants that also use
+  the `default` sentinel for `background`/`surface`, with cooler or warmer
+  foreground/accent/state palettes.
 
 ## Fallback Inventory
 
