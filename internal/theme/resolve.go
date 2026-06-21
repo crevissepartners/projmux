@@ -504,21 +504,21 @@ var builtinPresets = map[string]preset{
 	"blue-hour": {
 		Name: "blue-hour",
 		Colors: presetColors(map[ColorToken]string{
-			TokenBackground: "#1e2a44", TokenSurface: "#273653", TokenSurfaceActive: "#364a6f",
-			TokenChromeForeground: "#cdd6f4", TokenTextPrimary: "#cdd6f4", TokenForeground: "#cdd6f4", TokenMuted: "#7f849c", TokenAccent: "#89b4fa",
-			TokenCritical: "#f38ba8", TokenWarning: "#f9e2af",
-			TokenProgress: "#89b4fa", TokenSuccess: "#a6e3a1", TokenActionRequired: "#fab387",
-			TokenPaneActiveBg: "#000000", TokenFocus: "#89dceb",
+			TokenBackground: "#1d2433", TokenSurface: "#2d4a6e", TokenSurfaceActive: "#4a5878",
+			TokenChromeForeground: "#acb6bf", TokenTextPrimary: "#acb6bf", TokenForeground: "#acb6bf", TokenMuted: "#4a5878", TokenAccent: "#3d8fd1",
+			TokenCritical: "#ec6a88", TokenWarning: "#efb472",
+			TokenProgress: "#5ca7e4", TokenSuccess: "#3fdaa4", TokenActionRequired: "#ffca85",
+			TokenPaneActiveBg: "#1d2433", TokenFocus: "#5ca7e4",
 		}),
 	},
 	"blue-hour-terminal": {
 		Name: "blue-hour-terminal",
 		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
-			TokenSurfaceActive:    "#364a6f",
-			TokenChromeForeground: "#cdd6f4", TokenTextPrimary: "#cdd6f4", TokenForeground: "#cdd6f4", TokenMuted: "#7f849c", TokenAccent: "#89b4fa",
-			TokenCritical: "#f38ba8", TokenWarning: "#f9e2af",
-			TokenProgress: "#89b4fa", TokenSuccess: "#a6e3a1", TokenActionRequired: "#fab387",
-			TokenPaneActiveBg: "#000000", TokenFocus: "#89dceb",
+			TokenSurfaceActive:    "#4a5878",
+			TokenChromeForeground: "#acb6bf", TokenTextPrimary: "#acb6bf", TokenForeground: "#acb6bf", TokenMuted: "#4a5878", TokenAccent: "#3d8fd1",
+			TokenCritical: "#ec6a88", TokenWarning: "#efb472",
+			TokenProgress: "#5ca7e4", TokenSuccess: "#3fdaa4", TokenActionRequired: "#ffca85",
+			TokenPaneActiveBg: "#1d2433", TokenFocus: "#5ca7e4",
 		}, TokenBackground, TokenSurface),
 	},
 	"ocean": {
