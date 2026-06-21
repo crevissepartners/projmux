@@ -15,6 +15,9 @@ func TestBlueHourTargetsInactivePaneBlueTint(t *testing.T) {
 	if got, want := fixed.StatusBackground.Value.Hex, "#07111f"; got != want {
 		t.Fatalf("blue-hour status_background = %q, want deep navy status surface %q", got, want)
 	}
+	if got, want := fixed.SurfaceActive.Value.Hex, "#252f55"; got != want {
+		t.Fatalf("blue-hour surface_active = %q, want readable active surface %q", got, want)
+	}
 	if got, want := fixed.Accent.Value.Hex, "#3d8fd1"; got != want {
 		t.Fatalf("blue-hour accent = %q, want terminal blue %q", got, want)
 	}
@@ -76,8 +79,8 @@ func TestHighContrastPresetUsesStrongContrastPalette(t *testing.T) {
 			t.Fatalf("high-contrast %s = %q, want %q", name, got, want)
 		}
 	}
-	if got, want := effective.SurfaceActive.Value.Hex, "#005fff"; got != want {
-		t.Fatalf("high-contrast surface_active = %q, want vivid active surface %q", got, want)
+	if got, want := effective.SurfaceActive.Value.Hex, "#00306f"; got != want {
+		t.Fatalf("high-contrast surface_active = %q, want readable dark blue active surface %q", got, want)
 	}
 	if got, want := effective.PaneActiveBg.Value.Hex, "#080808"; got != want {
 		t.Fatalf("high-contrast pane_active_bg = %q, want near-black active pane tint %q", got, want)
