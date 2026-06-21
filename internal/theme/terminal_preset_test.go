@@ -11,7 +11,7 @@ import "testing"
 func TestTerminalPresetRidesTerminalBackground(t *testing.T) {
 	t.Parallel()
 
-	for _, preset := range []string{"terminal", "terminal-cool", "terminal-warm"} {
+	for _, preset := range []string{"terminal", "terminal-cool", "terminal-warm", "blue-hour-terminal", "carbon-violet-terminal"} {
 		t.Run(preset, func(t *testing.T) {
 			t.Parallel()
 
