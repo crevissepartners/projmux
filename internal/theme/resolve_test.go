@@ -20,11 +20,11 @@ func TestResolveThemeGlobalMissingFallsBackToBuiltInFallback(t *testing.T) {
 
 	got := ResolveTheme(ThemeConfig{})
 
-	if got.Background.Value.Hex != "#182226" || got.Background.Source != SourceFallback {
-		t.Fatalf("background = %#v, want fallback projmux-dark background", got.Background)
+	if !IsThemeDefaultSpec(got.Background.Value) || got.Background.Source != SourceFallback {
+		t.Fatalf("background = %#v, want fallback terminal-default background", got.Background)
 	}
-	if got.Preset.Value != "projmux-dark" || got.Preset.Source != SourceFallback {
-		t.Fatalf("preset = %#v, want fallback projmux-dark", got.Preset)
+	if got.Preset.Value != "projmux" || got.Preset.Source != SourceFallback {
+		t.Fatalf("preset = %#v, want fallback projmux", got.Preset)
 	}
 }
 
@@ -38,6 +38,21 @@ func TestResolveThemePresetFillsMissingColorTokens(t *testing.T) {
 	}
 	if got.Warning.Value.Hex != "#e5c45f" || got.Warning.Source != SourceGlobal {
 		t.Fatalf("warning = %#v, want forest/global", got.Warning)
+	}
+}
+
+func TestPresetNamesPutPrimaryChoicesFirst(t *testing.T) {
+	t.Parallel()
+
+	got := PresetNames()
+	wantPrefix := []string{"projmux", "high-contrast", "blue-hour", "carbon-violet"}
+	if len(got) < len(wantPrefix) {
+		t.Fatalf("PresetNames() = %#v, want prefix %#v", got, wantPrefix)
+	}
+	for i, want := range wantPrefix {
+		if got[i] != want {
+			t.Fatalf("PresetNames()[%d] = %q, want %q in %#v", i, got[i], want, got)
+		}
 	}
 }
 
@@ -110,12 +125,12 @@ func TestResolveThemeDefaultSentinelOverridesPresetForBackground(t *testing.T) {
 func TestResolveThemeDefaultSentinelEmitsTmuxDefaultRole(t *testing.T) {
 	t.Parallel()
 
-	roles := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Preset: "forest", Background: "default", Surface: "default"}))
+	roles := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Preset: "forest", Background: "default", Surface: "default", StatusBackground: "default"}))
 	if roles.PaneInactiveBg != "default" {
 		t.Fatalf("PaneInactiveBg = %q, want default (sentinel beats preset)", roles.PaneInactiveBg)
 	}
 	if roles.StatusBg != "default" {
-		t.Fatalf("StatusBg = %q, want default (surface sentinel)", roles.StatusBg)
+		t.Fatalf("StatusBg = %q, want default (status_background sentinel)", roles.StatusBg)
 	}
 }
 
@@ -176,12 +191,12 @@ func TestResolveThemeUnsetByteIdenticalWithoutSentinel(t *testing.T) {
 	}
 }
 
-func TestTmuxRenderTokensFallbackPreservesBuiltInPalette(t *testing.T) {
+func TestTmuxRenderTokensFallbackUsesTerminalDefaultPaneBackground(t *testing.T) {
 	t.Parallel()
 
 	got := TmuxRenderTokensFromEffective(ResolveTheme(ThemeConfig{}))
 	want := TmuxRenderTokens{
-		WindowInactiveBg: TmuxWindowInactiveBg,
+		WindowInactiveBg: ThemeDefaultSentinel,
 		WindowInactiveFg: TmuxWindowInactiveFg,
 		WindowActiveBg:   TmuxWindowActiveBg,
 		WindowActiveFg:   TmuxWindowActiveFg,
@@ -193,12 +208,12 @@ func TestTmuxRenderTokensFallbackPreservesBuiltInPalette(t *testing.T) {
 	}
 }
 
-func TestRenderRolesFallbackPreservesBuiltInPalette(t *testing.T) {
+func TestRenderRolesFallbackUsesTerminalDefaultPaneAndPopupBackgrounds(t *testing.T) {
 	t.Parallel()
 
 	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
 	want := RenderRoles{
-		WindowInactiveBg:  TmuxWindowInactiveBg,
+		WindowInactiveBg:  ThemeDefaultSentinel,
 		WindowInactiveFg:  TmuxWindowInactiveFg,
 		WindowActiveBg:    TmuxWindowActiveBg,
 		WindowActiveFg:    TmuxWindowActiveFg,
@@ -208,7 +223,7 @@ func TestRenderRolesFallbackPreservesBuiltInPalette(t *testing.T) {
 		FocusBorder:       TmuxPaneActiveBorderFg,
 		PaneTopicChipBg:   TmuxPaneActiveBg,
 		PaneTopicChipFg:   TmuxPaneActiveFg,
-		FocusPaneActiveBg: TmuxPaneActiveTintBg, // dedicated dark tint colour234
+		FocusPaneActiveBg: ThemeDefaultSentinel, // default active pane rides terminal bg
 		PaneInactiveBg:    "default",            // Phase 6b: terminal default literal so window-style stays bg=default when unset
 		StateWarning:      TmuxStateWarningFg,
 		StateCritical:     TmuxStateCriticalFg,
@@ -369,10 +384,11 @@ func TestTmuxRenderTokensUseGlobalTruecolorWithoutFallbackLeak(t *testing.T) {
 	t.Parallel()
 
 	got := TmuxRenderTokensFromEffective(ResolveTheme(ThemeConfig{
-		Background:    "#ff0000",
-		Surface:       "#ff00ff",
-		SurfaceActive: "#0000ff",
-		Foreground:    "#00ff00",
+		Background:       "#ff0000",
+		Surface:          "#ff00ff",
+		StatusBackground: "#112233",
+		SurfaceActive:    "#0000ff",
+		Foreground:       "#00ff00",
 	}))
 	fallback := TmuxRenderTokensFromEffective(ResolveTheme(ThemeConfig{}))
 
@@ -382,31 +398,27 @@ func TestTmuxRenderTokensUseGlobalTruecolorWithoutFallbackLeak(t *testing.T) {
 	if got.WindowInactiveBg == fallback.WindowInactiveBg || got.WindowInactiveFg == fallback.WindowInactiveFg || got.WindowActiveBg == fallback.WindowActiveBg || got.WindowActiveFg == fallback.WindowActiveFg {
 		t.Fatalf("global tmux render tokens = %#v, must not reuse fallback tokens %#v", got, fallback)
 	}
-	if got.WindowInactiveBg != "#ff0000" || got.StatusBg != "#ff00ff" || got.WindowActiveBg != "#0000ff" || got.WindowInactiveFg != "#00ff00" {
+	if got.WindowInactiveBg != "#ff0000" || got.StatusBg != "#112233" || got.WindowActiveBg != "#0000ff" || got.WindowInactiveFg != "#00ff00" {
 		t.Fatalf("global tmux render tokens = %#v, want exact hex truecolor tokens", got)
 	}
-	// Phase 6b: StatusBg follows `surface` (popup/chrome group), not `background`.
-	// With both set to different colors, StatusBg must derive from the explicit
-	// surface (no fallback leak) and must NOT equal the background-driven
-	// WindowInactiveBg — proving the popup/chrome bg is separated from the pane
-	// body bg.
+	// StatusBg follows `status_background`, not `surface` or `background`.
 	if got.StatusBg == "" {
 		t.Fatalf("status tokens = %#v, want populated StatusBg", got)
 	}
 	if got.StatusBg == fallback.StatusBg {
-		t.Fatalf("status bg = %q, want derived from explicit surface, not fallback literal %q", got.StatusBg, fallback.StatusBg)
+		t.Fatalf("status bg = %q, want derived from explicit status_background, not fallback literal %q", got.StatusBg, fallback.StatusBg)
 	}
-	if got.StatusBg == got.WindowInactiveBg {
-		t.Fatalf("status bg = %q must not equal background-driven window inactive bg %q (surface ≠ background)", got.StatusBg, got.WindowInactiveBg)
+	if got.StatusBg == got.WindowInactiveBg || got.StatusBg == "#ff00ff" {
+		t.Fatalf("status bg = %q must not equal background-driven pane bg %q or surface #ff00ff", got.StatusBg, got.WindowInactiveBg)
 	}
 	if got.StatusFg != got.WindowInactiveFg {
 		t.Fatalf("status fg = %q, want inactive window fg %q", got.StatusFg, got.WindowInactiveFg)
 	}
 }
 
-// Phase 6b: an explicit `background` (surface unset) repaints the general pane
-// body (PaneInactiveBg → tmux window-style) but must NOT drag the popup/chrome
-// bg with it — StatusBg follows `surface`, which stays at the fallback literal.
+// Phase 6b: an explicit `background` repaints the general pane body
+// (PaneInactiveBg → tmux window-style) but must NOT drag the bottom status bg
+// with it.
 func TestRenderRolesExplicitBackgroundRepaintsPaneBodyNotPopup(t *testing.T) {
 	t.Parallel()
 
@@ -424,28 +436,43 @@ func TestRenderRolesExplicitBackgroundRepaintsPaneBodyNotPopup(t *testing.T) {
 	if got.PaneInactiveBg != got.WindowInactiveBg {
 		t.Fatalf("pane.inactive_bg = %q, want background-derived (= WindowInactiveBg %q)", got.PaneInactiveBg, got.WindowInactiveBg)
 	}
-	// Popup does NOT follow background: StatusBg stays at the surface fallback.
+	// Status does NOT follow background: StatusBg stays at the fallback.
 	if got.StatusBg != fallback.StatusBg {
-		t.Fatalf("status bg = %q, want surface fallback %q (popup must not follow background)", got.StatusBg, fallback.StatusBg)
+		t.Fatalf("status bg = %q, want fallback %q (status must not follow background)", got.StatusBg, fallback.StatusBg)
 	}
 }
 
-// Phase 6b: an explicit `surface` (background unset) repaints the popup/chrome
-// bg (StatusBg) but must NOT touch the general pane body — PaneInactiveBg stays
-// at the terminal default literal so the generated window-style is "bg=default".
-func TestRenderRolesExplicitSurfaceRepaintsPopupNotPaneBody(t *testing.T) {
+// An explicit `surface` repaints popup/native surfaces but not the bottom status
+// or the general pane body.
+func TestRenderRolesExplicitSurfaceDoesNotRepaintStatusOrPaneBody(t *testing.T) {
 	t.Parallel()
 
 	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Surface: "#ff00ff"}))
 	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
 
-	// Popup repaints: StatusBg follows the explicit surface, not the fallback.
-	if got.StatusBg == fallback.StatusBg {
-		t.Fatalf("status bg = %q, want repainted from explicit surface, not fallback literal %q", got.StatusBg, fallback.StatusBg)
+	if got.StatusBg != fallback.StatusBg {
+		t.Fatalf("status bg = %q, want fallback %q when only surface changes", got.StatusBg, fallback.StatusBg)
 	}
 	// Pane body untouched: PaneInactiveBg stays "default" (unset background).
 	if got.PaneInactiveBg != "default" {
 		t.Fatalf("pane.inactive_bg = %q, want \"default\" when background unset (pane body must not follow surface)", got.PaneInactiveBg)
+	}
+}
+
+func TestRenderRolesExplicitStatusBackgroundRepaintsOnlyStatus(t *testing.T) {
+	t.Parallel()
+
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{StatusBackground: "#334455"}))
+	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	if got.StatusBg != "#334455" {
+		t.Fatalf("status bg = %q, want explicit status_background", got.StatusBg)
+	}
+	if got.PaneInactiveBg != fallback.PaneInactiveBg {
+		t.Fatalf("pane.inactive_bg = %q, want unchanged fallback %q", got.PaneInactiveBg, fallback.PaneInactiveBg)
+	}
+	if got.WindowInactiveBg != fallback.WindowInactiveBg {
+		t.Fatalf("window inactive bg = %q, want unchanged fallback %q", got.WindowInactiveBg, fallback.WindowInactiveBg)
 	}
 }
 
@@ -454,8 +481,8 @@ func TestResolveThemeUnknownPresetIgnoresGlobalAndWarns(t *testing.T) {
 
 	got := ResolveTheme(ThemeConfig{Preset: "does-not-exist", Background: "#111111"})
 
-	if got.Background.Value.Hex != "#182226" || got.Background.Source != SourceFallback {
-		t.Fatalf("background = %#v, want fallback after invalid global preset", got.Background)
+	if !IsThemeDefaultSpec(got.Background.Value) || got.Background.Source != SourceFallback {
+		t.Fatalf("background = %#v, want fallback terminal-default after invalid global preset", got.Background)
 	}
 	requireThemeWarning(t, got, SourceGlobal, "preset")
 }
@@ -465,8 +492,8 @@ func TestResolveThemeInvalidColorIgnoresGlobalAndWarns(t *testing.T) {
 
 	got := ResolveTheme(ThemeConfig{Background: "blue"})
 
-	if got.Background.Value.Hex != "#182226" || got.Background.Source != SourceFallback {
-		t.Fatalf("background = %#v, want fallback after invalid global color", got.Background)
+	if !IsThemeDefaultSpec(got.Background.Value) || got.Background.Source != SourceFallback {
+		t.Fatalf("background = %#v, want fallback terminal-default after invalid global color", got.Background)
 	}
 	requireThemeWarning(t, got, SourceGlobal, "background")
 }

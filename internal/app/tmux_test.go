@@ -1470,10 +1470,10 @@ func TestTmuxConfigThemeUsesGlobal256ColorBackgroundWithoutFallbackLeak(t *testi
 	}
 }
 
-// Phase 6b: an explicit `background` (surface unset) must repaint the inactive
-// pane body (window-style follows PaneInactiveBg ← background) while the
-// surface-driven popup/chrome bg (status-style ← StatusBg) stays at the
-// fallback literal — proving pane body and popup bg are separated.
+// Phase 6b+: an explicit `background` (surface/status unset) must repaint the
+// inactive pane body (window-style follows PaneInactiveBg from background) while
+// the bottom status bg (status-style from StatusBg) stays at the fallback
+// literal, proving pane body and status bg are separated.
 func TestTmuxConfigExplicitBackgroundRepaintsWindowStyleNotStatus(t *testing.T) {
 	t.Parallel()
 
@@ -1501,24 +1501,23 @@ func TestTmuxConfigExplicitBackgroundRepaintsWindowStyleNotStatus(t *testing.T) 
 	}
 }
 
-// Phase 6b: an explicit `surface` (background unset) must repaint the popup/
-// chrome bg (status-style ← StatusBg ← surface) while the general pane body
-// (window-style) stays at the historical "bg=default".
-func TestTmuxConfigExplicitSurfaceRepaintsStatusNotWindowStyle(t *testing.T) {
+// An explicit `status_background` (background/surface unset) must repaint the
+// bottom status bg while the popup surface and general pane body stay separate.
+func TestTmuxConfigExplicitStatusBackgroundRepaintsStatusNotWindowStyle(t *testing.T) {
 	t.Parallel()
 
-	effective := theme.ResolveTheme(theme.ThemeConfig{Surface: "#ff00ff"})
+	effective := theme.ResolveTheme(theme.ThemeConfig{StatusBackground: "#ff00ff"})
 	roles := theme.RenderRolesFromEffective(effective)
 	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
 
 	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
 
-	// Popup repaints: status-style follows surface, not the fallback.
+	// Status repaints: status-style follows status_background, not the fallback.
 	if roles.StatusBg == fallbackRoles.StatusBg {
-		t.Fatalf("StatusBg = %q, want repainted from explicit surface", roles.StatusBg)
+		t.Fatalf("StatusBg = %q, want repainted from explicit status_background", roles.StatusBg)
 	}
 	if want := "set -g status-style \"bg=" + roles.StatusBg + ",fg="; !strings.Contains(output, want) {
-		t.Fatalf("themed app config missing surface-driven status-style %q\n%s", want, output)
+		t.Fatalf("themed app config missing status_background-driven status-style %q\n%s", want, output)
 	}
 	// Pane body untouched: window-style stays bg=default.
 	if want := "set -g window-style \"bg=default\""; !strings.Contains(output, want) {

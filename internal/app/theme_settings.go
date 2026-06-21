@@ -33,7 +33,7 @@ var themeTokenGroups = []themeTokenGroup{
 		theme.TokenBackground, theme.TokenTextPrimary, theme.TokenAccent,
 	}},
 	{Prefix: "[surface]", Tokens: []theme.ColorToken{
-		theme.TokenSurface, theme.TokenSurfaceActive, theme.TokenMuted,
+		theme.TokenSurface, theme.TokenStatusBackground, theme.TokenSurfaceActive, theme.TokenMuted,
 	}},
 	{Prefix: "[state]", Tokens: []theme.ColorToken{
 		theme.TokenCritical, theme.TokenWarning, theme.TokenProgress, theme.TokenSuccess, theme.TokenActionRequired,
@@ -543,31 +543,70 @@ func themeColorSummary(cfg theme.ThemeConfig, token theme.ColorToken) string {
 	return themeSwatch(value) + " " + value + " - set override"
 }
 
-// themeColorSummaryEffective renders the Global-view summary for a token. When
-// the token is set globally (explicit value or via a global preset) it keeps the
-// standard set/override/preset summary. When the token is UNSET globally it shows
-// the resolved fallback value with a DIM swatch, a "(fallback)" label, and the
-// "fallback" source so the merged Global view surfaces the effective value inline
-// (replacing the removed Effective theme view).
+// themeColorSummaryEffective renders the Global-view summary for a token. It
+// always starts with the currently effective preview, then adds source/detail
+// text so the token list can be scanned without opening each token.
 func themeColorSummaryEffective(cfg theme.ThemeConfig, effective theme.EffectiveTheme, token theme.ColorToken) string {
+	preview := themeEffectiveColorPreview(effective, token)
+	detail := themeColorSummaryEffectiveDetail(cfg, effective, token)
+	if preview == "" {
+		return detail
+	}
+	if detail == "" {
+		return preview
+	}
+	return preview + " " + detail
+}
+
+func themeColorSummaryEffectiveDetail(cfg theme.ThemeConfig, effective theme.EffectiveTheme, token theme.ColorToken) string {
 	if strings.EqualFold(themeColorFieldValue(cfg, token), theme.ThemeDefaultSentinel) {
 		return "Terminal default - overrides preset fill"
 	}
-	if themeColorFieldValue(cfg, token) != "" || strings.TrimSpace(cfg.Preset) != "" {
-		return themeColorSummary(cfg, token)
+	value := themeColorFieldValue(cfg, token)
+	if value != "" {
+		if cfg.Preset != "" && !strings.EqualFold(cfg.Preset, "inherit") {
+			if presetHex, ok := theme.PresetColorHex(cfg.Preset, token); ok {
+				if strings.EqualFold(value, presetHex) {
+					return "equivalent to " + cfg.Preset
+				}
+				return "custom from " + cfg.Preset
+			}
+		}
+		return "set override"
+	}
+	if strings.TrimSpace(cfg.Preset) != "" {
+		return "from preset " + strings.TrimSpace(cfg.Preset)
 	}
 	field := effectiveColorField(effective, token)
-	value := strings.TrimSpace(field.Value.Hex)
-	if value == "" {
-		return "unset"
-	}
 	if field.Source == theme.SourceGlobal && legacyForegroundFillsToken(cfg, token) {
-		return themeSwatch(value) + " " + value + " - legacy foreground"
+		return "legacy foreground"
 	}
 	if field.Source != theme.SourceFallback {
-		return themeSwatch(value) + " " + value + " - " + string(field.Source)
+		return string(field.Source)
 	}
-	return settingsDim(themeSwatch(value)+" "+value+" (fallback)") + " - " + string(field.Source)
+	if theme.IsThemeDefaultSpec(field.Value) || strings.TrimSpace(field.Value.Hex) != "" {
+		return "(fallback) - " + string(field.Source)
+	}
+	return "unset"
+}
+
+func themeEffectiveColorPreview(effective theme.EffectiveTheme, token theme.ColorToken) string {
+	field := effectiveColorField(effective, token)
+	if theme.IsThemeDefaultSpec(field.Value) {
+		if field.Source == theme.SourceFallback {
+			return settingsDim("default")
+		}
+		return "default"
+	}
+	value := strings.TrimSpace(field.Value.Hex)
+	if value == "" {
+		return ""
+	}
+	preview := themeSwatch(value) + " " + value
+	if field.Source == theme.SourceFallback {
+		return settingsDim(preview)
+	}
+	return preview
 }
 
 // settingsDim wraps text in the SGR dim attribute so fallback rows read as muted
@@ -582,6 +621,8 @@ func effectiveColorField(effective theme.EffectiveTheme, token theme.ColorToken)
 		return effective.Background
 	case theme.TokenSurface:
 		return effective.Surface
+	case theme.TokenStatusBackground:
+		return effective.StatusBackground
 	case theme.TokenSurfaceActive:
 		return effective.SurfaceActive
 	case theme.TokenChromeForeground:
@@ -703,6 +744,8 @@ func themeColorFieldValue(cfg theme.ThemeConfig, token theme.ColorToken) string 
 		return strings.TrimSpace(cfg.Background)
 	case theme.TokenSurface:
 		return strings.TrimSpace(cfg.Surface)
+	case theme.TokenStatusBackground:
+		return strings.TrimSpace(cfg.StatusBackground)
 	case theme.TokenSurfaceActive:
 		return strings.TrimSpace(cfg.SurfaceActive)
 	case theme.TokenChromeForeground:
@@ -740,6 +783,8 @@ func setThemeColorField(cfg *theme.ThemeConfig, token theme.ColorToken, value st
 		cfg.Background = value
 	case theme.TokenSurface:
 		cfg.Surface = value
+	case theme.TokenStatusBackground:
+		cfg.StatusBackground = value
 	case theme.TokenSurfaceActive:
 		cfg.SurfaceActive = value
 	case theme.TokenChromeForeground:

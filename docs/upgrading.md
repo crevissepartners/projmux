@@ -74,16 +74,15 @@ matching role. `action_required` is independent of `critical` — repainting
 `critical` never changes it. The full public token set is documented in
 `docs/configuration.md` and `docs/theme-palette.md`.
 
-The active-pane tint (`pane_active_bg`) defaults to `colour234`, one tone darker
-than the base background so the active pane visibly sinks; the active-pane
-border (`focus`) defaults to cyan `colour51`. Both apply only to tmux pane
-chrome.
+The active-pane tint (`pane_active_bg`) defaults to the terminal background in
+the built-in `projmux` preset; set it to a concrete color when the active pane
+should visibly sink. The active-pane border (`focus`) defaults to cyan
+`colour51`. Both apply only to tmux pane chrome.
 
-Additional built-in presets are available for both terminal-native and fixed
-background workflows: `terminal-cool`, `terminal-warm`, `blue-hour`,
-`blue-hour-terminal`, `carbon-violet`, `carbon-violet-terminal`, `ocean`, and
-`ember`. The terminal-native presets keep `background` and `surface` at
-`default`; the fixed presets paint their own pane and popup surfaces.
+Built-in presets are intentionally small: `projmux`, `high-contrast`,
+`blue-hour`, `carbon-violet`, `ember`, `forest`, and `rose`. Terminal-default
+backgrounds are configured per token with the `default` sentinel rather than
+through separate terminal preset variants.
 
 ### Pane body vs popup backgrounds
 

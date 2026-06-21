@@ -2040,8 +2040,8 @@ func TestSettingsThemeResetClearsGlobalOnly(t *testing.T) {
 	mkdirAll(t, filepath.Join(project, ".git"))
 	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
 [theme]
-preset = "midnight"
-background = "#101820"
+preset = "blue-hour"
+background = "#1e1e2e"
 `)
 	// A deprecated project [theme] is left untouched by the global-only theme
 	// editor: reset must not reach into the project file.
@@ -2125,8 +2125,11 @@ background = "#010203"
 	}
 	// An UNSET token shows the resolved fallback value with a (fallback) label
 	// and a fallback source.
-	if !hasEntryLabelContainingAll(entries, "accent", "(fallback)", "fallback") {
+	if !hasEntryLabelContainingAll(entries, "accent", "#7ac7ad", "(fallback)", "fallback") {
 		t.Fatalf("global theme entries = %#v, want fallback accent summary", entries)
+	}
+	if !hasEntryLabelContainingAll(entries, "background", "default", "(fallback)", "fallback") {
+		t.Fatalf("global theme entries = %#v, want terminal-default fallback background preview", entries)
 	}
 	// Project [theme] background is ignored: must not leak or carry "project".
 	if hasEntryLabelContaining(entries, "#010203") {
