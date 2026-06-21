@@ -480,7 +480,7 @@ var builtinPresets = map[string]preset{
 		Colors: presetColors(map[ColorToken]string{
 			TokenBackground: "#101820", TokenSurface: "#16242d", TokenSurfaceActive: "#253844",
 			TokenForeground: "#e7eef2", TokenMuted: "#8296a1", TokenAccent: "#7bd3c6",
-			TokenCritical: "#ff6b7a", TokenWarning: "#ffd166",
+			TokenCritical: "#ff6b7a", TokenWarning: "#e6a23c",
 			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
 			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
 		}),
