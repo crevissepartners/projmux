@@ -15,14 +15,14 @@ import "testing"
 //	    signal text must still read.
 //	(c) foreground != background.
 //
-// projmux-dark is the built-in fallback baseline: its values are frozen to
-// preserve unset-theme byte-identity across the renderer goldens, and it
+// projmux is the built-in fallback baseline: its non-background values preserve
+// the established renderer palette, and it
 // historically maps warning and progress to the same amber (they appear on
 // different surfaces). It is therefore exempt from rule (a) ONLY. Rules (b)/(c)
 // still apply to it.
 func TestPresetTokensSatisfyDesignRubric(t *testing.T) {
 	stateTokens := []ColorToken{TokenProgress, TokenWarning, TokenCritical, TokenSuccess, TokenActionRequired}
-	exemptStateDistinct := map[string]bool{"projmux-dark": true}
+	exemptStateDistinct := map[string]bool{"projmux": true}
 
 	colourOf := func(t *testing.T, preset string, tok ColorToken) (string, bool) {
 		t.Helper()

@@ -5,18 +5,17 @@ import (
 	"testing"
 )
 
-// TestANSIRolesFallbackPreservesBuiltInPalette is the byte-identity guard for
-// the ANSI-side adapter, mirroring TestRenderRolesFallbackPreservesBuiltInPalette.
-// Every fallback-sourced role MUST equal the exact historical ANSI* literal so
-// native UI rendered with the built-in fallback theme stays byte-identical.
-func TestANSIRolesFallbackPreservesBuiltInPalette(t *testing.T) {
+// TestANSIRolesFallbackUsesTerminalDefaultSurfaces guards the default theme:
+// popup/native base surfaces inherit the terminal background, while foreground,
+// state, and structural roles preserve the established literals.
+func TestANSIRolesFallbackUsesTerminalDefaultSurfaces(t *testing.T) {
 	t.Parallel()
 
 	got := ANSIRolesFromEffective(ResolveTheme(ThemeConfig{}))
 	want := ANSIRoles{
 		SurfaceActive: ANSISurfaceActiveStart,
-		SurfaceRaised: ANSISurfaceRaisedStart,
-		SurfaceRule:   ANSISurfaceRuleStart,
+		SurfaceRaised: "\x1b[38;2;216;224;228m",
+		SurfaceRule:   "\x1b[38;2;117;132;140m",
 
 		TextPrimary:   ANSITextPrimaryStart,
 		TextSecondary: ANSITextSecondaryStart,

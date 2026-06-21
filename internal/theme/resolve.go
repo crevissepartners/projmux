@@ -5,6 +5,7 @@ import (
 	"maps"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ type ColorToken string
 const (
 	TokenBackground       ColorToken = "background"
 	TokenSurface          ColorToken = "surface"
+	TokenStatusBackground ColorToken = "status_background"
 	TokenSurfaceActive    ColorToken = "surface_active"
 	TokenChromeForeground ColorToken = "chrome_foreground"
 	TokenTextPrimary      ColorToken = "text_primary"
@@ -47,6 +49,7 @@ const (
 var ResolverColorTokens = []ColorToken{
 	TokenBackground,
 	TokenSurface,
+	TokenStatusBackground,
 	TokenSurfaceActive,
 	TokenChromeForeground,
 	TokenTextPrimary,
@@ -69,6 +72,7 @@ type ThemeConfig struct {
 	Preset           string
 	Background       string
 	Surface          string
+	StatusBackground string
 	SurfaceActive    string
 	ChromeForeground string
 	TextPrimary      string
@@ -90,6 +94,7 @@ func (c ThemeConfig) HasContent() bool {
 		c.Preset,
 		c.Background,
 		c.Surface,
+		c.StatusBackground,
 		c.SurfaceActive,
 		c.ChromeForeground,
 		c.TextPrimary,
@@ -117,6 +122,7 @@ func (c *ThemeConfig) Normalize() {
 	c.Preset = strings.TrimSpace(c.Preset)
 	c.Background = strings.TrimSpace(c.Background)
 	c.Surface = strings.TrimSpace(c.Surface)
+	c.StatusBackground = strings.TrimSpace(c.StatusBackground)
 	c.SurfaceActive = strings.TrimSpace(c.SurfaceActive)
 	c.ChromeForeground = strings.TrimSpace(c.ChromeForeground)
 	c.TextPrimary = strings.TrimSpace(c.TextPrimary)
@@ -189,6 +195,7 @@ type EffectiveTheme struct {
 	Preset           StringField
 	Background       ColorField
 	Surface          ColorField
+	StatusBackground ColorField
 	SurfaceActive    ColorField
 	ChromeForeground ColorField
 	TextPrimary      ColorField
@@ -228,13 +235,10 @@ type RenderRoles struct {
 	WindowInactiveFg string // text on inactive    <- chrome_foreground (colour245 fallback)
 	WindowActiveBg   string // surface.active      <- surface_active  (colour240)
 	WindowActiveFg   string // text on active      <- chrome_foreground (colour231 fallback)
-	// status bar bg — popup/chrome group (Phase 6b). Follows `surface`, NOT
-	// `background`: status-style, the native popup body, and the settings/notify/
-	// recent/picker frames all route through StatusBg, so deriving it from
-	// `surface` separates popup/chrome bg from the general pane body (which now
-	// follows `background` via PaneInactiveBg). Fallback stays the colour235
-	// literal so unset surface (≈ background) is byte-identical with before.
-	StatusBg string // status bar bg       <- surface         (colour235)
+	// status bar bg — bottom status line group. Follows `status_background`.
+	// Popup/native frames consume `surface` directly, so status can now be tuned
+	// without repainting Settings/recent/picker popup surfaces.
+	StatusBg string // status bar bg       <- status_background (colour235)
 	StatusFg string // status bar fg       <- chrome_foreground (colour245 fallback)
 
 	// pane / focus chrome.
@@ -257,10 +261,10 @@ type RenderRoles struct {
 	// general/pane-body inactive bg — general (pane) bg group (Phase 6b). Tier A
 	// (public token `background`): drives tmux `window-style` for inactive panes.
 	// Fallback is the terminal default literal "default" (NOT a colour literal),
-	// so an unset background stays byte-identical with the historical
-	// `window-style "bg=default"`; an explicit background repaints the pane body.
-	// Separated from StatusBg (now surface-driven) so the pane body and popup/
-	// chrome bg can be tuned independently.
+	// so an unset background keeps `window-style "bg=default"`; an explicit
+	// background repaints the pane body.
+	// Separated from surface/status roles so pane body, popup/native frames, and
+	// the bottom status bar can be tuned independently.
 	PaneInactiveBg string
 
 	// state / severity cluster (Phase 3). Single source for the notify HUD,
@@ -309,18 +313,18 @@ type RenderRoles struct {
 }
 
 // RenderRolesFromEffective derives the semantic role map from an effective
-// theme. Fallback-sourced roles deliberately reproduce the historical palette
-// literals so generated fallback config stays byte-identical.
+// theme. Fallback-sourced roles keep their historical palette literals unless a
+// role intentionally inherits the terminal default.
 func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 	return RenderRoles{
 		WindowInactiveBg: tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
 		WindowInactiveFg: tmuxColorOrFallback(effective.ChromeForeground, TmuxWindowInactiveFg),
 		WindowActiveBg:   tmuxColorOrFallback(effective.SurfaceActive, TmuxWindowActiveBg),
 		WindowActiveFg:   tmuxColorOrFallback(effective.ChromeForeground, TmuxWindowActiveFg),
-		// Popup/chrome group (Phase 6b): StatusBg follows `surface`, not
-		// `background`. Fallback stays the colour235 literal so unset surface is
-		// byte-identical with before (surface fallback ≈ background).
-		StatusBg: tmuxColorOrFallback(effective.Surface, TmuxWindowInactiveBg),
+		// Bottom status group: StatusBg follows `status_background`, not
+		// `surface`. Fallback stays colour235 so the status bar keeps its own
+		// historical background.
+		StatusBg: tmuxColorOrFallback(effective.StatusBackground, TmuxWindowInactiveBg),
 		StatusFg: tmuxColorOrFallback(effective.ChromeForeground, TmuxWindowInactiveFg),
 
 		PaneBorder: tmuxColorOrFallback(effective.Muted, TmuxPaneBorderFg),
@@ -339,8 +343,8 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 
 		// General/pane bg group (Phase 6b): inactive-pane window-style follows the
 		// explicit `background` public token, falling back to the terminal default
-		// literal "default" (not a colour) so unset background keeps the historical
-		// `window-style "bg=default"` byte-identical.
+		// literal "default" (not a colour) so unset background keeps the pane body
+		// on the terminal background.
 		PaneInactiveBg: tmuxColorOrFallback(effective.Background, "default"),
 
 		// Tier A: warning/critical follow the explicit public token so an
@@ -404,8 +408,7 @@ type TmuxRenderTokens struct {
 }
 
 // TmuxRenderTokensFromEffective maps an EffectiveTheme into tmux style tokens.
-// Fallback-sourced fields deliberately keep the historical palette constants so
-// generated fallback config remains byte-identical. It is built on top of the
+// Fallback-sourced fields keep their role-map values. It is built on top of the
 // role map so the two views never diverge.
 func TmuxRenderTokensFromEffective(effective EffectiveTheme) TmuxRenderTokens {
 	roles := RenderRolesFromEffective(effective)
@@ -425,6 +428,7 @@ func (t EffectiveTheme) Fields() []EffectiveField {
 		{Name: "preset", Value: t.Preset.Value, Source: t.Preset.Source},
 		{Name: string(TokenBackground), Value: t.Background.Value.Hex, Source: t.Background.Source},
 		{Name: string(TokenSurface), Value: t.Surface.Value.Hex, Source: t.Surface.Source},
+		{Name: string(TokenStatusBackground), Value: t.StatusBackground.Value.Hex, Source: t.StatusBackground.Source},
 		{Name: string(TokenSurfaceActive), Value: t.SurfaceActive.Value.Hex, Source: t.SurfaceActive.Source},
 		{Name: string(TokenChromeForeground), Value: t.ChromeForeground.Value.Hex, Source: t.ChromeForeground.Source},
 		{Name: string(TokenTextPrimary), Value: t.TextPrimary.Value.Hex, Source: t.TextPrimary.Source},
@@ -442,6 +446,9 @@ func (t EffectiveTheme) Fields() []EffectiveField {
 }
 
 func tmuxColorOrFallback(field ColorField, fallback string) string {
+	if IsThemeDefaultSpec(field.Value) {
+		return ThemeDefaultSentinel
+	}
 	if field.Source == SourceFallback {
 		return fallback
 	}
@@ -479,11 +486,12 @@ type preset struct {
 }
 
 var builtinPresets = map[string]preset{
-	"projmux-dark": {
-		Name: "projmux-dark",
+	"projmux": {
+		Name: "projmux",
 		Colors: map[ColorToken]ColorSpec{
-			TokenBackground:       {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
-			TokenSurface:          {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
+			TokenBackground:       {Tmux: ThemeDefaultSentinel},
+			TokenSurface:          {Tmux: ThemeDefaultSentinel},
+			TokenStatusBackground: {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
 			TokenSurfaceActive:    {Hex: "#2c383d", Tmux: TmuxWindowActiveBg},
 			TokenChromeForeground: {Hex: "#d8e0e4", Tmux: TmuxPrimaryFg},
 			TokenTextPrimary:      {Hex: "#d8e0e4", Tmux: TmuxPrimaryFg},
@@ -495,19 +503,9 @@ var builtinPresets = map[string]preset{
 			TokenProgress:         {Hex: "#ffcc66", Tmux: TmuxStateProgressFg},
 			TokenSuccess:          {Hex: "#5faf87", Tmux: TmuxStateSuccessFg},
 			TokenActionRequired:   {Hex: "#ffaf00", Tmux: TmuxAIBadgeActionRequiredFg},
-			TokenPaneActiveBg:     {Hex: "#1c1c1c", Tmux: TmuxPaneActiveTintBg},
+			TokenPaneActiveBg:     {Tmux: ThemeDefaultSentinel},
 			TokenFocus:            {Hex: "#00ffff", Tmux: TmuxPaneActiveBorderFg},
 		},
-	},
-	"midnight": {
-		Name: "midnight",
-		Colors: presetColors(map[ColorToken]string{
-			TokenBackground: "#101820", TokenSurface: "#16242d", TokenSurfaceActive: "#253844",
-			TokenChromeForeground: "#e7eef2", TokenTextPrimary: "#e7eef2", TokenForeground: "#e7eef2", TokenMuted: "#8296a1", TokenAccent: "#7bd3c6",
-			TokenCritical: "#ff6b7a", TokenWarning: "#e6a23c",
-			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
-			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
-		}),
 	},
 	"blue-hour": {
 		Name: "blue-hour",
@@ -519,26 +517,6 @@ var builtinPresets = map[string]preset{
 			TokenPaneActiveBg: "#000000", TokenFocus: "#5ca7e4",
 		}),
 	},
-	"blue-hour-terminal": {
-		Name: "blue-hour-terminal",
-		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
-			TokenSurfaceActive:    "#4a5878",
-			TokenChromeForeground: "#acb6bf", TokenTextPrimary: "#acb6bf", TokenForeground: "#acb6bf", TokenMuted: "#4a5878", TokenAccent: "#3d8fd1",
-			TokenCritical: "#ec6a88", TokenWarning: "#efb472",
-			TokenProgress: "#5ca7e4", TokenSuccess: "#3fdaa4", TokenActionRequired: "#ffca85",
-			TokenPaneActiveBg: "#000000", TokenFocus: "#5ca7e4",
-		}, TokenBackground, TokenSurface),
-	},
-	"ocean": {
-		Name: "ocean",
-		Colors: presetColors(map[ColorToken]string{
-			TokenBackground: "#0e1f2a", TokenSurface: "#132b38", TokenSurfaceActive: "#21465a",
-			TokenChromeForeground: "#d9eef7", TokenTextPrimary: "#d9eef7", TokenForeground: "#d9eef7", TokenMuted: "#7f9aaa", TokenAccent: "#5fd7ff",
-			TokenCritical: "#ff005f", TokenWarning: "#d7af00",
-			TokenProgress: "#5fafff", TokenSuccess: "#5faf5f", TokenActionRequired: "#ff8700",
-			TokenPaneActiveBg: "#102834", TokenFocus: "#5fd7ff",
-		}),
-	},
 	"carbon-violet": {
 		Name: "carbon-violet",
 		Colors: presetColors(map[ColorToken]string{
@@ -548,16 +526,6 @@ var builtinPresets = map[string]preset{
 			TokenProgress: "#87afff", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
 			TokenPaneActiveBg: "#000000", TokenFocus: "#b48ead",
 		}),
-	},
-	"carbon-violet-terminal": {
-		Name: "carbon-violet-terminal",
-		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
-			TokenSurfaceActive:    "#3a3b44",
-			TokenChromeForeground: "#d6d3df", TokenTextPrimary: "#d6d3df", TokenForeground: "#d6d3df", TokenMuted: "#8d8996", TokenAccent: "#b48ead",
-			TokenCritical: "#ff5f5f", TokenWarning: "#d7af5f",
-			TokenProgress: "#87afff", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
-			TokenPaneActiveBg: "#000000", TokenFocus: "#b48ead",
-		}, TokenBackground, TokenSurface),
 	},
 	"ember": {
 		Name: "ember",
@@ -599,43 +567,6 @@ var builtinPresets = map[string]preset{
 			TokenPaneActiveBg: "#080808", TokenFocus: "#00ffff",
 		}),
 	},
-	// terminal: a terminal-native preset. background/surface ride the terminal's
-	// own background via the "default" sentinel (no colour literal); projmux only
-	// paints text/chrome foreground, accent, and state chrome on top. Foreground
-	// tokens do not support the sentinel, so fg/muted/selection tints are tuned for a DARK terminal
-	// (the common projmux host) — documented in docs/theme-palette.md. State
-	// colors keep the rubric's distinct amber tier (progress 221 / warning 179 /
-	// action_required 214).
-	"terminal": {
-		Name: "terminal",
-		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
-			TokenSurfaceActive:    "#303030",
-			TokenChromeForeground: "#d0d0d0", TokenTextPrimary: "#d0d0d0", TokenForeground: "#d0d0d0", TokenMuted: "#8a8a8a", TokenAccent: "#5fd7af",
-			TokenCritical: "#ff5f5f", TokenWarning: "#d7af5f",
-			TokenProgress: "#ffd75f", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
-			TokenPaneActiveBg: "#262626", TokenFocus: "#00ffff",
-		}, TokenBackground, TokenSurface),
-	},
-	"terminal-cool": {
-		Name: "terminal-cool",
-		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
-			TokenSurfaceActive:    "#26343f",
-			TokenChromeForeground: "#d8eef2", TokenTextPrimary: "#d8eef2", TokenForeground: "#d8eef2", TokenMuted: "#8aa4ad", TokenAccent: "#5fd7d7",
-			TokenCritical: "#ff005f", TokenWarning: "#d7af00",
-			TokenProgress: "#5fafff", TokenSuccess: "#5faf5f", TokenActionRequired: "#ff8700",
-			TokenPaneActiveBg: "#262626", TokenFocus: "#5fffff",
-		}, TokenBackground, TokenSurface),
-	},
-	"terminal-warm": {
-		Name: "terminal-warm",
-		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
-			TokenSurfaceActive:    "#3a3028",
-			TokenChromeForeground: "#f0dfcf", TokenTextPrimary: "#f0dfcf", TokenForeground: "#f0dfcf", TokenMuted: "#a79080", TokenAccent: "#ffaf87",
-			TokenCritical: "#ff5f5f", TokenWarning: "#d7af00",
-			TokenProgress: "#ffd75f", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
-			TokenPaneActiveBg: "#262626", TokenFocus: "#ffaf87",
-		}, TokenBackground, TokenSurface),
-	},
 }
 
 // PresetNames returns the built-in preset config values in stable order.
@@ -645,12 +576,20 @@ func PresetNames() []string {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names
+	priority := []string{"projmux", "high-contrast", "blue-hour", "carbon-violet"}
+	out := make([]string, 0, len(names))
+	for _, name := range priority {
+		if i := slices.Index(names, name); i >= 0 {
+			out = append(out, name)
+			names = append(names[:i], names[i+1:]...)
+		}
+	}
+	return append(out, names...)
 }
 
 // PresetColorHex returns the truecolor hex value for a built-in preset token.
 func PresetColorHex(name string, token ColorToken) (string, bool) {
-	p, ok := builtinPresets[strings.ToLower(strings.TrimSpace(name))]
+	p, ok := builtinPresetByName(name)
 	if !ok {
 		return "", false
 	}
@@ -673,7 +612,7 @@ func NormalizeHexColor(value string) (string, bool) {
 func ResolveTheme(global ThemeConfig) EffectiveTheme {
 	layers := []layerInput{
 		{source: SourceGlobal, config: global},
-		{source: SourceFallback, config: ThemeConfig{Preset: "projmux-dark"}},
+		{source: SourceFallback, config: ThemeConfig{Preset: "projmux"}},
 	}
 
 	valid := make([]resolvedLayer, 0, len(layers))
@@ -693,6 +632,7 @@ func ResolveTheme(global ThemeConfig) EffectiveTheme {
 	result.Preset = resolveString(valid, func(l resolvedLayer) (string, bool) { return l.preset, l.preset != "" })
 	result.Background = resolveColor(valid, TokenBackground)
 	result.Surface = resolveColor(valid, TokenSurface)
+	result.StatusBackground = resolveColor(valid, TokenStatusBackground)
 	result.SurfaceActive = resolveColor(valid, TokenSurfaceActive)
 	result.ChromeForeground = resolveColor(valid, TokenChromeForeground)
 	result.TextPrimary = resolveColor(valid, TokenTextPrimary)
@@ -728,7 +668,7 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 	colors := map[ColorToken]ColorSpec{}
 	if hasThemeValue(cfg.Preset) {
 		name := strings.ToLower(cfg.Preset)
-		p, ok := builtinPresets[name]
+		p, ok := builtinPresetByName(name)
 		if !ok {
 			return resolvedLayer{}, []Warning{{
 				Source: input.source, Field: "preset", Value: cfg.Preset,
@@ -746,6 +686,7 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 	}{
 		{TokenBackground, cfg.Background},
 		{TokenSurface, cfg.Surface},
+		{TokenStatusBackground, cfg.StatusBackground},
 		{TokenSurfaceActive, cfg.SurfaceActive},
 		{TokenChromeForeground, cfg.ChromeForeground},
 		{TokenTextPrimary, cfg.TextPrimary},
@@ -763,14 +704,14 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 		if !hasThemeValue(item.value) {
 			continue
 		}
-		// "terminal default" sentinel: only background/surface(/surface_active)
-		// support pinning the pane/popup background to the terminal default. This
-		// is treated as a real explicit value so it overrides the preset fill
-		// within the global layer (explicit default > preset). It must be
-		// intercepted BEFORE normalizeHexColor, which would reject "default" and
-		// drop the whole layer. A ColorSpec with no Hex and Tmux="default" makes
-		// the tmux roles emit `bg=default` and the ANSI surfaces fall back to the
-		// terminal background (no 48;2 / 48;5 sequence).
+		// "terminal default" sentinel: terminal-backed background tokens support
+		// pinning their background to the terminal default. This is treated as a
+		// real explicit value so it overrides the preset fill within the global
+		// layer (explicit default > preset). It must be intercepted BEFORE
+		// normalizeHexColor, which would reject "default" and drop the whole
+		// layer. A ColorSpec with no Hex and Tmux="default" makes tmux roles emit
+		// `bg=default` and ANSI surfaces fall back to the terminal background (no
+		// 48;2 / 48;5 sequence).
 		if isThemeDefaultSentinel(item.value) {
 			if tokenSupportsDefaultSentinel(item.token) {
 				spec := ColorSpec{Tmux: ThemeDefaultSentinel}
@@ -780,7 +721,7 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 			}
 			warnings = append(warnings, Warning{
 				Source: input.source, Field: string(item.token), Value: item.value,
-				Message: "terminal default is only valid for background/surface; ignored this theme layer",
+				Message: "terminal default is only valid for background-like tokens; ignored this theme layer",
 			})
 			return resolvedLayer{}, warnings, false
 		}
@@ -800,6 +741,12 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 
 	layer := resolvedLayer{source: input.source, preset: presetName, colors: colors}
 	return layer, nil, true
+}
+
+func builtinPresetByName(name string) (preset, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	p, ok := builtinPresets[name]
+	return p, ok
 }
 
 func applyForegroundAliases(colors, explicit map[ColorToken]ColorSpec) {
@@ -847,11 +794,11 @@ func hasThemeValue(value string) bool {
 }
 
 // ThemeDefaultSentinel is the explicit "terminal default" value a user can set
-// on the background/surface(/surface_active) tokens. It pins the pane/popup
-// background to the terminal default even when a preset is chosen
-// (explicit default > preset fill > unset/fallback). On the tmux side it surfaces
-// as `bg=default`; on the ANSI side it produces no background sequence so the
-// terminal background shows through.
+// on terminal-backed background tokens. It pins that role's background to the
+// terminal default even when a preset is chosen (explicit default > preset fill
+// > unset/fallback). On the tmux side it surfaces as `bg=default`; on the ANSI
+// side it produces no background sequence so the terminal background shows
+// through.
 const ThemeDefaultSentinel = "default"
 
 // isThemeDefaultSentinel reports whether value is the terminal-default sentinel.
@@ -859,11 +806,12 @@ func isThemeDefaultSentinel(value string) bool {
 	return strings.EqualFold(strings.TrimSpace(value), ThemeDefaultSentinel)
 }
 
-// tokenSupportsDefaultSentinel restricts the "default" sentinel to the
-// background/surface family. Other tokens treat "default" as an invalid hex.
+// tokenSupportsDefaultSentinel restricts the "default" sentinel to tokens that
+// paint terminal-backed backgrounds. Other tokens treat "default" as an invalid
+// hex.
 func tokenSupportsDefaultSentinel(token ColorToken) bool {
 	switch token {
-	case TokenBackground, TokenSurface, TokenSurfaceActive:
+	case TokenBackground, TokenSurface, TokenStatusBackground, TokenSurfaceActive, TokenPaneActiveBg:
 		return true
 	default:
 		return false
@@ -913,24 +861,17 @@ func presetColors(values map[ColorToken]string) map[ColorToken]ColorSpec {
 		}
 		out[token] = ColorSpec{Hex: normalized, Tmux: nearestTmuxColor(normalized)}
 	}
-	return out
+	return fillPresetStatusBackground(out)
 }
 
-// presetColorsWithTerminalDefault builds a preset color map from hex values and
-// pins each token in defaults to the terminal-default sentinel (a ColorSpec with
-// no Hex and Tmux="default"), the same shape resolveLayer produces for a user's
-// explicit "default". This lets a built-in preset ride the terminal background
-// for the background/surface family. The sentinel tokens are intentionally
-// absent from values; passing one in both places is harmless (default wins).
-func presetColorsWithTerminalDefault(values map[ColorToken]string, defaults ...ColorToken) map[ColorToken]ColorSpec {
-	out := presetColors(values)
-	for _, token := range defaults {
-		if !tokenSupportsDefaultSentinel(token) {
-			continue
-		}
-		out[token] = ColorSpec{Tmux: ThemeDefaultSentinel}
+func fillPresetStatusBackground(colors map[ColorToken]ColorSpec) map[ColorToken]ColorSpec {
+	if _, ok := colors[TokenStatusBackground]; ok {
+		return colors
 	}
-	return out
+	if surface, ok := colors[TokenSurface]; ok {
+		colors[TokenStatusBackground] = surface
+	}
+	return colors
 }
 
 func nearestTmuxColor(hex string) string {

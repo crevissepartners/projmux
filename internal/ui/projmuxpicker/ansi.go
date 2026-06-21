@@ -54,7 +54,9 @@ const (
 // chrome.
 func ThemeFromEffective(effective theme.EffectiveTheme) Theme {
 	out := DefaultTheme
-	if bg := effective.Surface.Value.TruecolorBG(); bg != "" {
+	if theme.IsThemeDefaultSpec(effective.Surface.Value) {
+		out.Background = ""
+	} else if bg := effective.Surface.Value.TruecolorBG(); bg != "" {
 		out.Background = "\x1b[" + bg + "m"
 	}
 	if fg := effective.ChromeForeground.Value.TruecolorFG(); fg != "" {

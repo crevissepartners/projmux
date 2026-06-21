@@ -20,9 +20,9 @@ import (
 //   - Tier C: renderer-only brand/state color not reducible to a public token;
 //     the literal is carried under a role name but not derived.
 //
-// Every field, when its backing token is fallback-sourced, MUST reproduce the
-// exact historical ANSI* literal so fallback-theme golden output stays
-// byte-identical. Derivation only activates for explicit (non-fallback) tokens.
+// Most fields, when their backing token is fallback-sourced, reproduce the
+// historical ANSI* literal. Background roles may intentionally inherit the
+// terminal default. Derivation otherwise activates for explicit tokens.
 type ANSIRoles struct {
 	// surface — base chrome. Tier A/B.
 	SurfaceActive string // surface.active  Tier A <- surface_active+chrome_foreground (ANSISurfaceActiveStart)
@@ -90,16 +90,16 @@ type ANSIRoles struct {
 }
 
 // ANSIRolesFromEffective derives the ANSI semantic role map from an effective
-// theme. Fallback-sourced roles deliberately reproduce the historical ANSI*
-// palette literals so native UI rendered with the built-in fallback theme stays
-// byte-identical. Derivation only activates for explicit (non-fallback) tokens.
+// theme. Fallback-sourced roles keep historical ANSI* palette literals except
+// for background roles that intentionally inherit the terminal default.
+// Derivation otherwise activates for explicit tokens.
 func ANSIRolesFromEffective(effective EffectiveTheme) ANSIRoles {
 	return ANSIRoles{
 		// surface
 		SurfaceActive: ansiBGFGOrLiteral(effective.SurfaceActive, fgWhite, ANSISurfaceActiveStart),
-		// surface.raised: the (near-dead) surface token now feeds raised/rule so
-		// it is wired. Fallback surface == background #182226 so the literal
-		// holds; an explicit surface repaints the picker titlebar/popup body.
+		// surface.raised: surface feeds raised/rule. A terminal-default surface
+		// inherits the terminal background while explicit surface repaints the
+		// picker titlebar/popup body.
 		SurfaceRaised: ansiBGFieldFGFieldOrLiteral(effective.Surface, effective.ChromeForeground, ANSISurfaceRaisedStart),
 		SurfaceRule:   ansiBGFieldFGFieldOrLiteral(effective.Surface, effective.Muted, ANSISurfaceRuleStart),
 
@@ -203,11 +203,11 @@ func ansi256FGOrLiteral(field ColorField, literal string) string {
 // terminal-default sentinel it emits the foreground escape only, so the surface
 // inherits the terminal background (no 48;2 sequence).
 func ansiBGFGOrLiteral(bg ColorField, fg, literal string) string {
-	if bg.Source == SourceFallback {
-		return literal
-	}
 	if IsThemeDefaultSpec(bg.Value) {
 		return fg
+	}
+	if bg.Source == SourceFallback {
+		return literal
 	}
 	if b := bg.Value.TruecolorBG(); b != "" {
 		return "\x1b[" + b + "m" + fg
@@ -217,13 +217,10 @@ func ansiBGFGOrLiteral(bg ColorField, fg, literal string) string {
 
 // ansiBGFieldFGFieldOrLiteral pairs an explicit background field with an
 // explicit foreground field. It derives only when at least one of the two is
-// explicit, so a fully-fallback pair returns the byte-identical literal. When
+// explicit or the background intentionally inherits the terminal default. When
 // only one side is explicit the other falls back to its built-in token so the
 // surface still reads correctly.
 func ansiBGFieldFGFieldOrLiteral(bg, fg ColorField, literal string) string {
-	if bg.Source == SourceFallback && fg.Source == SourceFallback {
-		return literal
-	}
 	f := fg.Value.TruecolorFG()
 	// Terminal-default sentinel background: emit the foreground escape only so the
 	// surface inherits the terminal background (no 48;2 sequence). Fall back to a
@@ -232,6 +229,9 @@ func ansiBGFieldFGFieldOrLiteral(bg, fg ColorField, literal string) string {
 		if f != "" {
 			return "\x1b[" + f + "m"
 		}
+		return literal
+	}
+	if bg.Source == SourceFallback && fg.Source == SourceFallback {
 		return literal
 	}
 	b := bg.Value.TruecolorBG()

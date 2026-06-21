@@ -16,10 +16,11 @@ func TestRenderThemeSourceFeedsPickerAndTmuxFromSameEffectiveTheme(t *testing.T)
 	t.Parallel()
 
 	globalCfg := theme.ThemeConfig{
-		Background:    "#010203",
-		Surface:       "#040506",
-		SurfaceActive: "#070809",
-		Foreground:    "#aabbcc",
+		Background:       "#010203",
+		Surface:          "#040506",
+		StatusBackground: "#0a0b0c",
+		SurfaceActive:    "#070809",
+		Foreground:       "#aabbcc",
 	}
 	source := newRenderThemeSource(theme.ResolveTheme(globalCfg))
 

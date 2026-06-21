@@ -185,15 +185,18 @@ Settings runs inside tmux, `tmux source-file`-reloads it so a running server
 repaints immediately. Outside tmux the save still succeeds and the report
 prints `Next: run \`projmux tmux apply\`` to sync a running server.
 
-The `background`, `surface`, and `surface_active` tokens additionally accept the
-value `default` ("Terminal default" in Settings) to keep that surface at the
-terminal background. Priority is **explicit `default` > preset fill > unset
-(fallback)**, so picking a preset and then setting (for example)
-`background = "default"` keeps every other token preset-filled while the pane
-body stays at the terminal default (`window-style "bg=default"`). Set
-`surface = "default"` separately when popup/status/native frame backgrounds
-should also inherit the terminal background. `default` is only valid on these
-three tokens. See `docs/theme-palette.md` for the full sentinel contract.
+The `background`, `surface`, `status_background`, `surface_active`, and
+`pane_active_bg` tokens additionally accept the value `default` ("Terminal
+default" in Settings) to keep that role at the terminal background. Priority is
+**explicit `default` > preset fill > unset (fallback)**, so picking a preset and
+then setting (for example) `background = "default"` keeps every other token
+preset-filled while the pane body stays at the terminal default (`window-style
+"bg=default"`). Set `surface = "default"` separately when popup/native frame
+backgrounds should inherit the terminal background, set
+`status_background = "default"` when the bottom status line should do the same,
+and set `pane_active_bg = "default"` when the active pane should not be tinted.
+`default` is only valid on these background-like tokens. See
+`docs/theme-palette.md` for the full sentinel contract.
 
 Project `.projmux/config.toml` `[theme]` is **deprecated and ignored**: it is no
 longer an effective theme source and does not influence the native picker,
@@ -204,12 +207,12 @@ See `docs/upgrading.md` for the migration note for existing project `[theme]`
 users.
 
 Renderer adapters can apply an already resolved `EffectiveTheme` to native
-picker frame `surface` / `chrome_foreground` SGR and tmux status/window
-`colourN` tokens. Settings and native project picker surfaces load global
-`[theme]` values through the shared effective-theme source. Native picker frames
-also apply the built-in fallback `surface` / `chrome_foreground` tokens so
-picker-owned padding, empty rows, footer rows, and preview gaps do not inherit
-the terminal default background.
+picker frame `surface` / `chrome_foreground` SGR, tmux window background tokens,
+and the bottom status bar `status_background` token. Settings and native project
+picker surfaces load global `[theme]` values through the shared effective-theme
+source. Native picker frames also apply the built-in fallback `surface` /
+`chrome_foreground` tokens so picker-owned padding, empty rows, footer rows, and
+preview gaps do not inherit the terminal default background.
 
 Active pane focus is part of the theme app chrome. The active pane is marked by
 an active border (`pane-active-border-style`, fallback cyan `colour51`, the
@@ -223,8 +226,9 @@ top`, pane topics, AI badges, and visible pane labels.
 
 Native picker popups launched through `projmux tmux popup-toggle` also pass a
 per-popup tmux 3.4 `display-popup -s` body style using the effective theme
-`surface` / `chrome_foreground` tmux tokens (popup/chrome backgrounds follow
-`surface`). This styles only the tmux popup body
+`surface` / `chrome_foreground` tmux tokens (popup/native backgrounds follow
+`surface`, while the bottom status bar follows `status_background`). This styles
+only the tmux popup body
 before the native renderer draws. It does not set global `popup-style` or
 `popup-border-style`, and it does not change shell pane backgrounds,
 `default-style`, `window-style`, OSC terminal backgrounds, or the general
@@ -234,9 +238,10 @@ Resolver schema shape:
 
 ```toml
 [theme]
-preset = "projmux-dark"
-background = "#182226"
-surface = "#182226"
+preset = "projmux"
+background = "default"
+surface = "default"
+status_background = "#182226"
 surface_active = "#2c383d"
 chrome_foreground = "#d8e0e4"
 text_primary = "#d8e0e4"
@@ -247,7 +252,7 @@ warning = "#ffcc66"
 progress = "#ffcc66"
 success = "#5faf87"
 action_required = "#ffaf00"
-pane_active_bg = "#1c1c1c"
+pane_active_bg = "default"
 focus = "#00ffff"
 ```
 
@@ -267,18 +272,12 @@ active-pane background tint, and `focus` is the active-pane border color. Each
 of these is a public token: leave it unset to keep the historical built-in
 color, or set it to repaint the matching chrome.
 
-Supported presets are `projmux-dark`, `midnight`, `blue-hour`,
-`blue-hour-terminal`, `ocean`, `carbon-violet`, `carbon-violet-terminal`,
-`ember`, `forest`, `rose`, `high-contrast`, `terminal`, `terminal-cool`, and
-`terminal-warm`. A preset fills missing color tokens, and
-explicit color tokens override preset values. Tokens the global theme leaves
-unset fall through to the built-in fallback preset. The `terminal`,
-`terminal-cool`, `terminal-warm`, `blue-hour-terminal`, and
-`carbon-violet-terminal` presets are terminal-native: their `background`/
-`surface` use the `default` sentinel so the terminal's own background shows
-through. Pair variants such as `blue-hour-terminal` and
-`carbon-violet-terminal` otherwise keep the same token values as their
-non-terminal base preset.
+Supported presets are `projmux`, `high-contrast`, `blue-hour`, `carbon-violet`,
+`ember`, `forest`, and `rose`. A preset fills
+missing color tokens, and explicit color tokens override preset values. Tokens
+the global theme leaves unset fall through to the built-in fallback preset.
+Terminal-default backgrounds are configured per token with the `default`
+sentinel rather than through separate terminal preset variants.
 
 Unknown presets and invalid color values invalidate only the global theme
 source and produce resolver warnings; the built-in fallback still resolves
@@ -286,10 +285,12 @@ normally.
 Colors are `#RRGGBB`. Settings edits colors through a preset selector, swatch
 rows, and a hex input page. Native truecolor renderers and tmux style roles use
 the exact hex value; 256-color mappings are retained only for renderer paths
-that explicitly require xterm `colourN`/ANSI-256 colors. The theme has no font
-keys: `font_family` and `font_size` were removed in Phase 1b because tmux/ANSI
-rendering cannot force a terminal font. Leftover font keys in an existing
-config are accepted but ignored. See `docs/upgrading.md`.
+that explicitly require xterm `colourN`/ANSI-256 colors. Generated tmux config
+adds `xterm*:RGB` to `terminal-features` so capable terminals render exact
+theme hex values instead of tmux downsampling them to the nearest 256-color
+entry. The theme has no font keys: `font_family` and `font_size` were removed in
+Phase 1b because tmux/ANSI rendering cannot force a terminal font. Leftover font
+keys in an existing config are accepted but ignored. See `docs/upgrading.md`.
 
 ## UI Locale
 
