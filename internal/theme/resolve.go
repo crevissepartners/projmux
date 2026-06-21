@@ -515,6 +515,23 @@ var builtinPresets = map[string]preset{
 			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
 		}),
 	},
+	// terminal: a terminal-native preset. background/surface ride the terminal's
+	// own background via the "default" sentinel (no colour literal); projmux only
+	// paints foreground/accent/state chrome on top. Foreground does not support
+	// the sentinel, so fg/muted/selection tints are tuned for a DARK terminal
+	// (the common projmux host) — documented in docs/theme-palette.md. State
+	// colors keep the rubric's distinct amber tier (progress 221 / warning 179 /
+	// action_required 214).
+	"terminal": {
+		Name: "terminal",
+		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
+			TokenSurfaceActive: "#303030",
+			TokenForeground:    "#d0d0d0", TokenMuted: "#8a8a8a", TokenAccent: "#5fd7af",
+			TokenCritical: "#ff5f5f", TokenWarning: "#d7af5f",
+			TokenProgress: "#ffd75f", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
+			TokenPaneActiveBg: "#262626", TokenFocus: "#00ffff",
+		}, TokenBackground, TokenSurface),
+	},
 }
 
 // PresetNames returns the built-in preset config values in stable order.
@@ -760,6 +777,23 @@ func presetColors(values map[ColorToken]string) map[ColorToken]ColorSpec {
 			continue
 		}
 		out[token] = ColorSpec{Hex: normalized, Tmux: nearestTmuxColor(normalized)}
+	}
+	return out
+}
+
+// presetColorsWithTerminalDefault builds a preset color map from hex values and
+// pins each token in defaults to the terminal-default sentinel (a ColorSpec with
+// no Hex and Tmux="default"), the same shape resolveLayer produces for a user's
+// explicit "default". This lets a built-in preset ride the terminal background
+// for the background/surface family. The sentinel tokens are intentionally
+// absent from values; passing one in both places is harmless (default wins).
+func presetColorsWithTerminalDefault(values map[ColorToken]string, defaults ...ColorToken) map[ColorToken]ColorSpec {
+	out := presetColors(values)
+	for _, token := range defaults {
+		if !tokenSupportsDefaultSentinel(token) {
+			continue
+		}
+		out[token] = ColorSpec{Tmux: ThemeDefaultSentinel}
 	}
 	return out
 }

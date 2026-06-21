@@ -257,10 +257,13 @@ active-pane background tint, and `focus` is the active-pane border color. Each
 of these is a public token: leave it unset to keep the historical built-in
 color, or set it to repaint the matching chrome.
 
-Supported presets are `projmux-dark`, `midnight`, `forest`, `rose`, and
-`high-contrast`. A preset fills missing color tokens, and explicit color tokens
-override preset values. Tokens the global theme leaves unset fall through to the
-built-in fallback preset.
+Supported presets are `projmux-dark`, `midnight`, `forest`, `rose`,
+`high-contrast`, and `terminal`. A preset fills missing color tokens, and
+explicit color tokens override preset values. Tokens the global theme leaves
+unset fall through to the built-in fallback preset. The `terminal` preset is
+terminal-native: its `background`/`surface` use the `default` sentinel so the
+terminal's own background shows through, with foreground/accent/state tuned for
+a dark terminal.
 
 Unknown presets and invalid color values invalidate only the global theme
 source and produce resolver warnings; the built-in fallback still resolves
