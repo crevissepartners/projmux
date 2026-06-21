@@ -393,7 +393,7 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 			options = source.pickerCompatOptions(options)
 		}
 	}
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, options)
+	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, options)
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return intpickercompat.Result{}, errSettingsClosed
@@ -410,7 +410,7 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 // environment, and translation is idempotent so there is no double-translation.
 func (c *settingsCommand) localizeSettingsOptions(options intpickercompat.Options) intpickercompat.Options {
 	options.Locale = c.locale()
-	return localizePickerOptions(c.lookupEnv, options)
+	return localizePickerOptions(c.homeDir, c.lookupEnv, options)
 }
 
 func (c *settingsCommand) locale() i18n.Locale {

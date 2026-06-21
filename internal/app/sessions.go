@@ -155,7 +155,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.runner, intpickercompat.Options{
+		result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.native, c.runner, intpickercompat.Options{
 			UI:      *ui,
 			Entries: rowsToEntries(rows),
 			Prompt:  "› ",
@@ -214,7 +214,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 func (c *sessionsCommand) runSessionStateOverview(sessionName string, summaries []inttmux.RecentSessionSummary) error {
 	entries := c.sessionStateOverviewEntries(sessionName, summaries)
-	result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.runner, intpickercompat.Options{
+	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.native, c.runner, intpickercompat.Options{
 		UI:            "projects-sessions-state",
 		Entries:       entries,
 		Title:         "Projects > Sessions > State",

@@ -111,7 +111,7 @@ func (c *switchCommand) pickProjectStartupMode(sessionName, target string) proje
 	if len(candidates) == 0 {
 		return projectStartupCandidate{Kind: projectStartupKindEmpty}
 	}
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, projectStartupPickerOptions(candidates))
+	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, projectStartupPickerOptions(candidates))
 	if err != nil {
 		return projectStartupCandidate{Kind: projectStartupKindEmpty}
 	}
