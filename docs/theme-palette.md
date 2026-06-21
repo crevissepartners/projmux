@@ -169,10 +169,12 @@ Built-in preset config values are:
 - `blue-hour` / `blue-hour-terminal` — dark theme pair tuned around a terminal
   blue accent; `blue-hour` uses a dark blue-tinted inactive pane body, while
   the terminal variant keeps pane and popup backgrounds at the terminal
-  default. Both keep the active pane tint at the palette black.
+  default. Both keep the active pane tint true black.
 - `carbon-violet` / `carbon-violet-terminal` — charcoal/violet dark theme pair;
   the terminal variant keeps pane and popup backgrounds at the terminal
   default. Both keep the active pane tint black.
+- `high-contrast` — black surfaces, white text, a vivid blue active surface,
+  and bright cyan/yellow/red/green state colors.
 
 ## Fallback Inventory
 

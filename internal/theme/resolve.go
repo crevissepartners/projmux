@@ -508,7 +508,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#acb6bf", TokenTextPrimary: "#acb6bf", TokenForeground: "#acb6bf", TokenMuted: "#4a5878", TokenAccent: "#3d8fd1",
 			TokenCritical: "#ec6a88", TokenWarning: "#efb472",
 			TokenProgress: "#5ca7e4", TokenSuccess: "#3fdaa4", TokenActionRequired: "#ffca85",
-			TokenPaneActiveBg: "#1d2433", TokenFocus: "#5ca7e4",
+			TokenPaneActiveBg: "#000000", TokenFocus: "#5ca7e4",
 		}),
 	},
 	"blue-hour-terminal": {
@@ -518,7 +518,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#acb6bf", TokenTextPrimary: "#acb6bf", TokenForeground: "#acb6bf", TokenMuted: "#4a5878", TokenAccent: "#3d8fd1",
 			TokenCritical: "#ec6a88", TokenWarning: "#efb472",
 			TokenProgress: "#5ca7e4", TokenSuccess: "#3fdaa4", TokenActionRequired: "#ffca85",
-			TokenPaneActiveBg: "#1d2433", TokenFocus: "#5ca7e4",
+			TokenPaneActiveBg: "#000000", TokenFocus: "#5ca7e4",
 		}, TokenBackground, TokenSurface),
 	},
 	"ocean": {
@@ -584,11 +584,11 @@ var builtinPresets = map[string]preset{
 	"high-contrast": {
 		Name: "high-contrast",
 		Colors: presetColors(map[ColorToken]string{
-			TokenBackground: "#000000", TokenSurface: "#101010", TokenSurfaceActive: "#303030",
-			TokenChromeForeground: "#ffffff", TokenTextPrimary: "#ffffff", TokenForeground: "#ffffff", TokenMuted: "#b8b8b8", TokenAccent: "#00ffd0",
-			TokenCritical: "#ff4040", TokenWarning: "#ffd700",
-			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
-			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
+			TokenBackground: "#000000", TokenSurface: "#000000", TokenSurfaceActive: "#005fff",
+			TokenChromeForeground: "#ffffff", TokenTextPrimary: "#ffffff", TokenForeground: "#ffffff", TokenMuted: "#bfbfbf", TokenAccent: "#00ffff",
+			TokenCritical: "#ff0000", TokenWarning: "#ffff00",
+			TokenProgress: "#00bfff", TokenSuccess: "#00ff66", TokenActionRequired: "#ffaf00",
+			TokenPaneActiveBg: "#000000", TokenFocus: "#ffffff",
 		}),
 	},
 	// terminal: a terminal-native preset. background/surface ride the terminal's
