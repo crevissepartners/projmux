@@ -163,8 +163,8 @@ Built-in preset config values are:
 - `forest`
 - `rose`
 - `blue-hour` — dark theme tuned around a terminal blue accent; it uses a dark
-  blue-tinted inactive pane body, darker popup/status surfaces, and a true black
-  active pane tint.
+  blue-tinted inactive pane body, black popup surface, deep navy status bar,
+  and a deep indigo active pane tint.
 - `carbon-violet` — charcoal/violet dark theme with darker popup/status
   surfaces and a black active pane tint.
 - `high-contrast` — black surfaces, white text, a vivid blue active surface,

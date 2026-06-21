@@ -510,11 +510,11 @@ var builtinPresets = map[string]preset{
 	"blue-hour": {
 		Name: "blue-hour",
 		Colors: presetColors(map[ColorToken]string{
-			TokenBackground: "#1e1e2e", TokenSurface: "#16242d", TokenStatusBackground: "#132b38", TokenSurfaceActive: "#4a5878",
+			TokenBackground: "#1e1e2e", TokenSurface: "#000000", TokenStatusBackground: "#07111f", TokenSurfaceActive: "#4a5878",
 			TokenChromeForeground: "#acb6bf", TokenTextPrimary: "#acb6bf", TokenForeground: "#acb6bf", TokenMuted: "#4a5878", TokenAccent: "#3d8fd1",
 			TokenCritical: "#ec6a88", TokenWarning: "#efb472",
 			TokenProgress: "#5ca7e4", TokenSuccess: "#3fdaa4", TokenActionRequired: "#ffca85",
-			TokenPaneActiveBg: "#000000", TokenFocus: "#5ca7e4",
+			TokenPaneActiveBg: "#161a3a", TokenFocus: "#5ca7e4",
 		}),
 	},
 	"carbon-violet": {
