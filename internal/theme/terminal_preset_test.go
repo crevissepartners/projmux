@@ -9,17 +9,17 @@ func TestBlueHourTargetsInactivePaneBlueTint(t *testing.T) {
 	if got, want := fixed.Background.Value.Hex, "#1e1e2e"; got != want {
 		t.Fatalf("blue-hour background = %q, want terminal palette background %q", got, want)
 	}
-	if got, want := fixed.Surface.Value.Hex, "#16242d"; got != want {
-		t.Fatalf("blue-hour surface = %q, want midnight popup surface %q", got, want)
+	if got, want := fixed.Surface.Value.Hex, "#000000"; got != want {
+		t.Fatalf("blue-hour surface = %q, want black popup surface %q", got, want)
 	}
-	if got, want := fixed.StatusBackground.Value.Hex, "#132b38"; got != want {
-		t.Fatalf("blue-hour status_background = %q, want ocean status surface %q", got, want)
+	if got, want := fixed.StatusBackground.Value.Hex, "#07111f"; got != want {
+		t.Fatalf("blue-hour status_background = %q, want deep navy status surface %q", got, want)
 	}
 	if got, want := fixed.Accent.Value.Hex, "#3d8fd1"; got != want {
 		t.Fatalf("blue-hour accent = %q, want terminal blue %q", got, want)
 	}
-	if got, want := fixed.PaneActiveBg.Value.Hex, "#000000"; got != want {
-		t.Fatalf("blue-hour pane_active_bg = %q, want true black %q", got, want)
+	if got, want := fixed.PaneActiveBg.Value.Hex, "#161a3a"; got != want {
+		t.Fatalf("blue-hour pane_active_bg = %q, want deep indigo active-pane tint %q", got, want)
 	}
 
 }
@@ -39,11 +39,11 @@ func TestCarbonVioletUsesReadablePopupAndStatusSurfaces(t *testing.T) {
 	}
 }
 
-func TestInspiredPresetPairsUseBlackActivePaneTint(t *testing.T) {
+func TestInspiredPresetPairsUseConfiguredActivePaneTint(t *testing.T) {
 	t.Parallel()
 
 	for preset, want := range map[string]string{
-		"blue-hour":     "#000000",
+		"blue-hour":     "#161a3a",
 		"carbon-violet": "#000000",
 	} {
 		t.Run(preset, func(t *testing.T) {
@@ -51,7 +51,7 @@ func TestInspiredPresetPairsUseBlackActivePaneTint(t *testing.T) {
 
 			effective := ResolveTheme(ThemeConfig{Preset: preset})
 			if got := effective.PaneActiveBg.Value.Hex; got != want {
-				t.Fatalf("%s pane_active_bg = %q, want palette black %q", preset, got, want)
+				t.Fatalf("%s pane_active_bg = %q, want configured active-pane tint %q", preset, got, want)
 			}
 		})
 	}
