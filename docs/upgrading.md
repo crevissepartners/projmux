@@ -80,9 +80,10 @@ border (`focus`) defaults to cyan `colour51`. Both apply only to tmux pane
 chrome.
 
 Additional built-in presets are available for both terminal-native and fixed
-background workflows: `terminal-cool`, `terminal-warm`, `ocean`, and `ember`.
-The terminal-native presets keep `background` and `surface` at `default`; the
-fixed presets paint their own pane and popup surfaces.
+background workflows: `terminal-cool`, `terminal-warm`, `blue-hour`,
+`blue-hour-terminal`, `carbon-violet`, `carbon-violet-terminal`, `ocean`, and
+`ember`. The terminal-native presets keep `background` and `surface` at
+`default`; the fixed presets paint their own pane and popup surfaces.
 
 ### Pane body vs popup backgrounds
 

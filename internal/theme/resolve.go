@@ -501,6 +501,26 @@ var builtinPresets = map[string]preset{
 			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
 		}),
 	},
+	"blue-hour": {
+		Name: "blue-hour",
+		Colors: presetColors(map[ColorToken]string{
+			TokenBackground: "#101923", TokenSurface: "#142434", TokenSurfaceActive: "#243b53",
+			TokenChromeForeground: "#d8e7ff", TokenTextPrimary: "#d8e7ff", TokenForeground: "#d8e7ff", TokenMuted: "#8197ad", TokenAccent: "#7aa2f7",
+			TokenCritical: "#ff5f87", TokenWarning: "#d7af5f",
+			TokenProgress: "#5fafff", TokenSuccess: "#5faf87", TokenActionRequired: "#ff8700",
+			TokenPaneActiveBg: "#0b1720", TokenFocus: "#87d7ff",
+		}),
+	},
+	"blue-hour-terminal": {
+		Name: "blue-hour-terminal",
+		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
+			TokenSurfaceActive:    "#243b53",
+			TokenChromeForeground: "#d8e7ff", TokenTextPrimary: "#d8e7ff", TokenForeground: "#d8e7ff", TokenMuted: "#8197ad", TokenAccent: "#7aa2f7",
+			TokenCritical: "#ff5f87", TokenWarning: "#d7af5f",
+			TokenProgress: "#5fafff", TokenSuccess: "#5faf87", TokenActionRequired: "#ff8700",
+			TokenPaneActiveBg: "#262626", TokenFocus: "#87d7ff",
+		}, TokenBackground, TokenSurface),
+	},
 	"ocean": {
 		Name: "ocean",
 		Colors: presetColors(map[ColorToken]string{
@@ -510,6 +530,26 @@ var builtinPresets = map[string]preset{
 			TokenProgress: "#5fafff", TokenSuccess: "#5faf5f", TokenActionRequired: "#ff8700",
 			TokenPaneActiveBg: "#102834", TokenFocus: "#5fd7ff",
 		}),
+	},
+	"carbon-violet": {
+		Name: "carbon-violet",
+		Colors: presetColors(map[ColorToken]string{
+			TokenBackground: "#1f2026", TokenSurface: "#292a30", TokenSurfaceActive: "#3a3b44",
+			TokenChromeForeground: "#d6d3df", TokenTextPrimary: "#d6d3df", TokenForeground: "#d6d3df", TokenMuted: "#8d8996", TokenAccent: "#b48ead",
+			TokenCritical: "#ff5f5f", TokenWarning: "#d7af5f",
+			TokenProgress: "#87afff", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
+			TokenPaneActiveBg: "#1a1b20", TokenFocus: "#b48ead",
+		}),
+	},
+	"carbon-violet-terminal": {
+		Name: "carbon-violet-terminal",
+		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
+			TokenSurfaceActive:    "#3a3b44",
+			TokenChromeForeground: "#d6d3df", TokenTextPrimary: "#d6d3df", TokenForeground: "#d6d3df", TokenMuted: "#8d8996", TokenAccent: "#b48ead",
+			TokenCritical: "#ff5f5f", TokenWarning: "#d7af5f",
+			TokenProgress: "#87afff", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
+			TokenPaneActiveBg: "#262626", TokenFocus: "#b48ead",
+		}, TokenBackground, TokenSurface),
 	},
 	"ember": {
 		Name: "ember",

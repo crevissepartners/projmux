@@ -148,7 +148,11 @@ Built-in preset config values are:
 
 - `projmux-dark`
 - `midnight`
+- `blue-hour`
+- `blue-hour-terminal`
 - `ocean`
+- `carbon-violet`
+- `carbon-violet-terminal`
 - `ember`
 - `forest`
 - `rose`
@@ -162,6 +166,10 @@ Built-in preset config values are:
 - `terminal-cool` / `terminal-warm` — terminal-native variants that also use
   the `default` sentinel for `background`/`surface`, with cooler or warmer
   foreground/accent/state palettes.
+- `blue-hour` / `blue-hour-terminal` — blue-forward dark theme pair; the
+  terminal variant keeps pane and popup backgrounds at the terminal default.
+- `carbon-violet` / `carbon-violet-terminal` — charcoal/violet dark theme pair;
+  the terminal variant keeps pane and popup backgrounds at the terminal default.
 
 ## Fallback Inventory
 
