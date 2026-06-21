@@ -79,14 +79,15 @@ func TestANSIRolesExplicitThemeRepaintsCoreRoles(t *testing.T) {
 	t.Parallel()
 
 	got := ANSIRolesFromEffective(ResolveTheme(ThemeConfig{
-		Background:    "#102030",
-		Surface:       "#112233",
-		SurfaceActive: "#445566",
-		Foreground:    "#eef0f2",
-		Muted:         "#808890",
-		Accent:        "#00ddaa",
-		Warning:       "#ffaa00",
-		Critical:      "#dd2244",
+		Background:       "#102030",
+		Surface:          "#112233",
+		SurfaceActive:    "#445566",
+		ChromeForeground: "#eef0f2",
+		TextPrimary:      "#eef0f2",
+		Muted:            "#808890",
+		Accent:           "#00ddaa",
+		Warning:          "#ffaa00",
+		Critical:         "#dd2244",
 	}))
 
 	cases := []struct {
@@ -126,6 +127,34 @@ func TestANSIRolesExplicitThemeRepaintsCoreRoles(t *testing.T) {
 	}
 	if got.SwitchPath == ANSISwitchPathStart {
 		t.Errorf("switch.path did not repaint: still %q", ANSISwitchPathStart)
+	}
+}
+
+func TestANSIRolesTextPrimaryDoesNotRepaintFrameChrome(t *testing.T) {
+	t.Parallel()
+
+	got := ANSIRolesFromEffective(ResolveTheme(ThemeConfig{TextPrimary: "#112233"}))
+	fallback := ANSIRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	if got.TextPrimary == fallback.TextPrimary {
+		t.Fatalf("text.primary = %q, want repaint from text_primary", got.TextPrimary)
+	}
+	if got.SurfaceRaised != fallback.SurfaceRaised {
+		t.Fatalf("surface.raised = %q, want fallback chrome when only text_primary changes", got.SurfaceRaised)
+	}
+}
+
+func TestANSIRolesChromeForegroundRepaintsFrameChromeNotPrimaryText(t *testing.T) {
+	t.Parallel()
+
+	got := ANSIRolesFromEffective(ResolveTheme(ThemeConfig{ChromeForeground: "#112233"}))
+	fallback := ANSIRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	if got.SurfaceRaised == fallback.SurfaceRaised {
+		t.Fatalf("surface.raised = %q, want repaint from chrome_foreground", got.SurfaceRaised)
+	}
+	if got.TextPrimary != fallback.TextPrimary {
+		t.Fatalf("text.primary = %q, want unchanged when only chrome_foreground changes", got.TextPrimary)
 	}
 }
 

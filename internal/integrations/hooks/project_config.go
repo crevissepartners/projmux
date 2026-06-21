@@ -243,6 +243,10 @@ func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lin
 		cfg.Surface = value
 	case "surface_active":
 		cfg.SurfaceActive = value
+	case "chrome_foreground":
+		cfg.ChromeForeground = value
+	case "text_primary":
+		cfg.TextPrimary = value
 	case "foreground":
 		cfg.Foreground = value
 	case "muted":
@@ -463,6 +467,8 @@ func renderThemeConfigSection(cfg theme.ThemeConfig) string {
 		{"background", cfg.Background},
 		{"surface", cfg.Surface},
 		{"surface_active", cfg.SurfaceActive},
+		{"chrome_foreground", cfg.ChromeForeground},
+		{"text_primary", cfg.TextPrimary},
 		{"foreground", cfg.Foreground},
 		{"muted", cfg.Muted},
 		{"accent", cfg.Accent},

@@ -1398,7 +1398,7 @@ func nativeFrameStyleForTest(t *testing.T, effective theme.EffectiveTheme) strin
 	nativeTheme := projmuxpicker.ThemeFromEffective(effective)
 	style := nativeTheme.Background + nativeTheme.Foreground
 	if style == "" {
-		t.Fatal("native frame style empty, want app background/foreground SGR")
+		t.Fatal("native frame style empty, want app background/chrome_foreground SGR")
 	}
 	return style
 }

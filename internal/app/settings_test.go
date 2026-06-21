@@ -2109,9 +2109,19 @@ background = "#010203"
 	if err != nil {
 		t.Fatalf("themeEntries error: %v", err)
 	}
-	// A globally-set token keeps its set/override summary.
-	if !hasEntryLabelContainingAll(entries, "foreground", "#eeeeee", "set override") {
-		t.Fatalf("global theme entries = %#v, want set-override foreground summary", entries)
+	// Legacy foreground is readable through the new split rows, but Settings no
+	// longer encourages writing foreground directly.
+	if hasEntryLabelContainingAll(entries, "foreground", "#eeeeee", "set override") {
+		t.Fatalf("global theme entries = %#v, must not show editable foreground row", entries)
+	}
+	if !hasEntryLabelContainingAll(entries, "text primary", "#eeeeee", "legacy foreground") {
+		t.Fatalf("global theme entries = %#v, want legacy foreground fill on text_primary", entries)
+	}
+	if !hasEntryLabelContainingAll(entries, "chrome foreground", "#eeeeee", "legacy foreground") {
+		t.Fatalf("global theme entries = %#v, want legacy foreground fill on chrome_foreground", entries)
+	}
+	if hasEntryValue(entries, settingsNoopValue) && hasEntryLabelContaining(entries, "Core") {
+		t.Fatalf("global theme entries = %#v, must not include non-actionable theme group rows", entries)
 	}
 	// An UNSET token shows the resolved fallback value with a (fallback) label
 	// and a fallback source.
@@ -5421,8 +5431,8 @@ func TestSettingsThemeColorSetDefaultSentinelRejectedForNonSurfaceToken(t *testi
 		homeDir:   func() (string, error) { return home, nil },
 		lookupEnv: func(string) string { return "" },
 	}
-	if err := cmd.setThemeColor(theme.TokenForeground, theme.ThemeDefaultSentinel, &bytes.Buffer{}); err == nil {
-		t.Fatalf("setThemeColor(foreground, default) error = nil, want invalid color error")
+	if err := cmd.setThemeColor(theme.TokenTextPrimary, theme.ThemeDefaultSentinel, &bytes.Buffer{}); err == nil {
+		t.Fatalf("setThemeColor(text_primary, default) error = nil, want invalid color error")
 	}
 }
 
@@ -5437,9 +5447,9 @@ func TestSettingsThemeColorEntriesOfferTerminalDefaultForSurfaceTokens(t *testin
 	if !hasEntryValue(bgEntries, themeAction("color-set:"+string(theme.TokenBackground)+":"+theme.ThemeDefaultSentinel)) {
 		t.Fatalf("background entries = %#v, want Terminal default choice", bgEntries)
 	}
-	fgEntries := cmd.themeColorEntries(theme.TokenForeground)
-	if hasEntryValue(fgEntries, themeAction("color-set:"+string(theme.TokenForeground)+":"+theme.ThemeDefaultSentinel)) {
-		t.Fatalf("foreground entries = %#v, must not offer Terminal default", fgEntries)
+	fgEntries := cmd.themeColorEntries(theme.TokenTextPrimary)
+	if hasEntryValue(fgEntries, themeAction("color-set:"+string(theme.TokenTextPrimary)+":"+theme.ThemeDefaultSentinel)) {
+		t.Fatalf("text_primary entries = %#v, must not offer Terminal default", fgEntries)
 	}
 }
 

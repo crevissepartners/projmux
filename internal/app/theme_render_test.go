@@ -104,7 +104,7 @@ foreground = "#aabbcc"
 		RenderFrameWithTitle(&frame, "api", options.Title, projmuxpicker.Layout{Rows: 5, Cols: 20})
 	rendered := frame.String()
 	if !strings.Contains(rendered, "\x1b[48;2;255;0;0m") || !strings.Contains(rendered, "\x1b[38;2;0;255;0m") {
-		t.Fatalf("popup frame = %q, want global theme background/foreground SGR", rendered)
+		t.Fatalf("popup frame = %q, want global theme background/chrome_foreground SGR", rendered)
 	}
 	if strings.Contains(rendered, "\x1b[48;2;1;2;3m") || strings.Contains(rendered, "\x1b[38;2;170;187;204m") {
 		t.Fatalf("popup frame = %q, leaked ignored project theme", rendered)

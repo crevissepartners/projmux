@@ -82,6 +82,8 @@ func TestProjectThemeConfigRoundTripsPhase6Keys(t *testing.T) {
 
 	cfg, err := ParseProjectConfig(`
 [theme]
+chrome_foreground = "#010203"
+text_primary = "#040506"
 progress = "#112233"
 success = "#445566"
 action_required = "#778899"
@@ -91,14 +93,17 @@ focus = "#0d0e0f"
 	if err != nil {
 		t.Fatalf("ParseProjectConfig() error = %v", err)
 	}
-	if cfg.Theme.Progress != "#112233" || cfg.Theme.Success != "#445566" ||
+	if cfg.Theme.ChromeForeground != "#010203" || cfg.Theme.TextPrimary != "#040506" ||
+		cfg.Theme.Progress != "#112233" || cfg.Theme.Success != "#445566" ||
 		cfg.Theme.ActionRequired != "#778899" || cfg.Theme.PaneActiveBg != "#0a0b0c" ||
 		cfg.Theme.Focus != "#0d0e0f" {
-		t.Fatalf("Theme = %#v, want all phase-6 keys parsed", cfg.Theme)
+		t.Fatalf("Theme = %#v, want all public theme keys parsed", cfg.Theme)
 	}
 
 	rendered := renderThemeConfigSection(cfg.Theme)
 	for _, want := range []string{
+		`chrome_foreground = "#010203"`,
+		`text_primary = "#040506"`,
 		`progress = "#112233"`,
 		`success = "#445566"`,
 		`action_required = "#778899"`,

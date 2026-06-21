@@ -4,7 +4,8 @@ import "testing"
 
 // TestTerminalPresetRidesTerminalBackground verifies the terminal-native preset
 // pins background/surface to the terminal-default sentinel (so the terminal's
-// own background shows through) while still painting foreground/accent/state
+// own background shows through) while still painting text/chrome foreground,
+// accent, and state
 // chrome. Selecting the preset by name must behave like the user typing
 // `background = "default"`, on both the tmux and ANSI render paths.
 func TestTerminalPresetRidesTerminalBackground(t *testing.T) {
@@ -12,7 +13,7 @@ func TestTerminalPresetRidesTerminalBackground(t *testing.T) {
 
 	effective := ResolveTheme(ThemeConfig{Preset: "terminal"})
 
-	// background/surface ride the terminal default; foreground/accent are real.
+	// background/surface ride the terminal default; text/chrome foreground and accent are real.
 	if !IsThemeDefaultSpec(effective.Background.Value) {
 		t.Fatalf("terminal background = %#v, want terminal-default sentinel", effective.Background)
 	}

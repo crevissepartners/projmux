@@ -54,6 +54,42 @@ func TestResolveThemeExplicitColorOverridesPreset(t *testing.T) {
 	}
 }
 
+func TestResolveThemeLegacyForegroundFillsSplitForegroundTokens(t *testing.T) {
+	t.Parallel()
+
+	got := ResolveTheme(ThemeConfig{Foreground: "#eeeeee"})
+
+	for name, field := range map[string]ColorField{
+		"foreground":        got.Foreground,
+		"chrome_foreground": got.ChromeForeground,
+		"text_primary":      got.TextPrimary,
+	} {
+		if field.Value.Hex != "#eeeeee" || field.Source != SourceGlobal {
+			t.Fatalf("%s = %#v, want global legacy foreground fill #eeeeee", name, field)
+		}
+	}
+}
+
+func TestResolveThemeSplitForegroundTokensOverrideLegacyFill(t *testing.T) {
+	t.Parallel()
+
+	got := ResolveTheme(ThemeConfig{
+		Foreground:       "#eeeeee",
+		ChromeForeground: "#aabbcc",
+		TextPrimary:      "#112233",
+	})
+
+	if got.Foreground.Value.Hex != "#eeeeee" {
+		t.Fatalf("foreground = %#v, want legacy value readable", got.Foreground)
+	}
+	if got.ChromeForeground.Value.Hex != "#aabbcc" {
+		t.Fatalf("chrome_foreground = %#v, want explicit split value", got.ChromeForeground)
+	}
+	if got.TextPrimary.Value.Hex != "#112233" {
+		t.Fatalf("text_primary = %#v, want explicit split value", got.TextPrimary)
+	}
+}
+
 func TestResolveThemeDefaultSentinelOverridesPresetForBackground(t *testing.T) {
 	t.Parallel()
 
@@ -301,6 +337,34 @@ func TestRenderRolesExplicitThemeRepaintsTierABChromeRoles(t *testing.T) {
 	}
 }
 
+func TestTextPrimaryDoesNotRepaintTmuxChromeRoles(t *testing.T) {
+	t.Parallel()
+
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{TextPrimary: "#ff0000"}))
+	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	if got.WindowInactiveFg != fallback.WindowInactiveFg ||
+		got.WindowActiveFg != fallback.WindowActiveFg ||
+		got.StatusFg != fallback.StatusFg ||
+		got.GitSegmentFg != fallback.GitSegmentFg {
+		t.Fatalf("text_primary repainted chrome roles: got %#v fallback %#v", got, fallback)
+	}
+}
+
+func TestChromeForegroundRepaintsTmuxChromeRoles(t *testing.T) {
+	t.Parallel()
+
+	got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{ChromeForeground: "#ff0000"}))
+	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+
+	if got.WindowInactiveFg == fallback.WindowInactiveFg ||
+		got.WindowActiveFg == fallback.WindowActiveFg ||
+		got.StatusFg == fallback.StatusFg ||
+		got.GitSegmentFg == fallback.GitSegmentFg {
+		t.Fatalf("chrome_foreground did not repaint chrome roles: got %#v fallback %#v", got, fallback)
+	}
+}
+
 func TestTmuxRenderTokensUseGlobalNearest256ColorsWithoutFallbackLeak(t *testing.T) {
 	t.Parallel()
 
@@ -507,7 +571,7 @@ func TestPhase6FieldsIncludeNewTokens(t *testing.T) {
 	for _, field := range got.Fields() {
 		names[field.Name] = true
 	}
-	for _, token := range []ColorToken{TokenProgress, TokenSuccess, TokenActionRequired, TokenPaneActiveBg, TokenFocus} {
+	for _, token := range []ColorToken{TokenChromeForeground, TokenTextPrimary, TokenProgress, TokenSuccess, TokenActionRequired, TokenPaneActiveBg, TokenFocus} {
 		if !names[string(token)] {
 			t.Fatalf("Fields() missing new token %q", token)
 		}

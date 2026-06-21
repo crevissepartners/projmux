@@ -106,11 +106,11 @@ func TestThemeFromEffectiveFallbackPaintsFrameBackground(t *testing.T) {
 	fallbackTheme := ThemeFromEffective(effective)
 	style := fallbackTheme.Background + fallbackTheme.Foreground
 	if style == "" {
-		t.Fatal("fallback frame style empty, want app background/foreground SGR")
+		t.Fatal("fallback frame style empty, want app background/chrome_foreground SGR")
 	}
 	for _, rendered := range []string{themedFrame.String(), themedTitle.String(), themedChips.String()} {
 		if !strings.Contains(rendered, style) {
-			t.Fatalf("fallback themed frame = %q, want fallback background/foreground SGR %q", rendered, style)
+			t.Fatalf("fallback themed frame = %q, want fallback background/chrome_foreground SGR %q", rendered, style)
 		}
 		for line := range strings.SplitSeq(rendered, "\r\n") {
 			if !strings.HasPrefix(line, style) {
