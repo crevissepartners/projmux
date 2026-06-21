@@ -47,6 +47,7 @@ AuditGoStringLiterals
 AuditGoStringLiteralsInDir
 AuditGoStrings
 RuntimeKoreanStringAuditOptions
+PickerChromeStringAuditOptions
 StringAuditFinding.IsCandidate
 auditGoStringLiteralsInFile
 classifyStringLiteral
@@ -56,6 +57,7 @@ isDataStringLiteral
 isDebugStringContext
 isDebugStringLiteral
 isEnglishUserFacingCandidate
+isPickerChromeFieldContext
 isPreservedLiteralString
 shouldKeepStringAuditFinding
 sortStringAuditFindings

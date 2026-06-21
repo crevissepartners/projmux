@@ -513,10 +513,10 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 	return intpicker.Options{
 		UI:             "notify-sidebar",
 		MultiLine:      true,
-		Title:          notifySidebarTitle + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications" + theme.ANSIReset,
-		Prompt:         "Notify > ",
-		Header:         "Newest first",
-		Footer:         notifySidebarFooter(c.homeDir, c.lookupEnv),
+		Title:          notifySidebarTitle + notifyHeaderDecorator(c.statusbarDecoration()) + localizeUIText(locale, "Pending Notifications") + theme.ANSIReset,
+		Prompt:         localizeUIText(locale, "Notify > "),
+		Header:         localizeUIText(locale, "Newest first"),
+		Footer:         notifySidebarFooter(c.homeDir, c.lookupEnv, locale),
 		Actions:        actions,
 		Items:          notifySidebarPickerItems(model.ExpandedEntries(expanded)),
 		DisableSearch:  true,
@@ -536,7 +536,7 @@ func notifySidebarMutableActions(keys []string, mutate func(intpicker.ActionCont
 	return actions
 }
 
-func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string) string {
+func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string, locale i18n.Locale) string {
 	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
 		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live/inactive / clean gone"},
 		{ActionID: "NotifySidebar:Ack", Label: "ack child"},
@@ -544,7 +544,7 @@ func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) 
 		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
 		{ActionID: "NotifySidebar:ClearAll", Label: "clear all"},
 	})
-	local := keybindingReadableChord("Right") + ": show child rows  |  " + keybindingReadableChord("Left") + ": hide child rows"
+	local := keybindingReadableChord("Right") + ": " + localizeUIText(locale, "show child rows") + "  |  " + keybindingReadableChord("Left") + ": " + localizeUIText(locale, "hide child rows")
 	if guide == "" {
 		return local
 	}
@@ -795,6 +795,7 @@ func notifySidebarEntriesWithLive(entries []notify.Notification, now time.Time, 
 
 type notifySidebarReadModel struct {
 	Groups []notifySidebarGroup
+	Locale i18n.Locale
 }
 
 type notifySidebarGroup struct {
@@ -819,7 +820,7 @@ type notifySidebarRow struct {
 
 func (m notifySidebarReadModel) CollapsedEntries() []intpickercompat.Entry {
 	if len(m.Groups) == 0 {
-		return notifySidebarEmptyEntries()
+		return notifySidebarEmptyEntries(m.Locale)
 	}
 	out := make([]intpickercompat.Entry, 0, len(m.Groups))
 	for _, group := range m.Groups {
@@ -830,7 +831,7 @@ func (m notifySidebarReadModel) CollapsedEntries() []intpickercompat.Entry {
 
 func (m notifySidebarReadModel) ExpandedEntries(expanded map[string]bool) []intpickercompat.Entry {
 	if len(m.Groups) == 0 {
-		return notifySidebarEmptyEntries()
+		return notifySidebarEmptyEntries(m.Locale)
 	}
 	out := make([]intpickercompat.Entry, 0, len(m.Groups))
 	for _, group := range m.Groups {
@@ -882,9 +883,9 @@ func notifySidebarGroupLabelWithoutMarker(label string) string {
 	return label
 }
 
-func notifySidebarEmptyEntries() []intpickercompat.Entry {
+func notifySidebarEmptyEntries(locale i18n.Locale) []intpickercompat.Entry {
 	return []intpickercompat.Entry{{
-		Label: "No pending notifications",
+		Label: localizeUIText(locale, "No pending notifications"),
 		Value: notifySidebarEmptyValue,
 	}}
 }
@@ -940,7 +941,7 @@ func buildNotifySidebarReadModel(entries []notify.Notification, now time.Time, l
 	sort.SliceStable(groups, func(i, j int) bool {
 		return groups[i].NewestAt.After(groups[j].NewestAt)
 	})
-	return notifySidebarReadModel{Groups: groups}
+	return notifySidebarReadModel{Groups: groups, Locale: locale}
 }
 
 func notifySidebarGroupKey(entry notify.Notification) string {
