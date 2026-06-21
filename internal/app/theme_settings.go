@@ -19,28 +19,27 @@ import (
 
 // themeTokenGroup is a Settings presentation grouping for the color tokens.
 type themeTokenGroup struct {
-	Label  string
-	Desc   string
+	Prefix string
 	Tokens []theme.ColorToken
 }
 
 // themeTokenGroups orders the theme editor's color rows by how often users
 // touch them and by semantic cluster, instead of the flat serialization order.
 // It is a DISPLAY concern only — theme.ResolverColorTokens stays the stable
-// serialization/storage order. Every ResolverColorTokens entry must appear here
-// exactly once; TestThemeTokenGroupsCoverAllTokens guards that invariant.
+// serialization/storage order. Every editable non-legacy token must appear here
+// exactly once; TestThemeTokenGroupsCoverEditableTokens guards that invariant.
 var themeTokenGroups = []themeTokenGroup{
-	{Label: "Core", Desc: "background, foreground, accent", Tokens: []theme.ColorToken{
-		theme.TokenBackground, theme.TokenForeground, theme.TokenAccent,
+	{Prefix: "[core]", Tokens: []theme.ColorToken{
+		theme.TokenBackground, theme.TokenTextPrimary, theme.TokenAccent,
 	}},
-	{Label: "Surfaces", Desc: "panels, selected rows, muted text", Tokens: []theme.ColorToken{
+	{Prefix: "[surface]", Tokens: []theme.ColorToken{
 		theme.TokenSurface, theme.TokenSurfaceActive, theme.TokenMuted,
 	}},
-	{Label: "State", Desc: "severity and AI status colors", Tokens: []theme.ColorToken{
+	{Prefix: "[state]", Tokens: []theme.ColorToken{
 		theme.TokenCritical, theme.TokenWarning, theme.TokenProgress, theme.TokenSuccess, theme.TokenActionRequired,
 	}},
-	{Label: "App chrome", Desc: "active-pane tint and focus border", Tokens: []theme.ColorToken{
-		theme.TokenPaneActiveBg, theme.TokenFocus,
+	{Prefix: "[chrome]", Tokens: []theme.ColorToken{
+		theme.TokenChromeForeground, theme.TokenPaneActiveBg, theme.TokenFocus,
 	}},
 }
 
@@ -122,22 +121,15 @@ func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 		SearchKey: "theme preset selector swatch colors",
 	})
 	effective := theme.ResolveTheme(cfg.Theme)
-	// Present the color tokens grouped by priority/meaning (Core → Surfaces →
-	// State → App chrome) rather than the flat serialization order. This is a
-	// display concern only: ResolverColorTokens (the serialization/storage order)
-	// is unchanged, and themeTokenGroups covers it exactly once (guarded by a
-	// test). Each group emits a dim, non-actionable header row.
+	// Present the editable color tokens grouped by priority/meaning while keeping
+	// the rows directly selectable. `foreground` remains parseable as a legacy
+	// config key, but Settings steers users to text_primary/chrome_foreground.
 	for _, group := range themeTokenGroups {
-		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabelDim(group.Label, group.Desc),
-			Value:     settingsNoopValue,
-			SearchKey: "theme group " + group.Label,
-		})
 		for _, token := range group.Tokens {
 			entries = append(entries, intpickercompat.Entry{
-				Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), themeColorSummaryEffective(cfg.Theme, effective, token)),
+				Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), group.Prefix+" "+themeColorSummaryEffective(cfg.Theme, effective, token)),
 				Value:     themeAction("color:" + string(token)),
-				SearchKey: "theme color swatch hex input " + string(token),
+				SearchKey: "theme color " + group.Prefix + " " + strings.Trim(group.Prefix, "[]") + " swatch hex input " + string(token),
 			})
 		}
 	}
@@ -499,10 +491,18 @@ func themeAction(action string) string {
 
 func parseThemeColorAction(raw string) (theme.ColorToken, bool) {
 	token := theme.ColorToken(strings.TrimSpace(raw))
-	if slices.Contains(theme.ResolverColorTokens, token) {
+	if slices.Contains(themeSettingsColorTokens(), token) {
 		return token, true
 	}
 	return "", false
+}
+
+func themeSettingsColorTokens() []theme.ColorToken {
+	var out []theme.ColorToken
+	for _, group := range themeTokenGroups {
+		out = append(out, group.Tokens...)
+	}
+	return out
 }
 
 func themeColorLabel(token theme.ColorToken) string {
@@ -561,6 +561,12 @@ func themeColorSummaryEffective(cfg theme.ThemeConfig, effective theme.Effective
 	if value == "" {
 		return "unset"
 	}
+	if field.Source == theme.SourceGlobal && legacyForegroundFillsToken(cfg, token) {
+		return themeSwatch(value) + " " + value + " - legacy foreground"
+	}
+	if field.Source != theme.SourceFallback {
+		return themeSwatch(value) + " " + value + " - " + string(field.Source)
+	}
 	return settingsDim(themeSwatch(value)+" "+value+" (fallback)") + " - " + string(field.Source)
 }
 
@@ -578,6 +584,10 @@ func effectiveColorField(effective theme.EffectiveTheme, token theme.ColorToken)
 		return effective.Surface
 	case theme.TokenSurfaceActive:
 		return effective.SurfaceActive
+	case theme.TokenChromeForeground:
+		return effective.ChromeForeground
+	case theme.TokenTextPrimary:
+		return effective.TextPrimary
 	case theme.TokenForeground:
 		return effective.Foreground
 	case theme.TokenMuted:
@@ -611,6 +621,9 @@ func themeColorCurrentValue(cfg theme.ThemeConfig, token theme.ColorToken) strin
 	if value != "" {
 		return value
 	}
+	if legacyForegroundFillsToken(cfg, token) {
+		return strings.TrimSpace(cfg.Foreground)
+	}
 	if cfg.Preset != "" && !strings.EqualFold(cfg.Preset, "inherit") {
 		if hex, ok := theme.PresetColorHex(cfg.Preset, token); ok {
 			return hex
@@ -629,12 +642,26 @@ func themeColorInitialQuery(cfg theme.ThemeConfig, token theme.ColorToken) strin
 	if value != "" {
 		return value
 	}
+	if legacyForegroundFillsToken(cfg, token) {
+		return strings.TrimSpace(cfg.Foreground)
+	}
 	if cfg.Preset != "" && !strings.EqualFold(cfg.Preset, "inherit") {
 		if hex, ok := theme.PresetColorHex(cfg.Preset, token); ok {
 			return hex
 		}
 	}
 	return "#"
+}
+
+func legacyForegroundFillsToken(cfg theme.ThemeConfig, token theme.ColorToken) bool {
+	switch token {
+	case theme.TokenChromeForeground:
+		return strings.TrimSpace(cfg.ChromeForeground) == "" && strings.TrimSpace(cfg.Foreground) != ""
+	case theme.TokenTextPrimary:
+		return strings.TrimSpace(cfg.TextPrimary) == "" && strings.TrimSpace(cfg.Foreground) != ""
+	default:
+		return false
+	}
 }
 
 func themeSwatch(hex string) string {
@@ -678,6 +705,10 @@ func themeColorFieldValue(cfg theme.ThemeConfig, token theme.ColorToken) string 
 		return strings.TrimSpace(cfg.Surface)
 	case theme.TokenSurfaceActive:
 		return strings.TrimSpace(cfg.SurfaceActive)
+	case theme.TokenChromeForeground:
+		return strings.TrimSpace(cfg.ChromeForeground)
+	case theme.TokenTextPrimary:
+		return strings.TrimSpace(cfg.TextPrimary)
 	case theme.TokenForeground:
 		return strings.TrimSpace(cfg.Foreground)
 	case theme.TokenMuted:
@@ -711,6 +742,10 @@ func setThemeColorField(cfg *theme.ThemeConfig, token theme.ColorToken, value st
 		cfg.Surface = value
 	case theme.TokenSurfaceActive:
 		cfg.SurfaceActive = value
+	case theme.TokenChromeForeground:
+		cfg.ChromeForeground = value
+	case theme.TokenTextPrimary:
+		cfg.TextPrimary = value
 	case theme.TokenForeground:
 		cfg.Foreground = value
 	case theme.TokenMuted:

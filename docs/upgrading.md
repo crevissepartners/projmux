@@ -50,14 +50,29 @@ separate Effective theme view has been merged into the Global theme view: each
 token row now shows its resolved value inline, with unset tokens shown as their
 dimmed `(fallback)` value.
 
+### Foreground split
+
+The old broad `foreground` theme key is now split into two clearer public keys:
+`text_primary` for primary native content text, and `chrome_foreground` for
+frame/title/search/status/window chrome foreground roles. Existing global
+`foreground` values still work as a legacy alias/fill and will feed both split
+roles unless either new key is set explicitly. Settings shows and writes the new
+split names instead of encouraging new `foreground` writes.
+
+If your previous `foreground` override made both content and chrome change
+together, you do not need to migrate immediately. To tune them separately, copy
+the value into `text_primary` and/or `chrome_foreground`, then remove
+`foreground` when you no longer need the compatibility fill.
+
 ### New public theme keys
 
-Five new public `[theme]` keys are now available: `progress`, `success`,
-`action_required` (AI/status colors), `pane_active_bg` (active-pane tint), and
-`focus` (active-pane border). Leaving a key unset keeps the historical built-in
-color; setting it repaints the matching chrome. `action_required` is independent
-of `critical` — repainting `critical` never changes it. The full public token
-set is documented in `docs/configuration.md` and `docs/theme-palette.md`.
+Seven new public `[theme]` keys are now available: `text_primary`,
+`chrome_foreground`, `progress`, `success`, `action_required` (AI/status
+colors), `pane_active_bg` (active-pane tint), and `focus` (active-pane border).
+Leaving a key unset keeps the historical built-in color; setting it repaints the
+matching role. `action_required` is independent of `critical` — repainting
+`critical` never changes it. The full public token set is documented in
+`docs/configuration.md` and `docs/theme-palette.md`.
 
 The active-pane tint (`pane_active_bg`) defaults to `colour234`, one tone darker
 than the base background so the active pane visibly sinks; the active-pane

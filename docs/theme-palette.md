@@ -20,9 +20,9 @@ bare palette literals.
 - Tmux statusbar and generated-config color tokens.
 - Settings/action/state/trust/attention helper tokens.
 
-Renderer adapters apply resolver-backed background/foreground colors to native
-picker frame chrome and to tmux status/window background tokens when an
-`EffectiveTheme` is supplied by the caller. Fallback-sourced fields still
+Renderer adapters apply resolver-backed background and `chrome_foreground`
+colors to native picker frame chrome and to tmux status/window background tokens
+when an `EffectiveTheme` is supplied by the caller. Fallback-sourced fields still
 render through the historical constants so built-in default output remains
 byte-identical. Project `.projmux/config.toml` `[theme]` is deprecated and
 ignored: it is not an effective theme source, and the resolver and Settings
@@ -40,7 +40,9 @@ onto these stable names:
 | `background` | base popup/sidebar/status surface background | native picker, frame titlebar, notify sidebar, settings popup, statusbar |
 | `surface` | raised or inactive chrome surface | frame titlebar, chips, switch cards, settings popup |
 | `surface_active` | selected/current row or active chip surface | native picker current row, frame chips, statusbar active window |
-| `foreground` | primary readable text | native picker, titlebar, statusbar, notify sidebar, settings popup |
+| `chrome_foreground` | app chrome readable text | native picker frame/title/search chrome, tmux status/window foregrounds, popup body style |
+| `text_primary` | primary content text | settings/info rows and native terminal-rendered content text |
+| `foreground` | legacy alias/fill for split foreground tokens | accepted in config for compatibility; Settings uses `text_primary` / `chrome_foreground` |
 | `muted` | secondary text, divider, disabled or stale details | picker metadata, titlebar rule, notify age/stale, settings descriptions |
 | `accent` | pointer, primary action, highlight, active affordance | native picker pointer/highlight, settings actions, chips |
 | `critical` | destructive/error/critical state | settings remove/quit, notify critical badge, statusbar critical usage |
@@ -51,11 +53,16 @@ onto these stable names:
 | `pane_active_bg` | active-pane background tint | active-pane window-active-style tint (tmux pane chrome) |
 | `focus` | active-pane border color | active-pane border (tmux pane chrome) |
 
-`progress`, `success`, and `action_required` are now **public** `[theme]` keys
-(Phase 6), no longer renderer-only candidates. The fallback contract is progress
-yellow, success green, action-required amber-orange. These roles are separate
-from notify queue severity and desktop notification urgency; an AI approval row
-can be `critical` in the notify queue while the live status badge uses
+`text_primary` and `chrome_foreground` split the old broad foreground behavior:
+changing primary content text no longer repaints frame/title/search/border/status
+chrome as a side effect. The legacy `foreground` key remains readable; it fills
+both split fields unless either split field is explicitly set.
+
+`progress`, `success`, and `action_required` are public `[theme]` keys, no
+longer renderer-only candidates. The fallback contract is progress yellow,
+success green, action-required amber-orange. These roles are separate from
+notify queue severity and desktop notification urgency; an AI approval row can
+be `critical` in the notify queue while the live status badge uses
 `action_required`, not red. `action_required` is independent of `critical`:
 repainting `critical` never changes it. `critical` remains reserved for error,
 failure, destructive, over-limit, or risk states. `pane_active_bg` and `focus`
@@ -110,6 +117,8 @@ Rules:
 - Missing global values fall back to built-in values.
 - A preset fills missing color tokens in the global layer.
 - Explicit global color tokens override preset colors.
+- Legacy `foreground` fills `text_primary` and `chrome_foreground` unless either
+  split key is explicitly set.
 - An unknown preset invalidates only the global layer.
 - An invalid color invalidates only the global layer.
 - Every effective field reports `global` or `fallback` as its source label.
@@ -144,10 +153,10 @@ Built-in preset config values are:
 - `high-contrast`
 - `terminal` — terminal-native: `background`/`surface` ride the terminal's own
   background via the `default` sentinel (no colour literal), so projmux only
-  paints foreground/accent/state chrome on top. Foreground does not support the
-  sentinel, so the foreground, muted, and selection-tint values are tuned for a
-  dark terminal (the common projmux host); on a light terminal, set those tokens
-  explicitly or pick another preset.
+  paints text/chrome foreground, accent, and state chrome on top. Foreground
+  tokens do not support the sentinel, so the text/chrome foreground, muted, and
+  selection-tint values are tuned for a dark terminal (the common projmux host);
+  on a light terminal, set those tokens explicitly or pick another preset.
 
 ## Fallback Inventory
 

@@ -56,11 +56,11 @@ func ThemeFromEffective(effective theme.EffectiveTheme) Theme {
 	if bg := effective.Background.Value.TruecolorBG(); bg != "" {
 		out.Background = "\x1b[" + bg + "m"
 	}
-	if fg := effective.Foreground.Value.TruecolorFG(); fg != "" {
+	if fg := effective.ChromeForeground.Value.TruecolorFG(); fg != "" {
 		out.Foreground = "\x1b[" + fg + "m"
 	}
-	if effective.SurfaceActive.Source != theme.SourceFallback || effective.Foreground.Source != theme.SourceFallback {
-		out.Selected = ansiBG(effective.SurfaceActive) + ansiFG(effective.Foreground)
+	if effective.SurfaceActive.Source != theme.SourceFallback || effective.ChromeForeground.Source != theme.SourceFallback {
+		out.Selected = ansiBG(effective.SurfaceActive) + ansiFG(effective.ChromeForeground)
 	}
 	if effective.Muted.Source != theme.SourceFallback {
 		out.Muted = ansiFG(effective.Muted)

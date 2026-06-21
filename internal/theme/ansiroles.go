@@ -25,13 +25,13 @@ import (
 // byte-identical. Derivation only activates for explicit (non-fallback) tokens.
 type ANSIRoles struct {
 	// surface — base chrome. Tier A/B.
-	SurfaceActive string // surface.active  Tier A <- surface_active+foreground (ANSISurfaceActiveStart)
-	SurfaceRaised string // surface.raised  Tier B <- surface (fallback bg) + foreground (ANSISurfaceRaisedStart)
+	SurfaceActive string // surface.active  Tier A <- surface_active+chrome_foreground (ANSISurfaceActiveStart)
+	SurfaceRaised string // surface.raised  Tier B <- surface (fallback bg) + chrome_foreground (ANSISurfaceRaisedStart)
 	SurfaceRule   string // surface.rule    Tier B <- surface bg + muted fg (ANSISurfaceRuleStart)
 
 	// text. Tier A/B.
-	TextPrimary   string // text.primary   Tier A <- foreground (ANSITextPrimaryStart)
-	TextSecondary string // text.secondary Tier B <- blend(foreground,muted) (ANSITextSecondaryStart)
+	TextPrimary   string // text.primary   Tier A <- text_primary (ANSITextPrimaryStart)
+	TextSecondary string // text.secondary Tier B <- blend(text_primary,muted) (ANSITextSecondaryStart)
 	TextMuted     string // text.muted     Tier A <- muted (ANSITextMutedStart)
 	TextDim       string // text.dim       Tier C renderer-only (ANSITextDimStart \x1b[90m) — no truecolor literal
 
@@ -100,12 +100,12 @@ func ANSIRolesFromEffective(effective EffectiveTheme) ANSIRoles {
 		// surface.raised: the (near-dead) surface token now feeds raised/rule so
 		// it is wired. Fallback surface == background #182226 so the literal
 		// holds; an explicit surface repaints the picker titlebar/popup body.
-		SurfaceRaised: ansiBGFieldFGFieldOrLiteral(effective.Surface, effective.Foreground, ANSISurfaceRaisedStart),
+		SurfaceRaised: ansiBGFieldFGFieldOrLiteral(effective.Surface, effective.ChromeForeground, ANSISurfaceRaisedStart),
 		SurfaceRule:   ansiBGFieldFGFieldOrLiteral(effective.Surface, effective.Muted, ANSISurfaceRuleStart),
 
 		// text
-		TextPrimary:   ansiFGOrLiteral(effective.Foreground, ANSITextPrimaryStart),
-		TextSecondary: ansiBlendFGOrLiteral(effective.Foreground, effective.Muted, ANSITextSecondaryStart),
+		TextPrimary:   ansiFGOrLiteral(effective.TextPrimary, ANSITextPrimaryStart),
+		TextSecondary: ansiBlendFGOrLiteral(effective.TextPrimary, effective.Muted, ANSITextSecondaryStart),
 		TextMuted:     ansiFGOrLiteral(effective.Muted, ANSITextMutedStart),
 		// text.dim is the \x1b[90m bright-black attribute with no truecolor
 		// literal; carry it verbatim (Tier C).

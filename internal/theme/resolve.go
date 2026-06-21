@@ -25,19 +25,21 @@ const (
 type ColorToken string
 
 const (
-	TokenBackground     ColorToken = "background"
-	TokenSurface        ColorToken = "surface"
-	TokenSurfaceActive  ColorToken = "surface_active"
-	TokenForeground     ColorToken = "foreground"
-	TokenMuted          ColorToken = "muted"
-	TokenAccent         ColorToken = "accent"
-	TokenCritical       ColorToken = "critical"
-	TokenWarning        ColorToken = "warning"
-	TokenProgress       ColorToken = "progress"
-	TokenSuccess        ColorToken = "success"
-	TokenActionRequired ColorToken = "action_required"
-	TokenPaneActiveBg   ColorToken = "pane_active_bg"
-	TokenFocus          ColorToken = "focus"
+	TokenBackground       ColorToken = "background"
+	TokenSurface          ColorToken = "surface"
+	TokenSurfaceActive    ColorToken = "surface_active"
+	TokenChromeForeground ColorToken = "chrome_foreground"
+	TokenTextPrimary      ColorToken = "text_primary"
+	TokenForeground       ColorToken = "foreground"
+	TokenMuted            ColorToken = "muted"
+	TokenAccent           ColorToken = "accent"
+	TokenCritical         ColorToken = "critical"
+	TokenWarning          ColorToken = "warning"
+	TokenProgress         ColorToken = "progress"
+	TokenSuccess          ColorToken = "success"
+	TokenActionRequired   ColorToken = "action_required"
+	TokenPaneActiveBg     ColorToken = "pane_active_bg"
+	TokenFocus            ColorToken = "focus"
 )
 
 // ResolverColorTokens is the stable display/serialization order for theme
@@ -46,6 +48,8 @@ var ResolverColorTokens = []ColorToken{
 	TokenBackground,
 	TokenSurface,
 	TokenSurfaceActive,
+	TokenChromeForeground,
+	TokenTextPrimary,
 	TokenForeground,
 	TokenMuted,
 	TokenAccent,
@@ -62,20 +66,22 @@ var ResolverColorTokens = []ColorToken{
 // config.toml. Values are intentionally raw: validation belongs to the
 // resolver so an invalid layer can warn and fall through to the next source.
 type ThemeConfig struct {
-	Preset         string
-	Background     string
-	Surface        string
-	SurfaceActive  string
-	Foreground     string
-	Muted          string
-	Accent         string
-	Critical       string
-	Warning        string
-	Progress       string
-	Success        string
-	ActionRequired string
-	PaneActiveBg   string
-	Focus          string
+	Preset           string
+	Background       string
+	Surface          string
+	SurfaceActive    string
+	ChromeForeground string
+	TextPrimary      string
+	Foreground       string
+	Muted            string
+	Accent           string
+	Critical         string
+	Warning          string
+	Progress         string
+	Success          string
+	ActionRequired   string
+	PaneActiveBg     string
+	Focus            string
 }
 
 // HasContent reports whether the config carries any theme override.
@@ -85,6 +91,8 @@ func (c ThemeConfig) HasContent() bool {
 		c.Background,
 		c.Surface,
 		c.SurfaceActive,
+		c.ChromeForeground,
+		c.TextPrimary,
 		c.Foreground,
 		c.Muted,
 		c.Accent,
@@ -110,6 +118,8 @@ func (c *ThemeConfig) Normalize() {
 	c.Background = strings.TrimSpace(c.Background)
 	c.Surface = strings.TrimSpace(c.Surface)
 	c.SurfaceActive = strings.TrimSpace(c.SurfaceActive)
+	c.ChromeForeground = strings.TrimSpace(c.ChromeForeground)
+	c.TextPrimary = strings.TrimSpace(c.TextPrimary)
 	c.Foreground = strings.TrimSpace(c.Foreground)
 	c.Muted = strings.TrimSpace(c.Muted)
 	c.Accent = strings.TrimSpace(c.Accent)
@@ -175,21 +185,23 @@ type Warning struct {
 }
 
 type EffectiveTheme struct {
-	Preset         StringField
-	Background     ColorField
-	Surface        ColorField
-	SurfaceActive  ColorField
-	Foreground     ColorField
-	Muted          ColorField
-	Accent         ColorField
-	Critical       ColorField
-	Warning        ColorField
-	Progress       ColorField
-	Success        ColorField
-	ActionRequired ColorField
-	PaneActiveBg   ColorField
-	Focus          ColorField
-	Warnings       []Warning
+	Preset           StringField
+	Background       ColorField
+	Surface          ColorField
+	SurfaceActive    ColorField
+	ChromeForeground ColorField
+	TextPrimary      ColorField
+	Foreground       ColorField
+	Muted            ColorField
+	Accent           ColorField
+	Critical         ColorField
+	Warning          ColorField
+	Progress         ColorField
+	Success          ColorField
+	ActionRequired   ColorField
+	PaneActiveBg     ColorField
+	Focus            ColorField
+	Warnings         []Warning
 }
 
 // RenderRoles is the semantic role -> tmux color map that app chrome consumes
@@ -212,9 +224,9 @@ type EffectiveTheme struct {
 type RenderRoles struct {
 	// surface — base chrome. Tier A.
 	WindowInactiveBg string // surface.base       <- background      (colour235)
-	WindowInactiveFg string // text on inactive    <- foreground      (colour245 fallback)
+	WindowInactiveFg string // text on inactive    <- chrome_foreground (colour245 fallback)
 	WindowActiveBg   string // surface.active      <- surface_active  (colour240)
-	WindowActiveFg   string // text on active      <- foreground      (colour231 fallback)
+	WindowActiveFg   string // text on active      <- chrome_foreground (colour231 fallback)
 	// status bar bg — popup/chrome group (Phase 6b). Follows `surface`, NOT
 	// `background`: status-style, the native popup body, and the settings/notify/
 	// recent/picker frames all route through StatusBg, so deriving it from
@@ -222,7 +234,7 @@ type RenderRoles struct {
 	// follows `background` via PaneInactiveBg). Fallback stays the colour235
 	// literal so unset surface (≈ background) is byte-identical with before.
 	StatusBg string // status bar bg       <- surface         (colour235)
-	StatusFg string // status bar fg       <- foreground      (colour245 fallback)
+	StatusFg string // status bar fg       <- chrome_foreground (colour245 fallback)
 
 	// pane / focus chrome.
 	PaneBorder string // pane.border          Tier A <- muted-ish (colour236)
@@ -265,9 +277,9 @@ type RenderRoles struct {
 	AIActionRequired string // ai.action_required Tier A <- action_required (colour214 fallback); independent of critical
 
 	// statusbar git segment cluster (Phase 4). The segment foreground is the
-	// only foreground-derived role here; the segment bg and the staged/dirty/
+	// only chrome_foreground-derived role here; the segment bg and the staged/dirty/
 	// ahead/behind state colors are renderer-only literals carried verbatim.
-	GitSegmentFg string // git.segment_fg Tier A <- foreground (colour231 fallback)
+	GitSegmentFg string // git.segment_fg Tier A <- chrome_foreground (colour231 fallback)
 	GitSegmentBg string // git.segment_bg Tier C renderer-only (colour30)
 	GitStaged    string // git.staged     Tier C renderer-only (colour151)
 	GitDirty     string // git.dirty      Tier C renderer-only (colour222)
@@ -301,14 +313,14 @@ type RenderRoles struct {
 func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 	return RenderRoles{
 		WindowInactiveBg: tmuxColorOrFallback(effective.Background, TmuxWindowInactiveBg),
-		WindowInactiveFg: tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
+		WindowInactiveFg: tmuxColorOrFallback(effective.ChromeForeground, TmuxWindowInactiveFg),
 		WindowActiveBg:   tmuxColorOrFallback(effective.SurfaceActive, TmuxWindowActiveBg),
-		WindowActiveFg:   tmuxColorOrFallback(effective.Foreground, TmuxWindowActiveFg),
+		WindowActiveFg:   tmuxColorOrFallback(effective.ChromeForeground, TmuxWindowActiveFg),
 		// Popup/chrome group (Phase 6b): StatusBg follows `surface`, not
 		// `background`. Fallback stays the colour235 literal so unset surface is
 		// byte-identical with before (surface fallback ≈ background).
 		StatusBg: tmuxColorOrFallback(effective.Surface, TmuxWindowInactiveBg),
-		StatusFg: tmuxColorOrFallback(effective.Foreground, TmuxWindowInactiveFg),
+		StatusFg: tmuxColorOrFallback(effective.ChromeForeground, TmuxWindowInactiveFg),
 
 		PaneBorder: tmuxColorOrFallback(effective.Muted, TmuxPaneBorderFg),
 		// Tier A: focus.border follows the explicit `focus` public token, falling
@@ -347,9 +359,9 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		AIActionRequired: tmuxColorOrFallback(effective.ActionRequired, TmuxAIBadgeActionRequiredFg),
 
 		// statusbar git segment: only the segment fg follows the public
-		// foreground token (Tier A). The segment bg and state colors are
+		// chrome_foreground token (Tier A). The segment bg and state colors are
 		// Tier C renderer-only literals carried verbatim.
-		GitSegmentFg: tmuxColorOrFallback(effective.Foreground, TmuxGitSegmentFg),
+		GitSegmentFg: tmuxColorOrFallback(effective.ChromeForeground, TmuxGitSegmentFg),
 		GitSegmentBg: TmuxGitSegmentBg,
 		GitStaged:    TmuxStateStagedFg,
 		GitDirty:     TmuxStateDirtyFg,
@@ -412,6 +424,8 @@ func (t EffectiveTheme) Fields() []EffectiveField {
 		{Name: string(TokenBackground), Value: t.Background.Value.Hex, Source: t.Background.Source},
 		{Name: string(TokenSurface), Value: t.Surface.Value.Hex, Source: t.Surface.Source},
 		{Name: string(TokenSurfaceActive), Value: t.SurfaceActive.Value.Hex, Source: t.SurfaceActive.Source},
+		{Name: string(TokenChromeForeground), Value: t.ChromeForeground.Value.Hex, Source: t.ChromeForeground.Source},
+		{Name: string(TokenTextPrimary), Value: t.TextPrimary.Value.Hex, Source: t.TextPrimary.Source},
 		{Name: string(TokenForeground), Value: t.Foreground.Value.Hex, Source: t.Foreground.Source},
 		{Name: string(TokenMuted), Value: t.Muted.Value.Hex, Source: t.Muted.Source},
 		{Name: string(TokenAccent), Value: t.Accent.Value.Hex, Source: t.Accent.Source},
@@ -460,26 +474,28 @@ var builtinPresets = map[string]preset{
 	"projmux-dark": {
 		Name: "projmux-dark",
 		Colors: map[ColorToken]ColorSpec{
-			TokenBackground:     {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
-			TokenSurface:        {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
-			TokenSurfaceActive:  {Hex: "#2c383d", Tmux: TmuxWindowActiveBg},
-			TokenForeground:     {Hex: "#d8e0e4", Tmux: TmuxPrimaryFg},
-			TokenMuted:          {Hex: "#75848c", Tmux: TmuxMutedFg},
-			TokenAccent:         {Hex: "#7ac7ad", Tmux: TmuxActionBg},
-			TokenCritical:       {Hex: "#ff6b6b", Tmux: TmuxStateCriticalFg},
-			TokenWarning:        {Hex: "#ffcc66", Tmux: TmuxStateProgressFg},
-			TokenProgress:       {Hex: "#ffcc66", Tmux: TmuxStateProgressFg},
-			TokenSuccess:        {Hex: "#5faf87", Tmux: TmuxStateSuccessFg},
-			TokenActionRequired: {Hex: "#ffaf00", Tmux: TmuxAIBadgeActionRequiredFg},
-			TokenPaneActiveBg:   {Hex: "#1c1c1c", Tmux: TmuxPaneActiveTintBg},
-			TokenFocus:          {Hex: "#00ffff", Tmux: TmuxPaneActiveBorderFg},
+			TokenBackground:       {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
+			TokenSurface:          {Hex: "#182226", Tmux: TmuxWindowInactiveBg},
+			TokenSurfaceActive:    {Hex: "#2c383d", Tmux: TmuxWindowActiveBg},
+			TokenChromeForeground: {Hex: "#d8e0e4", Tmux: TmuxPrimaryFg},
+			TokenTextPrimary:      {Hex: "#d8e0e4", Tmux: TmuxPrimaryFg},
+			TokenForeground:       {Hex: "#d8e0e4", Tmux: TmuxPrimaryFg},
+			TokenMuted:            {Hex: "#75848c", Tmux: TmuxMutedFg},
+			TokenAccent:           {Hex: "#7ac7ad", Tmux: TmuxActionBg},
+			TokenCritical:         {Hex: "#ff6b6b", Tmux: TmuxStateCriticalFg},
+			TokenWarning:          {Hex: "#ffcc66", Tmux: TmuxStateProgressFg},
+			TokenProgress:         {Hex: "#ffcc66", Tmux: TmuxStateProgressFg},
+			TokenSuccess:          {Hex: "#5faf87", Tmux: TmuxStateSuccessFg},
+			TokenActionRequired:   {Hex: "#ffaf00", Tmux: TmuxAIBadgeActionRequiredFg},
+			TokenPaneActiveBg:     {Hex: "#1c1c1c", Tmux: TmuxPaneActiveTintBg},
+			TokenFocus:            {Hex: "#00ffff", Tmux: TmuxPaneActiveBorderFg},
 		},
 	},
 	"midnight": {
 		Name: "midnight",
 		Colors: presetColors(map[ColorToken]string{
 			TokenBackground: "#101820", TokenSurface: "#16242d", TokenSurfaceActive: "#253844",
-			TokenForeground: "#e7eef2", TokenMuted: "#8296a1", TokenAccent: "#7bd3c6",
+			TokenChromeForeground: "#e7eef2", TokenTextPrimary: "#e7eef2", TokenForeground: "#e7eef2", TokenMuted: "#8296a1", TokenAccent: "#7bd3c6",
 			TokenCritical: "#ff6b7a", TokenWarning: "#e6a23c",
 			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
 			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
@@ -489,7 +505,7 @@ var builtinPresets = map[string]preset{
 		Name: "forest",
 		Colors: presetColors(map[ColorToken]string{
 			TokenBackground: "#14201a", TokenSurface: "#1b2b22", TokenSurfaceActive: "#2b4335",
-			TokenForeground: "#e0ebe4", TokenMuted: "#8fa196", TokenAccent: "#9bcf8f",
+			TokenChromeForeground: "#e0ebe4", TokenTextPrimary: "#e0ebe4", TokenForeground: "#e0ebe4", TokenMuted: "#8fa196", TokenAccent: "#9bcf8f",
 			TokenCritical: "#ff7a70", TokenWarning: "#e5c45f",
 			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
 			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
@@ -499,7 +515,7 @@ var builtinPresets = map[string]preset{
 		Name: "rose",
 		Colors: presetColors(map[ColorToken]string{
 			TokenBackground: "#20151c", TokenSurface: "#2b1d27", TokenSurfaceActive: "#412b3a",
-			TokenForeground: "#f0e3ea", TokenMuted: "#aa8d9c", TokenAccent: "#e12672",
+			TokenChromeForeground: "#f0e3ea", TokenTextPrimary: "#f0e3ea", TokenForeground: "#f0e3ea", TokenMuted: "#aa8d9c", TokenAccent: "#e12672",
 			TokenCritical: "#ff6b6b", TokenWarning: "#f0c36a",
 			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
 			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
@@ -509,7 +525,7 @@ var builtinPresets = map[string]preset{
 		Name: "high-contrast",
 		Colors: presetColors(map[ColorToken]string{
 			TokenBackground: "#000000", TokenSurface: "#101010", TokenSurfaceActive: "#303030",
-			TokenForeground: "#ffffff", TokenMuted: "#b8b8b8", TokenAccent: "#00ffd0",
+			TokenChromeForeground: "#ffffff", TokenTextPrimary: "#ffffff", TokenForeground: "#ffffff", TokenMuted: "#b8b8b8", TokenAccent: "#00ffd0",
 			TokenCritical: "#ff4040", TokenWarning: "#ffd700",
 			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
 			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
@@ -517,16 +533,16 @@ var builtinPresets = map[string]preset{
 	},
 	// terminal: a terminal-native preset. background/surface ride the terminal's
 	// own background via the "default" sentinel (no colour literal); projmux only
-	// paints foreground/accent/state chrome on top. Foreground does not support
-	// the sentinel, so fg/muted/selection tints are tuned for a DARK terminal
+	// paints text/chrome foreground, accent, and state chrome on top. Foreground
+	// tokens do not support the sentinel, so fg/muted/selection tints are tuned for a DARK terminal
 	// (the common projmux host) — documented in docs/theme-palette.md. State
 	// colors keep the rubric's distinct amber tier (progress 221 / warning 179 /
 	// action_required 214).
 	"terminal": {
 		Name: "terminal",
 		Colors: presetColorsWithTerminalDefault(map[ColorToken]string{
-			TokenSurfaceActive: "#303030",
-			TokenForeground:    "#d0d0d0", TokenMuted: "#8a8a8a", TokenAccent: "#5fd7af",
+			TokenSurfaceActive:    "#303030",
+			TokenChromeForeground: "#d0d0d0", TokenTextPrimary: "#d0d0d0", TokenForeground: "#d0d0d0", TokenMuted: "#8a8a8a", TokenAccent: "#5fd7af",
 			TokenCritical: "#ff5f5f", TokenWarning: "#d7af5f",
 			TokenProgress: "#ffd75f", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
 			TokenPaneActiveBg: "#262626", TokenFocus: "#00ffff",
@@ -590,6 +606,8 @@ func ResolveTheme(global ThemeConfig) EffectiveTheme {
 	result.Background = resolveColor(valid, TokenBackground)
 	result.Surface = resolveColor(valid, TokenSurface)
 	result.SurfaceActive = resolveColor(valid, TokenSurfaceActive)
+	result.ChromeForeground = resolveColor(valid, TokenChromeForeground)
+	result.TextPrimary = resolveColor(valid, TokenTextPrimary)
 	result.Foreground = resolveColor(valid, TokenForeground)
 	result.Muted = resolveColor(valid, TokenMuted)
 	result.Accent = resolveColor(valid, TokenAccent)
@@ -633,6 +651,7 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 		maps.Copy(colors, p.Colors)
 	}
 
+	explicit := map[ColorToken]ColorSpec{}
 	for _, item := range []struct {
 		token ColorToken
 		value string
@@ -640,6 +659,8 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 		{TokenBackground, cfg.Background},
 		{TokenSurface, cfg.Surface},
 		{TokenSurfaceActive, cfg.SurfaceActive},
+		{TokenChromeForeground, cfg.ChromeForeground},
+		{TokenTextPrimary, cfg.TextPrimary},
 		{TokenForeground, cfg.Foreground},
 		{TokenMuted, cfg.Muted},
 		{TokenAccent, cfg.Accent},
@@ -664,7 +685,9 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 		// terminal background (no 48;2 / 48;5 sequence).
 		if isThemeDefaultSentinel(item.value) {
 			if tokenSupportsDefaultSentinel(item.token) {
-				colors[item.token] = ColorSpec{Tmux: ThemeDefaultSentinel}
+				spec := ColorSpec{Tmux: ThemeDefaultSentinel}
+				colors[item.token] = spec
+				explicit[item.token] = spec
 				continue
 			}
 			warnings = append(warnings, Warning{
@@ -681,11 +704,35 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 			})
 			return resolvedLayer{}, warnings, false
 		}
-		colors[item.token] = ColorSpec{Hex: hex, Tmux: nearestTmuxColor(hex)}
+		spec := ColorSpec{Hex: hex, Tmux: nearestTmuxColor(hex)}
+		colors[item.token] = spec
+		explicit[item.token] = spec
 	}
+	applyForegroundAliases(colors, explicit)
 
 	layer := resolvedLayer{source: input.source, preset: presetName, colors: colors}
 	return layer, nil, true
+}
+
+func applyForegroundAliases(colors, explicit map[ColorToken]ColorSpec) {
+	if legacy, ok := explicit[TokenForeground]; ok {
+		if _, set := explicit[TokenChromeForeground]; !set {
+			colors[TokenChromeForeground] = legacy
+		}
+		if _, set := explicit[TokenTextPrimary]; !set {
+			colors[TokenTextPrimary] = legacy
+		}
+	}
+	if _, ok := colors[TokenForeground]; ok {
+		return
+	}
+	if text, ok := colors[TokenTextPrimary]; ok {
+		colors[TokenForeground] = text
+		return
+	}
+	if chrome, ok := colors[TokenChromeForeground]; ok {
+		colors[TokenForeground] = chrome
+	}
 }
 
 func resolveColor(layers []resolvedLayer, token ColorToken) ColorField {

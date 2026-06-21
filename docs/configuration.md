@@ -203,12 +203,12 @@ See `docs/upgrading.md` for the migration note for existing project `[theme]`
 users.
 
 Renderer adapters can apply an already resolved `EffectiveTheme` to native
-picker frame background/foreground SGR and tmux status/window `colourN`
-background tokens. Settings and native project picker surfaces load global
-`[theme]` values through the shared effective-theme source. Native picker
-frames also apply the built-in fallback `background`/`foreground` tokens so
-picker-owned padding, empty rows, footer rows, and preview gaps do not inherit
-the terminal default background.
+picker frame background / `chrome_foreground` SGR and tmux status/window
+`colourN` background tokens. Settings and native project picker surfaces load
+global `[theme]` values through the shared effective-theme source. Native picker
+frames also apply the built-in fallback `background` / `chrome_foreground`
+tokens so picker-owned padding, empty rows, footer rows, and preview gaps do not
+inherit the terminal default background.
 
 Active pane focus is part of the theme app chrome. The active pane is marked by
 an active border (`pane-active-border-style`, fallback cyan `colour51`, the
@@ -222,8 +222,8 @@ top`, pane topics, AI badges, and visible pane labels.
 
 Native picker popups launched through `projmux tmux popup-toggle` also pass a
 per-popup tmux 3.4 `display-popup -s` body style using the effective theme
-`surface`/`foreground` tmux tokens (popup/chrome backgrounds follow `surface`,
-Phase 6b). This styles only the tmux popup body
+`surface` / `chrome_foreground` tmux tokens (popup/chrome backgrounds follow
+`surface`). This styles only the tmux popup body
 before the native renderer draws. It does not set global `popup-style` or
 `popup-border-style`, and it does not change shell pane backgrounds,
 `default-style`, `window-style`, OSC terminal backgrounds, or the general
@@ -237,7 +237,8 @@ preset = "projmux-dark"
 background = "#182226"
 surface = "#182226"
 surface_active = "#2c383d"
-foreground = "#d8e0e4"
+chrome_foreground = "#d8e0e4"
+text_primary = "#d8e0e4"
 muted = "#75848c"
 accent = "#7ac7ad"
 critical = "#ff6b6b"
@@ -248,6 +249,14 @@ action_required = "#ffaf00"
 pane_active_bg = "#1c1c1c"
 focus = "#00ffff"
 ```
+
+`text_primary` controls primary content text in native terminal-rendered UI.
+`chrome_foreground` controls frame, title, search, status, border-adjacent, and
+other app chrome foreground roles. The older `foreground` key is still accepted
+as a legacy alias/fill value: when present, it fills `text_primary` and
+`chrome_foreground` unless either new key is explicitly set. New configs should
+prefer the split keys, and Settings presents the split names rather than
+encouraging writes to `foreground`.
 
 `progress`, `success`, and `action_required` are the AI/status colors (progress
 yellow, success green, action-required amber-orange). `action_required` is the
@@ -262,8 +271,8 @@ Supported presets are `projmux-dark`, `midnight`, `forest`, `rose`,
 explicit color tokens override preset values. Tokens the global theme leaves
 unset fall through to the built-in fallback preset. The `terminal` preset is
 terminal-native: its `background`/`surface` use the `default` sentinel so the
-terminal's own background shows through, with foreground/accent/state tuned for
-a dark terminal.
+terminal's own background shows through, with text/chrome foreground,
+accent, and state colors tuned for a dark terminal.
 
 Unknown presets and invalid color values invalidate only the global theme
 source and produce resolver warnings; the built-in fallback still resolves
