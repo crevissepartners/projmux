@@ -67,22 +67,26 @@ type DeferredUpdate struct {
 }
 
 type Options struct {
-	UI                    string
-	Items                 []Item
-	Title                 string
-	TitleChips            []projmuxpicker.Chip
-	Prompt                string
-	Header                string
-	Footer                string
-	Locale                i18n.Locale
-	Actions               []Action
-	Preview               Preview
-	InitialQuery          string
-	InitialIndex          int
-	InitialIndexSet       bool
-	DisableSearch         bool
-	AcceptQuery           bool
-	MultiLine             bool
+	UI              string
+	Items           []Item
+	Title           string
+	TitleChips      []projmuxpicker.Chip
+	Prompt          string
+	Header          string
+	Footer          string
+	Locale          i18n.Locale
+	Actions         []Action
+	Preview         Preview
+	InitialQuery    string
+	InitialIndex    int
+	InitialIndexSet bool
+	DisableSearch   bool
+	AcceptQuery     bool
+	MultiLine       bool
+	// ColorGrid switches runNativeInteractive into the xterm-256 color grid
+	// mode: a navigable swatch grid with a live preview instead of the list
+	// filter/preview machinery. Purely additive; ignored by list pickers.
+	ColorGrid             bool
 	Theme                 *theme.EffectiveTheme
 	DeferredUpdate        func() (DeferredUpdate, error)
 	DeferredUpdateTrigger <-chan struct{}
@@ -457,6 +461,9 @@ type nativeDeferredRead struct {
 }
 
 func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result, error) {
+	if options.ColorGrid {
+		return runNativeColorGrid(in, out, options)
+	}
 	query := strings.TrimSpace(options.InitialQuery)
 	if options.DisableSearch {
 		query = ""
