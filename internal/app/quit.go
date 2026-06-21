@@ -67,7 +67,7 @@ func (c *quitCommand) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *quitCommand) pickAction() (string, error) {
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.picker, quitActionOptions())
+	result, err := runPickerOptionBackend(os.UserHomeDir, c.lookupEnv, c.nativePicker, c.picker, quitActionOptions())
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return "", nil

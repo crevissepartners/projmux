@@ -36,6 +36,7 @@ func TestRunPickerOptionBackendUsesNativeWhenRequested(t *testing.T) {
 	})
 
 	result, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			if name == intpicker.BackendEnv {
 				return "native"
@@ -76,6 +77,7 @@ func TestRunPickerOptionBackendUsesSavedNativeBackend(t *testing.T) {
 	var compatCalled bool
 	nativeCalled := false
 	result, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			switch name {
 			case intpicker.BackendEnv:
@@ -123,6 +125,7 @@ func TestRunPickerOptionBackendDefaultsToNativeBackend(t *testing.T) {
 	var compatCalled bool
 	var nativeCalled bool
 	result, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			switch name {
 			case intpicker.BackendEnv:
@@ -164,6 +167,7 @@ func TestRunPickerOptionBackendPopulatesFallbackTheme(t *testing.T) {
 
 	var gotTheme *theme.EffectiveTheme
 	_, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(string) string { return "" },
 		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			gotTheme = options.Theme
@@ -192,6 +196,7 @@ func TestRunPickerOptionBackendPreservesSuppliedTheme(t *testing.T) {
 	})
 	var gotTheme *theme.EffectiveTheme
 	_, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(string) string { return "" },
 		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			gotTheme = options.Theme
@@ -224,6 +229,7 @@ func TestRunPickerOptionBackendIgnoresDeprecatedBackendEnvOverride(t *testing.T)
 	var nativeCalled bool
 	var compatCalled bool
 	result, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			if name == intpicker.BackendEnv {
 				return "fzf"
@@ -259,6 +265,7 @@ func TestRunPickerOptionBackendErrorsWhenNativeMissingWithoutCallingCompatRunner
 
 	var compatCalled bool
 	_, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			if name == intpicker.BackendEnv {
 				return "fzf"

@@ -787,7 +787,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	if c.nativePicker == nil {
 		return errors.New("native picker is not configured")
 	}
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
+	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
 		UI:         "ai-settings",
 		Entries:    c.settingsRows(),
 		Title:      "AI Settings - Default split mode",
@@ -812,7 +812,7 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 	if c.nativePicker == nil {
 		return intpickercompat.Result{}, errors.New("native picker is not configured")
 	}
-	return runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
+	return runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
 		UI:         "ai-picker",
 		Entries:    c.agentRows(),
 		Title:      localizeUIText(appLocale(c.homeDir, c.lookupEnv), "AI Launch - Split direction: ") + direction,

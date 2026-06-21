@@ -463,7 +463,7 @@ func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
 			return err
 		}
 
-		result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
+		result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
 			UI:      "settings",
 			Entries: entries,
 		})
@@ -519,7 +519,7 @@ func (c *switchCommand) runAddPinInteractive(stdout io.Writer) error {
 		return nil
 	}
 
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
+	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
 		UI:      "pin",
 		Entries: entries,
 	})
