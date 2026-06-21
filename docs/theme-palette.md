@@ -167,7 +167,7 @@ Built-in preset config values are:
   and a deep indigo active pane tint.
 - `carbon-violet` — charcoal/violet dark theme with darker popup/status
   surfaces and a black active pane tint.
-- `high-contrast` — black surfaces, white text, a vivid blue active surface,
+- `high-contrast` — black surfaces, white text, a dark blue active surface,
   near-black active pane tint, vivid cyan focus, and bright
   cyan/yellow/red/green state colors.
 
