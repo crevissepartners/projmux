@@ -472,8 +472,18 @@ var uiTextKeys = map[string]i18n.Key{
 // uiTextKeys / localizeUIText directly.
 var settingsTextKeys = uiTextKeys
 
-func settingsLocaleFromEnv() i18n.Locale {
-	return appLocale(nil, os.Getenv)
+// settingsLocale resolves the active UI locale for package-level eager
+// localization helpers that have no *settingsCommand (and therefore no
+// injected homeDir) — e.g. projmuxFooter, settingsLabel, and the settings root
+// chips/prompts/entries. It MUST pass os.UserHomeDir, not nil: appLocale only
+// honors the global config `[ui] locale` override when it can read the global
+// config, and a nil homeDir makes appGlobalLocaleOverride return "" so the
+// override is silently dropped and resolution falls through to the ambient
+// LANG. That nil was the bug behind footers/labels rendering Korean for a user
+// who pinned `[ui] locale = "en-US"` under a ko_KR terminal. The command-bound
+// path already does the right thing via (*settingsCommand).locale().
+func settingsLocale() i18n.Locale {
+	return appLocale(os.UserHomeDir, os.Getenv)
 }
 
 // localizeUIText is the shared UI localization entry point. Given the active
@@ -490,7 +500,7 @@ func localizeUIText(locale i18n.Locale, fallback string) string {
 }
 
 func settingsCatalogText(fallback string) string {
-	return settingsCatalogTextLocale(settingsLocaleFromEnv(), fallback)
+	return settingsCatalogTextLocale(settingsLocale(), fallback)
 }
 
 func settingsCatalogTextLocale(locale i18n.Locale, fallback string) string {
