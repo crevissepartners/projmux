@@ -510,7 +510,7 @@ var builtinPresets = map[string]preset{
 	"blue-hour": {
 		Name: "blue-hour",
 		Colors: presetColors(map[ColorToken]string{
-			TokenBackground: "#1e1e2e", TokenSurface: "#2d4a6e", TokenSurfaceActive: "#4a5878",
+			TokenBackground: "#1e1e2e", TokenSurface: "#16242d", TokenStatusBackground: "#132b38", TokenSurfaceActive: "#4a5878",
 			TokenChromeForeground: "#acb6bf", TokenTextPrimary: "#acb6bf", TokenForeground: "#acb6bf", TokenMuted: "#4a5878", TokenAccent: "#3d8fd1",
 			TokenCritical: "#ec6a88", TokenWarning: "#efb472",
 			TokenProgress: "#5ca7e4", TokenSuccess: "#3fdaa4", TokenActionRequired: "#ffca85",
@@ -520,7 +520,7 @@ var builtinPresets = map[string]preset{
 	"carbon-violet": {
 		Name: "carbon-violet",
 		Colors: presetColors(map[ColorToken]string{
-			TokenBackground: "#1f2026", TokenSurface: "#292a30", TokenSurfaceActive: "#3a3b44",
+			TokenBackground: "#1f2026", TokenSurface: "#23212b", TokenStatusBackground: "#1a1822", TokenSurfaceActive: "#3a3b44",
 			TokenChromeForeground: "#d6d3df", TokenTextPrimary: "#d6d3df", TokenForeground: "#d6d3df", TokenMuted: "#8d8996", TokenAccent: "#b48ead",
 			TokenCritical: "#ff5f5f", TokenWarning: "#d7af5f",
 			TokenProgress: "#87afff", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
