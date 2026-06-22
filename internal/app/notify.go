@@ -486,7 +486,28 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 			delete(expanded, groupKey)
 			return refresh()
 		}
-		return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: ctx.Key, Value: ctx.Value, Query: ctx.Query}}, nil
+		id := strings.TrimSpace(ctx.Value)
+		if id == "" || id == notifySidebarEmptyValue {
+			return refresh()
+		}
+		entry, ok := findNotificationByID(current, id)
+		if !ok {
+			return refresh()
+		}
+		if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
+			if isFocusTargetUnresolved(err) {
+				if ackErr := store.Ack(id); ackErr != nil {
+					return intpicker.DeferredUpdate{}, fmt.Errorf("ack target-gone notification: %w", ackErr)
+				}
+				return refresh()
+			}
+			c.displayNotifySidebarMessage(fmt.Sprintf("notify focus failed: %s; not acked", focusFailureSummary(err)))
+			return refresh()
+		}
+		if err := ackFocusedNotification(store, entry, current); err != nil {
+			return intpicker.DeferredUpdate{}, fmt.Errorf("ack focused notification: %w", err)
+		}
+		return refresh()
 	}
 	actions := append(
 		pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, "notify-sidebar", "esc"),
