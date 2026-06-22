@@ -75,7 +75,7 @@
   three-line grouped card rendering with child-count/fold semantics plus focus/ack/non-critical-clear/clear-all
   actions, notify/statusbar/sidebar attention-vs-AI palette assertions including muted inactive/gone rows,
   native picker-session-local `a` ack that refreshes the sidebar without
-  focusing or restarting the picker, native child-row Enter focus/ack handling that refreshes and keeps the sidebar open across success, target-gone cleanup, and transient focus failure, non-critical `x` bulk clear that preserves critical rows, empty
+  focusing or restarting the picker, non-critical `x` bulk clear that preserves critical rows, empty
   state rendering after all visible non-critical rows are cleared, and notify queue-write refresh events
   that update an open native sidebar best-effort without failing queue pushes, and `focus` dispatch diagnostics for session fallback, unresolved
   targets, window fallback, pane fallback, explicit id failures as unresolved exits, and
