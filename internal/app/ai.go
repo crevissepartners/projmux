@@ -23,6 +23,9 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -873,6 +876,7 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	if !ok {
 		return nil
 	}
+	selection = enrichAIResumeSelection(selection, sessions)
 	return c.runSelectedResumeSession(selection, direction)
 }
 
@@ -898,8 +902,10 @@ func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessio
 }
 
 type aiResumeSelection struct {
-	agent    string
-	resumeID string
+	agent     string
+	resumeID  string
+	source    string
+	updatedAt time.Time
 }
 
 func aiResumeSessionRows(sessions []aisessions.SessionMeta) ([]intpickercompat.Entry, int, int) {
@@ -971,9 +977,21 @@ func parseAIResumePickerValue(value string) (aiResumeSelection, bool) {
 	return aiResumeSelection{agent: strings.TrimSpace(parts[1]), resumeID: strings.TrimSpace(parts[2])}, true
 }
 
+func enrichAIResumeSelection(selection aiResumeSelection, sessions []aisessions.SessionMeta) aiResumeSelection {
+	agent := normalizeAIMode(selection.agent)
+	resumeID := strings.TrimSpace(selection.resumeID)
+	for _, session := range sessions {
+		if normalizeAIMode(session.Agent) != agent || strings.TrimSpace(session.ResumeID) != resumeID {
+			continue
+		}
+		selection.source = strings.TrimSpace(session.Source)
+		selection.updatedAt = session.LastModified
+		return selection
+	}
+	return selection
+}
+
 func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direction string) error {
-	// Phase 2 owns replacing this fresh fallback with agent-specific ResumeArgs
-	// wiring and pane resume metadata. Keep this as the single handoff point.
 	mode := normalizeAIMode(selection.agent)
 	if mode != aiModeClaude && mode != aiModeCodex && mode != aiModeAntigravity {
 		return nil
@@ -981,7 +999,42 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 	if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
 		return err
 	}
-	return c.runAgentSplit(mode, direction)
+	resumeArgv, err := resumeArgsForAgent(mode, selection.resumeID)
+	if err != nil {
+		_ = c.displayMessage(fmt.Sprintf("Could not resume %s session: %v; launching new session", mode, err))
+		return c.runAgentSplit(mode, direction)
+	}
+	agentBin := c.findAgentBinary(mode)
+	if agentBin == "" {
+		message := c.missingAgentRunnerMessage(mode)
+		_ = c.displayMessage(message)
+		return errors.New(message)
+	}
+	normalizedResumeID := resumeArgv[len(resumeArgv)-1]
+	resumeArgv[0] = agentBin
+	return c.runAgentSplitResolvedWithOptions(mode, direction, nil, c.resolveTargetPane(), c.resolveAgentContextDir(mode), aiSplitLaunchOptions{
+		execArgv:    resumeArgv,
+		pathPrepend: filepath.Dir(agentBin),
+		resume: aiPaneResumeMetadata{
+			sessionID: normalizedResumeID,
+			resumeID:  normalizedResumeID,
+			source:    selection.source,
+			updatedAt: selection.updatedAt,
+		},
+	})
+}
+
+func resumeArgsForAgent(mode, resumeID string) ([]string, error) {
+	switch mode {
+	case aiModeClaude:
+		return claude.ResumeArgs(resumeID)
+	case aiModeCodex:
+		return codex.ResumeArgs(resumeID)
+	case aiModeAntigravity:
+		return antigravity.ResumeArgs(resumeID)
+	default:
+		return nil, fmt.Errorf("unsupported resume agent: %s", mode)
+	}
 }
 
 // themedPickerOptions fills options.Theme with the global theme source so AI
@@ -1246,10 +1299,32 @@ func (c *aiCommand) runAgentSplitWithExtraArgs(mode, direction string, extraArgs
 	return c.runAgentSplitResolved(mode, direction, extraArgs, c.resolveTargetPane(), c.resolveAgentContextDir(mode))
 }
 
+type aiSplitLaunchOptions struct {
+	execArgv    []string
+	pathPrepend string
+	resume      aiPaneResumeMetadata
+}
+
+type aiPaneResumeMetadata struct {
+	sessionID string
+	resumeID  string
+	source    string
+	updatedAt time.Time
+}
+
 func (c *aiCommand) runAgentSplitResolved(mode, direction string, extraArgs []string, targetPane, contextDir string) error {
-	execArgv, pathPrepend, err := c.agentExecArgv(mode, extraArgs)
-	if err != nil {
-		return err
+	return c.runAgentSplitResolvedWithOptions(mode, direction, extraArgs, targetPane, contextDir, aiSplitLaunchOptions{})
+}
+
+func (c *aiCommand) runAgentSplitResolvedWithOptions(mode, direction string, extraArgs []string, targetPane, contextDir string, options aiSplitLaunchOptions) error {
+	execArgv := append([]string(nil), options.execArgv...)
+	pathPrepend := options.pathPrepend
+	if len(execArgv) == 0 {
+		var err error
+		execArgv, pathPrepend, err = c.agentExecArgv(mode, extraArgs)
+		if err != nil {
+			return err
+		}
 	}
 	usePSMux := c.usePSMuxAIBackend()
 	title := c.buildAgentTitle(mode, contextDir)
@@ -1278,7 +1353,7 @@ func (c *aiCommand) runAgentSplitResolved(mode, direction string, extraArgs []st
 	if usePSMux {
 		return nil
 	}
-	c.configureAIPane(paneID, mode, contextDir, title)
+	c.configureAIPane(paneID, mode, contextDir, title, options.resume)
 	c.applySplitLayout(targetPane, direction)
 	c.startAIWatchTitle(paneID)
 	return nil
@@ -1640,7 +1715,7 @@ func psmuxInteractiveShellCommand(lookupEnv func(string) string) []string {
 	return []string{"powershell", "-NoLogo"}
 }
 
-func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string) {
+func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string, resume aiPaneResumeMetadata) {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
 		return
@@ -1650,6 +1725,25 @@ func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string) {
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneContextOption, strings.TrimSpace(contextDir))
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, displayAITopic(title))
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
+	c.configureAIPaneResumeMetadata(paneID, resume)
+}
+
+func (c *aiCommand) configureAIPaneResumeMetadata(paneID string, resume aiPaneResumeMetadata) {
+	sessionID := strings.TrimSpace(resume.sessionID)
+	resumeID := strings.TrimSpace(resume.resumeID)
+	source := strings.TrimSpace(resume.source)
+	if sessionID != "" {
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneSessionIDOption, sessionID)
+	}
+	if resumeID != "" {
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeIDOption, resumeID)
+	}
+	if source != "" {
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeSourceOption, source)
+	}
+	if !resume.updatedAt.IsZero() {
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeUpdatedAtOption, resume.updatedAt.UTC().Format(time.RFC3339))
+	}
 }
 
 func (c *aiCommand) startAIWatchTitle(paneID string) {

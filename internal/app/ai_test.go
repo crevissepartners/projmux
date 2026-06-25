@@ -1401,7 +1401,7 @@ func TestAIResumePickerNewDelegatesToAgentPicker(t *testing.T) {
 	}
 }
 
-func TestAIResumePickerSessionRowUsesFreshFallbackUntilPhase2(t *testing.T) {
+func TestAIResumePickerSessionRowRunsCodexResumeAndRecordsPaneMetadata(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")
 	if err := os.MkdirAll(work, 0o755); err != nil {
@@ -1426,12 +1426,98 @@ func TestAIResumePickerSessionRowUsesFreshFallbackUntilPhase2(t *testing.T) {
 		t.Fatalf("picker footer = %q, want capped-count footer", runner.options.Footer)
 	}
 	commands := cmdRecorder(cmd).commands
+	wantExec := "exec " + shellQuote(codexBin) + " 'resume' '" + resumeID + "'"
+	if !containsAICommandArgSubstring(commands, wantExec) {
+		t.Fatalf("commands = %#v, want Codex resume exec %q", commands, wantExec)
+	}
+	for _, want := range [][]string{
+		{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeCodex},
+		{"set-option", "-p", "-t", "%9", aiPaneSessionIDOption, resumeID},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeIDOption, resumeID},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeSourceOption, aisessions.SourceCodexRollout},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeUpdatedAtOption, "2026-06-25T09:00:00Z"},
+	} {
+		if !containsAICommandArgs(commands, "tmux", want) {
+			t.Fatalf("commands = %#v, want resume metadata command %v", commands, want)
+		}
+	}
+}
+
+func TestRunSelectedResumeSessionRunsClaudeResume(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claudeBin := writeExecutable(t, filepath.Join(home, "bin", "claude"))
+	cmd := testAICommand(home)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"claude": claudeBin}, "%7", "%9")
+	resumeID := "018f4c2d-abc_DEF.123"
+	updatedAt := time.Date(2026, 6, 25, 10, 30, 0, 0, time.UTC)
+
+	err := cmd.runSelectedResumeSession(aiResumeSelection{
+		agent:     aiModeClaude,
+		resumeID:  resumeID,
+		source:    aisessions.SourceClaudeTranscript,
+		updatedAt: updatedAt,
+	}, "down")
+	if err != nil {
+		t.Fatalf("runSelectedResumeSession() error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	wantExec := "exec " + shellQuote(claudeBin) + " '--resume' '" + resumeID + "'"
+	if !containsAICommandArgSubstring(commands, wantExec) {
+		t.Fatalf("commands = %#v, want Claude resume exec %q", commands, wantExec)
+	}
+	for _, want := range [][]string{
+		{"split-window", "-P", "-F", "#{pane_id}", "-v", "-t", "%7", "-c", work, "/bin/bash", "-lc"},
+		{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeClaude},
+		{"set-option", "-p", "-t", "%9", aiPaneSessionIDOption, resumeID},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeIDOption, resumeID},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeSourceOption, aisessions.SourceClaudeTranscript},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeUpdatedAtOption, "2026-06-25T10:30:00Z"},
+	} {
+		if !containsAICommandArgs(commands, "tmux", want) {
+			t.Fatalf("commands = %#v, want command %v", commands, want)
+		}
+	}
+}
+
+func TestRunSelectedResumeSessionInvalidResumeIDFallsBackToFresh(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd := testAICommand(home)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"codex": codexBin}, "%7", "%9")
+
+	err := cmd.runSelectedResumeSession(aiResumeSelection{agent: aiModeCodex, resumeID: "bad\nid"}, "right")
+	if err != nil {
+		t.Fatalf("runSelectedResumeSession() error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
 	wantExec := "exec " + shellQuote(codexBin)
 	if !containsAICommandArgSubstring(commands, wantExec) {
 		t.Fatalf("commands = %#v, want fresh Codex exec %q", commands, wantExec)
 	}
-	if containsAICommandArgSubstring(commands, "resume "+resumeID) {
-		t.Fatalf("commands = %#v, Phase 1 must not wire codex resume args", commands)
+	if containsAICommandArgSubstring(commands, "exec "+shellQuote(codexBin)+" 'resume'") {
+		t.Fatalf("commands = %#v, invalid resume id should fall back to fresh launch", commands)
+	}
+	if !containsAICommandArgSubstring(commands, "Could not resume codex session") {
+		t.Fatalf("commands = %#v, want fallback message", commands)
+	}
+	for _, forbidden := range [][]string{
+		{"set-option", "-p", "-t", "%9", aiPaneSessionIDOption},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeIDOption},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeSourceOption},
+	} {
+		if containsAICommandArgs(commands, "tmux", forbidden) {
+			t.Fatalf("commands = %#v, fresh fallback must not write resume metadata %v", commands, forbidden)
+		}
 	}
 }
 
