@@ -66,6 +66,7 @@ projmux shell
 - `Alt-4`: AI split picker.
 - `Alt-5`: settings.
 - `Alt-6`: project switcher popup.
+- `Alt-7`: AI resume session picker.
 
 전체 key map은 [Terminal Keybindings](docs/keybindings.md)를 참고하세요. 키가
 동작하지 않으면 tmux 밖에서 `projmux setup`을 실행한 뒤,

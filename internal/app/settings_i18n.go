@@ -468,13 +468,18 @@ var uiTextKeys = map[string]i18n.Key{
 	// Breadcrumb/path and title segments surfaced by the picker-chrome audit
 	// as bypassing the catalog. Registering the static segments lets the
 	// composed path/`-`-split resolver translate the full prompt/title.
-	"AI Setting":                    "picker.ai.crumb_setting",
-	"AI Launch":                     "picker.ai.crumb_launch",
-	"AI Launch - Split direction: ": "picker.ai.launch_split_direction_title",
-	"Read-only hook":                "picker.hook.read_only_hook",
-	"Projects":                      "picker.crumb.projects",
-	"Sessions":                      "picker.crumb.sessions",
-	"State":                         "picker.crumb.state",
+	"AI Setting":                               "picker.ai.crumb_setting",
+	"AI Launch":                                "picker.ai.crumb_launch",
+	"AI Launch - Split direction: ":            "picker.ai.launch_split_direction_title",
+	"AI Resume":                                "picker.ai.crumb_resume",
+	"AI Resume - Split direction: ":            "picker.ai.resume_split_direction_title",
+	"AI Resume > ":                             "picker.ai.resume_prompt",
+	"Showing latest %d resume sessions.":       "picker.ai.resume_showing_latest",
+	"Showing latest %d of %d resume sessions.": "picker.ai.resume_showing_latest_of",
+	"Read-only hook":                           "picker.hook.read_only_hook",
+	"Projects":                                 "picker.crumb.projects",
+	"Sessions":                                 "picker.crumb.sessions",
+	"State":                                    "picker.crumb.state",
 	"Session state opens read-only; destructive actions keep the current confirmation policy.": "picker.sessions.state_readonly_note",
 }
 
