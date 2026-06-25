@@ -340,8 +340,8 @@ supplied window.
 ## ai
 
 ```
-projmux ai split    [--agent <claude|codex|antigravity|shell|selective>] [--force-agent] [right|down] [-- <extra-arg>...]
-projmux ai picker   --inside <right|down>
+projmux ai split    [--agent <claude|codex|antigravity|shell|selective|resume>] [--force-agent] [right|down] [-- <extra-arg>...]
+projmux ai picker   [--inside] [--shell] [--resume] <right|down>
 projmux ai settings
 projmux ai status   set <thinking|waiting|idle> [--pane <id>]
 projmux ai notify   <reset|notify> [--pane <id>]
@@ -372,7 +372,8 @@ can still render a non-red action-required status badge.
 
 `ai split right|down` uses the configured default split mode. Add
 `--agent claude`, `--agent codex`, `--agent antigravity`, `--agent shell`, or
-`--agent selective` for a one-shot launch without changing that default.
+`--agent selective` for a one-shot launch without changing that default. Add
+`--agent resume` to open the current project's AI resume-session picker.
 Concrete `--agent claude|codex|antigravity` invocations create a new managed
 agent pane every time; existing managed AI panes in the same project/session are
 not selected or reused.
@@ -381,6 +382,11 @@ existing plain shell split. Arguments after `--` are extra arguments appended to
 the resolved `claude`, `codex`, or `agy` executable inside the managed wrapper;
 projmux still sets the context directory, tmux title, AI pane metadata, title
 watcher, and split layout.
+The resume picker lists the newest deduplicated Claude/Codex resume sessions
+for the current project, with `[+ New Session]` pinned first. If there are no
+resume sessions it goes straight to the existing selective picker. Phase 1
+captures the selected `(agent, resume id)` contract but still launches a fresh
+split; actual `claude --resume` / `codex resume` wiring is reserved for Phase 2.
 Settings > AI Settings > Enabled agents controls Claude/Codex/Antigravity launch
 visibility. Disabled agents are hidden from the selective picker and from the
 default-mode picker. A saved default that later becomes disabled fails clearly
@@ -657,7 +663,8 @@ Helpers tmux's keybindings and the install pipeline call into. Modes
 accepted by `popup-toggle` mirror the historical sessionizer surface:
 `session-popup`, `sessionizer`, `sessionizer-sidebar`,
 `notify-sidebar`, `recent-windows`, `ai-split-picker-right`,
-`ai-split-picker-down`, `ai-split-settings`.
+`ai-split-picker-down`, `ai-split-resume-right`, `ai-split-resume-down`,
+`ai-split-settings`.
 `apply` regenerates the app tmux config and reloads the live `-L projmux`
 server without restarting it. `make install` and `projmux upgrade` invoke it
 after replacing the binary. Settings > Keybindings normally runs the same

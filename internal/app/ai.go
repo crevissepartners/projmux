@@ -22,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -30,10 +31,14 @@ import (
 
 const (
 	aiModeSelective   = "selective"
+	aiModeResume      = "resume"
 	aiModeClaude      = "claude"
 	aiModeCodex       = "codex"
 	aiModeAntigravity = "antigravity"
 	aiModeShell       = "shell"
+
+	aiResumePickerLimit = 30
+	aiResumeNewValue    = "new"
 
 	aiPaneManagedOption         = "@projmux_ai_managed"
 	aiPaneAgentOption           = "@projmux_ai_agent"
@@ -673,6 +678,9 @@ func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 		if invocation.agent == aiModeSelective {
 			return c.openPickerToggle(invocation.direction)
 		}
+		if invocation.agent == aiModeResume {
+			return c.openResumePickerToggle(invocation.direction)
+		}
 		if invocation.agent == aiModeShell && len(invocation.extraArgs) == 0 {
 			return c.runShellSplit(invocation.direction)
 		}
@@ -705,6 +713,8 @@ func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 		return c.runShellSplit(invocation.direction)
 	case aiModeSelective:
 		return c.openPickerToggle(invocation.direction)
+	case aiModeResume:
+		return c.openResumePickerToggle(invocation.direction)
 	default:
 		return c.openPickerToggle(invocation.direction)
 	}
@@ -715,6 +725,7 @@ func (c *aiCommand) runPicker(args []string, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	inside := fs.Bool("inside", false, "run inside an already-open popup")
 	shellOnly := fs.Bool("shell", false, "open a plain shell split")
+	resumeOnly := fs.Bool("resume", false, "open the resume session picker")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -722,13 +733,24 @@ func (c *aiCommand) runPicker(args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if *shellOnly && *resumeOnly {
+		printAIUsage(stderr)
+		return errors.New("ai picker cannot combine --shell and --resume")
+	}
 	if *shellOnly {
 		return c.runShellSplit(direction)
+	}
+	if *resumeOnly {
+		return c.runResumePicker(direction)
 	}
 	if !*inside && c.env("TMUX") != "" {
 		return c.openPicker(direction)
 	}
 
+	return c.runAgentPickerSelection(direction)
+}
+
+func (c *aiCommand) runAgentPickerSelection(direction string) error {
 	result, err := c.runAgentPicker(direction)
 	if err != nil {
 		if isNoSelectionExit(err) {
@@ -823,6 +845,145 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 	}))
 }
 
+func (c *aiCommand) runResumePicker(direction string) error {
+	contextDir := c.resolveContextDir()
+	homeDir, _ := c.home()
+	sessions, err := aisessions.Discover(contextDir, aisessions.DiscoverOptions{HomeDir: homeDir})
+	if err != nil {
+		return err
+	}
+	if len(sessions) == 0 {
+		return c.runAgentPickerSelection(direction)
+	}
+
+	result, err := c.runResumeSessionPicker(direction, sessions)
+	if err != nil {
+		if isNoSelectionExit(err) {
+			return nil
+		}
+		return err
+	}
+	if result.Value == "" || result.Key != "enter" {
+		return nil
+	}
+	if result.Value == aiResumeNewValue {
+		return c.runAgentPickerSelection(direction)
+	}
+	selection, ok := parseAIResumePickerValue(result.Value)
+	if !ok {
+		return nil
+	}
+	return c.runSelectedResumeSession(selection, direction)
+}
+
+func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessions.SessionMeta) (intpickercompat.Result, error) {
+	if c.nativePicker == nil {
+		return intpickercompat.Result{}, errors.New("native picker is not configured")
+	}
+	entries, visible, total := aiResumeSessionRows(sessions)
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	footer := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), visible)
+	if total > visible {
+		footer = fmt.Sprintf(localizeUIText(locale, "Showing latest %d of %d resume sessions."), visible, total)
+	}
+	return runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
+		UI:         "ai-resume-picker",
+		Entries:    entries,
+		Title:      localizeUIText(locale, "AI Resume - Split direction: ") + direction,
+		Prompt:     "AI Resume > ",
+		Footer:     projmuxFooter(footer),
+		ExpectKeys: []string{"enter"},
+		Bindings:   pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
+	}))
+}
+
+type aiResumeSelection struct {
+	agent    string
+	resumeID string
+}
+
+func aiResumeSessionRows(sessions []aisessions.SessionMeta) ([]intpickercompat.Entry, int, int) {
+	total := len(sessions)
+	if len(sessions) > aiResumePickerLimit {
+		sessions = sessions[:aiResumePickerLimit]
+	}
+	rows := make([]intpickercompat.Entry, 0, len(sessions)+1)
+	rows = append(rows, intpickercompat.Entry{
+		Label:     "\x1b[32m[+ New Session]\x1b[0m",
+		Value:     aiResumeNewValue,
+		SearchKey: "new session fresh agent picker",
+	})
+	for _, session := range sessions {
+		rows = append(rows, aiResumeSessionRow(session))
+	}
+	return rows, len(sessions), total
+}
+
+func aiResumeSessionRow(session aisessions.SessionMeta) intpickercompat.Entry {
+	agent := strings.TrimSpace(session.Agent)
+	resumeID := strings.TrimSpace(session.ResumeID)
+	branch := strings.TrimSpace(session.Context.Branch)
+	if branch == "" {
+		branch = "-"
+	}
+	title := cleanAIResumeTitle(session.Title, resumeID)
+	label := fmt.Sprintf("\x1b[36m[%-6s]\x1b[0m %s  \x1b[90m%-18s\x1b[0m %s",
+		agent,
+		session.LastModified.Local().Format("2006-01-02 15:04"),
+		truncateAIResumeRunes(branch, 18),
+		title,
+	)
+	return intpickercompat.Entry{
+		Label:     label,
+		Value:     aiResumePickerValue(agent, resumeID),
+		SearchKey: strings.Join([]string{agent, title, resumeID, branch}, " "),
+	}
+}
+
+func cleanAIResumeTitle(title, resumeID string) string {
+	title = strings.Join(strings.Fields(title), " ")
+	if title == "" {
+		title = resumeID
+	}
+	if title == "" {
+		return "(untitled)"
+	}
+	return truncateAIResumeRunes(title, 72)
+}
+
+func truncateAIResumeRunes(value string, limit int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if limit <= 0 || len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit])
+}
+
+func aiResumePickerValue(agent, resumeID string) string {
+	return "resume\t" + strings.TrimSpace(agent) + "\t" + strings.TrimSpace(resumeID)
+}
+
+func parseAIResumePickerValue(value string) (aiResumeSelection, bool) {
+	parts := strings.Split(value, "\t")
+	if len(parts) != 3 || parts[0] != "resume" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return aiResumeSelection{}, false
+	}
+	return aiResumeSelection{agent: strings.TrimSpace(parts[1]), resumeID: strings.TrimSpace(parts[2])}, true
+}
+
+func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direction string) error {
+	// Phase 2 owns replacing this fresh fallback with agent-specific ResumeArgs
+	// wiring and pane resume metadata. Keep this as the single handoff point.
+	mode := normalizeAIMode(selection.agent)
+	if mode != aiModeClaude && mode != aiModeCodex && mode != aiModeAntigravity {
+		return nil
+	}
+	if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
+		return err
+	}
+	return c.runAgentSplit(mode, direction)
+}
+
 // themedPickerOptions fills options.Theme with the global theme source so AI
 // split-picker and AI settings popups paint the themed surface/background
 // instead of the runPickerOptionBackend fallback default. It degrades to the
@@ -846,6 +1007,13 @@ func aiSplitPickerPopupMode(direction string) string {
 	return "ai-split-picker-right"
 }
 
+func aiResumePickerPopupMode(direction string) string {
+	if direction == "down" {
+		return "ai-split-resume-down"
+	}
+	return "ai-split-resume-right"
+}
+
 func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 	current := c.getMode()
 	enabled := c.enabledAIAgents()
@@ -854,6 +1022,7 @@ func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 		desc string
 	}{
 		{aiModeSelective, "show picker each time"},
+		{aiModeResume, "show resume session picker"},
 	}
 	for _, provider := range aiprovider.SettingsVisible() {
 		modes = append(modes, struct {
@@ -1035,6 +1204,23 @@ func (c *aiCommand) openPickerToggle(direction string) error {
 		args = append(args, "--client", clientKey)
 	}
 	args = append(args, mode)
+	err = c.run(binaryPath, args...)
+	if isNoSelectionExit(err) {
+		return nil
+	}
+	return err
+}
+
+func (c *aiCommand) openResumePickerToggle(direction string) error {
+	binaryPath, err := c.binaryPath()
+	if err != nil {
+		return err
+	}
+	args := []string{"tmux", "popup-toggle"}
+	if clientKey := c.readTrimmed("tmux", "display-message", "-p", "-F", "#{client_tty}"); clientKey != "" {
+		args = append(args, "--client", clientKey)
+	}
+	args = append(args, aiResumePickerPopupMode(direction))
 	err = c.run(binaryPath, args...)
 	if isNoSelectionExit(err) {
 		return nil
@@ -2303,7 +2489,7 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 	invocation.direction = direction
 	if invocation.agentSet {
 		switch invocation.agent {
-		case aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeShell, aiModeSelective:
+		case aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeShell, aiModeSelective, aiModeResume:
 		default:
 			printAIUsage(stderr)
 			return aiSplitInvocation{}, fmt.Errorf("unknown ai split agent: %s", invocation.agent)
@@ -2311,6 +2497,10 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 		if invocation.agent == aiModeSelective && len(invocation.extraArgs) > 0 {
 			printAIUsage(stderr)
 			return aiSplitInvocation{}, errors.New("ai split --agent selective cannot use extra args")
+		}
+		if invocation.agent == aiModeResume && len(invocation.extraArgs) > 0 {
+			printAIUsage(stderr)
+			return aiSplitInvocation{}, errors.New("ai split --agent resume cannot use extra args")
 		}
 		if invocation.agent == aiModeShell && len(invocation.extraArgs) > 0 {
 			printAIUsage(stderr)
@@ -3219,7 +3409,7 @@ func defaultString(value, fallback string) string {
 
 func normalizeAIMode(mode string) string {
 	switch strings.TrimSpace(mode) {
-	case aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeSelective, aiModeShell:
+	case aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeSelective, aiModeResume, aiModeShell:
 		return strings.TrimSpace(mode)
 	default:
 		return aiModeSelective
@@ -3330,8 +3520,8 @@ func parsePositiveInt(value string) int {
 
 func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|antigravity|shell|selective>] [--force-agent] [right|down] [-- <extra-arg>...]")
-	fmt.Fprintln(w, "  projmux ai picker [--inside] [--shell] [right|down]")
+	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|antigravity|shell|selective|resume>] [--force-agent] [right|down] [-- <extra-arg>...]")
+	fmt.Fprintln(w, "  projmux ai picker [--inside] [--shell] [--resume] [right|down]")
 	fmt.Fprintln(w, "  projmux ai settings [--get|--set <mode>]")
 	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")
 	fmt.Fprintln(w, "  projmux ai notify [notify|reset] [pane]")

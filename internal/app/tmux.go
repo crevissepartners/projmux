@@ -479,6 +479,10 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client}, nil
 	case "ai-split-picker-down":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "down", ClientKey: client}, nil
+	case "ai-split-resume-right":
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "right", ClientKey: client}, nil
+	case "ai-split-resume-down":
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "down", ClientKey: client}, nil
 	default:
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
 	}
@@ -796,7 +800,7 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux popup-preview <session>")
 	fmt.Fprintln(w, "  projmux tmux popup-switch")
 	fmt.Fprintln(w, "  projmux tmux popup-sessions")
-	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
+	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|ai-split-picker-right|ai-split-picker-down|ai-split-resume-right|ai-split-resume-down|ai-split-settings>")
 	fmt.Fprintln(w, "  projmux tmux rebalance-panes")
 	fmt.Fprintln(w, "  projmux tmux rename-pane <pane> <title>")
 	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
@@ -1039,6 +1043,13 @@ func buildPopupToggleWithPickerBackendAndStyle(mode tmuxPopupToggleMode, binaryP
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
 		commandArgs = []string{"ai", "picker", "--inside", mode.Direction}
+	case "ai-split-resume-right", "ai-split-resume-down":
+		options.Width = popupSize(ctx.ClientWidth, 55, 110)
+		options.Height = popupSize(ctx.ClientHeight, 55, 24)
+		cwd = ctx.ContextDir
+		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
+		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
+		commandArgs = []string{"ai", "picker", "--resume", "--inside", mode.Direction}
 	case "ai-split-settings":
 		options.Width = popupSize(ctx.ClientWidth, 55, 80)
 		options.Height = popupSize(ctx.ClientHeight, 40, 14)
@@ -1108,6 +1119,8 @@ func nativeLaunchKeyForPopupMode(mode string) string {
 		return "alt-3"
 	case "ai-split-picker-right", "ai-split-picker-down":
 		return "alt-4"
+	case "ai-split-resume-right", "ai-split-resume-down":
+		return "alt-7"
 	case "ai-split-settings":
 		return "alt-5"
 	case "sessionizer":

@@ -111,6 +111,7 @@ func TestPopupToggleModeActionMappingCoversCatalog(t *testing.T) {
 		"NotifySidebarToggle":   {"notify-sidebar"},
 		"RecentWindows:Open":    {"recent-windows"},
 		"AISplitPickerToggle":   {"ai-split-picker-right", "ai-split-picker-down"},
+		"AIResumePickerToggle":  {"ai-split-resume-right", "ai-split-resume-down"},
 		"SettingsToggle":        {"ai-split-settings"},
 		"ProjectSwitcherToggle": {"sessionizer"},
 		"SessionPopupToggle":    {"session-popup"},

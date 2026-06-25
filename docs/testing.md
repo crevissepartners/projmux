@@ -97,6 +97,7 @@ Observe:
 - `Alt-3` opens Recent Windows.
 - `Alt-4` opens the AI split picker.
 - `Alt-5` opens Settings.
+- `Alt-7` opens the AI resume session picker.
 - Pressing the same launch key again closes the popup instead of typing escape
   bytes into the shell or picker input.
 

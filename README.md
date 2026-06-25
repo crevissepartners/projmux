@@ -74,8 +74,10 @@ Inside the app:
 - `Alt-3` opens Recent Windows.
 - `Alt-4` opens the AI split picker.
 - `Alt-5` opens settings.
+- `Alt-7` opens the AI resume session picker.
 
-Those five launch keys are the guaranteed zero-config defaults. Add more
+The `Alt-1` through `Alt-5` launch keys are the guaranteed zero-config
+defaults. Add more
 aliases in Settings > Keybindings or `~/.config/projmux/keymap.toml`. If a key
 does not fire, run `projmux setup` outside tmux, then use
 `projmux init [terminal] --apply` for supported terminal delivery fallbacks.

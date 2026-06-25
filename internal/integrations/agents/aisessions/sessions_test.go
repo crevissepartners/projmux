@@ -63,6 +63,75 @@ func TestDiscoverReturnsEmptyForMissingOrInvalidSessions(t *testing.T) {
 	}
 }
 
+func TestDiscoverDedupesResumeIDKeepingNewest(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "codex", "sessions", "2026", "06", "25")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	olderPath := filepath.Join(sessionsDir, "rollout-older.jsonl")
+	newerPath := filepath.Join(sessionsDir, "rollout-newer.jsonl")
+	sharedID := "019f0000-0000-7000-8000-000000000099"
+	writeFile(t, olderPath, `{"type":"session_meta","payload":{"id":"`+sharedID+`","cwd":"/workspace/app","git_branch":"feat/older"}}
+{"type":"event_msg","payload":{"message":"Older duplicate"}}
+`)
+	writeFile(t, newerPath, `{"type":"session_meta","payload":{"id":"`+sharedID+`","cwd":"/workspace/app","git_branch":"feat/newer"}}
+{"type":"event_msg","payload":{"message":"Newer duplicate"}}
+`)
+	setModTime(t, olderPath, time.Date(2026, 6, 25, 8, 0, 0, 0, time.UTC))
+	setModTime(t, newerPath, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
+
+	got, err := Discover("/workspace/app", DiscoverOptions{
+		CodexSessionsDir: filepath.Join(root, "codex", "sessions"),
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Discover() len = %d, want 1: %#v", len(got), got)
+	}
+	assertSession(t, got[0], SessionMeta{
+		Agent:        AgentCodex,
+		ResumeID:     sharedID,
+		Title:        "Newer duplicate",
+		LastModified: time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC),
+		Context:      SessionContext{CWD: "/workspace/app", Branch: "feat/newer"},
+		Source:       SourceCodexRollout,
+	})
+}
+
+func TestDiscoverSkipsNoisyTitleCandidates(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "codex", "sessions", "2026", "06", "25")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionsDir, "rollout-noisy-title.jsonl")
+	writeFile(t, path, `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000088","cwd":"/workspace/app","git_branch":"feat/title"}}
+{"type":"event_msg","payload":{"message":"# AGENTS.md instructions for /workspace/app"}}
+{"type":"event_msg","payload":{"message":"<command-name>/goal"}}
+{"type":"event_msg","payload":{"message":"Implement resume picker"}}
+`)
+	setModTime(t, path, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
+
+	got, err := Discover("/workspace/app", DiscoverOptions{
+		CodexSessionsDir: filepath.Join(root, "codex", "sessions"),
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Discover() len = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Title != "Implement resume picker" {
+		t.Fatalf("Title = %q, want cleaned prose title", got[0].Title)
+	}
+}
+
 func TestEncodeClaudeProjectPath(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +157,14 @@ func setModTime(t *testing.T, path string, at time.Time) {
 
 	if err := os.Chtimes(path, at, at); err != nil {
 		t.Fatalf("chtimes %s: %v", path, err)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 

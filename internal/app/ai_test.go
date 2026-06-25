@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aiprovider"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -263,6 +265,66 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	}
 	if got, want := runner.options.Footer, "Choose an agent or shell target to launch."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
+	}
+}
+
+func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
+	sessions := make([]aisessions.SessionMeta, 0, aiResumePickerLimit+2)
+	for i := 0; i < aiResumePickerLimit+2; i++ {
+		sessions = append(sessions, aisessions.SessionMeta{
+			Agent:        aiModeCodex,
+			ResumeID:     fmt.Sprintf("019f0000-0000-7000-8000-%012d", i),
+			Title:        fmt.Sprintf("Title %02d", i),
+			LastModified: time.Date(2026, 6, 25, 9, i, 0, 0, time.UTC),
+			Context:      aisessions.SessionContext{Branch: "feat/resume-picker"},
+		})
+	}
+
+	rows, visible, total := aiResumeSessionRows(sessions)
+
+	if visible != aiResumePickerLimit || total != aiResumePickerLimit+2 {
+		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, aiResumePickerLimit, aiResumePickerLimit+2)
+	}
+	if len(rows) != aiResumePickerLimit+1 {
+		t.Fatalf("rows len = %d, want cap plus New row", len(rows))
+	}
+	if rows[0].Value != aiResumeNewValue || !strings.Contains(rows[0].Label, "[+ New Session]") {
+		t.Fatalf("first row = %#v, want New row", rows[0])
+	}
+	if !strings.Contains(rows[1].Label, "[codex") || !strings.Contains(rows[1].Label, "feat/resume-picke") || !strings.Contains(rows[1].Label, "Title 00") {
+		t.Fatalf("session row label = %q, want agent, branch, title", rows[1].Label)
+	}
+	if !strings.Contains(rows[1].SearchKey, sessions[0].ResumeID) {
+		t.Fatalf("session row search key = %q, want resume id", rows[1].SearchKey)
+	}
+}
+
+func TestAIResumePickerNoSessionsDelegatesToAgentPicker(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "esc"}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		default:
+			return ""
+		}
+	}
+
+	if err := cmd.runResumePicker("right"); err != nil {
+		t.Fatalf("runResumePicker() error = %v", err)
+	}
+	if got, want := runner.options.UI, "ai-picker"; got != want {
+		t.Fatalf("picker UI = %q, want %q", got, want)
 	}
 }
 
@@ -1266,6 +1328,110 @@ func TestAISplitAgentSelectiveDelegatesToPickerWithoutChangingDefault(t *testing
 	}}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAISplitAgentResumeDelegatesToResumePickerWithoutChangingDefault(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.executable = func() (string, error) { return "/tmp/projmux bin", nil }
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{client_tty}"}) {
+			return []byte("/dev/pts/7\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "resume", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent resume error = %v", err)
+	}
+
+	if got, want := readModeFile(t, home), "codex\n"; got != want {
+		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+	want := []recordedAICommand{{
+		name: "/tmp/projmux bin",
+		args: []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-resume-right"},
+	}}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAIResumePickerNewDelegatesToAgentPicker(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeCodexResumeSession(t, home, "019f0000-0000-7000-8000-000000000077", work, "feat/resume", "Resume existing")
+	runner := &sequencingAIRunner{results: []intpickercompat.Result{
+		{Key: "enter", Value: aiResumeNewValue},
+		{Key: "esc"},
+	}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		default:
+			return ""
+		}
+	}
+
+	if err := cmd.runResumePicker("right"); err != nil {
+		t.Fatalf("runResumePicker() error = %v", err)
+	}
+	if len(runner.options) != 2 {
+		t.Fatalf("picker calls = %d, want resume picker then agent picker", len(runner.options))
+	}
+	if got, want := runner.options[0].UI, "ai-resume-picker"; got != want {
+		t.Fatalf("first picker UI = %q, want %q", got, want)
+	}
+	if got, want := runner.options[1].UI, "ai-picker"; got != want {
+		t.Fatalf("second picker UI = %q, want %q", got, want)
+	}
+}
+
+func TestAIResumePickerSessionRowUsesFreshFallbackUntilPhase2(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resumeID := "019f0000-0000-7000-8000-000000000078"
+	writeCodexResumeSession(t, home, resumeID, work, "feat/resume", "Resume existing")
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiResumePickerValue(aiModeCodex, resumeID)}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"codex": codexBin}, "%7", "%9")
+
+	if err := cmd.runResumePicker("right"); err != nil {
+		t.Fatalf("runResumePicker() error = %v", err)
+	}
+	if got, want := runner.options.UI, "ai-resume-picker"; got != want {
+		t.Fatalf("picker UI = %q, want %q", got, want)
+	}
+	if !strings.Contains(runner.options.Footer, "Showing latest 1 resume sessions") {
+		t.Fatalf("picker footer = %q, want capped-count footer", runner.options.Footer)
+	}
+	commands := cmdRecorder(cmd).commands
+	wantExec := "exec " + shellQuote(codexBin)
+	if !containsAICommandArgSubstring(commands, wantExec) {
+		t.Fatalf("commands = %#v, want fresh Codex exec %q", commands, wantExec)
+	}
+	if containsAICommandArgSubstring(commands, "resume "+resumeID) {
+		t.Fatalf("commands = %#v, Phase 1 must not wire codex resume args", commands)
 	}
 }
 
@@ -2834,6 +3000,25 @@ func (r *capturingAIRunner) Run(options intpickercompat.Options) (intpickercompa
 	return r.result, r.err
 }
 
+type sequencingAIRunner struct {
+	options []intpickercompat.Options
+	results []intpickercompat.Result
+	err     error
+}
+
+func (r *sequencingAIRunner) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
+	r.options = append(r.options, options)
+	if r.err != nil {
+		return intpickercompat.Result{}, r.err
+	}
+	if len(r.results) == 0 {
+		return intpickercompat.Result{}, nil
+	}
+	result := r.results[0]
+	r.results = r.results[1:]
+	return result, nil
+}
+
 type recordedAICommand struct {
 	name string
 	args []string
@@ -2923,6 +3108,25 @@ func stubAISplitReadCommand(cmd *aiCommand, home, work string, bins map[string]s
 			return []byte(targetPane + "\t0\t0\t40\t10\n" + newPane + "\t41\t0\t40\t10\n"), nil
 		}
 		return nil, os.ErrNotExist
+	}
+}
+
+func writeCodexResumeSession(t *testing.T, home, resumeID, cwd, branch, title string) {
+	t.Helper()
+
+	dir := filepath.Join(home, ".codex", "sessions", "2026", "06", "25")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "rollout-"+resumeID+".jsonl")
+	content := fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":%q,"git_branch":%q}}
+{"type":"event_msg","payload":{"message":%q}}
+`, resumeID, cwd, branch, title)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write codex resume session: %v", err)
+	}
+	if err := os.Chtimes(path, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC), time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("chtimes codex resume session: %v", err)
 	}
 }
 

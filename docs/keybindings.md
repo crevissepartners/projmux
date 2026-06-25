@@ -2,7 +2,8 @@
 
 projmux is keyboard-driven, but the guaranteed launch contract is small:
 fresh installs bind `Alt-1` through `Alt-5` as plain Meta sequences
-(`M-1`..`M-5`, bytes `\x1b1`..`\x1b5`). Other actions remain discoverable in
+(`M-1`..`M-5`, bytes `\x1b1`..`\x1b5`). The AI resume picker ships with an
+editable `Alt-7` default. Other actions remain discoverable in
 Settings > Keybindings. Transport-dependent actions keep their built-in
 transport default key, and Settings can add separate safe tmux plain keys to
 the same action. They are not installed as terminal-specific User-key
@@ -84,6 +85,7 @@ Optional direct keys can be added for actions such as:
 | `RecentWindows:Open` | Recent windows queue across projects |
 | `ProjectSwitcherToggle` | Project switcher popup |
 | `AISplitPickerToggle` | AI split popup picker; pressing again closes the picker popup |
+| `AIResumePickerToggle` | AI resume session picker; default `Alt-7`; pressing again closes the picker popup |
 | `ai-split-right` | Open a new direct AI split to the right |
 | `ai-split-down` | Open a new direct AI split below |
 | `new-window` | New tmux window in the current pane directory |

@@ -69,6 +69,7 @@ func Discover(cwd string, opts DiscoverOptions) ([]SessionMeta, error) {
 	sessions = append(sessions, discoverClaude(cwd, opts.ClaudeProjectsDir)...)
 	sessions = append(sessions, discoverCodex(cwd, opts.CodexSessionsDir)...)
 	sessions = append(sessions, discoverAntigravity(cwd, opts.AntigravitySessionsDir)...)
+	sessions = dedupeByResumeID(sessions)
 
 	sort.SliceStable(sessions, func(i, j int) bool {
 		if sessions[i].LastModified.Equal(sessions[j].LastModified) {
@@ -141,10 +142,14 @@ func discoverClaude(cwd, projectsDir string) []SessionMeta {
 		if err != nil {
 			continue
 		}
+		title := details.title
+		if title == "" {
+			title = shortResumeID(id)
+		}
 		sessions = append(sessions, SessionMeta{
 			Agent:        AgentClaude,
 			ResumeID:     id,
-			Title:        details.title,
+			Title:        title,
 			LastModified: info.ModTime(),
 			Context: SessionContext{
 				CWD:    cwd,
@@ -181,10 +186,14 @@ func discoverCodex(cwd, sessionsDir string) []SessionMeta {
 		if err != nil {
 			return nil
 		}
+		title := details.title
+		if title == "" {
+			title = shortResumeID(id)
+		}
 		sessions = append(sessions, SessionMeta{
 			Agent:        AgentCodex,
 			ResumeID:     id,
-			Title:        details.title,
+			Title:        title,
 			LastModified: info.ModTime(),
 			Context: SessionContext{
 				CWD:    cwd,
@@ -199,6 +208,28 @@ func discoverCodex(cwd, sessionsDir string) []SessionMeta {
 
 func discoverAntigravity(_ string, _ string) []SessionMeta {
 	return nil
+}
+
+func dedupeByResumeID(sessions []SessionMeta) []SessionMeta {
+	if len(sessions) < 2 {
+		return sessions
+	}
+	latest := make(map[string]SessionMeta, len(sessions))
+	for _, session := range sessions {
+		id := strings.TrimSpace(session.ResumeID)
+		if id == "" {
+			continue
+		}
+		current, ok := latest[id]
+		if !ok || session.LastModified.After(current.LastModified) {
+			latest[id] = session
+		}
+	}
+	deduped := make([]SessionMeta, 0, len(latest))
+	for _, session := range latest {
+		deduped = append(deduped, session)
+	}
+	return deduped
 }
 
 type sessionDetails struct {
@@ -247,19 +278,19 @@ func titleFromRecord(fields map[string]any) string {
 	recordType := strings.ToLower(stringJSONField(fields, "type"))
 	if recordType == "event_msg" {
 		if payload, ok := fields["payload"].(map[string]any); ok {
-			return cleanTitle(firstNestedString(payload, "message"))
+			return cleanTitleCandidate(firstNestedString(payload, "message"))
 		}
 	}
 	if recordType == "response_item" {
 		if payload, ok := fields["payload"].(map[string]any); ok && strings.EqualFold(stringJSONField(payload, "role"), "user") {
-			return cleanTitle(contentText(payload["content"]))
+			return cleanTitleCandidate(contentText(payload["content"]))
 		}
 	}
 	if recordType == "user" || strings.EqualFold(stringJSONField(fields, "role"), "user") {
 		if message, ok := fields["message"].(map[string]any); ok {
-			return cleanTitle(contentText(message["content"]))
+			return cleanTitleCandidate(contentText(message["content"]))
 		}
-		return cleanTitle(contentText(fields["content"]))
+		return cleanTitleCandidate(contentText(fields["content"]))
 	}
 	return ""
 }
@@ -323,6 +354,27 @@ func cleanTitle(title string) string {
 		return string(runes[:120])
 	}
 	return title
+}
+
+func cleanTitleCandidate(title string) string {
+	title = cleanTitle(title)
+	if title == "" || isNoisyTitleCandidate(title) {
+		return ""
+	}
+	return title
+}
+
+func isNoisyTitleCandidate(title string) bool {
+	title = strings.TrimSpace(title)
+	return strings.HasPrefix(title, "<command-") || strings.HasPrefix(title, "# AGENTS.md")
+}
+
+func shortResumeID(id string) string {
+	id = strings.TrimSpace(id)
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
 }
 
 func cleanCWD(cwd string) string {
