@@ -1,0 +1,2 @@
+{"timestamp":"2026-06-24T09:00:00.000Z","type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000002","cwd":"/workspace/other","git_branch":"feat/other"}}
+{"timestamp":"2026-06-24T09:01:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"Other cwd should not appear"}}
