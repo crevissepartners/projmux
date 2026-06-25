@@ -1,8 +1,11 @@
 package aisessions
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -132,6 +135,83 @@ func TestDiscoverSkipsNoisyTitleCandidates(t *testing.T) {
 	}
 }
 
+func TestScanSessionJSONLStopsAfterCwdMismatch(t *testing.T) {
+	t.Parallel()
+
+	firstLine := `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000077","cwd":"/workspace/other","git_branch":"feat/other"}}` + "\n"
+	reader := newFailAfterReader(firstLine+`{"type":"event_msg","payload":{"message":"must not be read"}}`+"\n", len(firstLine))
+
+	details, ok := scanSessionJSONLReader(reader, sessionScanOptions{
+		targetCWD:  "/workspace/app",
+		requireCWD: true,
+	})
+
+	if ok {
+		t.Fatalf("scanSessionJSONLReader() ok = true, details = %#v", details)
+	}
+	if reader.failed {
+		t.Fatal("scanSessionJSONLReader() read past mismatched cwd metadata")
+	}
+}
+
+func TestScanSessionJSONLEarlyExitsAfterOutputFields(t *testing.T) {
+	t.Parallel()
+
+	prefix := `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000066","cwd":"/workspace/app","git_branch":"feat/perf"}}` + "\n" +
+		`{"type":"event_msg","payload":{"message":"Speed up resume picker"}}` + "\n"
+	reader := newFailAfterReader(prefix+`{"type":"event_msg","payload":{"message":"must not be read"}}`+"\n", len(prefix))
+
+	details, ok := scanSessionJSONLReader(reader, sessionScanOptions{
+		targetCWD:  "/workspace/app",
+		requireCWD: true,
+	})
+
+	if !ok {
+		t.Fatal("scanSessionJSONLReader() ok = false")
+	}
+	if reader.failed {
+		t.Fatal("scanSessionJSONLReader() read after id/cwd/title/branch were available")
+	}
+	if details.id != "019f0000-0000-7000-8000-000000000066" ||
+		details.cwd != "/workspace/app" ||
+		details.branch != "feat/perf" ||
+		details.title != "Speed up resume picker" {
+		t.Fatalf("details = %#v", details)
+	}
+}
+
+func TestDiscoverUsesShortIDWhenTitleIsOutsideBoundedPrefix(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "codex", "sessions", "2026", "06", "25")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	id := "019f0000-0000-7000-8000-000000000055"
+	var lines strings.Builder
+	lines.WriteString(`{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/workspace/app","git_branch":"feat/title-bound"}}` + "\n")
+	for i := 1; i < sessionTitleLineLimit; i++ {
+		lines.WriteString(`{"type":"event_msg","payload":{"message":"# AGENTS.md instructions for /workspace/app"}}` + "\n")
+	}
+	lines.WriteString(`{"type":"event_msg","payload":{"message":"Title after bounded prefix"}}` + "\n")
+	path := filepath.Join(sessionsDir, "rollout-late-title.jsonl")
+	writeFile(t, path, lines.String())
+
+	got, err := Discover("/workspace/app", DiscoverOptions{
+		CodexSessionsDir: filepath.Join(root, "codex", "sessions"),
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Discover() len = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Title != shortResumeID(id) {
+		t.Fatalf("Title = %q, want short id fallback %q", got[0].Title, shortResumeID(id))
+	}
+}
+
 func TestEncodeClaudeProjectPath(t *testing.T) {
 	t.Parallel()
 
@@ -179,4 +259,31 @@ func assertSession(t *testing.T, got, want SessionMeta) {
 		!got.LastModified.Equal(want.LastModified) {
 		t.Fatalf("session = %#v, want %#v", got, want)
 	}
+}
+
+type failAfterReader struct {
+	data   string
+	limit  int
+	offset int
+	failed bool
+}
+
+func newFailAfterReader(data string, limit int) *failAfterReader {
+	return &failAfterReader{data: data, limit: limit}
+}
+
+func (r *failAfterReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.offset >= len(r.data) {
+		return 0, io.EOF
+	}
+	if r.offset >= r.limit {
+		r.failed = true
+		return 0, errors.New("read past limit")
+	}
+	p[0] = r.data[r.offset]
+	r.offset++
+	return 1, nil
 }

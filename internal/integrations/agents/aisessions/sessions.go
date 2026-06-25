@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -23,6 +24,9 @@ const (
 
 	SourceClaudeTranscript = "claude-transcript"
 	SourceCodexRollout     = "codex-rollout"
+
+	sessionScanLineLimit  = 100
+	sessionTitleLineLimit = 100
 )
 
 // SessionContext captures project metadata associated with a resume session.
@@ -127,7 +131,9 @@ func discoverClaude(cwd, projectsDir string) []SessionMeta {
 		if err != nil {
 			continue
 		}
-		details, ok := scanSessionJSONL(path)
+		details, ok := scanSessionJSONL(path, sessionScanOptions{
+			targetCWD: cwd,
+		})
 		if !ok {
 			continue
 		}
@@ -178,7 +184,10 @@ func discoverCodex(cwd, sessionsDir string) []SessionMeta {
 		if err != nil {
 			return nil
 		}
-		details, ok := scanSessionJSONL(path)
+		details, ok := scanSessionJSONL(path, sessionScanOptions{
+			targetCWD:  cwd,
+			requireCWD: true,
+		})
 		if !ok || details.id == "" || cleanCWD(details.cwd) != cwd {
 			return nil
 		}
@@ -239,23 +248,41 @@ type sessionDetails struct {
 	branch string
 }
 
-func scanSessionJSONL(path string) (sessionDetails, bool) {
+type sessionScanOptions struct {
+	targetCWD  string
+	requireCWD bool
+}
+
+func scanSessionJSONL(path string, opts sessionScanOptions) (sessionDetails, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return sessionDetails{}, false
 	}
 	defer f.Close()
 
+	return scanSessionJSONLReader(f, opts)
+}
+
+func scanSessionJSONLReader(r io.Reader, opts sessionScanOptions) (sessionDetails, bool) {
 	var details sessionDetails
-	scanner := bufio.NewScanner(f)
+	targetCWD := cleanCWD(opts.targetCWD)
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	lineNo := 0
 	for scanner.Scan() {
+		lineNo++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
+			if lineNo >= sessionScanLineLimit {
+				break
+			}
 			continue
 		}
 		var fields map[string]any
 		if err := json.Unmarshal([]byte(line), &fields); err != nil {
+			if lineNo >= sessionScanLineLimit {
+				break
+			}
 			continue
 		}
 		if details.id == "" {
@@ -263,15 +290,37 @@ func scanSessionJSONL(path string) (sessionDetails, bool) {
 		}
 		if details.cwd == "" {
 			details.cwd = firstNestedString(fields, "cwd", "current_dir", "currentDir", "project_dir", "projectDir", "project_path", "projectPath", "working_directory", "workingDirectory")
+			if targetCWD != "" && details.cwd != "" && cleanCWD(details.cwd) != targetCWD {
+				return sessionDetails{}, false
+			}
 		}
 		if details.branch == "" {
 			details.branch = firstNestedString(fields, "gitBranch", "git_branch", "branch")
 		}
-		if details.title == "" {
+		if details.title == "" && lineNo <= sessionTitleLineLimit {
 			details.title = titleFromRecord(fields)
 		}
+		if details.ready(opts.requireCWD, targetCWD) {
+			return details, true
+		}
+		if lineNo >= sessionScanLineLimit {
+			break
+		}
+	}
+	if opts.requireCWD && details.cwd == "" {
+		return sessionDetails{}, false
 	}
 	return details, details.id != "" || details.cwd != "" || details.title != ""
+}
+
+func (details sessionDetails) ready(requireCWD bool, targetCWD string) bool {
+	if details.id == "" || details.title == "" || details.branch == "" {
+		return false
+	}
+	if targetCWD != "" && details.cwd == "" {
+		return false
+	}
+	return !requireCWD || details.cwd != ""
 }
 
 func titleFromRecord(fields map[string]any) string {
