@@ -884,8 +884,12 @@ func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessio
 	if c.nativePicker == nil {
 		return intpickercompat.Result{}, errors.New("native picker is not configured")
 	}
-	entries, visible, total := aiResumeSessionRows(sessions)
 	locale := appLocale(c.homeDir, c.lookupEnv)
+	var now time.Time
+	if c.now != nil {
+		now = c.now()
+	}
+	entries, visible, total := aiResumeSessionRows(sessions, now, locale)
 	footer := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), visible)
 	if total > visible {
 		footer = fmt.Sprintf(localizeUIText(locale, "Showing latest %d of %d resume sessions."), visible, total)
@@ -908,7 +912,38 @@ type aiResumeSelection struct {
 	updatedAt time.Time
 }
 
-func aiResumeSessionRows(sessions []aisessions.SessionMeta) ([]intpickercompat.Entry, int, int) {
+// Resume picker row column schema (Phase 0 — row view slice).
+//
+// Every row lays out the same fixed-width columns so they align in the popup
+// regardless of locale or CJK content, with the title as the trailing
+// variable-width column:
+//
+//	[agent ] MM-DD HH:MM <rel>  <branch>            <shortid> [<extra>] <title…>
+//	  6        11          6      18                  8         (0)       rest
+//
+// Column order / cell width (visible cells, fixed columns left-aligned):
+//   - agent badge: aiResumeAgentCellWidth (inside cyan [ ])
+//   - absolute time: aiResumeTimeWidth ("MM-DD HH:MM", dim)
+//   - relative age: aiResumeRelCellWidth (compact, locale-aware, dim)
+//   - branch: aiResumeBranchCellWidth (dim, cut)
+//   - short resume id: aiResumeShortIDWidth (dim, leading runes)
+//   - extra-meta slot: reserved for the Phase 2 cwd column; empty today so the
+//     layout matches the current view (source is intentionally not surfaced —
+//     it duplicates the agent badge).
+//   - title: trailing variable width, cut with an ellipsis past
+//     aiResumeTitleMaxCells.
+const (
+	aiResumeAgentCellWidth  = 6
+	aiResumeTimeWidth       = 11
+	aiResumeRelCellWidth    = 6
+	aiResumeBranchCellWidth = 18
+	aiResumeShortIDWidth    = 8
+	aiResumeTitleMaxCells   = 72
+	aiResumeTimeLayout      = "01-02 15:04"
+	aiResumeEmptyCell       = "-"
+)
+
+func aiResumeSessionRows(sessions []aisessions.SessionMeta, now time.Time, locale i18n.Locale) ([]intpickercompat.Entry, int, int) {
 	total := len(sessions)
 	if len(sessions) > aiResumePickerLimit {
 		sessions = sessions[:aiResumePickerLimit]
@@ -920,25 +955,38 @@ func aiResumeSessionRows(sessions []aisessions.SessionMeta) ([]intpickercompat.E
 		SearchKey: "new session fresh agent picker",
 	})
 	for _, session := range sessions {
-		rows = append(rows, aiResumeSessionRow(session))
+		rows = append(rows, aiResumeSessionRow(session, now, locale))
 	}
 	return rows, len(sessions), total
 }
 
-func aiResumeSessionRow(session aisessions.SessionMeta) intpickercompat.Entry {
+func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i18n.Locale) intpickercompat.Entry {
 	agent := strings.TrimSpace(session.Agent)
 	resumeID := strings.TrimSpace(session.ResumeID)
 	branch := strings.TrimSpace(session.Context.Branch)
 	if branch == "" {
-		branch = "-"
+		branch = aiResumeEmptyCell
 	}
 	title := cleanAIResumeTitle(session.Title, resumeID)
-	label := fmt.Sprintf("\x1b[36m[%-6s]\x1b[0m %s  \x1b[90m%-18s\x1b[0m %s",
-		agent,
-		session.LastModified.Local().Format("2006-01-02 15:04"),
-		truncateAIResumeRunes(branch, 18),
-		title,
-	)
+
+	// Fixed columns: pad/truncate each to a stable cell width, then colorize.
+	badge := "\x1b[36m[" + aiResumeFitCell(agent, aiResumeAgentCellWidth) + "]\x1b[0m"
+	absTime := ansiDim(aiResumeAbsoluteTime(session.LastModified))
+	relTime := ansiDim(aiResumeFitCell(aiResumeRelativeAge(now, session.LastModified, locale), aiResumeRelCellWidth))
+	branchCell := ansiDim(aiResumeFitCell(branch, aiResumeBranchCellWidth))
+	shortID := ansiDim(aiResumeFitCell(aiResumeShortID(resumeID), aiResumeShortIDWidth))
+
+	// Reserved extra-meta slot (Phase 2 cwd column). Empty today, so the column
+	// contributes nothing and the layout is identical to the current view; a
+	// non-empty value carries its own trailing gap before the title.
+	extra := aiResumeExtraMetaCell(session)
+	if extra != "" {
+		extra += " "
+	}
+
+	label := fmt.Sprintf("%s %s %s %s %s %s%s",
+		badge, absTime, relTime, branchCell, shortID, extra, title)
+
 	return intpickercompat.Entry{
 		Label:     label,
 		Value:     aiResumePickerValue(agent, resumeID),
@@ -946,23 +994,79 @@ func aiResumeSessionRow(session aisessions.SessionMeta) intpickercompat.Entry {
 	}
 }
 
+// aiResumeAbsoluteTime renders the fixed-width "MM-DD HH:MM" column, padding to
+// a stable width when the timestamp is missing so columns stay aligned.
+func aiResumeAbsoluteTime(t time.Time) string {
+	if t.IsZero() {
+		return strings.Repeat(" ", aiResumeTimeWidth)
+	}
+	return t.Local().Format(aiResumeTimeLayout)
+}
+
+// aiResumeRelativeAge renders a compact, locale-aware relative age ("2h", "3d",
+// "2시간"). It returns empty when either timestamp is unknown so the column pads
+// to a blank cell instead of a bogus age.
+func aiResumeRelativeAge(now, modified time.Time, locale i18n.Locale) string {
+	if now.IsZero() || modified.IsZero() {
+		return ""
+	}
+	age := now.Sub(modified)
+	if age < 0 {
+		age = 0
+	}
+	return i18n.FormatDuration(age, locale, i18n.FormatCompact)
+}
+
+// aiResumeShortID returns the leading runes of the resume id for a compact
+// fixed-width identifier column.
+func aiResumeShortID(resumeID string) string {
+	runes := []rune(strings.TrimSpace(resumeID))
+	if len(runes) > aiResumeShortIDWidth {
+		return string(runes[:aiResumeShortIDWidth])
+	}
+	return string(runes)
+}
+
+// aiResumeExtraMetaCell is the reserved extra-meta column. Phase 0 keeps it
+// empty (source duplicates the agent badge); Phase 2 returns the cwd relative
+// path here. Keeping a single seam documents where the next column slots in.
+func aiResumeExtraMetaCell(_ aisessions.SessionMeta) string {
+	return ""
+}
+
 func cleanAIResumeTitle(title, resumeID string) string {
 	title = strings.Join(strings.Fields(title), " ")
 	if title == "" {
-		title = resumeID
+		title = strings.TrimSpace(resumeID)
 	}
 	if title == "" {
 		return "(untitled)"
 	}
-	return truncateAIResumeRunes(title, 72)
+	return truncateAIResumeCells(title, aiResumeTitleMaxCells)
 }
 
-func truncateAIResumeRunes(value string, limit int) string {
-	runes := []rune(strings.TrimSpace(value))
-	if limit <= 0 || len(runes) <= limit {
-		return string(runes)
+// aiResumeFitCell truncates value to width terminal cells and right-pads with
+// spaces, so fixed columns align even with CJK or empty content.
+func aiResumeFitCell(value string, width int) string {
+	fitted := i18n.TruncateTerminalCells(strings.TrimSpace(value), width)
+	if pad := width - i18n.TerminalCellWidth(fitted); pad > 0 {
+		fitted += strings.Repeat(" ", pad)
 	}
-	return string(runes[:limit])
+	return fitted
+}
+
+// truncateAIResumeCells clips value to limit terminal cells, appending an
+// ellipsis when it overflows. Width-based (not rune-count) so CJK titles stay
+// inside narrow popups.
+func truncateAIResumeCells(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 {
+		return ""
+	}
+	if i18n.TerminalCellWidth(value) <= limit {
+		return value
+	}
+	return i18n.TruncateTerminalCells(value, limit-1) + "…"
 }
 
 func aiResumePickerValue(agent, resumeID string) string {
