@@ -27,6 +27,7 @@ const (
 
 	sessionScanLineLimit  = 100
 	sessionTitleLineLimit = 100
+	codexScanFileLimit    = 80
 )
 
 // SessionContext captures project metadata associated with a resume session.
@@ -168,11 +169,16 @@ func discoverClaude(cwd, projectsDir string) []SessionMeta {
 }
 
 func discoverCodex(cwd, sessionsDir string) []SessionMeta {
+	return discoverCodexWithFileLimit(cwd, sessionsDir, codexScanFileLimit)
+}
+
+func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit int) []SessionMeta {
 	sessionsDir = strings.TrimSpace(sessionsDir)
 	if sessionsDir == "" {
 		return nil
 	}
-	var sessions []SessionMeta
+
+	var candidates []sessionFileCandidate
 	_ = filepath.WalkDir(sessionsDir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry == nil || entry.IsDir() {
 			return nil
@@ -184,16 +190,34 @@ func discoverCodex(cwd, sessionsDir string) []SessionMeta {
 		if err != nil {
 			return nil
 		}
-		details, ok := scanSessionJSONL(path, sessionScanOptions{
+		candidates = append(candidates, sessionFileCandidate{
+			path:    path,
+			modTime: info.ModTime(),
+		})
+		return nil
+	})
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].modTime.Equal(candidates[j].modTime) {
+			return candidates[i].path < candidates[j].path
+		}
+		return candidates[i].modTime.After(candidates[j].modTime)
+	})
+	if scanFileLimit > 0 && len(candidates) > scanFileLimit {
+		candidates = candidates[:scanFileLimit]
+	}
+
+	sessions := make([]SessionMeta, 0, len(candidates))
+	for _, candidate := range candidates {
+		details, ok := scanSessionJSONL(candidate.path, sessionScanOptions{
 			targetCWD:  cwd,
 			requireCWD: true,
 		})
 		if !ok || details.id == "" || cleanCWD(details.cwd) != cwd {
-			return nil
+			continue
 		}
 		id, err := codex.NormalizeResumeID(details.id)
 		if err != nil {
-			return nil
+			continue
 		}
 		title := details.title
 		if title == "" {
@@ -203,20 +227,24 @@ func discoverCodex(cwd, sessionsDir string) []SessionMeta {
 			Agent:        AgentCodex,
 			ResumeID:     id,
 			Title:        title,
-			LastModified: info.ModTime(),
+			LastModified: candidate.modTime,
 			Context: SessionContext{
 				CWD:    cwd,
 				Branch: details.branch,
 			},
 			Source: SourceCodexRollout,
 		})
-		return nil
-	})
+	}
 	return sessions
 }
 
 func discoverAntigravity(_ string, _ string) []SessionMeta {
 	return nil
+}
+
+type sessionFileCandidate struct {
+	path    string
+	modTime time.Time
 }
 
 func dedupeByResumeID(sessions []SessionMeta) []SessionMeta {

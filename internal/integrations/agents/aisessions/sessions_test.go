@@ -2,6 +2,7 @@ package aisessions
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -103,6 +104,82 @@ func TestDiscoverDedupesResumeIDKeepingNewest(t *testing.T) {
 		Context:      SessionContext{CWD: "/workspace/app", Branch: "feat/newer"},
 		Source:       SourceCodexRollout,
 	})
+}
+
+func TestDiscoverCodexScansNewestFilesFirstByModTime(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "codex", "sessions", "2026", "06", "25")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	olderPath := filepath.Join(sessionsDir, "rollout-000-older.jsonl")
+	newerPath := filepath.Join(sessionsDir, "rollout-999-newer.jsonl")
+	writeFile(t, olderPath, `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000201","cwd":"/workspace/app","git_branch":"feat/older"}}
+{"type":"event_msg","payload":{"message":"Older session"}}
+`)
+	writeFile(t, newerPath, `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000202","cwd":"/workspace/app","git_branch":"feat/newer"}}
+{"type":"event_msg","payload":{"message":"Newer session"}}
+`)
+	setModTime(t, olderPath, time.Date(2026, 6, 25, 8, 0, 0, 0, time.UTC))
+	setModTime(t, newerPath, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
+
+	got := discoverCodex("/workspace/app", filepath.Join(root, "codex", "sessions"))
+	if len(got) != 2 {
+		t.Fatalf("discoverCodex() len = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].Title != "Newer session" || got[1].Title != "Older session" {
+		t.Fatalf("discoverCodex() titles = [%q, %q], want newest first", got[0].Title, got[1].Title)
+	}
+}
+
+func TestDiscoverCodexLimitsScanToMostRecentFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "codex", "sessions")
+	base := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	for i := 0; i <= codexScanFileLimit; i++ {
+		writeNumberedCodexSession(t, sessionsDir, i, base.Add(-time.Duration(i)*time.Minute), "/workspace/app")
+	}
+
+	got := discoverCodex("/workspace/app", sessionsDir)
+	if len(got) != codexScanFileLimit {
+		t.Fatalf("discoverCodex() len = %d, want %d", len(got), codexScanFileLimit)
+	}
+	oldestID := numberedCodexSessionID(codexScanFileLimit)
+	for _, session := range got {
+		if session.ResumeID == oldestID {
+			t.Fatalf("discoverCodex() included oldest session beyond scan limit: %#v", session)
+		}
+	}
+}
+
+func TestDiscoverCodexLimitedScanPreservesRecentPickerResults(t *testing.T) {
+	t.Parallel()
+
+	const pickerVisibleLimit = 30
+
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "codex", "sessions")
+	base := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < codexScanFileLimit+40; i++ {
+		writeNumberedCodexSession(t, sessionsDir, i, base.Add(-time.Duration(i)*time.Minute), "/workspace/app")
+	}
+
+	limited := discoverCodexWithFileLimit("/workspace/app", sessionsDir, codexScanFileLimit)
+	unbounded := discoverCodexWithFileLimit("/workspace/app", sessionsDir, 0)
+	if len(limited) < pickerVisibleLimit || len(unbounded) < pickerVisibleLimit {
+		t.Fatalf("not enough sessions to compare picker rows: limited=%d unbounded=%d", len(limited), len(unbounded))
+	}
+	for i := 0; i < pickerVisibleLimit; i++ {
+		if limited[i].ResumeID != unbounded[i].ResumeID ||
+			limited[i].Title != unbounded[i].Title ||
+			!limited[i].LastModified.Equal(unbounded[i].LastModified) {
+			t.Fatalf("row %d differs after limit: limited=%#v unbounded=%#v", i, limited[i], unbounded[i])
+		}
+	}
 }
 
 func TestDiscoverSkipsNoisyTitleCandidates(t *testing.T) {
@@ -259,6 +336,26 @@ func assertSession(t *testing.T, got, want SessionMeta) {
 		!got.LastModified.Equal(want.LastModified) {
 		t.Fatalf("session = %#v, want %#v", got, want)
 	}
+}
+
+func writeNumberedCodexSession(t *testing.T, sessionsDir string, index int, modTime time.Time, cwd string) string {
+	t.Helper()
+
+	dir := filepath.Join(sessionsDir, "2026", "06", "25")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, fmt.Sprintf("rollout-%03d.jsonl", index))
+	id := numberedCodexSessionID(index)
+	writeFile(t, path, `{"type":"session_meta","payload":{"id":"`+id+`","cwd":"`+cwd+`","git_branch":"feat/perf"}}
+{"type":"event_msg","payload":{"message":"Session `+fmt.Sprintf("%03d", index)+`"}}
+`)
+	setModTime(t, path, modTime)
+	return path
+}
+
+func numberedCodexSessionID(index int) string {
+	return fmt.Sprintf("019f0000-0000-7000-8000-%012d", index)
 }
 
 type failAfterReader struct {
