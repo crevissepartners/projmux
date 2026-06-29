@@ -850,7 +850,8 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 func (c *aiCommand) runResumePicker(direction string) error {
 	contextDir := c.resolveContextDir()
 	homeDir, _ := c.home()
-	sessions, err := aisessions.Discover(contextDir, aisessions.DiscoverOptions{HomeDir: homeDir})
+	depth := resolveAIResumeScanDepth(c.homeDir, c.lookupEnv, contextDir).Depth
+	sessions, err := aisessions.Discover(contextDir, aisessions.DiscoverOptions{HomeDir: homeDir, Depth: depth})
 	if err != nil {
 		return err
 	}
@@ -859,7 +860,7 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	}
 
 	limit := resolveAIResumePickerLimit(c.homeDir, c.lookupEnv, contextDir).Limit
-	result, err := c.runResumeSessionPicker(direction, sessions, limit)
+	result, err := c.runResumeSessionPicker(direction, sessions, limit, contextDir, depth)
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return nil
@@ -880,7 +881,7 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	return c.runSelectedResumeSession(selection, direction)
 }
 
-func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessions.SessionMeta, limit int) (intpickercompat.Result, error) {
+func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessions.SessionMeta, limit int, baseCWD string, depth int) (intpickercompat.Result, error) {
 	if c.nativePicker == nil {
 		return intpickercompat.Result{}, errors.New("native picker is not configured")
 	}
@@ -889,7 +890,7 @@ func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessio
 	if c.now != nil {
 		now = c.now()
 	}
-	entries, visible, total := aiResumeSessionRows(sessions, limit, now, locale)
+	entries, visible, total := aiResumeSessionRows(sessions, limit, now, locale, baseCWD, depth)
 	footer := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), visible)
 	if total > visible {
 		footer = fmt.Sprintf(localizeUIText(locale, "Showing latest %d of %d resume sessions."), visible, total)
@@ -938,12 +939,13 @@ const (
 	aiResumeRelCellWidth    = 6
 	aiResumeBranchCellWidth = 18
 	aiResumeShortIDWidth    = 8
+	aiResumeCWDCellWidth    = 14
 	aiResumeTitleMaxCells   = 72
 	aiResumeTimeLayout      = "01-02 15:04"
 	aiResumeEmptyCell       = "-"
 )
 
-func aiResumeSessionRows(sessions []aisessions.SessionMeta, limit int, now time.Time, locale i18n.Locale) ([]intpickercompat.Entry, int, int) {
+func aiResumeSessionRows(sessions []aisessions.SessionMeta, limit int, now time.Time, locale i18n.Locale, baseCWD string, depth int) ([]intpickercompat.Entry, int, int) {
 	limit = normalizeResumePickerLimit(limit)
 	total := len(sessions)
 	if len(sessions) > limit {
@@ -956,12 +958,12 @@ func aiResumeSessionRows(sessions []aisessions.SessionMeta, limit int, now time.
 		SearchKey: "new session fresh agent picker",
 	})
 	for _, session := range sessions {
-		rows = append(rows, aiResumeSessionRow(session, now, locale))
+		rows = append(rows, aiResumeSessionRow(session, now, locale, baseCWD, depth))
 	}
 	return rows, len(sessions), total
 }
 
-func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i18n.Locale) intpickercompat.Entry {
+func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
 	agent := strings.TrimSpace(session.Agent)
 	resumeID := strings.TrimSpace(session.ResumeID)
 	branch := strings.TrimSpace(session.Context.Branch)
@@ -977,12 +979,14 @@ func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i1
 	branchCell := ansiDim(aiResumeFitCell(branch, aiResumeBranchCellWidth))
 	shortID := ansiDim(aiResumeFitCell(aiResumeShortID(resumeID), aiResumeShortIDWidth))
 
-	// Reserved extra-meta slot (Phase 2 cwd column). Empty today, so the column
-	// contributes nothing and the layout is identical to the current view; a
-	// non-empty value carries its own trailing gap before the title.
-	extra := aiResumeExtraMetaCell(session)
-	if extra != "" {
-		extra += " "
+	// Extra-meta slot (Phase 2 cwd column). Empty at depth 0, so the column
+	// contributes nothing and the layout is identical to the historical view. At
+	// depth>0 every row carries a fixed-width relative-cwd cell (exact matches
+	// render "./") so the title column stays aligned, plus a trailing gap.
+	relCWD := aiResumeExtraMetaCell(session, baseCWD, depth)
+	extra := ""
+	if relCWD != "" {
+		extra = ansiDim(aiResumeFitCell(relCWD, aiResumeCWDCellWidth)) + " "
 	}
 
 	label := fmt.Sprintf("%s %s %s %s %s %s%s",
@@ -991,7 +995,7 @@ func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i1
 	return intpickercompat.Entry{
 		Label:     label,
 		Value:     aiResumePickerValue(agent, resumeID),
-		SearchKey: strings.Join([]string{agent, title, resumeID, branch}, " "),
+		SearchKey: strings.TrimSpace(strings.Join([]string{agent, title, resumeID, branch, relCWD}, " ")),
 	}
 }
 
@@ -1025,11 +1029,40 @@ func aiResumeShortID(resumeID string) string {
 	return string(runes)
 }
 
-// aiResumeExtraMetaCell is the reserved extra-meta column. Phase 0 keeps it
-// empty (source duplicates the agent badge); Phase 2 returns the cwd relative
-// path here. Keeping a single seam documents where the next column slots in.
-func aiResumeExtraMetaCell(_ aisessions.SessionMeta) string {
-	return ""
+// aiResumeExtraMetaCell fills the reserved extra-meta column. At depth 0 it
+// stays empty (the column is hidden, matching the historical view); at depth>0
+// it returns the session cwd as a path relative to the picker's base cwd
+// ("./", "./web", "./web/api") so the user can tell child-directory sessions
+// apart. A session whose recorded cwd cannot be made relative (it should always
+// be a descendant given discovery filtering) collapses to an empty cell.
+func aiResumeExtraMetaCell(session aisessions.SessionMeta, baseCWD string, depth int) string {
+	if depth <= 0 {
+		return ""
+	}
+	return aiResumeRelativeCWD(baseCWD, session.Context.CWD)
+}
+
+// aiResumeRelativeCWD renders recorded as a "./"-prefixed path relative to base.
+// The exact cwd renders "./"; descendants render "./sub" (slash-normalised).
+// It returns "" when either path is empty or recorded escapes base (a "..").
+func aiResumeRelativeCWD(base, recorded string) string {
+	base = strings.TrimSpace(base)
+	recorded = strings.TrimSpace(recorded)
+	if base == "" || recorded == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(base, recorded)
+	if err != nil {
+		return ""
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." {
+		return "./"
+	}
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return ""
+	}
+	return "./" + rel
 }
 
 func cleanAIResumeTitle(title, resumeID string) string {

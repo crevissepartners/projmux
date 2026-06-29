@@ -281,7 +281,7 @@ func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
 		})
 	}
 
-	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC), i18n.FallbackLocale)
+	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC), i18n.FallbackLocale, "", 0)
 
 	if visible != aiResumePickerLimitDefault || total != aiResumePickerLimitDefault+2 {
 		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, aiResumePickerLimitDefault, aiResumePickerLimitDefault+2)
@@ -332,7 +332,7 @@ func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
 		},
 	}
 
-	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, now, i18n.FallbackLocale)
+	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, now, i18n.FallbackLocale, "", 0)
 	if visible != len(sessions) || total != len(sessions) {
 		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, len(sessions), len(sessions))
 	}
@@ -379,7 +379,7 @@ func TestAIResumeSessionRowsLimitBoundaries(t *testing.T) {
 		{name: "oversized clamps to max", limit: 500, wantVisible: maxLimit},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, visible, total := aiResumeSessionRows(sessions, tc.limit, now, i18n.FallbackLocale)
+			_, visible, total := aiResumeSessionRows(sessions, tc.limit, now, i18n.FallbackLocale, "", 0)
 			if visible != tc.wantVisible {
 				t.Fatalf("visible = %d, want %d", visible, tc.wantVisible)
 			}
@@ -398,7 +398,7 @@ func TestAIResumeSessionRowTitleEllipsis(t *testing.T) {
 		ResumeID:     "019f0000-0000-7000-8000-000000000009",
 		Title:        long,
 		LastModified: now.Add(-time.Hour),
-	}, now, i18n.FallbackLocale)
+	}, now, i18n.FallbackLocale, "", 0)
 
 	if !strings.Contains(row.Label, "…") {
 		t.Fatalf("row label = %q, want ellipsis on overflow", row.Label)
@@ -410,6 +410,74 @@ func TestAIResumeSessionRowTitleEllipsis(t *testing.T) {
 	// Short ids surface in the short-id column.
 	if !strings.Contains(row.Label, "019f0000") {
 		t.Fatalf("row label = %q, want short resume id", row.Label)
+	}
+}
+
+func TestAIResumeExtraMetaCellDepthGating(t *testing.T) {
+	session := aisessions.SessionMeta{
+		Context: aisessions.SessionContext{CWD: "/workspace/app/web"},
+	}
+	// Depth 0 hides the column entirely (historical view).
+	if got := aiResumeExtraMetaCell(session, "/workspace/app", 0); got != "" {
+		t.Fatalf("depth 0 extra cell = %q, want empty", got)
+	}
+	// Depth>0 surfaces the cwd relative to the picker base.
+	if got := aiResumeExtraMetaCell(session, "/workspace/app", 1); got != "./web" {
+		t.Fatalf("depth 1 extra cell = %q, want ./web", got)
+	}
+	// The exact cwd renders "./" so every row keeps the column aligned.
+	exact := aisessions.SessionMeta{Context: aisessions.SessionContext{CWD: "/workspace/app"}}
+	if got := aiResumeExtraMetaCell(exact, "/workspace/app", 1); got != "./" {
+		t.Fatalf("exact cwd extra cell = %q, want ./", got)
+	}
+}
+
+func TestAIResumeRelativeCWD(t *testing.T) {
+	for _, tc := range []struct {
+		base     string
+		recorded string
+		want     string
+	}{
+		{base: "/workspace/app", recorded: "/workspace/app", want: "./"},
+		{base: "/workspace/app", recorded: "/workspace/app/web", want: "./web"},
+		{base: "/workspace/app", recorded: "/workspace/app/web/api", want: "./web/api"},
+		{base: "/workspace/app", recorded: "/workspace/app-other", want: ""}, // sibling escapes base
+		{base: "/workspace/app", recorded: "/workspace", want: ""},           // parent escapes base
+		{base: "", recorded: "/workspace/app", want: ""},
+		{base: "/workspace/app", recorded: "", want: ""},
+	} {
+		if got := aiResumeRelativeCWD(tc.base, tc.recorded); got != tc.want {
+			t.Fatalf("aiResumeRelativeCWD(%q, %q) = %q, want %q", tc.base, tc.recorded, got, tc.want)
+		}
+	}
+}
+
+func TestAIResumeSessionRowShowsCWDColumnOnlyAtDepth(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	session := aisessions.SessionMeta{
+		Agent:        aiModeClaude,
+		ResumeID:     "019f0000-0000-7000-8000-000000000021",
+		Title:        "Child session",
+		LastModified: now.Add(-time.Hour),
+		Context:      aisessions.SessionContext{CWD: "/workspace/app/web", Branch: "feat/web"},
+	}
+
+	depth0 := aiResumeSessionRow(session, now, i18n.FallbackLocale, "/workspace/app", 0)
+	if strings.Contains(depth0.Label, "./web") {
+		t.Fatalf("depth 0 row should hide cwd column: %q", depth0.Label)
+	}
+
+	depth1 := aiResumeSessionRow(session, now, i18n.FallbackLocale, "/workspace/app", 1)
+	if !strings.Contains(depth1.Label, "./web") {
+		t.Fatalf("depth 1 row should show cwd column: %q", depth1.Label)
+	}
+	if !strings.Contains(depth1.SearchKey, "./web") {
+		t.Fatalf("depth 1 search key should include cwd: %q", depth1.SearchKey)
+	}
+	// The cwd column pushes the title right, so the depth>0 label is wider.
+	if i18n.TerminalCellWidth(depth1.Label) <= i18n.TerminalCellWidth(depth0.Label) {
+		t.Fatalf("depth 1 label width %d should exceed depth 0 width %d",
+			i18n.TerminalCellWidth(depth1.Label), i18n.TerminalCellWidth(depth0.Label))
 	}
 }
 

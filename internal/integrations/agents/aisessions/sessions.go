@@ -28,6 +28,10 @@ const (
 	sessionScanLineLimit  = 100
 	sessionTitleLineLimit = 100
 	codexScanFileLimit    = 80
+	// codexScanBudgetMax caps the depth-widened codex scan budget. depth>0
+	// widens the per-discovery file budget (more child cwds match), but an
+	// unbounded walk would defeat the perf limit, so the budget tops out here.
+	codexScanBudgetMax = 400
 )
 
 // SessionContext captures project metadata associated with a resume session.
@@ -52,6 +56,11 @@ type SessionMeta struct {
 type DiscoverOptions struct {
 	HomeDir string
 
+	// Depth widens discovery to sessions started in directories up to Depth
+	// levels below cwd (path-tree filter on the session's recorded cwd). Zero
+	// (the default) keeps the historical exact-cwd behaviour for both agents.
+	Depth int
+
 	ClaudeProjectsDir string
 	CodexSessionsDir  string
 
@@ -70,9 +79,10 @@ func Discover(cwd string, opts DiscoverOptions) ([]SessionMeta, error) {
 	}
 
 	opts = opts.withDefaults()
+	depth := max(opts.Depth, 0)
 	var sessions []SessionMeta
-	sessions = append(sessions, discoverClaude(cwd, opts.ClaudeProjectsDir)...)
-	sessions = append(sessions, discoverCodex(cwd, opts.CodexSessionsDir)...)
+	sessions = append(sessions, discoverClaude(cwd, opts.ClaudeProjectsDir, depth)...)
+	sessions = append(sessions, discoverCodex(cwd, opts.CodexSessionsDir, depth)...)
 	sessions = append(sessions, discoverAntigravity(cwd, opts.AntigravitySessionsDir)...)
 	sessions = dedupeByResumeID(sessions)
 
@@ -111,16 +121,50 @@ func (opts DiscoverOptions) withDefaults() DiscoverOptions {
 	return opts
 }
 
-func discoverClaude(cwd, projectsDir string) []SessionMeta {
+func discoverClaude(cwd, projectsDir string, depth int) []SessionMeta {
 	projectsDir = strings.TrimSpace(projectsDir)
 	if projectsDir == "" {
 		return nil
 	}
-	dir := filepath.Join(projectsDir, EncodeClaudeProjectPath(cwd))
+	if depth <= 0 {
+		// Exact-cwd: the historical single-directory path (no behaviour change).
+		return discoverClaudeDir(filepath.Join(projectsDir, EncodeClaudeProjectPath(cwd)), cwd, 0)
+	}
+
+	// depth>0: enumerate candidate project dirs by encoded-cwd prefix. The
+	// encoding is lossy ('/' and '-' both become '-'), so this prefix only
+	// narrows the on-disk scan; the authoritative child test is withinTree on
+	// the cwd recorded inside each file (see discoverClaudeDir), which rejects
+	// false-positive siblings such as "repo-other".
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return nil
+	}
+	encoded := EncodeClaudeProjectPath(cwd)
+	var sessions []SessionMeta
+	for _, entry := range entries {
+		if entry == nil || !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name != encoded && !strings.HasPrefix(name, encoded+"-") {
+			continue
+		}
+		sessions = append(sessions, discoverClaudeDir(filepath.Join(projectsDir, name), cwd, depth)...)
+	}
+	return sessions
+}
+
+// discoverClaudeDir scans one Claude project directory. depth<=0 keeps the
+// exact-cwd contract (cwd is the search target and the recorded value); depth>0
+// accepts any session whose recorded cwd is within depth levels of cwd and
+// records that recorded cwd so the picker can render the relative column.
+func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
+	treeFilter := depth > 0
 
 	sessions := make([]SessionMeta, 0, len(entries))
 	for _, entry := range entries {
@@ -132,13 +176,23 @@ func discoverClaude(cwd, projectsDir string) []SessionMeta {
 		if err != nil {
 			continue
 		}
-		details, ok := scanSessionJSONL(path, sessionScanOptions{
-			targetCWD: cwd,
-		})
+		scanOpts := sessionScanOptions{targetCWD: cwd}
+		if treeFilter {
+			// No targetCWD short-circuit: we keep non-exact matches and judge
+			// them by withinTree below. requireCWD ensures we captured one.
+			scanOpts = sessionScanOptions{requireCWD: true}
+		}
+		details, ok := scanSessionJSONL(path, scanOpts)
 		if !ok {
 			continue
 		}
-		if details.cwd != "" && cleanCWD(details.cwd) != cwd {
+		recordedCWD := cwd
+		if treeFilter {
+			if !withinTree(details.cwd, cwd, depth) {
+				continue
+			}
+			recordedCWD = cleanCWD(details.cwd)
+		} else if details.cwd != "" && cleanCWD(details.cwd) != cwd {
 			continue
 		}
 		id := details.id
@@ -159,7 +213,7 @@ func discoverClaude(cwd, projectsDir string) []SessionMeta {
 			Title:        title,
 			LastModified: info.ModTime(),
 			Context: SessionContext{
-				CWD:    cwd,
+				CWD:    recordedCWD,
 				Branch: details.branch,
 			},
 			Source: SourceClaudeTranscript,
@@ -168,15 +222,31 @@ func discoverClaude(cwd, projectsDir string) []SessionMeta {
 	return sessions
 }
 
-func discoverCodex(cwd, sessionsDir string) []SessionMeta {
-	return discoverCodexWithFileLimit(cwd, sessionsDir, codexScanFileLimit)
+func discoverCodex(cwd, sessionsDir string, depth int) []SessionMeta {
+	return discoverCodexWithFileLimit(cwd, sessionsDir, codexScanBudget(depth), depth)
 }
 
-func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit int) []SessionMeta {
+// codexScanBudget returns the codex file-scan budget for a discovery depth. The
+// exact-cwd default keeps the historical 80-file limit; depth>0 widens it
+// proportionally (more child cwds match, so a fixed budget could drop recent
+// matches) and caps it at codexScanBudgetMax so the walk stays bounded.
+func codexScanBudget(depth int) int {
+	if depth <= 0 {
+		return codexScanFileLimit
+	}
+	budget := codexScanFileLimit * (depth + 1)
+	if budget > codexScanBudgetMax {
+		return codexScanBudgetMax
+	}
+	return budget
+}
+
+func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit, depth int) []SessionMeta {
 	sessionsDir = strings.TrimSpace(sessionsDir)
 	if sessionsDir == "" {
 		return nil
 	}
+	treeFilter := depth > 0
 
 	var candidates []sessionFileCandidate
 	_ = filepath.WalkDir(sessionsDir, func(path string, entry fs.DirEntry, err error) error {
@@ -208,11 +278,13 @@ func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit int) []Se
 
 	sessions := make([]SessionMeta, 0, len(candidates))
 	for _, candidate := range candidates {
-		details, ok := scanSessionJSONL(candidate.path, sessionScanOptions{
-			targetCWD:  cwd,
-			requireCWD: true,
-		})
-		if !ok || details.id == "" || cleanCWD(details.cwd) != cwd {
+		scanOpts := sessionScanOptions{targetCWD: cwd, requireCWD: true}
+		if treeFilter {
+			// Keep non-exact matches; judge them by withinTree below.
+			scanOpts = sessionScanOptions{requireCWD: true}
+		}
+		details, ok := scanSessionJSONL(candidate.path, scanOpts)
+		if !ok || details.id == "" || !withinTree(details.cwd, cwd, depth) {
 			continue
 		}
 		id, err := codex.NormalizeResumeID(details.id)
@@ -223,19 +295,57 @@ func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit int) []Se
 		if title == "" {
 			title = shortResumeID(id)
 		}
+		recordedCWD := cwd
+		if treeFilter {
+			recordedCWD = cleanCWD(details.cwd)
+		}
 		sessions = append(sessions, SessionMeta{
 			Agent:        AgentCodex,
 			ResumeID:     id,
 			Title:        title,
 			LastModified: candidate.modTime,
 			Context: SessionContext{
-				CWD:    cwd,
+				CWD:    recordedCWD,
 				Branch: details.branch,
 			},
 			Source: SourceCodexRollout,
 		})
 	}
 	return sessions
+}
+
+// withinTree reports whether recordedCWD is cwd itself or a descendant up to
+// depth levels below it. The decision is purely on the cleaned paths: Rel must
+// resolve without a ".." prefix (so parents/siblings are excluded) and the
+// number of path segments must not exceed depth. depth 0 therefore matches only
+// the exact cwd, identical to the historical equality check.
+func withinTree(recordedCWD, cwd string, depth int) bool {
+	if depth < 0 {
+		depth = 0
+	}
+	recorded := cleanCWD(recordedCWD)
+	base := cleanCWD(cwd)
+	if recorded == "" || base == "" {
+		return false
+	}
+	if recorded == base {
+		return true
+	}
+	if depth == 0 {
+		return false
+	}
+	rel, err := filepath.Rel(base, recorded)
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." {
+		return true
+	}
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return false
+	}
+	return len(strings.Split(rel, "/")) <= depth
 }
 
 func discoverAntigravity(_ string, _ string) []SessionMeta {

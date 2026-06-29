@@ -114,8 +114,85 @@ func TestProjectAIConfigRejectsNonInteger(t *testing.T) {
 	if _, err := ParseProjectConfig("[ai]\nresume_picker_limit = \"thirty\"\n"); err == nil {
 		t.Fatal("expected non-integer resume_picker_limit to error")
 	}
+	if _, err := ParseProjectConfig("[ai]\nresume_scan_depth = \"two\"\n"); err == nil {
+		t.Fatal("expected non-integer resume_scan_depth to error")
+	}
 	if _, err := ParseProjectConfig("[ai]\nunknown_key = 3\n"); err == nil {
 		t.Fatal("expected unsupported ai key to error")
+	}
+}
+
+func TestProjectAIConfigResumeScanDepthRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[ai]\nresume_scan_depth = 2\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.AI.ResumeScanDepth != 2 {
+		t.Fatalf("AI.ResumeScanDepth = %d, want 2", cfg.AI.ResumeScanDepth)
+	}
+
+	rendered := renderProjectConfig(cfg)
+	if !strings.Contains(rendered, "[ai]") || !strings.Contains(rendered, "resume_scan_depth = 2") {
+		t.Fatalf("rendered = %q, want [ai] resume_scan_depth = 2", rendered)
+	}
+
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.AI != cfg.AI {
+		t.Fatalf("re-parsed AI = %#v, want %#v", reparsed.AI, cfg.AI)
+	}
+}
+
+func TestProjectAIConfigBothKeysShareOneSection(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[ai]\nresume_picker_limit = 50\nresume_scan_depth = 3\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.AI.ResumePickerLimit != 50 || cfg.AI.ResumeScanDepth != 3 {
+		t.Fatalf("AI = %#v, want limit 50 depth 3", cfg.AI)
+	}
+
+	rendered := renderProjectConfig(cfg)
+	if strings.Count(rendered, "[ai]") != 1 {
+		t.Fatalf("rendered = %q, want a single [ai] section", rendered)
+	}
+	if !strings.Contains(rendered, "resume_picker_limit = 50") || !strings.Contains(rendered, "resume_scan_depth = 3") {
+		t.Fatalf("rendered = %q, want both ai keys", rendered)
+	}
+
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.AI != cfg.AI {
+		t.Fatalf("re-parsed AI = %#v, want %#v", reparsed.AI, cfg.AI)
+	}
+}
+
+func TestNormalizeClampsResumeScanDepth(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in   int
+		want int
+	}{
+		{in: 0, want: 0},  // unset stays unset
+		{in: -3, want: 0}, // negative collapses to exact cwd
+		{in: 1, want: 1},  // in range
+		{in: 8, want: 8},  // max
+		{in: 99, want: AIResumeScanDepthMax},
+	} {
+		cfg := ProjectConfig{AI: AIConfig{ResumeScanDepth: tc.in}}
+		normalizeProjectConfig(&cfg)
+		if cfg.AI.ResumeScanDepth != tc.want {
+			t.Fatalf("normalize(%d) = %d, want %d", tc.in, cfg.AI.ResumeScanDepth, tc.want)
+		}
 	}
 }
 

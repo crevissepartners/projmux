@@ -331,8 +331,9 @@ user/global preference in this release.
 ## AI Resume Picker
 
 The AI resume picker (`projmux ai split --agent resume`) lists the most recent
-deduplicated Claude/Codex resume sessions. The number of rows it shows is
-configurable; the default is 30.
+deduplicated Claude/Codex resume sessions. The number of rows it shows and how
+far below the current directory it scans are both configurable; the defaults are
+30 rows and depth 0 (the current directory only).
 
 Preferred interactive path:
 
@@ -350,18 +351,26 @@ Schema:
 ```toml
 [ai]
 resume_picker_limit = 30 # 1-100; how many recent sessions the picker lists
+resume_scan_depth = 0    # 0-8; include sessions started in cwd child dirs
 ```
 
-Resolution priority is:
+Resolution priority (each key resolves independently) is:
 
-1. `PROJMUX_AI_RESUME_PICKER_LIMIT`
-2. project `[ai] resume_picker_limit`
-3. global/user `[ai] resume_picker_limit`
-4. built-in default `30`
+1. `PROJMUX_AI_RESUME_PICKER_LIMIT` / `PROJMUX_AI_RESUME_SCAN_DEPTH`
+2. project `[ai]` key
+3. global/user `[ai]` key
+4. built-in default (`30` rows, depth `0`)
 
-Configured values are clamped to `1`-`100`. A missing or non-positive value
-falls back to the default, so an empty config is identical to the historical
-hardcoded behavior. Settings edits write the global config.
+`resume_picker_limit` is clamped to `1`-`100`; a missing or non-positive value
+falls back to the default. `resume_scan_depth` is clamped to `0`-`8`: depth `0`
+lists only sessions whose recorded working directory matches the current one
+(the historical behavior), while depth `N` also lists sessions started up to `N`
+levels below it — useful from a monorepo or parent directory. The match is a
+path-tree filter on each session's recorded cwd, so parent and sibling
+directories are never included. At depth `>0` the picker adds a relative-cwd
+column (`./`, `./web`, `./api`) so child-directory sessions are easy to tell
+apart. A missing or zero depth is identical to the historical behavior. Settings
+edits write the global config.
 
 ## Environment Variables
 
@@ -373,6 +382,7 @@ hardcoded behavior. Settings edits write the global config.
 | `PROJMUX_LOCALE` | UI locale override. `auto` resumes detection; `en-US` and `ko-KR` pin supported locales. Unsupported tags fall back to `en-US` and surface a Settings warning. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in Linux/WSL sender. Separate from declarative `[hooks.send-noti]`. |
 | `PROJMUX_AI_RESUME_PICKER_LIMIT` | Overrides the AI resume picker row count (`[ai] resume_picker_limit`). Clamped to 1-100; takes priority over project and global config. |
+| `PROJMUX_AI_RESUME_SCAN_DEPTH` | Overrides the AI resume picker cwd-tree scan depth (`[ai] resume_scan_depth`). Clamped to 0-8; takes priority over project and global config. Depth 0 keeps the exact-cwd behavior. |
 | `PROJMUX_NOTIFY_HOOK_DEPTH` | Internal recursion guard for `send-noti` hooks. Depth `>= 1` suppresses nested hook dispatch while still allowing the queue write itself. |
 | `PROJMUX_NOTIFY_EXPIRE_MS` | AI desktop notification expiration in milliseconds. Defaults to `5000`; unset, zero, negative, and non-numeric values fall back to the default. |
 | `PROJMUX_DESKTOP_NOTIFY_MODE` | OS desktop notification mode override. `none` / `notify` / `raise` (case insensitive). When set, this takes priority over every other resolution rung. The in-app notify queue is not affected. |
