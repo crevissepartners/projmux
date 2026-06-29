@@ -19,6 +19,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aiprovider"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -280,7 +281,7 @@ func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
 		})
 	}
 
-	rows, visible, total := aiResumeSessionRows(sessions)
+	rows, visible, total := aiResumeSessionRows(sessions, time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC), i18n.FallbackLocale)
 
 	if visible != aiResumePickerLimit || total != aiResumePickerLimit+2 {
 		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, aiResumePickerLimit, aiResumePickerLimit+2)
@@ -296,6 +297,138 @@ func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
 	}
 	if !strings.Contains(rows[1].SearchKey, sessions[0].ResumeID) {
 		t.Fatalf("session row search key = %q, want resume id", rows[1].SearchKey)
+	}
+}
+
+// aiResumeRowPrefixWidth is the fixed-column prefix width that every session
+// row shares before the trailing title: badge[8] + " " + time[11] + " " +
+// rel[6] + " " + branch[18] + " " + shortid[8] + " " (separator before title).
+const aiResumeRowPrefixWidth = (aiResumeAgentCellWidth + 2) + 1 + aiResumeTimeWidth + 1 +
+	aiResumeRelCellWidth + 1 + aiResumeBranchCellWidth + 1 + aiResumeShortIDWidth + 1
+
+func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	sessions := []aisessions.SessionMeta{
+		{
+			Agent:        aiModeClaude,
+			ResumeID:     "019f0000-0000-7000-8000-000000000001",
+			Title:        "short title",
+			LastModified: now.Add(-2 * time.Hour),
+			Context:      aisessions.SessionContext{Branch: "main"},
+		},
+		{
+			Agent:        aiModeAntigravity, // longer than the badge cell
+			ResumeID:     "abc",             // shorter than the short-id cell
+			Title:        strings.Repeat("very-long-title ", 12),
+			LastModified: now.Add(-72 * time.Hour),
+			Context:      aisessions.SessionContext{Branch: "feature/extremely-long-branch-name-overflow"},
+		},
+		{
+			Agent:        aiModeCodex,
+			ResumeID:     "019f0000-0000-7000-8000-000000000003",
+			Title:        "한글 제목 정렬 확인", // wide runes in the title
+			LastModified: now.Add(-30 * time.Minute),
+			Context:      aisessions.SessionContext{Branch: ""}, // empty -> placeholder
+		},
+	}
+
+	rows, visible, total := aiResumeSessionRows(sessions, now, i18n.FallbackLocale)
+	if visible != len(sessions) || total != len(sessions) {
+		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, len(sessions), len(sessions))
+	}
+
+	for i, session := range sessions {
+		row := rows[i+1] // row 0 is the New Session entry
+		title := cleanAIResumeTitle(session.Title, session.ResumeID)
+		// The fixed-column prefix width is label width minus the rendered title.
+		prefix := i18n.TerminalCellWidth(row.Label) - i18n.TerminalCellWidth(title)
+		if prefix != aiResumeRowPrefixWidth {
+			t.Fatalf("row %d prefix width = %d, want %d (label %q)", i, prefix, aiResumeRowPrefixWidth, row.Label)
+		}
+	}
+
+	// Empty branch renders the placeholder, not a collapsed column.
+	if !strings.Contains(rows[3].Label, aiResumeEmptyCell) {
+		t.Fatalf("empty-branch row = %q, want %q placeholder", rows[3].Label, aiResumeEmptyCell)
+	}
+}
+
+func TestAIResumeSessionRowTitleEllipsis(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	long := strings.Repeat("x", aiResumeTitleMaxCells+25)
+	row := aiResumeSessionRow(aisessions.SessionMeta{
+		Agent:        aiModeClaude,
+		ResumeID:     "019f0000-0000-7000-8000-000000000009",
+		Title:        long,
+		LastModified: now.Add(-time.Hour),
+	}, now, i18n.FallbackLocale)
+
+	if !strings.Contains(row.Label, "…") {
+		t.Fatalf("row label = %q, want ellipsis on overflow", row.Label)
+	}
+	title := cleanAIResumeTitle(long, "")
+	if w := i18n.TerminalCellWidth(title); w > aiResumeTitleMaxCells {
+		t.Fatalf("clipped title width = %d, want <= %d", w, aiResumeTitleMaxCells)
+	}
+	// Short ids surface in the short-id column.
+	if !strings.Contains(row.Label, "019f0000") {
+		t.Fatalf("row label = %q, want short resume id", row.Label)
+	}
+}
+
+func TestAIResumeFitCell(t *testing.T) {
+	if got := aiResumeFitCell("ab", 6); got != "ab    " {
+		t.Fatalf("pad short = %q, want %q", got, "ab    ")
+	}
+	if got := aiResumeFitCell("abcdefgh", 6); got != "abcdef" {
+		t.Fatalf("truncate long = %q, want %q", got, "abcdef")
+	}
+	// Wide runes must be measured in cells, not bytes/runes.
+	if got := i18n.TerminalCellWidth(aiResumeFitCell("한글", 6)); got != 6 {
+		t.Fatalf("CJK cell width = %d, want 6", got)
+	}
+}
+
+func TestTruncateAIResumeCells(t *testing.T) {
+	if got := truncateAIResumeCells("hello", 10); got != "hello" {
+		t.Fatalf("under limit = %q, want unchanged", got)
+	}
+	got := truncateAIResumeCells("abcdefghij", 5)
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("over limit = %q, want ellipsis suffix", got)
+	}
+	if w := i18n.TerminalCellWidth(got); w > 5 {
+		t.Fatalf("clipped width = %d, want <= 5", w)
+	}
+}
+
+func TestAIResumeRelativeAge(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	if got := aiResumeRelativeAge(now, now.Add(-2*time.Hour), i18n.FallbackLocale); got != "2h" {
+		t.Fatalf("relative hours = %q, want %q", got, "2h")
+	}
+	if got := aiResumeRelativeAge(now, now.Add(-72*time.Hour), i18n.FallbackLocale); got != "3d" {
+		t.Fatalf("relative days = %q, want %q", got, "3d")
+	}
+	// Unknown timestamps yield an empty (padded) cell rather than a bogus age.
+	if got := aiResumeRelativeAge(time.Time{}, now, i18n.FallbackLocale); got != "" {
+		t.Fatalf("zero now = %q, want empty", got)
+	}
+	if got := aiResumeRelativeAge(now, time.Time{}, i18n.FallbackLocale); got != "" {
+		t.Fatalf("zero modified = %q, want empty", got)
+	}
+	// Future timestamps clamp to zero instead of going negative.
+	if got := aiResumeRelativeAge(now, now.Add(time.Hour), i18n.FallbackLocale); got != "0s" {
+		t.Fatalf("future = %q, want %q", got, "0s")
+	}
+}
+
+func TestAIResumeShortID(t *testing.T) {
+	if got := aiResumeShortID("019f0000-0000-7000"); got != "019f0000" {
+		t.Fatalf("short id = %q, want %q", got, "019f0000")
+	}
+	if got := aiResumeShortID("abc"); got != "abc" {
+		t.Fatalf("short id (short) = %q, want %q", got, "abc")
 	}
 }
 
