@@ -24,6 +24,7 @@ type ProjectConfig struct {
 	Kube       KubeConfig
 	Theme      theme.ThemeConfig
 	UI         UIConfig
+	AI         AIConfig
 }
 
 type KubeConfig struct {
@@ -33,6 +34,37 @@ type KubeConfig struct {
 
 type UIConfig struct {
 	Locale string
+}
+
+// AIConfig holds the [ai] section. It is intentionally extensible: Phase 1
+// adds ResumePickerLimit; Phase 2 will add the resume scan depth alongside it.
+type AIConfig struct {
+	// ResumePickerLimit caps how many recent sessions the AI resume picker
+	// lists. Zero means unset (callers fall back to their own default). Stored
+	// values are clamped to [AIResumePickerLimitMin, AIResumePickerLimitMax].
+	ResumePickerLimit int
+}
+
+// AIResumePickerLimit bounds. A configured value outside this range is clamped
+// on write (normalizeProjectConfig); zero stays zero and means "not set".
+const (
+	AIResumePickerLimitMin = 1
+	AIResumePickerLimitMax = 100
+)
+
+// ClampAIResumePickerLimit constrains a configured (non-zero) limit to the
+// supported range. Zero is preserved so it keeps meaning "unset".
+func ClampAIResumePickerLimit(limit int) int {
+	if limit == 0 {
+		return 0
+	}
+	if limit < AIResumePickerLimitMin {
+		return AIResumePickerLimitMin
+	}
+	if limit > AIResumePickerLimitMax {
+		return AIResumePickerLimitMax
+	}
+	return limit
 }
 
 func (c ProjectConfig) SessionEnv() map[string]string {
@@ -178,7 +210,7 @@ func loadProjectConfig(path string) (ProjectConfig, error) {
 
 func isSupportedProjectConfigSection(section string) bool {
 	switch section {
-	case "startup", "env", "kube", "theme", "ui":
+	case "startup", "env", "kube", "theme", "ui", "ai":
 		return true
 	}
 	if eventName, ok := strings.CutPrefix(section, "hooks."); ok {
@@ -218,6 +250,17 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 			cfg.UI.Locale = value
 		default:
 			return fmt.Errorf("line %d: unsupported ui key %q", lineNo, key)
+		}
+	case "ai":
+		switch key {
+		case "resume_picker_limit":
+			limit, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("line %d: invalid ai resume_picker_limit %q: %w", lineNo, value, err)
+			}
+			cfg.AI.ResumePickerLimit = limit
+		default:
+			return fmt.Errorf("line %d: unsupported ai key %q", lineNo, key)
 		}
 	default:
 		eventName, ok := strings.CutPrefix(section, "hooks.")
@@ -280,6 +323,19 @@ func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lin
 }
 
 func parseProjectConfigValue(section, key, value string) (string, error) {
+	if section == "ai" && key == "resume_picker_limit" {
+		// resume_picker_limit is a bare integer (no quotes), e.g.
+		//   [ai]
+		//   resume_picker_limit = 50
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", fmt.Errorf("value must be an integer")
+		}
+		if _, err := strconv.Atoi(value); err != nil {
+			return "", fmt.Errorf("invalid integer value: %w", err)
+		}
+		return value, nil
+	}
 	if section == "theme" && key == "font_size" && !strings.HasPrefix(strings.TrimSpace(value), "\"") {
 		// font_size is a deprecated, ignored key (Phase 1b). It used to be
 		// written as a bare integer, so tolerate that form here to keep old
@@ -361,6 +417,7 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 	cfg.Kube.Namespace = strings.TrimSpace(cfg.Kube.Namespace)
 	cfg.Theme.Normalize()
 	cfg.UI.Locale = strings.TrimSpace(cfg.UI.Locale)
+	cfg.AI.ResumePickerLimit = ClampAIResumePickerLimit(cfg.AI.ResumePickerLimit)
 }
 
 func validateProjectConfig(cfg ProjectConfig) error {
@@ -450,6 +507,9 @@ func renderProjectConfig(cfg ProjectConfig) string {
 	}
 	if cfg.UI.Locale != "" {
 		sections = append(sections, fmt.Sprintf("[ui]\nlocale = %s\n", strconv.Quote(strings.TrimSpace(cfg.UI.Locale))))
+	}
+	if cfg.AI.ResumePickerLimit != 0 {
+		sections = append(sections, fmt.Sprintf("[ai]\nresume_picker_limit = %d\n", cfg.AI.ResumePickerLimit))
 	}
 	if len(sections) == 0 {
 		return ""

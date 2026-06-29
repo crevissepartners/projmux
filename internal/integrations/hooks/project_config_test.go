@@ -43,6 +43,9 @@ font_size = 12
 
 [ui]
 locale = "ko-KR"
+
+[ai]
+resume_picker_limit = 50
 `)
 	if err != nil {
 		t.Fatalf("ParseProjectConfig() error = %v", err)
@@ -74,6 +77,67 @@ locale = "ko-KR"
 	}
 	if cfg.UI.Locale != "ko-KR" {
 		t.Fatalf("UI.Locale = %q, want ko-KR", cfg.UI.Locale)
+	}
+	if cfg.AI.ResumePickerLimit != 50 {
+		t.Fatalf("AI.ResumePickerLimit = %d, want 50", cfg.AI.ResumePickerLimit)
+	}
+}
+
+func TestProjectAIConfigResumePickerLimitRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[ai]\nresume_picker_limit = 42\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.AI.ResumePickerLimit != 42 {
+		t.Fatalf("AI.ResumePickerLimit = %d, want 42", cfg.AI.ResumePickerLimit)
+	}
+
+	rendered := renderProjectConfig(cfg)
+	if !strings.Contains(rendered, "[ai]") || !strings.Contains(rendered, "resume_picker_limit = 42") {
+		t.Fatalf("rendered = %q, want [ai] resume_picker_limit = 42", rendered)
+	}
+
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.AI != cfg.AI {
+		t.Fatalf("re-parsed AI = %#v, want %#v", reparsed.AI, cfg.AI)
+	}
+}
+
+func TestProjectAIConfigRejectsNonInteger(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ParseProjectConfig("[ai]\nresume_picker_limit = \"thirty\"\n"); err == nil {
+		t.Fatal("expected non-integer resume_picker_limit to error")
+	}
+	if _, err := ParseProjectConfig("[ai]\nunknown_key = 3\n"); err == nil {
+		t.Fatal("expected unsupported ai key to error")
+	}
+}
+
+func TestNormalizeClampsResumePickerLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in   int
+		want int
+	}{
+		{in: 0, want: 0},     // unset stays unset
+		{in: 1, want: 1},     // min
+		{in: 50, want: 50},   // in range
+		{in: 100, want: 100}, // max
+		{in: 250, want: AIResumePickerLimitMax},
+		{in: -5, want: AIResumePickerLimitMin},
+	} {
+		cfg := ProjectConfig{AI: AIConfig{ResumePickerLimit: tc.in}}
+		normalizeProjectConfig(&cfg)
+		if cfg.AI.ResumePickerLimit != tc.want {
+			t.Fatalf("normalize(%d) = %d, want %d", tc.in, cfg.AI.ResumePickerLimit, tc.want)
+		}
 	}
 }
 

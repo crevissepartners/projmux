@@ -2491,10 +2491,13 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 	if !hasEntryValue(root, settingsAIEnabledAgents) {
 		t.Fatalf("AI root entries = %#v, want Enabled agents row", root)
 	}
+	if !hasEntryValue(root, settingsAIResumePicker) {
+		t.Fatalf("AI root entries = %#v, want Resume picker row", root)
+	}
 	if hasEntryValue(root, settingsAINotifyDiagnostics) {
 		t.Fatalf("AI root entries = %#v, want Notify integrations moved to Notifications", root)
 	}
-	if got, want := len(root), 3; got != want {
+	if got, want := len(root), 4; got != want {
 		t.Fatalf("AI root entries = %#v, want back row plus AI detail rows", root)
 	}
 	for _, want := range []string{
@@ -3129,6 +3132,56 @@ func TestSettingsNotificationsHookActionsShowsAndSavesRuntimeQuietPolicy(t *test
 	}
 	if events, err := ai.aiHookInstallEvents(aiHookProviderCodex); err != nil || !containsString(events, "Stop") {
 		t.Fatalf("install events = %#v, err = %v; want Stop preserved", events, err)
+	}
+}
+
+func TestSettingsAIResumePickerRowsAndCustomWrite(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		ai:        testAICommand(home),
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string { return "" },
+	}
+
+	// The submenu is reachable from the AI root.
+	if !hasEntryValue(cmd.aiRootEntries(), settingsAIResumePicker) {
+		t.Fatalf("AI root entries = %#v, want Resume picker row", cmd.aiRootEntries())
+	}
+
+	detail := cmd.aiResumePickerEntries()
+	for _, want := range []string{
+		settingsActionPrefixAIResumeLimit + "20",
+		settingsActionPrefixAIResumeLimit + "30",
+		settingsActionPrefixAIResumeLimit + "50",
+		settingsActionPrefixAIResumeLimit + "100",
+		settingsActionPrefixAIResumeLimit + "custom",
+	} {
+		if !hasEntryValue(detail, want) {
+			t.Fatalf("resume picker entries = %#v, want row %q", detail, want)
+		}
+	}
+
+	// Default state shows the built-in limit with the default source.
+	if got := cmd.currentAIResumePickerLimit(); got.Limit != aiResumePickerLimitDefault || got.Source != aiResumePickerLimitSourceDefault {
+		t.Fatalf("current resume picker = %#v, want %d/default", got, aiResumePickerLimitDefault)
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.setAIResumePickerLimit(50, &stdout); err != nil {
+		t.Fatalf("setAIResumePickerLimit error = %v", err)
+	}
+	if got := cmd.currentAIResumePickerLimit(); got.Limit != 50 || got.Source != aiResumePickerLimitSourceGlobal {
+		t.Fatalf("current resume picker = %#v, want 50/global", got)
+	}
+	if got, want := stdout.String(), "AI resume picker limit: 50\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+
+	// The saved limit toggles on in the preset list.
+	if !hasEntryLabelContaining(cmd.aiResumePickerEntries(), "50 sessions") {
+		t.Fatalf("resume picker entries = %#v, want 50 sessions selected", cmd.aiResumePickerEntries())
 	}
 }
 

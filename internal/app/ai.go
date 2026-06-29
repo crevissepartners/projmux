@@ -40,8 +40,7 @@ const (
 	aiModeAntigravity = "antigravity"
 	aiModeShell       = "shell"
 
-	aiResumePickerLimit = 30
-	aiResumeNewValue    = "new"
+	aiResumeNewValue = "new"
 
 	aiPaneManagedOption         = "@projmux_ai_managed"
 	aiPaneAgentOption           = "@projmux_ai_agent"
@@ -859,7 +858,8 @@ func (c *aiCommand) runResumePicker(direction string) error {
 		return c.runAgentPickerSelection(direction)
 	}
 
-	result, err := c.runResumeSessionPicker(direction, sessions)
+	limit := resolveAIResumePickerLimit(c.homeDir, c.lookupEnv, contextDir).Limit
+	result, err := c.runResumeSessionPicker(direction, sessions, limit)
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return nil
@@ -880,7 +880,7 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	return c.runSelectedResumeSession(selection, direction)
 }
 
-func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessions.SessionMeta) (intpickercompat.Result, error) {
+func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessions.SessionMeta, limit int) (intpickercompat.Result, error) {
 	if c.nativePicker == nil {
 		return intpickercompat.Result{}, errors.New("native picker is not configured")
 	}
@@ -889,7 +889,7 @@ func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessio
 	if c.now != nil {
 		now = c.now()
 	}
-	entries, visible, total := aiResumeSessionRows(sessions, now, locale)
+	entries, visible, total := aiResumeSessionRows(sessions, limit, now, locale)
 	footer := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), visible)
 	if total > visible {
 		footer = fmt.Sprintf(localizeUIText(locale, "Showing latest %d of %d resume sessions."), visible, total)
@@ -943,10 +943,11 @@ const (
 	aiResumeEmptyCell       = "-"
 )
 
-func aiResumeSessionRows(sessions []aisessions.SessionMeta, now time.Time, locale i18n.Locale) ([]intpickercompat.Entry, int, int) {
+func aiResumeSessionRows(sessions []aisessions.SessionMeta, limit int, now time.Time, locale i18n.Locale) ([]intpickercompat.Entry, int, int) {
+	limit = normalizeResumePickerLimit(limit)
 	total := len(sessions)
-	if len(sessions) > aiResumePickerLimit {
-		sessions = sessions[:aiResumePickerLimit]
+	if len(sessions) > limit {
+		sessions = sessions[:limit]
 	}
 	rows := make([]intpickercompat.Entry, 0, len(sessions)+1)
 	rows = append(rows, intpickercompat.Entry{
@@ -1010,10 +1011,7 @@ func aiResumeRelativeAge(now, modified time.Time, locale i18n.Locale) string {
 	if now.IsZero() || modified.IsZero() {
 		return ""
 	}
-	age := now.Sub(modified)
-	if age < 0 {
-		age = 0
-	}
+	age := max(now.Sub(modified), 0)
 	return i18n.FormatDuration(age, locale, i18n.FormatCompact)
 }
 
