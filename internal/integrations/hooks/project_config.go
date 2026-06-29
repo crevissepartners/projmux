@@ -37,12 +37,18 @@ type UIConfig struct {
 }
 
 // AIConfig holds the [ai] section. It is intentionally extensible: Phase 1
-// adds ResumePickerLimit; Phase 2 will add the resume scan depth alongside it.
+// added ResumePickerLimit; Phase 2 adds ResumeScanDepth alongside it.
 type AIConfig struct {
 	// ResumePickerLimit caps how many recent sessions the AI resume picker
 	// lists. Zero means unset (callers fall back to their own default). Stored
 	// values are clamped to [AIResumePickerLimitMin, AIResumePickerLimitMax].
 	ResumePickerLimit int
+
+	// ResumeScanDepth widens the AI resume picker to include sessions started in
+	// directories up to N levels below the current cwd. Zero means unset, which
+	// is identical to the historical exact-cwd behaviour (depth 0). Stored
+	// values are clamped to [0, AIResumeScanDepthMax].
+	ResumeScanDepth int
 }
 
 // AIResumePickerLimit bounds. A configured value outside this range is clamped
@@ -50,6 +56,15 @@ type AIConfig struct {
 const (
 	AIResumePickerLimitMin = 1
 	AIResumePickerLimitMax = 100
+)
+
+// AIResumeScanDepth bounds. Depth 0 is the default exact-cwd behaviour; a
+// configured value above the max is clamped on write. Unlike the picker limit,
+// zero is a meaningful value (exact cwd) as well as the "unset" sentinel — both
+// resolve to the same behaviour, so render simply omits a zero depth.
+const (
+	AIResumeScanDepthMin = 0
+	AIResumeScanDepthMax = 8
 )
 
 // ClampAIResumePickerLimit constrains a configured (non-zero) limit to the
@@ -65,6 +80,19 @@ func ClampAIResumePickerLimit(limit int) int {
 		return AIResumePickerLimitMax
 	}
 	return limit
+}
+
+// ClampAIResumeScanDepth constrains a configured scan depth to the supported
+// range. Negative depths collapse to zero (unset/exact cwd); oversized depths
+// clamp to AIResumeScanDepthMax.
+func ClampAIResumeScanDepth(depth int) int {
+	if depth <= AIResumeScanDepthMin {
+		return AIResumeScanDepthMin
+	}
+	if depth > AIResumeScanDepthMax {
+		return AIResumeScanDepthMax
+	}
+	return depth
 }
 
 func (c ProjectConfig) SessionEnv() map[string]string {
@@ -259,6 +287,12 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 				return fmt.Errorf("line %d: invalid ai resume_picker_limit %q: %w", lineNo, value, err)
 			}
 			cfg.AI.ResumePickerLimit = limit
+		case "resume_scan_depth":
+			depth, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("line %d: invalid ai resume_scan_depth %q: %w", lineNo, value, err)
+			}
+			cfg.AI.ResumeScanDepth = depth
 		default:
 			return fmt.Errorf("line %d: unsupported ai key %q", lineNo, key)
 		}
@@ -323,10 +357,12 @@ func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lin
 }
 
 func parseProjectConfigValue(section, key, value string) (string, error) {
-	if section == "ai" && key == "resume_picker_limit" {
-		// resume_picker_limit is a bare integer (no quotes), e.g.
+	if section == "ai" && (key == "resume_picker_limit" || key == "resume_scan_depth") {
+		// resume_picker_limit and resume_scan_depth are bare integers (no
+		// quotes), e.g.
 		//   [ai]
 		//   resume_picker_limit = 50
+		//   resume_scan_depth = 2
 		value = strings.TrimSpace(value)
 		if value == "" {
 			return "", fmt.Errorf("value must be an integer")
@@ -418,6 +454,7 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 	cfg.Theme.Normalize()
 	cfg.UI.Locale = strings.TrimSpace(cfg.UI.Locale)
 	cfg.AI.ResumePickerLimit = ClampAIResumePickerLimit(cfg.AI.ResumePickerLimit)
+	cfg.AI.ResumeScanDepth = ClampAIResumeScanDepth(cfg.AI.ResumeScanDepth)
 }
 
 func validateProjectConfig(cfg ProjectConfig) error {
@@ -508,8 +545,16 @@ func renderProjectConfig(cfg ProjectConfig) string {
 	if cfg.UI.Locale != "" {
 		sections = append(sections, fmt.Sprintf("[ui]\nlocale = %s\n", strconv.Quote(strings.TrimSpace(cfg.UI.Locale))))
 	}
-	if cfg.AI.ResumePickerLimit != 0 {
-		sections = append(sections, fmt.Sprintf("[ai]\nresume_picker_limit = %d\n", cfg.AI.ResumePickerLimit))
+	if cfg.AI.ResumePickerLimit != 0 || cfg.AI.ResumeScanDepth != 0 {
+		var b strings.Builder
+		b.WriteString("[ai]\n")
+		if cfg.AI.ResumePickerLimit != 0 {
+			fmt.Fprintf(&b, "resume_picker_limit = %d\n", cfg.AI.ResumePickerLimit)
+		}
+		if cfg.AI.ResumeScanDepth != 0 {
+			fmt.Fprintf(&b, "resume_scan_depth = %d\n", cfg.AI.ResumeScanDepth)
+		}
+		sections = append(sections, b.String())
 	}
 	if len(sections) == 0 {
 		return ""

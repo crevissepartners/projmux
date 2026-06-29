@@ -196,6 +196,7 @@ const (
 	settingsActionPrefixAINotifyCommand    = "ai-notify-command:"
 	settingsActionPrefixAINotifyDedupe     = "ai-notify-dedupe:"
 	settingsActionPrefixAIResumeLimit      = "ai-resume-limit:"
+	settingsActionPrefixAIResumeDepth      = "ai-resume-depth:"
 	settingsActionPrefixAIHookProvider     = "ai-hook-provider:"
 	settingsActionPrefixAIHookEvent        = "ai-hook-event:"
 	settingsActionPrefixAIHookSet          = "ai-hook-set:"
@@ -1792,6 +1793,18 @@ func (c *settingsCommand) runAIResumePickerSection(stdout, stderr io.Writer) err
 			if err := c.setAIResumePickerLimit(limit, stdout); err != nil {
 				return err
 			}
+		case action == settingsActionPrefixAIResumeDepth+"custom":
+			if err := c.runAIResumePickerDepthCustom(stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixAIResumeDepth):
+			depth, err := parseAIResumeScanDepth(strings.TrimPrefix(action, settingsActionPrefixAIResumeDepth))
+			if err != nil {
+				return err
+			}
+			if err := c.setAIResumeScanDepth(depth, stdout); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unknown AI resume picker settings action: %s", action)
 		}
@@ -1825,6 +1838,33 @@ func (c *settingsCommand) runAIResumePickerLimitCustom(stdout, stderr io.Writer)
 	return c.setAIResumePickerLimit(limit, stdout)
 }
 
+func (c *settingsCommand) runAIResumePickerDepthCustom(stdout, stderr io.Writer) error {
+	current := c.currentAIResumeScanDepth()
+	result, err := c.runPicker(intpickercompat.Options{
+		UI:           "settings-ai-resume-picker-depth-custom",
+		Entries:      nil,
+		AcceptQuery:  true,
+		InitialQuery: strconv.Itoa(current.Depth),
+		Title:        "AI Settings - Custom resume scan depth",
+		Prompt:       "Resume scan depth > ",
+		Footer:       projmuxFooter("Enter: save  |  Example: 2 "),
+		ExpectKeys:   []string{"enter"},
+		Bindings:     c.settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+	if result.Key != "enter" {
+		return nil
+	}
+	depth, err := parseAIResumeScanDepth(result.Query)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return nil
+	}
+	return c.setAIResumeScanDepth(depth, stdout)
+}
+
 func (c *settingsCommand) aiResumePickerEntries() []intpickercompat.Entry {
 	current := c.currentAIResumePickerLimit()
 	entries := []intpickercompat.Entry{
@@ -1849,6 +1889,34 @@ func (c *settingsCommand) aiResumePickerEntries() []intpickercompat.Entry {
 	entries = append(entries, intpickercompat.Entry{
 		Label: c.rowLabel(settingsGlyphType, settingsColorType, "Custom limit", "store a session count between 1 and 100"),
 		Value: settingsActionPrefixAIResumeLimit + "custom",
+	})
+
+	depth := c.currentAIResumeScanDepth()
+	entries = append(entries, intpickercompat.Entry{
+		Label: c.rowLabelInfo("Resume scan depth", fmt.Sprintf("depth %d", depth.Depth), string(depth.Source)),
+		Value: settingsNoopValue,
+	})
+	for _, level := range []int{0, 1, 2, 3} {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		// Depth 0 is the default, so highlight it only when explicitly set; any
+		// non-zero preset highlights when it matches the resolved depth.
+		active := level == depth.Depth
+		if level == 0 && depth.Source == aiResumeScanDepthSourceDefault {
+			active = false
+		}
+		if active {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabel(glyph, color, fmt.Sprintf("depth %d", level), "include sessions from cwd child directories"),
+			Value: settingsActionPrefixAIResumeDepth + strconv.Itoa(level),
+		})
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label: c.rowLabel(settingsGlyphType, settingsColorType, "Custom depth", "store a cwd child depth between 0 and 8"),
+		Value: settingsActionPrefixAIResumeDepth + "custom",
 	})
 	return entries
 }
@@ -2054,14 +2122,15 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 		intpickercompat.Entry{
 			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Resume picker", c.aiResumePickerSummary()),
 			Value:     settingsAIResumePicker,
-			SearchKey: "resume picker limit max sessions resume_picker_limit",
+			SearchKey: "resume picker limit max sessions resume_picker_limit scan depth cwd resume_scan_depth",
 		},
 	)
 }
 
 func (c *settingsCommand) aiResumePickerSummary() string {
 	current := c.currentAIResumePickerLimit()
-	return fmt.Sprintf("%d sessions - %s", current.Limit, current.Source)
+	depth := c.currentAIResumeScanDepth()
+	return fmt.Sprintf("%d sessions, depth %d - %s", current.Limit, depth.Depth, current.Source)
 }
 
 func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {

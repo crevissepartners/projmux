@@ -125,7 +125,7 @@ func TestDiscoverCodexScansNewestFilesFirstByModTime(t *testing.T) {
 	setModTime(t, olderPath, time.Date(2026, 6, 25, 8, 0, 0, 0, time.UTC))
 	setModTime(t, newerPath, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
 
-	got := discoverCodex("/workspace/app", filepath.Join(root, "codex", "sessions"))
+	got := discoverCodex("/workspace/app", filepath.Join(root, "codex", "sessions"), 0)
 	if len(got) != 2 {
 		t.Fatalf("discoverCodex() len = %d, want 2: %#v", len(got), got)
 	}
@@ -144,7 +144,7 @@ func TestDiscoverCodexLimitsScanToMostRecentFiles(t *testing.T) {
 		writeNumberedCodexSession(t, sessionsDir, i, base.Add(-time.Duration(i)*time.Minute), "/workspace/app")
 	}
 
-	got := discoverCodex("/workspace/app", sessionsDir)
+	got := discoverCodex("/workspace/app", sessionsDir, 0)
 	if len(got) != codexScanFileLimit {
 		t.Fatalf("discoverCodex() len = %d, want %d", len(got), codexScanFileLimit)
 	}
@@ -164,16 +164,16 @@ func TestDiscoverCodexLimitedScanPreservesRecentPickerResults(t *testing.T) {
 	root := t.TempDir()
 	sessionsDir := filepath.Join(root, "codex", "sessions")
 	base := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
-	for i := 0; i < codexScanFileLimit+40; i++ {
+	for i := range codexScanFileLimit + 40 {
 		writeNumberedCodexSession(t, sessionsDir, i, base.Add(-time.Duration(i)*time.Minute), "/workspace/app")
 	}
 
-	limited := discoverCodexWithFileLimit("/workspace/app", sessionsDir, codexScanFileLimit)
-	unbounded := discoverCodexWithFileLimit("/workspace/app", sessionsDir, 0)
+	limited := discoverCodexWithFileLimit("/workspace/app", sessionsDir, codexScanFileLimit, 0)
+	unbounded := discoverCodexWithFileLimit("/workspace/app", sessionsDir, 0, 0)
 	if len(limited) < pickerVisibleLimit || len(unbounded) < pickerVisibleLimit {
 		t.Fatalf("not enough sessions to compare picker rows: limited=%d unbounded=%d", len(limited), len(unbounded))
 	}
-	for i := 0; i < pickerVisibleLimit; i++ {
+	for i := range pickerVisibleLimit {
 		if limited[i].ResumeID != unbounded[i].ResumeID ||
 			limited[i].Title != unbounded[i].Title ||
 			!limited[i].LastModified.Equal(unbounded[i].LastModified) {
