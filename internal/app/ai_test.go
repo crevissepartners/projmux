@@ -270,8 +270,8 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 }
 
 func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
-	sessions := make([]aisessions.SessionMeta, 0, aiResumePickerLimit+2)
-	for i := 0; i < aiResumePickerLimit+2; i++ {
+	sessions := make([]aisessions.SessionMeta, 0, aiResumePickerLimitDefault+2)
+	for i := range aiResumePickerLimitDefault + 2 {
 		sessions = append(sessions, aisessions.SessionMeta{
 			Agent:        aiModeCodex,
 			ResumeID:     fmt.Sprintf("019f0000-0000-7000-8000-%012d", i),
@@ -281,12 +281,12 @@ func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
 		})
 	}
 
-	rows, visible, total := aiResumeSessionRows(sessions, time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC), i18n.FallbackLocale)
+	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC), i18n.FallbackLocale)
 
-	if visible != aiResumePickerLimit || total != aiResumePickerLimit+2 {
-		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, aiResumePickerLimit, aiResumePickerLimit+2)
+	if visible != aiResumePickerLimitDefault || total != aiResumePickerLimitDefault+2 {
+		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, aiResumePickerLimitDefault, aiResumePickerLimitDefault+2)
 	}
-	if len(rows) != aiResumePickerLimit+1 {
+	if len(rows) != aiResumePickerLimitDefault+1 {
 		t.Fatalf("rows len = %d, want cap plus New row", len(rows))
 	}
 	if rows[0].Value != aiResumeNewValue || !strings.Contains(rows[0].Label, "[+ New Session]") {
@@ -332,7 +332,7 @@ func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
 		},
 	}
 
-	rows, visible, total := aiResumeSessionRows(sessions, now, i18n.FallbackLocale)
+	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, now, i18n.FallbackLocale)
 	if visible != len(sessions) || total != len(sessions) {
 		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, len(sessions), len(sessions))
 	}
@@ -350,6 +350,43 @@ func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
 	// Empty branch renders the placeholder, not a collapsed column.
 	if !strings.Contains(rows[3].Label, aiResumeEmptyCell) {
 		t.Fatalf("empty-branch row = %q, want %q placeholder", rows[3].Label, aiResumeEmptyCell)
+	}
+}
+
+func TestAIResumeSessionRowsLimitBoundaries(t *testing.T) {
+	now := time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC)
+	// hooks.AIResumePickerLimitMax is 100; clamp pins the visible count there.
+	const maxLimit = 100
+	const sessionCount = maxLimit + 10
+	sessions := make([]aisessions.SessionMeta, 0, sessionCount)
+	for i := range sessionCount {
+		sessions = append(sessions, aisessions.SessionMeta{
+			Agent:        aiModeCodex,
+			ResumeID:     fmt.Sprintf("019f0000-0000-7000-8000-%012d", i),
+			Title:        fmt.Sprintf("Title %03d", i),
+			LastModified: now.Add(-time.Duration(i) * time.Minute),
+		})
+	}
+
+	for _, tc := range []struct {
+		name        string
+		limit       int
+		wantVisible int
+	}{
+		{name: "zero falls back to default", limit: 0, wantVisible: aiResumePickerLimitDefault},
+		{name: "negative falls back to default", limit: -7, wantVisible: aiResumePickerLimitDefault},
+		{name: "in range honored", limit: 12, wantVisible: 12},
+		{name: "oversized clamps to max", limit: 500, wantVisible: maxLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, visible, total := aiResumeSessionRows(sessions, tc.limit, now, i18n.FallbackLocale)
+			if visible != tc.wantVisible {
+				t.Fatalf("visible = %d, want %d", visible, tc.wantVisible)
+			}
+			if total != sessionCount {
+				t.Fatalf("total = %d, want %d", total, sessionCount)
+			}
+		})
 	}
 }
 

@@ -105,6 +105,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsKeybindingsInit:            {Name: "Keybinding Init", Axis: settingsAxisGlobal},
 	settingsAIDefaultMode:              {Name: "Default split mode", Axis: settingsAxisGlobal},
 	settingsAIEnabledAgents:            {Name: "Enabled agents", Axis: settingsAxisGlobal},
+	settingsAIResumePicker:             {Name: "Resume picker", Axis: settingsAxisGlobal},
 	settingsAINotifyDiagnostics:        {Name: "AI notify diagnostics", Axis: settingsAxisGlobal},
 	settingsNotificationsDesktop:       {Name: "Desktop notification settings", Axis: settingsAxisGlobal},
 	settingsNotificationsAIDedupe:      {Name: "AI notification dedupe", Axis: settingsAxisGlobal},
@@ -132,6 +133,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixAIBadgeStyle, settingsEntryMeta{Name: "AI badge style", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixDesktopNotifyMode, settingsEntryMeta{Name: "Desktop notification mode", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAINotifyDedupe, settingsEntryMeta{Name: "AI notification dedupe", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixAIResumeLimit, settingsEntryMeta{Name: "Resume picker", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAIHookProvider, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAIHookEvent, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAIHookSet, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
@@ -193,6 +195,7 @@ const (
 	settingsActionPrefixAINotifyDiagnostic = "ai-notify:"
 	settingsActionPrefixAINotifyCommand    = "ai-notify-command:"
 	settingsActionPrefixAINotifyDedupe     = "ai-notify-dedupe:"
+	settingsActionPrefixAIResumeLimit      = "ai-resume-limit:"
 	settingsActionPrefixAIHookProvider     = "ai-hook-provider:"
 	settingsActionPrefixAIHookEvent        = "ai-hook-event:"
 	settingsActionPrefixAIHookSet          = "ai-hook-set:"
@@ -230,6 +233,7 @@ const (
 	settingsKeybindingsInit                = "keybindings:init"
 	settingsAIDefaultMode                  = "ai-default-mode"
 	settingsAIEnabledAgents                = "ai-enabled-agents"
+	settingsAIResumePicker                 = "ai-resume-picker"
 	settingsAINotifyDiagnostics            = "ai-notify-diagnostics"
 	settingsNotificationsDesktop           = "notifications:desktop"
 	settingsNotificationsAIDedupe          = "notifications:ai-dedupe"
@@ -1697,6 +1701,10 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 			if err := c.runAIEnabledAgentsSection(stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsAIResumePicker:
+			if err := c.runAIResumePickerSection(stdout, stderr); err != nil {
+				return err
+			}
 		case action == settingsAINotifyDiagnostics:
 			if err := c.runAINotifyDiagnosticsSection(stdout, stderr); err != nil {
 				return err
@@ -1743,6 +1751,106 @@ func (c *settingsCommand) runAIEnabledAgentsSection(stdout, stderr io.Writer) er
 			return fmt.Errorf("unknown AI enabled agents action: %s", action)
 		}
 	}
+}
+
+// runAIResumePickerSection drives the Settings > AI Settings > Resume picker
+// submenu. It currently exposes the max-sessions limit (Phase 1); Phase 2 adds
+// a scan-depth row to the same menu, which is why the entry builder groups the
+// limit rows under a header rather than rendering a single flat list.
+func (c *settingsCommand) runAIResumePickerSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-ai-resume-picker",
+			Entries:    c.aiResumePickerEntries(),
+			Title:      "AI Settings - Resume picker",
+			Prompt:     "Settings > AI Settings > Resume picker > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsActionPrefixAIResumeLimit+"custom":
+			if err := c.runAIResumePickerLimitCustom(stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixAIResumeLimit):
+			limit, err := parseAIResumePickerLimit(strings.TrimPrefix(action, settingsActionPrefixAIResumeLimit))
+			if err != nil {
+				return err
+			}
+			if err := c.setAIResumePickerLimit(limit, stdout); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI resume picker settings action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAIResumePickerLimitCustom(stdout, stderr io.Writer) error {
+	current := c.currentAIResumePickerLimit()
+	result, err := c.runPicker(intpickercompat.Options{
+		UI:           "settings-ai-resume-picker-custom",
+		Entries:      nil,
+		AcceptQuery:  true,
+		InitialQuery: strconv.Itoa(current.Limit),
+		Title:        "AI Settings - Custom resume picker limit",
+		Prompt:       "Resume picker limit > ",
+		Footer:       projmuxFooter("Enter: save  |  Example: 30 "),
+		ExpectKeys:   []string{"enter"},
+		Bindings:     c.settingsCloseBindings(),
+	})
+	if err != nil {
+		return err
+	}
+	if result.Key != "enter" {
+		return nil
+	}
+	limit, err := parseAIResumePickerLimit(result.Query)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return nil
+	}
+	return c.setAIResumePickerLimit(limit, stdout)
+}
+
+func (c *settingsCommand) aiResumePickerEntries() []intpickercompat.Entry {
+	current := c.currentAIResumePickerLimit()
+	entries := []intpickercompat.Entry{
+		c.backEntry(),
+		{
+			Label: c.rowLabelInfo("Resume picker limit", fmt.Sprintf("%d sessions", current.Limit), string(current.Source)),
+			Value: settingsNoopValue,
+		},
+	}
+	for _, limit := range []int{20, 30, 50, 100} {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if limit == current.Limit && current.Source != aiResumePickerLimitSourceDefault {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabel(glyph, color, fmt.Sprintf("%d sessions", limit), "max sessions listed in the AI resume picker"),
+			Value: settingsActionPrefixAIResumeLimit + strconv.Itoa(limit),
+		})
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label: c.rowLabel(settingsGlyphType, settingsColorType, "Custom limit", "store a session count between 1 and 100"),
+		Value: settingsActionPrefixAIResumeLimit + "custom",
+	})
+	return entries
 }
 
 func (c *settingsCommand) runNotificationsSection(stdout, stderr io.Writer) error {
@@ -1943,7 +2051,17 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 			Value:     settingsAIEnabledAgents,
 			SearchKey: "enabled agents claude codex antigravity",
 		},
+		intpickercompat.Entry{
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Resume picker", c.aiResumePickerSummary()),
+			Value:     settingsAIResumePicker,
+			SearchKey: "resume picker limit max sessions resume_picker_limit",
+		},
 	)
+}
+
+func (c *settingsCommand) aiResumePickerSummary() string {
+	current := c.currentAIResumePickerLimit()
+	return fmt.Sprintf("%d sessions - %s", current.Limit, current.Source)
 }
 
 func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {

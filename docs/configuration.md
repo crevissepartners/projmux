@@ -328,6 +328,41 @@ warning with the unsupported value and source.
 Project-local locale override is not part of the runtime policy. Locale is a
 user/global preference in this release.
 
+## AI Resume Picker
+
+The AI resume picker (`projmux ai split --agent resume`) lists the most recent
+deduplicated Claude/Codex resume sessions. The number of rows it shows is
+configurable; the default is 30.
+
+Preferred interactive path:
+
+- `Settings > AI Settings > Resume picker`
+
+Config paths (global and project both honored):
+
+```text
+~/.config/projmux/config.toml      # global
+<project>/.projmux/config.toml     # project
+```
+
+Schema:
+
+```toml
+[ai]
+resume_picker_limit = 30 # 1-100; how many recent sessions the picker lists
+```
+
+Resolution priority is:
+
+1. `PROJMUX_AI_RESUME_PICKER_LIMIT`
+2. project `[ai] resume_picker_limit`
+3. global/user `[ai] resume_picker_limit`
+4. built-in default `30`
+
+Configured values are clamped to `1`-`100`. A missing or non-positive value
+falls back to the default, so an empty config is identical to the historical
+hardcoded behavior. Settings edits write the global config.
+
 ## Environment Variables
 
 | Variable | Purpose |
@@ -337,6 +372,7 @@ user/global preference in this release.
 | `TMUX_SESSIONIZER_ROOTS` | Legacy alias still honored at runtime for managed roots. |
 | `PROJMUX_LOCALE` | UI locale override. `auto` resumes detection; `en-US` and `ko-KR` pin supported locales. Unsupported tags fall back to `en-US` and surface a Settings warning. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in Linux/WSL sender. Separate from declarative `[hooks.send-noti]`. |
+| `PROJMUX_AI_RESUME_PICKER_LIMIT` | Overrides the AI resume picker row count (`[ai] resume_picker_limit`). Clamped to 1-100; takes priority over project and global config. |
 | `PROJMUX_NOTIFY_HOOK_DEPTH` | Internal recursion guard for `send-noti` hooks. Depth `>= 1` suppresses nested hook dispatch while still allowing the queue write itself. |
 | `PROJMUX_NOTIFY_EXPIRE_MS` | AI desktop notification expiration in milliseconds. Defaults to `5000`; unset, zero, negative, and non-numeric values fall back to the default. |
 | `PROJMUX_DESKTOP_NOTIFY_MODE` | OS desktop notification mode override. `none` / `notify` / `raise` (case insensitive). When set, this takes priority over every other resolution rung. The in-app notify queue is not affected. |
