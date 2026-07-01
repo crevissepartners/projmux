@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.7.2](https://github.com/crevissepartners/projmux/compare/v0.7.1...v0.7.2) (2026-07-01)
+
+
+### Features
+
+* **ai:** antigravity resume discovery from history.jsonl (Phase 2) ([43acdbf](https://github.com/crevissepartners/projmux/commit/43acdbfabcc22b95a5ba46bd7d6839d36a0f081e))
+* **ai:** antigravity session inclusion in resume picker — disk discovery (Phase 2) ([#487](https://github.com/crevissepartners/projmux/issues/487)) ([43acdbf](https://github.com/crevissepartners/projmux/commit/43acdbfabcc22b95a5ba46bd7d6839d36a0f081e))
+* **ai:** antigravity usage parity — context-window HUD/status exposure (Phase 0) ([#486](https://github.com/crevissepartners/projmux/issues/486)) ([fb8822c](https://github.com/crevissepartners/projmux/commit/fb8822c87fc64ec3dee4ac2265ef2d9e9deb2f90))
+* **ai:** configurable resume picker limit (Phase 1) ([#480](https://github.com/crevissepartners/projmux/issues/480)) ([ca47811](https://github.com/crevissepartners/projmux/commit/ca47811a8c3761a255b22954859170dddc39e9aa))
+* **ai:** cwd-depth scope for resume picker (Phase 2) ([#481](https://github.com/crevissepartners/projmux/issues/481)) ([125dfc5](https://github.com/crevissepartners/projmux/commit/125dfc51da193906f4a8dead300b2a255ffa9e67))
+* **ai:** drill-in IA for resume picker settings (Phase 3) ([#482](https://github.com/crevissepartners/projmux/issues/482)) ([5f88b86](https://github.com/crevissepartners/projmux/commit/5f88b86516b2290143874097e6a3d015ffbd9630))
+* **ai:** fixed-column resume picker row view (Phase 0) ([#479](https://github.com/crevissepartners/projmux/issues/479)) ([3ffcd3e](https://github.com/crevissepartners/projmux/commit/3ffcd3e17003bf0a2151929b5adcb94eb2f5eae1))
+* **ai:** recency-anchored resume row with per-agent badge + turn count (Phase 0) ([#485](https://github.com/crevissepartners/projmux/issues/485)) ([3ac6e8a](https://github.com/crevissepartners/projmux/commit/3ac6e8a34135d47d9227067f6a88ff0893d6b47b))
+* **ai:** resume session split picker ([#476](https://github.com/crevissepartners/projmux/issues/476)) ([44edb99](https://github.com/crevissepartners/projmux/commit/44edb993fc6f4dc89e684f74316f1eacf867df81))
+* **ai:** session-anchored cwd for AI split/resume (Phase 1) ([#488](https://github.com/crevissepartners/projmux/issues/488)) ([2167fb8](https://github.com/crevissepartners/projmux/commit/2167fb8d8ca0e2bdceac88530adb5480a4c54366))
+* **ai:** symlink loop guard + session uniqueness for resume discovery (Phase 4) ([#483](https://github.com/crevissepartners/projmux/issues/483)) ([92b8241](https://github.com/crevissepartners/projmux/commit/92b82417e24683ef489be8830437f2ddeef279e1))
+
+
+### Bug Fixes
+
+* **ai:** accurate resume turn count via full-file deferred scan ([#490](https://github.com/crevissepartners/projmux/issues/490) follow-up) ([#492](https://github.com/crevissepartners/projmux/issues/492)) ([541b0a7](https://github.com/crevissepartners/projmux/commit/541b0a775f8dc5846acaf8d04ff9561b865b9d91))
+* **ai:** count resume turns over the whole log, not the 100-line window ([541b0a7](https://github.com/crevissepartners/projmux/commit/541b0a775f8dc5846acaf8d04ff9561b865b9d91))
+* close notify sidebar after child enter ([#475](https://github.com/crevissepartners/projmux/issues/475)) ([17330ad](https://github.com/crevissepartners/projmux/commit/17330ad4aac5cc61598be4d15f84078dcccec7ad))
+* keep notify sidebar open after child enter ([#473](https://github.com/crevissepartners/projmux/issues/473)) ([765f949](https://github.com/crevissepartners/projmux/commit/765f94981f6266081a77ab6d0266693e55c9aaaa))
+* **recent-windows:** project badge = session-anchor basename ([#489](https://github.com/crevissepartners/projmux/issues/489)) ([67c30c1](https://github.com/crevissepartners/projmux/commit/67c30c196ebc18af4f7e00b18af0c046a6f527ba))
+* **recent-windows:** resolve worktree cwd to main repo project badge ([6eb64e9](https://github.com/crevissepartners/projmux/commit/6eb64e9deea27690a34df119435548e8ac6222f1))
+* **recent-windows:** worktree cwd resolves to main repo project badge ([#489](https://github.com/crevissepartners/projmux/issues/489) follow-up) ([#491](https://github.com/crevissepartners/projmux/issues/491)) ([6eb64e9](https://github.com/crevissepartners/projmux/commit/6eb64e9deea27690a34df119435548e8ac6222f1))
+* **sidebar:** follow active session cursor after Ctrl-X kill ([#484](https://github.com/crevissepartners/projmux/issues/484)) ([3b270eb](https://github.com/crevissepartners/projmux/commit/3b270ebf1d46d43ee5481ef106f12a5b08ce322e))
+
+
+### Performance Improvements
+
+* **ai:** defer resume turn count so discovery renders fast again ([#490](https://github.com/crevissepartners/projmux/issues/490)) ([357a2ef](https://github.com/crevissepartners/projmux/commit/357a2efad166b65edee507b35efd8b1fb21d14d3))
+* **ai:** limit resume discovery to recent sessions ([#478](https://github.com/crevissepartners/projmux/issues/478)) ([703a1dd](https://github.com/crevissepartners/projmux/commit/703a1ddfc82476d97710bf1fdf9a7c9b0fe14184))
+* **ai:** speed up resume session discovery ([#477](https://github.com/crevissepartners/projmux/issues/477)) ([9fc6687](https://github.com/crevissepartners/projmux/commit/9fc66876a87ee7b86584f2430576510be89abbf6))
+
 ## [0.7.1](https://github.com/crevissepartners/projmux/compare/v0.7.0...v0.7.1) (2026-06-21)
 
 
