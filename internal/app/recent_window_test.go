@@ -1076,6 +1076,7 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 			"Phase 4 recorder",
 			"codex",
 			filepath.Join(project, "internal", "app"),
+			"",
 		}, recentWindowFieldSep) + "\n",
 		listPanesOutput: strings.Join([]string{"codex-review", "in_progress", "Phase 9 picker", "codex"}, recentWindowFieldSep) + "\n" +
 			strings.Join([]string{"Claude Code", "response_complete", "Recent windows queue", "claude"}, recentWindowFieldSep) + "\n" +
@@ -1136,6 +1137,106 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 	}
 }
 
+func TestRecentWindowSnapshotProjectPriority(t *testing.T) {
+	tests := []struct {
+		name    string
+		anchor  string
+		pane    string
+		session string
+		want    string
+	}{
+		{
+			name:    "anchor basename wins over live cwd",
+			anchor:  "/home/es5h/source/repos/projmux",
+			pane:    "/home/es5h/source/repos/projmux/internal/app",
+			session: "repos-projmux",
+			want:    "projmux",
+		},
+		{
+			name:    "anchor stable when cwd drifts into subdir",
+			anchor:  "/home/es5h/source/repos/projmux",
+			pane:    "/home/es5h/source/repos/projmux/internal/core/recentwindows",
+			session: "repos-projmux",
+			want:    "projmux",
+		},
+		{
+			name:    "no anchor falls back to marker basename",
+			anchor:  "",
+			pane:    projectMarkerDir(t),
+			session: "repos-projmux",
+			want:    "projmux-fixture",
+		},
+		{
+			name:    "no anchor and no marker falls back to session",
+			anchor:  "",
+			pane:    "",
+			session: "repos-projmux",
+			want:    "repos-projmux",
+		},
+		{
+			name:    "anchor trailing slash still yields basename",
+			anchor:  "/home/es5h/source/repos/projmux/",
+			pane:    "/tmp/elsewhere",
+			session: "repos-projmux",
+			want:    "projmux",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := recentWindowSnapshotProject(tt.anchor, tt.pane, tt.session); got != tt.want {
+				t.Fatalf("recentWindowSnapshotProject(%q, %q, %q) = %q, want %q", tt.anchor, tt.pane, tt.session, got, tt.want)
+			}
+		})
+	}
+}
+
+// projectMarkerDir creates a temp project directory named "projmux-fixture"
+// with a .git marker so recentWindowProjectName resolves it as the nearest
+// project root basename.
+func projectMarkerDir(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "projmux-fixture")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("create marker: %v", err)
+	}
+	return filepath.Join(root, "internal", "app")
+}
+
+func TestRecentWindowRecordUsesSessionAnchorProject(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	now := time.Date(2026, 7, 1, 1, 2, 3, 0, time.UTC)
+	runner := &recentWindowFakeRunner{
+		recordOutput: strings.Join([]string{
+			"/tmp/tmux",
+			"repos-projmux",
+			"@6",
+			"agent",
+			"%54",
+			"shell",
+			"topic",
+			"zsh",
+			// Live pane cwd drifted deep into a subdir with no project marker.
+			"/home/es5h/source/repos/projmux/internal/core/recentwindows",
+			// Session anchor pins the project root.
+			"/home/es5h/source/repos/projmux",
+		}, recentWindowFieldSep) + "\n",
+	}
+	store := &recentWindowStubStore{}
+	cmd := &recentWindowCommand{
+		runner:       runner,
+		storeFactory: func(string) (recentWindowStore, error) { return store, nil },
+		now:          func() time.Time { return now },
+	}
+
+	if err := cmd.RunRecord(nil, nil, nil); err != nil {
+		t.Fatalf("RunRecord() error = %v", err)
+	}
+	if got := store.records[0].Project; got != "projmux" {
+		t.Fatalf("snapshot project = %q, want %q (session anchor basename, cwd-drift independent)", got, "projmux")
+	}
+}
+
 func TestRecentWindowRecordParsesEscapedSnapshotSeparators(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/tmux,1,0")
 
@@ -1150,6 +1251,7 @@ func TestRecentWindowRecordParsesEscapedSnapshotSeparators(t *testing.T) {
 			"topic",
 			"zsh",
 			"/repo/projmux",
+			"",
 		}, recentWindowEscapedFieldSep) + "\n",
 	}
 	store := &recentWindowStubStore{}
@@ -1184,6 +1286,7 @@ func TestRecentWindowRecordRepeatedSameWindowDoesNotGrowQueue(t *testing.T) {
 			"",
 			"zsh",
 			"/repo/projmux",
+			"",
 		}, recentWindowFieldSep) + "\n",
 	}
 	cmd := &recentWindowCommand{
@@ -1366,7 +1469,7 @@ func (r *recentWindowFakeRunner) Run(_ context.Context, name string, args ...str
 	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}"}, recentWindowFieldSep)}) {
 		return []byte(r.currentOutput), nil
 	}
-	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}", "#{window_name}", "#{pane_id}", "#{pane_title}", "#{@projmux_ai_topic}", "#{pane_current_command}", "#{pane_current_path}"}, recentWindowFieldSep)}) {
+	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}", "#{window_name}", "#{pane_id}", "#{pane_title}", "#{@projmux_ai_topic}", "#{pane_current_command}", "#{pane_current_path}", "#{@projmux_project_path}"}, recentWindowFieldSep)}) {
 		return []byte(r.recordOutput), nil
 	}
 	if name == "tmux" && len(args) == 5 && args[0] == "list-panes" && args[1] == "-t" && args[3] == "-F" && args[4] == strings.Join([]string{"#{pane_title}", "#{@projmux_ai_badge_kind}", "#{@projmux_ai_topic}", "#{pane_current_command}"}, recentWindowFieldSep) {

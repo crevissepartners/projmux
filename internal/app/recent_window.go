@@ -270,12 +270,13 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 		"#{@projmux_ai_topic}",
 		"#{pane_current_command}",
 		"#{pane_current_path}",
+		"#{@projmux_project_path}",
 	}, recentWindowFieldSep))
 	if err != nil {
 		return recentwindows.Snapshot{}, fmt.Errorf("snapshot current tmux window: %w", err)
 	}
-	fields := parseRecentWindowFields(output, 9)
-	if len(fields) != 9 || fields[1] == "" || fields[2] == "" {
+	fields := parseRecentWindowFields(output, 10)
+	if len(fields) != 10 || fields[1] == "" || fields[2] == "" {
 		return recentwindows.Snapshot{}, fmt.Errorf("snapshot current tmux window: tmux returned incomplete metadata")
 	}
 	titles, badgeKinds, topics, commands := c.windowPaneMetadata(ctx, fields[2])
@@ -284,7 +285,7 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 		Session:        fields[1],
 		WindowID:       fields[2],
 		WindowName:     fields[3],
-		Project:        recentWindowProjectName(fields[8]),
+		Project:        recentWindowSnapshotProject(fields[9], fields[8], fields[1]),
 		LastPaneID:     fields[4],
 		LastPaneTitle:  fields[5],
 		PaneTitles:     titles,
@@ -822,6 +823,37 @@ func joinRecentWindowParts(values ...string) string {
 		parts = append(parts, value)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// recentWindowSnapshotProject resolves the project badge source for a recorded
+// snapshot. It prefers the session anchor (@projmux_project_path) basename so
+// the badge stays the project name even after the pane cwd drifts into a subdir
+// (the anchor is fixed at session creation, roadmap #488). It falls back to the
+// nearest project-marker basename of the live pane cwd, then the session name,
+// so anchor-less sessions keep their prior behavior with no regression.
+func recentWindowSnapshotProject(anchorPath, panePath, session string) string {
+	if name := recentWindowAnchorProjectName(anchorPath); name != "" {
+		return name
+	}
+	if name := recentWindowProjectName(panePath); name != "" {
+		return name
+	}
+	return strings.TrimSpace(session)
+}
+
+// recentWindowAnchorProjectName returns the basename of the session anchor path.
+// The anchor is already the project root, so (unlike recentWindowProjectName) it
+// does not walk for a project marker — its last segment is the project basename.
+func recentWindowAnchorProjectName(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	name := filepath.Base(filepath.Clean(path))
+	if name == "." || name == string(filepath.Separator) {
+		return ""
+	}
+	return name
 }
 
 func recentWindowProjectName(path string) string {
