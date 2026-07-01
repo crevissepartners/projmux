@@ -1,4 +1,14 @@
 // Package aisessions discovers resume-capable AI agent sessions on disk.
+//
+// Symlink policy: directory traversal (the depth>0 Claude project-dir
+// enumeration and the codex sessions walk) follows symlinked directories so
+// sessions stored behind a symlink stay discoverable, but every directory is
+// recorded in a pathGuard keyed by its resolved real path. Re-entering an
+// already-visited real directory is refused, so a symlink cycle (a directory
+// linking to one of its ancestors) or two symlink paths aliasing the same real
+// directory can never cause an unbounded walk or scan the same file twice.
+// Results are additionally deduped by ResumeID (the session identity), so a
+// session reached through two paths still appears in the picker exactly once.
 package aisessions
 
 import (
@@ -141,16 +151,24 @@ func discoverClaude(cwd, projectsDir string, depth int) []SessionMeta {
 		return nil
 	}
 	encoded := EncodeClaudeProjectPath(cwd)
+	guard := newPathGuard()
 	var sessions []SessionMeta
 	for _, entry := range entries {
-		if entry == nil || !entry.IsDir() {
+		// entryIsDir follows symlinks so a symlinked project dir still counts.
+		if entry == nil || !entryIsDir(projectsDir, entry) {
 			continue
 		}
 		name := entry.Name()
 		if name != encoded && !strings.HasPrefix(name, encoded+"-") {
 			continue
 		}
-		sessions = append(sessions, discoverClaudeDir(filepath.Join(projectsDir, name), cwd, depth)...)
+		dir := filepath.Join(projectsDir, name)
+		// Two project-dir names can symlink to the same real directory; scan the
+		// underlying sessions only once so a session is not discovered twice.
+		if !guard.visit(dir) {
+			continue
+		}
+		sessions = append(sessions, discoverClaudeDir(dir, cwd, depth)...)
 	}
 	return sessions
 }
@@ -249,22 +267,11 @@ func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit, depth in
 	treeFilter := depth > 0
 
 	var candidates []sessionFileCandidate
-	_ = filepath.WalkDir(sessionsDir, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry == nil || entry.IsDir() {
-			return nil
-		}
-		if matched, matchErr := filepath.Match("rollout-*.jsonl", entry.Name()); matchErr != nil || !matched {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return nil
-		}
+	walkCodexSessionFiles(sessionsDir, newPathGuard(), func(path string, modTime time.Time) {
 		candidates = append(candidates, sessionFileCandidate{
 			path:    path,
-			modTime: info.ModTime(),
+			modTime: modTime,
 		})
-		return nil
 	})
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].modTime.Equal(candidates[j].modTime) {
@@ -312,6 +319,100 @@ func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit, depth in
 		})
 	}
 	return sessions
+}
+
+// walkCodexSessionFiles walks root for codex rollout files, descending into
+// subdirectories and following symlinked directories. guard makes following
+// safe: it records the resolved real path of every directory entered, so a
+// symlink cycle (a directory linking to an ancestor) or two symlink paths
+// aliasing the same real directory resolve to an already-visited location and
+// are skipped. The walk is therefore always bounded regardless of symlinks.
+func walkCodexSessionFiles(dir string, guard *pathGuard, visit func(path string, modTime time.Time)) {
+	// A directory whose real path was already walked is a cycle or alias; stop.
+	if !guard.visit(dir) {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		full := filepath.Join(dir, entry.Name())
+		if entryIsDir(dir, entry) {
+			walkCodexSessionFiles(full, guard, visit)
+			continue
+		}
+		if matched, matchErr := filepath.Match("rollout-*.jsonl", entry.Name()); matchErr != nil || !matched {
+			continue
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			// Follow the link to the real file for its mtime, and skip it if the
+			// same real file was already collected through another path.
+			info, statErr := os.Stat(full)
+			if statErr != nil || info.IsDir() || !guard.visit(full) {
+				continue
+			}
+			visit(full, info.ModTime())
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		visit(full, info.ModTime())
+	}
+}
+
+// pathGuard bounds a symlink-following directory walk. It records the resolved
+// real path of every directory (and symlinked file) already visited so a
+// symlink cycle or alias resolves to an already-seen real location and is
+// refused, making an unbounded walk or a double scan impossible independent of
+// the depth cap.
+type pathGuard struct {
+	visited map[string]struct{}
+}
+
+func newPathGuard() *pathGuard {
+	return &pathGuard{visited: make(map[string]struct{})}
+}
+
+// visit reports whether path's resolved real location is newly seen. A false
+// return means path aliases an already-visited real location and must be
+// skipped to avoid re-walking it.
+func (g *pathGuard) visit(path string) bool {
+	real := resolveRealPath(path)
+	if _, ok := g.visited[real]; ok {
+		return false
+	}
+	g.visited[real] = struct{}{}
+	return true
+}
+
+// resolveRealPath returns path with all symlinks resolved. A broken or cyclic
+// symlink cannot be resolved; the cleaned literal path is used instead, which
+// still dedupes exact repeats without following a dangling link.
+func resolveRealPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
+}
+
+// entryIsDir reports whether entry under parent is a directory, following one
+// level of symlink so a symlinked directory counts as a directory. Broken
+// symlinks report false.
+func entryIsDir(parent string, entry fs.DirEntry) bool {
+	if entry.IsDir() {
+		return true
+	}
+	if entry.Type()&fs.ModeSymlink == 0 {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(parent, entry.Name()))
+	return err == nil && info.IsDir()
 }
 
 // withinTree reports whether recordedCWD is cwd itself or a descendant up to
