@@ -16,6 +16,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
@@ -783,6 +784,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte) error {
 	}
 
 	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, payload.ConversationID, payload.TranscriptPath)
+	c.persistAntigravityContextUsage(payload)
 	metadata := payload.antigravityMetadata()
 	action := c.aiHookEffectiveAction(aiHookProviderAntigravity, payload.EventName)
 
@@ -866,6 +868,51 @@ func (c *aiCommand) ingestAntigravityHook(data []byte) error {
 		c.quietAntigravityHook(paneID, payload, aiHookNoHandlerReason(action))
 		return nil
 	}
+}
+
+// persistAntigravityContextUsage records the latest context-window
+// percentage carried by an antigravity hook into the usage state
+// directory so the usage adapter (and thus the HUD/status bar) can surface
+// it. Best-effort: antigravity exposes no 5h/weekly quota, so this
+// context-window gauge is the only usage-shaped signal available. A
+// missing or unparseable value, or a write failure, is silently ignored —
+// usage is a non-critical side channel of hook ingest.
+func (c *aiCommand) persistAntigravityContextUsage(payload antigravityHookPayload) {
+	pct, ok := antigravityadapter.ParsePercent(payload.ContextWindow)
+	if !ok {
+		return
+	}
+	baseDir, err := c.usageStateDir()
+	if err != nil {
+		return
+	}
+	_ = antigravityadapter.WriteContext(baseDir, antigravityadapter.ContextRecord{
+		Pct:       pct,
+		UpdatedAt: c.now().UTC(),
+	})
+}
+
+// usageStateDir resolves the directory the usage snapshot cache and the
+// antigravity context sidecar live in. It mirrors usageCommand.resolveStateDir
+// so the ingest writer and the adapter reader agree even when
+// PROJMUX_USAGE_STATE_DIR redirects the cache to a synced location.
+func (c *aiCommand) usageStateDir() (string, error) {
+	if override := strings.TrimSpace(c.env(stateDirEnvVar)); override != "" {
+		return override, nil
+	}
+	homeDir, err := c.homeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	paths, err := config.Homes{
+		HomeDir:    homeDir,
+		ConfigHome: c.env("XDG_CONFIG_HOME"),
+		StateHome:  c.env("XDG_STATE_HOME"),
+	}.Paths()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(paths.StateDir, "usage"), nil
 }
 
 func (c *aiCommand) quietCodexHook(paneID string, payload codexHookPayload, reason string) {

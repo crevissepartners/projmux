@@ -634,10 +634,11 @@ include `conversationId`/`conversation_id`, `cwd`, `workspace.path`,
 Antigravity ingest uses `conversationId` as pane thread metadata for matching
 and as session-state resume metadata. Session restore uses
 `agy --conversation <uuid>` only when that id is present and UUID-shaped;
-otherwise preview and doctor render `resume unavailable`. Antigravity usage
-quota HUD support remains unsupported because the stable usage signal is
-`context-window-only` statusline data, not 5-hour/weekly quota data. Raw
-payloads or transcript contents are not stored.
+otherwise preview and doctor render `resume unavailable`. The statusline
+`context_window` percentage is persisted to the usage state dir on ingest so
+the usage HUD can surface it as a `context-window-only` row — Antigravity has
+no 5-hour/weekly quota contract, so no quota bars are emitted. Raw payloads or
+transcript contents are not stored.
 
 ## Ingest Debug Log
 

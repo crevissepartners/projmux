@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	"github.com/crevissepartners/projmux/internal/core/usage"
+	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 	claudeadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/claude"
 	codexadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/codex"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -61,7 +62,7 @@ func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	model := fs.String("model", "all", "filter by model: codex | claude | antigravity | all")
-	window := fs.String("window", "all", "filter by window: 5h | weekly | all")
+	window := fs.String("window", "all", "filter by window: 5h | weekly | context | all")
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the tab-aligned table")
 	// --force / -f bypasses the per-adapter throttle floor AND clears
 	// any active backoff before invoking adapters. Useful when bound
@@ -242,6 +243,13 @@ func (c *usageCommand) managerForScope(modelScope []string) (*usage.Manager, err
 }
 
 func (c *usageCommand) defaultManager(modelScope []string) (*usage.Manager, error) {
+	// Resolve the state dir up front: the Antigravity adapter reads its
+	// context sidecar from the same directory the snapshot cache lives in,
+	// so it needs the resolved path at construction time.
+	stateDir, err := c.resolveStateDir()
+	if err != nil {
+		return nil, err
+	}
 	registry := usage.NewRegistry()
 	for _, model := range normalizeUsageModelScope(modelScope) {
 		provider, ok := aiprovider.Lookup(model)
@@ -257,11 +265,11 @@ func (c *usageCommand) defaultManager(modelScope []string) (*usage.Manager, erro
 			if err := registry.Register(codexadapter.New()); err != nil {
 				return nil, fmt.Errorf("usage: register codex adapter: %w", err)
 			}
+		case aiprovider.Antigravity:
+			if err := registry.Register(antigravityadapter.New(stateDir)); err != nil {
+				return nil, fmt.Errorf("usage: register antigravity adapter: %w", err)
+			}
 		}
-	}
-	stateDir, err := c.resolveStateDir()
-	if err != nil {
-		return nil, err
 	}
 	// PROJMUX_USAGE_LIMITS_PATH is deprecated in schema v2 — observe it
 	// here purely so users who set it don't see a "permission denied" or
@@ -377,14 +385,10 @@ func (c *usageCommand) unsupportedUsageProviders(model string, explicitModel boo
 }
 
 func unsupportedUsageProviderFor(provider aiprovider.Metadata) usageUnsupportedProvider {
-	reason := "no supported 5h/weekly quota usage adapter"
-	if provider.ID == aiprovider.Antigravity {
-		reason = "context-window-only statusline data; no supported 5h/weekly quota or reset contract"
-	}
 	return usageUnsupportedProvider{
 		Model:  string(provider.ID),
 		Label:  provider.DisplayName,
-		Reason: reason,
+		Reason: "no supported usage adapter",
 	}
 }
 
@@ -636,6 +640,12 @@ type modelDisplay struct {
 	hasWeek    bool
 	weekPct    float64
 	weekStale  int
+	// context-window fullness (usage.WindowContext). Used by adapters
+	// without a 5h/weekly quota contract (Antigravity). Rendered as a
+	// `ctx` pair alongside — or in place of — the time-windowed bars.
+	hasContext bool
+	contextPct float64
+	ctxStale   int
 	// lastSync is max(fiveUpdatedAt, weekUpdatedAt). Used together
 	// with `now` to compute the age indicator. Zero when no row
 	// supplied an UpdatedAt timestamp.
@@ -711,7 +721,7 @@ func renderTierLongHUD(models []modelDisplay, now time.Time) string {
 func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) string {
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
-		if !m.hasFive && !m.hasWeek {
+		if !m.hasFive && !m.hasWeek && !m.hasContext {
 			continue
 		}
 		var b strings.Builder
@@ -725,18 +735,23 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 			}
 		}
 		first := true
-		if m.hasFive {
-			b.WriteByte(' ')
-			b.WriteString(renderHUDPair("5h", m.fivePct))
-			first = false
-		}
-		if m.hasWeek {
+		writePair := func(window string, pct float64) {
 			if first {
 				b.WriteByte(' ')
+				first = false
 			} else {
 				b.WriteString(statusInnerSeparator)
 			}
-			b.WriteString(renderHUDPair("weekly", m.weekPct))
+			b.WriteString(renderHUDPair(window, pct))
+		}
+		if m.hasFive {
+			writePair("5h", m.fivePct)
+		}
+		if m.hasWeek {
+			writePair("weekly", m.weekPct)
+		}
+		if m.hasContext {
+			writePair("ctx", m.contextPct)
 		}
 		b.WriteString(statusDefaultReset)
 		blocks = append(blocks, b.String())
@@ -747,12 +762,21 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 	return strings.Join(blocks, statusModelSeparator) + statusDefaultReset
 }
 
-// renderTierFiveHOnlyHUD drops the weekly bar but keeps the 5h bar.
+// renderTierFiveHOnlyHUD drops the weekly bar but keeps a single primary
+// bar per model: 5h when present, else the context bar (so context-only
+// models like Antigravity stay visible at this narrower tier).
 func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
 	_ = now
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
-		if !m.hasFive {
+		window := ""
+		var pct float64
+		switch {
+		case m.hasFive:
+			window, pct = "5h", m.fivePct
+		case m.hasContext:
+			window, pct = "ctx", m.contextPct
+		default:
 			continue
 		}
 		var b strings.Builder
@@ -760,7 +784,7 @@ func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		b.WriteByte(' ')
-		b.WriteString(renderHUDPair("5h", m.fivePct))
+		b.WriteString(renderHUDPair(window, pct))
 		b.WriteString(statusDefaultReset)
 		blocks = append(blocks, b.String())
 	}
@@ -808,12 +832,15 @@ func renderTierTextShort(models []modelDisplay, now time.Time) string {
 // tier carries staleness via the age indicator. The non-JSON `usage`
 // table CLI still surfaces a STALE column for verbose inspection.
 func renderTextPair(m modelDisplay, label string) string {
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 3)
 	if m.hasFive {
 		parts = append(parts, fmt.Sprintf("5h:%s", percentText(m.fivePct)))
 	}
 	if m.hasWeek {
 		parts = append(parts, fmt.Sprintf("weekly:%s", percentText(m.weekPct)))
+	}
+	if m.hasContext {
+		parts = append(parts, fmt.Sprintf("ctx:%s", percentText(m.contextPct)))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -926,6 +953,10 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 			row.hasWeek = true
 			row.weekPct = s.Pct
 			row.weekStale = level
+		case usage.WindowContext:
+			row.hasContext = true
+			row.contextPct = s.Pct
+			row.ctxStale = level
 		}
 		// lastSync tracks the most recent successful refresh
 		// across the model's rows; the long HUD tier renders its
@@ -935,11 +966,15 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 		if !s.UpdatedAt.IsZero() && s.UpdatedAt.After(row.lastSync) {
 			row.lastSync = s.UpdatedAt
 		}
-		if strings.EqualFold(s.Model, "claude") {
+		// Claude data is throttled/backoff-gated and Antigravity data is
+		// hook-driven (only refreshed when agy emits a statusline), so both
+		// can go stale — surface the age indicator. Codex reads the latest
+		// rollout every call so its age is always ~now (showAge stays false).
+		if strings.EqualFold(s.Model, "claude") || strings.EqualFold(s.Model, "antigravity") {
 			row.showAge = true
 		}
 	}
-	canonical := []string{"claude", "codex"}
+	canonical := []string{"claude", "codex", "antigravity"}
 	listed := make(map[string]bool, len(canonical))
 	out := make([]modelDisplay, 0, len(byModel))
 	for _, m := range canonical {
@@ -964,6 +999,8 @@ func modelDisplayLabel(model string) string {
 		return "Claude"
 	case "codex":
 		return "Codex"
+	case "antigravity":
+		return "Antigravity"
 	default:
 		if model == "" {
 			return "?"
@@ -984,6 +1021,8 @@ func modelShortLabel(model string) string {
 		return "C"
 	case "codex":
 		return "X"
+	case "antigravity":
+		return "A"
 	default:
 		if model == "" {
 			return "?"
@@ -1049,7 +1088,7 @@ func runeLen(s string) int {
 
 func printUsageHelp(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|all] [--json] [--force|-f]")
+	fmt.Fprintln(w, "  projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|all] [--json] [--force|-f]")
 	fmt.Fprintln(w, "  projmux status usage [--max-width N] [--force|-f]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")
