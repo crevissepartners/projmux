@@ -865,7 +865,58 @@ func recentWindowProjectName(path string) string {
 	if root == "" {
 		root = path
 	}
+	// A git worktree carries its own `.git` marker, so nearestProjectMarker stops
+	// at the worktree dir whose basename is the branch/worktree name, not the
+	// project. When <root>/.git is a FILE (the worktree case) resolve the main
+	// repo root by parsing it — a pure file read, no git subprocess, since the
+	// recent list can hold many entries — and use the main project basename. A
+	// regular repo (.git dir), a missing .git, or a corrupt/unexpected .git file
+	// falls through to the existing marker-basename behavior and never panics.
+	if main := recentWindowWorktreeMainProjectName(root); main != "" {
+		return main
+	}
 	name := filepath.Base(filepath.Clean(root))
+	if name == "." || name == string(filepath.Separator) {
+		return ""
+	}
+	return name
+}
+
+// recentWindowWorktreeMainProjectName returns the main repository's project
+// basename when root is a git worktree, else "". A worktree's <root>/.git is a
+// file whose content is `gitdir: <main>/.git/worktrees/<name>`; the main repo
+// root is the path segment before `/.git/worktrees/`. Anything else — a `.git`
+// directory (regular repo), a missing/unreadable file, or content without the
+// expected `gitdir:` worktree pointer — yields "" so the caller keeps its prior
+// behavior. No git subprocess is spawned; only the marker file is read.
+func recentWindowWorktreeMainProjectName(root string) string {
+	gitPath := filepath.Join(root, ".git")
+	info, err := osStat(gitPath)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+	data, err := os.ReadFile(gitPath)
+	if err != nil {
+		return ""
+	}
+	gitdir := ""
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, "gitdir:"); ok {
+			gitdir = strings.TrimSpace(rest)
+			break
+		}
+	}
+	if gitdir == "" {
+		return ""
+	}
+	gitdir = filepath.ToSlash(gitdir)
+	idx := strings.Index(gitdir, "/.git/worktrees/")
+	if idx <= 0 {
+		return ""
+	}
+	mainRoot := filepath.Clean(filepath.FromSlash(gitdir[:idx]))
+	name := filepath.Base(mainRoot)
 	if name == "." || name == string(filepath.Separator) {
 		return ""
 	}
