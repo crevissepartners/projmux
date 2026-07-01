@@ -2790,6 +2790,130 @@ func TestNativeInteractiveCustomActionRefreshPreservesSelectedValue(t *testing.T
 	}
 }
 
+func TestNativeDeferredFocusValue(t *testing.T) {
+	t.Parallel()
+
+	if got := nativeDeferredFocusValue(DeferredUpdate{FocusValue: "  /repo/worker  "}, "/repo/api"); got != "/repo/worker" {
+		t.Fatalf("explicit FocusValue = %q, want trimmed /repo/worker", got)
+	}
+	if got := nativeDeferredFocusValue(DeferredUpdate{}, "/repo/api"); got != "/repo/api" {
+		t.Fatalf("unset FocusValue = %q, want fallback /repo/api", got)
+	}
+	if got := nativeDeferredFocusValue(DeferredUpdate{FocusValue: "   "}, "/repo/api"); got != "/repo/api" {
+		t.Fatalf("blank FocusValue = %q, want fallback /repo/api", got)
+	}
+}
+
+func TestNativeInteractiveDeferredFocusValueMovesCursor(t *testing.T) {
+	t.Parallel()
+
+	// Simulate a sidebar kill: the originally selected row (/repo/api) is
+	// gone from the refreshed list and FocusValue points at the newly
+	// active session, so the cursor must jump there instead of clamping.
+	result, err := runNativeInteractive(strings.NewReader("x\r"), io.Discard, Options{
+		UI:              "sidebar",
+		DisableSearch:   true,
+		InitialIndex:    0,
+		InitialIndexSet: true,
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+			{Title: "worker", Value: "/repo/worker"},
+		},
+		Actions: []Action{{
+			Key:    "x",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				return DeferredUpdate{
+					Items: []Item{
+						{Title: "web", Value: "/repo/web"},
+						{Title: "worker", Value: "/repo/worker"},
+					},
+					FocusValue: "/repo/worker",
+				}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "/repo/worker" {
+		t.Fatalf("result = %#v, want cursor moved to FocusValue /repo/worker", result)
+	}
+}
+
+func TestNativeInteractiveDeferredFocusValueUnsetPreservesLegacyFallback(t *testing.T) {
+	t.Parallel()
+
+	// Without FocusValue the removed previous value (/repo/api) is not
+	// found, so selection clamps to index 0 (/repo/web) — the pre-existing
+	// behaviour other pickers rely on must not regress.
+	result, err := runNativeInteractive(strings.NewReader("x\r"), io.Discard, Options{
+		UI:              "sidebar",
+		DisableSearch:   true,
+		InitialIndex:    0,
+		InitialIndexSet: true,
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+			{Title: "worker", Value: "/repo/worker"},
+		},
+		Actions: []Action{{
+			Key:    "x",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				return DeferredUpdate{Items: []Item{
+					{Title: "web", Value: "/repo/web"},
+					{Title: "worker", Value: "/repo/worker"},
+				}}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want legacy fallback /repo/web", result)
+	}
+}
+
+func TestNativeInteractiveDeferredFocusValueMissingFallsBackSafely(t *testing.T) {
+	t.Parallel()
+
+	// FocusValue absent from the refreshed list must not panic or escape
+	// range; it clamps to the prior selected index (1 -> /repo/worker).
+	result, err := runNativeInteractive(strings.NewReader("x\r"), io.Discard, Options{
+		UI:              "sidebar",
+		DisableSearch:   true,
+		InitialIndex:    1,
+		InitialIndexSet: true,
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+			{Title: "worker", Value: "/repo/worker"},
+		},
+		Actions: []Action{{
+			Key:    "x",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				return DeferredUpdate{
+					Items: []Item{
+						{Title: "web", Value: "/repo/web"},
+						{Title: "worker", Value: "/repo/worker"},
+					},
+					FocusValue: "/repo/ghost",
+				}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "/repo/worker" {
+		t.Fatalf("result = %#v, want safe fallback /repo/worker", result)
+	}
+}
+
 func TestNativeInteractiveRunsFocusActionOnSelectionChange(t *testing.T) {
 	t.Parallel()
 

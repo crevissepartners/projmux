@@ -1980,11 +1980,25 @@ func (c *switchCommand) switchSidebarRefreshUpdate(ctx context.Context) (intpick
 	if err != nil {
 		return intpicker.DeferredUpdate{}, fmt.Errorf("discover switch candidates: %w", err)
 	}
-	_, items, _, err := c.renderFullRows(ctx, switchUISidebar, paths)
+	_, items, sessionNames, err := c.renderFullRows(ctx, switchUISidebar, paths)
 	if err != nil {
 		return intpicker.DeferredUpdate{}, err
 	}
 	update := intpicker.DeferredUpdate{Items: items}
+	// After a kill, tmux switches to c.focusSession; move the sidebar cursor
+	// to match by reverse-mapping the active session name back to its row
+	// value. sessionNames is keyed by cleaned candidate path, so match items
+	// through the same cleaning to keep FocusValue byte-identical to the row
+	// Value the picker compares against. Empty focusSession or an absent row
+	// leaves FocusValue empty, preserving the prior cursor-follow behaviour.
+	if focus := strings.TrimSpace(c.focusSession); focus != "" {
+		for _, item := range items {
+			if strings.TrimSpace(sessionNames[cleanOptionalPath(item.Value)]) == focus {
+				update.FocusValue = item.Value
+				break
+			}
+		}
+	}
 	surface, err := c.switchPickerSurface(switchPlan{UI: switchUISidebar}, true)
 	if err != nil {
 		return intpicker.DeferredUpdate{}, err

@@ -2834,6 +2834,81 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 	}
 }
 
+func TestSwitchCommandPickerSidebarKillRefreshFocusesActiveSession(t *testing.T) {
+	t.Parallel()
+
+	executor := &capturingSwitchSessionExecutor{
+		exists: map[string]bool{
+			"tmp-app":      true,
+			"tmp-previous": true,
+			"tmp-worker":   true,
+		},
+		recentSessions: []string{"tmp-app", "tmp-previous", "tmp-worker"},
+	}
+	executor.killHook = func(sessionName string) {
+		executor.exists[sessionName] = false
+	}
+
+	var focusValue string
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app", "/tmp/previous", "/tmp/worker"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			var killAction intpicker.Action
+			for _, action := range options.Actions {
+				if action.Key == switchKillExpectKey {
+					killAction = action
+					break
+				}
+			}
+			if killAction.Mutate == nil {
+				t.Fatalf("kill action = %#v, want mutable native action", killAction)
+			}
+			update, err := killAction.Mutate(intpicker.ActionContext{
+				Key:           switchKillExpectKey,
+				Value:         "/tmp/app",
+				SelectedIndex: 0,
+			})
+			if err != nil {
+				t.Fatalf("kill mutate error = %v", err)
+			}
+			focusValue = update.FocusValue
+			return intpicker.Result{Closed: true}, nil
+		}),
+		sessions:   executor,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			switch path {
+			case "/tmp/app":
+				return "tmp-app", nil
+			case "/tmp/previous":
+				return "tmp-previous", nil
+			case "/tmp/worker":
+				return "tmp-worker", nil
+			default:
+				return "", errors.New("unexpected path")
+			}
+		}),
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	// After the kill tmux switches to tmp-previous; the refresh must point
+	// FocusValue at that session's row path so the sidebar cursor follows.
+	if got, want := cmd.focusSession, "tmp-previous"; got != want {
+		t.Fatalf("focus session = %q, want %q", got, want)
+	}
+	if got, want := focusValue, "/tmp/previous"; got != want {
+		t.Fatalf("refresh FocusValue = %q, want active session path %q", got, want)
+	}
+}
+
 func TestSwitchCommandPickerSidebarKillMutateBlocksWithoutPreviousLiveSession(t *testing.T) {
 	t.Parallel()
 
