@@ -235,6 +235,8 @@ const (
 	settingsAIDefaultMode                  = "ai-default-mode"
 	settingsAIEnabledAgents                = "ai-enabled-agents"
 	settingsAIResumePicker                 = "ai-resume-picker"
+	settingsAIResumePickerLimit            = "ai-resume-picker-limit"
+	settingsAIResumePickerDepth            = "ai-resume-picker-depth"
 	settingsAINotifyDiagnostics            = "ai-notify-diagnostics"
 	settingsNotificationsDesktop           = "notifications:desktop"
 	settingsNotificationsAIDedupe          = "notifications:ai-dedupe"
@@ -1755,9 +1757,10 @@ func (c *settingsCommand) runAIEnabledAgentsSection(stdout, stderr io.Writer) er
 }
 
 // runAIResumePickerSection drives the Settings > AI Settings > Resume picker
-// submenu. It currently exposes the max-sessions limit (Phase 1); Phase 2 adds
-// a scan-depth row to the same menu, which is why the entry builder groups the
-// limit rows under a header rather than rendering a single flat list.
+// submenu. It is a navigation view: it shows two drill-in rows (Picker limit
+// and Scan depth) with their current value + source, and routes each into a
+// deeper section that owns the preset toggles + custom input. The preset/custom
+// wiring itself is unchanged — only relocated one level deeper.
 func (c *settingsCommand) runAIResumePickerSection(stdout, stderr io.Writer) error {
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
@@ -1765,6 +1768,46 @@ func (c *settingsCommand) runAIResumePickerSection(stdout, stderr io.Writer) err
 			Entries:    c.aiResumePickerEntries(),
 			Title:      "AI Settings - Resume picker",
 			Prompt:     "Settings > AI Settings > Resume picker > ",
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsAIResumePickerLimit:
+			if err := c.runAIResumePickerLimitSection(stdout, stderr); err != nil {
+				return err
+			}
+		case action == settingsAIResumePickerDepth:
+			if err := c.runAIResumePickerDepthSection(stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown AI resume picker settings action: %s", action)
+		}
+	}
+}
+
+// runAIResumePickerLimitSection drives the deeper Picker limit view: an info
+// header plus the preset toggles + custom row. Preset/custom wiring is the same
+// as before; it just lives one level down now.
+func (c *settingsCommand) runAIResumePickerLimitSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-ai-resume-picker-limit",
+			Entries:    c.aiResumePickerLimitEntries(),
+			Title:      "AI Settings - Picker limit",
+			Prompt:     "Settings > AI Settings > Resume picker > Picker limit > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -1793,6 +1836,38 @@ func (c *settingsCommand) runAIResumePickerSection(stdout, stderr io.Writer) err
 			if err := c.setAIResumePickerLimit(limit, stdout); err != nil {
 				return err
 			}
+		default:
+			return fmt.Errorf("unknown AI resume picker limit action: %s", action)
+		}
+	}
+}
+
+// runAIResumePickerDepthSection drives the deeper Scan depth view: an info
+// header plus the preset toggles + custom row. Preset/custom wiring is the same
+// as before; it just lives one level down now.
+func (c *settingsCommand) runAIResumePickerDepthSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-ai-resume-picker-depth",
+			Entries:    c.aiResumePickerDepthEntries(),
+			Title:      "AI Settings - Scan depth",
+			Prompt:     "Settings > AI Settings > Resume picker > Scan depth > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
 		case action == settingsActionPrefixAIResumeDepth+"custom":
 			if err := c.runAIResumePickerDepthCustom(stdout, stderr); err != nil {
 				return err
@@ -1806,7 +1881,7 @@ func (c *settingsCommand) runAIResumePickerSection(stdout, stderr io.Writer) err
 				return err
 			}
 		default:
-			return fmt.Errorf("unknown AI resume picker settings action: %s", action)
+			return fmt.Errorf("unknown AI resume picker depth action: %s", action)
 		}
 	}
 }
@@ -1865,7 +1940,29 @@ func (c *settingsCommand) runAIResumePickerDepthCustom(stdout, stderr io.Writer)
 	return c.setAIResumeScanDepth(depth, stdout)
 }
 
+// aiResumePickerEntries builds the Resume picker navigation view: two drill-in
+// rows (Picker limit, Scan depth), each showing the resolved value + source and
+// routing into its own deeper section.
 func (c *settingsCommand) aiResumePickerEntries() []intpickercompat.Entry {
+	return []intpickercompat.Entry{
+		c.backEntry(),
+		{
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, "Picker limit", c.aiResumePickerLimitSummary()),
+			Value:     settingsAIResumePickerLimit,
+			SearchKey: "resume picker limit max sessions resume_picker_limit",
+		},
+		{
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, "Scan depth", c.aiResumeScanDepthSummary()),
+			Value:     settingsAIResumePickerDepth,
+			SearchKey: "resume scan depth cwd child directories resume_scan_depth",
+		},
+	}
+}
+
+// aiResumePickerLimitEntries builds the deeper Picker limit view: an info
+// header (current value + source) followed by the preset toggles and the custom
+// input row.
+func (c *settingsCommand) aiResumePickerLimitEntries() []intpickercompat.Entry {
 	current := c.currentAIResumePickerLimit()
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
@@ -1890,12 +1987,21 @@ func (c *settingsCommand) aiResumePickerEntries() []intpickercompat.Entry {
 		Label: c.rowLabel(settingsGlyphType, settingsColorType, "Custom limit", "store a session count between 1 and 100"),
 		Value: settingsActionPrefixAIResumeLimit + "custom",
 	})
+	return entries
+}
 
+// aiResumePickerDepthEntries builds the deeper Scan depth view: an info header
+// (current value + source) followed by the preset toggles and the custom input
+// row.
+func (c *settingsCommand) aiResumePickerDepthEntries() []intpickercompat.Entry {
 	depth := c.currentAIResumeScanDepth()
-	entries = append(entries, intpickercompat.Entry{
-		Label: c.rowLabelInfo("Resume scan depth", fmt.Sprintf("depth %d", depth.Depth), string(depth.Source)),
-		Value: settingsNoopValue,
-	})
+	entries := []intpickercompat.Entry{
+		c.backEntry(),
+		{
+			Label: c.rowLabelInfo("Resume scan depth", fmt.Sprintf("depth %d", depth.Depth), string(depth.Source)),
+			Value: settingsNoopValue,
+		},
+	}
 	for _, level := range []int{0, 1, 2, 3} {
 		glyph := settingsGlyphInactive
 		color := settingsColorDim
@@ -2131,6 +2237,20 @@ func (c *settingsCommand) aiResumePickerSummary() string {
 	current := c.currentAIResumePickerLimit()
 	depth := c.currentAIResumeScanDepth()
 	return fmt.Sprintf("%d sessions, depth %d - %s", current.Limit, depth.Depth, current.Source)
+}
+
+// aiResumePickerLimitSummary renders the "<value> - <source>" tail used on the
+// Picker limit drill-in row, reusing the resolved limit + source.
+func (c *settingsCommand) aiResumePickerLimitSummary() string {
+	current := c.currentAIResumePickerLimit()
+	return fmt.Sprintf("%d - %s", current.Limit, current.Source)
+}
+
+// aiResumeScanDepthSummary renders the "<value> - <source>" tail used on the
+// Scan depth drill-in row, reusing the resolved depth + source.
+func (c *settingsCommand) aiResumeScanDepthSummary() string {
+	depth := c.currentAIResumeScanDepth()
+	return fmt.Sprintf("%d - %s", depth.Depth, depth.Source)
 }
 
 func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {

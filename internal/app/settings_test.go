@@ -3150,7 +3150,27 @@ func TestSettingsAIResumePickerRowsAndCustomWrite(t *testing.T) {
 		t.Fatalf("AI root entries = %#v, want Resume picker row", cmd.aiRootEntries())
 	}
 
-	detail := cmd.aiResumePickerEntries()
+	// The Resume picker view is a navigation view: only the two drill-in rows,
+	// no flat preset list. Selecting a row routes one level deeper.
+	nav := cmd.aiResumePickerEntries()
+	for _, want := range []string{settingsAIResumePickerLimit, settingsAIResumePickerDepth} {
+		if !hasEntryValue(nav, want) {
+			t.Fatalf("resume picker nav entries = %#v, want drill-in row %q", nav, want)
+		}
+	}
+	for _, unwanted := range []string{
+		settingsActionPrefixAIResumeLimit + "20",
+		settingsActionPrefixAIResumeLimit + "custom",
+		settingsActionPrefixAIResumeDepth + "0",
+		settingsActionPrefixAIResumeDepth + "custom",
+	} {
+		if hasEntryValue(nav, unwanted) {
+			t.Fatalf("resume picker nav entries = %#v, must not list preset row %q", nav, unwanted)
+		}
+	}
+
+	// The Picker limit sub-section exposes the preset toggles + custom row.
+	limitDetail := cmd.aiResumePickerLimitEntries()
 	for _, want := range []string{
 		settingsActionPrefixAIResumeLimit + "20",
 		settingsActionPrefixAIResumeLimit + "30",
@@ -3158,8 +3178,22 @@ func TestSettingsAIResumePickerRowsAndCustomWrite(t *testing.T) {
 		settingsActionPrefixAIResumeLimit + "100",
 		settingsActionPrefixAIResumeLimit + "custom",
 	} {
-		if !hasEntryValue(detail, want) {
-			t.Fatalf("resume picker entries = %#v, want row %q", detail, want)
+		if !hasEntryValue(limitDetail, want) {
+			t.Fatalf("picker limit entries = %#v, want row %q", limitDetail, want)
+		}
+	}
+
+	// The Scan depth sub-section exposes the preset toggles + custom row.
+	depthDetail := cmd.aiResumePickerDepthEntries()
+	for _, want := range []string{
+		settingsActionPrefixAIResumeDepth + "0",
+		settingsActionPrefixAIResumeDepth + "1",
+		settingsActionPrefixAIResumeDepth + "2",
+		settingsActionPrefixAIResumeDepth + "3",
+		settingsActionPrefixAIResumeDepth + "custom",
+	} {
+		if !hasEntryValue(depthDetail, want) {
+			t.Fatalf("scan depth entries = %#v, want row %q", depthDetail, want)
 		}
 	}
 
@@ -3179,9 +3213,27 @@ func TestSettingsAIResumePickerRowsAndCustomWrite(t *testing.T) {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 
-	// The saved limit toggles on in the preset list.
-	if !hasEntryLabelContaining(cmd.aiResumePickerEntries(), "50 sessions") {
-		t.Fatalf("resume picker entries = %#v, want 50 sessions selected", cmd.aiResumePickerEntries())
+	// The saved limit toggles on in the Picker limit sub-section preset list,
+	// and the navigation row reflects the new value + source.
+	if !hasEntryLabelContaining(cmd.aiResumePickerLimitEntries(), "50 sessions") {
+		t.Fatalf("picker limit entries = %#v, want 50 sessions selected", cmd.aiResumePickerLimitEntries())
+	}
+	if got, want := cmd.aiResumePickerLimitSummary(), "50 - global"; got != want {
+		t.Fatalf("picker limit summary = %q, want %q", got, want)
+	}
+
+	// Scan depth round-trips through its own sub-section save path.
+	if err := cmd.setAIResumeScanDepth(2, &stdout); err != nil {
+		t.Fatalf("setAIResumeScanDepth error = %v", err)
+	}
+	if got := cmd.currentAIResumeScanDepth(); got.Depth != 2 || got.Source != aiResumeScanDepthSourceGlobal {
+		t.Fatalf("current scan depth = %#v, want 2/global", got)
+	}
+	if !hasEntryLabelContaining(cmd.aiResumePickerDepthEntries(), "depth 2") {
+		t.Fatalf("scan depth entries = %#v, want depth 2 selected", cmd.aiResumePickerDepthEntries())
+	}
+	if got, want := cmd.aiResumeScanDepthSummary(), "2 - global"; got != want {
+		t.Fatalf("scan depth summary = %q, want %q", got, want)
 	}
 }
 
