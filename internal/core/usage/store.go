@@ -180,7 +180,7 @@ func (s *Store) SaveState(state State) error {
 	// Stable ordering: model asc, window asc within model.
 	sorted := make([]Snapshot, len(state.Snapshots))
 	copy(sorted, state.Snapshots)
-	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1}
+	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1, WindowContext: 2}
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if sorted[i].Model != sorted[j].Model {
 			return sorted[i].Model < sorted[j].Model
@@ -260,7 +260,7 @@ func (s *Store) CleanupLegacyArtifacts() {
 func SortedSnapshots(snaps []Snapshot) []Snapshot {
 	out := make([]Snapshot, len(snaps))
 	copy(out, snaps)
-	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1}
+	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1, WindowContext: 2}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Model != out[j].Model {
 			return out[i].Model < out[j].Model

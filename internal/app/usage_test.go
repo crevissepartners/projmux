@@ -46,6 +46,57 @@ func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
 	}
 }
 
+func TestFormatStatusUsageRendersAntigravityContext(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	// Antigravity exposes only a context-window gauge — no 5h/weekly quota.
+	// It must still render a `ctx` bar in the HUD.
+	snaps := []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 42, UpdatedAt: now},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+
+	if !strings.Contains(got, "Antigravity") {
+		t.Fatalf("missing Antigravity label: %q", got)
+	}
+	if !strings.Contains(got, "ctx ") {
+		t.Fatalf("missing ctx window label: %q", got)
+	}
+	if !strings.Contains(got, "42%") {
+		t.Fatalf("missing context percentage: %q", got)
+	}
+	if !strings.Contains(got, "█") || !strings.Contains(got, "░") {
+		t.Fatalf("missing bar runes: %q", got)
+	}
+}
+
+// TestFormatStatusUsageCanonicalOrder locks the HUD ordering: Claude,
+// Codex, then Antigravity, regardless of snapshot input order. This also
+// guards claude/codex against regression when a context-only model is
+// present.
+func TestFormatStatusUsageCanonicalOrder(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 42, UpdatedAt: now},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		{Model: "claude", Window: usage.Window5h, Pct: 12, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+
+	iClaude := strings.Index(got, "Claude")
+	iCodex := strings.Index(got, "Codex")
+	iAgy := strings.Index(got, "Antigravity")
+	if iClaude < 0 || iCodex < 0 || iAgy < 0 {
+		t.Fatalf("missing a model label: %q", got)
+	}
+	if !(iClaude < iCodex && iCodex < iAgy) {
+		t.Fatalf("canonical order Claude<Codex<Antigravity not held: claude=%d codex=%d agy=%d in %q", iClaude, iCodex, iAgy, got)
+	}
+}
+
 func TestFormatStatusUsageOmitsPlaceholderRows(t *testing.T) {
 	t.Parallel()
 
@@ -340,13 +391,14 @@ func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
 	}
 }
 
-func TestUsageStatusIgnoresEnabledAntigravityUntilAdapterExists(t *testing.T) {
+func TestUsageStatusShowsAntigravityContext(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	store := usage.NewStore(t.TempDir())
-	claudeAd := &stubAdapter{name: "claude"}
-	codexAd := &stubAdapter{name: "codex"}
+	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 63, UpdatedAt: now},
+	}}
 
 	c := newUsageCommand()
 	c.now = func() time.Time { return now }
@@ -354,8 +406,7 @@ func TestUsageStatusIgnoresEnabledAntigravityUntilAdapterExists(t *testing.T) {
 		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
 	}
 	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
-		"claude": claudeAd,
-		"codex":  codexAd,
+		"antigravity": agyAd,
 	})
 
 	stdout := &bytes.Buffer{}
@@ -363,61 +414,80 @@ func TestUsageStatusIgnoresEnabledAntigravityUntilAdapterExists(t *testing.T) {
 	if err := c.runStatus(nil, stdout, stderr); err != nil {
 		t.Fatalf("runStatus: %v", err)
 	}
-	if got := stdout.String(); got != "" {
-		t.Fatalf("status usage output = %q, want empty without Antigravity usage adapter", got)
+	out := stdout.String()
+	if !strings.Contains(out, "Antigravity") || !strings.Contains(out, "63%") {
+		t.Fatalf("expected Antigravity context HUD: %q", out)
 	}
-	if claudeAd.collectCalls != 0 || codexAd.collectCalls != 0 {
-		t.Fatalf("collect calls with only Antigravity enabled = claude:%d codex:%d, want 0/0", claudeAd.collectCalls, codexAd.collectCalls)
+	if agyAd.collectCalls != 1 {
+		t.Fatalf("antigravity collect calls = %d, want 1", agyAd.collectCalls)
 	}
 }
 
-func TestUsageRunShowsAntigravityUnsupportedState(t *testing.T) {
+func TestUsageRunShowsAntigravityContextUsage(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	store := usage.NewStore(t.TempDir())
+	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 55, UpdatedAt: now},
+	}}
 	c := newUsageCommand()
 	c.now = func() time.Time { return now }
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
 	}
-	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{})
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"antigravity": agyAd,
+	})
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	if err := c.Run([]string{"--model", "all"}, stdout, stderr); err != nil {
-		t.Fatalf("Run: %v", err)
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "Antigravity usage unsupported") ||
-		!strings.Contains(output, "context-window-only") ||
-		!strings.Contains(output, "no supported 5h/weekly quota or reset contract") {
-		t.Fatalf("output = %q, want Antigravity unsupported context-window-only state", output)
+	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "context") || !strings.Contains(output, "55%") {
+		t.Fatalf("output = %q, want antigravity context row", output)
+	}
+	if strings.Contains(output, "unsupported") {
+		t.Fatalf("output = %q, Antigravity usage should no longer be unsupported", output)
 	}
 	if strings.Contains(output, "enable Claude or Codex") {
 		t.Fatalf("output = %q, should not imply Antigravity is not an enabled agent", output)
 	}
+	if agyAd.collectCalls != 1 {
+		t.Fatalf("antigravity collect calls = %d, want 1", agyAd.collectCalls)
+	}
 }
 
-func TestUsageRunExplicitAntigravityShowsUnsupportedState(t *testing.T) {
+func TestUsageRunExplicitAntigravityWorksWhenDisabled(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	store := usage.NewStore(t.TempDir())
+	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 77, UpdatedAt: now},
+	}}
 	c := newUsageCommand()
 	c.now = func() time.Time { return now }
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentClaude}, nil
 	}
-	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{})
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"antigravity": agyAd,
+	})
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	if err := c.Run([]string{"--model", "antigravity"}, stdout, stderr); err != nil {
-		t.Fatalf("Run: %v", err)
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
 	}
-	if output := stdout.String(); !strings.Contains(output, "Antigravity usage unsupported") {
-		t.Fatalf("output = %q, want explicit Antigravity unsupported state", output)
+	output := stdout.String()
+	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "77%") {
+		t.Fatalf("output = %q, want explicit antigravity context row", output)
+	}
+	if agyAd.collectCalls != 1 {
+		t.Fatalf("antigravity collect calls = %d, want 1 for explicit model", agyAd.collectCalls)
 	}
 }
 

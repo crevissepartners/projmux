@@ -736,7 +736,7 @@ func TestStatusbarDefaultUsageStateFiltersDisabledProviders(t *testing.T) {
 	}
 }
 
-func TestStatusbarDefaultUsageStateShowsAntigravityUnsupported(t *testing.T) {
+func TestStatusbarDefaultUsageStateShowsAntigravityContext(t *testing.T) {
 	home := t.TempDir()
 	configHome := filepath.Join(home, "xdg-config")
 	stateHome := filepath.Join(home, "xdg-state")
@@ -749,30 +749,34 @@ func TestStatusbarDefaultUsageStateShowsAntigravityUnsupported(t *testing.T) {
 	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), []config.AIAgentProvider{config.AIAgentAntigravity}); err != nil {
 		t.Fatalf("SaveAIEnabledAgentsFile: %v", err)
 	}
-	if err := coreusage.NewStore(filepath.Join(paths.StateDir, "usage")).SaveState(coreusage.State{}); err != nil {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	if err := coreusage.NewStore(filepath.Join(paths.StateDir, "usage")).SaveState(coreusage.State{
+		Snapshots: []coreusage.Snapshot{
+			{Model: "antigravity", Window: coreusage.WindowContext, Pct: 42, UpdatedAt: now},
+		},
+	}); err != nil {
 		t.Fatalf("seed usage state: %v", err)
 	}
 
-	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
 	cmd := newStatusbarCommand()
 	cmd.now = func() time.Time { return now }
 	state, err := cmd.defaultUsageState(context.Background())
 	if err != nil {
 		t.Fatalf("defaultUsageState: %v", err)
 	}
-	if len(state.Snapshots) != 0 {
-		t.Fatalf("Snapshots = %#v, want no quota rows", state.Snapshots)
+	if len(state.Unsupported) != 0 {
+		t.Fatalf("Unsupported = %#v, want none now that Antigravity usage is supported", state.Unsupported)
 	}
-	if len(state.Unsupported) != 1 || state.Unsupported[0].Model != "antigravity" {
-		t.Fatalf("Unsupported = %#v, want Antigravity unsupported row", state.Unsupported)
+	if len(state.Snapshots) != 1 || state.Snapshots[0].Model != "antigravity" || state.Snapshots[0].Window != coreusage.WindowContext {
+		t.Fatalf("Snapshots = %#v, want single Antigravity context row", state.Snapshots)
 	}
 
 	popup := statusbarUsagePopup(state, now, "/usr/local/bin/projmux")
-	if !strings.Contains(popup.Command, "Antigravity") || !strings.Contains(popup.Command, "unsupported") {
-		t.Fatalf("popup command = %q, want Antigravity unsupported row", popup.Command)
+	if !strings.Contains(popup.Command, "Antigravity") || !strings.Contains(popup.Command, "42%") {
+		t.Fatalf("popup command = %q, want Antigravity context row", popup.Command)
 	}
-	if toast := statusbarUsageToast(state); toast != "usage: antigravity unsupported" {
-		t.Fatalf("toast = %q, want Antigravity unsupported", toast)
+	if toast := statusbarUsageToast(state); !strings.Contains(toast, "Antigravity") || !strings.Contains(toast, "42%") {
+		t.Fatalf("toast = %q, want Antigravity context usage", toast)
 	}
 }
 

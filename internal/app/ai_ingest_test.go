@@ -14,8 +14,40 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 	"github.com/crevissepartners/projmux/internal/i18n"
 )
+
+func TestPersistAntigravityContextUsage(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	now := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	cmd.now = func() time.Time { return now }
+
+	// Numeric context_window is persisted so the adapter surfaces it.
+	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: "42%"})
+
+	baseDir, err := cmd.usageStateDir()
+	if err != nil {
+		t.Fatalf("usageStateDir: %v", err)
+	}
+	snaps, err := antigravityadapter.New(baseDir).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(snaps) != 1 || snaps[0].Pct != 42 || snaps[0].Model != "antigravity" {
+		t.Fatalf("snapshots = %#v, want single antigravity 42%% context row", snaps)
+	}
+
+	// Non-numeric / empty values are ignored (clean degrade, no garbage file
+	// churn) — the previously persisted value stays intact.
+	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: ""})
+	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: "n/a"})
+	snaps, err = antigravityadapter.New(baseDir).Collect(context.Background())
+	if err != nil || len(snaps) != 1 || snaps[0].Pct != 42 {
+		t.Fatalf("after non-numeric writes snapshots = %#v err = %v, want unchanged 42%%", snaps, err)
+	}
+}
 
 func TestParseCodexHookPayload(t *testing.T) {
 	t.Parallel()

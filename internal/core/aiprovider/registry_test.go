@@ -14,7 +14,7 @@ func TestProviderRegistryOrdersSurfaces(t *testing.T) {
 	if got, want := providerIDs(PickerEligible()), []ID{Codex, Claude, Antigravity}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("PickerEligible() = %#v, want %#v", got, want)
 	}
-	if got, want := providerIDs(UsageSupported()), []ID{Claude, Codex}; !reflect.DeepEqual(got, want) {
+	if got, want := providerIDs(UsageSupported()), []ID{Claude, Codex, Antigravity}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UsageSupported() = %#v, want %#v", got, want)
 	}
 	if got, want := providerIDs(HookDiagnosticSupported()), []ID{Claude, Codex, Antigravity}; !reflect.DeepEqual(got, want) {
@@ -61,8 +61,14 @@ func TestProviderRegistryMetadataForCurrentAgents(t *testing.T) {
 	if !ok {
 		t.Fatalf("Lookup(antigravity) missing")
 	}
-	if antigravity.UsageSupported || antigravity.UsageModel != "" || antigravity.Integrate.Supported || !antigravity.SessionState.Supported {
-		t.Fatalf("Antigravity metadata = %#v, want session-state support without quota usage/integrate support", antigravity)
+	// Phase 0 (usage parity) wires antigravity into the usage infra:
+	// UsageSupported + UsageModel are set. Integrate remains unsupported
+	// (that is a later phase); session-state stays supported.
+	if !antigravity.UsageSupported || antigravity.UsageModel != string(Antigravity) {
+		t.Fatalf("Antigravity metadata = %#v, want usage support with UsageModel set", antigravity)
+	}
+	if antigravity.Integrate.Supported || !antigravity.SessionState.Supported {
+		t.Fatalf("Antigravity metadata = %#v, want session-state support without integrate support", antigravity)
 	}
 	if !antigravity.HookDiagnostics.Supported || antigravity.HookDiagnostics.ID != "antigravity-hooks" || antigravity.HookProvider != "antigravity" {
 		t.Fatalf("Antigravity hook metadata = %#v, want manual hook diagnostics support", antigravity)

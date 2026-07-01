@@ -91,9 +91,11 @@ var registry = []Metadata{
 		DisplayName:     "Antigravity",
 		ShortName:       "Antigravity",
 		BinaryName:      "agy",
+		UsageModel:      string(Antigravity),
 		HookProvider:    string(Antigravity),
 		SettingsVisible: true,
 		PickerEligible:  true,
+		UsageSupported:  true,
 		HookDiagnostics: SupportMetadata{
 			Supported: true,
 			ID:        "antigravity-hooks",

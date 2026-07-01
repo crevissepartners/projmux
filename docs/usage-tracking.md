@@ -122,11 +122,12 @@ claude is in backoff, try again in 30m (use --force to bypass)
 
 When no AI agents are enabled, all-model table output contains no
 provider rows and prints a short Settings hint. `--json` returns an
-empty array. Explicit `--model claude` and `--model codex` bypass the
-enabled-agent filter for read-only inspection and collect/render only
-the requested adapter. Explicit `--model antigravity` renders the same
-unsupported/context-window-only note even when Antigravity is disabled, because
-there is no supported Antigravity quota adapter to collect.
+empty array. Explicit `--model claude`, `--model codex` and
+`--model antigravity` bypass the enabled-agent filter for read-only
+inspection and collect/render only the requested adapter. Antigravity
+exposes no 5h/weekly quota, so its adapter reports a single `context`
+window row (context-window fullness, no `RESETS_AT`) sourced from the
+latest statusline `context_window` observed via hook ingest.
 
 ### `projmux status usage`
 

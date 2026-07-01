@@ -259,10 +259,12 @@ Codex shares the global `30s`). `--json` emits the snapshot array; when
 backoff is active the wrapper `{snapshots, backoff}` object is emitted
 instead.
 
-Antigravity has no supported 5-hour/weekly quota adapter. `--model
-antigravity` renders an explicit unsupported note: the stable Antigravity
-signal is `context-window-only` statusline data, which is not mixed into the
-Claude/Codex quota HUD.
+Antigravity has no 5-hour/weekly quota contract, so it is surfaced
+`context-window-only`: the adapter emits a single `context` window row
+(context-window fullness, no `RESETS_AT`) sourced from the latest
+statusline `context_window` seen via hook ingest. `--model antigravity`
+renders that row; in the HUD it shows as `Antigravity ctx [bar] N%`
+alongside the Claude/Codex quota bars.
 
 ## status
 
@@ -473,9 +475,10 @@ Antigravity notify metadata uses `agent=antigravity`. Phase 3 session-state
 restore is included: Antigravity ingest stores `conversationId` as pane thread
 metadata for matching and as session-state resume metadata. Restore uses
 `agy --conversation <uuid>` when that id is present and UUID-shaped; otherwise
-session-state preview/doctor render `resume unavailable`. Usage quota HUD
-support remains unsupported because the only stable usage signal is
-`context-window-only` statusline data. Transcript contents are not read.
+session-state preview/doctor render `resume unavailable`. The statusline
+`context_window` value is persisted on ingest and surfaced by the usage HUD
+as a `context-window-only` row (Antigravity has no 5h/weekly quota contract).
+Transcript contents are not read.
 
 `ingest bell --pane <pane_id>` is the narrow tmux-bell fallback ingest path.
 It does not require the pane to be AI-managed. Projmux resolves session,
