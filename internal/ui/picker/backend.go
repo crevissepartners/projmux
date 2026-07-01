@@ -64,6 +64,14 @@ type DeferredUpdate struct {
 	Items   []Item
 	Preview Preview
 	Result  *Result
+	// FocusValue, when non-empty, moves the selection cursor to the item
+	// whose Value matches it after the update is applied. It overrides the
+	// default behaviour of preserving the previously selected value, which
+	// breaks when that value was removed from the list (e.g. the sidebar
+	// row for a just-killed session). When empty, the previous value is
+	// preserved as before. Falls back safely (0/clamp) if the value is not
+	// present in the new item list.
+	FocusValue string
 }
 
 type Options struct {
@@ -517,7 +525,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		key, err := nextNativeInteractiveKey(in, keyCh, &deferredCh, func(update DeferredUpdate) {
 			options = applyNativeDeferredUpdate(options, update)
 			nextItems := nativeFilteredItems(options, query)
-			selected = nativeSelectedIndexForValue(nextItems, focusValue, selected)
+			selected = nativeSelectedIndexForValue(nextItems, nativeDeferredFocusValue(update, focusValue), selected)
 			previewOffset = 0
 		}, options.UI)
 		if key.Name == "" && key.Text == "" && err == nil {
@@ -590,7 +598,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			if refresh {
 				options = applyNativeDeferredUpdate(options, update)
 				nextItems := nativeFilteredItems(options, query)
-				selected = nativeSelectedIndexForValue(nextItems, selectedNativeValue(items, selected), selected)
+				selected = nativeSelectedIndexForValue(nextItems, nativeDeferredFocusValue(update, selectedNativeValue(items, selected)), selected)
 				previewOffset = 0
 			}
 			nativeDebugLogf("interactive ui=%q action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
@@ -608,7 +616,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 				if refresh {
 					options = applyNativeDeferredUpdate(options, update)
 					nextItems := nativeFilteredItems(options, query)
-					selected = nativeSelectedIndexForValue(nextItems, selectedNativeValue(items, selected), selected)
+					selected = nativeSelectedIndexForValue(nextItems, nativeDeferredFocusValue(update, selectedNativeValue(items, selected)), selected)
 					previewOffset = 0
 				}
 				nativeDebugLogf("interactive ui=%q text_action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
@@ -826,6 +834,17 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 		options.Preview = update.Preview
 	}
 	return options
+}
+
+// nativeDeferredFocusValue resolves which item value the cursor should track
+// after a deferred update. An explicit DeferredUpdate.FocusValue wins so a
+// refresh can move the cursor to a specific row (e.g. the newly active session
+// after a sidebar kill); otherwise the previously focused value is preserved.
+func nativeDeferredFocusValue(update DeferredUpdate, fallbackValue string) string {
+	if value := strings.TrimSpace(update.FocusValue); value != "" {
+		return value
+	}
+	return fallbackValue
 }
 
 func nativeSelectedIndexForValue(items []Item, value string, fallback int) int {
