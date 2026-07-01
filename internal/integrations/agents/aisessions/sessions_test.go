@@ -231,45 +231,32 @@ func TestScanSessionJSONLStopsAfterCwdMismatch(t *testing.T) {
 	}
 }
 
-func TestScanSessionJSONLCountsTurnsPastMetadata(t *testing.T) {
+func TestCountUserTurnsExcludesAgentMessages(t *testing.T) {
 	t.Parallel()
 
-	// The turn-counting pass (countTurns) does not early-exit once
-	// id/cwd/title/branch are known: it keeps reading (bounded by
-	// sessionScanLineLimit) so it can count user turns. The title still comes
-	// from the first user prompt; later user prompts only add to the turn count.
+	// The deferred turn count reads the whole log counting only user turns; the
+	// session_meta and agent_message records are not user turns.
 	log := `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000066","cwd":"/workspace/app","git_branch":"feat/perf"}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"user_message","message":"Speed up resume picker"}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"agent_message","message":"On it"}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"user_message","message":"Also add turn counts"}}` + "\n"
 
-	details, ok := scanSessionJSONLReader(strings.NewReader(log), sessionScanOptions{
-		targetCWD:  "/workspace/app",
-		requireCWD: true,
-		countTurns: true,
-	})
-
+	turns, ok := countUserTurnsReader(strings.NewReader(log))
 	if !ok {
-		t.Fatal("scanSessionJSONLReader() ok = false")
+		t.Fatal("countUserTurnsReader() ok = false")
 	}
-	if details.id != "019f0000-0000-7000-8000-000000000066" ||
-		details.cwd != "/workspace/app" ||
-		details.branch != "feat/perf" ||
-		details.title != "Speed up resume picker" {
-		t.Fatalf("details = %#v", details)
-	}
-	if details.turns != 2 {
-		t.Fatalf("turns = %d, want 2 (two user_message records, agent_message excluded)", details.turns)
+	if turns != 2 {
+		t.Fatalf("turns = %d, want 2 (two user_message records, agent_message excluded)", turns)
 	}
 }
 
 func TestScanSessionJSONLCandidatePassEarlyExitsBeforeCountingTurns(t *testing.T) {
 	t.Parallel()
 
-	// Candidate discovery (countTurns=false) must stop the moment the cheap
-	// id/cwd/title/branch fields are captured and must not read the rest of the
-	// window, so the turn count stays 0 and the tail is never touched. This is
-	// the #477 early-exit the always-on turn count had defeated.
+	// Candidate discovery must stop the moment the cheap id/cwd/title/branch
+	// fields are captured and must not read the rest of the window; the tail is
+	// never touched. This is the #477 early-exit. The turn count is a separate
+	// deferred full-file pass (countUserTurns), so it never runs here.
 	metaAndFirstTurn := `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000066","cwd":"/workspace/app","git_branch":"feat/perf"}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"user_message","message":"Speed up resume picker"}}` + "\n"
 	tail := `{"type":"event_msg","payload":{"type":"user_message","message":"must not be read"}}` + "\n"
@@ -289,9 +276,6 @@ func TestScanSessionJSONLCandidatePassEarlyExitsBeforeCountingTurns(t *testing.T
 	if details.title != "Speed up resume picker" {
 		t.Fatalf("title = %q, want first user prompt", details.title)
 	}
-	if details.turns != 0 {
-		t.Fatalf("turns = %d, want 0 (candidate pass does not count turns)", details.turns)
-	}
 }
 
 func TestScanSessionJSONLCountsClaudeUserTurnsExcludingToolResults(t *testing.T) {
@@ -305,12 +289,12 @@ func TestScanSessionJSONLCountsClaudeUserTurnsExcludingToolResults(t *testing.T)
 		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"output"}]}}` + "\n" +
 		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"second prompt"}]}}` + "\n"
 
-	details, ok := scanSessionJSONLReader(strings.NewReader(log), sessionScanOptions{targetCWD: "/workspace/app", countTurns: true})
+	turns, ok := countUserTurnsReader(strings.NewReader(log))
 	if !ok {
-		t.Fatalf("scanSessionJSONLReader() ok = false, details = %#v", details)
+		t.Fatal("countUserTurnsReader() ok = false")
 	}
-	if details.turns != 2 {
-		t.Fatalf("turns = %d, want 2 (tool_result carrier excluded)", details.turns)
+	if turns != 2 {
+		t.Fatalf("turns = %d, want 2 (tool_result carrier excluded)", turns)
 	}
 }
 
@@ -342,6 +326,67 @@ func TestDiscoverPopulatesTurnCount(t *testing.T) {
 	}
 	if got[0].Turns != 3 {
 		t.Fatalf("Turns = %d, want 3", got[0].Turns)
+	}
+}
+
+func TestCountUserTurnsCountsBeyondCandidateScanLimit(t *testing.T) {
+	t.Parallel()
+
+	// The candidate scan stops at sessionScanLineLimit (100). The deferred turn
+	// count must not: a long session with user turns well past line 100 must
+	// count all of them, otherwise long sessions are badly under-reported — the
+	// #490 follow-up bug (real ~505 user turns rendered as ~17).
+	var b strings.Builder
+	b.WriteString(`{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-0000000000aa","cwd":"/workspace/app","git_branch":"feat/long"}}` + "\n")
+	const userTurns = 505
+	for i := 0; i < userTurns; i++ {
+		b.WriteString(`{"type":"event_msg","payload":{"type":"user_message","message":"prompt"}}` + "\n")
+		b.WriteString(`{"type":"event_msg","payload":{"type":"agent_message","message":"reply"}}` + "\n")
+	}
+
+	turns, ok := countUserTurnsReader(strings.NewReader(b.String()))
+	if !ok {
+		t.Fatal("countUserTurnsReader() ok = false")
+	}
+	if turns != userTurns {
+		t.Fatalf("turns = %d, want %d (must count past the %d-line candidate limit)", turns, userTurns, sessionScanLineLimit)
+	}
+}
+
+func TestEnrichTurnsCountsBeyondCandidateScanLimit(t *testing.T) {
+	t.Parallel()
+
+	// End-to-end: Discover + enrich on a >100-line log must report the full user
+	// turn count, proving enrichTurns wires through the full-file countUserTurns
+	// path rather than the bounded candidate window.
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "codex", "sessions", "2026", "06", "25")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionsDir, "rollout-long.jsonl")
+
+	var b strings.Builder
+	b.WriteString(`{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-0000000000ab","cwd":"/workspace/app","git_branch":"feat/long"}}` + "\n")
+	const userTurns = 250
+	for i := 0; i < userTurns; i++ {
+		b.WriteString(`{"type":"event_msg","payload":{"type":"user_message","message":"prompt"}}` + "\n")
+		b.WriteString(`{"type":"event_msg","payload":{"type":"agent_message","message":"reply"}}` + "\n")
+	}
+	writeFile(t, path, b.String())
+	setModTime(t, path, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
+
+	got, err := Discover("/workspace/app", DiscoverOptions{
+		CodexSessionsDir: filepath.Join(root, "codex", "sessions"),
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Discover() len = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Turns != userTurns {
+		t.Fatalf("Turns = %d, want %d (full-file enrich must count past the %d-line candidate limit)", got[0].Turns, userTurns, sessionScanLineLimit)
 	}
 }
 
