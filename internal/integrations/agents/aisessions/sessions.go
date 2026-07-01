@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 )
@@ -32,8 +33,9 @@ const (
 	AgentCodex       = codex.AgentName
 	AgentAntigravity = "antigravity"
 
-	SourceClaudeTranscript = "claude-transcript"
-	SourceCodexRollout     = "codex-rollout"
+	SourceClaudeTranscript   = "claude-transcript"
+	SourceCodexRollout       = "codex-rollout"
+	SourceAntigravityHistory = "antigravity-history"
 
 	sessionScanLineLimit  = 100
 	sessionTitleLineLimit = 100
@@ -80,10 +82,12 @@ type DiscoverOptions struct {
 	ClaudeProjectsDir string
 	CodexSessionsDir  string
 
-	// AntigravitySessionsDir is reserved for a future supported on-disk format.
-	// Phase 0 intentionally returns no Antigravity rows because no stable local
-	// session store layout has been confirmed.
-	AntigravitySessionsDir string
+	// AntigravityHistoryPath is the Antigravity CLI session index (JSONL). Each
+	// line records one conversation's id, workspace cwd, timestamp, and first
+	// message; Discover parses it through the same cwd/depth/dedup/sort pipeline
+	// as the other agents. Empty resolves to ~/.gemini/antigravity-cli/history.jsonl
+	// under HomeDir; a missing or malformed file yields no Antigravity rows.
+	AntigravityHistoryPath string
 }
 
 // Discover returns resume sessions for cwd across supported agents, newest
@@ -99,7 +103,7 @@ func Discover(cwd string, opts DiscoverOptions) ([]SessionMeta, error) {
 	var sessions []SessionMeta
 	sessions = append(sessions, discoverClaude(cwd, opts.ClaudeProjectsDir, depth)...)
 	sessions = append(sessions, discoverCodex(cwd, opts.CodexSessionsDir, depth)...)
-	sessions = append(sessions, discoverAntigravity(cwd, opts.AntigravitySessionsDir)...)
+	sessions = append(sessions, discoverAntigravity(cwd, opts.AntigravityHistoryPath, depth)...)
 	sessions = dedupeByResumeID(sessions)
 
 	sort.SliceStable(sessions, func(i, j int) bool {
@@ -133,6 +137,9 @@ func (opts DiscoverOptions) withDefaults() DiscoverOptions {
 	}
 	if strings.TrimSpace(opts.CodexSessionsDir) == "" && home != "" {
 		opts.CodexSessionsDir = filepath.Join(home, ".codex", "sessions")
+	}
+	if strings.TrimSpace(opts.AntigravityHistoryPath) == "" && home != "" {
+		opts.AntigravityHistoryPath = filepath.Join(home, ".gemini", "antigravity-cli", "history.jsonl")
 	}
 	return opts
 }
@@ -457,8 +464,78 @@ func withinTree(recordedCWD, cwd string, depth int) bool {
 	return len(strings.Split(rel, "/")) <= depth
 }
 
-func discoverAntigravity(_ string, _ string) []SessionMeta {
-	return nil
+// antigravityHistoryRecord is one line of the Antigravity CLI session index
+// (~/.gemini/antigravity-cli/history.jsonl). Only the fields Discover surfaces
+// are decoded; unknown fields are ignored.
+type antigravityHistoryRecord struct {
+	ConversationID string `json:"conversationId"`
+	Workspace      string `json:"workspace"`
+	Timestamp      int64  `json:"timestamp"`
+	Display        string `json:"display"`
+}
+
+// discoverAntigravity reads the Antigravity history index and returns the
+// sessions whose recorded workspace is within depth levels of cwd. It runs
+// through the same cwd/depth filter the other agents use (the shared Discover
+// caller then dedupes, sorts, and caps). A missing file, malformed lines, and
+// records whose conversationId is not a valid resume id are skipped silently so
+// a broken index degrades to no Antigravity rows rather than an error.
+func discoverAntigravity(cwd, historyPath string, depth int) []SessionMeta {
+	historyPath = strings.TrimSpace(historyPath)
+	if historyPath == "" {
+		return nil
+	}
+	f, err := os.Open(historyPath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var sessions []SessionMeta
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var record antigravityHistoryRecord
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			continue
+		}
+		id, err := antigravity.NormalizeResumeID(record.ConversationID)
+		if err != nil {
+			continue
+		}
+		if !withinTree(record.Workspace, cwd, depth) {
+			continue
+		}
+		// Mirror the other agents: at exact-cwd depth the recorded cwd is the
+		// search target; depth>0 records the session's own workspace so the picker
+		// can render the relative column.
+		recordedCWD := cwd
+		if depth > 0 {
+			recordedCWD = cleanCWD(record.Workspace)
+		}
+		title := cleanTitleCandidate(record.Display)
+		if title == "" {
+			title = shortResumeID(id)
+		}
+		sessions = append(sessions, SessionMeta{
+			Agent:        AgentAntigravity,
+			ResumeID:     id,
+			Title:        title,
+			LastModified: time.UnixMilli(record.Timestamp),
+			Context: SessionContext{
+				CWD: recordedCWD,
+			},
+			Source: SourceAntigravityHistory,
+			// history.jsonl carries no per-turn data; Antigravity turn count is
+			// unknown (0) and renders as a blank cell.
+			Turns: 0,
+		})
+	}
+	return sessions
 }
 
 type sessionFileCandidate struct {
