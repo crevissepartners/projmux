@@ -29,6 +29,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -1690,7 +1691,7 @@ func (c *aiCommand) resolveContextDir() string {
 	}
 	if c.env("TMUX") != "" {
 		if path := c.readMuxTrimmed("display-message", "-p", "-F", "#{pane_current_path}"); isDir(path) {
-			return path
+			return c.anchorPaneContextDir(path)
 		}
 	}
 	if target := c.resolveRecentTmuxTarget(); target != "" {
@@ -1699,6 +1700,58 @@ func (c *aiCommand) resolveContextDir() string {
 		}
 	}
 	return c.resolveIDEContextDir()
+}
+
+// anchorPaneContextDir reconciles the live pane cwd against the current
+// session's project anchor (@projmux_project_path, set at creation). When the
+// pane sits inside the project tree (the anchor itself or a descendant) the
+// intentional subdir is respected and the pane cwd wins; when it has drifted
+// outside (another repo, $HOME, …) the anchor wins so discovery and launch stay
+// project-relative. Sessions without an anchor (pre-anchor or externally
+// created) fall back to the pane cwd unchanged — no regression.
+func (c *aiCommand) anchorPaneContextDir(paneCWD string) string {
+	session := c.readMuxTrimmed("display-message", "-p", "-F", "#{session_name}")
+	anchor := c.resolveSessionProjectPath(session)
+	if anchor == "" {
+		return paneCWD
+	}
+	if pathWithinTree(anchor, paneCWD) {
+		return paneCWD
+	}
+	return anchor
+}
+
+// resolveSessionProjectPath reads the project cwd anchor stored on the named
+// session at creation time (@projmux_project_path). It returns the anchor only
+// when it still resolves to a directory; otherwise "" so callers fall back to
+// the live pane cwd.
+func (c *aiCommand) resolveSessionProjectPath(sessionName string) string {
+	if strings.TrimSpace(sessionName) == "" {
+		return ""
+	}
+	anchor := c.readMuxTrimmed("show-options", "-t", sessionName, "-v", inttmux.ProjectPathSessionOption)
+	if isDir(anchor) {
+		return anchor
+	}
+	return ""
+}
+
+// pathWithinTree reports whether path is anchor itself or a descendant of it.
+// It uses a pure path comparison (filepath.Rel with no leading ".."), matching
+// the roadmap's "path descendant" rule; both inputs are assumed to be existing
+// directories so no symlink resolution is attempted.
+func pathWithinTree(anchor, path string) bool {
+	anchor = strings.TrimSpace(anchor)
+	path = strings.TrimSpace(path)
+	if anchor == "" || path == "" {
+		return false
+	}
+	rel, err := filepath.Rel(anchor, path)
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, "../"))
 }
 
 func (c *aiCommand) resolveAgentContextDir(mode string) string {

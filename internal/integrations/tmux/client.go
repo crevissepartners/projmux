@@ -40,6 +40,12 @@ const (
 	tmuxEscapedFieldSep = "\\037"
 )
 
+// ProjectPathSessionOption stores the project cwd a session was created with.
+// It is written once at session creation and never drifts, so AI split/resume
+// can anchor to the project root even after a pane wanders via `cd`. Read back
+// by the app layer's resolveSessionProjectPath.
+const ProjectPathSessionOption = "@projmux_project_path"
+
 type commandRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
 }
@@ -470,6 +476,7 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 	}
 
 	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
+	c.setProjectPathAnchor(ctx, sessionName, cwd)
 	c.runPostCreate(ctx, sessionName, cwd, "persistent")
 	c.runStartupCommand(ctx, sessionName, cwd, "persistent", paneID)
 	return nil
@@ -495,6 +502,7 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 		return fmt.Errorf("create tmux ephemeral session %q: %w", sessionName, err)
 	}
 	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
+	c.setProjectPathAnchor(ctx, sessionName, cwd)
 	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", "@projmux_ephemeral", "1"); err != nil {
 		// set-option failure is intentionally swallowed; the session is still
 		// usable. The post-create hook still runs so the session gets the same
@@ -531,6 +539,18 @@ func (c *Client) applyProjectSessionEnv(ctx context.Context, sessionName string,
 	for _, key := range sortedMapKeys(env) {
 		_, _ = c.runner.Run(ctx, "tmux", "set-environment", "-t", sessionName, key, env[key])
 	}
+}
+
+// setProjectPathAnchor records the project cwd on the freshly created session
+// so AI split/resume can anchor to the project root even after a pane drifts
+// via `cd`. Failures are swallowed (matching the ephemeral marker): the session
+// is still usable and simply falls back to the live pane cwd when the anchor is
+// missing.
+func (c *Client) setProjectPathAnchor(ctx context.Context, sessionName, cwd string) {
+	if strings.TrimSpace(cwd) == "" {
+		return
+	}
+	_, _ = c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", ProjectPathSessionOption, cwd)
 }
 
 func (c *Client) runPreCreate(ctx context.Context, sessionName, cwd, kind string) error {
