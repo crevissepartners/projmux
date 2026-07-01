@@ -301,10 +301,10 @@ func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
 }
 
 // aiResumeRowPrefixWidth is the fixed-column prefix width that every session
-// row shares before the trailing title: badge[8] + " " + time[11] + " " +
-// rel[6] + " " + branch[18] + " " + shortid[8] + " " (separator before title).
-const aiResumeRowPrefixWidth = (aiResumeAgentCellWidth + 2) + 1 + aiResumeTimeWidth + 1 +
-	aiResumeRelCellWidth + 1 + aiResumeBranchCellWidth + 1 + aiResumeShortIDWidth + 1
+// row shares before the trailing title: rel[6] + " " + badge[8] + " " +
+// branch[18] + " " + turns[5] + " " (separator before title).
+const aiResumeRowPrefixWidth = aiResumeRelCellWidth + 1 + aiResumeBadgeCellWidth + 1 +
+	aiResumeBranchCellWidth + 1 + aiResumeTurnsCellWidth + 1
 
 func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
 	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
@@ -393,9 +393,10 @@ func TestAIResumeSessionRowsLimitBoundaries(t *testing.T) {
 func TestAIResumeSessionRowTitleEllipsis(t *testing.T) {
 	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
 	long := strings.Repeat("x", aiResumeTitleMaxCells+25)
+	const resumeID = "019f0000-0000-7000-8000-000000000009"
 	row := aiResumeSessionRow(aisessions.SessionMeta{
 		Agent:        aiModeClaude,
-		ResumeID:     "019f0000-0000-7000-8000-000000000009",
+		ResumeID:     resumeID,
 		Title:        long,
 		LastModified: now.Add(-time.Hour),
 	}, now, i18n.FallbackLocale, "", 0)
@@ -407,9 +408,12 @@ func TestAIResumeSessionRowTitleEllipsis(t *testing.T) {
 	if w := i18n.TerminalCellWidth(title); w > aiResumeTitleMaxCells {
 		t.Fatalf("clipped title width = %d, want <= %d", w, aiResumeTitleMaxCells)
 	}
-	// Short ids surface in the short-id column.
-	if !strings.Contains(row.Label, "019f0000") {
-		t.Fatalf("row label = %q, want short resume id", row.Label)
+	// The resume id is dropped from the visible columns but stays searchable.
+	if strings.Contains(row.Label, "019f0000") {
+		t.Fatalf("row label = %q, should not surface the resume id column", row.Label)
+	}
+	if !strings.Contains(row.SearchKey, resumeID) {
+		t.Fatalf("row search key = %q, want resume id preserved for search", row.SearchKey)
 	}
 }
 
@@ -528,12 +532,62 @@ func TestAIResumeRelativeAge(t *testing.T) {
 	}
 }
 
-func TestAIResumeShortID(t *testing.T) {
-	if got := aiResumeShortID("019f0000-0000-7000"); got != "019f0000" {
-		t.Fatalf("short id = %q, want %q", got, "019f0000")
+func TestAIResumeTurnsCell(t *testing.T) {
+	// Known counts render as "<n>t" left-aligned in a fixed-width cell.
+	if got := aiResumeTurnsCell(8); strings.TrimRight(got, " ") != "8t" {
+		t.Fatalf("turns cell = %q, want %q", got, "8t")
 	}
-	if got := aiResumeShortID("abc"); got != "abc" {
-		t.Fatalf("short id (short) = %q, want %q", got, "abc")
+	if got := aiResumeTurnsCell(120); strings.TrimRight(got, " ") != "120t" {
+		t.Fatalf("turns cell = %q, want %q", got, "120t")
+	}
+	if w := i18n.TerminalCellWidth(aiResumeTurnsCell(31)); w != aiResumeTurnsCellWidth {
+		t.Fatalf("turns cell width = %d, want %d", w, aiResumeTurnsCellWidth)
+	}
+	// Unknown (zero) turns render as a blank padded cell, not "0t".
+	blank := aiResumeTurnsCell(0)
+	if strings.TrimSpace(blank) != "" {
+		t.Fatalf("zero turns cell = %q, want blank", blank)
+	}
+	if w := i18n.TerminalCellWidth(blank); w != aiResumeTurnsCellWidth {
+		t.Fatalf("blank turns cell width = %d, want %d", w, aiResumeTurnsCellWidth)
+	}
+}
+
+func TestAIResumeAgentBadgeTightBracketsAndColor(t *testing.T) {
+	// Padding sits outside the brackets: "[codex]", never "[codex ]".
+	badge := aiResumeAgentBadge(aiModeCodex)
+	if !strings.Contains(badge, "[codex]") {
+		t.Fatalf("codex badge = %q, want tight [codex]", badge)
+	}
+	if strings.Contains(badge, "[codex ") {
+		t.Fatalf("codex badge = %q, want no padding inside brackets", badge)
+	}
+	// Every agent badge occupies the same visible cell width regardless of name.
+	for _, agent := range []string{aiModeClaude, aiModeCodex, aiModeAntigravity} {
+		if w := i18n.TerminalCellWidth(aiResumeAgentBadge(agent)); w != aiResumeBadgeCellWidth {
+			t.Fatalf("%s badge width = %d, want %d", agent, w, aiResumeBadgeCellWidth)
+		}
+	}
+	// Distinct agents get distinct colours (per-agent disambiguation).
+	claudeColor := aiResumeAgentColor(aiModeClaude)
+	codexColor := aiResumeAgentColor(aiModeCodex)
+	agyColor := aiResumeAgentColor(aiModeAntigravity)
+	if claudeColor == codexColor || codexColor == agyColor || claudeColor == agyColor {
+		t.Fatalf("agent colours not distinct: claude=%q codex=%q agy=%q", claudeColor, codexColor, agyColor)
+	}
+}
+
+func TestAIResumeSessionRowShowsTurns(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	row := aiResumeSessionRow(aisessions.SessionMeta{
+		Agent:        aiModeCodex,
+		ResumeID:     "019f0000-0000-7000-8000-000000000042",
+		Title:        "Optimize picker",
+		LastModified: now.Add(-time.Hour),
+		Turns:        31,
+	}, now, i18n.FallbackLocale, "", 0)
+	if !strings.Contains(row.Label, "31t") {
+		t.Fatalf("row label = %q, want turn count 31t", row.Label)
 	}
 }
 
