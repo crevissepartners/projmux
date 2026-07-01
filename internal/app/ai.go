@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -913,35 +914,37 @@ type aiResumeSelection struct {
 	updatedAt time.Time
 }
 
-// Resume picker row column schema (Phase 0 — row view slice).
+// Resume picker row column schema (Phase 0 — row enrichment slice).
 //
 // Every row lays out the same fixed-width columns so they align in the popup
 // regardless of locale or CJK content, with the title as the trailing
-// variable-width column:
+// variable-width column. The recency anchor leads (it matches the newest-first
+// sort axis), followed by a per-agent colour badge:
 //
-//	[agent ] MM-DD HH:MM <rel>  <branch>            <shortid> [<extra>] <title…>
-//	  6        11          6      18                  8         (0)       rest
+//	<rel>  [agent]   <branch>            [<cwd>] <turns> <title…>
+//	 6      (tight)+pad→8   18                  (14)     5       rest
 //
 // Column order / cell width (visible cells, fixed columns left-aligned):
-//   - agent badge: aiResumeAgentCellWidth (inside cyan [ ])
-//   - absolute time: aiResumeTimeWidth ("MM-DD HH:MM", dim)
-//   - relative age: aiResumeRelCellWidth (compact, locale-aware, dim)
-//   - branch: aiResumeBranchCellWidth (dim, cut)
-//   - short resume id: aiResumeShortIDWidth (dim, leading runes)
-//   - extra-meta slot: reserved for the Phase 2 cwd column; empty today so the
-//     layout matches the current view (source is intentionally not surfaced —
-//     it duplicates the agent badge).
+//   - relative age: aiResumeRelCellWidth (compact, locale-aware, dim) — leads.
+//   - agent badge: tight per-agent-coloured "[name]" padded to
+//     aiResumeBadgeCellWidth; padding sits outside the brackets/colour.
+//   - branch: aiResumeBranchCellWidth (dim, cut).
+//   - extra-meta slot: the depth>0 relative-cwd column (aiResumeCWDCellWidth,
+//     dim); empty at depth 0 so the layout collapses to the base view.
+//   - turns: aiResumeTurnsCellWidth ("8t"/"31t", dim), blank when unknown.
 //   - title: trailing variable width, cut with an ellipsis past
 //     aiResumeTitleMaxCells.
+//
+// The absolute time and short resume id are intentionally dropped from the
+// visible columns; the resume id stays in SearchKey so id search still works.
 const (
 	aiResumeAgentCellWidth  = 6
-	aiResumeTimeWidth       = 11
+	aiResumeBadgeCellWidth  = aiResumeAgentCellWidth + 2 // tight "[name]" + brackets
 	aiResumeRelCellWidth    = 6
 	aiResumeBranchCellWidth = 18
-	aiResumeShortIDWidth    = 8
 	aiResumeCWDCellWidth    = 14
-	aiResumeTitleMaxCells   = 72
-	aiResumeTimeLayout      = "01-02 15:04"
+	aiResumeTurnsCellWidth  = 5
+	aiResumeTitleMaxCells   = 90
 	aiResumeEmptyCell       = "-"
 )
 
@@ -972,25 +975,26 @@ func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i1
 	}
 	title := cleanAIResumeTitle(session.Title, resumeID)
 
-	// Fixed columns: pad/truncate each to a stable cell width, then colorize.
-	badge := "\x1b[36m[" + aiResumeFitCell(agent, aiResumeAgentCellWidth) + "]\x1b[0m"
-	absTime := ansiDim(aiResumeAbsoluteTime(session.LastModified))
+	// Recency anchor leads (matches the newest-first sort axis), then the
+	// per-agent colour badge, branch (+cwd at depth>0), turn count, and the
+	// flexible title. Fixed columns pad/truncate to a stable cell width.
 	relTime := ansiDim(aiResumeFitCell(aiResumeRelativeAge(now, session.LastModified, locale), aiResumeRelCellWidth))
+	badge := aiResumeAgentBadge(agent)
 	branchCell := ansiDim(aiResumeFitCell(branch, aiResumeBranchCellWidth))
-	shortID := ansiDim(aiResumeFitCell(aiResumeShortID(resumeID), aiResumeShortIDWidth))
 
-	// Extra-meta slot (Phase 2 cwd column). Empty at depth 0, so the column
-	// contributes nothing and the layout is identical to the historical view. At
-	// depth>0 every row carries a fixed-width relative-cwd cell (exact matches
-	// render "./") so the title column stays aligned, plus a trailing gap.
+	// Extra-meta slot (depth>0 cwd column). Empty at depth 0, so the column
+	// contributes nothing and the layout collapses to the base view. At depth>0
+	// every row carries a fixed-width relative-cwd cell (exact matches render
+	// "./") so the title column stays aligned, plus a trailing gap.
 	relCWD := aiResumeExtraMetaCell(session, baseCWD, depth)
 	extra := ""
 	if relCWD != "" {
 		extra = ansiDim(aiResumeFitCell(relCWD, aiResumeCWDCellWidth)) + " "
 	}
+	turnsCell := ansiDim(aiResumeTurnsCell(session.Turns))
 
-	label := fmt.Sprintf("%s %s %s %s %s %s%s",
-		badge, absTime, relTime, branchCell, shortID, extra, title)
+	label := fmt.Sprintf("%s %s %s %s%s %s",
+		relTime, badge, branchCell, extra, turnsCell, title)
 
 	return intpickercompat.Entry{
 		Label:     label,
@@ -999,13 +1003,45 @@ func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i1
 	}
 }
 
-// aiResumeAbsoluteTime renders the fixed-width "MM-DD HH:MM" column, padding to
-// a stable width when the timestamp is missing so columns stay aligned.
-func aiResumeAbsoluteTime(t time.Time) string {
-	if t.IsZero() {
-		return strings.Repeat(" ", aiResumeTimeWidth)
+// aiResumeAgentBadge renders the agent tag as a tight, per-agent-coloured
+// "[name]" token padded to a fixed column width. The brackets hug the name
+// ("[codex]", never "[codex ]") and only the tight token is coloured; the
+// alignment padding after "]" stays uncoloured so columns line up in the popup.
+func aiResumeAgentBadge(agent string) string {
+	inner := i18n.TruncateTerminalCells(strings.TrimSpace(agent), aiResumeAgentCellWidth)
+	tight := "[" + inner + "]"
+	badge := aiResumeAgentColor(agent) + tight + "\x1b[0m"
+	if pad := aiResumeBadgeCellWidth - i18n.TerminalCellWidth(tight); pad > 0 {
+		badge += strings.Repeat(" ", pad)
 	}
-	return t.Local().Format(aiResumeTimeLayout)
+	return badge
+}
+
+// aiResumeAgentColor maps an agent to a distinct ANSI colour so the badge tells
+// at a glance which resume CLI a row uses. The theme palette carries no
+// per-agent accent token, so these are the roadmap's fixed-hue fallback; codex
+// keeps the historical cyan. Unknown agents fall back to default foreground.
+func aiResumeAgentColor(agent string) string {
+	switch strings.ToLower(strings.TrimSpace(agent)) {
+	case aiModeClaude:
+		return "\x1b[35m" // magenta
+	case aiModeCodex:
+		return "\x1b[36m" // cyan (historical badge colour)
+	case aiModeAntigravity:
+		return "\x1b[34m" // blue
+	default:
+		return "\x1b[37m"
+	}
+}
+
+// aiResumeTurnsCell renders the user-turn count ("8t", "31t") in a fixed-width
+// dim column, or a blank (padded) cell when the count is unknown (zero).
+func aiResumeTurnsCell(turns int) string {
+	label := ""
+	if turns > 0 {
+		label = strconv.Itoa(turns) + "t"
+	}
+	return aiResumeFitCell(label, aiResumeTurnsCellWidth)
 }
 
 // aiResumeRelativeAge renders a compact, locale-aware relative age ("2h", "3d",
@@ -1017,16 +1053,6 @@ func aiResumeRelativeAge(now, modified time.Time, locale i18n.Locale) string {
 	}
 	age := max(now.Sub(modified), 0)
 	return i18n.FormatDuration(age, locale, i18n.FormatCompact)
-}
-
-// aiResumeShortID returns the leading runes of the resume id for a compact
-// fixed-width identifier column.
-func aiResumeShortID(resumeID string) string {
-	runes := []rune(strings.TrimSpace(resumeID))
-	if len(runes) > aiResumeShortIDWidth {
-		return string(runes[:aiResumeShortIDWidth])
-	}
-	return string(runes)
 }
 
 // aiResumeExtraMetaCell fills the reserved extra-meta column. At depth 0 it

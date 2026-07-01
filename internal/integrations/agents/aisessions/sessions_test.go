@@ -231,14 +231,19 @@ func TestScanSessionJSONLStopsAfterCwdMismatch(t *testing.T) {
 	}
 }
 
-func TestScanSessionJSONLEarlyExitsAfterOutputFields(t *testing.T) {
+func TestScanSessionJSONLCountsTurnsPastMetadata(t *testing.T) {
 	t.Parallel()
 
-	prefix := `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000066","cwd":"/workspace/app","git_branch":"feat/perf"}}` + "\n" +
-		`{"type":"event_msg","payload":{"message":"Speed up resume picker"}}` + "\n"
-	reader := newFailAfterReader(prefix+`{"type":"event_msg","payload":{"message":"must not be read"}}`+"\n", len(prefix))
+	// The scan does not early-exit once id/cwd/title/branch are known: it keeps
+	// reading (bounded by sessionScanLineLimit) so it can count user turns. The
+	// title still comes from the first user prompt; later user prompts only add
+	// to the turn count.
+	log := `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000066","cwd":"/workspace/app","git_branch":"feat/perf"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"Speed up resume picker"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"agent_message","message":"On it"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"Also add turn counts"}}` + "\n"
 
-	details, ok := scanSessionJSONLReader(reader, sessionScanOptions{
+	details, ok := scanSessionJSONLReader(strings.NewReader(log), sessionScanOptions{
 		targetCWD:  "/workspace/app",
 		requireCWD: true,
 	})
@@ -246,14 +251,65 @@ func TestScanSessionJSONLEarlyExitsAfterOutputFields(t *testing.T) {
 	if !ok {
 		t.Fatal("scanSessionJSONLReader() ok = false")
 	}
-	if reader.failed {
-		t.Fatal("scanSessionJSONLReader() read after id/cwd/title/branch were available")
-	}
 	if details.id != "019f0000-0000-7000-8000-000000000066" ||
 		details.cwd != "/workspace/app" ||
 		details.branch != "feat/perf" ||
 		details.title != "Speed up resume picker" {
 		t.Fatalf("details = %#v", details)
+	}
+	if details.turns != 2 {
+		t.Fatalf("turns = %d, want 2 (two user_message records, agent_message excluded)", details.turns)
+	}
+}
+
+func TestScanSessionJSONLCountsClaudeUserTurnsExcludingToolResults(t *testing.T) {
+	t.Parallel()
+
+	// Claude replays tool output as role "user"; those carrier records must not
+	// inflate the turn count. Only real user prompts (string / text content)
+	// count.
+	log := `{"type":"user","message":{"role":"user","content":"first prompt"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555555","gitBranch":"main"}` + "\n" +
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash"}]}}` + "\n" +
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"output"}]}}` + "\n" +
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"second prompt"}]}}` + "\n"
+
+	details, ok := scanSessionJSONLReader(strings.NewReader(log), sessionScanOptions{targetCWD: "/workspace/app"})
+	if !ok {
+		t.Fatalf("scanSessionJSONLReader() ok = false, details = %#v", details)
+	}
+	if details.turns != 2 {
+		t.Fatalf("turns = %d, want 2 (tool_result carrier excluded)", details.turns)
+	}
+}
+
+func TestDiscoverPopulatesTurnCount(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "codex", "sessions", "2026", "06", "25")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionsDir, "rollout-turns.jsonl")
+	writeFile(t, path, `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000099","cwd":"/workspace/app","git_branch":"feat/turns"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"First"}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"Reply"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Second"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Third"}}
+`)
+	setModTime(t, path, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
+
+	got, err := Discover("/workspace/app", DiscoverOptions{
+		CodexSessionsDir: filepath.Join(root, "codex", "sessions"),
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Discover() len = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Turns != 3 {
+		t.Fatalf("Turns = %d, want 3", got[0].Turns)
 	}
 }
 

@@ -58,6 +58,12 @@ type SessionMeta struct {
 	LastModified time.Time
 	Context      SessionContext
 	Source       string
+
+	// Turns is the count of user turns observed while scanning the session log.
+	// It is a low-cost signal counted in the same bounded pass that extracts the
+	// title (no extra file pass), so it saturates for very long sessions at the
+	// scan-line limit. Zero means "unknown" and renders as a blank cell.
+	Turns int
 }
 
 // DiscoverOptions controls where session logs are read from. Empty roots use
@@ -235,6 +241,7 @@ func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
 				Branch: details.branch,
 			},
 			Source: SourceClaudeTranscript,
+			Turns:  details.turns,
 		})
 	}
 	return sessions
@@ -316,6 +323,7 @@ func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit, depth in
 				Branch: details.branch,
 			},
 			Source: SourceCodexRollout,
+			Turns:  details.turns,
 		})
 	}
 	return sessions
@@ -485,6 +493,7 @@ type sessionDetails struct {
 	title  string
 	cwd    string
 	branch string
+	turns  int
 }
 
 type sessionScanOptions struct {
@@ -539,8 +548,14 @@ func scanSessionJSONLReader(r io.Reader, opts sessionScanOptions) (sessionDetail
 		if details.title == "" && lineNo <= sessionTitleLineLimit {
 			details.title = titleFromRecord(fields)
 		}
-		if details.ready(opts.requireCWD, targetCWD) {
-			return details, true
+		// Count user turns in the same bounded pass that extracts the title. We
+		// deliberately do not early-exit once id/title/branch/cwd are known: a
+		// turn count is only meaningful if the scan sees the whole bounded window,
+		// so it keeps reading up to sessionScanLineLimit. The cwd-mismatch abort
+		// above still short-circuits non-matching sessions on their first cwd
+		// record, so the extra reads are paid only for sessions we will display.
+		if isUserTurnRecord(fields) {
+			details.turns++
 		}
 		if lineNo >= sessionScanLineLimit {
 			break
@@ -552,14 +567,69 @@ func scanSessionJSONLReader(r io.Reader, opts sessionScanOptions) (sessionDetail
 	return details, details.id != "" || details.cwd != "" || details.title != ""
 }
 
-func (details sessionDetails) ready(requireCWD bool, targetCWD string) bool {
-	if details.id == "" || details.title == "" || details.branch == "" {
+// isUserTurnRecord reports whether a session-log record is a user turn (a human
+// prompt), counting toward SessionMeta.Turns. It matches codex user_message /
+// user-role response items and Claude user records, but excludes tool-result
+// carrier records (Claude replays tool output as role "user"), so the count
+// tracks conversational turns rather than raw record lines.
+func isUserTurnRecord(fields map[string]any) bool {
+	switch strings.ToLower(stringJSONField(fields, "type")) {
+	case "event_msg":
+		// codex: payload.type == "user_message" is the human prompt event.
+		if payload, ok := fields["payload"].(map[string]any); ok {
+			return strings.EqualFold(stringJSONField(payload, "type"), "user_message")
+		}
+		return false
+	case "response_item":
+		// codex: a response item with role "user" carrying real text.
+		if payload, ok := fields["payload"].(map[string]any); ok && strings.EqualFold(stringJSONField(payload, "role"), "user") {
+			return hasUserText(payload["content"])
+		}
+		return false
+	case "user":
+		// claude: a user record whose message content is real user text.
+		if message, ok := fields["message"].(map[string]any); ok {
+			return hasUserText(message["content"])
+		}
+		return hasUserText(fields["content"])
+	default:
+		if strings.EqualFold(stringJSONField(fields, "role"), "user") {
+			return hasUserText(fields["content"])
+		}
 		return false
 	}
-	if targetCWD != "" && details.cwd == "" {
-		return false
+}
+
+// hasUserText reports whether content holds real user-authored text rather than
+// a tool-result / tool-use carrier. A bare string counts; an array counts only
+// if it holds a string or a non-tool block with text, so Claude's tool-result
+// user records (content is an array of tool_result blocks) are not miscounted.
+func hasUserText(value any) bool {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v) != ""
+	case []any:
+		for _, item := range v {
+			switch item := item.(type) {
+			case string:
+				if strings.TrimSpace(item) != "" {
+					return true
+				}
+			case map[string]any:
+				switch strings.ToLower(stringJSONField(item, "type")) {
+				case "tool_result", "tool_use":
+					continue
+				case "text":
+					return true
+				default:
+					if stringJSONField(item, "text") != "" {
+						return true
+					}
+				}
+			}
+		}
 	}
-	return !requireCWD || details.cwd != ""
+	return false
 }
 
 func titleFromRecord(fields map[string]any) string {
