@@ -62,10 +62,19 @@ type SessionMeta struct {
 	Source       string
 
 	// Turns is the count of user turns observed while scanning the session log.
-	// It is a low-cost signal counted in the same bounded pass that extracts the
-	// title (no extra file pass), so it saturates for very long sessions at the
-	// scan-line limit. Zero means "unknown" and renders as a blank cell.
+	// Counting turns needs the whole bounded scan window (it defeats the cheap
+	// id/cwd/title/branch early-exit), so it is not paid during candidate
+	// discovery; Discover fills it only for the top TurnEnrichLimit sessions in
+	// a bounded second pass (see enrichTurns), which are the only rows the picker
+	// displays. It saturates for very long sessions at the scan-line limit. Zero
+	// means "unknown" (not yet enriched, or no per-turn data) and renders as a
+	// blank cell.
 	Turns int
+
+	// sourcePath is the on-disk session log the turn-count enrich pass re-scans.
+	// It is internal to discovery (unexported, invisible to the picker contract)
+	// and empty for agents with no per-turn log, such as Antigravity.
+	sourcePath string
 }
 
 // DiscoverOptions controls where session logs are read from. Empty roots use
@@ -88,6 +97,15 @@ type DiscoverOptions struct {
 	// as the other agents. Empty resolves to ~/.gemini/antigravity-cli/history.jsonl
 	// under HomeDir; a missing or malformed file yields no Antigravity rows.
 	AntigravityHistoryPath string
+
+	// DeferTurns returns candidates without their user-turn count. Turn counting
+	// is the one expensive field (it reads the whole bounded scan window instead
+	// of early-exiting the cheap id/cwd/title/branch pass), so a picker that
+	// wants to render immediately sets this to get a fast candidate list and then
+	// fills the turn column for the rows it displays with a background EnrichTurns
+	// pass. The default (false) counts turns inline for every session, preserving
+	// the historical fully-counted result for callers that block on Discover.
+	DeferTurns bool
 }
 
 // Discover returns resume sessions for cwd across supported agents, newest
@@ -115,7 +133,42 @@ func Discover(cwd string, opts DiscoverOptions) ([]SessionMeta, error) {
 		}
 		return sessions[i].LastModified.After(sessions[j].LastModified)
 	})
+	// Candidate discovery above early-exits without counting turns (the cheap
+	// pass). Unless the caller defers it, fill the turn count inline now.
+	if !opts.DeferTurns {
+		enrichTurns(sessions)
+	}
 	return sessions, nil
+}
+
+// EnrichTurns fills SessionMeta.Turns for the given sessions by scanning each
+// session's log for user turns, returning the same slice for convenience. A
+// picker that discovered candidates with DiscoverOptions.DeferTurns calls this
+// on just the rows it displays (a bounded set) from a background goroutine, so
+// the expensive turn-count scan never blocks the initial render. It is a no-op
+// on sessions with no per-turn log (empty sourcePath, e.g. Antigravity).
+func EnrichTurns(sessions []SessionMeta) []SessionMeta {
+	enrichTurns(sessions)
+	return sessions
+}
+
+// enrichTurns re-scans each session's log for user turns and records the count.
+// Turn counting is the one field that defeats the candidate early-exit (it must
+// read the whole bounded window), so paying it only for displayed rows — inline
+// for blocking callers, or in the background via EnrichTurns — is what keeps
+// discovery fast. Sessions with no per-turn log (empty sourcePath) and
+// unreadable logs are left at Turns 0 (rendered blank).
+func enrichTurns(sessions []SessionMeta) {
+	for i := range sessions {
+		if sessions[i].sourcePath == "" {
+			continue
+		}
+		details, ok := scanSessionJSONL(sessions[i].sourcePath, sessionScanOptions{countTurns: true})
+		if !ok {
+			continue
+		}
+		sessions[i].Turns = details.turns
+	}
 }
 
 // EncodeClaudeProjectPath returns Claude Code's project directory name for cwd:
@@ -248,7 +301,9 @@ func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
 				Branch: details.branch,
 			},
 			Source: SourceClaudeTranscript,
-			Turns:  details.turns,
+			// Turns is left at 0 here; the candidate scan does not count turns.
+			// enrichTurns re-scans sourcePath to fill it for displayed rows.
+			sourcePath: path,
 		})
 	}
 	return sessions
@@ -330,7 +385,8 @@ func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit, depth in
 				Branch: details.branch,
 			},
 			Source: SourceCodexRollout,
-			Turns:  details.turns,
+			// Turns is left at 0 here; enrichTurns fills it from sourcePath.
+			sourcePath: candidate.path,
 		})
 	}
 	return sessions
@@ -576,6 +632,26 @@ type sessionDetails struct {
 type sessionScanOptions struct {
 	targetCWD  string
 	requireCWD bool
+
+	// countTurns keeps the scan reading the whole bounded window to count user
+	// turns. When false (candidate discovery), the scan early-exits the moment
+	// id/cwd/title/branch are known, which is the cheap pass that keeps discovery
+	// fast; the turn count is then filled for displayed rows in a separate pass.
+	countTurns bool
+}
+
+// ready reports whether the cheap candidate fields (id, title, branch, and a
+// cwd consistent with the scan's constraints) are all captured, so a non
+// turn-counting scan can stop before the line limit. This is the early-exit
+// that keeps candidate discovery fast.
+func (details sessionDetails) ready(requireCWD bool, targetCWD string) bool {
+	if details.id == "" || details.title == "" || details.branch == "" {
+		return false
+	}
+	if targetCWD != "" && details.cwd == "" {
+		return false
+	}
+	return !requireCWD || details.cwd != ""
 }
 
 func scanSessionJSONL(path string, opts sessionScanOptions) (sessionDetails, bool) {
@@ -625,14 +701,18 @@ func scanSessionJSONLReader(r io.Reader, opts sessionScanOptions) (sessionDetail
 		if details.title == "" && lineNo <= sessionTitleLineLimit {
 			details.title = titleFromRecord(fields)
 		}
-		// Count user turns in the same bounded pass that extracts the title. We
-		// deliberately do not early-exit once id/title/branch/cwd are known: a
-		// turn count is only meaningful if the scan sees the whole bounded window,
-		// so it keeps reading up to sessionScanLineLimit. The cwd-mismatch abort
-		// above still short-circuits non-matching sessions on their first cwd
-		// record, so the extra reads are paid only for sessions we will display.
-		if isUserTurnRecord(fields) {
-			details.turns++
+		if opts.countTurns {
+			// Turn counting only means something if the scan sees the whole
+			// bounded window, so this pass keeps reading up to the line limit
+			// (no early-exit). It is paid only for the displayed rows enrichTurns
+			// re-scans, not during candidate discovery.
+			if isUserTurnRecord(fields) {
+				details.turns++
+			}
+		} else if details.ready(opts.requireCWD, targetCWD) {
+			// Candidate discovery: stop as soon as the cheap fields are known.
+			// This is the #477 early-exit the turn count had defeated.
+			return details, true
 		}
 		if lineNo >= sessionScanLineLimit {
 			break
