@@ -40,6 +40,13 @@ const (
 	sessionScanLineLimit  = 100
 	sessionTitleLineLimit = 100
 	codexScanFileLimit    = 80
+	// turnCountLineLimit bounds the deferred full-file turn count so a
+	// pathological multi-hundred-MB log cannot stall the background enrich pass.
+	// It sits far above the candidate scan window (sessionScanLineLimit): turn
+	// counting runs in the background for displayed rows only, so it can read the
+	// whole log for an accurate total while the initial render stays fast. Real
+	// sessions of hundreds of turns finish well within it.
+	turnCountLineLimit = 200000
 	// codexScanBudgetMax caps the depth-widened codex scan budget. depth>0
 	// widens the per-discovery file budget (more child cwds match), but an
 	// unbounded walk would defeat the perf limit, so the budget tops out here.
@@ -61,14 +68,13 @@ type SessionMeta struct {
 	Context      SessionContext
 	Source       string
 
-	// Turns is the count of user turns observed while scanning the session log.
-	// Counting turns needs the whole bounded scan window (it defeats the cheap
-	// id/cwd/title/branch early-exit), so it is not paid during candidate
-	// discovery; Discover fills it only for the top TurnEnrichLimit sessions in
-	// a bounded second pass (see enrichTurns), which are the only rows the picker
-	// displays. It saturates for very long sessions at the scan-line limit. Zero
-	// means "unknown" (not yet enriched, or no per-turn data) and renders as a
-	// blank cell.
+	// Turns is the count of user turns in the session log. Counting turns means
+	// scanning the whole log (it defeats the cheap id/cwd/title/branch early-exit
+	// of candidate discovery), so it is not paid during discovery; Discover fills
+	// it only for the rows the picker displays, in a background second pass (see
+	// enrichTurns) that reads the full file for an accurate total regardless of
+	// session length. Zero means "unknown" (not yet enriched, or no per-turn
+	// data) and renders as a blank cell.
 	Turns int
 
 	// sourcePath is the on-disk session log the turn-count enrich pass re-scans.
@@ -152,23 +158,61 @@ func EnrichTurns(sessions []SessionMeta) []SessionMeta {
 	return sessions
 }
 
-// enrichTurns re-scans each session's log for user turns and records the count.
-// Turn counting is the one field that defeats the candidate early-exit (it must
-// read the whole bounded window), so paying it only for displayed rows — inline
-// for blocking callers, or in the background via EnrichTurns — is what keeps
-// discovery fast. Sessions with no per-turn log (empty sourcePath) and
-// unreadable logs are left at Turns 0 (rendered blank).
+// enrichTurns re-scans each session's whole log for user turns and records the
+// count. Turn counting is the one field that defeats the candidate early-exit
+// (it must read the whole file, not just the fast candidate window), so paying
+// it only for displayed rows — inline for blocking callers, or in the background
+// via EnrichTurns — is what keeps discovery fast. Sessions with no per-turn log
+// (empty sourcePath) and unreadable logs are left at Turns 0 (rendered blank).
 func enrichTurns(sessions []SessionMeta) {
 	for i := range sessions {
 		if sessions[i].sourcePath == "" {
 			continue
 		}
-		details, ok := scanSessionJSONL(sessions[i].sourcePath, sessionScanOptions{countTurns: true})
+		turns, ok := countUserTurns(sessions[i].sourcePath)
 		if !ok {
 			continue
 		}
-		sessions[i].Turns = details.turns
+		sessions[i].Turns = turns
 	}
+}
+
+// countUserTurns returns the number of user-turn records in the whole session
+// log at path (bounded only by turnCountLineLimit). Unlike the candidate scan it
+// extracts nothing else — each line is tested only by isUserTurnRecord — so
+// reading the full file stays cheap, and it runs only in the deferred enrich
+// pass for displayed rows, never during discovery. ok is false only when the
+// file cannot be opened; an empty or all-malformed log yields (0, true).
+func countUserTurns(path string) (int, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	return countUserTurnsReader(f)
+}
+
+func countUserTurnsReader(r io.Reader) (int, bool) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	turns := 0
+	for lineNo := 0; scanner.Scan(); lineNo++ {
+		if lineNo >= turnCountLineLimit {
+			break
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var fields map[string]any
+		if err := json.Unmarshal([]byte(line), &fields); err != nil {
+			continue
+		}
+		if isUserTurnRecord(fields) {
+			turns++
+		}
+	}
+	return turns, true
 }
 
 // EncodeClaudeProjectPath returns Claude Code's project directory name for cwd:
@@ -626,18 +670,11 @@ type sessionDetails struct {
 	title  string
 	cwd    string
 	branch string
-	turns  int
 }
 
 type sessionScanOptions struct {
 	targetCWD  string
 	requireCWD bool
-
-	// countTurns keeps the scan reading the whole bounded window to count user
-	// turns. When false (candidate discovery), the scan early-exits the moment
-	// id/cwd/title/branch are known, which is the cheap pass that keeps discovery
-	// fast; the turn count is then filled for displayed rows in a separate pass.
-	countTurns bool
 }
 
 // ready reports whether the cheap candidate fields (id, title, branch, and a
@@ -701,17 +738,10 @@ func scanSessionJSONLReader(r io.Reader, opts sessionScanOptions) (sessionDetail
 		if details.title == "" && lineNo <= sessionTitleLineLimit {
 			details.title = titleFromRecord(fields)
 		}
-		if opts.countTurns {
-			// Turn counting only means something if the scan sees the whole
-			// bounded window, so this pass keeps reading up to the line limit
-			// (no early-exit). It is paid only for the displayed rows enrichTurns
-			// re-scans, not during candidate discovery.
-			if isUserTurnRecord(fields) {
-				details.turns++
-			}
-		} else if details.ready(opts.requireCWD, targetCWD) {
+		if details.ready(opts.requireCWD, targetCWD) {
 			// Candidate discovery: stop as soon as the cheap fields are known.
-			// This is the #477 early-exit the turn count had defeated.
+			// This is the #477 early-exit; the turn count is a separate deferred
+			// full-file pass (see countUserTurns), so nothing defeats it here.
 			return details, true
 		}
 		if lineNo >= sessionScanLineLimit {
