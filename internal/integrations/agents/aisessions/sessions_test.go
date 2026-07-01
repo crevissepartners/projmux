@@ -234,10 +234,10 @@ func TestScanSessionJSONLStopsAfterCwdMismatch(t *testing.T) {
 func TestScanSessionJSONLCountsTurnsPastMetadata(t *testing.T) {
 	t.Parallel()
 
-	// The scan does not early-exit once id/cwd/title/branch are known: it keeps
-	// reading (bounded by sessionScanLineLimit) so it can count user turns. The
-	// title still comes from the first user prompt; later user prompts only add
-	// to the turn count.
+	// The turn-counting pass (countTurns) does not early-exit once
+	// id/cwd/title/branch are known: it keeps reading (bounded by
+	// sessionScanLineLimit) so it can count user turns. The title still comes
+	// from the first user prompt; later user prompts only add to the turn count.
 	log := `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000066","cwd":"/workspace/app","git_branch":"feat/perf"}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"user_message","message":"Speed up resume picker"}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"agent_message","message":"On it"}}` + "\n" +
@@ -246,6 +246,7 @@ func TestScanSessionJSONLCountsTurnsPastMetadata(t *testing.T) {
 	details, ok := scanSessionJSONLReader(strings.NewReader(log), sessionScanOptions{
 		targetCWD:  "/workspace/app",
 		requireCWD: true,
+		countTurns: true,
 	})
 
 	if !ok {
@@ -262,6 +263,37 @@ func TestScanSessionJSONLCountsTurnsPastMetadata(t *testing.T) {
 	}
 }
 
+func TestScanSessionJSONLCandidatePassEarlyExitsBeforeCountingTurns(t *testing.T) {
+	t.Parallel()
+
+	// Candidate discovery (countTurns=false) must stop the moment the cheap
+	// id/cwd/title/branch fields are captured and must not read the rest of the
+	// window, so the turn count stays 0 and the tail is never touched. This is
+	// the #477 early-exit the always-on turn count had defeated.
+	metaAndFirstTurn := `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000066","cwd":"/workspace/app","git_branch":"feat/perf"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"Speed up resume picker"}}` + "\n"
+	tail := `{"type":"event_msg","payload":{"type":"user_message","message":"must not be read"}}` + "\n"
+	reader := newFailAfterReader(metaAndFirstTurn+tail, len(metaAndFirstTurn))
+
+	details, ok := scanSessionJSONLReader(reader, sessionScanOptions{
+		targetCWD:  "/workspace/app",
+		requireCWD: true,
+	})
+
+	if !ok {
+		t.Fatal("scanSessionJSONLReader() ok = false")
+	}
+	if reader.failed {
+		t.Fatal("scanSessionJSONLReader() read past the ready candidate fields")
+	}
+	if details.title != "Speed up resume picker" {
+		t.Fatalf("title = %q, want first user prompt", details.title)
+	}
+	if details.turns != 0 {
+		t.Fatalf("turns = %d, want 0 (candidate pass does not count turns)", details.turns)
+	}
+}
+
 func TestScanSessionJSONLCountsClaudeUserTurnsExcludingToolResults(t *testing.T) {
 	t.Parallel()
 
@@ -273,7 +305,7 @@ func TestScanSessionJSONLCountsClaudeUserTurnsExcludingToolResults(t *testing.T)
 		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"output"}]}}` + "\n" +
 		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"second prompt"}]}}` + "\n"
 
-	details, ok := scanSessionJSONLReader(strings.NewReader(log), sessionScanOptions{targetCWD: "/workspace/app"})
+	details, ok := scanSessionJSONLReader(strings.NewReader(log), sessionScanOptions{targetCWD: "/workspace/app", countTurns: true})
 	if !ok {
 		t.Fatalf("scanSessionJSONLReader() ok = false, details = %#v", details)
 	}
@@ -310,6 +342,64 @@ func TestDiscoverPopulatesTurnCount(t *testing.T) {
 	}
 	if got[0].Turns != 3 {
 		t.Fatalf("Turns = %d, want 3", got[0].Turns)
+	}
+}
+
+func TestDiscoverDeferTurnsLeavesCountZeroUntilEnriched(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "codex", "sessions", "2026", "06", "25")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionsDir, "rollout-defer.jsonl")
+	writeFile(t, path, `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000099","cwd":"/workspace/app","git_branch":"feat/turns"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"First"}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"Reply"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Second"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Third"}}
+`)
+	setModTime(t, path, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
+
+	opts := DiscoverOptions{
+		CodexSessionsDir: filepath.Join(root, "codex", "sessions"),
+		DeferTurns:       true,
+	}
+	got, err := Discover("/workspace/app", opts)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Discover() len = %d, want 1: %#v", len(got), got)
+	}
+	// Deferred: the identity fields are present but the turn count is not paid.
+	if got[0].ResumeID == "" || got[0].Title == "" {
+		t.Fatalf("deferred candidate missing identity fields: %#v", got[0])
+	}
+	if got[0].Turns != 0 {
+		t.Fatalf("Turns = %d, want 0 before enrichment (DeferTurns)", got[0].Turns)
+	}
+
+	// The background enrich pass fills the same count the blocking path produces.
+	enriched := EnrichTurns(got)
+	if enriched[0].Turns != 3 {
+		t.Fatalf("Turns after EnrichTurns = %d, want 3", enriched[0].Turns)
+	}
+	if got[0].Turns != 3 {
+		t.Fatalf("EnrichTurns did not fill the passed slice: Turns = %d, want 3", got[0].Turns)
+	}
+}
+
+func TestEnrichTurnsIgnoresSessionsWithoutLog(t *testing.T) {
+	t.Parallel()
+
+	// Antigravity rows carry no per-turn log (empty sourcePath); enrichment must
+	// leave them at 0 rather than panic or read a bogus path.
+	sessions := []SessionMeta{{Agent: AgentAntigravity, ResumeID: "abc", Turns: 0}}
+	got := EnrichTurns(sessions)
+	if got[0].Turns != 0 {
+		t.Fatalf("Turns = %d, want 0 (no per-turn log)", got[0].Turns)
 	}
 }
 

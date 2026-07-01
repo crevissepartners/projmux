@@ -853,7 +853,14 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	contextDir := c.resolveContextDir()
 	homeDir, _ := c.home()
 	depth := resolveAIResumeScanDepth(c.homeDir, c.lookupEnv, contextDir).Depth
-	sessions, err := aisessions.Discover(contextDir, aisessions.DiscoverOptions{HomeDir: homeDir, Depth: depth})
+	// Defer the turn count: discovery returns candidates fast (early-exit, no
+	// per-turn scan) so the picker renders immediately, and the turn column is
+	// filled for the displayed rows by a background pass (see runResumeSessionPicker).
+	sessions, err := aisessions.Discover(contextDir, aisessions.DiscoverOptions{
+		HomeDir:    homeDir,
+		Depth:      depth,
+		DeferTurns: true,
+	})
 	if err != nil {
 		return err
 	}
@@ -897,14 +904,29 @@ func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessio
 	if total > visible {
 		footer = fmt.Sprintf(localizeUIText(locale, "Showing latest %d of %d resume sessions."), visible, total)
 	}
+	// The rows above render immediately with a blank turn column (discovery
+	// deferred the expensive per-turn scan). Fill it in a background pass over
+	// just the displayed sessions and hand the picker rebuilt rows; the turn
+	// count pops in without blocking the initial list. Values/search keys are
+	// unchanged by the turn count, so focus and filtering are preserved.
+	displayed := sessions
+	if n := normalizeResumePickerLimit(limit); len(displayed) > n {
+		displayed = displayed[:n]
+	}
+	deferredUpdate := func() (intpicker.DeferredUpdate, error) {
+		aisessions.EnrichTurns(displayed)
+		enriched, _, _ := aiResumeSessionRows(sessions, limit, now, locale, baseCWD, depth)
+		return intpicker.DeferredUpdate{Items: intpickercompat.PickerItemsFromEntries(enriched)}, nil
+	}
 	return runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
-		UI:         "ai-resume-picker",
-		Entries:    entries,
-		Title:      localizeUIText(locale, "AI Resume - Split direction: ") + direction,
-		Prompt:     "AI Resume > ",
-		Footer:     projmuxFooter(footer),
-		ExpectKeys: []string{"enter"},
-		Bindings:   pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
+		UI:             "ai-resume-picker",
+		Entries:        entries,
+		Title:          localizeUIText(locale, "AI Resume - Split direction: ") + direction,
+		Prompt:         "AI Resume > ",
+		Footer:         projmuxFooter(footer),
+		ExpectKeys:     []string{"enter"},
+		Bindings:       pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
+		DeferredUpdate: deferredUpdate,
 	}))
 }
 
