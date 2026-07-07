@@ -826,19 +826,53 @@ func joinRecentWindowParts(values ...string) string {
 }
 
 // recentWindowSnapshotProject resolves the project badge source for a recorded
-// snapshot. It prefers the session anchor (@projmux_project_path) basename so
-// the badge stays the project name even after the pane cwd drifts into a subdir
-// (the anchor is fixed at session creation, roadmap #488). It falls back to the
-// nearest project-marker basename of the live pane cwd, then the session name,
-// so anchor-less sessions keep their prior behavior with no regression.
+// snapshot, in session-first priority so a drifted pane cwd can never mislabel
+// the window with a foreign project:
+//
+//  1. Session anchor (@projmux_project_path) basename — fixed at session
+//     creation (roadmap #488) so it survives any pane cwd drift (#489).
+//  2. Worktree main-repo resolution — when the pane cwd sits inside a git
+//     worktree, its MAIN repo is unambiguously the session's project (a worktree
+//     of X always belongs to X), so keep resolving it even without an anchor
+//     (#491). This is a resolved project identity, not the cwd's own basename.
+//  3. Session identity — an anchor-less (pre-#488) session's pane cwd may have
+//     drifted into an entirely different sibling repo, so a plain regular-repo
+//     cwd basename is NOT trusted; the session name always reflects the window's
+//     real session (roadmap: recent-windows badge session over drifted cwd).
+//  4. cwd project-marker basename — true last resort, reached only when there is
+//     no session name at all (currentSnapshot guarantees one, so this is purely
+//     defensive and never fires in practice).
 func recentWindowSnapshotProject(anchorPath, panePath, session string) string {
 	if name := recentWindowAnchorProjectName(anchorPath); name != "" {
 		return name
 	}
-	if name := recentWindowProjectName(panePath); name != "" {
+	if name := recentWindowWorktreeProjectName(panePath); name != "" {
 		return name
 	}
-	return strings.TrimSpace(session)
+	if s := strings.TrimSpace(session); s != "" {
+		return s
+	}
+	return recentWindowProjectName(panePath)
+}
+
+// recentWindowWorktreeProjectName resolves the MAIN repo project basename when
+// the pane cwd sits inside (or under) a git worktree, else "". It mirrors
+// recentWindowProjectName's marker walk to find the enclosing project root, then
+// reuses recentWindowWorktreeMainProjectName's pure `.git`-file parse (no git
+// subprocess) to turn a worktree gitlink into its main-repo basename. A regular
+// repo (.git dir), a missing marker, or a non-worktree `.git` file yields "" so
+// the caller prefers the session identity over an untrusted regular-repo cwd
+// basename.
+func recentWindowWorktreeProjectName(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	root := nearestProjectMarker(path, os.TempDir())
+	if root == "" {
+		root = path
+	}
+	return recentWindowWorktreeMainProjectName(root)
 }
 
 // recentWindowAnchorProjectName returns the basename of the session anchor path.
