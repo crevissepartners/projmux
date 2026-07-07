@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.3](https://github.com/crevissepartners/projmux/compare/v0.7.2...v0.7.3) (2026-07-07)
+
+
+### Features
+
+* **notify:** clear gone notifications via G key ([#499](https://github.com/crevissepartners/projmux/issues/499)) ([99e4f66](https://github.com/crevissepartners/projmux/commit/99e4f662a088d28d4d5a533ff8798c107931487b))
+
+
+### Bug Fixes
+
+* **notify:** rebind clear-gone to lowercase g ([#500](https://github.com/crevissepartners/projmux/issues/500)) ([907fcde](https://github.com/crevissepartners/projmux/commit/907fcde581dd5d57866d8414c1a5b18c6a0adbd6))
+* **recent-windows:** de-slug project badge via shared display-name wrapper ([#498](https://github.com/crevissepartners/projmux/issues/498)) ([91f94cd](https://github.com/crevissepartners/projmux/commit/91f94cdb9b00e8aad28a31cadb89b89f4b4b818e))
+* **recent-windows:** session over drifted cwd for anchor-less badge ([#493](https://github.com/crevissepartners/projmux/issues/493)) ([726a2c2](https://github.com/crevissepartners/projmux/commit/726a2c2fb58c8a6c27e09b0f451ee767d4fd7e70))
+* **update:** npm install -g [@latest](https://github.com/latest) + installer autodetect + surfaced feedback ([#495](https://github.com/crevissepartners/projmux/issues/495)) ([34c7d3e](https://github.com/crevissepartners/projmux/commit/34c7d3eee3cf858d0cfcdfe7fe85d6617bcb13fb))
+* **update:** npm install -g [@latest](https://github.com/latest), installer autodetect, surfaced feedback ([34c7d3e](https://github.com/crevissepartners/projmux/commit/34c7d3eee3cf858d0cfcdfe7fe85d6617bcb13fb))
+
 ## [0.7.2](https://github.com/crevissepartners/projmux/compare/v0.7.1...v0.7.2) (2026-07-01)
 
 
