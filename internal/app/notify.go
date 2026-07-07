@@ -362,6 +362,15 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 			return err
 		}
 		return nil
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearGone", "G"):
+		removed, err := c.clearGoneNotifications(store, entries)
+		if err != nil {
+			return err
+		}
+		if removed == 0 {
+			c.displayNotifySidebarMessage("no gone notifications")
+		}
+		return nil
 	default:
 		if groupKey := notifySidebarGroupKeyFromValue(id); groupKey != "" {
 			return c.focusAndAckNotifySidebarGroup(store, entries, groupKey, clientTTY, locale)
@@ -449,6 +458,20 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 		}
 		return refresh()
 	}
+	clearGone := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		removed, err := c.clearGoneNotifications(store, current)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		if removed == 0 {
+			c.displayNotifySidebarMessage("no gone notifications")
+		}
+		return refresh()
+	}
 	unfold := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
 		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
 		if err != nil {
@@ -501,6 +524,9 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 	actions = append(actions,
 		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearNonCritical"}, []string{"x"}), clearNonCritical)...,
 	)
+	actions = append(actions,
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearGone"}, []string{"G"}), clearGone)...,
+	)
 	actions = append(actions, notifySidebarMutableActions([]string{"right"}, unfold)...)
 	actions = append(actions, notifySidebarMutableActions([]string{"left"}, fold)...)
 	for _, key := range effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearAll"}, []string{"ctrl-x"}) {
@@ -542,6 +568,7 @@ func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) 
 		{ActionID: "NotifySidebar:Ack", Label: "ack child"},
 		{ActionID: "NotifySidebar:AckGroup", Label: "ack group"},
 		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
+		{ActionID: "NotifySidebar:ClearGone", Label: "clear gone"},
 		{ActionID: "NotifySidebar:ClearAll", Label: "clear all"},
 	})
 	local := keybindingReadableChord("Right") + ": " + localizeUIText(locale, "show child rows") + "  |  " + keybindingReadableChord("Left") + ": " + localizeUIText(locale, "hide child rows")
@@ -600,6 +627,33 @@ func ackNonCriticalNotifications(store notifyStore, entries []notify.Notificatio
 		}
 	}
 	return nil
+}
+
+// ackGoneNotifications dismisses every entry whose display classification is
+// notifyDisplayGone, leaving live/inactive/critical rows untouched. It returns
+// the number of entries acked so callers can no-op with a hint when the queue
+// has nothing gone. GONE classification is reused from classifyNotifyRowState;
+// this helper never changes that policy.
+func ackGoneNotifications(store notifyStore, entries []notify.Notification, liveByID map[string]notifyLivePane, paneSet notifyLivePaneSet) (int, error) {
+	removed := 0
+	for _, entry := range entries {
+		if classifyNotifyRowState(entry, liveByID, paneSet) != notifyDisplayGone {
+			continue
+		}
+		if err := store.Ack(entry.ID); err != nil {
+			return removed, fmt.Errorf("clear gone notification: %w", err)
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+// clearGoneNotifications resolves best-effort live state and dismisses gone
+// entries. It shares the runSidebar dispatch path and the in-picker clearGone
+// handler so both surfaces classify identically.
+func (c *notifyCommand) clearGoneNotifications(store notifyStore, entries []notify.Notification) (int, error) {
+	liveByID, paneSet := c.notifyLiveStateBestEffort()
+	return ackGoneNotifications(store, entries, liveByID, paneSet)
 }
 
 const notifySidebarEmptyValue = "__projmux_notify_empty__"

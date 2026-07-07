@@ -645,6 +645,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			PlainChord:  "C-x",
 		},
 		{
+			ID:          "NotifySidebar:ClearGone",
+			Description: "Clear gone notifications",
+			DisplayName: "Notify Sidebar: Clear Gone",
+			Kind:        keyBindingActionPickerInternal,
+			Tier:        keyBindingTierNativePickerInternal,
+			Surface:     "NotifySidebar",
+			PlainChord:  "G",
+		},
+		{
 			ID:          "Settings:SwitchTabPrev",
 			Description: "Switch Settings tab left",
 			DisplayName: "Previous Settings Tab",
