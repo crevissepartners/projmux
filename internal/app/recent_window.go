@@ -285,11 +285,11 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 		Session:    fields[1],
 		WindowID:   fields[2],
 		WindowName: fields[3],
-		Project: projectidentity.Resolve(projectidentity.Inputs{
+		Project: resolveProjectDisplayName(projectidentity.Inputs{
 			AnchorPath:  fields[9],
 			PaneCWD:     fields[8],
 			SessionName: fields[1],
-		}, projectidentity.OSFS).Name,
+		}, projectidentity.OSFS),
 		LastPaneID:     fields[4],
 		LastPaneTitle:  fields[5],
 		PaneTitles:     titles,
