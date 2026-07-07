@@ -14,6 +14,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 )
@@ -978,15 +979,15 @@ func isKnownAgent(name string) bool {
 	return slices.Contains(notifyKnownAgents, name)
 }
 
+// notifyProjectName resolves the notify sidebar's project label from a session
+// name via the unified resolver, then applies the de-slug reduction the sidebar
+// has always shown (e.g. "repos-projmux" -> "projmux"). A notify entry carries
+// only its session name, so Resolve falls through to the SessionName source
+// (returned verbatim) and DeSlug produces the compact label — identical output
+// to the former inline cut-at-first-dash.
 func notifyProjectName(session string) string {
-	session = strings.TrimSpace(session)
-	if session == "" {
-		return ""
-	}
-	if _, after, ok := strings.Cut(session, "-"); ok && strings.TrimSpace(after) != "" {
-		return strings.TrimSpace(after)
-	}
-	return session
+	res := projectidentity.Resolve(projectidentity.Inputs{SessionName: session}, projectidentity.OSFS)
+	return projectidentity.DeSlug(res.Name)
 }
 
 // formatRelativeAge renders a compact English relative age.
