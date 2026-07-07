@@ -362,7 +362,7 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 			return err
 		}
 		return nil
-	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearGone", "G"):
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearGone", "g"):
 		removed, err := c.clearGoneNotifications(store, entries)
 		if err != nil {
 			return err
@@ -525,7 +525,7 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearNonCritical"}, []string{"x"}), clearNonCritical)...,
 	)
 	actions = append(actions,
-		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearGone"}, []string{"G"}), clearGone)...,
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearGone"}, []string{"g"}), clearGone)...,
 	)
 	actions = append(actions, notifySidebarMutableActions([]string{"right"}, unfold)...)
 	actions = append(actions, notifySidebarMutableActions([]string{"left"}, fold)...)
