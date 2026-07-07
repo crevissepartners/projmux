@@ -705,18 +705,25 @@ fresh cached update is available, the shell welcome uses Enter=Continue,
 `${XDG_CACHE_HOME:-~/.cache}/projmux/update-skip.json` and suppresses that tag
 until a newer latest release appears.
 
-Installer detection honors
-`PROJMUX_INSTALLER=npm|go|github-release|source`. When unset or invalid,
-the source is reported as `unknown` with guidance to set the variable.
+Installer detection honors an explicit
+`PROJMUX_INSTALLER=npm|go|github-release|source` first. When it is unset,
+detection falls back to inspecting the running binary: an npm install tree
+(`node_modules/@projmux/...`) is reported as `npm`, a `go install …@latest`
+binary in `$GOBIN`/`$GOPATH/bin`/`~/go/bin` as `go`, and a local `go build`
+(`make install`) — which reports a `(devel)` main-module version — as `source`.
+`github-release` installs are indistinguishable from a hand-placed binary and
+still require an explicit `PROJMUX_INSTALLER=github-release`. Anything else is
+reported as `unknown` with guidance.
 `apply` is installer-aware and only runs after explicit user selection.
-For npm installs, it runs `npm update -g projmux` and then
-`projmux tmux apply` unless `--no-apply` is set. For Go installs, it
-delegates to the existing atomic `projmux upgrade` flow. For
-`github-release` installs, it downloads the latest matching
-`projmux_<version>_<goos>_<goarch>.tar.gz` release asset, extracts the
+For npm installs, it runs `npm install -g projmux@latest` (which reliably
+crosses minor/major versions where `npm update -g` does not, and re-resolves
+the per-platform optional dependency) and then `projmux tmux apply` unless
+`--no-apply` is set. For Go installs, it delegates to the existing atomic
+`projmux upgrade` flow. For `github-release` installs, it downloads the latest
+matching `projmux_<version>_<goos>_<goarch>.tar.gz` release asset, extracts the
 binary, atomically replaces the current executable, then applies tmux
 configuration unless `--no-apply` is set. `source` installs report an
-actionable error because they must be updated from the source checkout.
+actionable error to update the checkout with `git pull --ff-only && make install`.
 
 ## upgrade
 
@@ -729,7 +736,7 @@ projmux upgrade [--ref @latest|@<tag>|@<branch>]
 runs `projmux tmux apply` (skipped with `--no-apply`). Reads
 `PROJMUX_PROJDIR` from the calling shell and memoizes the primary entry
 to `~/.config/projmux/projdir`. npm-installed binaries reject this
-command; use `projmux update apply` or `npm update -g projmux` for npm
+command; use `projmux update apply` or `npm install -g projmux@latest` for npm
 installs.
 
 ## welcome

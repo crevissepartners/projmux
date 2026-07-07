@@ -62,8 +62,15 @@ func (c *shellCommand) promptWelcome(stdout, stderr io.Writer) (bool, error) {
 			return true, nil
 		}
 		if err := c.update.Run([]string{"apply"}, stdout, stderr); err != nil {
-			return true, fmt.Errorf("run shell welcome update: %w", err)
+			// Surface the failure but never block shell entry on it: the user
+			// asked to enter the shell, and a failed upgrade should be visible,
+			// not fatal.
+			_, _ = fmt.Fprintf(stdout, "Update failed: %v\n", err)
+			_, _ = fmt.Fprintln(stdout, "Continuing shell entry; retry later with `projmux update apply`.")
+			return true, nil
 		}
+		_, _ = fmt.Fprintf(stdout, "Updated projmux from %s to %s. Restart projmux shell to run the new version.\n",
+			strings.TrimSpace(status.CurrentVersion), strings.TrimSpace(status.LatestVersion))
 	default:
 	}
 	return true, nil

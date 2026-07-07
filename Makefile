@@ -16,7 +16,7 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 
 DEADCODE_ALLOWLIST ?= .deadcode-allowlist.txt
 
-.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-install-smoke test-e2e e2e verify deadcode
+.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-install-smoke test-e2e test-e2e-update e2e verify deadcode
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -100,6 +100,11 @@ test-install-smoke:
 
 test-e2e:
 	scripts/test-e2e-docker.sh
+
+# Opt-in / local: depends on the public npm registry and published projmux
+# package, so it is not part of `verify`.
+test-e2e-update:
+	scripts/test-e2e-update-docker.sh
 
 e2e: test-e2e
 

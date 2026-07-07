@@ -946,7 +946,7 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	wantCommands := []string{"npm update -g projmux", "projmux tmux apply"}
+	wantCommands := []string{"npm install -g projmux@latest", "projmux tmux apply"}
 	if !reflect.DeepEqual(updateCommands, wantCommands) {
 		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
 	}
@@ -1187,10 +1187,58 @@ func TestShellWelcomeUnsupportedInstallerShowsGuidanceAndContinues(t *testing.T)
 	if recorder.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
 	}
-	for _, want := range []string{"Upgrade guidance", "source", "update from the source checkout"} {
+	for _, want := range []string{"Upgrade guidance", "source", "make install"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 		}
+	}
+}
+
+func TestShellWelcomeSurfacesUpdateFailureAndContinues(t *testing.T) {
+	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		return fmt.Errorf("npm registry unreachable")
+	}
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     testVersionTag(t, 1),
+		PublishedAt: now,
+	})
+
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("u\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
+	}
+	markShellWelcomed(t, cmd)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, update failure must not block shell entry", err)
+	}
+	if recorder.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux after failed update, command = %q", recorder.name)
+	}
+	if !strings.Contains(stdout.String(), "Update failed") {
+		t.Fatalf("stdout = %q, want failure surfaced", stdout.String())
 	}
 }
 

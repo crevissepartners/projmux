@@ -10,12 +10,125 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/version"
 )
+
+func buildInfoWithVersion(v string) func() (*debug.BuildInfo, bool) {
+	return func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: v}}, true
+	}
+}
+
+func TestDetectInstallerAutodetection(t *testing.T) {
+	t.Parallel()
+
+	const homeDir = "/home/tester"
+	goBin := filepath.Join(homeDir, "go", "bin", "projmux")
+	npmBin := "/usr/lib/node_modules/@projmux/linux-x64/bin/projmux"
+
+	tests := []struct {
+		name       string
+		env        map[string]string
+		exe        string
+		buildInfo  func() (*debug.BuildInfo, bool)
+		wantSource string
+		wantNote   string
+	}{
+		{
+			name:       "explicit env wins over path",
+			env:        map[string]string{"PROJMUX_INSTALLER": "npm"},
+			exe:        goBin,
+			buildInfo:  buildInfoWithVersion("v0.7.2"),
+			wantSource: "npm",
+			wantNote:   "Installed by npm",
+		},
+		{
+			name:       "npm path detected without env",
+			exe:        npmBin,
+			buildInfo:  buildInfoWithVersion("v0.7.2"),
+			wantSource: "npm",
+			wantNote:   "Detected npm install",
+		},
+		{
+			name:       "devel build detected as source",
+			exe:        goBin,
+			buildInfo:  buildInfoWithVersion("(devel)"),
+			wantSource: "source",
+			wantNote:   "make install",
+		},
+		{
+			name:       "go install in home go bin",
+			exe:        goBin,
+			buildInfo:  buildInfoWithVersion("v0.7.2"),
+			wantSource: "go",
+			wantNote:   "Detected `go install`",
+		},
+		{
+			name:       "go install honors GOBIN",
+			env:        map[string]string{"GOBIN": "/opt/gobin"},
+			exe:        "/opt/gobin/projmux",
+			buildInfo:  buildInfoWithVersion("v0.7.2"),
+			wantSource: "go",
+			wantNote:   "Detected `go install`",
+		},
+		{
+			name:       "unrecognized path stays unknown",
+			exe:        "/usr/local/bin/projmux",
+			buildInfo:  buildInfoWithVersion("v0.7.2"),
+			wantSource: "unknown",
+			wantNote:   "Could not detect the installer",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+			env := tc.env
+			cmd.getenv = func(name string) string { return env[name] }
+			cmd.executable = func() (string, error) { return tc.exe, nil }
+			cmd.buildInfo = tc.buildInfo
+			cmd.userHomeDir = func() (string, error) { return homeDir, nil }
+
+			got := cmd.detectInstaller()
+			if got.Source != tc.wantSource {
+				t.Fatalf("detectInstaller() source = %q, want %q", got.Source, tc.wantSource)
+			}
+			if !strings.Contains(got.Note, tc.wantNote) {
+				t.Fatalf("detectInstaller() note = %q, want substring %q", got.Note, tc.wantNote)
+			}
+		})
+	}
+}
+
+func TestUpdateApplyNpmUsesInstallLatest(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+	cmd.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	var ran []string
+	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		ran = append(ran, updateApplyCommand{Name: name, Args: args}.String())
+		return nil
+	}
+	if err := cmd.Run([]string{"apply", "--no-apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"npm install -g projmux@latest"}
+	if len(ran) != 1 || ran[0] != want[0] {
+		t.Fatalf("ran = %#v, want %#v", ran, want)
+	}
+}
 
 type updateRoundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -61,7 +174,7 @@ func TestUpdateStatusUnknownWithoutCache(t *testing.T) {
 		"current:   " + version.String(),
 		"latest:    unknown (unknown)",
 		"state:     unknown",
-		"installer: unknown - Set PROJMUX_INSTALLER=npm|go|github-release|source",
+		"installer: unknown - Could not detect the installer. Set PROJMUX_INSTALLER=npm|go|github-release",
 		filepath.Join(cacheDir, updateCacheFileName),
 	} {
 		if !strings.Contains(out, want) {
@@ -195,7 +308,7 @@ func TestUpdateApplyDryRunForNPM(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{
-		"would run: npm update -g projmux",
+		"would run: npm install -g projmux@latest",
 		"would run: projmux tmux apply",
 	} {
 		if !strings.Contains(out, want) {
@@ -223,7 +336,7 @@ func TestUpdateApplyRunsNPMCommands(t *testing.T) {
 	if err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"npm update -g projmux", "projmux tmux apply"}
+	want := []string{"npm install -g projmux@latest", "projmux tmux apply"}
 	if !equalStrings(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}
@@ -389,8 +502,8 @@ func TestUpdateApplyRejectsUnsupportedInstallers(t *testing.T) {
 		installer string
 		want      string
 	}{
-		{name: "unknown", installer: "", want: "PROJMUX_INSTALLER=github-release"},
-		{name: "source", installer: "source", want: "not supported"},
+		{name: "unknown", installer: "", want: "could not detect a supported installer"},
+		{name: "source", installer: "source", want: "not available for source installs"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
