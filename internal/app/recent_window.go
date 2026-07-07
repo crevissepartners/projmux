@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -281,11 +281,15 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 	}
 	titles, badgeKinds, topics, commands := c.windowPaneMetadata(ctx, fields[2])
 	return recentwindows.Snapshot{
-		Socket:         fields[0],
-		Session:        fields[1],
-		WindowID:       fields[2],
-		WindowName:     fields[3],
-		Project:        recentWindowSnapshotProject(fields[9], fields[8], fields[1]),
+		Socket:     fields[0],
+		Session:    fields[1],
+		WindowID:   fields[2],
+		WindowName: fields[3],
+		Project: projectidentity.Resolve(projectidentity.Inputs{
+			AnchorPath:  fields[9],
+			PaneCWD:     fields[8],
+			SessionName: fields[1],
+		}, projectidentity.OSFS).Name,
 		LastPaneID:     fields[4],
 		LastPaneTitle:  fields[5],
 		PaneTitles:     titles,
@@ -823,138 +827,6 @@ func joinRecentWindowParts(values ...string) string {
 		parts = append(parts, value)
 	}
 	return strings.Join(parts, " · ")
-}
-
-// recentWindowSnapshotProject resolves the project badge source for a recorded
-// snapshot, in session-first priority so a drifted pane cwd can never mislabel
-// the window with a foreign project:
-//
-//  1. Session anchor (@projmux_project_path) basename — fixed at session
-//     creation (roadmap #488) so it survives any pane cwd drift (#489).
-//  2. Worktree main-repo resolution — when the pane cwd sits inside a git
-//     worktree, its MAIN repo is unambiguously the session's project (a worktree
-//     of X always belongs to X), so keep resolving it even without an anchor
-//     (#491). This is a resolved project identity, not the cwd's own basename.
-//  3. Session identity — an anchor-less (pre-#488) session's pane cwd may have
-//     drifted into an entirely different sibling repo, so a plain regular-repo
-//     cwd basename is NOT trusted; the session name always reflects the window's
-//     real session (roadmap: recent-windows badge session over drifted cwd).
-//  4. cwd project-marker basename — true last resort, reached only when there is
-//     no session name at all (currentSnapshot guarantees one, so this is purely
-//     defensive and never fires in practice).
-func recentWindowSnapshotProject(anchorPath, panePath, session string) string {
-	if name := recentWindowAnchorProjectName(anchorPath); name != "" {
-		return name
-	}
-	if name := recentWindowWorktreeProjectName(panePath); name != "" {
-		return name
-	}
-	if s := strings.TrimSpace(session); s != "" {
-		return s
-	}
-	return recentWindowProjectName(panePath)
-}
-
-// recentWindowWorktreeProjectName resolves the MAIN repo project basename when
-// the pane cwd sits inside (or under) a git worktree, else "". It mirrors
-// recentWindowProjectName's marker walk to find the enclosing project root, then
-// reuses recentWindowWorktreeMainProjectName's pure `.git`-file parse (no git
-// subprocess) to turn a worktree gitlink into its main-repo basename. A regular
-// repo (.git dir), a missing marker, or a non-worktree `.git` file yields "" so
-// the caller prefers the session identity over an untrusted regular-repo cwd
-// basename.
-func recentWindowWorktreeProjectName(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-	root := nearestProjectMarker(path, os.TempDir())
-	if root == "" {
-		root = path
-	}
-	return recentWindowWorktreeMainProjectName(root)
-}
-
-// recentWindowAnchorProjectName returns the basename of the session anchor path.
-// The anchor is already the project root, so (unlike recentWindowProjectName) it
-// does not walk for a project marker — its last segment is the project basename.
-func recentWindowAnchorProjectName(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-	name := filepath.Base(filepath.Clean(path))
-	if name == "." || name == string(filepath.Separator) {
-		return ""
-	}
-	return name
-}
-
-func recentWindowProjectName(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-	root := nearestProjectMarker(path, os.TempDir())
-	if root == "" {
-		root = path
-	}
-	// A git worktree carries its own `.git` marker, so nearestProjectMarker stops
-	// at the worktree dir whose basename is the branch/worktree name, not the
-	// project. When <root>/.git is a FILE (the worktree case) resolve the main
-	// repo root by parsing it — a pure file read, no git subprocess, since the
-	// recent list can hold many entries — and use the main project basename. A
-	// regular repo (.git dir), a missing .git, or a corrupt/unexpected .git file
-	// falls through to the existing marker-basename behavior and never panics.
-	if main := recentWindowWorktreeMainProjectName(root); main != "" {
-		return main
-	}
-	name := filepath.Base(filepath.Clean(root))
-	if name == "." || name == string(filepath.Separator) {
-		return ""
-	}
-	return name
-}
-
-// recentWindowWorktreeMainProjectName returns the main repository's project
-// basename when root is a git worktree, else "". A worktree's <root>/.git is a
-// file whose content is `gitdir: <main>/.git/worktrees/<name>`; the main repo
-// root is the path segment before `/.git/worktrees/`. Anything else — a `.git`
-// directory (regular repo), a missing/unreadable file, or content without the
-// expected `gitdir:` worktree pointer — yields "" so the caller keeps its prior
-// behavior. No git subprocess is spawned; only the marker file is read.
-func recentWindowWorktreeMainProjectName(root string) string {
-	gitPath := filepath.Join(root, ".git")
-	info, err := osStat(gitPath)
-	if err != nil || info.IsDir() {
-		return ""
-	}
-	data, err := os.ReadFile(gitPath)
-	if err != nil {
-		return ""
-	}
-	gitdir := ""
-	for line := range strings.SplitSeq(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if rest, ok := strings.CutPrefix(line, "gitdir:"); ok {
-			gitdir = strings.TrimSpace(rest)
-			break
-		}
-	}
-	if gitdir == "" {
-		return ""
-	}
-	gitdir = filepath.ToSlash(gitdir)
-	idx := strings.Index(gitdir, "/.git/worktrees/")
-	if idx <= 0 {
-		return ""
-	}
-	mainRoot := filepath.Clean(filepath.FromSlash(gitdir[:idx]))
-	name := filepath.Base(mainRoot)
-	if name == "." || name == string(filepath.Separator) {
-		return ""
-	}
-	return name
 }
 
 func parseRecentWindowFields(output []byte, count int) []string {
