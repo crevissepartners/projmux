@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	coretags "github.com/crevissepartners/projmux/internal/core/tags"
 	"github.com/crevissepartners/projmux/internal/integrations/mux"
 	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
@@ -2543,7 +2544,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 		renderCandidates = append(renderCandidates, intrender.SwitchCandidate{
 			Path:          candidatePath,
 			DisplayPath:   intrender.PrettyPath(candidatePath, homeDir, repoRoot),
-			DisplayName:   switchProjectName(candidatePath),
+			DisplayName:   switchProjectName(candidatePath, sessionName),
 			SessionName:   sessionName,
 			ModeLabel:     modeLabel,
 			GitBranch:     gitBranch,
@@ -2747,8 +2748,21 @@ func sortSwitchCandidates(candidates []intrender.SwitchCandidate, homeDir string
 	})
 }
 
-func switchProjectName(path string) string {
+// switchProjectName resolves a switch sidebar row's project display name via
+// the unified project-identity resolver. The candidate path is the canonical
+// project directory (a sessionizer root, not a live drifting pane cwd), and the
+// row already knows the session name, so a worktree candidate normalizes to its
+// main repo and a regular-repo candidate shows the de-slugged session name —
+// the same name the statusbar and notify sidebar now show. Falls back to the
+// former cwd basename only when the resolver yields nothing.
+func switchProjectName(path, sessionName string) string {
 	path = cleanOptionalPath(path)
+	if name := resolveProjectDisplayName(projectidentity.Inputs{
+		PaneCWD:     path,
+		SessionName: sessionName,
+	}, projectidentity.OSFS); name != "" {
+		return name
+	}
 	if path == "" {
 		return ""
 	}
