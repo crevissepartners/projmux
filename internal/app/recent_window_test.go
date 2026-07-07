@@ -1119,8 +1119,11 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 	if !reflect.DeepEqual(got.PaneCommands, []string{"codex", "claude", "zsh"}) {
 		t.Fatalf("snapshot pane commands = %+v, want per-pane commands aligned with titles", got.PaneCommands)
 	}
-	if got.Project != filepath.Base(project) {
-		t.Fatalf("snapshot project = %q, want %q", got.Project, filepath.Base(project))
+	// Anchor-less snapshot (empty @projmux_project_path): the regular-repo pane
+	// cwd basename is untrusted (it may be a drifted foreign repo), so the badge
+	// source is the session identity, not the cwd basename.
+	if got.Project != "repos-projmux" {
+		t.Fatalf("snapshot project = %q, want %q (session identity for anchor-less cwd)", got.Project, "repos-projmux")
 	}
 	if got.LastFocusedAt != now {
 		t.Fatalf("snapshot time = %s, want %s", got.LastFocusedAt, now)
@@ -1160,11 +1163,24 @@ func TestRecentWindowSnapshotProjectPriority(t *testing.T) {
 			want:    "projmux",
 		},
 		{
-			name:    "no anchor falls back to marker basename",
+			// Anchor-less session whose pane cwd drifted into a *different*
+			// sibling repo (its own .git dir). The regular-repo basename is NOT
+			// trusted — the session identity must win, else the badge shows the
+			// foreign project (roadmap: badge session over drifted cwd).
+			name:    "no anchor + regular-repo cwd falls back to session identity",
 			anchor:  "",
 			pane:    projectMarkerDir(t),
 			session: "repos-projmux",
-			want:    "projmux-fixture",
+			want:    "repos-projmux",
+		},
+		{
+			// #491 preserved even without an anchor: a worktree's main-repo
+			// resolution is unambiguous, so it beats the session identity.
+			name:    "no anchor + worktree cwd resolves to main repo (#491)",
+			anchor:  "",
+			pane:    worktreeMarkerDir(t),
+			session: "fix-recent-window-session-badge",
+			want:    "projmux",
 		},
 		{
 			name:    "no anchor and no marker falls back to session",
@@ -1200,6 +1216,23 @@ func projectMarkerDir(t *testing.T) string {
 		t.Fatalf("create marker: %v", err)
 	}
 	return filepath.Join(root, "internal", "app")
+}
+
+// worktreeMarkerDir creates a git worktree layout (main repo "projmux" with a
+// worktree whose `.git` is a gitlink file) and returns a subdir inside the
+// worktree, so recentWindowWorktreeProjectName resolves it to the main repo
+// basename "projmux" (#491), independent of any session anchor.
+func worktreeMarkerDir(t *testing.T) string {
+	t.Helper()
+	main := filepath.Join(t.TempDir(), "projmux")
+	worktree := filepath.Join(main, ".wt", "fix", "recent-window-session-badge")
+	sub := filepath.Join(worktree, "internal", "app")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("create worktree subdir: %v", err)
+	}
+	gitdir := filepath.Join(main, ".git", "worktrees", "recent-window-session-badge")
+	writeWorktreeGitFile(t, worktree, "gitdir: "+gitdir+"\n")
+	return sub
 }
 
 func TestRecentWindowRecordUsesSessionAnchorProject(t *testing.T) {
