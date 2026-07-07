@@ -25,10 +25,18 @@ projmux update apply
 Use `--dry-run` to see the planned action and `--no-apply` to skip reloading
 the live tmux config after the binary changes.
 
-Shell Upgrade invokes only `projmux update apply`. Shell Skip until next stores
-the current latest release tag in `update-skip.json`; the prompt appears again
-when the cached latest tag changes. For `source` and unknown installer sources,
-Upgrade prints guidance and continues shell entry without applying anything.
+Shell Upgrade invokes only `projmux update apply`, then reports success or the
+specific failure inline and continues into the shell either way (a failed
+upgrade is never fatal to shell entry). Shell Skip until next stores the current
+latest release tag in `update-skip.json`; the prompt appears again when the
+cached latest tag changes. For `source` and unknown installer sources, Upgrade
+prints guidance and continues shell entry without applying anything.
+
+The installer is detected from an explicit `PROJMUX_INSTALLER` first, then
+inferred from the running binary when unset (npm install tree → `npm`,
+`go install …@latest` binary in `$GOBIN`/`$GOPATH/bin`/`~/go/bin` → `go`, a
+local `go build`/`make install` `(devel)` binary → `source`). `github-release`
+still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
@@ -118,12 +126,20 @@ npm install -g projmux
 For npm-managed installs, `projmux update apply` runs:
 
 ```sh
-npm update -g projmux
+npm install -g projmux@latest
 projmux tmux apply
 ```
 
+`npm install -g projmux@latest` is used instead of `npm update -g projmux`
+because `npm update -g` honors the installed semver range and frequently
+refuses to move a global install across a newer minor/major release, leaving it
+stuck on an old version. `install -g …@latest` always fetches the newest
+published release and re-resolves the per-platform optional dependency.
+
 The npm shim sets `PROJMUX_INSTALLER=npm` so projmux can detect this path
-automatically. You can also update manually with `npm update -g projmux`.
+automatically. Even when the shim is bypassed, projmux infers the npm install
+from the binary path (`node_modules/@projmux/...`). You can also update manually
+with `npm install -g projmux@latest`.
 
 ## Go Installs
 

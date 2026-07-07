@@ -1,0 +1,21 @@
+# Image for the npm update-flow e2e: Go (to build the binary under test) plus
+# Node.js and npm (to exercise the real `npm install -g projmux@latest` path
+# against the public registry).
+FROM golang:1.25-trixie
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV GOTOOLCHAIN=local
+ENV PATH=/go/bin:$PATH
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    coreutils \
+    git \
+    make \
+    nodejs \
+    npm \
+    tmux \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace

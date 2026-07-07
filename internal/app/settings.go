@@ -5383,9 +5383,22 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		action := strings.TrimPrefix(value, settingsActionPrefixUpdate)
 		switch action {
 		case "apply":
-			return c.update.Run([]string{"apply"}, stdout, stderr)
+			// Surface success/failure inline and keep Settings open rather
+			// than closing the whole UI on a handled update error (e.g. a
+			// source/unknown install that cannot auto-update). The Installer
+			// row already carries the manual guidance.
+			if err := c.update.Run([]string{"apply"}, stdout, stderr); err != nil {
+				_, _ = fmt.Fprintf(stdout, "Update failed: %v\n", err)
+				return nil
+			}
+			_, _ = fmt.Fprintln(stdout, "Update complete. Restart projmux to run the new version.")
+			return nil
 		case "check":
-			return c.update.Run([]string{"check"}, stdout, stderr)
+			if err := c.update.Run([]string{"check"}, stdout, stderr); err != nil {
+				_, _ = fmt.Fprintf(stdout, "Update check failed: %v\n", err)
+				return nil
+			}
+			return nil
 		default:
 			return fmt.Errorf("unknown update settings action: %s", action)
 		}

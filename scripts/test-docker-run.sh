@@ -13,6 +13,9 @@ shift
 image="${PROJMUX_TEST_IMAGE:-projmux:test-linux}"
 dockerfile="${PROJMUX_TEST_DOCKERFILE:-$root/test/docker/Dockerfile}"
 docker_context="${PROJMUX_TEST_DOCKER_CONTEXT:-$root/test/docker}"
+# Suites are network-isolated by default. Suites that must reach a real
+# registry (e.g. the npm update-flow e2e) override this to "bridge".
+docker_network="${PROJMUX_TEST_DOCKER_NETWORK:-none}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is required for this test target" >&2
@@ -26,7 +29,7 @@ docker build \
   "$docker_context"
 
 docker run --rm \
-  --network none \
+  --network "$docker_network" \
   --user "$(id -u):$(id -g)" \
   -e HOME=/tmp/projmux-home \
   -e XDG_CACHE_HOME=/tmp/projmux-cache \

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +50,8 @@ type updateCommand struct {
 	chmod       func(name string, mode os.FileMode) error
 	remove      func(name string) error
 	copyFile    func(src, dst string) error
+	buildInfo   func() (*debug.BuildInfo, bool)
+	userHomeDir func() (string, error)
 }
 
 type updateCache struct {
@@ -106,6 +109,8 @@ func newUpdateCommand() *updateCommand {
 		chmod:       os.Chmod,
 		remove:      os.Remove,
 		copyFile:    copyRegularFile,
+		buildInfo:   debug.ReadBuildInfo,
+		userHomeDir: os.UserHomeDir,
 	}
 }
 
@@ -185,7 +190,12 @@ func (c updateApplyCommand) String() string {
 func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateApplyCommand, error) {
 	switch source {
 	case "npm":
-		commands := []updateApplyCommand{{Name: "npm", Args: []string{"update", "-g", "projmux"}}}
+		// `npm update -g` honors the installed semver range and frequently
+		// refuses to cross into a newer minor/major, so global installs get
+		// stuck on an old version. `npm install -g projmux@latest` always
+		// pulls the newest published release and re-resolves the per-platform
+		// optionalDependency, which is what "update" must actually do.
+		commands := []updateApplyCommand{{Name: "npm", Args: []string{"install", "-g", "projmux@latest"}}}
 		if !noApply {
 			commands = append(commands, updateApplyCommand{Name: "projmux", Args: []string{"tmux", "apply"}})
 		}
@@ -203,9 +213,9 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 	case "github-release":
 		return nil, errors.New("update apply for github-release installs is handled by direct release binary replacement")
 	case "source":
-		return nil, errors.New("update apply for source installs is not supported; update the source checkout and rebuild")
+		return nil, errors.New("update apply is not available for source installs; update the checkout with `git pull --ff-only && make install`")
 	default:
-		return nil, errors.New("update apply requires PROJMUX_INSTALLER=npm, PROJMUX_INSTALLER=go, or PROJMUX_INSTALLER=github-release")
+		return nil, errors.New("update apply could not detect a supported installer; run from an npm/go/github-release install or set PROJMUX_INSTALLER=npm|go|github-release (source installs update with `git pull --ff-only && make install`)")
 	}
 }
 
@@ -659,20 +669,134 @@ func (c *updateCommand) detectInstaller() updateInstaller {
 	if c.getenv != nil {
 		source = strings.TrimSpace(c.getenv("PROJMUX_INSTALLER"))
 	}
+	// An explicit PROJMUX_INSTALLER always wins. Only fall back to
+	// autodetection when it is unset so that update apply works even when the
+	// binary was not launched through the npm shim (which is the only path
+	// that exports the variable today).
+	autodetected := false
+	if source == "" {
+		source = c.autodetectInstaller()
+		autodetected = source != ""
+	}
 	switch source {
 	case "npm":
-		return updateInstaller{Source: source, Note: "Installed by npm shim; update with projmux update apply or npm update -g projmux."}
+		note := "Installed by npm; update apply runs `npm install -g projmux@latest`."
+		if autodetected {
+			note = "Detected npm install; update apply runs `npm install -g projmux@latest`."
+		}
+		return updateInstaller{Source: source, Note: note}
 	case "go":
-		return updateInstaller{Source: source, Note: "Installed with Go tooling; update apply delegates to projmux upgrade."}
+		note := "Installed with Go tooling; update apply delegates to projmux upgrade."
+		if autodetected {
+			note = "Detected `go install` binary; update apply delegates to projmux upgrade."
+		}
+		return updateInstaller{Source: source, Note: note}
 	case "github-release":
 		return updateInstaller{Source: source, Note: "Installed from a GitHub release binary; update apply replaces the current binary atomically."}
 	case "source":
-		return updateInstaller{Source: source, Note: "Installed from source; update from the source checkout until update apply exists."}
+		note := "Installed from source; update with `git pull --ff-only && make install`."
+		if autodetected {
+			note = "Detected source build; update with `git pull --ff-only && make install` (not auto-updated)."
+		}
+		return updateInstaller{Source: source, Note: note}
 	case "":
-		return updateInstaller{Source: "unknown", Note: "Set PROJMUX_INSTALLER=npm|go|github-release|source to make update guidance installer-aware."}
+		return updateInstaller{Source: "unknown", Note: "Could not detect the installer. Set PROJMUX_INSTALLER=npm|go|github-release, or update source builds with `git pull --ff-only && make install`."}
 	default:
 		return updateInstaller{Source: "unknown", Note: "Unrecognized PROJMUX_INSTALLER=" + source + "; expected npm|go|github-release|source."}
 	}
+}
+
+// autodetectInstaller infers the installer source from the running binary when
+// PROJMUX_INSTALLER is unset. It only recognizes the distribution channels that
+// can be updated in place (npm and go install) plus source builds, which it
+// reports so callers can print manual guidance instead of failing silently.
+// github-release installs are indistinguishable from a hand-placed binary
+// without a marker, so they continue to require an explicit PROJMUX_INSTALLER.
+func (c *updateCommand) autodetectInstaller() string {
+	exe := ""
+	if c.executable != nil {
+		if resolved, err := c.executable(); err == nil {
+			exe = strings.TrimSpace(resolved)
+		}
+	}
+	if exe != "" && isNpmExecutablePath(exe) {
+		return "npm"
+	}
+	// A binary produced by `go build`/`make install` from a local checkout
+	// reports a "(devel)" main module version, while `go install …@latest`
+	// stamps the resolved tag. This is the only reliable way to tell a source
+	// build apart from a go-install binary when both live in GOBIN/~/go/bin.
+	if c.isSourceBuild() {
+		return "source"
+	}
+	if exe != "" && c.isGoInstallPath(exe) {
+		return "go"
+	}
+	return ""
+}
+
+// isNpmExecutablePath reports whether the resolved binary lives inside an npm
+// install tree. The npm platform packages install the real binary at
+// node_modules/@projmux/<platform>/bin/projmux.
+func isNpmExecutablePath(exe string) bool {
+	normalized := filepath.ToSlash(exe)
+	if !strings.Contains(normalized, "node_modules/") {
+		return false
+	}
+	return strings.Contains(normalized, "/@projmux/") || strings.Contains(normalized, "node_modules/projmux/")
+}
+
+func (c *updateCommand) isSourceBuild() bool {
+	if c.buildInfo == nil {
+		return false
+	}
+	info, ok := c.buildInfo()
+	if !ok || info == nil {
+		return false
+	}
+	v := strings.TrimSpace(info.Main.Version)
+	return v == "" || v == "(devel)"
+}
+
+// isGoInstallPath reports whether exe sits in the directory `go install` writes
+// to: $GOBIN, else $GOPATH/bin, else ~/go/bin.
+func (c *updateCommand) isGoInstallPath(exe string) bool {
+	dir := filepath.Dir(exe)
+	for _, candidate := range c.goInstallDirs() {
+		if candidate == "" {
+			continue
+		}
+		if filepath.Clean(candidate) == filepath.Clean(dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *updateCommand) goInstallDirs() []string {
+	getenv := c.getenv
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
+	var dirs []string
+	if gobin := strings.TrimSpace(getenv("GOBIN")); gobin != "" {
+		dirs = append(dirs, gobin)
+	}
+	if gopath := strings.TrimSpace(getenv("GOPATH")); gopath != "" {
+		for _, p := range filepath.SplitList(gopath) {
+			if p = strings.TrimSpace(p); p != "" {
+				dirs = append(dirs, filepath.Join(p, "bin"))
+			}
+		}
+	}
+	if c.userHomeDir != nil {
+		if home, err := c.userHomeDir(); err == nil {
+			if home = strings.TrimSpace(home); home != "" {
+				dirs = append(dirs, filepath.Join(home, "go", "bin"))
+			}
+		}
+	}
+	return dirs
 }
 
 func (c *updateCommand) currentExecutable() (string, error) {
