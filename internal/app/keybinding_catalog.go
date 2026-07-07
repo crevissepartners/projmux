@@ -651,7 +651,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
-			PlainChord:  "G",
+			PlainChord:  "g",
 		},
 		{
 			ID:          "Settings:SwitchTabPrev",

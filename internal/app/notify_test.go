@@ -437,10 +437,10 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  x: clear non-critical  |  G: clear gone  |  Ctrl-X: clear all"; got != want {
+	if got, want := picker.options.Footer, "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  x: clear non-critical  |  g: clear gone  |  Ctrl-X: clear all"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
-	if got, want := picker.options.ExpectKeys, []string{"enter", "a", "A", "x", "G", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
+	if got, want := picker.options.ExpectKeys, []string{"enter", "a", "A", "x", "g", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expect keys = %#v, want %#v", got, want)
 	}
 	groupValue := notifySidebarGroupValue("pane\x00projmux\x00main\x000")
@@ -519,7 +519,7 @@ keys = ["C-y"]
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	want := "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  c: clear non-critical  |  G: clear gone  |  Ctrl-Y: clear all"
+	want := "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  c: clear non-critical  |  g: clear gone  |  Ctrl-Y: clear all"
 	if got := picker.options.Footer; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
@@ -1227,7 +1227,7 @@ func TestNotifyListSidebarAAcksSelectedRowAndRefreshes(t *testing.T) {
 	if got, want := compatOptions.Bindings, []string{"esc:abort", "alt-2:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("picker bindings = %#v, want %#v", got, want)
 	}
-	if got, want := compatOptions.ExpectKeys, []string{"enter", "a", "A", "x", "G", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
+	if got, want := compatOptions.ExpectKeys, []string{"enter", "a", "A", "x", "g", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expect keys = %#v, want %#v", got, want)
 	}
 	second := picker.updates[0]
@@ -1749,7 +1749,7 @@ func TestNotifyListSidebarGClearsGoneOnly(t *testing.T) {
 		},
 	}
 	picker := &recordingNotifyNativePicker{
-		steps: []notifyNativeActionStep{{key: "G", value: "live", selectedIndex: 0}},
+		steps: []notifyNativeActionStep{{key: "g", value: "live", selectedIndex: 0}},
 	}
 	cmd := newCmd(store)
 	cmd.native = picker
@@ -1779,7 +1779,7 @@ func TestNotifyListSidebarGNoGoneNotificationsIsNoOp(t *testing.T) {
 		},
 	}
 	picker := &recordingNotifyNativePicker{
-		steps: []notifyNativeActionStep{{key: "G", value: "live", selectedIndex: 0}},
+		steps: []notifyNativeActionStep{{key: "g", value: "live", selectedIndex: 0}},
 	}
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
@@ -1804,8 +1804,8 @@ func TestNotifyListSidebarClearGoneRebindsFromKeymap(t *testing.T) {
 	if !ok {
 		t.Fatal("NotifySidebar:ClearGone missing from default catalog")
 	}
-	if got := firstNonEmptyString(keyBindingEffectivePlainChords(action)); got != "G" {
-		t.Fatalf("default ClearGone chord = %q, want G", got)
+	if got := firstNonEmptyString(keyBindingEffectivePlainChords(action)); got != "g" {
+		t.Fatalf("default ClearGone chord = %q, want g", got)
 	}
 
 	home := t.TempDir()
@@ -1835,7 +1835,7 @@ keys = ["d"]
 	if !strings.Contains(picker.options.Footer, "d: clear gone") {
 		t.Fatalf("footer missing rebound clear-gone chord: %q", picker.options.Footer)
 	}
-	if strings.Contains(picker.options.Footer, "G: clear gone") {
+	if strings.Contains(picker.options.Footer, "g: clear gone") {
 		t.Fatalf("footer still shows default clear-gone chord after rebind: %q", picker.options.Footer)
 	}
 }
