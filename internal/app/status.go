@@ -80,6 +80,8 @@ func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "git":
 		return c.runGit(args[1:], stdout, stderr)
+	case "project":
+		return c.runProject(args[1:], stdout, stderr)
 	case "kube":
 		return c.runKube(args[1:], stdout, stderr)
 	case "usage":
@@ -408,6 +410,7 @@ func readTextFile(path string) string {
 func printStatusUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux status git [path]")
+	fmt.Fprintln(w, "  projmux status project")
 	fmt.Fprintln(w, "  projmux status kube [session]")
 	fmt.Fprintln(w, "  projmux status usage [--max-width N]")
 	fmt.Fprintln(w, "  projmux status notify [--max-width N]")
@@ -988,6 +991,51 @@ func isKnownAgent(name string) bool {
 func notifyProjectName(session string) string {
 	res := projectidentity.Resolve(projectidentity.Inputs{SessionName: session}, projectidentity.OSFS)
 	return projectidentity.DeSlug(res.Name)
+}
+
+// resolveProjectDisplayName resolves the unified project display label from the
+// identity signals a surface knows, applying the session-name de-slug ONLY when
+// the resolver fell through to the session slug. Anchor, worktree-main, and
+// cwd-marker names are already compact basenames and must not be lossy-cut (a
+// real repo like "my-app" would otherwise collapse to "app"). This generalizes
+// the notify sidebar's Resolve+DeSlug so the switch sidebar, statusbar session
+// segment, and path popup all resolve names the same way.
+func resolveProjectDisplayName(in projectidentity.Inputs, f projectidentity.FS) string {
+	res := projectidentity.Resolve(in, f)
+	if res.Source == projectidentity.SessionName {
+		return projectidentity.DeSlug(res.Name)
+	}
+	return res.Name
+}
+
+// runProject prints the unified project display name for the current session,
+// consumed by the status-left session segment (`#(projmux status project)`). It
+// reads the session name, session anchor (@projmux_project_path), and active
+// pane cwd from tmux and resolves them through the shared project-identity
+// resolver, so the statusbar shows the same name as recent windows, notify, and
+// the switch sidebar. Any failure degrades to empty output so a status refresh
+// never fails loudly.
+func (c *statusCommand) runProject(args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 {
+		printStatusUsage(stderr)
+		return errors.New("status project accepts no arguments")
+	}
+	if c.env("TMUX") == "" {
+		return nil
+	}
+	// Read each identity signal with its own display-message: tmux escapes a raw
+	// field separator (e.g. 0x1f) to a literal "\037" in -F output, so a single
+	// multi-field format cannot be split back apart reliably.
+	name := resolveProjectDisplayName(projectidentity.Inputs{
+		SessionName: c.readTrimmed("tmux", "display-message", "-p", "#{session_name}"),
+		AnchorPath:  c.readTrimmed("tmux", "display-message", "-p", "#{@projmux_project_path}"),
+		PaneCWD:     c.readTrimmed("tmux", "display-message", "-p", "#{pane_current_path}"),
+	}, projectidentity.OSFS)
+	if name == "" {
+		return nil
+	}
+	_, err := fmt.Fprint(stdout, name)
+	return err
 }
 
 // formatRelativeAge renders a compact English relative age.

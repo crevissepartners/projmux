@@ -1238,12 +1238,15 @@ func statusbarSettingsButtonBody(label string) string {
 	return " " + label + " "
 }
 
-func statusbarStandaloneSessionLeftFormat() string {
-	return "#[range=user|session]#[bold,fg=" + statusSegmentRoles.IdentityFg + ",bg=" + statusSegmentRoles.IdentityBg + "] [#S] #[default]#[norange] "
-}
-
-func statusbarAppSessionLeftFormat() string {
-	return "#[range=user|session]#[bold,fg=" + statusSegmentRoles.IdentityFg + ",bg=" + statusSegmentRoles.IdentityBg + "] #{s|^[^-]*-||:session_name} #[default]#[norange] "
+// statusbarSessionLeftFormat renders the status-left session segment for both
+// the standalone and app configs. The displayed name is computed by the unified
+// project-identity resolver via `status project`, so the segment shows the same
+// drift-safe, worktree-normalized, de-slugged project name as every other
+// project surface. This replaces the former divergent raw `[#S]` (standalone)
+// and tmux-native de-slug `#{s|^[^-]*-||:session_name}` (app) segments; the
+// tmux regex de-slug is gone (naming v2 Phase 1b).
+func statusbarSessionLeftFormat(bin string) string {
+	return "#[range=user|session]#[bold,fg=" + statusSegmentRoles.IdentityFg + ",bg=" + statusSegmentRoles.IdentityBg + "] #(" + bin + " status project) #[default]#[norange] "
 }
 
 func statusbarAuxLineFormat(bin string, autosave bool) string {
@@ -1392,7 +1395,7 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryP
 		"set -g status 2",
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
-		"set -g status-left "+tmuxConfigQuote(statusbarStandaloneSessionLeftFormat()),
+		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin)),
 		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
 		// Two-line status bar: line 0 is the notify/HUD control row; line 1 is
 		// tmux's native session/window/path row. Setting both rows explicitly is
@@ -1515,7 +1518,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, de
 	// small buffer while still fitting alongside notify.
 	lines = append(lines,
 		"set -g status 2",
-		"set -g status-left "+tmuxConfigQuote(statusbarAppSessionLeftFormat()),
+		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin)),
 		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
 		"set -g status-format[0] "+tmuxConfigQuote(statusbarAuxLineFormat(bin, true)),
 		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),

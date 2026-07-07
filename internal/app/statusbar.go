@@ -26,6 +26,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -1034,6 +1035,14 @@ func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path strin
 	if metadata.Project == "." || metadata.Project == string(filepath.Separator) {
 		metadata.Project = path
 	}
+	// Preserve the raw cwd basename for the git "in <repo>" comparison below so
+	// routing the displayed project name through the unified resolver
+	// (worktree→main, drift-safe, de-slugged) does not change when the git
+	// segment appends the repo name.
+	cwdProject := metadata.Project
+	if display := c.resolveStatusbarProjectName(ctx, path); display != "" {
+		metadata.Project = display
+	}
 	if c.runner == nil {
 		return metadata
 	}
@@ -1050,12 +1059,34 @@ func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path strin
 		return metadata
 	}
 	repo := filepath.Base(root)
-	if repo != "" && repo != "." && repo != metadata.Project {
+	if repo != "" && repo != "." && repo != cwdProject {
 		metadata.Git = branch + " in " + repo
 	} else {
 		metadata.Git = branch
 	}
 	return metadata
+}
+
+// resolveStatusbarProjectName resolves the path popup's project label via the
+// unified resolver. The active pane cwd is already known; the session name and
+// anchor (@projmux_project_path) are read from tmux best-effort, so any read
+// failure just contributes an empty signal and Resolve falls through its
+// priority chain.
+func (c *statusbarCommand) resolveStatusbarProjectName(ctx context.Context, path string) string {
+	sessionName, anchor := "", ""
+	if c.runner != nil {
+		if out, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "#{session_name}"); err == nil {
+			sessionName = strings.TrimSpace(string(out))
+		}
+		if out, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "#{@projmux_project_path}"); err == nil {
+			anchor = strings.TrimSpace(string(out))
+		}
+	}
+	return resolveProjectDisplayName(projectidentity.Inputs{
+		AnchorPath:  anchor,
+		PaneCWD:     path,
+		SessionName: sessionName,
+	}, projectidentity.OSFS)
 }
 
 type statusbarPathPopupView struct {

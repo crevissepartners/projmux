@@ -349,3 +349,89 @@ func testStatusCommand(home string) *statusCommand {
 		now: func() time.Time { return time.Now() },
 	}
 }
+
+// statusProjectTmuxFields stubs the three per-signal display-message reads that
+// runProject issues (tmux escapes a packed field separator, so each signal is
+// read on its own).
+func statusProjectTmuxFields(session, anchor, cwd string) func(context.Context, string, ...string) ([]byte, error) {
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "#{session_name}"}) {
+			return []byte(session + "\n"), nil
+		}
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "#{@projmux_project_path}"}) {
+			return []byte(anchor + "\n"), nil
+		}
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "#{pane_current_path}"}) {
+			return []byte(cwd + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+func TestStatusProjectResolvesAnchorBasename(t *testing.T) {
+	t.Parallel()
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX" {
+			return "/tmp/tmux"
+		}
+		return ""
+	}
+	// anchor present -> Anchor source wins, no de-slug applied, drifted cwd ignored.
+	cmd.readCommand = statusProjectTmuxFields("repos-app", "/home/tester/source/repos/app", "/tmp/drifted")
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"project"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); got != "app" {
+		t.Fatalf("stdout = %q, want %q", got, "app")
+	}
+}
+
+func TestStatusProjectDeSlugsSessionNameFallback(t *testing.T) {
+	t.Parallel()
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX" {
+			return "/tmp/tmux"
+		}
+		return ""
+	}
+	// no anchor, no worktree; a non-existent pane cwd must not be trusted over
+	// the session name, which is de-slugged for display.
+	cmd.readCommand = statusProjectTmuxFields("repos-app", "", "/tmp/does-not-exist-projmux")
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"project"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); got != "app" {
+		t.Fatalf("stdout = %q, want %q", got, "app")
+	}
+}
+
+func TestStatusProjectSilentOutsideTmux(t *testing.T) {
+	t.Parallel()
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.lookupEnv = func(string) string { return "" }
+	called := false
+	cmd.readCommand = func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		called = true
+		return nil, os.ErrNotExist
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"project"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty outside tmux", stdout.String())
+	}
+	if called {
+		t.Fatalf("must not query tmux when TMUX is unset")
+	}
+}
