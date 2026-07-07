@@ -1121,9 +1121,11 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 	}
 	// Anchor-less snapshot (empty @projmux_project_path): the regular-repo pane
 	// cwd basename is untrusted (it may be a drifted foreign repo), so the badge
-	// source is the session identity, not the cwd basename.
-	if got.Project != "repos-projmux" {
-		t.Fatalf("snapshot project = %q, want %q (session identity for anchor-less cwd)", got.Project, "repos-projmux")
+	// source stays the session identity, not the cwd basename (#493 drift
+	// guarantee). The display label is de-slugged the same way statusbar/switch
+	// are, so "repos-projmux" surfaces as "projmux" rather than the raw slug.
+	if got.Project != "projmux" {
+		t.Fatalf("snapshot project = %q, want %q (de-slugged session identity for anchor-less cwd)", got.Project, "projmux")
 	}
 	if got.LastFocusedAt != now {
 		t.Fatalf("snapshot time = %s, want %s", got.LastFocusedAt, now)
@@ -1172,6 +1174,87 @@ func TestRecentWindowRecordUsesSessionAnchorProject(t *testing.T) {
 	}
 	if got := store.records[0].Project; got != "projmux" {
 		t.Fatalf("snapshot project = %q, want %q (session anchor basename, cwd-drift independent)", got, "projmux")
+	}
+}
+
+// TestRecentWindowRecordDeSlugsAnchorlessSessionBadge pins the recent-windows
+// badge to the SAME de-slug rule the statusbar and switch sidebar apply: an
+// anchor-less session named "repos-donus-db" must surface as "donus-db", not
+// the raw "repos-donus-db" slug. The badge routes through
+// resolveProjectDisplayName, so the reduction only fires when the resolver falls
+// through to the session name.
+func TestRecentWindowRecordDeSlugsAnchorlessSessionBadge(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	now := time.Date(2026, 7, 7, 1, 2, 3, 0, time.UTC)
+	runner := &recentWindowFakeRunner{
+		recordOutput: strings.Join([]string{
+			"/tmp/tmux",
+			"repos-donus-db",
+			"@6",
+			"agent",
+			"%54",
+			"shell",
+			"topic",
+			"zsh",
+			// No project marker on the pane cwd path.
+			"/home/es5h/nowhere",
+			// No session anchor (@projmux_project_path empty): older/foreign session.
+			"",
+		}, recentWindowFieldSep) + "\n",
+	}
+	store := &recentWindowStubStore{}
+	cmd := &recentWindowCommand{
+		runner:       runner,
+		storeFactory: func(string) (recentWindowStore, error) { return store, nil },
+		now:          func() time.Time { return now },
+	}
+
+	if err := cmd.RunRecord(nil, nil, nil); err != nil {
+		t.Fatalf("RunRecord() error = %v", err)
+	}
+	if got := store.records[0].Project; got != "donus-db" {
+		t.Fatalf("snapshot project = %q, want %q (de-slugged session badge matching statusbar/switch)", got, "donus-db")
+	}
+}
+
+// TestRecentWindowRecordDoesNotOverCutHyphenatedAnchorName guards the over-cut
+// regression: the de-slug is a lossy cut-at-first-dash meant only for session
+// slugs. A real hyphenated project name coming from the session ANCHOR must NOT
+// be reduced, so "my-app" stays "my-app" instead of collapsing to "app". This
+// is exactly why the badge routes through resolveProjectDisplayName (de-slug
+// only when Source==SessionName) rather than DeSlug(Resolve(...).Name).
+func TestRecentWindowRecordDoesNotOverCutHyphenatedAnchorName(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	now := time.Date(2026, 7, 7, 1, 2, 3, 0, time.UTC)
+	runner := &recentWindowFakeRunner{
+		recordOutput: strings.Join([]string{
+			"/tmp/tmux",
+			"repos-my-app",
+			"@6",
+			"agent",
+			"%54",
+			"shell",
+			"topic",
+			"zsh",
+			"/home/es5h/source/repos/my-app",
+			// Session anchor pins a real hyphenated project root.
+			"/home/es5h/source/repos/my-app",
+		}, recentWindowFieldSep) + "\n",
+	}
+	store := &recentWindowStubStore{}
+	cmd := &recentWindowCommand{
+		runner:       runner,
+		storeFactory: func(string) (recentWindowStore, error) { return store, nil },
+		now:          func() time.Time { return now },
+	}
+
+	if err := cmd.RunRecord(nil, nil, nil); err != nil {
+		t.Fatalf("RunRecord() error = %v", err)
+	}
+	if got := store.records[0].Project; got != "my-app" {
+		t.Fatalf("snapshot project = %q, want %q (anchor basename must not be de-slug over-cut)", got, "my-app")
 	}
 }
 
