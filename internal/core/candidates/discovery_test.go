@@ -156,3 +156,104 @@ func (f fixtureFS) path(rel string) string {
 
 	return filepath.Join(f.root, filepath.FromSlash(rel))
 }
+
+func TestDiscoverDedupesSymlinkAndRealPathKeepingDisplayForm(t *testing.T) {
+	t.Parallel()
+
+	fixture := newFixture(t)
+	fixture.mkdir("real/proj")
+
+	linkRoot := fixture.path("link")
+	if err := os.Symlink(fixture.path("real"), linkRoot); err != nil {
+		t.Fatalf("Symlink(): %v", err)
+	}
+
+	symlinkProj := filepath.Join(linkRoot, "proj")
+	realProj := fixture.path("real/proj")
+
+	got, err := Discover(Inputs{
+		// Symlink spelling is encountered first, so it wins as the display form.
+		Pins: []string{symlinkProj, realProj},
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+
+	want := []string{symlinkProj}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Discover() = %q, want %q (symlink and real path must collapse to one, keeping symlink spelling)", got, want)
+	}
+}
+
+func TestDiscoverDedupePrefersFirstEncounteredDisplayForm(t *testing.T) {
+	t.Parallel()
+
+	fixture := newFixture(t)
+	fixture.mkdir("real/proj")
+
+	linkRoot := fixture.path("link")
+	if err := os.Symlink(fixture.path("real"), linkRoot); err != nil {
+		t.Fatalf("Symlink(): %v", err)
+	}
+
+	symlinkProj := filepath.Join(linkRoot, "proj")
+	realProj := fixture.path("real/proj")
+
+	got, err := Discover(Inputs{
+		// Real path is encountered first here, so it wins.
+		Pins: []string{realProj, symlinkProj},
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+
+	want := []string{realProj}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Discover() = %q, want %q", got, want)
+	}
+}
+
+func TestCanonicalPathResolvesSymlinkAndFallsBack(t *testing.T) {
+	t.Parallel()
+
+	fixture := newFixture(t)
+	fixture.mkdir("real/proj")
+
+	linkRoot := fixture.path("link")
+	if err := os.Symlink(fixture.path("real"), linkRoot); err != nil {
+		t.Fatalf("Symlink(): %v", err)
+	}
+
+	symlinkProj := filepath.Join(linkRoot, "proj")
+	realProj := fixture.path("real/proj")
+
+	wantResolved, err := filepath.EvalSymlinks(realProj)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(): %v", err)
+	}
+	if got := CanonicalPath(symlinkProj); got != wantResolved {
+		t.Fatalf("CanonicalPath(symlink) = %q, want %q", got, wantResolved)
+	}
+	if got := CanonicalPath(realProj); got != wantResolved {
+		t.Fatalf("CanonicalPath(real) = %q, want %q", got, wantResolved)
+	}
+
+	// Broken/dangling symlink and missing paths must fall back to Clean without
+	// erroring or panicking.
+	brokenLink := fixture.path("broken")
+	if err := os.Symlink(fixture.path("does-not-exist"), brokenLink); err != nil {
+		t.Fatalf("Symlink(broken): %v", err)
+	}
+	if got := CanonicalPath(brokenLink); got != filepath.Clean(brokenLink) {
+		t.Fatalf("CanonicalPath(broken) = %q, want %q", got, filepath.Clean(brokenLink))
+	}
+
+	missing := fixture.path("missing/./child")
+	if got := CanonicalPath(missing); got != filepath.Clean(missing) {
+		t.Fatalf("CanonicalPath(missing) = %q, want %q", got, filepath.Clean(missing))
+	}
+
+	if got := CanonicalPath("   "); got != "" {
+		t.Fatalf("CanonicalPath(blank) = %q, want empty", got)
+	}
+}

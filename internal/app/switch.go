@@ -1358,21 +1358,35 @@ func cleanOptionalPath(path string) string {
 	return filepath.Clean(path)
 }
 
+// bestSwitchCandidateMatch finds the candidate whose directory contains (or
+// equals) path, comparing on canonical real paths so a session cwd spelled via
+// a symlink matches its real-path candidate row (and vice versa). The returned
+// value is the candidate's original display spelling, never the resolved real
+// path, so callers keep the user's form for display and cd.
 func bestSwitchCandidateMatch(path string, candidatePaths []string) string {
-	cleanPath := filepath.Clean(path)
+	canonicalPath := candidates.CanonicalPath(path)
+	if canonicalPath == "" {
+		return ""
+	}
+
 	best := ""
+	bestLen := -1
 
 	for _, candidatePath := range candidatePaths {
-		candidatePath = filepath.Clean(candidatePath)
-		if candidatePath == cleanPath {
+		canonicalCandidate := candidates.CanonicalPath(candidatePath)
+		if canonicalCandidate == "" {
+			continue
+		}
+		if canonicalCandidate == canonicalPath {
 			return candidatePath
 		}
 
-		prefix := candidatePath + string(filepath.Separator)
-		if !strings.HasPrefix(cleanPath, prefix) {
+		prefix := canonicalCandidate + string(filepath.Separator)
+		if !strings.HasPrefix(canonicalPath, prefix) {
 			continue
 		}
-		if len(candidatePath) > len(best) {
+		if len(canonicalCandidate) > bestLen {
+			bestLen = len(canonicalCandidate)
 			best = candidatePath
 		}
 	}

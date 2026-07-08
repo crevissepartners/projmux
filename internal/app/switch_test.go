@@ -3699,3 +3699,78 @@ func (f switchFixtureFS) path(rel string) string {
 
 	return filepath.Join(f.root, filepath.FromSlash(rel))
 }
+
+func TestBestSwitchCandidateMatchCrossesSymlinkForms(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	realProj := filepath.Join(tmp, "real", "proj")
+	if err := os.MkdirAll(filepath.Join(realProj, "sub"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(): %v", err)
+	}
+	linkRoot := filepath.Join(tmp, "link")
+	if err := os.Symlink(filepath.Join(tmp, "real"), linkRoot); err != nil {
+		t.Fatalf("Symlink(): %v", err)
+	}
+	symlinkProj := filepath.Join(linkRoot, "proj")
+
+	tests := []struct {
+		name       string
+		path       string
+		candidates []string
+		want       string
+	}{
+		{
+			name:       "session cwd via real path matches symlink candidate row",
+			path:       realProj,
+			candidates: []string{symlinkProj},
+			want:       symlinkProj,
+		},
+		{
+			name:       "session cwd via symlink matches real-path candidate row",
+			path:       symlinkProj,
+			candidates: []string{realProj},
+			want:       realProj,
+		},
+		{
+			name:       "nested real cwd prefix-matches symlink candidate, returns display form",
+			path:       filepath.Join(realProj, "sub"),
+			candidates: []string{symlinkProj},
+			want:       symlinkProj,
+		},
+		{
+			name:       "no match returns empty",
+			path:       filepath.Join(tmp, "elsewhere"),
+			candidates: []string{symlinkProj},
+			want:       "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bestSwitchCandidateMatch(tc.path, tc.candidates); got != tc.want {
+				t.Fatalf("bestSwitchCandidateMatch(%q, %q) = %q, want %q", tc.path, tc.candidates, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBestSwitchCandidateMatchBrokenLinkFallsBackToLexical(t *testing.T) {
+	t.Parallel()
+
+	// Neither path exists on disk, so EvalSymlinks fails and CanonicalPath must
+	// fall back to lexical Clean without panicking, still matching by prefix.
+	base := filepath.Join(string(filepath.Separator), "no", "such", "root")
+	candidate := filepath.Join(base, "proj")
+	nested := filepath.Join(candidate, "deep")
+
+	if got := bestSwitchCandidateMatch(nested, []string{candidate}); got != candidate {
+		t.Fatalf("bestSwitchCandidateMatch(%q, %q) = %q, want %q", nested, candidate, got, candidate)
+	}
+	if got := bestSwitchCandidateMatch(candidate, []string{candidate}); got != candidate {
+		t.Fatalf("bestSwitchCandidateMatch(exact) = %q, want %q", got, candidate)
+	}
+	if got := bestSwitchCandidateMatch("", []string{candidate}); got != "" {
+		t.Fatalf("bestSwitchCandidateMatch(blank) = %q, want empty", got)
+	}
+}
