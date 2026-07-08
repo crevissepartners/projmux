@@ -55,33 +55,62 @@ func (i Inputs) snapRoots() []string {
 	return roots
 }
 
+// snappedCurrentPath collapses the active session cwd to the managed-root child
+// that contains it, returned in that root's own (symlink) spelling.
+//
+// tmux reports pane_current_path as a kernel-resolved real path, so a cwd under
+// a symlinked managed root (e.g. ~/obsidian -> /mnt/c/...) arrives spelled as
+// the real path. Matching each root both lexically and on its canonical
+// (symlink-resolved) form lets a real-path cwd map back onto the symlink-form
+// root, and the returned path is rebuilt from the root's original spelling so
+// the current-path candidate dedups against, and displays identically to, the
+// root-children candidates instead of leaking the /mnt/c real path. Roots that
+// are not symlinks (or whose links are broken) fall back to the lexical match,
+// preserving the pre-existing Clean behaviour.
 func snappedCurrentPath(path string, managedRoots []string) string {
 	if !dirExists(path) {
 		return ""
 	}
 
 	current := cleanPath(path)
+	canonicalCurrent := CanonicalPath(path)
 	for _, root := range managedRoots {
 		if !dirExists(root) {
 			continue
 		}
 
 		cleanRoot := cleanPath(root)
-		prefix := cleanRoot + string(filepath.Separator)
-		if !strings.HasPrefix(current, prefix) {
-			continue
+
+		// Lexical match: cwd already spelled under this root's form.
+		if project := childSegment(current, cleanRoot); project != "" {
+			return filepath.Join(cleanRoot, project)
 		}
 
-		rel := strings.TrimPrefix(current, prefix)
-		project := strings.SplitN(rel, string(filepath.Separator), 2)[0]
-		if project == "" {
-			continue
+		// Canonical match: cwd is the real path of a child under this root's
+		// symlink spelling. Rebuild from cleanRoot (symlink form) so display
+		// and dedup stay in the user's spelling, not the resolved real path.
+		if project := childSegment(canonicalCurrent, CanonicalPath(root)); project != "" {
+			return filepath.Join(cleanRoot, project)
 		}
-
-		return filepath.Join(cleanRoot, project)
 	}
 
 	return current
+}
+
+// childSegment returns the first path segment of path relative to root, or ""
+// when path is not strictly under root.
+func childSegment(path, root string) string {
+	if path == "" || root == "" {
+		return ""
+	}
+
+	prefix := root + string(filepath.Separator)
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+
+	rel := strings.TrimPrefix(path, prefix)
+	return strings.SplitN(rel, string(filepath.Separator), 2)[0]
 }
 
 type orderedSet struct {

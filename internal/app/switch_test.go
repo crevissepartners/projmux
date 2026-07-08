@@ -3774,3 +3774,41 @@ func TestBestSwitchCandidateMatchBrokenLinkFallsBackToLexical(t *testing.T) {
 		t.Fatalf("bestSwitchCandidateMatch(blank) = %q, want empty", got)
 	}
 }
+
+func TestSwitchCurrentSelectionMatchesSnappedSymlinkCandidate(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "real", "proj"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(): %v", err)
+	}
+	linkRoot := filepath.Join(tmp, "link")
+	if err := os.Symlink(filepath.Join(tmp, "real"), linkRoot); err != nil {
+		t.Fatalf("Symlink(): %v", err)
+	}
+
+	// tmux reports the resolved real path as the active session cwd.
+	realCurrent := filepath.Join(tmp, "real", "proj")
+
+	got, err := candidates.Discover(candidates.Inputs{
+		ManagedRoots: []string{linkRoot},
+		CurrentPath:  realCurrent,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+
+	symlinkProj := filepath.Join(linkRoot, "proj")
+	if !slices.Contains(got, symlinkProj) {
+		t.Fatalf("Discover() = %q, want symlink-form candidate %q", got, symlinkProj)
+	}
+	if slices.Contains(got, realCurrent) {
+		t.Fatalf("Discover() = %q leaked real-path candidate %q", got, realCurrent)
+	}
+
+	// The current-session highlight resolves the real-path cwd onto the single
+	// symlink-form candidate row produced by discovery.
+	if match := bestSwitchCandidateMatch(realCurrent, got); match != symlinkProj {
+		t.Fatalf("bestSwitchCandidateMatch(%q, %q) = %q, want %q", realCurrent, got, match, symlinkProj)
+	}
+}
