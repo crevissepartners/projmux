@@ -67,6 +67,7 @@ type App struct {
 	focus        *focusCommand
 	hook         *hookCommand
 	initCmd      *initCommand
+	insertText   *insertFileTextCommand
 	kill         *killCommand
 	notify       *notifyCommand
 	pin          *pinCommand
@@ -107,6 +108,7 @@ func New() *App {
 		focus:        newFocusCommand(),
 		hook:         newHookCommand(),
 		initCmd:      newInitCommand(),
+		insertText:   newInsertFileTextCommand(),
 		kill:         newKillCommand(),
 		notify:       newNotifyCommand(),
 		pin:          newPinCommand(),
@@ -158,6 +160,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.hook.Run(args[1:], stdout, stderr)
 	case "init":
 		return a.initCmd.Run(args[1:], stdout, stderr)
+	case "insert-file-text":
+		return a.insertText.Run(args[1:], stdout, stderr)
 	case "kill":
 		return a.kill.Run(args[1:], stdout, stderr)
 	case "notify":
@@ -231,6 +235,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
 	fmt.Fprintln(w, "  init      Preview/apply supported terminal key delivery mappings")
+	fmt.Fprintln(w, "  insert-file-text  Insert a configured text file's contents into the active pane")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
