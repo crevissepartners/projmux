@@ -530,6 +530,13 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("picker.crumb.sessions"):                                         textEntry("Sessions"),
 		Key("picker.crumb.state"):                                            textEntry("State"),
 		Key("picker.sessions.state_readonly_note"):                           textEntry("Session state opens read-only; destructive actions keep the current confirmation policy."),
+		Key("picker.insert_file_text.title"):                                 textEntry("Insert File Text - Choose a source"),
+		Key("picker.insert_file_text.prompt"):                                textEntry("Insert > "),
+		Key("picker.insert_file_text.footer"):                                textEntry("Choose a text source to insert into the active pane."),
+		Key("insert_file_text.message.not_found"):                            textEntry("insert source not found:"),
+		Key("insert_file_text.message.unreadable"):                           textEntry("insert source unreadable:"),
+		Key("insert_file_text.message.empty"):                                textEntry("insert source empty:"),
+		Key("insert_file_text.message.none"):                                 textEntry("no insert-file-text source configured"),
 	},
 	Locale("ko-KR"): {
 		KeyNotifyAIResponseComplete:                                          textEntry("응답 완료"),
@@ -1056,6 +1063,13 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("picker.crumb.sessions"):                                         textEntry("세션"),
 		Key("picker.crumb.state"):                                            textEntry("상태"),
 		Key("picker.sessions.state_readonly_note"):                           textEntry("세션 상태는 읽기 전용으로 열리며, 파괴적 동작은 현재 확인 정책을 따릅니다."),
+		Key("picker.insert_file_text.title"):                                 textEntry("파일 텍스트 삽입 - 소스 선택"),
+		Key("picker.insert_file_text.prompt"):                                textEntry("삽입 > "),
+		Key("picker.insert_file_text.footer"):                                textEntry("활성 페인에 삽입할 텍스트 소스를 선택하세요."),
+		Key("insert_file_text.message.not_found"):                            textEntry("삽입 소스를 찾을 수 없음:"),
+		Key("insert_file_text.message.unreadable"):                           textEntry("삽입 소스를 읽을 수 없음:"),
+		Key("insert_file_text.message.empty"):                                textEntry("삽입 소스가 비어 있음:"),
+		Key("insert_file_text.message.none"):                                 textEntry("설정된 insert-file-text 소스가 없습니다"),
 	},
 }
 

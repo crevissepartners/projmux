@@ -17,14 +17,45 @@ const projectConfigRelativePath = ".projmux/config.toml"
 
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// insertFileTextNamePattern bounds `[insert_file_text.<name>]` source names to a
+// filename-safe, binding-safe identifier set.
+var insertFileTextNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*$`)
+
+const insertFileTextSectionPrefix = "insert_file_text."
+
 type ProjectConfig struct {
-	StartupRun string
-	Hooks      map[Event]string
-	Env        map[string]string
-	Kube       KubeConfig
-	Theme      theme.ThemeConfig
-	UI         UIConfig
-	AI         AIConfig
+	StartupRun     string
+	Hooks          map[Event]string
+	Env            map[string]string
+	Kube           KubeConfig
+	Theme          theme.ThemeConfig
+	UI             UIConfig
+	AI             AIConfig
+	InsertFileText map[string]InsertFileTextSource
+}
+
+// InsertFileTextSource describes one `[insert_file_text.<name>]` source: a text
+// file whose (optionally trimmed) contents are inserted into the active pane.
+type InsertFileTextSource struct {
+	// Path is the source file. A leading `~` is expanded at read time, not here.
+	Path string
+	// Trim reports whether surrounding whitespace is stripped before insert.
+	// Defaults to true; the parser seeds new sources with Trim=true so an
+	// unspecified `trim` behaves as trim-on.
+	Trim bool
+}
+
+// ValidateInsertFileTextName reports whether name is a supported
+// `[insert_file_text.<name>]` source identifier.
+func ValidateInsertFileTextName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("insert_file_text source name is required")
+	}
+	if !insertFileTextNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid insert_file_text source name %q", name)
+	}
+	return nil
 }
 
 type KubeConfig struct {
@@ -177,6 +208,9 @@ func ParseProjectConfig(content string) (ProjectConfig, error) {
 	if len(cfg.Env) == 0 {
 		cfg.Env = nil
 	}
+	if len(cfg.InsertFileText) == 0 {
+		cfg.InsertFileText = nil
+	}
 	return cfg, nil
 }
 
@@ -244,6 +278,9 @@ func isSupportedProjectConfigSection(section string) bool {
 	if eventName, ok := strings.CutPrefix(section, "hooks."); ok {
 		return normalizeEvent(Event(eventName)) != ""
 	}
+	if name, ok := strings.CutPrefix(section, insertFileTextSectionPrefix); ok {
+		return ValidateInsertFileTextName(name) == nil
+	}
 	return false
 }
 
@@ -297,6 +334,9 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 			return fmt.Errorf("line %d: unsupported ai key %q", lineNo, key)
 		}
 	default:
+		if name, ok := strings.CutPrefix(section, insertFileTextSectionPrefix); ok {
+			return applyInsertFileTextConfigValue(cfg, name, key, value, lineNo)
+		}
 		eventName, ok := strings.CutPrefix(section, "hooks.")
 		if !ok || key != "run" {
 			return fmt.Errorf("line %d: unsupported key %q in section %q", lineNo, key, section)
@@ -307,6 +347,35 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 		}
 		cfg.Hooks[event] = value
 	}
+	return nil
+}
+
+func applyInsertFileTextConfigValue(cfg *ProjectConfig, name, key, value string, lineNo int) error {
+	if err := ValidateInsertFileTextName(name); err != nil {
+		return fmt.Errorf("line %d: %w", lineNo, err)
+	}
+	if cfg.InsertFileText == nil {
+		cfg.InsertFileText = map[string]InsertFileTextSource{}
+	}
+	// Seed new sources with the trim-on default so an unspecified `trim` key
+	// resolves to true rather than the bool zero value.
+	source, ok := cfg.InsertFileText[name]
+	if !ok {
+		source = InsertFileTextSource{Trim: true}
+	}
+	switch key {
+	case "path":
+		source.Path = value
+	case "trim":
+		trim, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("line %d: invalid insert_file_text trim %q: %w", lineNo, value, err)
+		}
+		source.Trim = trim
+	default:
+		return fmt.Errorf("line %d: unsupported insert_file_text key %q", lineNo, key)
+	}
+	cfg.InsertFileText[name] = source
 	return nil
 }
 
@@ -357,6 +426,19 @@ func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lin
 }
 
 func parseProjectConfigValue(section, key, value string) (string, error) {
+	if strings.HasPrefix(section, insertFileTextSectionPrefix) && key == "trim" {
+		// trim is a bare boolean (no quotes), e.g.
+		//   [insert_file_text.latest_screenshot]
+		//   trim = true
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", fmt.Errorf("value must be a boolean")
+		}
+		if _, err := strconv.ParseBool(value); err != nil {
+			return "", fmt.Errorf("invalid boolean value: %w", err)
+		}
+		return value, nil
+	}
 	if section == "ai" && (key == "resume_picker_limit" || key == "resume_scan_depth") {
 		// resume_picker_limit and resume_scan_depth are bare integers (no
 		// quotes), e.g.
@@ -455,6 +537,13 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 	cfg.UI.Locale = strings.TrimSpace(cfg.UI.Locale)
 	cfg.AI.ResumePickerLimit = ClampAIResumePickerLimit(cfg.AI.ResumePickerLimit)
 	cfg.AI.ResumeScanDepth = ClampAIResumeScanDepth(cfg.AI.ResumeScanDepth)
+	for name, source := range cfg.InsertFileText {
+		source.Path = strings.TrimSpace(source.Path)
+		cfg.InsertFileText[name] = source
+	}
+	if len(cfg.InsertFileText) == 0 {
+		cfg.InsertFileText = nil
+	}
 }
 
 func validateProjectConfig(cfg ProjectConfig) error {
@@ -466,6 +555,14 @@ func validateProjectConfig(cfg ProjectConfig) error {
 	for event := range cfg.Hooks {
 		if normalizeEvent(event) == "" {
 			return fmt.Errorf("unsupported hook event %q", event)
+		}
+	}
+	for name, source := range cfg.InsertFileText {
+		if err := ValidateInsertFileTextName(name); err != nil {
+			return err
+		}
+		if strings.TrimSpace(source.Path) == "" {
+			return fmt.Errorf("insert_file_text source %q requires a path", name)
 		}
 	}
 	return nil
@@ -556,10 +653,33 @@ func renderProjectConfig(cfg ProjectConfig) string {
 		}
 		sections = append(sections, b.String())
 	}
+	for _, name := range sortedInsertFileTextNames(cfg.InsertFileText) {
+		source := cfg.InsertFileText[name]
+		var b strings.Builder
+		fmt.Fprintf(&b, "[%s%s]\n", insertFileTextSectionPrefix, name)
+		b.WriteString("path = ")
+		b.WriteString(strconv.Quote(strings.TrimSpace(source.Path)))
+		b.WriteString("\n")
+		// trim defaults to true, so only the opt-out is persisted; a rendered
+		// config round-trips back to the same source.
+		if !source.Trim {
+			b.WriteString("trim = false\n")
+		}
+		sections = append(sections, b.String())
+	}
 	if len(sections) == 0 {
 		return ""
 	}
 	return strings.Join(sections, "\n")
+}
+
+func sortedInsertFileTextNames(sources map[string]InsertFileTextSource) []string {
+	names := make([]string, 0, len(sources))
+	for name := range sources {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func renderThemeConfigSection(cfg theme.ThemeConfig) string {
