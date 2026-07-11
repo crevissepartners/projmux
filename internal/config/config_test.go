@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/crevissepartners/projmux/internal/core/aiprovider"
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 )
 
 func TestDefaultPaths(t *testing.T) {

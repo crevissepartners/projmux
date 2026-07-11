@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/crevissepartners/projmux/internal/core/aiprovider"
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	antigravityagent "github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	claudeagent "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	codexagent "github.com/crevissepartners/projmux/internal/integrations/agents/codex"

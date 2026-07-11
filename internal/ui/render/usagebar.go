@@ -1,8 +1,9 @@
-package usage
+package render
 
 // HUD bar rendering primitives shared by the `projmux status usage` HUD
-// segment. Kept in the core package (rather than internal/app) so unit tests
-// can exercise the math without importing the CLI plumbing.
+// segment. Lives in the ui render layer (rather than internal/core/usage) so
+// core stays theme-free while unit tests can still exercise the math without
+// importing the CLI plumbing.
 
 import (
 	"strings"
