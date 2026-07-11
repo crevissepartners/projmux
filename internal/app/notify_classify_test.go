@@ -71,7 +71,7 @@ func TestClassifyNotifyRowStateMatchesLiveReport(t *testing.T) {
 		},
 	}
 	cmd := newCmd(store)
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 
 	report, err := cmd.buildNotifyLiveReport(entries)
 	if err != nil {
@@ -153,7 +153,7 @@ func TestClassifyNotifyRowStatePaneInventoryGone(t *testing.T) {
 
 	now := time.Date(2026, time.June, 19, 12, 0, 0, 0, time.UTC)
 	// Live inventory has only %84 and %85 in repos-test-sample:@13.
-	paneSet := newNotifyLivePaneSet([]attentionPaneRow{
+	paneSet := newNotifyLivePaneSet([]livePaneRow{
 		{Session: "repos-test-sample", Window: "@13", Pane: "%84"},
 		{Session: "repos-test-sample", Window: "@13", Pane: "%85"},
 	})

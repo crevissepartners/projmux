@@ -305,7 +305,7 @@ func TestProductionPickerConstructorsDoNotCreateCompatRunner(t *testing.T) {
 	if cmd := newSessionsCommand(); cmd.runner != nil {
 		t.Fatal("newSessionsCommand() created compat runner")
 	}
-	if cmd := newNotifyCommand(); cmd.picker != nil {
+	if cmd := newNotifyCommand(newDefaultLivePaneLister()); cmd.picker != nil {
 		t.Fatal("newNotifyCommand() created compat runner")
 	}
 }

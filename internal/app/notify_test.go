@@ -198,6 +198,15 @@ func newCmd(store notifyStore) *notifyCommand {
 	}
 }
 
+// setNotifyLiveRunner wires both the focus/tmux runner and the live-pane
+// lister from the same fake, mirroring the production wiring in app.New so
+// tests keep exercising the attention row parsing behind the livePaneLister
+// seam.
+func setNotifyLiveRunner(cmd *notifyCommand, runner tmuxRunner) {
+	cmd.runner = runner
+	cmd.livePanes = newAttentionLivePaneLister(runner)
+}
+
 func TestNotifyPushHappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -413,7 +422,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	cmd := newCmd(store)
 	cmd.picker = picker
 	cmd.native = nativePickerFromCompatRunner(picker)
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -575,7 +584,7 @@ func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 			}
 			cmd.picker = picker
 			cmd.native = nativePickerFromCompatRunner(picker)
-			cmd.runner = runner
+			setNotifyLiveRunner(cmd, runner)
 
 			if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("Run error = %v", err)
@@ -974,7 +983,7 @@ func TestNotifySidebarReadModelPaneInventoryGoneVsStale(t *testing.T) {
 		// %83 is absent from tmux → GONE.
 		{ID: "ai:repos-test-sample:%83", Text: "Ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "category": "response_complete"}, Session: "repos-test-sample", Window: "@13", Pane: "%83", CreatedAt: now.Add(-1 * time.Minute)},
 	}
-	paneSet := newNotifyLivePaneSet([]attentionPaneRow{
+	paneSet := newNotifyLivePaneSet([]livePaneRow{
 		{Session: "repos-test-sample", Window: "@13", Pane: "%84"},
 		{Session: "repos-test-sample", Window: "@13", Pane: "%85"},
 	})
@@ -1065,7 +1074,7 @@ func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 		compatCalled = true
 		return intpickercompat.Result{}, nil
 	})
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 	cmd.lookupEnv = func(name string) string {
 		if name == "PROJMUX_NOTIFY_ORIGIN_CLIENT" {
@@ -1126,7 +1135,7 @@ func TestNotifyListSidebarDoesNotAckWhenFocusFails(t *testing.T) {
 	cmd := newCmd(store)
 	cmd.picker = picker
 	cmd.native = nativePickerFromCompatRunner(picker)
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{})
@@ -1165,7 +1174,7 @@ func TestNotifyListSidebarTargetGoneAcksSelectedRow(t *testing.T) {
 	cmd.now = func() time.Time { return now }
 	cmd.picker = picker
 	cmd.native = nativePickerFromCompatRunner(picker)
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1195,7 +1204,7 @@ func TestNotifyListSidebarAAcksSelectedRowAndRefreshes(t *testing.T) {
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1346,7 +1355,7 @@ func TestNotifyListSidebarEnterOnFoldedGroupFocusesRepresentativeAndAcksVisibleG
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1390,7 +1399,7 @@ func TestNotifyListSidebarEnterOnExpandedGroupFocusesAndAcksWithoutFolding(t *te
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1430,7 +1439,7 @@ func TestNotifyListSidebarEnterOnGroupTargetGoneCleansVisibleGroupWithoutFocus(t
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1471,7 +1480,7 @@ func TestNotifyListSidebarEnterOnGroupStaleRoutableFocusesAndAcks(t *testing.T) 
 	}}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1516,7 +1525,7 @@ func TestNotifyListSidebarEnterOnGroupPrefersLiveRepresentativeOverNewerStaleRow
 	}}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1561,7 +1570,7 @@ func TestNotifyListSidebarEnterOnGroupTargetGoneRaceCleansVisibleGroup(t *testin
 	}}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1602,7 +1611,7 @@ func TestNotifyListSidebarEnterOnGroupFocusFailureDoesNotAckAndRefreshes(t *test
 	}}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1667,7 +1676,7 @@ func TestNotifyListSidebarXClearsNonCriticalAndPreservesCritical(t *testing.T) {
 	}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = &focusFakeRunner{}
+	setNotifyLiveRunner(cmd, &focusFakeRunner{})
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1784,7 +1793,7 @@ func TestNotifyListSidebarGNoGoneNotificationsIsNoOp(t *testing.T) {
 	runner := &focusFakeRunner{}
 	cmd := newCmd(store)
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
@@ -2008,7 +2017,7 @@ func TestNotifyListSidebarAAckRefreshesLiveStateEachLoop(t *testing.T) {
 	cmd := newCmd(store)
 	cmd.now = func() time.Time { return now }
 	cmd.native = picker
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
@@ -2086,7 +2095,7 @@ func TestNotifyListLiveHumanExplainsManualReplyWithoutQueue(t *testing.T) {
 		},
 	}
 	cmd := newCmd(store)
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--live"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -2119,7 +2128,7 @@ func TestNotifyListLiveHumanExplainsTitlePrefixWithoutQueue(t *testing.T) {
 		},
 	}
 	cmd := newCmd(store)
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--live"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -2182,7 +2191,7 @@ func TestNotifyListLiveJSONExplainsQueueAndLiveStates(t *testing.T) {
 		},
 	}
 	cmd := newCmd(store)
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--live", "--json"}, &stdout, &bytes.Buffer{}); err != nil {

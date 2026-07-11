@@ -634,7 +634,7 @@ func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notificatio
 	if c == nil || c.runner == nil {
 		return classifyNotifyRowState(head, nil, nil)
 	}
-	panes, paneSet, err := (&notifyCommand{runner: c.runner}).listNotifyLivePanesAndSet()
+	panes, paneSet, err := (&notifyCommand{livePanes: newAttentionLivePaneLister(c.runner)}).listNotifyLivePanesAndSet()
 	if err != nil {
 		return classifyNotifyRowState(head, nil, nil)
 	}
