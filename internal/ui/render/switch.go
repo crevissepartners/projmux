@@ -517,10 +517,6 @@ func formatSidebarSwitchLabel(candidate SwitchCandidate) string {
 	return strings.Join(lines, "\n")
 }
 
-func formatAttentionBadge(kind string, rank int) string {
-	return formatAttentionBadgeWithStyle(kind, rank, aibadge.StyleDot)
-}
-
 func formatAttentionBadgeWithStyle(kind string, rank int, badgeStyle string) string {
 	if style := ansiAIBadgeKindStart(kind); style != "" {
 		glyph := aibadge.Glyph(kind, badgeStyle)

@@ -189,34 +189,6 @@ func (c *shellCommand) resolveShellProjectContext() (string, error) {
 	return "", nil
 }
 
-func (c *shellCommand) nowTime() time.Time {
-	if c.now == nil {
-		return time.Now()
-	}
-	return c.now()
-}
-
-type shellAppTmuxRunner struct {
-	runner     tmuxRunner
-	socketName string
-	configPath string
-}
-
-func (r shellAppTmuxRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if name != "tmux" {
-		return r.runner.Run(ctx, name, args...)
-	}
-	wrapped := make([]string, 0, len(args)+4)
-	if strings.TrimSpace(r.socketName) != "" {
-		wrapped = append(wrapped, "-L", r.socketName)
-	}
-	if strings.TrimSpace(r.configPath) != "" {
-		wrapped = append(wrapped, "-f", r.configPath)
-	}
-	wrapped = append(wrapped, args...)
-	return r.runner.Run(ctx, name, wrapped...)
-}
-
 func tmuxSessionExists(ctx context.Context, runner tmuxRunner, sessionName string) (bool, error) {
 	if runner == nil {
 		return false, errors.New("tmux runner is not configured")

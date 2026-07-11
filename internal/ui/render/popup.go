@@ -248,33 +248,6 @@ func formatPaneAIBadgeStatusPart(kind string) string {
 	}
 }
 
-func windowAttentionRank(windowIndex string, panes []preview.Pane) int {
-	rank := 0
-	for _, pane := range panes {
-		if strings.TrimSpace(pane.WindowIndex) != windowIndex {
-			continue
-		}
-		if paneAttentionRank(pane) == 2 {
-			return 2
-		}
-		if paneAttentionRank(pane) == 1 {
-			rank = 1
-		}
-	}
-	return rank
-}
-
-func formatWindowAttentionPrefix(rank int) string {
-	switch rank {
-	case 2:
-		return ansiProgress + "●" + ansiReset
-	case 1:
-		return ansiGreen + "●" + ansiReset
-	default:
-		return ""
-	}
-}
-
 func paneAttentionRank(pane preview.Pane) int {
 	switch aibadge.Normalize(pane.AIBadgeKind) {
 	case aibadge.ApprovalRequired, aibadge.InputRequired, aibadge.ResponseComplete:

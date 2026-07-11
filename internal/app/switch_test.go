@@ -19,7 +19,6 @@ import (
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -215,41 +214,6 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 	}
 	if strings.Contains(command, "display-popup -C") {
 		t.Fatalf("continuation command = %q, should not self-close before launching", command)
-	}
-}
-
-func TestSwitchPrepareSidebarTrustPopupRemovesMarkerAndUsesClientScope(t *testing.T) {
-	t.Parallel()
-
-	client := "/dev/pts/projmux-trust-test"
-	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
-	if err := os.WriteFile(marker, []byte("%hidden-pane\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(marker)
-
-	runner := &recordingTmuxRunner{}
-	cmd := &switchCommand{
-		tmuxRunner: runner,
-		lookupEnv: func(name string) string {
-			if name == inttmux.SwitchTargetClientEnv {
-				return client
-			}
-			return ""
-		},
-	}
-
-	if err := cmd.prepareSidebarTrustPopup(context.Background()); err != nil {
-		t.Fatalf("prepareSidebarTrustPopup() error = %v", err)
-	}
-	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("marker stat error = %v, want removed", err)
-	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("tmux calls = %#v, want one close", runner.calls)
-	}
-	if got, want := runner.calls[0], (recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-c", client, "-C"}}); !reflect.DeepEqual(got, want) {
-		t.Fatalf("tmux call = %#v, want %#v", got, want)
 	}
 }
 

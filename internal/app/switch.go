@@ -601,10 +601,6 @@ func (c *switchCommand) candidateInputs(currentPath string) (candidates.Inputs, 
 	return c.candidateInputsWithMemoize(currentPath, true)
 }
 
-func (c *switchCommand) candidateInputsNoMemoize(currentPath string) (candidates.Inputs, error) {
-	return c.candidateInputsWithMemoize(currentPath, false)
-}
-
 func (c *switchCommand) candidateInputsWithMemoize(currentPath string, memoize bool) (candidates.Inputs, error) {
 	homeDir, err := c.resolveHomeDir()
 	if err != nil {
@@ -1793,21 +1789,6 @@ func (c *switchCommand) closeSidebarPopupForTrust(ctx context.Context, targetCli
 	})
 }
 
-func (c *switchCommand) prepareSidebarTrustPopup(ctx context.Context) error {
-	if c.lookupEnv == nil || c.tmuxRunner == nil {
-		return nil
-	}
-	targetClient := firstNonEmpty(
-		c.lookupEnv(inttmux.SwitchTargetClientEnv),
-		c.lookupEnv(hookTrustPopupTargetClientEnv),
-	)
-	if strings.TrimSpace(targetClient) == "" {
-		return nil
-	}
-	c.closeSidebarPopupForTrust(ctx, targetClient)
-	return nil
-}
-
 func buildShellCommand(binaryPath string, args []string, env map[string]string) string {
 	command := []string{}
 	for _, key := range sortedStringKeys(env) {
@@ -2630,11 +2611,6 @@ func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, m
 	return tabs
 }
 
-func switchWindowAttentionRanks(panes []corepreview.Pane) map[string]int {
-	ranks, _ := switchWindowAttentionBadges(panes)
-	return ranks
-}
-
 func switchWindowAttentionBadges(panes []corepreview.Pane) (map[string]int, map[string]string) {
 	ranks := make(map[string]int)
 	kinds := make(map[string]string)
@@ -2647,11 +2623,6 @@ func switchWindowAttentionBadges(panes []corepreview.Pane) (map[string]int, map[
 		ranks[windowIndex] = attentionRankForBadgeKind(kinds[windowIndex])
 	}
 	return ranks, kinds
-}
-
-func (c *switchCommand) switchAttentionRanks(ctx context.Context) map[string]int {
-	ranks, _ := c.switchAttentionBadges(ctx)
-	return ranks
 }
 
 func (c *switchCommand) switchAttentionBadges(ctx context.Context) (map[string]int, map[string]string) {
@@ -2795,25 +2766,6 @@ func (c *switchCommand) loadPinnedSet() (map[string]bool, error) {
 	set := make(map[string]bool, len(pins))
 	for _, pin := range pins {
 		set[cleanOptionalPath(pin)] = true
-	}
-	return set, nil
-}
-
-func (c *switchCommand) loadTaggedSet() (map[string]bool, error) {
-	if c.tagStore == nil {
-		return map[string]bool{}, nil
-	}
-	store, err := c.loadTagStore()
-	if err != nil {
-		return nil, err
-	}
-	items, err := store.List()
-	if err != nil {
-		return nil, fmt.Errorf("load switch tags: %w", err)
-	}
-	set := make(map[string]bool, len(items))
-	for _, item := range items {
-		set[cleanOptionalPath(item)] = true
 	}
 	return set, nil
 }

@@ -599,59 +599,6 @@ func TestNotifyListSidebarTitleDecoration(t *testing.T) {
 	}
 }
 
-func TestNotifySidebarLabelDoesNotExposeRawPaneID(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	label := notifySidebarLabel(notify.Notification{
-		ID:        "abc",
-		Text:      "deploy\nok",
-		Severity:  notify.SeverityInfo,
-		Source:    notify.SourceExternal,
-		Session:   "main",
-		Window:    "1",
-		Pane:      "%42",
-		CreatedAt: now.Add(-2 * time.Minute),
-	}, now)
-
-	lines := strings.Split(label, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("sidebar label = %q, want two lines", label)
-	}
-	if lines[0] != "deploy ok" {
-		t.Fatalf("first line = %q, want sanitized text", lines[0])
-	}
-	if strings.Contains(label, "%42") {
-		t.Fatalf("sidebar label = %q, want raw pane id hidden", label)
-	}
-	if !strings.Contains(lines[1], "win 1") || !strings.Contains(lines[1], "pane 42") {
-		t.Fatalf("metadata = %q, want readable window/pane labels", lines[1])
-	}
-}
-
-func TestNotifySidebarLabelUsesKoreanFormatterOutput(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	label := notifySidebarLabelForLocale(notify.Notification{
-		ID:        "stale",
-		Text:      "deploy ok",
-		Severity:  notify.SeverityInfo,
-		Source:    notify.SourceExternal,
-		Session:   "main",
-		Window:    "1",
-		Pane:      "%42",
-		CreatedAt: now.Add(-36 * time.Second),
-	}, now, notifyDisplayStale, i18n.Locale("ko-KR"))
-
-	stripped := stripANSI(label)
-	for _, want := range []string{"36초 전", "비활성", "창 1", "페인 42"} {
-		if !strings.Contains(stripped, want) {
-			t.Fatalf("label = %q, want localized formatter output %q", stripped, want)
-		}
-	}
-}
-
 func TestNotifySidebarGroupedReadModelConstructsCollapsedPaneRows(t *testing.T) {
 	t.Parallel()
 

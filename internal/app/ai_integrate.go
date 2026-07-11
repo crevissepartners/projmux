@@ -760,16 +760,6 @@ func stripCodexTomlComment(line string) string {
 	return line
 }
 
-func flagWasProvided(args []string, name string) bool {
-	long := "--" + name
-	for _, arg := range args {
-		if arg == long || strings.HasPrefix(arg, long+"=") {
-			return true
-		}
-	}
-	return false
-}
-
 func parseClaudeSettings(content, path string) (map[string]any, error) {
 	if strings.TrimSpace(content) == "" {
 		return map[string]any{}, nil

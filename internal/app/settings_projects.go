@@ -400,13 +400,6 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 	return c.execute(action, stdout, stderr)
 }
 
-// settingsWorkdirTypedEntry surfaces the "Type path manually..." row that
-// bypasses the filesystem scan and lets the user type an absolute path
-// directly. Useful for heavy WSL mounts (/mnt/c/Users/...), large NFS, etc.
-func settingsWorkdirTypedEntry() intpickercompat.Entry {
-	return settingsWorkdirTypedEntryLocale(settingsLocale())
-}
-
 func settingsWorkdirTypedEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	return intpickercompat.Entry{
 		Label: settingsLabelLocale(locale, settingsGlyphType, settingsColorType, "Type path manually...", "skip filesystem scan"),
@@ -637,12 +630,6 @@ func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
 	return entries
 }
 
-// projectRootEntry renders the resolved primary root with its source label.
-// Opening it manages the saved project root; rendering never memoizes env state.
-func (c *settingsCommand) projectRootEntry() intpickercompat.Entry {
-	return c.projectRootEntryLocale(appLocale(c.homeDir, c.lookupEnv))
-}
-
 func (c *settingsCommand) projectRootEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	if c.switcher == nil {
 		return intpickercompat.Entry{
@@ -661,10 +648,6 @@ func (c *settingsCommand) projectRootEntryLocale(locale i18n.Locale) intpickerco
 		Label: settingsLabelInfoLocale(locale, "Project Root", value, source),
 		Value: settingsProjectRootManage,
 	}
-}
-
-func (c *settingsCommand) projectRootHintEntry() intpickercompat.Entry {
-	return c.projectRootHintEntryLocale(settingsLocale())
 }
 
 func (c *settingsCommand) projectRootHintEntryLocale(locale i18n.Locale) intpickercompat.Entry {
@@ -745,10 +728,6 @@ func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) 
 	return entries, nil
 }
 
-func (c *settingsCommand) setCurrentProjectRootEntry() intpickercompat.Entry {
-	return c.setCurrentProjectRootEntryLocale(appLocale(c.homeDir, c.lookupEnv))
-}
-
 func (c *settingsCommand) setCurrentProjectRootEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	if c.switcher == nil {
 		return intpickercompat.Entry{
@@ -776,10 +755,6 @@ func (c *settingsCommand) setCurrentProjectRootEntryLocale(locale i18n.Locale) i
 		Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Use Current Project as Root", intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 		Value: settingsProjdirSetCurrent,
 	}
-}
-
-func (c *settingsCommand) addCurrentProjectEntry() intpickercompat.Entry {
-	return c.addCurrentProjectEntryLocale(appLocale(c.homeDir, c.lookupEnv))
 }
 
 func (c *settingsCommand) addCurrentProjectEntryLocale(locale i18n.Locale) intpickercompat.Entry {

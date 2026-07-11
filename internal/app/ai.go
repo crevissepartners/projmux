@@ -352,10 +352,6 @@ func (c *aiCommand) notifyAIWithInput(paneID string, in attentionNotifyInput) er
 	return c.notifyAITextWithMetadata(paneID, in.Text, in.Severity, in.Force, in.Metadata)
 }
 
-func (c *aiCommand) notifyAIText(paneID, text, severity string, force bool) error {
-	return c.notifyAITextWithMetadata(paneID, text, severity, force, nil)
-}
-
 func (c *aiCommand) notifyAITextWithMetadata(paneID, text, severity string, force bool, metadata map[string]string) error {
 	paneID = strings.TrimSpace(paneID)
 	text = strings.TrimSpace(text)
@@ -373,10 +369,6 @@ func (c *aiCommand) notifyAITextWithMetadata(paneID, text, severity string, forc
 	}
 	c.recordAINotification(paneID, key)
 	return nil
-}
-
-func (c *aiCommand) aiTextNotification(paneID, text, severity string) aiNotification {
-	return c.aiTextNotificationWithMetadata(paneID, text, severity, nil)
 }
 
 func (c *aiCommand) aiTextNotificationWithMetadata(paneID, text, severity string, metadata map[string]string) aiNotification {
@@ -671,15 +663,6 @@ const (
 	aiSplitLaunchDefault aiSplitLaunchPath = "default"
 	aiSplitLaunchPicker  aiSplitLaunchPath = "picker"
 )
-
-func tmuxTruthy(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "on", "true", "yes":
-		return true
-	default:
-		return false
-	}
-}
 
 func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 	invocation, err := parseAISplitInvocation(args, stderr)
@@ -2957,10 +2940,6 @@ func aiSummaryForKindLocale(kind, agentName, topic string, locale i18n.Locale) s
 
 func aiOSNotificationUrgency(string) string {
 	return "normal"
-}
-
-func aiNotificationTextAgent(text string) string {
-	return aiNotificationTextAgentWithMetadata(text, nil)
 }
 
 func aiNotificationTextAgentWithMetadata(text string, metadata map[string]string) string {

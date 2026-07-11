@@ -483,10 +483,6 @@ func (c *settingsCommand) aiNotifyDiagnosticByID(id string) (doctorAINotifyInteg
 	return doctorAINotifyIntegration{}, false
 }
 
-func aiNotifyDiagnosticEntry(diag doctorAINotifyIntegration) intpickercompat.Entry {
-	return aiNotifyDiagnosticEntryLocale(settingsLocale(), diag)
-}
-
 func aiNotifyDiagnosticEntryLocale(locale i18n.Locale, diag doctorAINotifyIntegration) intpickercompat.Entry {
 	glyph, color := aiNotifyDiagnosticTone(diag.Status)
 	desc := string(diag.Status)
@@ -517,10 +513,6 @@ func aiNotifyDiagnosticTone(status doctorAINotifyStatus) (string, string) {
 	}
 }
 
-func aiNotifyDiagnosticDetailEntries(diag doctorAINotifyIntegration) []intpickercompat.Entry {
-	return aiNotifyDiagnosticDetailEntriesLocale(settingsLocale(), diag)
-}
-
 func aiNotifyDiagnosticDetailEntriesLocale(locale i18n.Locale, diag doctorAINotifyIntegration) []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
@@ -545,10 +537,6 @@ func aiNotifyDiagnosticDetailEntriesLocale(locale i18n.Locale, diag doctorAINoti
 		intpickercompat.Entry{Label: settingsLabelDimLocale(locale, "Copy only", "Settings copies command text and does not execute these commands"), Value: settingsNoopValue},
 	)
 	return entries
-}
-
-func aiNotifyDiagnosticCommandEntry(diag doctorAINotifyIntegration, kind, label, command string) intpickercompat.Entry {
-	return aiNotifyDiagnosticCommandEntryLocale(settingsLocale(), diag, kind, label, command)
 }
 
 func aiNotifyDiagnosticCommandEntryLocale(locale i18n.Locale, diag doctorAINotifyIntegration, kind, label, command string) intpickercompat.Entry {

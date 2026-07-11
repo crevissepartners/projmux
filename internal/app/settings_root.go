@@ -29,17 +29,6 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 	}
 }
 
-// settingsRootTabChips returns the chip strip rendered in the popup
-// titlebar so the active scope reads as a real tab metaphor instead of an
-// inline list entry. When no project context is available, the Project
-// chip renders as disabled so the user still sees that the tab exists.
-// ClickValue mirrors the sentinel emitted by Alt-Shift-Left/Right chord
-// handling so a primary-button click on the chip resolves through the
-// same tab-resolution path as the keyboard chord.
-func settingsRootTabChips(active settingsRootTab, hasProject bool) []projmuxpicker.Chip {
-	return settingsRootTabChipsLocale(active, hasProject, settingsLocale())
-}
-
 func settingsRootTabChipsLocale(active settingsRootTab, hasProject bool, locale i18n.Locale) []projmuxpicker.Chip {
 	return []projmuxpicker.Chip{
 		{
@@ -54,11 +43,6 @@ func settingsRootTabChipsLocale(active settingsRootTab, hasProject bool, locale 
 			ClickValue: settingsRootTabProjectValue,
 		},
 	}
-}
-
-func settingsPassiveRootTabChips(active settingsRootTab, hasProject bool) []projmuxpicker.Chip {
-	chips := settingsPassiveRootTabChipsLocale(active, hasProject, settingsLocale())
-	return chips
 }
 
 func settingsPassiveRootTabChipsLocale(active settingsRootTab, hasProject bool, locale i18n.Locale) []projmuxpicker.Chip {
@@ -82,19 +66,11 @@ func settingsRootContextHeader(tab settingsRootTab, ctx settingsProjectContext) 
 	return ""
 }
 
-func settingsRootPrompt(tab settingsRootTab) string {
-	return settingsRootPromptLocale(tab, settingsLocale())
-}
-
 func settingsRootPromptLocale(tab settingsRootTab, locale i18n.Locale) string {
 	if tab == settingsRootTabProject {
 		return localizeText(locale, i18n.KeySettingsRootPromptProject, "Settings > Project > ")
 	}
 	return localizeText(locale, i18n.KeySettingsRootPromptGlobal, "Settings > ")
-}
-
-func settingsRootTabFromResult(result intpickercompat.Result) (settingsRootTab, bool) {
-	return settingsRootTabFromResultWithCurrent(result, settingsRootTabGlobal)
 }
 
 // settingsRootTabFromResultWithCurrent resolves which tab the popup should
@@ -130,10 +106,6 @@ func settingsRootTabToggle(current settingsRootTab) settingsRootTab {
 
 func (c *settingsCommand) rootEntries() []intpickercompat.Entry {
 	return c.rootEntriesForAxis(settingsAxisGlobal)
-}
-
-func (c *settingsCommand) rootEntriesForTab(tab settingsRootTab) []intpickercompat.Entry {
-	return c.rootEntriesForTabLocale(tab, settingsLocale())
 }
 
 func (c *settingsCommand) rootEntriesForTabLocale(tab settingsRootTab, locale i18n.Locale) []intpickercompat.Entry {
@@ -220,10 +192,6 @@ func settingsRootLabelDim(name, description string) string {
 	return settingsRootLabelWithColorLocale(settingsLocale(), settingsGlyphInfo, settingsRootColorDim, name, description)
 }
 
-func settingsRootLabelWithColor(glyph, color, name, description string) string {
-	return settingsRootLabelWithColorLocale(settingsLocale(), glyph, color, name, description)
-}
-
 func settingsRootLabelWithColorLocale(locale i18n.Locale, glyph, color, name, description string) string {
 	name = settingsCatalogTextLocale(locale, name)
 	description = settingsCatalogTextLocale(locale, description)
@@ -244,10 +212,6 @@ func settingsRootLabelWithColorLocale(locale i18n.Locale, glyph, color, name, de
 		b.WriteString(settingsColorReset)
 	}
 	return b.String()
-}
-
-func (c *settingsCommand) sessionStateSettingsRootLabel() string {
-	return c.sessionStateSettingsRootLabelLocale(settingsLocale())
 }
 
 func (c *settingsCommand) sessionStateSettingsRootLabelLocale(locale i18n.Locale) string {

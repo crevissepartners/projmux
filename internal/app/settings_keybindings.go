@@ -688,18 +688,6 @@ func keybindingAliasesSummary(action keyBindingAction) string {
 	return strings.Join(labels, ", ")
 }
 
-func keybindingPlainAliasesSummary(action keyBindingAction) string {
-	keys := keybindingPlainAliasChords(action)
-	if len(keys) == 0 {
-		return "(none)"
-	}
-	labels := make([]string, 0, len(keys))
-	for _, key := range keys {
-		labels = append(labels, keybindingChordDisplay(key))
-	}
-	return strings.Join(labels, ", ")
-}
-
 func keybindingLocalizedSearchText(locale i18n.Locale, action keyBindingAction) string {
 	switch action.ID {
 	case "last-pane":
@@ -779,13 +767,6 @@ func keybindingPlainAliasChords(action keyBindingAction) []string {
 	return uniqueNonEmptyStrings(aliases)
 }
 
-func keybindingCanCapture(action keyBindingAction) bool {
-	if action.Tier == keyBindingTierTransportDependent {
-		return false
-	}
-	return strings.TrimSpace(action.ProbeLabel) != ""
-}
-
 func keybindingTransportChord(action keyBindingAction) string {
 	if chord := firstNonEmptyString(keyBindingEffectivePlainChords(action)); chord != "" {
 		return chord
@@ -801,26 +782,6 @@ func keybindingTransportChord(action keyBindingAction) string {
 		return ""
 	}
 	return strings.TrimSpace(probeAction[start+1 : end])
-}
-
-func keybindingSource(current, def keyBindingAction) string {
-	if len(keyBindingEffectivePlainChords(current)) == 0 {
-		return "Unbound"
-	}
-	if !sameStringSlice(keyBindingEffectivePlainChords(current), keyBindingEffectivePlainChords(def)) {
-		return "Custom"
-	}
-	return "Default"
-}
-
-func keybindingTransportAliasSource(current, def keyBindingAction) string {
-	if current.Tier == keyBindingTierTransportDependent && len(keybindingPlainAliasChords(current)) != 0 {
-		return "Custom"
-	}
-	if current.Tier == keyBindingTierTransportDependent {
-		return "none saved"
-	}
-	return keybindingSource(current, def)
 }
 
 func keybindingState(keymap keymapFile, current, def keyBindingAction) string {
@@ -897,137 +858,6 @@ func keybindingActionsSummary(keymap keymapFile, action, defaultAction keyBindin
 	return strings.Join(actions, ", ")
 }
 
-func keybindingDeliveryPath(action keyBindingAction) string {
-	switch action.Tier {
-	case keyBindingTierNativePickerInternal:
-		return "picker-local"
-	case keyBindingTierTransportDependent:
-		return "transport-dependent"
-	}
-	if len(keyBindingEffectivePlainChords(action)) == 0 && strings.TrimSpace(action.PrefixChord) != "" {
-		return "prefix-backed; direct key unassigned"
-	}
-	return "plain tmux"
-}
-
-func keybindingDeliveryHint(action keyBindingAction) string {
-	switch action.Tier {
-	case keyBindingTierNativePickerInternal:
-		if action.Surface != "" {
-			return action.Surface + " picker action"
-		}
-		return "native picker action"
-	case keyBindingTierTransportDependent:
-		if chord := keybindingTransportChord(action); chord != "" {
-			return keybindingChordDisplay(chord) + " depends on terminal/tmux transport; custom keys are saved separately"
-		}
-		return "no default direct key; configure a custom key if needed"
-	}
-	if len(keyBindingEffectivePlainChords(action)) == 0 && strings.TrimSpace(action.PrefixChord) != "" {
-		return "prefix " + action.PrefixChord + " exists, but no direct key is assigned"
-	}
-	return "direct keybinding"
-}
-
-func keybindingSurfaceSummary(action keyBindingAction) string {
-	if surface := strings.TrimSpace(action.Surface); surface != "" {
-		return surface
-	}
-	switch action.Scope {
-	case keyBindingScopeStandalone:
-		return "Standalone tmux"
-	case keyBindingScopeApp:
-		return "App tmux"
-	default:
-		return "Global"
-	}
-}
-
-func keybindingKindSummary(action keyBindingAction) string {
-	switch action.Kind {
-	case keyBindingActionTogglePopup:
-		return "popup toggle"
-	case keyBindingActionCommand:
-		return "tmux command"
-	case keyBindingActionPickerInternal:
-		return "picker-local action"
-	default:
-		if action.Kind != "" {
-			return string(action.Kind)
-		}
-		return "keybinding action"
-	}
-}
-
-func keybindingTierSummary(action keyBindingAction) string {
-	switch action.Tier {
-	case keyBindingTierGuaranteedLaunchDefault:
-		return "Guaranteed launch default"
-	case keyBindingTierUserConfigurableDirect:
-		return "User configurable direct alias"
-	case keyBindingTierTransportDependent:
-		return "Transport dependent"
-	case keyBindingTierAmbiguousTerminalChord:
-		return "Ambiguous terminal chord"
-	case keyBindingTierNativePickerInternal:
-		return "Picker local"
-	case keyBindingTierPopupLaunchCloseAlias:
-		return "Popup launch close alias"
-	default:
-		if action.Tier != "" {
-			return string(action.Tier)
-		}
-		return "Unclassified"
-	}
-}
-
-func keybindingEditabilitySummary(action keyBindingAction) string {
-	if keyBindingEditable(action) {
-		if action.Tier == keyBindingTierNativePickerInternal {
-			return "editable picker-local"
-		}
-		if action.Tier == keyBindingTierTransportDependent {
-			return "additive plain aliases"
-		}
-		return "editable direct alias"
-	}
-	switch action.Tier {
-	case keyBindingTierNativePickerInternal:
-		return "view-only picker-local"
-	case keyBindingTierTransportDependent:
-		return "view-only transport-dependent"
-	default:
-		return "view-only"
-	}
-}
-
-func keybindingNonEditableReason(action keyBindingAction) string {
-	switch action.Tier {
-	case keyBindingTierNativePickerInternal:
-		return "handled inside the native picker surface, not the direct tmux alias editor"
-	case keyBindingTierTransportDependent:
-		return "depends on terminal/tmux transport; view-only in Settings"
-	default:
-		return "not part of the direct tmux alias editor"
-	}
-}
-
-func keybindingPrimaryAndAdditional(action keyBindingAction) (string, string) {
-	keys := keybindingVisibleChords(action)
-	if len(keys) == 0 {
-		return "(none)", "(none)"
-	}
-	primary := keybindingChordDisplay(keys[0])
-	if len(keys) == 1 {
-		return primary, "(none)"
-	}
-	var additional []string
-	for _, key := range keys[1:] {
-		additional = append(additional, keybindingChordDisplay(key))
-	}
-	return primary, strings.Join(additional, ", ")
-}
-
 func keybindingDefaultKeysSummary(action keyBindingAction) string {
 	keys := keyBindingEffectivePlainChords(action)
 	if len(keys) == 0 {
@@ -1038,20 +868,6 @@ func keybindingDefaultKeysSummary(action keyBindingAction) string {
 		labels = append(labels, keybindingChordDisplay(key))
 	}
 	return strings.Join(labels, ", ")
-}
-
-func keybindingSourceDetail(current, def keyBindingAction) string {
-	switch keybindingSource(current, def) {
-	case "Custom":
-		return "saved in keymap.toml"
-	case "Unbound":
-		if len(keyBindingEffectivePlainChords(def)) == 0 {
-			return "no default fallback"
-		}
-		return "explicit no-bind override or no fallback"
-	default:
-		return "catalog fallback"
-	}
 }
 
 func keybindingResetExplanation(defaultAction keyBindingAction) string {
@@ -1074,16 +890,6 @@ func keybindingResetActionLabel(state string, defaultAction keyBindingAction) st
 
 func keybindingShowResetAction(state string) bool {
 	return state == "Custom" || state == "Unbound"
-}
-
-func keybindingAdvancedDeliveryHint(action keyBindingAction) string {
-	if action.Tier == keyBindingTierTransportDependent {
-		return "raw sequences and terminal adapter diagnostics stay advanced"
-	}
-	if strings.TrimSpace(action.PrefixChord) != "" && len(keyBindingEffectivePlainChords(action)) == 0 {
-		return "prefix-backed action; add a direct key here when wanted"
-	}
-	return "raw sequences/UserKey/terminal adapters are diagnostic-only"
 }
 
 func keybindingSafeDirectKeyPoolCopy() string {
@@ -1139,11 +945,6 @@ func (c *settingsCommand) keymapStore() keymapStore {
 		homeDir:   c.homeDir,
 		lookupEnv: c.lookupEnv,
 	}
-}
-
-func (c *settingsCommand) saveKeymapAndApply(actionID, field string, value *string, stdout io.Writer) error {
-	path, err := saveKeymapOverride(c.keymapStore(), actionID, field, value)
-	return c.finishKeymapApply(path, err, stdout)
 }
 
 func (c *settingsCommand) saveKeymapKeysAndApply(actionID string, keys []string, stdout io.Writer) error {
