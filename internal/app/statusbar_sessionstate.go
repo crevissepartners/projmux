@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -50,7 +51,7 @@ func statusbarSessionStateSavedText(savedAt, now time.Time) string {
 	text := savedAt.Local().Format("2006-01-02 15:04:05 MST")
 	age := statusbarSessionStateAge(savedAt, now)
 	if age >= time.Second {
-		text += " (" + formatBackoffDuration(age.Round(time.Second)) + " ago)"
+		text += " (" + usagecmd.FormatBackoffDuration(age.Round(time.Second)) + " ago)"
 	}
 	return text
 }

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
@@ -488,25 +489,9 @@ func (c *statusbarCommand) loadUsageState(ctx context.Context) (statusbarUsageSt
 }
 
 func (c *statusbarCommand) defaultUsageState(_ context.Context) (statusbarUsageState, error) {
-	cmd := newUsageCommand()
-	cmd.now = c.nowTime
-	modelScope := cmd.ambientModelScope()
-	mgr, err := cmd.managerForScope(modelScope)
+	state, unsupported, cacheMTime, err := usagecmd.New(c.nowTime).CachedState()
 	if err != nil {
 		return statusbarUsageState{}, err
-	}
-	state, err := mgr.LoadState()
-	if err != nil {
-		return statusbarUsageState{}, err
-	}
-	state = filterUsageStateByModels(state, modelScope)
-	unsupported := cmd.unsupportedUsageProviders("all", false)
-	var cacheMTime time.Time
-	stateDir, err := cmd.resolveStateDir()
-	if err == nil {
-		if info, statErr := os.Stat(coreusage.NewStore(stateDir).FilePath()); statErr == nil {
-			cacheMTime = info.ModTime()
-		}
 	}
 	out := statusbarUsageStateFromCache(state, cacheMTime)
 	out.Unsupported = unsupported
@@ -731,7 +716,7 @@ type statusbarUsageState struct {
 	LastSyncSource string
 	CacheMTime     time.Time
 	LoadError      error
-	Unsupported    []usageUnsupportedProvider
+	Unsupported    []usagecmd.UnsupportedProvider
 }
 
 type statusbarUsagePopupView struct {
@@ -831,7 +816,7 @@ func statusbarUsageToast(state statusbarUsageState) string {
 	return "usage: " + strings.Join(parts, " · ")
 }
 
-func statusbarUnsupportedUsageLine(provider usageUnsupportedProvider) string {
+func statusbarUnsupportedUsageLine(provider usagecmd.UnsupportedProvider) string {
 	label := strings.TrimSpace(provider.Label)
 	if label == "" {
 		label = provider.Model
@@ -847,7 +832,7 @@ func statusbarUsageSyncLine(state statusbarUsageState, now time.Time) string {
 	local := state.LastSync.Local()
 	value := local.Format("2006-01-02 15:04:05")
 	if age := usageSyncAge(state.LastSync, now); age >= time.Second {
-		value += " (" + formatBackoffDuration(age.Round(time.Second)) + " ago)"
+		value += " (" + usagecmd.FormatBackoffDuration(age.Round(time.Second)) + " ago)"
 	}
 	if state.LastSyncSource == "cache mtime" {
 		value += " cache"
@@ -891,11 +876,11 @@ func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 			continue
 		}
 		row := statusbarUsageRow{
-			model:    modelDisplayLabel(s.Model),
+			model:    usagecmd.ModelDisplayLabel(s.Model),
 			window:   string(s.Window),
 			used:     usageCountText(s.Tokens),
 			limit:    usageLimitText(s.Limit),
-			pct:      percentText(s.Pct),
+			pct:      usagecmd.PercentText(s.Pct),
 			pctValue: s.Pct,
 			reset:    usageResetText(s.ResetsAt),
 		}

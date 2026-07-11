@@ -9,6 +9,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 func newStatusNotifyCommand(store notifyStore) *statusCommand {
@@ -353,8 +354,8 @@ func TestStatusNotifyLongBodyClipsBeforeDroppingAge(t *testing.T) {
 		{ID: "c", Text: "oldest", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "project"},
 	}
 	out := formatStatusNotify(entries, 80, now)
-	if visualLen(out) > 80 {
-		t.Fatalf("visualLen=%d > 80: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 80 {
+		t.Fatalf("visualLen=%d > 80: %q", intrender.VisualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("project"),
@@ -374,8 +375,8 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 96, now)
-	if visualLen(out) > 96 {
-		t.Fatalf("tier1 visualLen=%d > 96: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 96 {
+		t.Fatalf("tier1 visualLen=%d > 96: %q", intrender.VisualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
@@ -437,8 +438,8 @@ func TestStatusNotifyWidthTier2ClipsTextBeforeAge(t *testing.T) {
 	// clip body text while retaining contextual badges and age.
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 45, now)
-	if visualLen(out) > 45 {
-		t.Fatalf("tier2 visualLen=%d > 45: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 45 {
+		t.Fatalf("tier2 visualLen=%d > 45: %q", intrender.VisualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
@@ -459,8 +460,8 @@ func TestStatusNotifyWidthTier3DropsAgeAfterClippingText(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 24, now)
-	if visualLen(out) > 24 {
-		t.Fatalf("tier3 visualLen=%d > 24: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 24 {
+		t.Fatalf("tier3 visualLen=%d > 24: %q", intrender.VisualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
@@ -485,8 +486,8 @@ func TestStatusNotifyWidthTier4TruncatesText(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 24, now)
-	if visualLen(out) > 24 {
-		t.Fatalf("tier4 visualLen=%d > 24: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 24 {
+		t.Fatalf("tier4 visualLen=%d > 24: %q", intrender.VisualLen(out), out)
 	}
 	if strings.Contains(out, " NEED ") || strings.Contains(out, " claude ") {
 		t.Fatalf("tier4 should drop badges before icon fallback at this width: %q", out)
@@ -506,8 +507,8 @@ func TestStatusNotifyWidthTier5DropsBadgeAndDot(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 14, now)
-	if visualLen(out) > 14 {
-		t.Fatalf("tier5 visualLen=%d > 14: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 14 {
+		t.Fatalf("tier5 visualLen=%d > 14: %q", intrender.VisualLen(out), out)
 	}
 	if strings.Contains(out, " NEED ") || strings.Contains(out, " claude ") {
 		t.Fatalf("tier5 must drop the block badges: %q", out)
@@ -531,8 +532,8 @@ func TestStatusNotifyWidthTier6HardTruncate(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 8, now)
-	if visualLen(out) > 8 {
-		t.Fatalf("tier6 visualLen=%d > 8: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 8 {
+		t.Fatalf("tier6 visualLen=%d > 8: %q", intrender.VisualLen(out), out)
 	}
 	if !strings.HasSuffix(out, "#[default]") {
 		t.Fatalf("tier6 must end with #[default]: %q", out)
@@ -551,8 +552,8 @@ func TestStatusNotifyCriticalVeryNarrowFallbackHasNoStandaloneDot(t *testing.T) 
 		Session:   "prod",
 		CreatedAt: now,
 	}}, 6, now)
-	if visualLen(out) > 6 {
-		t.Fatalf("critical narrow visualLen=%d > 6: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 6 {
+		t.Fatalf("critical narrow visualLen=%d > 6: %q", intrender.VisualLen(out), out)
 	}
 	if strings.Contains(out, notifyIcon) {
 		t.Fatalf("critical narrow fallback must not render standalone dot: %q", out)

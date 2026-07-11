@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 )
@@ -151,11 +152,11 @@ func (c *aiCommand) persistAntigravityContextUsage(payload antigravityHookPayloa
 }
 
 // usageStateDir resolves the directory the usage snapshot cache and the
-// antigravity context sidecar live in. It mirrors usageCommand.resolveStateDir
+// antigravity context sidecar live in. It mirrors usagecmd.Command.resolveStateDir
 // so the ingest writer and the adapter reader agree even when
 // PROJMUX_USAGE_STATE_DIR redirects the cache to a synced location.
 func (c *aiCommand) usageStateDir() (string, error) {
-	if override := strings.TrimSpace(c.env(stateDirEnvVar)); override != "" {
+	if override := strings.TrimSpace(c.env(usagecmd.StateDirEnvVar)); override != "" {
 		return override, nil
 	}
 	homeDir, err := c.homeDir()
