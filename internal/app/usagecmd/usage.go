@@ -17,8 +17,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	"github.com/crevissepartners/projmux/internal/core/usage"
 	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 	claudeadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/claude"
