@@ -15,7 +15,7 @@ func TestKeyBindingCatalogGuaranteedLaunchDefaultsAreOnlyAltOneThroughFive(t *te
 		"ProjectSidebarToggle": "M-1",
 		"NotifySidebarToggle":  "M-2",
 		"RecentWindows:Open":   "M-3",
-		"AISplitPickerToggle":  "M-4",
+		"AIResumePickerToggle": "M-4",
 		"SettingsToggle":       "M-5",
 	}
 	got := map[string]string{}
@@ -33,7 +33,7 @@ func TestKeyBindingCatalogGuaranteedLaunchDefaultsAreOnlyAltOneThroughFive(t *te
 		}
 	}
 
-	for _, id := range []string{"SessionPopupToggle", "ProjectSwitcherToggle", "new-window", "previous-window", "next-window", "rename-window", "rename-pane-topic"} {
+	for _, id := range []string{"AISplitPickerToggle", "SessionPopupToggle", "ProjectSwitcherToggle", "new-window", "previous-window", "next-window", "rename-window", "rename-pane-topic"} {
 		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), id)
 		if !ok {
 			t.Fatalf("missing action %s", id)

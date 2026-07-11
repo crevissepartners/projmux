@@ -179,7 +179,7 @@ Manual UX checks for the Docker sandbox:
 - Alt-1 opens with the top border/title visible, not clipped.
 - Vertical borders stay continuous while moving Up/Down.
 - Alt-1 closes the sidebar immediately when pressed again.
-- Alt-2, Alt-4, and Alt-5 open their matching native popups and close
+- Alt-2, Alt-4, Alt-5, and Alt-7 open their matching native popups and close
   on the same Alt key immediately.
 - Alt-3 opens Recent Windows.
 - Arrow keys move selection without leaking `^[[` text into the query.
