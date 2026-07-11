@@ -1,4 +1,4 @@
-package app
+package usagecmd
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/usage"
+	"github.com/crevissepartners/projmux/internal/theme"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
@@ -38,7 +40,7 @@ func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
 			t.Fatalf("missing %q in %q", want, got)
 		}
 	}
-	if !strings.Contains(got, "#[fg="+tmuxAccentAIFg+",bold]") {
+	if !strings.Contains(got, "#[fg="+theme.TmuxAccentAIFg+",bold]") {
 		t.Fatalf("missing AI label color: %q", got)
 	}
 	if !strings.HasSuffix(got, "#[default]") {
@@ -170,14 +172,14 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	if !strings.Contains(long, "Claude") || !strings.Contains(long, "weekly ") {
 		t.Fatalf("tier1 long HUD missing weekly bar: %q", long)
 	}
-	if visualLen(long) > 200 {
-		t.Fatalf("tier1 visualLen=%d > 200", visualLen(long))
+	if intrender.VisualLen(long) > 200 {
+		t.Fatalf("tier1 visualLen=%d > 200", intrender.VisualLen(long))
 	}
 
 	// Tier 2: drop weekly bars (label + 5h only).
 	tier2 := formatStatusUsage(snaps, 60, now)
-	if visualLen(tier2) > 60 {
-		t.Fatalf("tier2 visualLen=%d > 60: %q", visualLen(tier2), tier2)
+	if intrender.VisualLen(tier2) > 60 {
+		t.Fatalf("tier2 visualLen=%d > 60: %q", intrender.VisualLen(tier2), tier2)
 	}
 	if !strings.Contains(tier2, "Claude") || !strings.Contains(tier2, "Codex") {
 		t.Fatalf("tier2 missing labels: %q", tier2)
@@ -191,8 +193,8 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 
 	// Tier 3: drop bars, keep long labels.
 	tier3 := formatStatusUsage(snaps, 50, now)
-	if visualLen(tier3) > 50 {
-		t.Fatalf("tier3 visualLen=%d > 50: %q", visualLen(tier3), tier3)
+	if intrender.VisualLen(tier3) > 50 {
+		t.Fatalf("tier3 visualLen=%d > 50: %q", intrender.VisualLen(tier3), tier3)
 	}
 	if !strings.Contains(tier3, "Claude 5h:42% weekly:18%") {
 		t.Fatalf("tier3 long-label form missing: %q", tier3)
@@ -203,8 +205,8 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 
 	// Tier 4: single-letter labels.
 	tier4 := formatStatusUsage(snaps, 45, now)
-	if visualLen(tier4) > 45 {
-		t.Fatalf("tier4 visualLen=%d > 45: %q", visualLen(tier4), tier4)
+	if intrender.VisualLen(tier4) > 45 {
+		t.Fatalf("tier4 visualLen=%d > 45: %q", intrender.VisualLen(tier4), tier4)
 	}
 	if !strings.Contains(tier4, "C 5h:42%") || !strings.Contains(tier4, "X 5h:71%") {
 		t.Fatalf("tier4 short-label form missing: %q", tier4)
@@ -215,8 +217,8 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 
 	// Tier 5: hard truncate with ellipsis.
 	tier5 := formatStatusUsage(snaps, 15, now)
-	if visualLen(tier5) > 15 {
-		t.Fatalf("tier5 visualLen=%d > 15: %q", visualLen(tier5), tier5)
+	if intrender.VisualLen(tier5) > 15 {
+		t.Fatalf("tier5 visualLen=%d > 15: %q", intrender.VisualLen(tier5), tier5)
 	}
 	if !strings.HasSuffix(tier5, "…") {
 		t.Fatalf("tier5 must end with ellipsis: %q", tier5)
@@ -235,30 +237,8 @@ func TestFormatStatusUsageOverLimitShowsActualPercent(t *testing.T) {
 	if !strings.Contains(got, "319%") {
 		t.Fatalf("missing actual over-limit percent: %q", got)
 	}
-	if !strings.Contains(got, tmuxStateCriticalFg+",bold") {
+	if !strings.Contains(got, theme.TmuxStateCriticalFg+",bold") {
 		t.Fatalf("over-limit must use critical color: %q", got)
-	}
-}
-
-func TestVisualLenIgnoresTmuxEscapes(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		in   string
-		want int
-	}{
-		{"", 0},
-		{"abc", 3},
-		{"#[fg=red]abc#[default]", 3},
-		{"#[fg=" + tmuxAccentAIFg + ",bold]Claude#[default] 5h", 9},
-		{"a#[fg=red]b#[default]c", 3},
-		{"abc#[broken", 11},
-		{"hash#tag", 8},
-	}
-	for _, tc := range cases {
-		if got := visualLen(tc.in); got != tc.want {
-			t.Fatalf("visualLen(%q) = %d, want %d", tc.in, got, tc.want)
-		}
 	}
 }
 
@@ -308,8 +288,7 @@ func TestUsageRunAllScopesToEnabledClaudeOnly(t *testing.T) {
 		{Model: "codex", Window: usage.Window5h, Pct: 89, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}}
 
-	c := newUsageCommand()
-	c.now = func() time.Time { return now }
+	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentClaude}, nil
 	}
@@ -361,8 +340,7 @@ func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
 		{Model: "codex", Window: usage.Window5h, Pct: 23, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}}
 
-	c := newUsageCommand()
-	c.now = func() time.Time { return now }
+	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentCodex}, nil
 	}
@@ -373,8 +351,8 @@ func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if err := c.runStatus(nil, stdout, stderr); err != nil {
-		t.Fatalf("runStatus: %v", err)
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
 	}
 	out := stdout.String()
 	if !strings.Contains(out, "Codex") || !strings.Contains(out, "23%") {
@@ -400,8 +378,7 @@ func TestUsageStatusShowsAntigravityContext(t *testing.T) {
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 63, UpdatedAt: now},
 	}}
 
-	c := newUsageCommand()
-	c.now = func() time.Time { return now }
+	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
 	}
@@ -411,8 +388,8 @@ func TestUsageStatusShowsAntigravityContext(t *testing.T) {
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if err := c.runStatus(nil, stdout, stderr); err != nil {
-		t.Fatalf("runStatus: %v", err)
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
 	}
 	out := stdout.String()
 	if !strings.Contains(out, "Antigravity") || !strings.Contains(out, "63%") {
@@ -431,8 +408,7 @@ func TestUsageRunShowsAntigravityContextUsage(t *testing.T) {
 	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 55, UpdatedAt: now},
 	}}
-	c := newUsageCommand()
-	c.now = func() time.Time { return now }
+	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
 	}
@@ -468,8 +444,7 @@ func TestUsageRunExplicitAntigravityWorksWhenDisabled(t *testing.T) {
 	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 77, UpdatedAt: now},
 	}}
-	c := newUsageCommand()
-	c.now = func() time.Time { return now }
+	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentClaude}, nil
 	}
@@ -507,8 +482,7 @@ func TestUsageAllWithNoEnabledAgentsSkipsCollectAndShowsFallback(t *testing.T) {
 	claudeAd := &stubAdapter{name: "claude"}
 	codexAd := &stubAdapter{name: "codex"}
 
-	c := newUsageCommand()
-	c.now = func() time.Time { return now }
+	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return nil, nil
 	}
@@ -534,8 +508,8 @@ func TestUsageAllWithNoEnabledAgentsSkipsCollectAndShowsFallback(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := c.runStatus(nil, stdout, stderr); err != nil {
-		t.Fatalf("runStatus: %v", err)
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("status output with no enabled agents = %q, want empty", stdout.String())
@@ -554,8 +528,7 @@ func TestUsageExplicitClaudeWorksWhenDisabled(t *testing.T) {
 		{Model: "codex", Window: usage.Window5h, Pct: 91, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}}
 
-	c := newUsageCommand()
-	c.now = func() time.Time { return now }
+	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentCodex}, nil
 	}
@@ -596,8 +569,7 @@ func TestUsageExplicitCodexWorksWhenDisabled(t *testing.T) {
 		{Model: "codex", Window: usage.Window5h, Pct: 91, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}}
 
-	c := newUsageCommand()
-	c.now = func() time.Time { return now }
+	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentClaude}, nil
 	}
@@ -672,7 +644,7 @@ func scopedUsageManagerFactory(t *testing.T, store *usage.Store, now time.Time, 
 func TestUsageRunJSONEmptyCacheReturnsArray(t *testing.T) {
 	t.Parallel()
 
-	c := newUsageCommand()
+	c := New(nil)
 	c.managerFn = func([]string) (*usage.Manager, error) {
 		dir := t.TempDir()
 		registry := usage.NewRegistry()
@@ -697,7 +669,7 @@ func TestUsageStatusEmitsFormattedSegment(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	c := newUsageCommand()
+	c := New(nil)
 	mgr := newStubManager(t, []*stubAdapter{
 		{name: "claude", snaps: []usage.Snapshot{
 			{Model: "claude", Window: usage.Window5h, Pct: 30, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
@@ -713,8 +685,8 @@ func TestUsageStatusEmitsFormattedSegment(t *testing.T) {
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if err := c.runStatus(nil, stdout, stderr); err != nil {
-		t.Fatalf("runStatus: %v", err)
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
 	}
 	out := stdout.String()
 	if !strings.Contains(out, "Claude") || !strings.Contains(out, "Codex") {
@@ -725,14 +697,14 @@ func TestUsageStatusEmitsFormattedSegment(t *testing.T) {
 func TestUsageStatusManagerErrorIsSilent(t *testing.T) {
 	t.Parallel()
 
-	c := newUsageCommand()
+	c := New(nil)
 	c.managerFn = func([]string) (*usage.Manager, error) {
 		return nil, errors.New("boom")
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if err := c.runStatus(nil, stdout, stderr); err != nil {
-		t.Fatalf("runStatus must swallow error, got %v", err)
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus must swallow error, got %v", err)
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
@@ -743,7 +715,7 @@ func TestUsageStatusMaybeCollectThrottledOnSecondCall(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	c := newUsageCommand()
+	c := New(nil)
 	mgr := newStubManager(t, []*stubAdapter{
 		{name: "claude", snaps: []usage.Snapshot{
 			{Model: "claude", Window: usage.Window5h, Pct: 5, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
@@ -756,13 +728,13 @@ func TestUsageStatusMaybeCollectThrottledOnSecondCall(t *testing.T) {
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if err := c.runStatus(nil, stdout, stderr); err != nil {
-		t.Fatalf("first runStatus: %v", err)
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("first RunStatus: %v", err)
 	}
 	first := stdout.String()
 	stdout.Reset()
-	if err := c.runStatus(nil, stdout, stderr); err != nil {
-		t.Fatalf("second runStatus: %v", err)
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("second RunStatus: %v", err)
 	}
 	second := stdout.String()
 	if first == "" || second == "" {
@@ -773,7 +745,7 @@ func TestUsageStatusMaybeCollectThrottledOnSecondCall(t *testing.T) {
 func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
 	t.Parallel()
 
-	c := newUsageCommand()
+	c := New(nil)
 	dir := t.TempDir()
 	registry := usage.NewRegistry()
 	_ = registry.Replace(&stubAdapter{
@@ -788,8 +760,8 @@ func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if err := c.runStatus(nil, stdout, stderr); err != nil {
-		t.Fatalf("runStatus: %v", err)
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty (adapter failures must be silent)", stderr.String())
@@ -799,7 +771,7 @@ func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
 func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 	t.Parallel()
 
-	c := newUsageCommand()
+	c := New(nil)
 	c.lookupEnv = func(name string) string {
 		if name == usageDebugEnvVar {
 			return "1"
@@ -820,8 +792,8 @@ func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if err := c.runStatus(nil, stdout, stderr); err != nil {
-		t.Fatalf("runStatus: %v", err)
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
 	}
 	if !strings.Contains(stderr.String(), "network down") {
 		t.Fatalf("stderr = %q, want adapter error surfaced under PROJMUX_USAGE_DEBUG", stderr.String())
@@ -1019,7 +991,7 @@ func TestUsageRunForceBypassesBackoffAndThrottle(t *testing.T) {
 	}
 	mgr := usage.NewManager(registry, store, func() time.Time { return now })
 
-	c := newUsageCommand()
+	c := New(nil)
 	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
 	c.now = func() time.Time { return now }
 
@@ -1068,7 +1040,7 @@ func TestUsageRunDefaultRespectsBackoff(t *testing.T) {
 	}
 	mgr := usage.NewManager(registry, store, func() time.Time { return now })
 
-	c := newUsageCommand()
+	c := New(nil)
 	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
 	c.now = func() time.Time { return now }
 
@@ -1154,8 +1126,8 @@ func TestFormatBackoffDurationShapes(t *testing.T) {
 		{75 * time.Minute, "1h15m"},
 	}
 	for _, tc := range cases {
-		if got := formatBackoffDuration(tc.in); got != tc.want {
-			t.Fatalf("formatBackoffDuration(%v) = %q, want %q", tc.in, got, tc.want)
+		if got := FormatBackoffDuration(tc.in); got != tc.want {
+			t.Fatalf("FormatBackoffDuration(%v) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -1270,7 +1242,7 @@ func TestFormatStatusUsageAgeDropsOnTier2(t *testing.T) {
 	if !strings.Contains(tier1, "(3m)") {
 		t.Fatalf("tier1 missing age indicator at unconstrained width: %q", tier1)
 	}
-	tier1Width := visualLen(tier1)
+	tier1Width := intrender.VisualLen(tier1)
 	// Pick a budget that fits tier 2 but not tier 1.
 	budget := tier1Width - 1
 	tier2 := formatStatusUsage(snaps, budget, now)
@@ -1280,8 +1252,8 @@ func TestFormatStatusUsageAgeDropsOnTier2(t *testing.T) {
 	if !strings.Contains(tier2, "weekly ") {
 		t.Fatalf("tier2 must keep the weekly bar: %q", tier2)
 	}
-	if visualLen(tier2) > budget {
-		t.Fatalf("tier2 visualLen=%d > budget=%d: %q", visualLen(tier2), budget, tier2)
+	if intrender.VisualLen(tier2) > budget {
+		t.Fatalf("tier2 visualLen=%d > budget=%d: %q", intrender.VisualLen(tier2), budget, tier2)
 	}
 }
 
@@ -1353,10 +1325,10 @@ func TestUsageHelpDocumentsForceFlag(t *testing.T) {
 func TestResolveStateDirHonoursEnvOverride(t *testing.T) {
 	t.Parallel()
 
-	c := newUsageCommand()
+	c := New(nil)
 	want := "/tmp/projmux-shared-usage"
 	c.lookupEnv = func(name string) string {
-		if name == stateDirEnvVar {
+		if name == StateDirEnvVar {
 			return want
 		}
 		return ""

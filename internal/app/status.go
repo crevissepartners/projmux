@@ -12,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 const (
@@ -45,7 +47,7 @@ type statusCommand struct {
 	homeDir       func() (string, error)
 	readCommand   func(ctx context.Context, name string, args ...string) ([]byte, error)
 	now           func() time.Time
-	usage         *usageCommand
+	usage         *usagecmd.Command
 	notifyStoreFn func() (notifyStore, error)
 }
 
@@ -55,7 +57,7 @@ func newStatusCommand() *statusCommand {
 		homeDir:       os.UserHomeDir,
 		readCommand:   readExternalCommand,
 		now:           time.Now,
-		usage:         newUsageCommand(),
+		usage:         usagecmd.New(nil),
 		notifyStoreFn: defaultStatusNotifyStore,
 	}
 }
@@ -86,9 +88,9 @@ func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runKube(args[1:], stdout, stderr)
 	case "usage":
 		if c.usage == nil {
-			c.usage = newUsageCommand()
+			c.usage = usagecmd.New(nil)
 		}
-		return c.usage.runStatus(args[1:], stdout, stderr)
+		return c.usage.RunStatus(args[1:], stdout, stderr)
 	case "notify":
 		return c.runNotify(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
@@ -913,7 +915,7 @@ func truncateNotifyWithEllipsis(s string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""
 	}
-	plain := stripTmuxEscapes(s)
+	plain := intrender.StripTmuxEscapes(s)
 	if notifyVisualLen(plain) <= maxWidth {
 		return plain
 	}

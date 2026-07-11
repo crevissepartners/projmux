@@ -1,4 +1,7 @@
-package app
+// Package usagecmd implements the `projmux usage` and `projmux status usage`
+// command surfaces on top of internal/core/usage. It owns the CLI flag
+// parsing, adapter registry wiring, and the HUD/table/JSON rendering tiers.
+package usagecmd
 
 import (
 	"context"
@@ -24,19 +27,24 @@ import (
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
-// usageCommand exposes the `projmux usage` and `projmux status usage`
+// Command exposes the `projmux usage` and `projmux status usage`
 // surfaces. Both share a single Manager so collect-once-render-twice stays
 // cheap.
-type usageCommand struct {
+type Command struct {
 	managerFn       func([]string) (*usage.Manager, error)
 	enabledAgentsFn func() ([]config.AIAgentProvider, error)
 	now             func() time.Time
 	lookupEnv       func(string) string
 }
 
-func newUsageCommand() *usageCommand {
-	return &usageCommand{
-		now:       time.Now,
+// New builds the usage command. now is the wall clock injected into the
+// Manager and staleness rendering; nil falls back to time.Now.
+func New(now func() time.Time) *Command {
+	if now == nil {
+		now = time.Now
+	}
+	return &Command{
+		now:       now,
 		lookupEnv: os.Getenv,
 	}
 }
@@ -59,7 +67,7 @@ const staleAfter = 10 * time.Minute
 const veryStaleAfter = 1 * time.Hour
 
 // Run implements `projmux usage [...]`.
-func (c *usageCommand) Run(args []string, stdout, stderr io.Writer) error {
+func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	model := fs.String("model", "all", "filter by model: codex | claude | antigravity | all")
@@ -154,12 +162,12 @@ const statusRefreshThrottle = 30 * time.Second
 // a healthy install.
 const usageDebugEnvVar = "PROJMUX_USAGE_DEBUG"
 
-// runStatus implements the `projmux status usage` subcommand. It triggers
+// RunStatus implements the `projmux status usage` subcommand. It triggers
 // an opportunistic, throttled cache refresh (so a fresh install or a stale
 // cache self-heals on the next tmux redraw) and then reads the persisted
 // cache to render the HUD segment. Adapter failures during this hot path
 // are swallowed unless PROJMUX_USAGE_DEBUG is set.
-func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error {
+func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("status usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	maxWidth := fs.Int("max-width", 0, "truncate output to N runes (0 = no truncation)")
@@ -225,10 +233,10 @@ func (c *usageCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 	return err
 }
 
-// stateDirEnvVar lets multi-machine users redirect the snapshot cache to
+// StateDirEnvVar lets multi-machine users redirect the snapshot cache to
 // a synced location (Dropbox, iCloud Drive, etc) so the HUD on every box
 // reflects whichever machine collected most recently.
-const stateDirEnvVar = "PROJMUX_USAGE_STATE_DIR"
+const StateDirEnvVar = "PROJMUX_USAGE_STATE_DIR"
 
 // limitsEnvVar is documented as deprecated in v2: authoritative limits
 // come from the upstream APIs themselves, so the override file has no
@@ -236,14 +244,14 @@ const stateDirEnvVar = "PROJMUX_USAGE_STATE_DIR"
 // existing user configs keep working.
 const limitsEnvVar = "PROJMUX_USAGE_LIMITS_PATH"
 
-func (c *usageCommand) managerForScope(modelScope []string) (*usage.Manager, error) {
+func (c *Command) managerForScope(modelScope []string) (*usage.Manager, error) {
 	if c.managerFn != nil {
 		return c.managerFn(modelScope)
 	}
 	return c.defaultManager(modelScope)
 }
 
-func (c *usageCommand) defaultManager(modelScope []string) (*usage.Manager, error) {
+func (c *Command) defaultManager(modelScope []string) (*usage.Manager, error) {
 	// Resolve the state dir up front: the Antigravity adapter reads its
 	// context sidecar from the same directory the snapshot cache lives in,
 	// so it needs the resolved path at construction time.
@@ -284,8 +292,8 @@ func (c *usageCommand) defaultManager(modelScope []string) (*usage.Manager, erro
 // to <StateDir>/usage. The env-var path is used verbatim so users can
 // point it at e.g. ~/Dropbox/projmux/usage to share the cache across
 // machines.
-func (c *usageCommand) resolveStateDir() (string, error) {
-	if override := strings.TrimSpace(c.env(stateDirEnvVar)); override != "" {
+func (c *Command) resolveStateDir() (string, error) {
+	if override := strings.TrimSpace(c.env(StateDirEnvVar)); override != "" {
 		return override, nil
 	}
 	paths, err := config.DefaultPathsFromEnv()
@@ -295,7 +303,33 @@ func (c *usageCommand) resolveStateDir() (string, error) {
 	return filepath.Join(paths.StateDir, "usage"), nil
 }
 
-func (c *usageCommand) modelScope(model string) ([]string, bool) {
+// CachedState loads the persisted usage state scoped to the ambient
+// enabled agents without triggering any adapter collection. It returns the
+// filtered state, the enabled providers whose usage is unsupported, and the
+// mtime of the on-disk snapshot cache (zero when the cache is missing).
+// Used by the statusbar usage popup, which renders from cache only.
+func (c *Command) CachedState() (usage.State, []UnsupportedProvider, time.Time, error) {
+	modelScope := c.ambientModelScope()
+	mgr, err := c.managerForScope(modelScope)
+	if err != nil {
+		return usage.State{}, nil, time.Time{}, err
+	}
+	state, err := mgr.LoadState()
+	if err != nil {
+		return usage.State{}, nil, time.Time{}, err
+	}
+	state = filterUsageStateByModels(state, modelScope)
+	unsupported := c.unsupportedUsageProviders("all", false)
+	var cacheMTime time.Time
+	if stateDir, err := c.resolveStateDir(); err == nil {
+		if info, statErr := os.Stat(usage.NewStore(stateDir).FilePath()); statErr == nil {
+			cacheMTime = info.ModTime()
+		}
+	}
+	return state, unsupported, cacheMTime, nil
+}
+
+func (c *Command) modelScope(model string) ([]string, bool) {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if model == "" {
 		model = "all"
@@ -311,11 +345,11 @@ func (c *usageCommand) modelScope(model string) ([]string, bool) {
 	}
 }
 
-func (c *usageCommand) ambientModelScope() []string {
+func (c *Command) ambientModelScope() []string {
 	return aiAgentProvidersToUsageModels(c.currentUsageEnabledAgents())
 }
 
-func (c *usageCommand) currentUsageEnabledAgents() []config.AIAgentProvider {
+func (c *Command) currentUsageEnabledAgents() []config.AIAgentProvider {
 	if c.enabledAgentsFn != nil {
 		agents, err := c.enabledAgentsFn()
 		if err == nil {
@@ -356,13 +390,16 @@ func aiAgentProvidersToUsageModels(agents []config.AIAgentProvider) []string {
 	return out
 }
 
-type usageUnsupportedProvider struct {
+// UnsupportedProvider describes an enabled AI agent whose usage cannot be
+// reported (no supported adapter). Rendered as a one-line note by the table
+// form and the statusbar usage popup.
+type UnsupportedProvider struct {
 	Model  string
 	Label  string
 	Reason string
 }
 
-func (c *usageCommand) unsupportedUsageProviders(model string, explicitModel bool) []usageUnsupportedProvider {
+func (c *Command) unsupportedUsageProviders(model string, explicitModel bool) []UnsupportedProvider {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if model == "" {
 		model = "all"
@@ -372,9 +409,9 @@ func (c *usageCommand) unsupportedUsageProviders(model string, explicitModel boo
 		if !ok || provider.UsageSupported {
 			return nil
 		}
-		return []usageUnsupportedProvider{unsupportedUsageProviderFor(provider)}
+		return []UnsupportedProvider{unsupportedUsageProviderFor(provider)}
 	}
-	out := make([]usageUnsupportedProvider, 0)
+	out := make([]UnsupportedProvider, 0)
 	for _, agent := range c.currentUsageEnabledAgents() {
 		provider, ok := aiprovider.Lookup(string(agent))
 		if !ok || provider.UsageSupported {
@@ -385,15 +422,15 @@ func (c *usageCommand) unsupportedUsageProviders(model string, explicitModel boo
 	return out
 }
 
-func unsupportedUsageProviderFor(provider aiprovider.Metadata) usageUnsupportedProvider {
-	return usageUnsupportedProvider{
+func unsupportedUsageProviderFor(provider aiprovider.Metadata) UnsupportedProvider {
+	return UnsupportedProvider{
 		Model:  string(provider.ID),
 		Label:  provider.DisplayName,
 		Reason: "no supported usage adapter",
 	}
 }
 
-func writeUsageUnsupportedNotes(w io.Writer, providers []usageUnsupportedProvider) {
+func writeUsageUnsupportedNotes(w io.Writer, providers []UnsupportedProvider) {
 	for _, provider := range providers {
 		label := strings.TrimSpace(provider.Label)
 		if label == "" {
@@ -403,7 +440,7 @@ func writeUsageUnsupportedNotes(w io.Writer, providers []usageUnsupportedProvide
 	}
 }
 
-func (c *usageCommand) env(name string) string {
+func (c *Command) env(name string) string {
 	if c.lookupEnv == nil {
 		return ""
 	}
@@ -602,8 +639,8 @@ func staleLevel(s usage.Snapshot, now time.Time) int {
 	}
 }
 
-// HUD layout constants. Separators are constant runes so visualLen can
-// reliably count cells without ever falling back to the tmux-escape
+// HUD layout constants. Separators are constant runes so render.VisualLen
+// can reliably count cells without ever falling back to the tmux-escape
 // stripper.
 const (
 	statusInnerSeparator = " · " // between 5h and weekly inside a model.
@@ -691,7 +728,7 @@ func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) stri
 		if out == "" {
 			continue
 		}
-		if maxWidth <= 0 || visualLen(out) <= maxWidth {
+		if maxWidth <= 0 || intrender.VisualLen(out) <= maxWidth {
 			return out
 		}
 	}
@@ -726,7 +763,7 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 			continue
 		}
 		var b strings.Builder
-		b.WriteString("#[fg=" + tmuxAccentAIFg + ",bold]")
+		b.WriteString("#[fg=" + theme.TmuxAccentAIFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		if withAge {
@@ -781,7 +818,7 @@ func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
 			continue
 		}
 		var b strings.Builder
-		b.WriteString("#[fg=" + tmuxAccentAIFg + ",bold]")
+		b.WriteString("#[fg=" + theme.TmuxAccentAIFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		b.WriteByte(' ')
@@ -835,13 +872,13 @@ func renderTierTextShort(models []modelDisplay, now time.Time) string {
 func renderTextPair(m modelDisplay, label string) string {
 	parts := make([]string, 0, 3)
 	if m.hasFive {
-		parts = append(parts, fmt.Sprintf("5h:%s", percentText(m.fivePct)))
+		parts = append(parts, fmt.Sprintf("5h:%s", PercentText(m.fivePct)))
 	}
 	if m.hasWeek {
-		parts = append(parts, fmt.Sprintf("weekly:%s", percentText(m.weekPct)))
+		parts = append(parts, fmt.Sprintf("weekly:%s", PercentText(m.weekPct)))
 	}
 	if m.hasContext {
-		parts = append(parts, fmt.Sprintf("ctx:%s", percentText(m.contextPct)))
+		parts = append(parts, fmt.Sprintf("ctx:%s", PercentText(m.contextPct)))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -863,7 +900,7 @@ func renderHUDPair(window string, pct float64) string {
 	// percent number then re-applies the same color as the bar fill so the
 	// numeric matches visually (a red bar's 90% reads red too).
 	return fmt.Sprintf("%s%s #[fg=%s]%s%s",
-		window+" ", bar, color, percentText(pct), statusDefaultReset)
+		window+" ", bar, color, PercentText(pct), statusDefaultReset)
 }
 
 // formatLastSyncAge formats the age payload used by the HUD's
@@ -909,10 +946,10 @@ func renderAgeIndicator(m modelDisplay, now time.Time) string {
 	return fmt.Sprintf("#[fg=%s](%s)%s", color, text, statusDefaultReset)
 }
 
-// percentText formats a percentage. Negative values are clamped to 0.
+// PercentText formats a percentage. Negative values are clamped to 0.
 // Above 100 we still print the actual number (the bar saturates, the
 // numeric does not — the user must see how far over they are).
-func percentText(pct float64) string {
+func PercentText(pct float64) string {
 	if pct < 0 {
 		pct = 0
 	}
@@ -938,7 +975,7 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 		if !ok {
 			row = &modelDisplay{
 				model:      s.Model,
-				label:      modelDisplayLabel(s.Model),
+				label:      ModelDisplayLabel(s.Model),
 				shortLabel: modelShortLabel(s.Model),
 			}
 			byModel[s.Model] = row
@@ -993,8 +1030,8 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 	return out
 }
 
-// modelDisplayLabel maps a model name to its capitalized HUD label.
-func modelDisplayLabel(model string) string {
+// ModelDisplayLabel maps a model name to its capitalized HUD label.
+func ModelDisplayLabel(model string) string {
 	switch strings.ToLower(model) {
 	case "claude":
 		return "Claude"
@@ -1039,8 +1076,8 @@ func truncateWithEllipsis(s string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""
 	}
-	plain := stripTmuxEscapes(s)
-	if visualLen(plain) <= maxWidth {
+	plain := intrender.StripTmuxEscapes(s)
+	if intrender.VisualLen(plain) <= maxWidth {
 		return plain
 	}
 	rs := []rune(plain)
@@ -1048,39 +1085,6 @@ func truncateWithEllipsis(s string, maxWidth int) string {
 		return string(rs[:1])
 	}
 	return string(rs[:maxWidth-1]) + "…"
-}
-
-// visualLen returns the rune count of s after stripping tmux `#[...]`
-// escape sequences. The HUD format strings only contain single-cell runes
-// (ASCII + `█` + `░` + `·`), so rune count matches display width 1:1.
-func visualLen(s string) int {
-	return len([]rune(stripTmuxEscapes(s)))
-}
-
-// stripTmuxEscapes removes `#[...]` escape sequences from s. A literal `#`
-// followed by a non-`[` is preserved untouched so user content with `#` is
-// not mangled.
-func stripTmuxEscapes(s string) string {
-	if !strings.Contains(s, "#[") {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); {
-		if s[i] == '#' && i+1 < len(s) && s[i+1] == '[' {
-			end := strings.IndexByte(s[i+2:], ']')
-			if end < 0 {
-				// Unterminated escape — emit verbatim and stop scanning.
-				b.WriteString(s[i:])
-				break
-			}
-			i += 2 + end + 1
-			continue
-		}
-		b.WriteByte(s[i])
-		i++
-	}
-	return b.String()
 }
 
 func runeLen(s string) int {
@@ -1120,14 +1124,14 @@ func writeBackoffNote(w io.Writer, state usage.State, now time.Time) {
 		if remaining <= 0 {
 			remaining = bs.Until.Sub(now).Round(time.Second)
 		}
-		fmt.Fprintf(w, "%s is in backoff, try again in %s (use --force to bypass)\n", name, formatBackoffDuration(remaining))
+		fmt.Fprintf(w, "%s is in backoff, try again in %s (use --force to bypass)\n", name, FormatBackoffDuration(remaining))
 	}
 }
 
-// formatBackoffDuration renders a duration in compact form (e.g. "12m",
+// FormatBackoffDuration renders a duration in compact form (e.g. "12m",
 // "1h3m", "45s"). Designed to round-trip through both the table note
 // and the HUD without ever emitting the noisy default Go form.
-func formatBackoffDuration(d time.Duration) string {
+func FormatBackoffDuration(d time.Duration) string {
 	if d < 0 {
 		d = 0
 	}

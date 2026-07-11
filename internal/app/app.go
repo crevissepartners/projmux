@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -88,7 +89,7 @@ type App struct {
 	tmux         *tmuxCommand
 	update       *updateCommand
 	upgrade      *upgradeCommand
-	usage        *usageCommand
+	usage        *usagecmd.Command
 	welcome      *welcomeCommand
 	window       *windowCommand
 }
@@ -129,7 +130,7 @@ func New() *App {
 		tmux:         newTmuxCommand(),
 		update:       update,
 		upgrade:      newUpgradeCommand(),
-		usage:        newUsageCommand(),
+		usage:        usagecmd.New(nil),
 		welcome:      newWelcomeCommand(update),
 		window:       newWindowCommand(),
 	}
