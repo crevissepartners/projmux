@@ -103,6 +103,140 @@ keys = ["M-1", "M-a"]
 	}
 }
 
+func TestKeymapMigratesConflictingLegacyAIPickerDefaultsAndPreservesAliases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		body       string
+		actionID   string
+		wantChords []string
+	}{
+		{
+			name: "split picker",
+			body: `[bindings.AISplitPickerToggle]
+keys = ["M-a", "M-4", "M-7"]
+`,
+			actionID:   "AISplitPickerToggle",
+			wantChords: []string{"M-a", "M-7"},
+		},
+		{
+			name: "resume picker",
+			body: `[bindings.AIResumePickerToggle]
+keys = ["M-b", "M-7", "M-4"]
+`,
+			actionID:   "AIResumePickerToggle",
+			wantChords: []string{"M-b", "M-4"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := parseKeymapFile("/tmp/keymap.toml", tc.body)
+			if err != nil {
+				t.Fatalf("parseKeymapFile() error = %v", err)
+			}
+			merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+			if err != nil {
+				t.Fatalf("mergeKeymapOverrides() error = %v", err)
+			}
+			action, ok := keyBindingActionByID(merged, tc.actionID)
+			if !ok {
+				t.Fatalf("catalog missing %s", tc.actionID)
+			}
+			if got := keyBindingEffectivePlainChords(action); !equalStrings(got, tc.wantChords) {
+				t.Fatalf("%s keys = %#v, want %#v", tc.actionID, got, tc.wantChords)
+			}
+		})
+	}
+}
+
+func TestKeymapMigratesConflictingLegacyAIPickerPlainOverrides(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		body     string
+		actionID string
+		want     string
+	}{
+		{
+			name:     "split picker",
+			body:     "[bindings.AISplitPickerToggle]\nplain = \"M-4\"\n",
+			actionID: "AISplitPickerToggle",
+			want:     "M-7",
+		},
+		{
+			name:     "resume picker",
+			body:     "[bindings.AIResumePickerToggle]\nplain = \"M-7\"\n",
+			actionID: "AIResumePickerToggle",
+			want:     "M-4",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := parseKeymapFile("/tmp/keymap.toml", tc.body)
+			if err != nil {
+				t.Fatalf("parseKeymapFile() error = %v", err)
+			}
+			merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+			if err != nil {
+				t.Fatalf("mergeKeymapOverrides() error = %v", err)
+			}
+			action, ok := keyBindingActionByID(merged, tc.actionID)
+			if !ok {
+				t.Fatalf("catalog missing %s", tc.actionID)
+			}
+			if got := firstNonEmptyString(keyBindingEffectivePlainChords(action)); got != tc.want {
+				t.Fatalf("%s key = %q, want %q", tc.actionID, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestKeymapPreservesLegacyAIPickerChordWithoutDefaultConflict(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := parseKeymapFile("/tmp/keymap.toml", `[bindings.AISplitPickerToggle]
+keys = ["M-4", "M-a"]
+[bindings.AIResumePickerToggle]
+keys = ["M-r"]
+`)
+	if err != nil {
+		t.Fatalf("parseKeymapFile() error = %v", err)
+	}
+	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	if err != nil {
+		t.Fatalf("mergeKeymapOverrides() error = %v", err)
+	}
+	action, ok := keyBindingActionByID(merged, "AISplitPickerToggle")
+	if !ok {
+		t.Fatal("catalog missing AISplitPickerToggle")
+	}
+	if got, want := keyBindingEffectivePlainChords(action), []string{"M-4", "M-a"}; !equalStrings(got, want) {
+		t.Fatalf("AISplitPickerToggle keys = %#v, want explicit non-conflicting keys %#v", got, want)
+	}
+}
+
+func TestKeymapDoesNotMigrateConflictBetweenExplicitAIPickerOverrides(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := parseKeymapFile("/tmp/keymap.toml", `[bindings.AISplitPickerToggle]
+keys = ["M-4"]
+[bindings.AIResumePickerToggle]
+keys = ["M-4"]
+`)
+	if err != nil {
+		t.Fatalf("parseKeymapFile() error = %v", err)
+	}
+	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed); err == nil {
+		t.Fatal("mergeKeymapOverrides() = nil, want conflict between explicit overrides")
+	}
+}
+
 func TestPopupToggleModeActionMappingCoversCatalog(t *testing.T) {
 	t.Parallel()
 

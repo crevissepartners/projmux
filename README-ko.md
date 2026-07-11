@@ -65,10 +65,9 @@ projmux shell
 - `Alt-3`: Recent Windows.
 - `Alt-4`: AI resume session picker.
 - `Alt-5`: settings.
-- `Alt-6`: project switcher popup.
 - `Alt-7`: AI split picker.
 
-`Alt-1`부터 `Alt-5`까지는 zero-config 보장 기본값이고, `Alt-6`과 `Alt-7`은
+`Alt-1`부터 `Alt-5`까지는 zero-config 보장 기본값이고, `Alt-7`은 추가로
 편집 가능한 built-in 기본값입니다. 전체 key map은
 [Terminal Keybindings](docs/keybindings.md)를 참고하세요. 키가 동작하지 않으면
 tmux 밖에서 `projmux setup`을 실행한 뒤, 지원 터미널에서는
