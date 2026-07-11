@@ -63,7 +63,3 @@ func localizePickerOptions(homeDir func() (string, error), lookupEnv func(string
 func pickerOptionsFromCompatPicker(options intpickercompat.Options) intpicker.Options {
 	return intpickercompat.PickerOptions(options)
 }
-
-func pickerCommandFromCompatBinding(action string) string {
-	return intpickercompat.PickerCommandFromBinding(action)
-}

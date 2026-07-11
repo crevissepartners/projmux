@@ -830,10 +830,6 @@ func notifySidebarGroupCanUnfold(entries []notify.Notification, groupKey string)
 	return false
 }
 
-func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpickercompat.Entry {
-	return notifySidebarEntriesWithLive(entries, now, nil)
-}
-
 func notifySidebarEntriesWithLiveLocale(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, locale i18n.Locale) []intpickercompat.Entry {
 	// Legacy collapsed-entry helper: the modern sidebar path builds the read
 	// model directly (with the pane inventory). These helpers keep nil paneSet
@@ -1211,59 +1207,6 @@ func firstNonEmptyNotifySidebarString(values ...string) string {
 	return ""
 }
 
-func notifySidebarLabel(e notify.Notification, now time.Time) string {
-	return notifySidebarLabelFor(e, now, notifyDisplayLive)
-}
-
-func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyRowDisplayState) string {
-	return notifySidebarLabelForLocale(e, now, display, i18n.FallbackLocale)
-}
-
-func notifySidebarLabelForLocale(e notify.Notification, now time.Time, display notifyRowDisplayState, locale i18n.Locale) string {
-	age := formatAgeLocale(now.Sub(e.CreatedAt), locale)
-	agent, text := splitAgentPrefix(e)
-	if e.Source == notify.SourceAI {
-		text = renderAINotifyText(e.Text, e.Metadata, locale).Full
-		if text == "" {
-			text = e.Text
-		}
-		agent = ""
-	}
-	text = notifySidebarLabelCell(text)
-	if text == "" {
-		text = "(empty notification)"
-	}
-	if display != notifyDisplayLive {
-		text = notifySidebarDimText(text)
-	}
-	if e.Source == notify.SourceAI {
-		if notifySidebarLabelCell(e.Metadata[notify.MetaTopic]) == notifySidebarLabelCell(e.Text) {
-			text = "Ready"
-			if display != notifyDisplayLive {
-				text = notifySidebarDimText(text)
-			}
-		}
-		return notifySidebarAILabel(e, age, agent, text, display, locale)
-	}
-	metaParts := []string{
-		notifySidebarAge(age),
-		notifySidebarProjectBadge(notifyProjectName(e.Session)),
-	}
-	if agent != "" {
-		metaParts = append(metaParts, notifySidebarAgentBadge(agent))
-	}
-	metaParts = append(metaParts, notifySidebarStateBadgeForDisplay(notifyStateLabelForLocale(e, text, display, locale), display))
-	if notifySidebarShowTargetParts(e) {
-		if window := notifySidebarTargetPart("window", e.Window, locale); window != "" {
-			metaParts = append(metaParts, window)
-		}
-		if pane := notifySidebarTargetPart("pane", e.Pane, locale); pane != "" {
-			metaParts = append(metaParts, pane)
-		}
-	}
-	return text + "\n  " + strings.Join(metaParts, " ")
-}
-
 func notifySidebarChildLabelForLocale(e notify.Notification, now time.Time, display notifyRowDisplayState, locale i18n.Locale) string {
 	age := formatAgeLocale(now.Sub(e.CreatedAt), locale)
 	preview := notifySidebarGroupPreview(e, locale)
@@ -1295,28 +1238,6 @@ func notifySidebarChildTarget(e notify.Notification, locale i18n.Locale) string 
 	return strings.Join(parts, " ")
 }
 
-func notifySidebarAILabel(e notify.Notification, age, agent, text string, display notifyRowDisplayState, locale i18n.Locale) string {
-	firstLineParts := []string{notifySidebarProjectBadge(notifyProjectName(e.Session))}
-	if text != "" {
-		firstLineParts = append(firstLineParts, text)
-	}
-	firstLine := strings.Join(firstLineParts, " ")
-
-	metaParts := []string{notifySidebarAge(age)}
-	if topic := notifySidebarTopicBadge(e); topic != "" {
-		metaParts = append(metaParts, topic)
-	}
-	metaParts = append(metaParts, notifySidebarStateBadgeForDisplay(notifyStateLabelForLocale(e, text, display, locale), display))
-	if agent != "" {
-		metaParts = append(metaParts, notifySidebarAgentBadge(agent))
-	}
-	return firstLine + "\n  " + strings.Join(metaParts, " ")
-}
-
-func notifySidebarShowTargetParts(e notify.Notification) bool {
-	return e.Source != notify.SourceAI
-}
-
 // notifySidebarDimText wraps the row's body text in the dim foreground so
 // inactive/gone rows visibly recede from active ones.
 func notifySidebarDimText(text string) string {
@@ -1333,18 +1254,6 @@ func notifySidebarLabelCell(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.ReplaceAll(value, "\n", " ")
 	return strings.TrimSpace(value)
-}
-
-func notifySidebarTarget(e notify.Notification) string {
-	pane := strings.TrimSpace(e.Pane)
-	if strings.HasPrefix(pane, "%") {
-		pane = ""
-	}
-	return notifySidebarLabelCell(notify.FormatTarget(notify.Target{
-		Session: e.Session,
-		Window:  e.Window,
-		Pane:    pane,
-	}))
 }
 
 const notifySidebarReset = theme.ANSIReset
@@ -1384,17 +1293,6 @@ func notifySidebarProjectBadge(project string) string {
 		project = "project"
 	}
 	return notifySidebarProject + " " + project + " " + notifySidebarReset
-}
-
-func notifySidebarTopicBadge(e notify.Notification) string {
-	if e.Source != notify.SourceAI {
-		return ""
-	}
-	topic := notifySidebarLabelCell(e.Metadata[notify.MetaTopic])
-	if topic == "" {
-		return ""
-	}
-	return notifySidebarTopicOpen + " " + topic + " " + notifySidebarReset
 }
 
 func notifySidebarTargetPart(label, value string, locale i18n.Locale) string {
@@ -1815,21 +1713,6 @@ func notifyLiveExplanationKey(state string) (i18n.Key, string) {
 	}
 }
 
-// notifyLiveByIDBestEffort returns the map of live AI reply-state panes keyed
-// by notify id, swallowing any tmux error. The sidebar/statusbar use this so
-// a missing tmux server only suppresses the stale/gone classification —
-// listing entries themselves continues to work.
-func (c *notifyCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
-	if c == nil || c.livePanes == nil {
-		return nil
-	}
-	panes, err := c.listNotifyLivePanes()
-	if err != nil {
-		return nil
-	}
-	return notifyLiveShouldQueueByID(panes)
-}
-
 // notifyLiveStateBestEffort reads the live pane rows once and returns both
 // the reply+agent index (for stale detection) and the full pane inventory
 // (for gone detection), swallowing any tmux error into nil/nil. Sidebar
@@ -2035,11 +1918,6 @@ func notifyTableCell(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.ReplaceAll(value, "\n", " ")
 	return value
-}
-
-// formatAge renders a duration as a compact English relative age string.
-func formatAge(d time.Duration) string {
-	return formatAgeLocale(d, i18n.FallbackLocale)
 }
 
 func formatAgeLocale(d time.Duration, locale i18n.Locale) string {

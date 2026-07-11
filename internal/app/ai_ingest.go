@@ -350,20 +350,6 @@ func composeBellNotifyText(info bellPaneInfo) string {
 	return "bell · " + context
 }
 
-func (c *aiCommand) aiHookFallbackReason(provider, event string) string {
-	action, ok, err := c.aiHookCatalogAction(provider, event)
-	if err != nil {
-		return "catalog unavailable; quiet fallback"
-	}
-	if !ok {
-		return "unknown event"
-	}
-	if action == aiHookActionQuiet {
-		return "catalog quiet event"
-	}
-	return "catalog " + action + " event has no specialized handler"
-}
-
 func (c *aiCommand) aiIngestLogPath() (string, error) {
 	homeDir, err := c.homeDir()
 	if err != nil {

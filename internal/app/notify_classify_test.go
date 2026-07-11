@@ -2,8 +2,6 @@ package app
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -279,42 +277,6 @@ func TestNotifySidebarAgeUsesBluePalette(t *testing.T) {
 	age := notifySidebarAge("11s ago")
 	if !strings.HasPrefix(age, "\x1b[38;5;153m") || !strings.Contains(age, " 11s ago ") {
 		t.Fatalf("age = %q, want blue age palette", age)
-	}
-}
-
-// TestNotifySidebarLabelDimsInactiveAndGoneText pins that inactive/gone rows
-// render their body text inside the dim escape so they visually recede.
-func TestNotifySidebarLabelDimsInactiveAndGoneText(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	entry := notify.Notification{
-		ID:        "ai:gone:%2",
-		Text:      "Ready",
-		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
-		Severity:  notify.SeverityInfo,
-		Source:    notify.SourceAI,
-		Session:   "main",
-		Window:    "1",
-		Pane:      "%2",
-		CreatedAt: now.Add(-time.Minute),
-	}
-
-	live := notifySidebarLabelFor(entry, now, notifyDisplayLive)
-	inactive := notifySidebarLabelFor(entry, now, notifyDisplayStale)
-	gone := notifySidebarLabelFor(entry, now, notifyDisplayGone)
-
-	if !strings.Contains(live, " NEED ") {
-		t.Fatalf("live label = %q, want NEED badge", live)
-	}
-	if strings.Contains(live, notifySidebarDimOpen+"Ready") {
-		t.Fatalf("live label = %q, must not dim its text", live)
-	}
-	if !strings.Contains(inactive, " INACTIVE ") || !strings.Contains(inactive, notifySidebarDimOpen) {
-		t.Fatalf("inactive label = %q, want INACTIVE badge + dim body", inactive)
-	}
-	if !strings.Contains(gone, " GONE ") || !strings.Contains(gone, notifySidebarDimOpen) {
-		t.Fatalf("gone label = %q, want GONE badge + dim body", gone)
 	}
 }
 
@@ -660,19 +622,4 @@ func findEntryByIDOrFail(t *testing.T, entries []notify.Notification, id string)
 	}
 	t.Fatalf("entry %q not in fixture", id)
 	return notify.Notification{}
-}
-
-// TestStatusCommandNotifyLiveByIDBestEffortSwallowsRunnerError pins that a
-// tmux failure during the status segment refresh degrades to nil (no live
-// data) instead of bubbling up. Status segments must never fail loudly.
-func TestStatusCommandNotifyLiveByIDBestEffortSwallowsRunnerError(t *testing.T) {
-	t.Parallel()
-
-	cmd := testStatusCommand("/tmp")
-	cmd.readCommand = func(context.Context, string, ...string) ([]byte, error) {
-		return nil, errors.New("tmux not running")
-	}
-	if got := cmd.notifyLiveByIDBestEffort(); got != nil {
-		t.Fatalf("notifyLiveByIDBestEffort = %v, want nil on runner error", got)
-	}
 }

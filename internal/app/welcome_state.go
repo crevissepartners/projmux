@@ -48,31 +48,6 @@ func (c *shellCommand) prepareWelcomeState() (string, bool) {
 	return current, true
 }
 
-func (c *shellCommand) skipWelcomeVersion(current string) error {
-	current = strings.TrimSpace(current)
-	if current == "" {
-		current = "unknown"
-	}
-	path, err := c.welcomeStatePath(current)
-	if err != nil {
-		return err
-	}
-	state := shellWelcomeState{}
-	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &state)
-	}
-	now := c.welcomeClock().UTC()
-	state.Version = welcomeStateVersion
-	state.LastWelcomedVersion = current
-	if state.WelcomedAt.IsZero() {
-		state.WelcomedAt = now
-	}
-	state.PendingAttachWelcome = false
-	state.SkipVersion = current
-	state.SkippedAt = &now
-	return c.writeWelcomeState(path, state)
-}
-
 func (c *shellCommand) writeWelcomeState(path string, state shellWelcomeState) error {
 	if c.writeFile == nil {
 		return nil

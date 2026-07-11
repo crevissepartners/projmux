@@ -461,22 +461,6 @@ func (c *statusCommand) runNotify(args []string, stdout, stderr io.Writer) error
 	return err
 }
 
-// notifyLiveByIDBestEffort returns the live AI reply-state pane index keyed
-// by notify id, swallowing tmux errors so the status segment never fails
-// loudly. Returns nil when the runner is unavailable or tmux refuses to
-// list panes — in that case the segment renders without stale/gone hints.
-func (c *statusCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
-	if c == nil || c.readCommand == nil {
-		return nil
-	}
-	runner := statusCommandRunnerAdapter{read: c.readCommand}
-	panes, err := (&notifyCommand{livePanes: newAttentionLivePaneLister(runner)}).listNotifyLivePanes()
-	if err != nil {
-		return nil
-	}
-	return notifyLiveShouldQueueByID(panes)
-}
-
 // notifyLiveStateBestEffort reads the live reply+agent index and the full pane
 // inventory from a single tmux subprocess, swallowing errors into nil/nil. A
 // nil set means "inventory unavailable" so the head entry is never falsely
@@ -753,10 +737,6 @@ func renderNotifyTopicBadge(n notify.Notification) string {
 	return renderNotifyBlockBadge(topic, notifyAgentOpen)
 }
 
-func notifyAIStatusBodyText(n notify.Notification, text string) string {
-	return notifyAIStatusBodyTextLocale(n, text, i18n.FallbackLocale)
-}
-
 func notifyAIStatusBodyTextLocale(n notify.Notification, text string, locale i18n.Locale) string {
 	if rendered := renderAINotifyText(n.Text, n.Metadata, locale); rendered.Full != "" {
 		return rendered.Full
@@ -836,10 +816,6 @@ func notifyBadgeOpen(severity string) string {
 	default:
 		return notifyBadgeInfoOpen
 	}
-}
-
-func notifyStateLabel(n notify.Notification, text string) string {
-	return notifyStateLabelFor(n, text, notifyDisplayLive)
 }
 
 // notifyStateLabelFor renders the long-form state badge label. When the
@@ -923,23 +899,6 @@ func truncateNotifyWithEllipsis(s string, maxWidth int) string {
 		return i18n.TruncateTerminalCells(plain, 1)
 	}
 	return i18n.TruncateTerminalCells(plain, maxWidth-1) + notifyEllipsis
-}
-
-// renderNotifyIcon returns the severity-tinted bullet that opens the
-// segment. Unknown severities fall through to the info color so we never
-// emit a stripped escape.
-func renderNotifyIcon(severity string) string {
-	return notifySeverityOpen(severity) + notifyIcon + notifyLineOpen
-}
-
-func notifySeverityOpen(severity string) string {
-	switch severity {
-	case notify.SeverityWarn:
-		return notifySeverityWarn
-	case notify.SeverityCritical:
-		return notifySeverityCrit
-	}
-	return notifySeverityInfo
 }
 
 // splitAgentPrefix extracts the leading `<agent>:` from the queue entry's
