@@ -145,6 +145,18 @@ func welcomeWidthFromEnv(lookupEnv func(string) string) int {
 }
 
 func resolveWelcomeUpdateStatus(update *updateCommand) (updateStatus, bool) {
+	// Concrete-typed wrapper: keep the nil *updateCommand check here so the
+	// shell/welcome callers never wrap a typed nil pointer in the interface.
+	if update == nil {
+		return updateStatus{}, false
+	}
+	return resolveWelcomeUpdateStatusFrom(update)
+}
+
+// resolveWelcomeUpdateStatusFrom is the interface-typed variant used by the
+// Settings About > Welcome viewer, which holds its update dependency behind
+// the updateRunner seam.
+func resolveWelcomeUpdateStatusFrom(update updateRunner) (updateStatus, bool) {
 	if update == nil {
 		return updateStatus{}, false
 	}

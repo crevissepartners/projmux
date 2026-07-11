@@ -16,10 +16,11 @@ import (
 )
 
 type settingsCommand struct {
-	ai                  *aiCommand
-	switcher            *switchCommand
-	update              *updateCommand
-	quit                *quitCommand
+	ai                  settingsAI
+	switcher            settingsSwitcher
+	update              updateRunner
+	quit                quitRunner
+	newAI               func() aiHookSettingsReader
 	runner              intpickercompat.Runner
 	nativePicker        intpicker.Runner
 	homeDir             func() (string, error)
@@ -35,11 +36,7 @@ type settingsCommand struct {
 var errSettingsClosed = errors.New("settings closed")
 
 func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand, quit *quitCommand) *settingsCommand {
-	return &settingsCommand{
-		ai:           ai,
-		switcher:     switcher,
-		update:       update,
-		quit:         quit,
+	c := &settingsCommand{
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		homeDir:      os.UserHomeDir,
 		lookupEnv:    os.Getenv,
@@ -52,6 +49,25 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 		},
 		tmuxRunner: inttmux.ExecRunner{},
 	}
+	// The concrete commands satisfy the settings role interfaces structurally.
+	// Guard the nil pointers so the `c.<dep> == nil` checks keep their
+	// pre-interface semantics (a nil *T stored in an interface is non-nil).
+	if ai != nil {
+		c.ai = ai
+	}
+	if switcher != nil {
+		c.switcher = switcher
+	}
+	if update != nil {
+		c.update = update
+	}
+	if quit != nil {
+		c.quit = quit
+	}
+	c.newAI = func() aiHookSettingsReader {
+		return newSettingsAIFallback(c.homeDir, c.lookupEnv)
+	}
+	return c
 }
 
 // statFile checks paths via the injected osStat seam, falling back to os.Stat
@@ -349,7 +365,7 @@ func (c *settingsCommand) runWelcomeSettingsViewer() error {
 }
 
 func (c *settingsCommand) welcomeSettingsViewerOptions() intpickercompat.Options {
-	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
+	status, hasStatus := resolveWelcomeUpdateStatusFrom(c.update)
 	var body strings.Builder
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	_ = writeShellWelcome(&body, welcomeCurrentVersion(), status, hasStatus, false, false, false, welcomeWidthFromEnv(c.lookupEnv), locale)
