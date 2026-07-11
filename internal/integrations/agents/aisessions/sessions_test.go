@@ -339,7 +339,7 @@ func TestCountUserTurnsCountsBeyondCandidateScanLimit(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-0000000000aa","cwd":"/workspace/app","git_branch":"feat/long"}}` + "\n")
 	const userTurns = 505
-	for i := 0; i < userTurns; i++ {
+	for range userTurns {
 		b.WriteString(`{"type":"event_msg","payload":{"type":"user_message","message":"prompt"}}` + "\n")
 		b.WriteString(`{"type":"event_msg","payload":{"type":"agent_message","message":"reply"}}` + "\n")
 	}
@@ -369,7 +369,7 @@ func TestEnrichTurnsCountsBeyondCandidateScanLimit(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-0000000000ab","cwd":"/workspace/app","git_branch":"feat/long"}}` + "\n")
 	const userTurns = 250
-	for i := 0; i < userTurns; i++ {
+	for range userTurns {
 		b.WriteString(`{"type":"event_msg","payload":{"type":"user_message","message":"prompt"}}` + "\n")
 		b.WriteString(`{"type":"event_msg","payload":{"type":"agent_message","message":"reply"}}` + "\n")
 	}
