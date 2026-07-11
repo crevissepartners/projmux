@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/crevissepartners/projmux/internal/core/aiprovider"
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 )
 
 const AIEnabledAgentsFileName = "ai-enabled-agents"

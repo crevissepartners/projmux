@@ -21,6 +21,7 @@ import (
 	claudeadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/claude"
 	codexadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/codex"
 	"github.com/crevissepartners/projmux/internal/theme"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 // usageCommand exposes the `projmux usage` and `projmux status usage`
@@ -856,8 +857,8 @@ func renderHUDPair(window string, pct float64) string {
 	// an explicit EffectiveTheme, so the fallback role map is used here; full
 	// runtime theme plumbing for the usage HUD is a later phase.
 	roles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
-	color := usage.BarColorForPct(pct, roles)
-	bar := usage.RenderColoredBar(pct, color, usage.BarEmptyColorForRoles(roles))
+	color := intrender.BarColorForPct(pct, roles)
+	bar := intrender.RenderColoredBar(pct, color, intrender.BarEmptyColorForRoles(roles))
 	// `#[default]` after the bar restores label fg before the weekly text. The
 	// percent number then re-applies the same color as the bar fill so the
 	// numeric matches visually (a red bar's 90% reads red too).

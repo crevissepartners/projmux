@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 )
 
 func TestStoreListDiscoversValidPresetsAndWarnsMalformed(t *testing.T) {
