@@ -329,14 +329,14 @@ func globalLegacyScriptMap(homeDir func() (string, error), lookupEnv func(string
 // dedicated cleanup nudge. Regular files only qualify when they have two or
 // more non-trivial lines — single-line scripts are migrated automatically.
 func inspectLegacyScript(path string) (settingsLegacyScript, bool) {
-	linfo, err := osLstat(path)
+	linfo, err := os.Lstat(path)
 	if err != nil {
 		return settingsLegacyScript{}, false
 	}
 	if linfo.Mode()&os.ModeSymlink != 0 {
 		return settingsLegacyScript{Path: path, Symlink: true}, true
 	}
-	info, err := osStat(path)
+	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		return settingsLegacyScript{}, false
 	}

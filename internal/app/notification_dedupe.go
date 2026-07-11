@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -37,7 +38,7 @@ func resolveAINotifyDedupeSeconds(homeDir func() (string, error), lookupEnv func
 	if err == nil {
 		seconds, err := config.LoadAINotifyDedupeSecondsFileDefault(paths.AINotifyDedupeSecondsFile(), defaultAINotifyDedupeSeconds)
 		if err == nil {
-			if _, statErr := osStat(paths.AINotifyDedupeSecondsFile()); statErr == nil {
+			if _, statErr := os.Stat(paths.AINotifyDedupeSecondsFile()); statErr == nil {
 				return aiNotifyDedupeResolution{Seconds: seconds, Source: aiNotifyDedupeSourceSetting}
 			}
 			return aiNotifyDedupeResolution{Seconds: seconds, Source: aiNotifyDedupeSourceDefault}

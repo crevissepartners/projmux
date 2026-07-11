@@ -975,7 +975,7 @@ func (c *settingsCommand) currentSessionStateAutosaveInterval() sessionStateEffe
 	if err != nil {
 		return sessionStateEffectiveInterval{Duration: defaultSessionStateAutosaveInterval, Source: "default"}
 	}
-	if _, err := osStat(paths.SessionStateAutosaveIntervalFile()); err == nil {
+	if _, err := c.statFile(paths.SessionStateAutosaveIntervalFile()); err == nil {
 		return sessionStateEffectiveInterval{Duration: duration, Source: "saved"}
 	}
 	return sessionStateEffectiveInterval{Duration: duration, Source: "default"}
@@ -1003,7 +1003,7 @@ func sessionStateToggleStateDefault(homeDir func() (string, error), lookupEnv fu
 	if err != nil {
 		return sessionStateEffectiveToggle{Mode: fallback, Source: "default"}
 	}
-	if _, err := osStat(file(paths)); err == nil {
+	if _, err := os.Stat(file(paths)); err == nil {
 		return sessionStateEffectiveToggle{Mode: mode, Source: "saved"}
 	}
 	return sessionStateEffectiveToggle{Mode: mode, Source: "default"}
@@ -1018,7 +1018,7 @@ func sessionStateToggleFileStateDefault(homeDir func() (string, error), lookupEn
 	if err != nil {
 		return sessionStateEffectiveToggle{Mode: fallback, Source: "default"}
 	}
-	if _, err := osStat(file(paths)); err == nil {
+	if _, err := os.Stat(file(paths)); err == nil {
 		return sessionStateEffectiveToggle{Mode: mode, Source: "saved"}
 	}
 	return sessionStateEffectiveToggle{Mode: mode, Source: "default"}
@@ -1055,7 +1055,7 @@ func (c *settingsCommand) currentProjectSessionStateAutosaveMode(sessionName str
 	if err != nil {
 		return config.SessionStateProjectInherit, "default"
 	}
-	if _, err := osStat(path); err == nil {
+	if _, err := c.statFile(path); err == nil {
 		return mode, "saved"
 	}
 	return mode, "default"

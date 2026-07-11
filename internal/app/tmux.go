@@ -226,7 +226,7 @@ func (c *tmuxCommand) projectSessionStateAutosaveModeForSession(ctx context.Cont
 		return config.SessionStateProjectInherit, false, err
 	}
 	path := paths.ProjectSessionStateAutosaveFile(sessionName)
-	if _, err := osStat(path); err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return config.SessionStateProjectInherit, false, nil
 	}
 	mode, err := config.LoadSessionStateProjectToggleFile(path)

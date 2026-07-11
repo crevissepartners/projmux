@@ -728,7 +728,7 @@ func hookMarkerExists(path string) bool {
 	if strings.TrimSpace(path) == "" {
 		return false
 	}
-	_, err := osStat(path)
+	_, err := os.Stat(path)
 	return err == nil
 }
 
