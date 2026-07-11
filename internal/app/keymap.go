@@ -558,10 +558,74 @@ func mergeKeymapOverrides(actions []keyBindingAction, keymap keymapFile) ([]keyB
 			actions[idx].PrefixChord = *override.Prefix
 		}
 	}
+	migrateLegacyAIPickerDefaultOverrides(actions, keymap)
 	if err := validateKeymapConflicts(actions); err != nil {
 		return nil, err
 	}
 	return actions, nil
+}
+
+func migrateLegacyAIPickerDefaultOverrides(actions []keyBindingAction, keymap keymapFile) {
+	type migration struct {
+		actionID       string
+		defaultOwnerID string
+		oldChord       string
+		newChord       string
+	}
+	for _, migration := range []migration{
+		{actionID: "AISplitPickerToggle", defaultOwnerID: "AIResumePickerToggle", oldChord: "M-4", newChord: "M-7"},
+		{actionID: "AIResumePickerToggle", defaultOwnerID: "AISplitPickerToggle", oldChord: "M-7", newChord: "M-4"},
+	} {
+		override, ok := keymap.Bindings[migration.actionID]
+		if !ok || !keymapOverrideBindsChord(override, migration.oldChord) {
+			continue
+		}
+
+		idx := keyBindingActionIndex(actions, migration.actionID)
+		defaultOwnerIdx := keyBindingActionIndex(actions, migration.defaultOwnerID)
+		if idx < 0 || defaultOwnerIdx < 0 || keymapActionHasPlainOverride(keymap, migration.defaultOwnerID) ||
+			!slices.Contains(keyBindingEffectivePlainChords(actions[defaultOwnerIdx]), migration.oldChord) {
+			continue
+		}
+		actions[idx].PlainChords = replaceKeymapChord(
+			keyBindingEffectivePlainChords(actions[idx]),
+			migration.oldChord,
+			migration.newChord,
+		)
+		actions[idx].PlainChord = firstNonEmptyString(actions[idx].PlainChords)
+	}
+}
+
+func keymapOverrideBindsChord(override keymapOverride, chord string) bool {
+	if override.KeysSet {
+		return slices.Contains(override.Keys, chord)
+	}
+	return override.Plain != nil && *override.Plain == chord
+}
+
+func keymapActionHasPlainOverride(keymap keymapFile, actionID string) bool {
+	override, ok := keymap.Bindings[actionID]
+	return ok && (override.KeysSet || override.Plain != nil)
+}
+
+func keyBindingActionIndex(actions []keyBindingAction, actionID string) int {
+	for i, action := range actions {
+		if action.ID == actionID {
+			return i
+		}
+	}
+	return -1
+}
+
+func replaceKeymapChord(chords []string, oldChord, newChord string) []string {
+	replaced := make([]string, len(chords))
+	for i, chord := range chords {
+		if chord == oldChord {
+			chord = newChord
+		}
+		replaced[i] = chord
+	}
+	return uniqueNonEmptyStrings(replaced)
 }
 
 func transportPlainAliasChords(action keyBindingAction, keys []string) ([]string, error) {

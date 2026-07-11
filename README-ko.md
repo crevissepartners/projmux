@@ -16,7 +16,7 @@ workspace 도구입니다.
 <p align="center">
   <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI attention demo" width="820">
   <br>
-  <em>project를 오가며 AI permission 대기를 상태줄에서 확인하고, notification list에서 해당 pane으로 돌아갑니다.</em>
+  <em>기존 AI session을 이어서 열고 다른 project에서 작업하다가, permission이 필요하면 notification list에서 managed pane으로 돌아갑니다.</em>
 </p>
 
 ## 무엇인가
@@ -63,14 +63,15 @@ projmux shell
 - `Alt-1`: project sidebar.
 - `Alt-2`: notification list.
 - `Alt-3`: Recent Windows.
-- `Alt-4`: AI split picker.
+- `Alt-4`: AI resume session picker.
 - `Alt-5`: settings.
-- `Alt-6`: project switcher popup.
-- `Alt-7`: AI resume session picker.
+- `Alt-7`: AI split picker.
 
-전체 key map은 [Terminal Keybindings](docs/keybindings.md)를 참고하세요. 키가
-동작하지 않으면 tmux 밖에서 `projmux setup`을 실행한 뒤,
-지원 터미널에서는 `projmux init [terminal] --apply`를 사용하세요.
+`Alt-1`부터 `Alt-5`까지는 zero-config 보장 기본값이고, `Alt-7`은 추가로
+편집 가능한 built-in 기본값입니다. 전체 key map은
+[Terminal Keybindings](docs/keybindings.md)를 참고하세요. 키가 동작하지 않으면
+tmux 밖에서 `projmux setup`을 실행한 뒤, 지원 터미널에서는
+`projmux init [terminal] --apply`를 사용하세요.
 
 ## 일상 사용
 
@@ -78,41 +79,46 @@ projmux shell
 - 중요한 project는 pin으로 고정합니다.
 - 전환 전에 window, pane, git branch, Kubernetes context, AI pane state를
   preview합니다.
+- 기존 Claude/Codex conversation을 resume하거나 새 managed AI split을 엽니다.
+- permission/completion event를 하나의 notification queue에서 확인하고 바로
+  attention이 필요한 pane으로 이동합니다.
 - env var를 직접 편집하지 않고 Settings > Project Picker에서 root와 workdir을
   추가할 수 있습니다.
 - Settings > About > Update 또는 `projmux update apply`로 업그레이드합니다.
+
+<p align="center">
+  <img src="docs/assets/projmux-shell-sidebar.gif" alt="projmux project 전환 및 managed Codex 데모" width="820">
+  <br>
+  <em>project를 전환하고 managed Codex pane을 연 뒤 completion notification을 확인합니다.</em>
+</p>
 
 `PROJMUX_PROJDIR`, managed roots, notification, usage tracking 같은 자세한
 설정은 [Configuration](docs/configuration.md)을 참고하세요. installer별 update
 동작은 [Upgrading](docs/upgrading.md)에 있습니다.
 
-## 에이전트 스킬
+## 멀티 에이전트 워크플로
 
-projmux shortcut은 AI 도구의 user-level skill 또는 slash command로도 등록할
-수 있습니다. 스킬은 같은 CLI contract를 감싸는 얇은 wrapper입니다:
-
-```sh
-projmux ai split --agent codex right
-projmux ai split --agent claude down
-projmux ai split --agent antigravity right
-```
-
-`/projmux:codex-right` 같은 Claude slash command를 등록한 뒤 prompt와 함께
-실행시키면, Claude가 projmux command를 호출하고 현재 project에 붙은 managed
-Codex pane이 새로 열립니다. prompt는 새 pane으로 바로 전달되고,
-permission/completion hook event가 tmux 상태줄과 notification list에
-표시됩니다.
-Antigravity도 같은 managed split 경로로 실행되며, 수동 hook ingest와 session
-resume 지원 범위는 CLI reference에 정리되어 있습니다.
-
-설치 template과 naming convention은
-[AI Agent Shortcuts](docs/ai-agent-shortcuts.md)에 정리되어 있습니다.
+하나의 tmux window에 shell과 여러 managed agent를 함께 띄워 둡니다. pane을
+이동하며 독립 작업을 시작하면 projmux가 permission/completion event를 하나의
+notification queue에 모읍니다.
 
 <p align="center">
-  <img src="docs/assets/projmux-skill-workflow.gif" alt="projmux skill workflow demo" width="820">
+  <img src="docs/assets/projmux-three-pane-workflow.gif" alt="projmux shell, Codex, Claude 3-pane workflow 데모" width="820">
   <br>
-  <em>Claude가 prompt와 함께 등록된 projmux skill을 호출해 managed Codex pane을 열고, Codex가 그 자리에서 응답합니다.</em>
+  <em>동일 폭의 shell, Codex, Claude pane을 이동하며 독립 작업의 완료 알림을 하나의 notification queue에서 확인합니다.</em>
 </p>
+
+## 에이전트 스킬 자동화
+
+AI 도구도 같은 projmux CLI를 호출해 managed pane을 열고 prompt를 전달할 수
+있습니다:
+
+```sh
+projmux ai split --agent codex right -- "Review the retry logic."
+```
+
+Claude, Codex와 다른 agent용 template 및 naming convention은
+[AI Agent Shortcuts](docs/ai-agent-shortcuts.md)에 정리되어 있습니다.
 
 ## 추가 문서
 

@@ -1118,9 +1118,9 @@ func nativeLaunchKeyForPopupMode(mode string) string {
 	case "recent-windows":
 		return "alt-3"
 	case "ai-split-picker-right", "ai-split-picker-down":
-		return "alt-4"
-	case "ai-split-resume-right", "ai-split-resume-down":
 		return "alt-7"
+	case "ai-split-resume-right", "ai-split-resume-down":
+		return "alt-4"
 	case "ai-split-settings":
 		return "alt-5"
 	case "sessionizer":

@@ -25,7 +25,7 @@ projmux shell
 <p align="center">
   <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI attention demo" width="820">
   <br>
-  <em>Switch between projects while an AI pane waits for permission, then jump back from the tmux notification list.</em>
+  <em>Resume an existing AI session, keep working in another project, then jump back when the managed pane needs permission.</em>
 </p>
 
 ## Why
@@ -72,15 +72,15 @@ Inside the app:
 - `Alt-1` opens the project sidebar.
 - `Alt-2` opens the notification list.
 - `Alt-3` opens Recent Windows.
-- `Alt-4` opens the AI split picker.
+- `Alt-4` opens the AI resume session picker.
 - `Alt-5` opens settings.
-- `Alt-7` opens the AI resume session picker.
+- `Alt-7` opens the AI split picker.
 
 The `Alt-1` through `Alt-5` launch keys are the guaranteed zero-config
-defaults. Add more
-aliases in Settings > Keybindings or `~/.config/projmux/keymap.toml`. If a key
-does not fire, run `projmux setup` outside tmux, then use
-`projmux init [terminal] --apply` for supported terminal delivery fallbacks.
+defaults. `Alt-7` is an additional editable built-in default. Add aliases in
+Settings > Keybindings or `~/.config/projmux/keymap.toml`. If a key does not
+fire, run `projmux setup` outside tmux, then use `projmux init [terminal]
+--apply` for supported terminal delivery fallbacks.
 
 ## Day-To-Day Use
 
@@ -88,42 +88,47 @@ does not fire, run `projmux setup` outside tmux, then use
 - Pin important projects so they stay easy to reach.
 - Preview windows, panes, git branch, Kubernetes context, and AI pane state
   before switching.
+- Resume an existing Claude or Codex conversation, or open a new managed AI
+  split.
+- Review permission and completion events in one notification queue, then jump
+  directly to the pane that needs attention.
 - Use Settings > Project Picker to add roots and workdirs without editing env
   vars.
 - Use Settings > About > Update or `projmux update apply` to upgrade.
+
+<p align="center">
+  <img src="docs/assets/projmux-shell-sidebar.gif" alt="projmux project switch and managed Codex demo" width="820">
+  <br>
+  <em>Switch projects, launch a managed Codex pane, and review its completion notification.</em>
+</p>
 
 For detailed configuration, including `PROJMUX_PROJDIR`, managed roots,
 notifications, and usage tracking, see [Configuration](docs/configuration.md).
 For update behavior by installer type, see [Upgrading](docs/upgrading.md).
 
-## Agent Skills
+## Multi-Agent Workflow
 
-projmux shortcuts can also live in your AI tool as user-level skills or slash
-commands. A skill is just a thin wrapper around the same CLI contract:
-
-```sh
-projmux ai split --agent codex right
-projmux ai split --agent claude down
-projmux ai split --agent antigravity right
-```
-
-After registering a Claude slash command such as `/projmux:codex-right`, ask
-Claude to use it with a prompt. Claude runs the projmux command, Codex opens in
-a managed pane attached to the current project, and the prompt is delivered
-there immediately.
-projmux tracks hook events from the opened pane and shows permission or
-completion notifications in tmux.
-Antigravity uses the same managed split path, with manual hook ingest and
-session resume support documented in the CLI reference.
-
-Install templates and naming conventions are in
-[AI Agent Shortcuts](docs/ai-agent-shortcuts.md).
+Keep a shell and multiple managed agents visible in the same tmux window.
+Move between panes to start independent tasks while projmux collects their
+permission and completion events in one notification queue.
 
 <p align="center">
-  <img src="docs/assets/projmux-skill-workflow.gif" alt="projmux skill workflow demo" width="820">
+  <img src="docs/assets/projmux-three-pane-workflow.gif" alt="projmux shell, Codex, and Claude 3-pane workflow demo" width="820">
   <br>
-  <em>Claude invokes a registered projmux skill with a prompt, opens a managed Codex pane, and Codex answers there.</em>
+  <em>Move across equal-width shell, Codex, and Claude panes while independent tasks report back through one notification queue.</em>
 </p>
+
+## Automation With Agent Skills
+
+AI tools can invoke the same projmux CLI to open a managed pane and deliver a
+prompt:
+
+```sh
+projmux ai split --agent codex right -- "Review the retry logic."
+```
+
+Templates and naming conventions for Claude, Codex, and other agents are in
+[AI Agent Shortcuts](docs/ai-agent-shortcuts.md).
 
 ## More Docs
 

@@ -2,7 +2,7 @@
 
 projmux is keyboard-driven, but the guaranteed launch contract is small:
 fresh installs bind `Alt-1` through `Alt-5` as plain Meta sequences
-(`M-1`..`M-5`, bytes `\x1b1`..`\x1b5`). The AI resume picker ships with an
+(`M-1`..`M-5`, bytes `\x1b1`..`\x1b5`). The AI split picker ships with an
 editable `Alt-7` default. Other actions remain discoverable in
 Settings > Keybindings. Transport-dependent actions keep their built-in
 transport default key, and Settings can add separate safe tmux plain keys to
@@ -46,7 +46,7 @@ These shortcuts are the guaranteed launch defaults. They need no tmux prefix.
 | `Alt-1` | Project sidebar |
 | `Alt-2` | Notify sidebar |
 | `Alt-3` | Recent Windows |
-| `Alt-4` | AI split popup picker |
+| `Alt-4` | AI resume session picker |
 | `Alt-5` | Settings |
 
 `RecentWindows:Open` opens the cross-project recent windows queue. It switches
@@ -84,14 +84,14 @@ Optional direct keys can be added for actions such as:
 | --- | --- |
 | `RecentWindows:Open` | Recent windows queue across projects |
 | `ProjectSwitcherToggle` | Project switcher popup |
-| `AISplitPickerToggle` | AI split popup picker; pressing again closes the picker popup |
-| `AIResumePickerToggle` | AI resume session picker; default `Alt-7`; pressing again closes the picker popup |
+| `AISplitPickerToggle` | AI split popup picker; default `Alt-7`; pressing again closes the picker popup |
+| `AIResumePickerToggle` | AI resume session picker; default `Alt-4`; pressing again closes the picker popup |
 | `ai-split-right` | Open a new direct AI split to the right |
 | `ai-split-down` | Open a new direct AI split below |
 | `new-window` | New tmux window in the current pane directory |
 | `rename-window` | Rename the current tmux window |
 
-`AISplitPickerToggle` is the `Alt-4` popup picker toggle. It opens or closes
+`AISplitPickerToggle` is the `Alt-7` popup picker toggle. It opens or closes
 the picker UI where the user chooses the AI split mode. It is separate from
 the direct `ai-split-right` and `ai-split-down` actions.
 
@@ -194,7 +194,7 @@ Legacy popup IDs such as `sessionizer-sidebar`, `notify-sidebar`,
 names: `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
 `AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`. Direct
 AI split actions keep their command IDs, `ai-split-right` and `ai-split-down`,
-so Settings can distinguish them from the `Alt-4` popup picker toggle.
+so Settings can distinguish them from the `Alt-7` popup picker toggle.
 
 ## Diagnose: `projmux setup`
 
