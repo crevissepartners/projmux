@@ -198,27 +198,14 @@ effectivePaneCount
 # internal/config -- config readers / trust helpers retained for callers.
 IsProjectConfigTrusted
 LoadSessionStateToggleFile
-Paths.PostCreateHookPath
-Paths.ProjdirFile
-Paths.WorkdirsFile
-PostCreateRunner.Run
-PostCreateRunner.runner
-WithPostCreateRunner
 
 # internal/core/usage -- adapter / store / registry surface.
 NewState
 Registry.Lookup
-Registry.Names
 Registry.Replace
 RedactToken
-Store.BaseDir
-Store.Remove
 Store.SaveAll
-Store.Show
 UsageSupported
-
-# internal/core/layout, preview, recentwindows
-RenderFullFrameUpdate
 
 # internal/integrations/hooks -- hook install / trust helpers.
 

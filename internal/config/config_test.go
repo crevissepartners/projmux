@@ -96,28 +96,6 @@ func TestHomesPathsRequiresHomeDirWhenFallbackNeeded(t *testing.T) {
 	}
 }
 
-func TestPathsProjdirFile(t *testing.T) {
-	t.Parallel()
-
-	paths := Paths{ConfigDir: "/tmp/config/projmux"}
-	if got, want := paths.ProjdirFile(), filepath.Join(paths.ConfigDir, ProjdirFileName); got != want {
-		t.Fatalf("ProjdirFile() = %q, want %q", got, want)
-	}
-}
-
-func TestPathsPostCreateHookPath(t *testing.T) {
-	t.Parallel()
-
-	paths := Paths{ConfigDir: "/tmp/config/projmux"}
-	want := filepath.Join(paths.ConfigDir, HooksDirName, PostCreateHookFileName)
-	if got := paths.PostCreateHookPath(); got != want {
-		t.Fatalf("PostCreateHookPath() = %q, want %q", got, want)
-	}
-	if want != filepath.Join("/tmp/config/projmux", "hooks", "post-create") {
-		t.Fatalf("PostCreateHookPath layout drifted: want %q", want)
-	}
-}
-
 func TestPathsStatusbarDecorationFile(t *testing.T) {
 	t.Parallel()
 

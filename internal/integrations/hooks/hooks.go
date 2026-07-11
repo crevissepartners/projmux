@@ -97,22 +97,6 @@ type Runner struct {
 // RunnerByEvent is the event-oriented lifecycle hook runner surface.
 type RunnerByEvent = Runner
 
-// PostCreateRunner is a backwards-compatible shim that delegates to Runner
-// for the post-create lifecycle point. It is intentionally thin: callers that
-// want full event coverage should construct *Runner directly.
-type PostCreateRunner struct {
-	GlobalConfigPath     string
-	DiscoverProjectHooks bool
-	ProjectHooksFilePath string
-	TrustStorePath       string
-	ProjectHookPrompt    ProjectHookPrompt
-	PromptReader         io.Reader
-	PromptWriter         io.Writer
-	Logger               io.Writer
-	Timeout              time.Duration
-	Version              string
-}
-
 // Run executes configured lifecycle hooks for event. Hook failures are logged
 // and ignored except for EventPreCreate, where a non-zero exit, exec error, or
 // timeout aborts creation by returning an error.
@@ -259,31 +243,6 @@ func (r *Runner) HasHooks(event Event, cwd string) bool {
 		return false
 	}
 	return cfg.hasEventSurface(event)
-}
-
-// Run executes configured post-create hooks for c. Hook failures
-// (non-zero exit, exec error, timeout) are recorded as a single warning line
-// on Logger and never returned.
-func (r *PostCreateRunner) Run(ctx context.Context, c PostCreateContext) {
-	if r == nil {
-		return
-	}
-	_, _ = r.runner().Run(ctx, EventPostCreate, c)
-}
-
-func (r *PostCreateRunner) runner() *Runner {
-	return &Runner{
-		GlobalConfigPath:     r.GlobalConfigPath,
-		DiscoverProjectHooks: r.DiscoverProjectHooks,
-		ProjectHooksFilePath: r.ProjectHooksFilePath,
-		TrustStorePath:       r.TrustStorePath,
-		ProjectHookPrompt:    r.ProjectHookPrompt,
-		PromptReader:         r.PromptReader,
-		PromptWriter:         r.PromptWriter,
-		Logger:               r.Logger,
-		Timeout:              r.Timeout,
-		Version:              r.Version,
-	}
 }
 
 type outputMode int

@@ -14,11 +14,6 @@ import (
 // non-empty, non-comment line stores one absolute directory path.
 const WorkdirsFileName = "workdirs"
 
-// WorkdirsFile returns the default file used for the persisted workdirs list.
-func (p Paths) WorkdirsFile() string {
-	return filepath.Join(p.ConfigDir, WorkdirsFileName)
-}
-
 // WorkdirsFile returns the path to the persisted workdirs file rooted at the
 // supplied home directory. An empty homeDir yields an empty string.
 func WorkdirsFile(homeDir string) string {

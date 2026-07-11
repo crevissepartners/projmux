@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-func TestPathsWorkdirsFile(t *testing.T) {
-	t.Parallel()
-
-	paths := Paths{ConfigDir: "/tmp/config/projmux"}
-	if got, want := paths.WorkdirsFile(), filepath.Join(paths.ConfigDir, WorkdirsFileName); got != want {
-		t.Fatalf("WorkdirsFile() = %q, want %q", got, want)
-	}
-}
-
 func TestWorkdirsFile(t *testing.T) {
 	t.Parallel()
 
