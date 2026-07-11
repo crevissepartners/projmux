@@ -2360,8 +2360,8 @@ func (f *fakeLifecycleRunner) StartupCommand(string) (string, bool) {
 	return f.startupCommand, f.startupOK
 }
 
-// withPostCreateRunnerInterface wires a test stub through the same field that
-// WithPostCreateRunner targets without depending on a real *hooks.PostCreateRunner.
+// withPostCreateRunnerInterface wires a test stub into the client's
+// post-create hook field without depending on a real hooks runner.
 func withPostCreateRunnerInterface(r postCreateRunner) ClientOption {
 	return func(c *Client) {
 		c.postCreate = r

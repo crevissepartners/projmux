@@ -63,21 +63,9 @@ func (p Paths) PreviewStateFile() string {
 	return filepath.Join(p.StateDir, PreviewStateFileName)
 }
 
-// ProjdirFile returns the default file used for the persisted
-// PROJMUX_PROJDIR value (the primary project root path).
-func (p Paths) ProjdirFile() string {
-	return filepath.Join(p.ConfigDir, ProjdirFileName)
-}
-
 // KeymapFile returns the user-editable keybinding override file.
 func (p Paths) KeymapFile() string {
 	return filepath.Join(p.ConfigDir, KeymapFileName)
-}
-
-// PostCreateHookPath returns the default location for the optional
-// post-create hook script.
-func (p Paths) PostCreateHookPath() string {
-	return p.HookPath(PostCreateHookFileName)
 }
 
 // HookPath returns the default location for a named global lifecycle hook.

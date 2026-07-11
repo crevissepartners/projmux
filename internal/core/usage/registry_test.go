@@ -2,7 +2,6 @@ package usage
 
 import (
 	"context"
-	"reflect"
 	"testing"
 )
 
@@ -41,10 +40,6 @@ func TestRegistryRegisterAndLookup(t *testing.T) {
 
 	if _, ok := r.Lookup("missing"); ok {
 		t.Fatalf("Lookup(missing) ok=true, want false")
-	}
-
-	if got, want := r.Names(), []string{"claude", "codex"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("Names() = %v, want %v", got, want)
 	}
 }
 

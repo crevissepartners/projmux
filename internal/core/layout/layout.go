@@ -197,35 +197,6 @@ func (s Store) Save(name string, preset Preset) error {
 	return nil
 }
 
-func (s Store) Remove(name string) error {
-	path, err := s.Path(name)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%w: %s", ErrNotFound, path)
-		}
-		return fmt.Errorf("layout: remove preset %s: %w", path, err)
-	}
-	return nil
-}
-
-func (s Store) Show(name string) (string, error) {
-	path, err := s.Path(name)
-	if err != nil {
-		return "", err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("%w: %s", ErrNotFound, path)
-		}
-		return "", fmt.Errorf("layout: read preset %s: %w", path, err)
-	}
-	return string(data), nil
-}
-
 func FromSnapshot(snap sessionstate.Snapshot, projectRoot, description, mode string) Preset {
 	p := Preset{
 		SchemaVersion: SchemaVersion,

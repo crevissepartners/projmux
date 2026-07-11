@@ -67,14 +67,6 @@ func (s *Store) FilePath() string {
 	return filepath.Join(s.baseDir, snapshotFileName)
 }
 
-// BaseDir returns the directory the Store is rooted at.
-func (s *Store) BaseDir() string {
-	if s == nil {
-		return ""
-	}
-	return s.baseDir
-}
-
 // State is the rich view the Manager and adapters need: snapshots plus
 // per-adapter throttle/backoff bookkeeping. Returned by LoadState; the
 // older LoadAll wrapper is kept for callers that only want the snapshot

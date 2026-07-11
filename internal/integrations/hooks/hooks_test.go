@@ -12,60 +12,6 @@ import (
 	"time"
 )
 
-// --- PostCreateRunner shim coverage ---------------------------------------
-
-func TestPostCreateRunnerNilReceiverIsNoOp(t *testing.T) {
-	t.Parallel()
-
-	var runner *PostCreateRunner
-	runner.Run(context.Background(), PostCreateContext{SessionName: "workspace"})
-}
-
-func TestPostCreateRunnerEmptyConfigIsNoOp(t *testing.T) {
-	t.Parallel()
-
-	var logger bytes.Buffer
-	runner := &PostCreateRunner{Logger: &logger}
-	runner.Run(context.Background(), PostCreateContext{SessionName: "workspace"})
-
-	if logger.Len() != 0 {
-		t.Fatalf("logger output = %q, want empty", logger.String())
-	}
-}
-
-func TestPostCreateRunnerProjectConfigRunsWithTrust(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("bash fixtures require POSIX")
-	}
-	t.Parallel()
-
-	cwd := t.TempDir()
-	writeProjectConfig(t, cwd, `
-[hooks.post-create]
-run = "echo from-project"
-`)
-
-	var logger bytes.Buffer
-	runner := &PostCreateRunner{
-		DiscoverProjectHooks: true,
-		ProjectHooksFilePath: testProjectHooksFilePath(t),
-		TrustStorePath:       testTrustStorePath(t),
-		ProjectHookPrompt:    func(ProjectHookPromptRequest) ProjectHookDecision { return ProjectHookAllowOnce },
-		Logger:               &logger,
-	}
-	runner.Run(context.Background(), PostCreateContext{
-		SessionName: "workspace",
-		CWD:         cwd,
-		Kind:        "persistent",
-		Version:     "0.0.0-test",
-	})
-
-	got := logger.String()
-	if !strings.Contains(got, "from-project") {
-		t.Fatalf("logger output missing declarative project hook stdout:\n%s", got)
-	}
-}
-
 // --- Runner declarative behaviour -----------------------------------------
 
 func TestRunnerNoConfigIsNoOp(t *testing.T) {

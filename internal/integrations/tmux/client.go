@@ -76,7 +76,7 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	return output, nil
 }
 
-// postCreateRunner is the subset of *hooks.PostCreateRunner that the tmux
+// postCreateRunner is the narrow post-create hook surface that the tmux
 // client invokes after creating a new session. The interface keeps the
 // dependency narrow and lets tests stub it without spinning up real exec.
 type postCreateRunner interface {
@@ -113,18 +113,6 @@ type Client struct {
 
 // ClientOption configures optional Client behavior.
 type ClientOption func(*Client)
-
-// WithPostCreateRunner attaches a hook runner that fires after a tmux
-// session is newly created. Pass nil to disable.
-func WithPostCreateRunner(r *hooks.PostCreateRunner) ClientOption {
-	return func(c *Client) {
-		if r == nil {
-			c.postCreate = nil
-			return
-		}
-		c.postCreate = r
-	}
-}
 
 // WithLifecycleHookRunner attaches the generic lifecycle hook runner.
 func WithLifecycleHookRunner(r *hooks.Runner) ClientOption {

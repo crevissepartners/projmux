@@ -113,18 +113,6 @@ func (r *Registry) Lookup(name string) (Adapter, bool) {
 	return a, ok
 }
 
-// Names returns the registered adapter names in lexicographic order.
-func (r *Registry) Names() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	names := make([]string, 0, len(r.adapters))
-	for n := range r.adapters {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // All returns every registered adapter, ordered by Name().
 func (r *Registry) All() []Adapter {
 	r.mu.RLock()
