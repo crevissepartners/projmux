@@ -107,6 +107,13 @@ func newAICommand() *aiCommand {
 	}
 }
 
+// newSettingsAIFallback builds the minimally wired aiCommand Settings falls
+// back to when no ai dependency was injected. It lives next to aiCommand so
+// the settings files never construct the struct directly.
+func newSettingsAIFallback(homeDir func() (string, error), lookupEnv func(string) string) *aiCommand {
+	return &aiCommand{homeDir: homeDir, lookupEnv: lookupEnv}
+}
+
 // notifyProducer returns the wired-up producer or a noop when the command
 // was constructed without one (the test fixtures build aiCommand structs
 // directly).

@@ -613,9 +613,15 @@ func aiEnabledAgentDisplayName(provider config.AIAgentProvider) string {
 	return string(provider)
 }
 
-func (c *settingsCommand) aiForSettings() *aiCommand {
+func (c *settingsCommand) aiForSettings() aiHookSettingsReader {
 	if c.ai != nil {
 		return c.ai
 	}
-	return &aiCommand{homeDir: c.homeDir, lookupEnv: c.lookupEnv}
+	if c.newAI != nil {
+		return c.newAI()
+	}
+	// Struct-literal constructions leave the factory nil; keep the previous
+	// nil-ai fallback of a minimally wired aiCommand without naming the
+	// struct here.
+	return newSettingsAIFallback(c.homeDir, c.lookupEnv)
 }

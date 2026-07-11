@@ -413,7 +413,12 @@ func (c *settingsCommand) currentAINotifyDiagnostics() []doctorAINotifyIntegrati
 	if c.aiNotifyDiagnostics != nil {
 		diagnostics = c.aiNotifyDiagnostics()
 	} else {
-		diagnostics = doctorAINotifyDiagnostics(c.ai)
+		// The doctor diagnostics need the full *aiCommand. Recover it when
+		// the injected dependency is the concrete command (production
+		// wiring); otherwise pass nil so doctorAINotifyDiagnostics builds
+		// its own default, matching the previous nil-ai handling.
+		ai, _ := c.ai.(*aiCommand)
+		diagnostics = doctorAINotifyDiagnostics(ai)
 	}
 	return diagnostics
 }
