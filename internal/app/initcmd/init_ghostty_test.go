@@ -1,4 +1,4 @@
-package app
+package initcmd
 
 import (
 	"bytes"
@@ -9,9 +9,20 @@ import (
 	"time"
 )
 
+// testGhosttyBindings is a catalog-shaped fixture. The real desired bindings
+// are derived from the app keybinding catalog and injected by the caller;
+// merge behavior only depends on the (trigger, action) shape.
+var testGhosttyBindings = []GhosttyBinding{
+	{Trigger: "alt+1", Action: `text:\x1b1`},
+	{Trigger: "alt+2", Action: `text:\x1b2`},
+	{Trigger: "alt+3", Action: `text:\x1b3`},
+	{Trigger: "alt+4", Action: `text:\x1b4`},
+	{Trigger: "alt+5", Action: `text:\x1b5`},
+}
+
 func newGhosttyTestAdapter(t *testing.T) *GhosttyAdapter {
 	t.Helper()
-	a := NewGhosttyAdapter()
+	a := NewGhosttyAdapter(testGhosttyBindings)
 	a.now = func() time.Time { return time.Date(2026, 4, 30, 1, 32, 15, 0, time.UTC) }
 	return a
 }
@@ -19,7 +30,7 @@ func newGhosttyTestAdapter(t *testing.T) *GhosttyAdapter {
 func TestGhosttyAdapterDetect(t *testing.T) {
 	t.Parallel()
 
-	a := NewGhosttyAdapter()
+	a := NewGhosttyAdapter(testGhosttyBindings)
 
 	cases := []struct {
 		name string
@@ -46,7 +57,7 @@ func TestGhosttyAdapterDetect(t *testing.T) {
 
 func TestGhosttyAdapterDetectNilEnv(t *testing.T) {
 	t.Parallel()
-	a := NewGhosttyAdapter()
+	a := NewGhosttyAdapter(testGhosttyBindings)
 	if a.Detect(nil) {
 		t.Fatalf("Detect(nil) = true, want false")
 	}
@@ -55,7 +66,7 @@ func TestGhosttyAdapterDetectNilEnv(t *testing.T) {
 func TestGhosttyAdapterConfigPathPrefersXDG(t *testing.T) {
 	t.Parallel()
 
-	a := NewGhosttyAdapter()
+	a := NewGhosttyAdapter(testGhosttyBindings)
 	env := func(k string) string {
 		if k == "XDG_CONFIG_HOME" {
 			return "/xdg"
@@ -74,7 +85,7 @@ func TestGhosttyAdapterConfigPathPrefersXDG(t *testing.T) {
 func TestGhosttyAdapterConfigPathFallsBackToHome(t *testing.T) {
 	t.Parallel()
 
-	a := NewGhosttyAdapter()
+	a := NewGhosttyAdapter(testGhosttyBindings)
 	a.userHomeDir = func() (string, error) { return "/home/u", nil }
 	got, err := a.ConfigPath(func(string) string { return "" })
 	if err != nil {
@@ -105,10 +116,10 @@ func TestGhosttyPlanMergeEmptyConfigAddsAllBindings(t *testing.T) {
 			addCount++
 		}
 	}
-	if addCount != len(ghosttyDesiredBindings) {
-		t.Fatalf("add count = %d, want %d", addCount, len(ghosttyDesiredBindings))
+	if addCount != len(testGhosttyBindings) {
+		t.Fatalf("add count = %d, want %d", addCount, len(testGhosttyBindings))
 	}
-	for _, kb := range ghosttyDesiredBindings {
+	for _, kb := range testGhosttyBindings {
 		needle := "keybind = " + kb.Trigger + "=" + kb.Action
 		if !strings.Contains(plan.Updated, needle) {
 			t.Fatalf("Updated missing %q\n--\n%s", needle, plan.Updated)
@@ -119,22 +130,6 @@ func TestGhosttyPlanMergeEmptyConfigAddsAllBindings(t *testing.T) {
 	}
 	if strings.Contains(plan.Updated, "c"+"si:") {
 		t.Fatalf("Updated contains retired CSI action:\n%s", plan.Updated)
-	}
-}
-
-func TestGhosttyDesiredBindingsUsePlainMeta(t *testing.T) {
-	t.Parallel()
-
-	if len(ghosttyDesiredBindings) == 0 {
-		t.Fatal("ghosttyDesiredBindings is empty, want Alt-1..5 plain Meta mappings")
-	}
-	for _, binding := range ghosttyDesiredBindings {
-		if strings.Contains(binding.Action, "c"+"si:") {
-			t.Fatalf("ghostty binding uses retired CSI action: %#v", binding)
-		}
-		if !strings.HasPrefix(binding.Action, `text:\x1b`) {
-			t.Fatalf("ghostty binding action = %q, want plain Meta text action", binding.Action)
-		}
 	}
 }
 
@@ -176,7 +171,7 @@ func TestGhosttyPlanMergePartialAddsMissingBindings(t *testing.T) {
 		t.Fatalf("expected effect when bindings missing")
 	}
 
-	expectAdd := len(ghosttyDesiredBindings) - 2
+	expectAdd := len(testGhosttyBindings) - 2
 	addCount := 0
 	noopCount := 0
 	for _, ch := range plan.Changes {
@@ -425,7 +420,7 @@ func TestSplitGhosttyConfigUserOverrideTrumpsManagedBlock(t *testing.T) {
 func TestGhosttyAdapterConfigPathCandidatesXDG(t *testing.T) {
 	t.Parallel()
 
-	a := NewGhosttyAdapter()
+	a := NewGhosttyAdapter(testGhosttyBindings)
 	env := func(k string) string {
 		if k == "XDG_CONFIG_HOME" {
 			return "/xdg"
@@ -453,7 +448,7 @@ func TestGhosttyAdapterConfigPathCandidatesXDG(t *testing.T) {
 func TestGhosttyAdapterConfigPathCandidatesHomeFallback(t *testing.T) {
 	t.Parallel()
 
-	a := NewGhosttyAdapter()
+	a := NewGhosttyAdapter(testGhosttyBindings)
 	a.userHomeDir = func() (string, error) { return "/home/u", nil }
 	got, err := a.ConfigPathCandidates(func(string) string { return "" })
 	if err != nil {
@@ -474,11 +469,11 @@ func TestGhosttyAdapterConfigPathCandidatesHomeFallback(t *testing.T) {
 // per-test temp dir as if it were $XDG_CONFIG_HOME. The Ghostty adapter is
 // the sole registered terminal so the test exercises the production code
 // path including ConfigPathCandidates.
-func newGhosttyTestInitCommand(t *testing.T, xdg string) *initCommand {
+func newGhosttyTestInitCommand(t *testing.T, xdg string) *Command {
 	t.Helper()
 	reg := newTestRegistry()
-	reg.register(NewGhosttyAdapter())
-	return &initCommand{
+	reg.register(NewGhosttyAdapter(testGhosttyBindings))
+	return &Command{
 		registry: reg,
 		getenv: func(k string) string {
 			if k == "XDG_CONFIG_HOME" {

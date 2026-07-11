@@ -1,4 +1,4 @@
-package app
+package initcmd
 
 import (
 	"fmt"
@@ -44,9 +44,8 @@ func (p MergePlan) HasEffect() bool {
 
 // TerminalAdapter is the per-terminal contract for `projmux init`.
 //
-// Implementations register themselves in the package-level registry via
-// RegisterTerminalAdapter so the init command can dispatch by name and
-// auto-detect the active terminal.
+// Implementations are registered by the caller via New so the init command
+// can dispatch by name and auto-detect the active terminal.
 type TerminalAdapter interface {
 	// Name returns the terminal's canonical CLI name, e.g. "ghostty".
 	Name() string
@@ -79,32 +78,32 @@ type ConfigPathCandidatesResolver interface {
 	ConfigPathCandidates(env func(string) string) ([]string, error)
 }
 
-// terminalRegistry is the global registry of TerminalAdapter implementations.
+// terminalRegistry indexes TerminalAdapter implementations by name for the
+// init command's dispatch and auto-detection.
 type terminalRegistry struct {
 	mu       sync.RWMutex
 	adapters map[string]TerminalAdapter
 }
 
-var defaultTerminalRegistry = &terminalRegistry{adapters: map[string]TerminalAdapter{}}
-
-// RegisterTerminalAdapter adds a TerminalAdapter to the default registry.
-// It panics on duplicate names so registration bugs surface at init time.
-func RegisterTerminalAdapter(a TerminalAdapter) {
-	defaultTerminalRegistry.register(a)
+// newTerminalRegistry returns an empty registry.
+func newTerminalRegistry() *terminalRegistry {
+	return &terminalRegistry{adapters: map[string]TerminalAdapter{}}
 }
 
+// register adds an adapter to the registry. It panics on nil adapters, empty
+// names, and duplicate names so wiring bugs surface immediately.
 func (r *terminalRegistry) register(a TerminalAdapter) {
 	if a == nil {
-		panic("RegisterTerminalAdapter: nil adapter")
+		panic("terminalRegistry.register: nil adapter")
 	}
 	name := a.Name()
 	if name == "" {
-		panic("RegisterTerminalAdapter: empty Name()")
+		panic("terminalRegistry.register: empty Name()")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.adapters[name]; exists {
-		panic(fmt.Sprintf("RegisterTerminalAdapter: %q already registered", name))
+		panic(fmt.Sprintf("terminalRegistry.register: %q already registered", name))
 	}
 	r.adapters[name] = a
 }
@@ -142,11 +141,4 @@ func (r *terminalRegistry) detect(env func(string) string) (TerminalAdapter, boo
 		}
 	}
 	return nil, false
-}
-
-// reset clears the registry. Test helper.
-func (r *terminalRegistry) reset() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.adapters = map[string]TerminalAdapter{}
 }

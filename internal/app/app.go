@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/crevissepartners/projmux/internal/app/initcmd"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -67,7 +68,7 @@ type App struct {
 	doctor       *doctorCommand
 	focus        *focusCommand
 	hook         *hookCommand
-	initCmd      *initCommand
+	initCmd      *initcmd.Command
 	insertText   *insertFileTextCommand
 	kill         *killCommand
 	notify       *notifyCommand

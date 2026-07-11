@@ -1,4 +1,4 @@
-package app
+package initcmd
 
 import (
 	"encoding/json"
@@ -10,11 +10,20 @@ import (
 	"time"
 )
 
+// testWTBindings is a catalog-shaped fixture. The real desired bindings are
+// derived from the app keybinding catalog and injected by the caller; merge
+// behavior only depends on the (id, keys, input) shape.
+var testWTBindings = []WTBinding{
+	{ID: "User.projmuxSidebar", Keys: "alt+1", Input: "\x1b1"},
+	{ID: "User.projmuxSessions", Keys: "alt+2", Input: "\x1b2"},
+	{ID: "User.projmuxAgent", Keys: "alt+3", Input: "\x1b3"},
+}
+
 // newWTTestAdapter returns a WindowsTerminalAdapter with deterministic
 // timestamps and no implicit cmd.exe interop, suitable for unit tests.
 func newWTTestAdapter(t *testing.T) *WindowsTerminalAdapter {
 	t.Helper()
-	a := NewWindowsTerminalAdapter()
+	a := NewWindowsTerminalAdapter(testWTBindings)
 	a.now = func() time.Time { return time.Date(2026, 4, 30, 1, 32, 15, 0, time.UTC) }
 	a.runCmdExe = func([]string) (string, error) { return "", errors.New("interop disabled in test") }
 	return a
@@ -45,25 +54,10 @@ func presetSidebarOnly() string {
 	return body
 }
 
-func TestWTAdapterRegisteredAlongsideGhostty(t *testing.T) {
-	t.Parallel()
-
-	wt, ok := defaultTerminalRegistry.lookup("windows-terminal")
-	if !ok {
-		t.Fatalf("default registry missing windows-terminal adapter")
-	}
-	if wt.Name() != "windows-terminal" {
-		t.Fatalf("name = %q, want windows-terminal", wt.Name())
-	}
-	if _, ok := defaultTerminalRegistry.lookup("ghostty"); !ok {
-		t.Fatalf("default registry missing ghostty adapter (regression in PR-B)")
-	}
-}
-
 func TestWTAdapterDetect(t *testing.T) {
 	t.Parallel()
 
-	a := NewWindowsTerminalAdapter()
+	a := NewWindowsTerminalAdapter(testWTBindings)
 	cases := []struct {
 		name string
 		env  map[string]string
@@ -90,7 +84,7 @@ func TestWTAdapterDetect(t *testing.T) {
 
 func TestWTAdapterDetectNilEnv(t *testing.T) {
 	t.Parallel()
-	a := NewWindowsTerminalAdapter()
+	a := NewWindowsTerminalAdapter(testWTBindings)
 	if a.Detect(nil) {
 		t.Fatalf("Detect(nil) = true, want false")
 	}
@@ -371,18 +365,18 @@ func TestWTPlanMergeEmptyAddsAllBindings(t *testing.T) {
 			addCount++
 		}
 	}
-	if addCount != len(wtDesiredBindings) {
-		t.Fatalf("add count = %d, want %d", addCount, len(wtDesiredBindings))
+	if addCount != len(testWTBindings) {
+		t.Fatalf("add count = %d, want %d", addCount, len(testWTBindings))
 	}
 	// Verify the merged JSON parses and has the expected entries.
 	root := mustJSON(t, plan.Updated)
 	actions := asObjectArray(root["actions"])
-	if len(actions) != len(wtDesiredBindings) {
-		t.Fatalf("actions len = %d, want %d", len(actions), len(wtDesiredBindings))
+	if len(actions) != len(testWTBindings) {
+		t.Fatalf("actions len = %d, want %d", len(actions), len(testWTBindings))
 	}
 	keybindings := asObjectArray(root["keybindings"])
-	if len(keybindings) != len(wtDesiredBindings) {
-		t.Fatalf("keybindings len = %d, want %d", len(keybindings), len(wtDesiredBindings))
+	if len(keybindings) != len(testWTBindings) {
+		t.Fatalf("keybindings len = %d, want %d", len(keybindings), len(testWTBindings))
 	}
 	// Spot-check one binding round-trips with the expected escape bytes.
 	var foundSidebar bool
@@ -400,16 +394,6 @@ func TestWTPlanMergeEmptyAddsAllBindings(t *testing.T) {
 	}
 	if strings.Contains(plan.Updated, `\u001b[900`) || strings.Contains(plan.Updated, `\u001b[901`) {
 		t.Fatalf("updated settings contains retired app modified-key input:\n%s", plan.Updated)
-	}
-}
-
-func TestWindowsTerminalDesiredBindingsDoNotUseAppCSIu(t *testing.T) {
-	t.Parallel()
-
-	for _, binding := range wtDesiredBindings {
-		if strings.Contains(binding.Input, "\x1b[900") || strings.Contains(binding.Input, "\x1b[901") {
-			t.Fatalf("windows-terminal binding uses retired app modified-key input: %#v", binding)
-		}
 	}
 }
 
@@ -455,8 +439,8 @@ func TestWTPlanMergePartialFillsGaps(t *testing.T) {
 			noopCount++
 		}
 	}
-	if addCount != len(wtDesiredBindings)-1 {
-		t.Fatalf("add count = %d, want %d", addCount, len(wtDesiredBindings)-1)
+	if addCount != len(testWTBindings)-1 {
+		t.Fatalf("add count = %d, want %d", addCount, len(testWTBindings)-1)
 	}
 	if noopCount != 1 {
 		t.Fatalf("noop count = %d, want 1", noopCount)

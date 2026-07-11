@@ -1,4 +1,4 @@
-package app
+package initcmd
 
 import (
 	"bytes"
@@ -14,11 +14,11 @@ import (
 	"unicode"
 )
 
-// wtBinding mirrors one Windows Terminal action+keybinding pair the projmux
-// init command guarantees in the user's settings.json. Entries are derived
-// from the built-in keybinding catalog; docs/keybindings.md mirrors it for
-// users.
-type wtBinding struct {
+// WTBinding mirrors one Windows Terminal action+keybinding pair the projmux
+// init command guarantees in the user's settings.json. The caller derives the
+// desired entries from its keybinding catalog; docs/keybindings.md mirrors
+// them for users.
+type WTBinding struct {
 	// ID is the stable settings.json identifier (prefixed with User.projmux).
 	// Same value is used in both the actions[] entry and the keybindings[]
 	// entry so the two halves stay in sync across re-runs.
@@ -35,14 +35,11 @@ type wtBinding struct {
 // with this string in `id` is owned by the merge; anything else is the user's.
 const wtIDPrefix = "User.projmux"
 
-// wtDesiredBindings mirrors the "Windows Terminal" section of
-// docs/keybindings.md. Update the built-in keybinding catalog and docs when
-// adjusting terminal routing.
-var wtDesiredBindings = windowsTerminalBindingsFromCatalog()
-
 // WindowsTerminalAdapter implements TerminalAdapter for Windows Terminal,
 // covering both native Windows installs and WSL where the host shell is WT.
 type WindowsTerminalAdapter struct {
+	// desired is the list of bindings the merge guarantees in settings.json.
+	desired []WTBinding
 	// now allows tests to pin the timestamp used for backup file names.
 	now func() time.Time
 	// userHomeDir defaults to os.UserHomeDir for the WSL fallback path.
@@ -60,10 +57,12 @@ type WindowsTerminalAdapter struct {
 	runCmdExe func(args []string) (string, error)
 }
 
-// NewWindowsTerminalAdapter constructs a WT adapter wired to real OS helpers.
-// Tests can override the internal hooks afterwards.
-func NewWindowsTerminalAdapter() *WindowsTerminalAdapter {
+// NewWindowsTerminalAdapter constructs a WT adapter wired to real OS helpers
+// that guarantees the supplied bindings. Tests can override the internal
+// hooks afterwards.
+func NewWindowsTerminalAdapter(desired []WTBinding) *WindowsTerminalAdapter {
 	return &WindowsTerminalAdapter{
+		desired:     desired,
 		now:         time.Now,
 		userHomeDir: os.UserHomeDir,
 		stat:        os.Stat,
@@ -282,7 +281,7 @@ func (w *WindowsTerminalAdapter) PlanMerge(currentConfig string, fileExists bool
 	var changes []MergeChange
 	dirty := false
 
-	for _, want := range wtDesiredBindings {
+	for _, want := range w.desired {
 		// 1) Conflict check: a non-projmux binding already owns these keys.
 		if existingKB, ok := keybindingByKeys[strings.ToLower(want.Keys)]; ok {
 			existingID, _ := existingKB["id"].(string)
@@ -385,7 +384,7 @@ func (w *WindowsTerminalAdapter) PlanMerge(currentConfig string, fileExists bool
 }
 
 // newProjmuxAction builds the canonical actions[] entry for a binding.
-func newProjmuxAction(b wtBinding) map[string]any {
+func newProjmuxAction(b WTBinding) map[string]any {
 	return map[string]any{
 		"command": map[string]any{
 			"action": "sendInput",
@@ -396,7 +395,7 @@ func newProjmuxAction(b wtBinding) map[string]any {
 }
 
 // newProjmuxKeybinding builds the canonical keybindings[] entry for a binding.
-func newProjmuxKeybinding(b wtBinding) map[string]any {
+func newProjmuxKeybinding(b WTBinding) map[string]any {
 	return map[string]any{
 		"id":   b.ID,
 		"keys": b.Keys,

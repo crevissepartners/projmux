@@ -1,4 +1,9 @@
-package app
+// Package initcmd implements the `projmux init` command: it auto-merges
+// projmux keybindings into a terminal emulator's config file via per-terminal
+// TerminalAdapter implementations. The desired bindings are injected by the
+// caller (the app package derives them from its keybinding catalog), so this
+// package has no dependency on the rest of the app.
+package initcmd
 
 import (
 	"errors"
@@ -10,10 +15,10 @@ import (
 	"strings"
 )
 
-// initCommand auto-merges projmux keybindings into a terminal emulator's
+// Command auto-merges projmux keybindings into a terminal emulator's
 // config file. The framework dispatches by terminal name and delegates the
 // actual merge to a TerminalAdapter implementation.
-type initCommand struct {
+type Command struct {
 	registry *terminalRegistry
 	getenv   func(string) string
 	readFile func(string) ([]byte, error)
@@ -39,9 +44,15 @@ type initResult struct {
 	Applied  bool
 }
 
-func newInitCommand() *initCommand {
-	return &initCommand{
-		registry: defaultTerminalRegistry,
+// New builds the init command with the supplied terminal adapters registered.
+// Registration panics on duplicate names so wiring bugs surface immediately.
+func New(adapters ...TerminalAdapter) *Command {
+	registry := newTerminalRegistry()
+	for _, a := range adapters {
+		registry.register(a)
+	}
+	return &Command{
+		registry: registry,
 		getenv:   os.Getenv,
 		readFile: os.ReadFile,
 		stat:     os.Stat,
@@ -54,7 +65,7 @@ func newInitCommand() *initCommand {
 // dry-run that prints the planned changes; --apply commits them with a
 // timestamped backup. The terminal name may appear before or after flags,
 // e.g. `projmux init ghostty --apply` or `projmux init --apply ghostty`.
-func (c *initCommand) Run(args []string, stdout, stderr io.Writer) error {
+func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	terminalName, flagArgs := splitInitArgs(args)
 
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
@@ -89,14 +100,14 @@ func (c *initCommand) Run(args []string, stdout, stderr io.Writer) error {
 	return c.printPlan(result.Terminal, result.Plan, stdout)
 }
 
-func (c *initCommand) run(opts initOptions) (initResult, error) {
+func (c *Command) run(opts initOptions) (initResult, error) {
 	if opts.Apply && opts.DryRun {
 		return initResult{}, errors.New("init: --apply and --dry-run are mutually exclusive")
 	}
 
 	registry := c.registry
 	if registry == nil {
-		registry = defaultTerminalRegistry
+		registry = newTerminalRegistry()
 	}
 
 	var (
@@ -147,7 +158,7 @@ func (c *initCommand) run(opts initOptions) (initResult, error) {
 	return initResult{Terminal: adapter.Name(), Plan: plan, Applied: true}, nil
 }
 
-func (c *initCommand) env() func(string) string {
+func (c *Command) env() func(string) string {
 	if c.getenv != nil {
 		return c.getenv
 	}
@@ -167,7 +178,7 @@ func (c *initCommand) env() func(string) string {
 //
 // Adapters that only register a single ConfigPath fall through to the same
 // logic with a one-element candidate list.
-func (c *initCommand) resolveConfigPath(adapter TerminalAdapter, override string) (string, error) {
+func (c *Command) resolveConfigPath(adapter TerminalAdapter, override string) (string, error) {
 	if override != "" {
 		return c.absConfigPath(override)
 	}
@@ -205,7 +216,7 @@ func (c *initCommand) resolveConfigPath(adapter TerminalAdapter, override string
 // candidatesFor returns the adapter's well-known config path candidates,
 // falling back to a single-element list for adapters that have not opted
 // into ConfigPathCandidatesResolver.
-func (c *initCommand) candidatesFor(adapter TerminalAdapter) ([]string, error) {
+func (c *Command) candidatesFor(adapter TerminalAdapter) ([]string, error) {
 	if multi, ok := adapter.(ConfigPathCandidatesResolver); ok {
 		return multi.ConfigPathCandidates(c.env())
 	}
@@ -218,7 +229,7 @@ func (c *initCommand) candidatesFor(adapter TerminalAdapter) ([]string, error) {
 
 // absConfigPath turns a (possibly relative) --config override into an
 // absolute path so downstream stat/symlink checks behave consistently.
-func (c *initCommand) absConfigPath(p string) (string, error) {
+func (c *Command) absConfigPath(p string) (string, error) {
 	if filepath.IsAbs(p) {
 		return p, nil
 	}
@@ -238,7 +249,7 @@ func (c *initCommand) absConfigPath(p string) (string, error) {
 // dotfiles users commonly symlink terminal configs into a tracked repo, and
 // silently editing through the symlink would mutate that repo without their
 // knowledge.
-func (c *initCommand) guardSymlink(path string, allow bool) error {
+func (c *Command) guardSymlink(path string, allow bool) error {
 	lstatFn := c.lstat
 	if lstatFn == nil {
 		lstatFn = os.Lstat
@@ -261,7 +272,7 @@ func (c *initCommand) guardSymlink(path string, allow bool) error {
 
 // loadConfig reads the terminal config and reports whether it already exists.
 // A missing file is not an error; the merge will create it.
-func (c *initCommand) loadConfig(path string) (string, bool, error) {
+func (c *Command) loadConfig(path string) (string, bool, error) {
 	statFn := c.stat
 	if statFn == nil {
 		statFn = os.Stat
@@ -283,7 +294,7 @@ func (c *initCommand) loadConfig(path string) (string, bool, error) {
 	return string(data), true, nil
 }
 
-func (c *initCommand) printPlan(terminal string, plan MergePlan, stdout io.Writer) error {
+func (c *Command) printPlan(terminal string, plan MergePlan, stdout io.Writer) error {
 	if _, err := fmt.Fprintf(stdout, "projmux init %s (dry-run)\n", terminal); err != nil {
 		return err
 	}
@@ -322,7 +333,7 @@ func (c *initCommand) printPlan(terminal string, plan MergePlan, stdout io.Write
 	return err
 }
 
-func (c *initCommand) printApplyResult(terminal string, plan MergePlan, stdout io.Writer) error {
+func (c *Command) printApplyResult(terminal string, plan MergePlan, stdout io.Writer) error {
 	if _, err := fmt.Fprintf(stdout, "projmux init %s --apply\n", terminal); err != nil {
 		return err
 	}
@@ -379,12 +390,4 @@ func splitInitArgs(args []string) (terminal string, flagArgs []string) {
 		flagArgs = append(flagArgs, a)
 	}
 	return terminal, flagArgs
-}
-
-// init registers the bundled terminal adapters with the package-level
-// registry. Future terminals add a sibling file with their own init() block,
-// or extend this list when registration order matters.
-func init() {
-	RegisterTerminalAdapter(NewGhosttyAdapter())
-	RegisterTerminalAdapter(NewWindowsTerminalAdapter())
 }
