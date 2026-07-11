@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 

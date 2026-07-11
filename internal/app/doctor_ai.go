@@ -3,8 +3,8 @@ package app
 import (
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/core/aiprovider"
 )
 
 type doctorAINotifyStatus string
