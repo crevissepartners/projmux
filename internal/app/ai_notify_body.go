@@ -184,10 +184,10 @@ func mergeAINotifyBodyMetadata(metadata map[string]string, body aiNotifyBody) ma
 	merged := make(map[string]string, len(metadata)+2)
 	maps.Copy(merged, metadata)
 	if body.Agent != "" {
-		merged["agent"] = body.Agent
+		merged[notify.MetaAgent] = body.Agent
 	}
 	if body.Category != "" {
-		merged["category"] = body.Category
+		merged[notify.MetaCategory] = body.Category
 	}
 	return merged
 }

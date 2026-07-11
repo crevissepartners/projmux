@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/notify"
 	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 )
 
@@ -252,8 +253,8 @@ func normalizeAntigravityEventName(name string) string {
 
 func (p antigravityHookPayload) antigravityMetadata() map[string]string {
 	metadata := map[string]string{
-		"agent":              aiModeAntigravity,
-		"event":              p.EventName,
+		notify.MetaAgent:     aiModeAntigravity,
+		notify.MetaEvent:     p.EventName,
 		"conversation_id":    p.ConversationID,
 		"cwd":                p.CWD,
 		"transcript_path":    p.TranscriptPath,

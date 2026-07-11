@@ -28,6 +28,15 @@ const (
 	SourceExternal = "external"
 )
 
+// Metadata keys shared by the notify produce/consume/reconcile sites.
+const (
+	MetaAgent    = "agent"
+	MetaTopic    = "topic"
+	MetaEvent    = "event"
+	MetaCategory = "category"
+	MetaState    = "state"
+)
+
 // DefaultTTL is the default freshness window applied when the caller does not
 // supply --ttl. Expiration is metadata only; it does not remove entries from
 // the pending queue.

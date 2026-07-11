@@ -1102,7 +1102,7 @@ func notifySidebarGroupPreview(entry notify.Notification, locale i18n.Locale) st
 		if text == "" {
 			text = entry.Text
 		}
-		if notifySidebarLabelCell(entry.Metadata["topic"]) == notifySidebarLabelCell(entry.Text) {
+		if notifySidebarLabelCell(entry.Metadata[notify.MetaTopic]) == notifySidebarLabelCell(entry.Text) {
 			text = "Ready"
 		}
 		return notifySidebarLabelCell(text)
@@ -1138,7 +1138,7 @@ func notifySidebarGroupContextLabel(group notifySidebarGroup, liveByID map[strin
 func notifySidebarGroupExplicitAgent(rows []notifySidebarRow, liveByID map[string]notifyLivePane) string {
 	for _, row := range rows {
 		live := liveByID[row.Notify.ID]
-		if agent := firstNonEmptyNotifySidebarString(live.Agent, row.Notify.Metadata["agent"], row.Notify.Metadata["provider"]); agent != "" {
+		if agent := firstNonEmptyNotifySidebarString(live.Agent, row.Notify.Metadata[notify.MetaAgent], row.Notify.Metadata["provider"]); agent != "" {
 			return notifySidebarAgentDisplayName(agent)
 		}
 	}
@@ -1150,7 +1150,7 @@ func notifySidebarGroupContext(rows []notifySidebarRow, liveByID map[string]noti
 		live := liveByID[row.Notify.ID]
 		if context := firstNonEmptyNotifySidebarString(
 			live.Topic,
-			row.Notify.Metadata["topic"],
+			row.Notify.Metadata[notify.MetaTopic],
 			live.Title,
 			row.Notify.Metadata["pane_title"],
 			row.Notify.Metadata["title"],
@@ -1235,7 +1235,7 @@ func notifySidebarLabelForLocale(e notify.Notification, now time.Time, display n
 		text = notifySidebarDimText(text)
 	}
 	if e.Source == notify.SourceAI {
-		if notifySidebarLabelCell(e.Metadata["topic"]) == notifySidebarLabelCell(e.Text) {
+		if notifySidebarLabelCell(e.Metadata[notify.MetaTopic]) == notifySidebarLabelCell(e.Text) {
 			text = "Ready"
 			if display != notifyDisplayLive {
 				text = notifySidebarDimText(text)
@@ -1388,7 +1388,7 @@ func notifySidebarTopicBadge(e notify.Notification) string {
 	if e.Source != notify.SourceAI {
 		return ""
 	}
-	topic := notifySidebarLabelCell(e.Metadata["topic"])
+	topic := notifySidebarLabelCell(e.Metadata[notify.MetaTopic])
 	if topic == "" {
 		return ""
 	}

@@ -199,21 +199,21 @@ func composeAttentionReplyText(agent, topic string) string {
 func mergeAttentionNotifyMetadata(metadata map[string]string, agent, topic, severity string) map[string]string {
 	merged := make(map[string]string, len(metadata)+3)
 	maps.Copy(merged, metadata)
-	if strings.TrimSpace(merged["agent"]) == "" {
-		merged["agent"] = strings.ToLower(strings.TrimSpace(agent))
+	if strings.TrimSpace(merged[notify.MetaAgent]) == "" {
+		merged[notify.MetaAgent] = strings.ToLower(strings.TrimSpace(agent))
 	}
-	if strings.TrimSpace(merged["topic"]) == "" {
-		merged["topic"] = strings.TrimSpace(topic)
+	if strings.TrimSpace(merged[notify.MetaTopic]) == "" {
+		merged[notify.MetaTopic] = strings.TrimSpace(topic)
 	}
-	if strings.TrimSpace(merged["category"]) == "" {
+	if strings.TrimSpace(merged[notify.MetaCategory]) == "" {
 		if severity == notify.SeverityCritical {
-			merged["category"] = "approval_required"
+			merged[notify.MetaCategory] = "approval_required"
 		} else {
-			merged["category"] = "response_complete"
+			merged[notify.MetaCategory] = "response_complete"
 		}
 	}
-	if strings.TrimSpace(merged["state"]) == "" {
-		merged["state"] = "need"
+	if strings.TrimSpace(merged[notify.MetaState]) == "" {
+		merged[notify.MetaState] = "need"
 	}
 	return merged
 }
