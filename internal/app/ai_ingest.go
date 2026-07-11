@@ -247,9 +247,9 @@ func (c *aiCommand) ingestBell(paneID string) error {
 	}
 	text := composeBellNotifyText(info)
 	metadata := map[string]string{
-		"agent": "bell",
-		"event": "bell",
-		"pane":  info.Pane,
+		notify.MetaAgent: "bell",
+		notify.MetaEvent: "bell",
+		"pane":           info.Pane,
 	}
 	if info.Session != "" {
 		metadata["session"] = info.Session

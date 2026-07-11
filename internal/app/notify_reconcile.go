@@ -188,7 +188,7 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 }
 
 func attentionNotifyMetadataMatches(got, want map[string]string) bool {
-	for _, key := range []string{"agent", "category", "state", "topic"} {
+	for _, key := range []string{notify.MetaAgent, notify.MetaCategory, notify.MetaState, notify.MetaTopic} {
 		if strings.TrimSpace(got[key]) != strings.TrimSpace(want[key]) {
 			return false
 		}

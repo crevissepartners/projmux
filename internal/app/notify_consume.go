@@ -76,7 +76,7 @@ func sameNotifyTargetPane(a, b notify.Notification) bool {
 }
 
 func protectedAINotifyEvent(n notify.Notification) bool {
-	event := strings.ToLower(strings.TrimSpace(n.Metadata["event"]))
+	event := strings.ToLower(strings.TrimSpace(n.Metadata[notify.MetaEvent]))
 	id := strings.ToLower(strings.TrimSpace(n.ID))
 	return strings.Contains(event, "permission") ||
 		strings.Contains(event, "stopfailure") ||

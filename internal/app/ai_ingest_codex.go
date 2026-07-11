@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
 type codexHookPayload struct {
@@ -197,8 +199,8 @@ func parseCodexHookPayload(data []byte) (codexHookPayload, error) {
 
 func (p codexHookPayload) codexHookMetadata() map[string]string {
 	metadata := map[string]string{
-		"agent":           aiModeCodex,
-		"event":           p.EventName,
+		notify.MetaAgent:  aiModeCodex,
+		notify.MetaEvent:  p.EventName,
 		"session_id":      p.SessionID,
 		"thread_id":       p.matchThreadID(),
 		"turn_id":         p.TurnID,
@@ -223,16 +225,16 @@ func (p codexHookPayload) codexHookMetadata() map[string]string {
 
 func (p codexHookPayload) codexGenericHookMetadata() map[string]string {
 	metadata := map[string]string{
-		"provider":   aiHookProviderCodex,
-		"agent":      aiModeCodex,
-		"event":      p.EventName,
-		"tool":       p.ToolName,
-		"tool_name":  p.ToolName,
-		"cwd":        p.CWD,
-		"thread_id":  p.matchThreadID(),
-		"session_id": p.SessionID,
-		"turn_id":    p.TurnID,
-		"model":      p.Model,
+		"provider":       aiHookProviderCodex,
+		notify.MetaAgent: aiModeCodex,
+		notify.MetaEvent: p.EventName,
+		"tool":           p.ToolName,
+		"tool_name":      p.ToolName,
+		"cwd":            p.CWD,
+		"thread_id":      p.matchThreadID(),
+		"session_id":     p.SessionID,
+		"turn_id":        p.TurnID,
+		"model":          p.Model,
 	}
 	out := make(map[string]string, len(metadata))
 	for k, v := range metadata {

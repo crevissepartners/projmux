@@ -310,8 +310,8 @@ func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
 
 func (p claudeHookPayload) claudeMetadata() map[string]string {
 	metadata := map[string]string{
-		"agent":             aiModeClaude,
-		"event":             p.EventName,
+		notify.MetaAgent:    aiModeClaude,
+		notify.MetaEvent:    p.EventName,
 		"session_id":        p.SessionID,
 		"cwd":               p.CWD,
 		"transcript_path":   p.TranscriptPath,

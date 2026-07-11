@@ -22,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/aiprovider"
+	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
@@ -2973,7 +2974,7 @@ func aiNotificationTextAgentWithMetadata(text string, metadata map[string]string
 }
 
 func aiNotificationMetadataAgent(metadata map[string]string) string {
-	switch strings.ToLower(strings.TrimSpace(metadata["agent"])) {
+	switch strings.ToLower(strings.TrimSpace(metadata[notify.MetaAgent])) {
 	case "codex":
 		return "Codex"
 	case "claude":
@@ -2984,7 +2985,7 @@ func aiNotificationMetadataAgent(metadata map[string]string) string {
 }
 
 func aiNotificationMetadataCategoryID(metadata map[string]string) string {
-	category := strings.TrimSpace(metadata["category"])
+	category := strings.TrimSpace(metadata[notify.MetaCategory])
 	if category == "" {
 		return ""
 	}
