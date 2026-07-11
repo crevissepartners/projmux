@@ -1,4 +1,4 @@
-package app
+package initcmd
 
 import (
 	"fmt"
@@ -8,17 +8,14 @@ import (
 	"time"
 )
 
-// ghosttyBinding is one keybind = trigger=action pair the projmux init
-// command guarantees in the user's Ghostty config. Entries are derived from
-// the built-in keybinding catalog; docs/keybindings.md mirrors it for users.
-type ghosttyBinding struct {
+// GhosttyBinding is one keybind = trigger=action pair the projmux init
+// command guarantees in the user's Ghostty config. The caller derives the
+// desired entries from its keybinding catalog; docs/keybindings.md mirrors
+// them for users.
+type GhosttyBinding struct {
 	Trigger string
 	Action  string
 }
-
-// ghosttyDesiredBindings mirrors the "Ghostty" section of docs/keybindings.md.
-// Update the built-in keybinding catalog and docs when adjusting terminal routing.
-var ghosttyDesiredBindings = ghosttyBindingsFromCatalog()
 
 // ghosttyManagedHeader marks the projmux-managed block in the Ghostty config.
 const (
@@ -28,6 +25,8 @@ const (
 
 // GhosttyAdapter implements TerminalAdapter for the Ghostty terminal.
 type GhosttyAdapter struct {
+	// desired is the list of bindings the merge guarantees in the config.
+	desired []GhosttyBinding
 	// now allows tests to pin the timestamp used for backup file names.
 	now func() time.Time
 	// userHomeDir defaults to os.UserHomeDir for path resolution.
@@ -39,9 +38,11 @@ type GhosttyAdapter struct {
 }
 
 // NewGhosttyAdapter constructs a Ghostty adapter wired to real filesystem
-// helpers. Tests can override the internal hooks afterwards.
-func NewGhosttyAdapter() *GhosttyAdapter {
+// helpers that guarantees the supplied bindings. Tests can override the
+// internal hooks afterwards.
+func NewGhosttyAdapter(desired []GhosttyBinding) *GhosttyAdapter {
 	return &GhosttyAdapter{
+		desired:     desired,
 		now:         time.Now,
 		userHomeDir: os.UserHomeDir,
 		writeFile:   os.WriteFile,
@@ -135,10 +136,10 @@ func (g *GhosttyAdapter) PlanMerge(currentConfig string, fileExists bool) (Merge
 	stripped, userBindings := splitGhosttyConfig(currentConfig)
 
 	var (
-		toAppend []ghosttyBinding
+		toAppend []GhosttyBinding
 		changes  []MergeChange
 	)
-	for _, want := range ghosttyDesiredBindings {
+	for _, want := range g.desired {
 		existing, ok := userBindings[want.Trigger]
 		switch {
 		case !ok:
@@ -316,7 +317,7 @@ func parseGhosttyKeybind(line string) (string, string, bool) {
 // renderGhosttyConfig appends a managed projmux block containing the supplied
 // bindings to stripped. It guarantees a single blank line separator between
 // existing user content and the managed block, and a trailing newline.
-func renderGhosttyConfig(stripped string, additions []ghosttyBinding) string {
+func renderGhosttyConfig(stripped string, additions []GhosttyBinding) string {
 	var b strings.Builder
 	if stripped != "" {
 		b.WriteString(strings.TrimRight(stripped, "\n"))

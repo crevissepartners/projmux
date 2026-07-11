@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/app/initcmd"
 )
 
 type keyBindingScope string
@@ -989,7 +991,16 @@ func filterKeyBindingActions(actions []keyBindingAction, keep func(keyBindingAct
 	return out
 }
 
-func ghosttyBindingsFromCatalog() []ghosttyBinding {
+// newInitCommand wires `projmux init` with the bundled terminal adapters,
+// injecting the desired bindings derived from the keybinding catalog.
+func newInitCommand() *initcmd.Command {
+	return initcmd.New(
+		initcmd.NewGhosttyAdapter(ghosttyBindingsFromCatalog()),
+		initcmd.NewWindowsTerminalAdapter(windowsTerminalBindingsFromCatalog()),
+	)
+}
+
+func ghosttyBindingsFromCatalog() []initcmd.GhosttyBinding {
 	var actions []keyBindingAction
 	for _, action := range defaultKeyBindingCatalog() {
 		if action.GhosttyTrigger == "" || action.GhosttyAction == "" {
@@ -1001,9 +1012,9 @@ func ghosttyBindingsFromCatalog() []ghosttyBinding {
 		return actions[i].GhosttyOrder < actions[j].GhosttyOrder
 	})
 
-	out := make([]ghosttyBinding, 0, len(actions))
+	out := make([]initcmd.GhosttyBinding, 0, len(actions))
 	for _, action := range actions {
-		out = append(out, ghosttyBinding{
+		out = append(out, initcmd.GhosttyBinding{
 			Trigger: action.GhosttyTrigger,
 			Action:  action.GhosttyAction,
 		})
@@ -1011,7 +1022,7 @@ func ghosttyBindingsFromCatalog() []ghosttyBinding {
 	return out
 }
 
-func windowsTerminalBindingsFromCatalog() []wtBinding {
+func windowsTerminalBindingsFromCatalog() []initcmd.WTBinding {
 	var actions []keyBindingAction
 	for _, action := range defaultKeyBindingCatalog() {
 		if action.WTID == "" {
@@ -1023,9 +1034,9 @@ func windowsTerminalBindingsFromCatalog() []wtBinding {
 		return actions[i].WTOrder < actions[j].WTOrder
 	})
 
-	out := make([]wtBinding, 0, len(actions))
+	out := make([]initcmd.WTBinding, 0, len(actions))
 	for _, action := range actions {
-		out = append(out, wtBinding{
+		out = append(out, initcmd.WTBinding{
 			ID:    action.WTID,
 			Keys:  action.WTKeys,
 			Input: action.WTInput,

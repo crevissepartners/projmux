@@ -1,4 +1,4 @@
-package app
+package initcmd
 
 import (
 	"bytes"
@@ -123,15 +123,21 @@ func TestTerminalRegistryDetectNoMatch(t *testing.T) {
 	}
 }
 
-func TestRegisterTerminalAdapterRegistersGhosttyByDefault(t *testing.T) {
+func TestNewRegistersSuppliedAdapters(t *testing.T) {
 	t.Parallel()
 
-	got, ok := defaultTerminalRegistry.lookup("ghostty")
-	if !ok {
-		t.Fatalf("default registry missing ghostty adapter")
+	cmd := New(NewGhosttyAdapter(nil), NewWindowsTerminalAdapter(nil))
+	for _, name := range []string{"ghostty", "windows-terminal"} {
+		got, ok := cmd.registry.lookup(name)
+		if !ok {
+			t.Fatalf("New() registry missing %s adapter", name)
+		}
+		if got.Name() != name {
+			t.Fatalf("adapter name = %q, want %q", got.Name(), name)
+		}
 	}
-	if got.Name() != "ghostty" {
-		t.Fatalf("default ghostty adapter name = %q, want ghostty", got.Name())
+	if names := cmd.registry.names(); len(names) != 2 {
+		t.Fatalf("names() = %v, want exactly the two supplied adapters", names)
 	}
 }
 
@@ -141,7 +147,7 @@ func TestInitCommandUnknownTerminalReturnsError(t *testing.T) {
 	reg := newTestRegistry()
 	reg.register(&fakeAdapter{name: "alpha"})
 
-	cmd := &initCommand{registry: reg, getenv: func(string) string { return "" }}
+	cmd := &Command{registry: reg, getenv: func(string) string { return "" }}
 	var stdout, stderr bytes.Buffer
 	err := cmd.Run([]string{"unknown"}, &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "unknown terminal") {
@@ -155,7 +161,7 @@ func TestInitCommandAutoDetectFailsWithoutMatch(t *testing.T) {
 	reg := newTestRegistry()
 	reg.register(&fakeAdapter{name: "alpha"})
 
-	cmd := &initCommand{registry: reg, getenv: func(string) string { return "" }}
+	cmd := &Command{registry: reg, getenv: func(string) string { return "" }}
 	var stdout, stderr bytes.Buffer
 	err := cmd.Run(nil, &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "auto-detect") {
@@ -180,7 +186,7 @@ func TestInitCommandDryRunPrintsPlanAndDoesNotApply(t *testing.T) {
 	reg := newTestRegistry()
 	reg.register(adapter)
 
-	cmd := &initCommand{
+	cmd := &Command{
 		registry: reg,
 		getenv:   func(string) string { return "" },
 		readFile: os.ReadFile,
@@ -215,7 +221,7 @@ func TestInitCommandApplyInvokesAdapter(t *testing.T) {
 	reg := newTestRegistry()
 	reg.register(adapter)
 
-	cmd := &initCommand{
+	cmd := &Command{
 		registry: reg,
 		getenv:   func(string) string { return "" },
 		readFile: os.ReadFile,
@@ -243,7 +249,7 @@ func TestInitCommandRunSurfacePlansAndApplies(t *testing.T) {
 	adapter := &fakeAdapter{name: "alpha", configPath: cfg}
 	reg := newTestRegistry()
 	reg.register(adapter)
-	cmd := &initCommand{
+	cmd := &Command{
 		registry: reg,
 		getenv:   func(string) string { return "" },
 		readFile: os.ReadFile,
@@ -276,7 +282,7 @@ func TestInitCommandRunSurfacePlansAndApplies(t *testing.T) {
 func TestInitCommandRejectsApplyAndDryRunTogether(t *testing.T) {
 	t.Parallel()
 
-	cmd := &initCommand{
+	cmd := &Command{
 		registry: newTestRegistry(),
 		getenv:   func(string) string { return "" },
 	}
@@ -290,7 +296,7 @@ func TestInitCommandRejectsApplyAndDryRunTogether(t *testing.T) {
 func TestInitCommandLoadConfigMissingFile(t *testing.T) {
 	t.Parallel()
 
-	cmd := &initCommand{
+	cmd := &Command{
 		readFile: os.ReadFile,
 		stat: func(name string) (os.FileInfo, error) {
 			return nil, os.ErrNotExist
@@ -312,7 +318,7 @@ func TestInitCommandLoadConfigPropagatesUnexpectedStatError(t *testing.T) {
 	t.Parallel()
 
 	sentinel := errors.New("boom")
-	cmd := &initCommand{
+	cmd := &Command{
 		stat: func(name string) (os.FileInfo, error) { return nil, sentinel },
 	}
 	if _, _, err := cmd.loadConfig("/whatever"); !errors.Is(err, sentinel) {
