@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,26 +8,8 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
-	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
-
-// reconcileListPanesFormats are the fields used by the reconcile pass. The
-// producer key set (session, pane id, agent, topic, socket) drives id
-// construction and queue text composition; the
-// attention/ai state fields decide whether the pane should be in the queue.
-var reconcileListPanesFormats = []string{
-	intmux.TmuxFormat("session_name"),
-	intmux.TmuxFormat("window_id"),
-	intmux.TmuxFormat("pane_id"),
-	intmux.PaneOptionFormat(attentionStateOption),
-	intmux.PaneOptionFormat(aiPaneStateOption),
-	intmux.PaneOptionFormat(aiPaneAgentOption),
-	intmux.PaneOptionFormat(aiPaneTopicOption),
-	intmux.TmuxFormat("socket_path"),
-}
-
-var reconcileListPanesFormat = intmux.JoinFormats("|", reconcileListPanesFormats...)
 
 // reconcileResult is the summary returned by the reconcile pass.
 type reconcileResult struct {
@@ -39,29 +20,16 @@ type reconcileResult struct {
 	Errors []string `json:"errors"`
 }
 
-// reconcilePane is the projection of one row from
-// `tmux list-panes -a -F <reconcileListPanesFormat>` after parsing.
-type reconcilePane struct {
-	Session        string
-	Window         string
-	Pane           string
-	AttentionState string
-	AIState        string
-	Agent          string
-	Topic          string
-	Socket         string
-}
-
-// shouldHaveQueueEntry reports whether the pane's live state means it must
-// be present in the notify queue. The producer pushes when the attention
-// state machine reports `reply` AND there is an AI agent associated with
-// the pane (manual `attention toggle` on a shell pane is intentionally
-// skipped). The reconcile pass mirrors that contract.
-func (p reconcilePane) shouldHaveQueueEntry() bool {
+// reconcileShouldHaveQueueEntry reports whether the pane's live state means
+// it must be present in the notify queue. The producer pushes when the
+// attention state machine reports `reply` AND there is an AI agent
+// associated with the pane (manual `attention toggle` on a shell pane is
+// intentionally skipped). The reconcile pass mirrors that contract.
+func reconcileShouldHaveQueueEntry(p livePaneRow) bool {
 	if strings.TrimSpace(p.Agent) == "" {
 		return false
 	}
-	if p.AttentionState == attentionStateReply {
+	if p.ReplyState {
 		return true
 	}
 	// The AI flow flips attention to reply on `status set waiting` but the
@@ -71,16 +39,17 @@ func (p reconcilePane) shouldHaveQueueEntry() bool {
 	return false
 }
 
-// id returns the canonical queue id used by the producer. Reusing the
-// shared helper guarantees push/ack/reconcile all agree on the key.
-func (p reconcilePane) id() string {
+// reconcileEntryID returns the canonical queue id used by the producer.
+// Reusing the shared helper guarantees push/ack/reconcile all agree on the
+// key.
+func reconcileEntryID(p livePaneRow) string {
 	return buildAttentionNotifyID(p.Session, p.Pane)
 }
 
-// text returns the canonical queue text used by the producer. Reusing the
-// shared helper guarantees the agent/topic rendering stays in lockstep
-// with the event-driven path.
-func (p reconcilePane) text() string {
+// reconcileEntryText returns the canonical queue text used by the producer.
+// Reusing the shared helper guarantees the agent/topic rendering stays in
+// lockstep with the event-driven path.
+func reconcileEntryText(p livePaneRow) string {
 	return composeAttentionReplyText(p.Agent, p.Topic)
 }
 
@@ -115,7 +84,7 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 
 	result := reconcileResult{Errors: []string{}}
 
-	panes, listErr := c.listReconcilePanes()
+	panes, listErr := c.listLivePaneRows()
 	if listErr != nil {
 		// Common case: tmux is not running. Treat as soft failure so the
 		// post-install hook does not break.
@@ -123,12 +92,12 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 		return writeReconcileSummary(stdout, result, *asJSON)
 	}
 
-	wantByID := make(map[string]reconcilePane, len(panes))
+	wantByID := make(map[string]livePaneRow, len(panes))
 	for _, p := range panes {
-		if !p.shouldHaveQueueEntry() {
+		if !reconcileShouldHaveQueueEntry(p) {
 			continue
 		}
-		wantByID[p.id()] = p
+		wantByID[reconcileEntryID(p)] = p
 	}
 
 	existing, listQueueErr := store.List()
@@ -143,7 +112,7 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 
 	// Push pass: for every pane that should be in the queue, add or refresh.
 	for id, pane := range wantByID {
-		want := pane.text()
+		want := reconcileEntryText(pane)
 		metadata := mergeAttentionNotifyMetadata(nil, pane.Agent, pane.Topic, notify.SeverityInfo)
 		if cur, ok := existingByID[id]; ok && cur.Text == want && attentionNotifyMetadataMatches(cur.Metadata, metadata) {
 			result.Kept++
@@ -194,43 +163,6 @@ func attentionNotifyMetadataMatches(got, want map[string]string) bool {
 		}
 	}
 	return true
-}
-
-// listReconcilePanes shells out to `tmux list-panes -a -F ...` and parses
-// every live pane row. Empty/blank rows are skipped. A nil runner short-
-// circuits to an empty slice so unit tests that exercise unrelated paths
-// do not need to wire a fake.
-func (c *notifyCommand) listReconcilePanes() ([]reconcilePane, error) {
-	if c == nil || c.runner == nil {
-		return nil, errors.New("tmux runner is not configured")
-	}
-	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
-		All:              true,
-		Formats:          reconcileListPanesFormats,
-		Delimiter:        "|",
-		AllowExtraFields: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tmux list-panes: %w", err)
-	}
-	out := make([]reconcilePane, 0, len(rows))
-	for _, fields := range rows {
-		p := reconcilePane{
-			Session:        fields[0],
-			Window:         fields[1],
-			Pane:           fields[2],
-			AttentionState: fields[3],
-			AIState:        fields[4],
-			Agent:          fields[5],
-			Topic:          fields[6],
-			Socket:         fields[7],
-		}
-		if p.Session == "" || p.Pane == "" {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out, nil
 }
 
 // writeReconcileSummary renders the result as either JSON or a single

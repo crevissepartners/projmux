@@ -111,7 +111,7 @@ func New() *App {
 		initCmd:      newInitCommand(),
 		insertText:   newInsertFileTextCommand(),
 		kill:         newKillCommand(),
-		notify:       newNotifyCommand(),
+		notify:       newNotifyCommand(newDefaultLivePaneLister()),
 		pin:          newPinCommand(),
 		popupWaitKey: newPopupWaitKeyCommand(),
 		preview:      newPreviewCommand(),

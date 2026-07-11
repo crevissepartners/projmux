@@ -487,6 +487,48 @@ func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
 	return out, nil
 }
 
+// attentionLivePaneLister implements the notify cluster's livePaneLister
+// seam on top of [attentionCommand.listAttentionPanes], translating
+// attentionPaneRow into the neutral livePaneRow DTO so the notify side does
+// not depend on attention internals (state consts, title-prefix helpers).
+type attentionLivePaneLister struct {
+	runner tmuxRunner
+}
+
+func newAttentionLivePaneLister(runner tmuxRunner) livePaneLister {
+	return attentionLivePaneLister{runner: runner}
+}
+
+// newDefaultLivePaneLister builds the production live-pane lister used by
+// the app constructor wiring in [New].
+func newDefaultLivePaneLister() livePaneLister {
+	return newAttentionLivePaneLister(inttmux.ExecRunner{})
+}
+
+func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
+	rows, err := (&attentionCommand{runner: l.runner}).listAttentionPanes()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]livePaneRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, livePaneRow{
+			Session:        row.Session,
+			Window:         row.Window,
+			Pane:           row.Pane,
+			Socket:         row.Socket,
+			Title:          row.Title,
+			AttentionState: row.AttentionState,
+			AIState:        row.AIState,
+			Agent:          row.Agent,
+			Topic:          row.Topic,
+			ReplyState:     row.AttentionState == attentionStateReply,
+			TitleBadge:     hasAttentionPrefix(row.Title) || hasBraillePrefix(row.Title),
+		})
+	}
+	return out, nil
+}
+
 func filterAttentionRows(rows []attentionPaneRow) []attentionPaneRow {
 	out := make([]attentionPaneRow, 0, len(rows))
 	for _, row := range rows {

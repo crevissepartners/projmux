@@ -23,6 +23,13 @@ type reconcileTmuxRunner struct {
 	calls  int
 }
 
+// reconcilePaneRow renders one live pane row in the attention list-panes
+// format the livePaneLister seam parses: session, window, pane, active,
+// title, attention state, ai state, agent, topic, socket.
+func reconcilePaneRow(session, window, pane, attention, ai, agent, topic, socket string) []byte {
+	return notifyLivePaneRows([]string{session, window, pane, "0", "", attention, ai, agent, topic, socket})
+}
+
 func (r *reconcileTmuxRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	if name == "tmux" && len(args) >= 2 && args[0] == "list-panes" && args[1] == "-a" {
 		r.calls++
@@ -92,9 +99,10 @@ func (s *memNotifyStore) AckAll() (int, error) {
 
 func newReconcileCmd(store notifyStore, runner tmuxRunner) *notifyCommand {
 	return &notifyCommand{
-		store:  store,
-		now:    func() time.Time { return time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC) },
-		runner: runner,
+		store:     store,
+		now:       func() time.Time { return time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC) },
+		runner:    runner,
+		livePanes: newAttentionLivePaneLister(runner),
 	}
 }
 
@@ -102,7 +110,7 @@ func TestNotifyReconcilePushesMissingEntryForReplyPane(t *testing.T) {
 	t.Parallel()
 
 	runner := &reconcileTmuxRunner{
-		output: []byte("main|@4|%16|reply|waiting|claude|notify wiring|/tmp/tmux-1000/projmux\n"),
+		output: reconcilePaneRow("main", "@4", "%16", "reply", "waiting", "claude", "notify wiring", "/tmp/tmux-1000/projmux"),
 	}
 	store := &memNotifyStore{}
 	cmd := newReconcileCmd(store, runner)
@@ -146,7 +154,7 @@ func TestNotifyReconcilePublishesQueueRefreshBestEffort(t *testing.T) {
 	t.Parallel()
 
 	runner := &reconcileTmuxRunner{
-		output: []byte("main|@4|%16|reply|waiting|claude|notify wiring|/tmp/tmux-1000/projmux\n"),
+		output: reconcilePaneRow("main", "@4", "%16", "reply", "waiting", "claude", "notify wiring", "/tmp/tmux-1000/projmux"),
 	}
 	store := &memNotifyStore{}
 	events := &stubNotifyQueueEvents{publishErr: errors.New("listener unavailable")}
@@ -193,7 +201,7 @@ func TestNotifyReconcileReportsStaleEntryWhenPaneNoLongerReply(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	runner := &reconcileTmuxRunner{
 		// Pane %16 is still alive but no longer in reply state.
-		output: []byte("main|@4|%16||idle|claude||/tmp/tmux/default\n"),
+		output: reconcilePaneRow("main", "@4", "%16", "", "idle", "claude", "", "/tmp/tmux/default"),
 	}
 	store := &memNotifyStore{
 		entries: []notify.Notification{
@@ -265,7 +273,7 @@ func TestNotifyReconcileKeepsMatchingEntryWithoutDuplicatePush(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	runner := &reconcileTmuxRunner{
-		output: []byte("main|@4|%16|reply|waiting|claude|notify wiring|/tmp/tmux/default\n"),
+		output: reconcilePaneRow("main", "@4", "%16", "reply", "waiting", "claude", "notify wiring", "/tmp/tmux/default"),
 	}
 	store := &memNotifyStore{
 		entries: []notify.Notification{
@@ -305,7 +313,7 @@ func TestNotifyReconcileRefreshesEntryWithStaleText(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	runner := &reconcileTmuxRunner{
 		// Topic on pane is "new topic" but queued entry still has old text.
-		output: []byte("main|@4|%16|reply||claude|new topic|\n"),
+		output: reconcilePaneRow("main", "@4", "%16", "reply", "", "claude", "new topic", ""),
 	}
 	store := &memNotifyStore{
 		entries: []notify.Notification{
@@ -347,7 +355,7 @@ func TestNotifyReconcileSkipsPaneWithoutAgent(t *testing.T) {
 	runner := &reconcileTmuxRunner{
 		// Pane is in reply state but has no AI agent (manual attention toggle
 		// on a shell pane). Producer skips it; reconcile mirrors that.
-		output: []byte("main|@4|%5|reply|||shell topic|\n"),
+		output: reconcilePaneRow("main", "@4", "%5", "reply", "", "", "shell topic", ""),
 	}
 	store := &memNotifyStore{}
 	cmd := newReconcileCmd(store, runner)
@@ -400,7 +408,7 @@ func TestNotifyReconcileIdempotent(t *testing.T) {
 	t.Parallel()
 
 	runner := &reconcileTmuxRunner{
-		output: []byte("main|@4|%16|reply|waiting|claude|notify wiring|/tmp/tmux/default\n"),
+		output: reconcilePaneRow("main", "@4", "%16", "reply", "waiting", "claude", "notify wiring", "/tmp/tmux/default"),
 	}
 	store := &memNotifyStore{}
 	cmd := newReconcileCmd(store, runner)
@@ -429,7 +437,7 @@ func TestNotifyReconcileJSONOutput(t *testing.T) {
 	t.Parallel()
 
 	runner := &reconcileTmuxRunner{
-		output: []byte("main|@4|%16|reply|waiting|claude||\n"),
+		output: reconcilePaneRow("main", "@4", "%16", "reply", "waiting", "claude", "", ""),
 	}
 	store := &memNotifyStore{}
 	cmd := newReconcileCmd(store, runner)

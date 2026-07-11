@@ -35,6 +35,7 @@ type notifyCommand struct {
 	storeErr   error
 	now        func() time.Time
 	runner     tmuxRunner
+	livePanes  livePaneLister
 	hooks      *sendNotiHookDispatcher
 	events     notifyQueueRefreshEvents
 	picker     intpickercompat.Runner
@@ -44,10 +45,11 @@ type notifyCommand struct {
 	homeDir    func() (string, error)
 }
 
-func newNotifyCommand() *notifyCommand {
+func newNotifyCommand(livePanes livePaneLister) *notifyCommand {
 	cmd := &notifyCommand{
 		now:        time.Now,
 		runner:     reconcileDefaultRunner(),
+		livePanes:  livePanes,
 		hooks:      newSendNotiHookDispatcher(),
 		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		executable: os.Executable,
@@ -1682,6 +1684,10 @@ type notifyLivePane struct {
 	Topic          string `json:"topic,omitempty"`
 	Target         string `json:"target"`
 	ShouldQueue    bool   `json:"should_queue"`
+	// replyState mirrors livePaneRow.ReplyState (pane is in attention "reply"
+	// state) for the manual-reply vs title-attention distinction. Unexported so
+	// the `--live` JSON shape stays unchanged.
+	replyState bool
 }
 
 type notifyLiveRow struct {
@@ -1732,7 +1738,7 @@ func (c *notifyCommand) buildNotifyLiveReportLocale(entries []notify.Notificatio
 		liveCopy := live
 		if !live.ShouldQueue {
 			state := "live-title-attention"
-			if live.AttentionState == attentionStateReply {
+			if live.replyState {
 				state = "live-manual-reply"
 			}
 			report.Rows = append(report.Rows, notifyLiveRow{
@@ -1814,7 +1820,7 @@ func notifyLiveExplanationKey(state string) (i18n.Key, string) {
 // a missing tmux server only suppresses the stale/gone classification —
 // listing entries themselves continues to work.
 func (c *notifyCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
-	if c == nil || c.runner == nil {
+	if c == nil || c.livePanes == nil {
 		return nil
 	}
 	panes, err := c.listNotifyLivePanes()
@@ -1824,12 +1830,12 @@ func (c *notifyCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
 	return notifyLiveShouldQueueByID(panes)
 }
 
-// notifyLiveStateBestEffort reads the attention pane rows once and returns
-// both the reply+agent index (for stale detection) and the full pane inventory
+// notifyLiveStateBestEffort reads the live pane rows once and returns both
+// the reply+agent index (for stale detection) and the full pane inventory
 // (for gone detection), swallowing any tmux error into nil/nil. Sidebar
 // renders use this so a single `list-panes` subprocess feeds both classifiers.
 func (c *notifyCommand) notifyLiveStateBestEffort() (map[string]notifyLivePane, notifyLivePaneSet) {
-	if c == nil || c.runner == nil {
+	if c == nil || c.livePanes == nil {
 		return nil, nil
 	}
 	panes, paneSet, err := c.listNotifyLivePanesAndSet()
@@ -1881,9 +1887,9 @@ func notifyLivePaneSetKey(session, pane string) string {
 }
 
 // newNotifyLivePaneSet builds a pane-inventory set from the full (unfiltered)
-// attention pane rows. It returns nil when no rows have a usable pane target,
+// live pane rows. It returns nil when no rows have a usable pane target,
 // so callers uniformly read nil as "inventory unavailable".
-func newNotifyLivePaneSet(rows []attentionPaneRow) notifyLivePaneSet {
+func newNotifyLivePaneSet(rows []livePaneRow) notifyLivePaneSet {
 	set := make(notifyLivePaneSet, len(rows))
 	for _, row := range rows {
 		if strings.TrimSpace(row.Pane) == "" {
@@ -1908,12 +1914,22 @@ func (s notifyLivePaneSet) Has(entry notify.Notification) bool {
 	return ok
 }
 
-// listNotifyLivePanesAndSet reads the attention pane rows once and returns both
+// listLivePaneRows reads the full (unfiltered) live pane inventory through
+// the livePaneLister seam. Every notify-side live read funnels through here
+// so the attention dependency stays behind the injected lister.
+func (c *notifyCommand) listLivePaneRows() ([]livePaneRow, error) {
+	if c == nil || c.livePanes == nil {
+		return nil, errors.New("live pane lister is not configured")
+	}
+	return c.livePanes.ListLivePanes()
+}
+
+// listNotifyLivePanesAndSet reads the live pane rows once and returns both
 // the attention/reply-filtered notifyLivePane slice (for stale detection) and
 // the full pane-inventory set (for GONE detection), avoiding a second tmux
 // subprocess.
 func (c *notifyCommand) listNotifyLivePanesAndSet() ([]notifyLivePane, notifyLivePaneSet, error) {
-	rows, err := (&attentionCommand{runner: c.runner}).listAttentionPanes()
+	rows, err := c.listLivePaneRows()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1921,14 +1937,14 @@ func (c *notifyCommand) listNotifyLivePanesAndSet() ([]notifyLivePane, notifyLiv
 }
 
 func (c *notifyCommand) listNotifyLivePanes() ([]notifyLivePane, error) {
-	rows, err := (&attentionCommand{runner: c.runner}).listAttentionPanes()
+	rows, err := c.listLivePaneRows()
 	if err != nil {
 		return nil, err
 	}
 	return notifyLivePanesFromRows(rows), nil
 }
 
-func notifyLivePanesFromRows(rows []attentionPaneRow) []notifyLivePane {
+func notifyLivePanesFromRows(rows []livePaneRow) []notifyLivePane {
 	out := make([]notifyLivePane, 0, len(rows))
 	for _, row := range rows {
 		live := notifyLivePane{
@@ -1947,9 +1963,10 @@ func notifyLivePanesFromRows(rows []attentionPaneRow) []notifyLivePane {
 				Window:  row.Window,
 				Pane:    row.Pane,
 			}),
-			ShouldQueue: row.AttentionState == attentionStateReply && strings.TrimSpace(row.Agent) != "",
+			ShouldQueue: row.ReplyState && strings.TrimSpace(row.Agent) != "",
+			replyState:  row.ReplyState,
 		}
-		if live.AttentionState == attentionStateReply || hasAttentionPrefix(live.Title) || hasBraillePrefix(live.Title) {
+		if row.ReplyState || row.TitleBadge {
 			out = append(out, live)
 		}
 	}

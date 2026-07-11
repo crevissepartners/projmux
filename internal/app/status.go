@@ -470,7 +470,7 @@ func (c *statusCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
 		return nil
 	}
 	runner := statusCommandRunnerAdapter{read: c.readCommand}
-	panes, err := (&notifyCommand{runner: runner}).listNotifyLivePanes()
+	panes, err := (&notifyCommand{livePanes: newAttentionLivePaneLister(runner)}).listNotifyLivePanes()
 	if err != nil {
 		return nil
 	}
@@ -486,12 +486,12 @@ func (c *statusCommand) notifyLiveStateBestEffort() (map[string]notifyLivePane, 
 		return nil, nil
 	}
 	runner := statusCommandRunnerAdapter{read: c.readCommand}
-	return (&notifyCommand{runner: runner}).notifyLiveStateBestEffort()
+	return (&notifyCommand{livePanes: newAttentionLivePaneLister(runner)}).notifyLiveStateBestEffort()
 }
 
-// statusCommandRunnerAdapter wraps statusCommand.readCommand so the existing
-// notifyCommand.listNotifyLivePanes helper can be reused without exporting
-// the underlying runner.
+// statusCommandRunnerAdapter wraps statusCommand.readCommand so the
+// attention-backed live-pane lister can be reused without exporting the
+// underlying runner.
 type statusCommandRunnerAdapter struct {
 	read func(ctx context.Context, name string, args ...string) ([]byte, error)
 }
