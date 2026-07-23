@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -3774,5 +3776,182 @@ func TestSwitchCurrentSelectionMatchesSnappedSymlinkCandidate(t *testing.T) {
 	// symlink-form candidate row produced by discovery.
 	if match := bestSwitchCandidateMatch(realCurrent, got); match != symlinkProj {
 		t.Fatalf("bestSwitchCandidateMatch(%q, %q) = %q, want %q", realCurrent, got, match, symlinkProj)
+	}
+}
+
+func TestSwitchSidebarCommitRecordsOnceAfterMarkerRemoval(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	client := "/dev/pts/7"
+	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\norigin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"work-session": true}}
+	cmd := &switchCommand{
+		sessions:   executor,
+		tmuxRunner: runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(key string) string {
+			if key == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return ""
+		},
+	}
+
+	plan := switchPlan{UI: switchUISidebar, Selection: "/repo/work", SessionName: "work-session"}
+	if err := cmd.openProjectTargetPathFromSidebar(context.Background(), plan); err != nil {
+		t.Fatalf("openProjectTargetPathFromSidebar() error = %v", err)
+	}
+
+	if got, want := executor.calls, []string{"open:work-session"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("session calls = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want removed before commit record", err)
+	}
+	want := recordedTmuxCall{name: "tmux", args: []string{"run-shell", "-b", "'/tmp/projmux' 'window' 'record'"}}
+	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0], want) {
+		t.Fatalf("tmux calls = %#v, want exactly one commit record %#v", runner.calls, want)
+	}
+}
+
+func TestSwitchSidebarCommitSkipsExplicitRecordWithoutMarker(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	runner := &recordingTmuxRunner{}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"work-session": true}}
+	cmd := &switchCommand{
+		sessions:   executor,
+		tmuxRunner: runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+	}
+
+	plan := switchPlan{UI: switchUISidebar, Selection: "/repo/work", SessionName: "work-session"}
+	if err := cmd.openProjectTargetPathFromSidebar(context.Background(), plan); err != nil {
+		t.Fatalf("openProjectTargetPathFromSidebar() error = %v", err)
+	}
+
+	if got, want := executor.calls, []string{"open:work-session"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("session calls = %q, want %q", got, want)
+	}
+	// Outside a sidebar popup the open switch fires the session-changed hook
+	// itself, so an explicit record would double-record.
+	if len(runner.calls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none without a sidebar popup marker", runner.calls)
+	}
+}
+
+func TestSwitchSidebarCancelRestoresOriginSession(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	client := "/dev/pts/7"
+	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\norigin-session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"origin-session": true}}
+	cmd := &switchCommand{
+		sessions: executor,
+		lookupEnv: func(key string) string {
+			if key == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return ""
+		},
+	}
+
+	reopen, err := cmd.execute(context.Background(), switchPlan{UI: switchUISidebar, OriginSession: "origin-session"}, io.Discard)
+	if err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if reopen {
+		t.Fatal("execute() reopen = true, want false on cancel")
+	}
+	if got, want := executor.calls, []string{"open:origin-session"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("session calls = %q, want origin restore %q", got, want)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want removed before origin restore", err)
+	}
+}
+
+func TestSwitchSidebarCancelSkipsRestoreWhenOriginMissing(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	client := "/dev/pts/7"
+	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\norigin-session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{}}
+	cmd := &switchCommand{
+		sessions: executor,
+		lookupEnv: func(key string) string {
+			if key == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return ""
+		},
+	}
+
+	if _, err := cmd.execute(context.Background(), switchPlan{UI: switchUISidebar, OriginSession: "origin-session"}, io.Discard); err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("session calls = %q, want none when the origin session is gone", executor.calls)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want marker removed even without restore", err)
+	}
+}
+
+func TestSwitchSidebarCancelWithoutMarkerDoesNothing(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"origin-session": true}}
+	cmd := &switchCommand{
+		sessions:  executor,
+		lookupEnv: func(string) string { return "" },
+	}
+
+	if _, err := cmd.execute(context.Background(), switchPlan{UI: switchUISidebar, OriginSession: "origin-session"}, io.Discard); err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("session calls = %q, want none outside a sidebar popup", executor.calls)
+	}
+}
+
+func TestSwitchPopupCancelDoesNotRestoreOrigin(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	client := "/dev/pts/7"
+	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\norigin-session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"origin-session": true}}
+	cmd := &switchCommand{
+		sessions: executor,
+		lookupEnv: func(key string) string {
+			if key == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return ""
+		},
+	}
+
+	if _, err := cmd.execute(context.Background(), switchPlan{UI: switchUIPopup, OriginSession: "origin-session"}, io.Discard); err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("session calls = %q, want none for the popup sessionizer", executor.calls)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("marker stat error = %v, want sidebar marker untouched by popup cancel", err)
 	}
 }

@@ -337,7 +337,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read marker error = %v", err)
 	}
-	if got, want := string(content), "%1\n"; got != want {
+	if got, want := string(content), "%1\nwork\n"; got != want {
 		t.Fatalf("marker content = %q, want %q", got, want)
 	}
 }
@@ -859,7 +859,7 @@ func TestAppRunTmuxPopupToggleOpensRecentWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read marker error = %v", err)
 	}
-	if got, want := string(content), "%1\n"; got != want {
+	if got, want := string(content), "%1\n\n"; got != want {
 		t.Fatalf("marker content = %q, want %q", got, want)
 	}
 }
@@ -1038,7 +1038,7 @@ func TestAppRunTmuxPopupToggleRecoversStaleSettingsMarkerAndReopens(t *testing.T
 			if err != nil {
 				t.Fatalf("read marker error = %v", err)
 			}
-			if got, want := string(content), "%active\n"; got != want {
+			if got, want := string(content), "%active\n\n"; got != want {
 				t.Fatalf("marker content = %q, want recovered current pane marker %q", got, want)
 			}
 		})
@@ -2925,4 +2925,146 @@ func containsTmuxArgPair(args []string, key, value string) bool {
 		}
 	}
 	return false
+}
+
+func TestParsePopupMarkerContent(t *testing.T) {
+	t.Parallel()
+
+	pane, session := parsePopupMarkerContent([]byte("%1\nwork\n"))
+	if pane != "%1" || session != "work" {
+		t.Fatalf("parsePopupMarkerContent(two lines) = (%q, %q), want (%q, %q)", pane, session, "%1", "work")
+	}
+	pane, session = parsePopupMarkerContent([]byte("%1\n"))
+	if pane != "%1" || session != "" {
+		t.Fatalf("parsePopupMarkerContent(legacy single line) = (%q, %q), want (%q, %q)", pane, session, "%1", "")
+	}
+	pane, session = parsePopupMarkerContent(nil)
+	if pane != "" || session != "" {
+		t.Fatalf("parsePopupMarkerContent(empty) = (%q, %q), want empty", pane, session)
+	}
+}
+
+func TestIsSidebarPreviewActive(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	if isSidebarPreviewActive() {
+		t.Fatal("isSidebarPreviewActive() = true, want false without markers")
+	}
+	other := popupMarkerPath("tty0", "recent-windows")
+	if err := os.WriteFile(other, []byte("%1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isSidebarPreviewActive() {
+		t.Fatal("isSidebarPreviewActive() = true, want false for non-sidebar popup markers")
+	}
+	marker := popupMarkerPath("tty0", "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\nwork\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isSidebarPreviewActive() {
+		t.Fatal("isSidebarPreviewActive() = false, want true while a sidebar marker exists")
+	}
+}
+
+func TestAppRunTmuxPopupToggleCloseRestoresSidebarOriginSession(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-sidebar-cancel"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\nwork\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}": clientKey,
+		"#{pane_id}":    "%active",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want not exist", err)
+	}
+	var got []recordedTmuxCall
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && (call.args[0] == "has-session" || call.args[0] == "switch-client") {
+			got = append(got, call)
+		}
+	}
+	want := []recordedTmuxCall{
+		{name: "tmux", args: []string{"has-session", "-t", "=work"}},
+		{name: "tmux", args: []string{"switch-client", "-c", clientKey, "-t", "=work"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cancel restore calls = %#v, want origin has-session then switch-client %#v", got, want)
+	}
+}
+
+func TestAppRunTmuxPopupToggleCloseSkipsSidebarRestoreWhenOriginGone(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-sidebar-cancel-gone"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\nwork\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{
+		formats: map[string]string{
+			"#{client_tty}": clientKey,
+			"#{pane_id}":    "%active",
+		},
+		errors: map[string]error{
+			recordedTmuxCallKey("tmux", "has-session", "-t", "=work"): errors.New("can't find session"),
+		},
+	}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && call.args[0] == "switch-client" {
+			t.Fatalf("tmux calls = %#v, want no switch-client when origin session is gone", runner.calls)
+		}
+	}
+}
+
+func TestAppRunTmuxPopupToggleCloseSkipsSidebarRestoreForLegacyMarker(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-sidebar-cancel-legacy"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}": clientKey,
+		"#{pane_id}":    "%active",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && (call.args[0] == "has-session" || call.args[0] == "switch-client") {
+			t.Fatalf("tmux calls = %#v, want no restore attempt without a recorded origin session", runner.calls)
+		}
+	}
 }

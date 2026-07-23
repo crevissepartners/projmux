@@ -410,8 +410,13 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	if _, err := os.Stat(marker); err == nil {
 		targetPane := strings.TrimSpace(popupCtx.OriginPane)
 		targetClient := ""
-		if content, readErr := os.ReadFile(marker); readErr == nil && strings.TrimSpace(string(content)) != "" {
-			targetPane = strings.TrimSpace(string(content))
+		originSession := ""
+		if content, readErr := os.ReadFile(marker); readErr == nil {
+			markerPane, markerSession := parsePopupMarkerContent(content)
+			if markerPane != "" {
+				targetPane = markerPane
+			}
+			originSession = markerSession
 		}
 		if mode.Canonical == "notify-sidebar" {
 			targetPane = ""
@@ -426,6 +431,9 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 			}
 		} else {
 			_ = os.Remove(marker)
+			if mode.Canonical == "sessionizer-sidebar" {
+				c.restoreSidebarOriginSession(ctx, popupCtx.TargetClient, originSession)
+			}
 			return nil
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -441,7 +449,7 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(marker, []byte(popupCtx.OriginPane+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(marker, []byte(popupCtx.OriginPane+"\n"+popupCtx.OriginSession+"\n"), 0o644); err != nil {
 		return fmt.Errorf("write tmux popup marker: %w", err)
 	}
 	if err := intmux.NewRunner(c.runner).DisplayPopup(ctx, command, intmux.PopupOptions(options)); err != nil {
@@ -1620,6 +1628,53 @@ func buildMarkedPopupCommand(binaryPath string, args []string, marker, cwd strin
 
 func popupMarkerPath(clientKey, mode string) string {
 	return filepath.Join(os.TempDir(), "projmux-tmux-popup-"+sanitizePopupKey(clientKey)+"-"+sanitizePopupKey(mode)+".marker")
+}
+
+// parsePopupMarkerContent splits a popup marker payload into its origin pane
+// (line 1) and origin session (line 2, used by the sessionizer-sidebar cancel
+// restore). Markers written before the session line existed yield an empty
+// session.
+func parsePopupMarkerContent(content []byte) (pane, session string) {
+	lines := strings.Split(string(content), "\n")
+	if len(lines) > 0 {
+		pane = strings.TrimSpace(lines[0])
+	}
+	if len(lines) > 1 {
+		session = strings.TrimSpace(lines[1])
+	}
+	return pane, session
+}
+
+// isSidebarPreviewActive reports whether any client currently has the project
+// sidebar popup open. The sidebar's live switch is a preview: while a sidebar
+// marker exists, `window record` skips so peeked sessions never enter the
+// recent-windows queue. The glob is client-agnostic because the tmux record
+// hook runs without client context.
+func isSidebarPreviewActive() bool {
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "projmux-tmux-popup-*-sessionizer-sidebar.marker"))
+	return err == nil && len(matches) > 0
+}
+
+// restoreSidebarOriginSession switches the client back to the session that was
+// active when the sidebar opened. Runs on toggle-off (= cancel) after the
+// popup marker is removed, so this restore switch records origin naturally via
+// the session-changed hook while the peeked sessions stay unrecorded. Best
+// effort: a missing origin session (killed while peeking) keeps the client on
+// its current session.
+func (c *tmuxCommand) restoreSidebarOriginSession(ctx context.Context, targetClient, originSession string) {
+	originSession = strings.TrimSpace(originSession)
+	if originSession == "" || c.runner == nil {
+		return
+	}
+	if _, err := c.runner.Run(ctx, "tmux", "has-session", "-t", "="+originSession); err != nil {
+		return
+	}
+	args := []string{"switch-client"}
+	if client := strings.TrimSpace(targetClient); client != "" {
+		args = append(args, "-c", client)
+	}
+	args = append(args, "-t", "="+originSession)
+	_, _ = c.runner.Run(ctx, "tmux", args...)
 }
 
 func sanitizePopupKey(value string) string {

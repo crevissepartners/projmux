@@ -1470,6 +1470,9 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 
 func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.Writer) (bool, error) {
 	if plan.Selection == "" {
+		if plan.UI == switchUISidebar {
+			c.cancelSidebarPreview(ctx, plan.OriginSession)
+		}
 		return false, nil
 	}
 	if plan.Selection == switchSettingsSentinel {
@@ -1599,7 +1602,11 @@ func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, pl
 		return err
 	}
 	if exists {
-		return c.openProjectSession(ctx, sessionName)
+		if err := c.openProjectSession(ctx, sessionName); err != nil {
+			return err
+		}
+		c.commitSidebarPreview(ctx)
+		return nil
 	}
 	mode := projectStartupCandidate{Kind: projectStartupKindEmpty}
 	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
@@ -1841,6 +1848,65 @@ func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Wr
 		return fmt.Errorf("open tmux session %q on sidebar focus: %w", sessionName, err)
 	}
 	return nil
+}
+
+// sidebarPreviewMarkerPath resolves this client's sessionizer-sidebar popup
+// marker. Empty when the switch command runs outside a sidebar popup (no
+// target-client env), which disables the commit/cancel marker handling.
+func (c *switchCommand) sidebarPreviewMarkerPath() string {
+	client := strings.TrimSpace(c.env(inttmux.SwitchTargetClientEnv))
+	if client == "" {
+		return ""
+	}
+	return popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+}
+
+// removeSidebarPreviewMarker deletes this client's sidebar popup marker and
+// reports whether one was present. The marker gates `window record`, so it
+// must be gone before the commit/cancel paths trigger any recording.
+func (c *switchCommand) removeSidebarPreviewMarker() bool {
+	marker := c.sidebarPreviewMarkerPath()
+	if marker == "" {
+		return false
+	}
+	return os.Remove(marker) == nil
+}
+
+// commitSidebarPreview finalizes an Enter-confirmed sidebar selection. The
+// live preview already switched the client to that session, so no
+// session-changed hook fires on commit; record the window once explicitly
+// after the gating marker is removed, detached like the tmux record hooks.
+func (c *switchCommand) commitSidebarPreview(ctx context.Context) {
+	if !c.removeSidebarPreviewMarker() {
+		return
+	}
+	if c.tmuxRunner == nil || c.executable == nil {
+		return
+	}
+	binaryPath, err := c.executable()
+	if err != nil {
+		return
+	}
+	command := buildShellCommand(binaryPath, []string{"window", "record"}, nil)
+	_, _ = c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", command)
+}
+
+// cancelSidebarPreview restores the origin session after the sidebar closes
+// without a selection (Esc). The marker is removed first so the restore
+// switch records origin naturally via the session-changed hook while peeked
+// sessions stay unrecorded. No-op outside a sidebar popup; a missing origin
+// session (killed while peeking) keeps the client on its current session.
+func (c *switchCommand) cancelSidebarPreview(ctx context.Context, originSession string) {
+	hadMarker := c.removeSidebarPreviewMarker()
+	originSession = strings.TrimSpace(originSession)
+	if !hadMarker || originSession == "" || c.sessions == nil {
+		return
+	}
+	exists, err := c.switchSessionExists(ctx, originSession)
+	if err != nil || !exists {
+		return
+	}
+	_ = c.sessions.OpenSession(ctx, originSession)
 }
 
 func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
