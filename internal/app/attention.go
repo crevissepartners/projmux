@@ -44,15 +44,28 @@ var attentionListFormats = []string{
 var attentionListFormat = intmux.JoinFormats(attentionListSeparator, attentionListFormats...)
 
 type attentionCommand struct {
-	runner   tmuxRunner
-	producer attentionNotifyProducer
+	runner               tmuxRunner
+	producer             attentionNotifyProducer
+	sidebarPreviewActive func() bool
 }
 
 func newAttentionCommand() *attentionCommand {
 	return &attentionCommand{
-		runner:   inttmux.ExecRunner{},
-		producer: newAttentionNotifyProducer(),
+		runner:               inttmux.ExecRunner{},
+		producer:             newAttentionNotifyProducer(),
+		sidebarPreviewActive: isSidebarPreviewActive,
 	}
+}
+
+// sidebarPreviewGateActive reports whether focus-hook attention updates must
+// be skipped because the project sidebar popup is previewing sessions. Only
+// `attention arm`/`attention clear` consult this gate: both subcommands are
+// invoked exclusively by the pane-focus-in/out and after-select-pane hooks,
+// so skipping them keeps peeked panes' markers intact. Manual
+// `attention toggle` and the AI ingest path (direct set-option in ai.go)
+// never route through these subcommands and stay live during preview.
+func (c *attentionCommand) sidebarPreviewGateActive() bool {
+	return c != nil && c.sidebarPreviewActive != nil && c.sidebarPreviewActive()
 }
 
 // notifyProducer returns the wired-up producer or a noop when the command
@@ -188,6 +201,9 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 	if err != nil || paneID == "" {
 		return err
 	}
+	if c.sidebarPreviewGateActive() {
+		return nil
+	}
 
 	state := c.paneAttentionState(paneID)
 	if state == attentionStateBusy {
@@ -215,6 +231,9 @@ func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
 	paneID, err := parseOptionalAttentionTarget(args, "attention arm", stderr)
 	if err != nil || paneID == "" {
 		return err
+	}
+	if c.sidebarPreviewGateActive() {
+		return nil
 	}
 	if c.paneAttentionState(paneID) == attentionStateReply {
 		c.setPaneOption(paneID, attentionFocusArmedOption, "1")

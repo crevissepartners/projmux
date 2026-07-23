@@ -3874,3 +3874,32 @@ func TestBuildRegisterToastAppIDDoesNotSetToastActivatorCLSID(t *testing.T) {
 		}
 	}
 }
+
+// Regression for the sidebar preview attention gate (Phase 1): the gate lives
+// only in `attention arm`/`attention clear` (focus hooks). The AI ingest path
+// writes attention state directly via set-option, so an AI turning "waiting"
+// while the user is browsing the sidebar must still raise the reply marker.
+func TestAIStatusWaitingSetsReplyDuringSidebarPreview(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	marker := popupMarkerPath("tty0", "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\nwork\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isSidebarPreviewActive() {
+		t.Fatal("test setup: sidebar preview marker not detected")
+	}
+
+	cmd := testAICommand(t.TempDir())
+
+	if err := cmd.applyAIStatusStateOnly("waiting", "%2", attentionNotifyInput{}); err != nil {
+		t.Fatalf("applyAIStatusStateOnly error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%2", "@projmux_attention_state", "reply"}) {
+		t.Fatalf("commands = %#v, want attention_state=reply while sidebar preview marker exists (AI completion attention must not be suppressed)", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%2", "@projmux_attention_focus_armed", "1"}) {
+		t.Fatalf("commands = %#v, want focus_armed=1 while sidebar preview marker exists", commands)
+	}
+}
