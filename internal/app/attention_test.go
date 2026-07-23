@@ -618,3 +618,125 @@ func (r *recordingAttentionRunner) Run(_ context.Context, name string, args ...s
 	}
 	return r.outputs[name+" "+strings.Join(args, " ")], nil
 }
+
+// Phase 1 (sidebar preview attention gate): the focus hooks are the only
+// callers of `attention arm`/`attention clear`, so gating those subcommands
+// suppresses preview-driven marker churn without touching the AI ingest path.
+
+func TestAttentionClearSkipsDuringSidebarPreview(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux display-message -p -t %3 #{@projmux_attention_state}":       []byte("reply\n"),
+			"tmux display-message -p -t %3 #{@projmux_attention_focus_armed}": []byte("1\n"),
+			"tmux display-message -p -t %3 #{pane_title}":                     []byte("✳ agent\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner, sidebarPreviewActive: func() bool { return true }}
+
+	if err := cmd.Run([]string{"clear", "%3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("calls = %#v, want none while the sidebar preview is active", runner.calls)
+	}
+}
+
+func TestAttentionArmSkipsDuringSidebarPreview(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux display-message -p -t %6 #{@projmux_attention_state}": []byte("reply\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner, sidebarPreviewActive: func() bool { return true }}
+
+	if err := cmd.Run([]string{"arm", "%6"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("calls = %#v, want none while the sidebar preview is active", runner.calls)
+	}
+}
+
+func TestAttentionClearRunsWhenSidebarPreviewInactive(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux display-message -p -t %3 #{@projmux_attention_state}":       []byte("reply\n"),
+			"tmux display-message -p -t %3 #{@projmux_attention_focus_armed}": []byte("1\n"),
+			"tmux display-message -p -t %3 #{pane_title}":                     []byte("✔ done\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner, sidebarPreviewActive: func() bool { return false }}
+
+	if err := cmd.Run([]string{"clear", "%3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []attentionCall{
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{@projmux_attention_state}"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{@projmux_attention_focus_armed}"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%3", "@projmux_attention_state"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%3", "@projmux_attention_ack", "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%3", "@projmux_attention_focus_armed"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{@projmux_ai_badge_kind}"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{@projmux_ai_state}"}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%3", "#{pane_title}"}},
+		{name: "tmux", args: []string{"select-pane", "-T", "done", "-t", "%3"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestAttentionArmRunsWhenSidebarPreviewInactive(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux display-message -p -t %6 #{@projmux_attention_state}": []byte("reply\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner, sidebarPreviewActive: func() bool { return false }}
+
+	if err := cmd.Run([]string{"arm", "%6"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []attentionCall{
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%6", "#{@projmux_attention_state}"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%6", "@projmux_attention_focus_armed", "1"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestAttentionToggleIgnoresSidebarPreview(t *testing.T) {
+	t.Parallel()
+
+	runner := &recordingAttentionRunner{
+		outputs: map[string][]byte{
+			"tmux display-message -p -t %1 #{pane_title}": []byte("server\n"),
+		},
+	}
+	cmd := &attentionCommand{runner: runner, sidebarPreviewActive: func() bool { return true }}
+
+	if err := cmd.Run([]string{"toggle", "%1"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []attentionCall{
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%1", "#{pane_title}"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_attention_state", "reply"}},
+		{name: "tmux", args: []string{"select-pane", "-T", "✳ server", "-t", "%1"}},
+		{name: "tmux", args: []string{"display-message", "-t", "%1", "attention: needs reply"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v (manual toggle must stay live during sidebar preview)", runner.calls, want)
+	}
+}
