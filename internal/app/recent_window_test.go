@@ -1529,3 +1529,55 @@ func (r *recentWindowFakeRunner) sawCall(name string, args ...string) bool {
 	}
 	return false
 }
+
+func TestRecentWindowRecordSkipsWhileSidebarPreviewActive(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	store := &recentWindowStubStore{}
+	cmd := &recentWindowCommand{
+		runner: &recentWindowFakeRunner{
+			recordOutput: strings.Join([]string{
+				"/tmp/tmux", "repos-projmux", "@6", "agent", "%54",
+				"shell", "topic", "zsh",
+				"/home/es5h/source/repos/projmux",
+				"/home/es5h/source/repos/projmux",
+			}, recentWindowFieldSep) + "\n",
+		},
+		storeFactory:         func(string) (recentWindowStore, error) { return store, nil },
+		now:                  time.Now,
+		sidebarPreviewActive: func() bool { return true },
+	}
+
+	if err := cmd.RunRecord(nil, nil, nil); err != nil {
+		t.Fatalf("RunRecord() error = %v", err)
+	}
+	if len(store.records) != 0 {
+		t.Fatalf("records len = %d, want 0 while the sidebar preview is active", len(store.records))
+	}
+}
+
+func TestRecentWindowRecordRecordsWhenSidebarPreviewInactive(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux,1,0")
+
+	store := &recentWindowStubStore{}
+	cmd := &recentWindowCommand{
+		runner: &recentWindowFakeRunner{
+			recordOutput: strings.Join([]string{
+				"/tmp/tmux", "repos-projmux", "@6", "agent", "%54",
+				"shell", "topic", "zsh",
+				"/home/es5h/source/repos/projmux",
+				"/home/es5h/source/repos/projmux",
+			}, recentWindowFieldSep) + "\n",
+		},
+		storeFactory:         func(string) (recentWindowStore, error) { return store, nil },
+		now:                  time.Now,
+		sidebarPreviewActive: func() bool { return false },
+	}
+
+	if err := cmd.RunRecord(nil, nil, nil); err != nil {
+		t.Fatalf("RunRecord() error = %v", err)
+	}
+	if len(store.records) != 1 {
+		t.Fatalf("records len = %d, want 1 for a regular switch outside the sidebar", len(store.records))
+	}
+}

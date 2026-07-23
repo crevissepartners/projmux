@@ -81,25 +81,27 @@ func printWindowUsage(w io.Writer) {
 }
 
 type recentWindowCommand struct {
-	runner       tmuxRunner
-	opener       recentWindowOpener
-	storeFactory recentWindowStoreFactory
-	nativePicker intpicker.Runner
-	lookupEnv    func(string) string
-	homeDir      func() (string, error)
-	now          func() time.Time
+	runner               tmuxRunner
+	opener               recentWindowOpener
+	storeFactory         recentWindowStoreFactory
+	nativePicker         intpicker.Runner
+	lookupEnv            func(string) string
+	homeDir              func() (string, error)
+	now                  func() time.Time
+	sidebarPreviewActive func() bool
 }
 
 func newRecentWindowCommand() *recentWindowCommand {
 	client := defaultTmuxClient()
 	return &recentWindowCommand{
-		runner:       inttmux.ExecRunner{},
-		opener:       client,
-		storeFactory: defaultRecentWindowStore,
-		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		lookupEnv:    os.Getenv,
-		homeDir:      os.UserHomeDir,
-		now:          time.Now,
+		runner:               inttmux.ExecRunner{},
+		opener:               client,
+		storeFactory:         defaultRecentWindowStore,
+		nativePicker:         intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		lookupEnv:            os.Getenv,
+		homeDir:              os.UserHomeDir,
+		now:                  time.Now,
+		sidebarPreviewActive: isSidebarPreviewActive,
 	}
 }
 
@@ -206,6 +208,14 @@ func (c *recentWindowCommand) RunRecord(args []string, _ io.Writer, stderr io.Wr
 	if fs.NArg() != 0 {
 		printWindowRecordUsage(stderr)
 		return fmt.Errorf("window record does not accept positional arguments")
+	}
+
+	// Sidebar live switches are previews: while the sidebar popup marker
+	// exists, skip recording so peeked sessions never enter the recent
+	// queue. The commit (Enter) path records once explicitly after the
+	// marker is removed, and the cancel restore switch records origin.
+	if c.sidebarPreviewActive != nil && c.sidebarPreviewActive() {
+		return nil
 	}
 
 	ctx := context.Background()
