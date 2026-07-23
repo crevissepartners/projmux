@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.4](https://github.com/crevissepartners/projmux/compare/v0.7.3...v0.7.4) (2026-07-23)
+
+
+### Features
+
+* **insert:** generic InsertFileText pane insert (config + CLI + keybinding) ([6ca1e86](https://github.com/crevissepartners/projmux/commit/6ca1e86822f21d35d32315b5afbbdc6ccf35efe1))
+* **insert:** generic InsertFileText pane insert (Phase 0+1) ([#504](https://github.com/crevissepartners/projmux/issues/504)) ([6ca1e86](https://github.com/crevissepartners/projmux/commit/6ca1e86822f21d35d32315b5afbbdc6ccf35efe1))
+* **keybindings:** move AI split picker to Alt-7 ([#514](https://github.com/crevissepartners/projmux/issues/514)) ([6a28b83](https://github.com/crevissepartners/projmux/commit/6a28b83d8b25384117719710e759dcd8e891ded7))
+
+
+### Bug Fixes
+
+* **attention:** skip focus-hook attention arm/clear during sidebar preview (Phase 1) ([cd28209](https://github.com/crevissepartners/projmux/commit/cd282099f0139dacf69fb43db986a8c4863908f4))
+* **attention:** suppress sidebar-preview attention arm/clear churn (Phase 1) ([#519](https://github.com/crevissepartners/projmux/issues/519)) ([cd28209](https://github.com/crevissepartners/projmux/commit/cd282099f0139dacf69fb43db986a8c4863908f4))
+* **sidebar:** make live switch a side-effect-free preview for recent-windows ([9af6dcb](https://github.com/crevissepartners/projmux/commit/9af6dcbec5a338cb0ffbd38b03d67c0f809c5119))
+* **sidebar:** sidebar live switch = preview, recent record on commit only (Phase 0) ([#518](https://github.com/crevissepartners/projmux/issues/518)) ([9af6dcb](https://github.com/crevissepartners/projmux/commit/9af6dcbec5a338cb0ffbd38b03d67c0f809c5119))
+* **switch:** dedup symlinked projects via canonical real-path identity ([#501](https://github.com/crevissepartners/projmux/issues/501)) ([0221702](https://github.com/crevissepartners/projmux/commit/02217027597edc6bfac28d1275561e159d245603))
+* **switch:** rebuild symlinked current-path candidate in alias form ([#503](https://github.com/crevissepartners/projmux/issues/503)) ([05a2537](https://github.com/crevissepartners/projmux/commit/05a253712caa3818dceed30a7bea2f3d48ec9e6a))
+
 ## [0.7.3](https://github.com/crevissepartners/projmux/compare/v0.7.2...v0.7.3) (2026-07-07)
 
 
