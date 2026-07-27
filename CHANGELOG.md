@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.5](https://github.com/crevissepartners/projmux/compare/v0.7.4...v0.7.5) (2026-07-27)
+
+
+### Bug Fixes
+
+* **aisessions:** unwrap codex XML context from resume titles ([005131c](https://github.com/crevissepartners/projmux/commit/005131ca9766ecb90eed3eedefef1e43618ce646))
+* **aisessions:** unwrap codex XML context from resume titles (Phase 0) ([#520](https://github.com/crevissepartners/projmux/issues/520)) ([005131c](https://github.com/crevissepartners/projmux/commit/005131ca9766ecb90eed3eedefef1e43618ce646))
+* classify Codex usage windows semantically ([e29263f](https://github.com/crevissepartners/projmux/commit/e29263fb7a50771f72172b36c7acee8673ab9d15))
+* **usage:** classify Codex rate-limit windows by window_minutes (Phase 0) ([#522](https://github.com/crevissepartners/projmux/issues/522)) ([e29263f](https://github.com/crevissepartners/projmux/commit/e29263fb7a50771f72172b36c7acee8673ab9d15))
+
 ## [0.7.4](https://github.com/crevissepartners/projmux/compare/v0.7.3...v0.7.4) (2026-07-23)
 
 
