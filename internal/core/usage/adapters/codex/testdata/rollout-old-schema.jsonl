@@ -1,0 +1,2 @@
+{"timestamp":"2026-04-30T09:00:00Z","type":"event_msg","payload":{"type":"agent_message"}}
+{"timestamp":"2026-04-30T09:30:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":5.0,"window_minutes":300,"resets_at":1777559543},"secondary":{"used_percent":12.0,"window_minutes":10080,"resets_at":1777966095},"plan_type":"prolite"}}}

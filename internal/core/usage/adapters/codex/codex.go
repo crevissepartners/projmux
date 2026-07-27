@@ -11,9 +11,10 @@
 //	  "plan_type": "prolite"
 //	}
 //
-// `primary` maps to the 5-hour window; `secondary` to the weekly window.
-// `resets_at` is a unix timestamp (seconds, UTC). Compared to the v0
-// JSONL token-counting implementation, this approach is:
+// Windows are classified semantically by `window_minutes`: 300 is the
+// 5-hour window and 10080 is the weekly window, regardless of which slot
+// contains them. `resets_at` is a unix timestamp (seconds, UTC). Compared
+// to the v0 JSONL token-counting implementation, this approach is:
 //
 //   - Server-authoritative: numbers match what `codex` itself shows.
 //   - Cross-machine: usage on another box is reflected as soon as that
@@ -68,9 +69,9 @@ func NewWithRoot(root string) *Adapter {
 func (a *Adapter) Name() string { return Name }
 
 // Collect locates the newest rollout-*.jsonl, walks it for the latest
-// `rate_limits` payload, and returns 5h + weekly Snapshots. Best-effort:
-// missing tree → nil snapshots, no rollout with rate_limits → nil
-// snapshots.
+// `rate_limits` payload, and returns its supported window Snapshots.
+// Best-effort: missing tree → nil snapshots, no rollout with rate_limits
+// → nil snapshots.
 func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 	root, err := a.resolveRoot()
 	if err != nil {
@@ -138,37 +139,44 @@ type rateLimits struct {
 }
 
 type rateLimitWindow struct {
-	UsedPercent float64 `json:"used_percent"`
-	ResetsAt    int64   `json:"resets_at"`
+	UsedPercent   float64 `json:"used_percent"`
+	WindowMinutes int     `json:"window_minutes"`
+	ResetsAt      int64   `json:"resets_at"`
 }
 
 func (rl *rateLimits) toSnapshots(now time.Time) []usage.Snapshot {
 	out := make([]usage.Snapshot, 0, 2)
-	if rl.Primary != nil {
+	for _, limit := range []*rateLimitWindow{rl.Primary, rl.Secondary} {
+		if limit == nil {
+			continue
+		}
+		window, supported := usageWindow(limit.WindowMinutes)
+		if !supported {
+			continue
+		}
 		s := usage.Snapshot{
 			Model:     Name,
-			Window:    usage.Window5h,
-			Pct:       rl.Primary.UsedPercent,
+			Window:    window,
+			Pct:       limit.UsedPercent,
 			UpdatedAt: now,
 		}
-		if rl.Primary.ResetsAt > 0 {
-			s.ResetsAt = time.Unix(rl.Primary.ResetsAt, 0).UTC()
-		}
-		out = append(out, s)
-	}
-	if rl.Secondary != nil {
-		s := usage.Snapshot{
-			Model:     Name,
-			Window:    usage.WindowWeekly,
-			Pct:       rl.Secondary.UsedPercent,
-			UpdatedAt: now,
-		}
-		if rl.Secondary.ResetsAt > 0 {
-			s.ResetsAt = time.Unix(rl.Secondary.ResetsAt, 0).UTC()
+		if limit.ResetsAt > 0 {
+			s.ResetsAt = time.Unix(limit.ResetsAt, 0).UTC()
 		}
 		out = append(out, s)
 	}
 	return out
+}
+
+func usageWindow(windowMinutes int) (usage.Window, bool) {
+	switch windowMinutes {
+	case 300:
+		return usage.Window5h, true
+	case 10080:
+		return usage.WindowWeekly, true
+	default:
+		return "", false
+	}
 }
 
 // rolloutLine is the minimal slice of the rollout schema needed to find
