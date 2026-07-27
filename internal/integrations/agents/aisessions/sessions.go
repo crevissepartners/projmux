@@ -823,6 +823,12 @@ func titleFromRecord(fields map[string]any) string {
 	recordType := strings.ToLower(stringJSONField(fields, "type"))
 	if recordType == "event_msg" {
 		if payload, ok := fields["payload"].(map[string]any); ok {
+			// codex: only user_message events carry the human prompt; skip
+			// agent_message and other event types so the title is the actual
+			// prompt. Untyped payloads keep the legacy behavior.
+			if payloadType := stringJSONField(payload, "type"); payloadType != "" && !strings.EqualFold(payloadType, "user_message") {
+				return ""
+			}
 			return cleanTitleCandidate(firstNestedString(payload, "message"))
 		}
 	}
@@ -902,11 +908,88 @@ func cleanTitle(title string) string {
 }
 
 func cleanTitleCandidate(title string) string {
+	title = unwrapContextWrappers(title)
 	title = cleanTitle(title)
 	if title == "" || isNoisyTitleCandidate(title) {
 		return ""
 	}
 	return title
+}
+
+// contextWrapperTags are the XML wrapper tags agents inject around context
+// (instructions, environment info) as synthetic user turns. Codex writes them
+// as the first user records of a rollout, which otherwise leak into resume
+// titles as raw "<environment_context>..." text.
+var contextWrapperTags = map[string]bool{
+	"user_instructions":   true,
+	"environment_context": true,
+}
+
+// unwrapContextWrappers strips agent-injected XML context wrapper blocks from
+// a title candidate. Removal is deliberately conservative so user-typed text
+// is never mangled:
+//   - only LEADING `<tag>...</tag>` blocks are removed, and only when the
+//     matching close tag is present;
+//   - the tag must be a known wrapper (contextWrapperTags) or snake_case
+//     (agent wrappers use snake_case names; HTML tags never do);
+//   - `<` anywhere past the leading block is never touched, so prompts like
+//     "why is a < b wrong?" or "<div>x</div> is broken" stay verbatim.
+//
+// If nothing but wrappers remains, the empty result makes the scan move on to
+// the next user candidate.
+func unwrapContextWrappers(text string) string {
+	for {
+		trimmed := strings.TrimSpace(text)
+		rest, ok := stripLeadingWrapperBlock(trimmed)
+		if !ok {
+			return trimmed
+		}
+		text = rest
+	}
+}
+
+// stripLeadingWrapperBlock removes one leading `<tag>...</tag>` wrapper block
+// and reports whether it did. It only fires when text starts with a wrapper
+// tag (see isContextWrapperTag) and the matching close tag exists.
+func stripLeadingWrapperBlock(text string) (string, bool) {
+	if !strings.HasPrefix(text, "<") {
+		return "", false
+	}
+	end := strings.IndexByte(text, '>')
+	if end < 0 {
+		return "", false
+	}
+	name, _, _ := strings.Cut(text[1:end], " ")
+	if !isContextWrapperTag(name) {
+		return "", false
+	}
+	closing := "</" + name + ">"
+	_, after, ok := strings.Cut(text, closing)
+	if !ok {
+		return "", false
+	}
+	return after, true
+}
+
+// isContextWrapperTag reports whether tag names an agent context wrapper:
+// either a known wrapper tag, or a lowercase snake_case name (must contain
+// "_"), which HTML tags and user-typed inline `<` expressions never match.
+func isContextWrapperTag(tag string) bool {
+	if contextWrapperTags[tag] {
+		return true
+	}
+	if !strings.Contains(tag, "_") {
+		return false
+	}
+	if tag == "" || tag[0] < 'a' || tag[0] > 'z' {
+		return false
+	}
+	for _, r := range tag {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func isNoisyTitleCandidate(title string) bool {
