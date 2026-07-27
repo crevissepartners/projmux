@@ -212,6 +212,97 @@ func TestDiscoverSkipsNoisyTitleCandidates(t *testing.T) {
 	}
 }
 
+func TestDiscoverCodexUnwrapsXMLContextTitles(t *testing.T) {
+	t.Parallel()
+
+	root := copyFixture(t, "titles")
+	sessionsDir := filepath.Join(root, "codex", "sessions")
+	day := filepath.Join(sessionsDir, "2026", "07", "27")
+	setModTime(t, filepath.Join(day, "rollout-xml-context.jsonl"), time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC))
+	setModTime(t, filepath.Join(day, "rollout-plain-prompt.jsonl"), time.Date(2026, 7, 27, 8, 0, 0, 0, time.UTC))
+	setModTime(t, filepath.Join(day, "rollout-inline-lt.jsonl"), time.Date(2026, 7, 27, 7, 0, 0, 0, time.UTC))
+	setModTime(t, filepath.Join(day, "rollout-html-snippet.jsonl"), time.Date(2026, 7, 27, 6, 0, 0, 0, time.UTC))
+
+	got, err := Discover("/workspace/app", DiscoverOptions{
+		CodexSessionsDir: sessionsDir,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("Discover() len = %d, want 4: %#v", len(got), got)
+	}
+	wantTitles := map[string]string{
+		// XML-wrapped context turns are skipped; the first real prompt wins.
+		"019f0000-0000-7000-8000-000000000301": "Fix codex resume titles",
+		// Plain prompt sessions are untouched (regression guard).
+		"019f0000-0000-7000-8000-000000000302": "Refactor the session scanner",
+		// Inline "<" typed by the user stays verbatim.
+		"019f0000-0000-7000-8000-000000000303": "why is a < b wrong in this loop?",
+		// A prompt starting with an HTML tag is never unwrapped.
+		"019f0000-0000-7000-8000-000000000304": `<div class="x">hello</div> is not rendering, why?`,
+	}
+	for _, session := range got {
+		want, ok := wantTitles[session.ResumeID]
+		if !ok {
+			t.Fatalf("unexpected session %q: %#v", session.ResumeID, session)
+		}
+		if session.Title != want {
+			t.Fatalf("Title[%s] = %q, want %q", session.ResumeID, session.Title, want)
+		}
+	}
+}
+
+func TestUnwrapContextWrappers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"user instructions only", "<user_instructions>\n# AGENTS.md\n</user_instructions>", ""},
+		{"environment context only", "<environment_context>\n  <cwd>/workspace/app</cwd>\n</environment_context>", ""},
+		{"wrapper then prompt", "<environment_context><cwd>/x</cwd></environment_context>\n\nFix the picker", "Fix the picker"},
+		{"stacked wrappers then prompt", "<user_instructions>rules</user_instructions>\n<environment_context>ctx</environment_context>\nDo the thing", "Do the thing"},
+		{"unknown snake_case wrapper", "<permissions_context>ro</permissions_context>Run tests", "Run tests"},
+		{"inline less-than untouched", "why is a < b wrong?", "why is a < b wrong?"},
+		{"leading html tag untouched", "<div>hello</div> is broken, why?", "<div>hello</div> is broken, why?"},
+		{"html tag with attrs untouched", `<div class="x">hi</div> not rendering`, `<div class="x">hi</div> not rendering`},
+		{"mid-text wrapper untouched", "explain <environment_context>foo</environment_context> please", "explain <environment_context>foo</environment_context> please"},
+		{"unclosed wrapper untouched", "<user_instructions> no close tag here", "<user_instructions> no close tag here"},
+		{"uppercase tag untouched", "<USER_INSTRUCTIONS>x</USER_INSTRUCTIONS> hi", "<USER_INSTRUCTIONS>x</USER_INSTRUCTIONS> hi"},
+		{"plain prompt untouched", "Refactor the session scanner", "Refactor the session scanner"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := unwrapContextWrappers(tt.in); got != tt.want {
+				t.Fatalf("unwrapContextWrappers(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTitleFromRecordSkipsNonUserEventMessages(t *testing.T) {
+	t.Parallel()
+
+	agentRecord := map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"type": "agent_message", "message": "On it"},
+	}
+	if got := titleFromRecord(agentRecord); got != "" {
+		t.Fatalf("titleFromRecord(agent_message) = %q, want empty", got)
+	}
+	legacyRecord := map[string]any{
+		"type":    "event_msg",
+		"payload": map[string]any{"message": "Legacy untyped message"},
+	}
+	if got := titleFromRecord(legacyRecord); got != "Legacy untyped message" {
+		t.Fatalf("titleFromRecord(untyped) = %q, want legacy message", got)
+	}
+}
+
 func TestScanSessionJSONLStopsAfterCwdMismatch(t *testing.T) {
 	t.Parallel()
 

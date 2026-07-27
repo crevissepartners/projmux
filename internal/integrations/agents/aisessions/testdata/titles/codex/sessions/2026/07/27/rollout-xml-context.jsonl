@@ -1,0 +1,5 @@
+{"timestamp":"2026-07-27T09:00:00.000Z","type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000301","cwd":"/workspace/app","git_branch":"feat/xml"}}
+{"timestamp":"2026-07-27T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>\n\n# AGENTS.md instructions for /workspace/app\n\nAlways run make test.\n\n</user_instructions>"}]}}
+{"timestamp":"2026-07-27T09:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"<environment_context>\n  <cwd>/workspace/app</cwd>\n  <shell>zsh</shell>\n</environment_context>","kind":"environment_context"}}
+{"timestamp":"2026-07-27T09:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"Fix codex resume titles","kind":"plain"}}
+{"timestamp":"2026-07-27T09:00:03.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix codex resume titles"}]}}
