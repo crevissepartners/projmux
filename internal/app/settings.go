@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -30,6 +32,7 @@ type settingsCommand struct {
 	runOutput           func(name string, args ...string) ([]byte, error)
 	tmuxRunner          tmuxRunner
 	probeKeybinding     func(probeKey, time.Duration) (probeResult, error)
+	nativeKeyCapture    func(context.Context) (string, bool, error)
 	aiNotifyDiagnostics func() []doctorAINotifyIntegration
 }
 
@@ -47,7 +50,8 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 		runOutput: func(name string, args ...string) ([]byte, error) {
 			return exec.Command(name, args...).Output()
 		},
-		tmuxRunner: inttmux.ExecRunner{},
+		tmuxRunner:       inttmux.ExecRunner{},
+		nativeKeyCapture: platformkeys.CaptureModifiedChord,
 	}
 	// The concrete commands satisfy the settings role interfaces structurally.
 	// Guard the nil pointers so the `c.<dep> == nil` checks keep their

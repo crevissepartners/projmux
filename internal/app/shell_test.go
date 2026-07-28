@@ -1410,6 +1410,39 @@ func TestShellRejectsInvalidUsage(t *testing.T) {
 	}
 }
 
+func TestShellNativeKeyBrokerPlatformBoundary(t *testing.T) {
+	tests := []struct {
+		name      string
+		goos      string
+		available bool
+		psmux     string
+		wantStart bool
+	}{
+		{name: "darwin native build", goos: "darwin", available: true, wantStart: true},
+		{name: "darwin without cgo adapter", goos: "darwin", available: false},
+		{name: "linux", goos: "linux", available: true},
+		{name: "windows", goos: "windows", available: true},
+		{name: "psmux backend", goos: "darwin", available: true, psmux: "psmux"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &shellCommand{
+				goos:       func() string { return tt.goos },
+				nativeKeys: func() bool { return tt.available },
+				lookupEnv: func(name string) string {
+					if name == muxBackendEnvVar {
+						return tt.psmux
+					}
+					return ""
+				},
+			}
+			if got := cmd.shouldStartNativeKeyBroker(); got != tt.wantStart {
+				t.Fatalf("shouldStartNativeKeyBroker() = %v, want %v", got, tt.wantStart)
+			}
+		})
+	}
+}
+
 type recordingShellRunner struct {
 	env  []string
 	name string

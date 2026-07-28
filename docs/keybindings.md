@@ -13,10 +13,13 @@ supported fallback guidance.
 The recommended path when a key does not fire:
 
 1. Try the key inside `projmux shell`.
-2. Run `projmux setup` outside tmux to see which bytes reach the process.
-3. For supported terminals, preview `projmux init [terminal]`; add `--apply`
+2. On macOS, approve the one-time Accessibility prompt from the native
+   `projmux shell` key adapter, then retry the physical key.
+3. Run `projmux setup` outside tmux to see which bytes reach the process.
+4. For supported terminals outside the native macOS app socket, preview
+   `projmux init [terminal]`; add `--apply`
    only after reviewing the merge.
-4. For unsupported terminals, configure plain Meta bytes or add a custom key in
+5. For unsupported terminals, configure plain Meta bytes or add a custom key in
    Settings > Keybindings.
 
 Settings saves safe tmux plain chords for actions and automatically applies the
@@ -56,6 +59,37 @@ separate from `last-pane` and from the existing-session popup.
 The tmux prefix remains the upstream default `Ctrl-b`. Inside a running
 session, `Ctrl-b ?` lists the live tmux bindings.
 
+### Native macOS delivery
+
+Darwin release binaries start a small native key adapter automatically with
+`projmux shell`. It observes physical keys only while a client on that projmux
+tmux socket reports itself focused. Supported `Alt`/Option and Control chords
+from the same merged action catalog are sent back through tmux's client key
+table. For example, a custom `M-a` remains the ordinary cross-platform
+`keymap.toml` value; on macOS the adapter recognizes physical Option-A and
+injects canonical `M-a`, while Linux and Windows keep their existing terminal
+delivery path.
+
+This adapter is terminal-independent, so Ghostty and iTerm2 do not need
+separate projmux mappings for the app socket. It does not rewrite terminal
+configuration and it does not translate Option-produced symbols such as `¡`.
+The first launch requires macOS Accessibility permission because consuming a
+physical chord before the terminal converts it requires a CGEvent event tap.
+The broker waits for the one-time approval and enables the event tap
+automatically; the tmux session does not need to be restarted.
+
+The portable key vocabulary stays shared across operating systems:
+`M-` (Alt/Option), `C-`, `S-`, letters, top-row digits, arrows/navigation,
+and function keys. Command/Super is intentionally not part of this portable
+tier. Picker-local unmodified commands continue through the picker input path;
+the native adapter owns action-level no-prefix bindings only.
+
+Settings > Keybindings > Add key races the native modified-key capture against
+the existing controlling-TTY capture. On Darwin this lets Press a key store a
+new physical Option, Control, Control-Option, or Shift-modified chord before
+the terminal turns it into text; ordinary keys still use the portable TTY
+path. Other operating systems keep the existing TTY capture unchanged.
+
 ## Discoverable Actions
 
 Settings > Keybindings lists the full action catalogue. In particular, sidebar
@@ -71,12 +105,13 @@ Troubleshooting row with Test key delivery and Advanced... entry points. Key
 rows open key detail for Remove key and Test key. Add key opens Press a key by
 default; Enter key name, the safe direct key pool, risky/reserved key copy, and
 raw diagnostics live under Advanced. Advanced delivery is still owned by the
-selected Projmux action: supported Ghostty and Windows Terminal mappings are
-previewed/applied through `projmux init`, not by storing raw sequences in the
-primary keymap. Options covers unbinding the action and reset/use-default
-flows. Diagnostic/probe/init workflows are not first-class Settings tabs; use
-`projmux setup` and `projmux init` from the terminal when key delivery needs
-remediation.
+selected Projmux action. The native macOS app-socket adapter reads the same
+safe chords directly; supported Ghostty and Windows Terminal mappings for
+other paths are previewed/applied through `projmux init`, not by storing raw
+sequences in the primary keymap. Options covers unbinding the action and
+reset/use-default flows. Diagnostic/probe/init workflows are not first-class
+Settings tabs; use `projmux setup` and, where the native adapter does not
+apply, `projmux init` from the terminal when key delivery needs remediation.
 
 Optional direct keys can be added for actions such as:
 

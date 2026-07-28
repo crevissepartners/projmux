@@ -169,7 +169,7 @@ func (c *setupCommand) printExpectedMap(stdout io.Writer) error {
 // rather than process stdin. Settings runs inside tmux where stdin may be the
 // picker's pipe/pane path, so /dev/tty is the only reliable source for a raw
 // operator keypress. Tests can still inject openTTY/readKey/enterRaw.
-func (c *setupCommand) probeControllingTTYKey(key probeKey, timeout time.Duration) (probeResult, error) {
+func (c *setupCommand) probeControllingTTYKeyContext(ctx context.Context, key probeKey, timeout time.Duration) (probeResult, error) {
 	if c.readKey != nil && c.openTTY == nil {
 		seq, err := c.readKey(timeout)
 		if err != nil && !errors.Is(err, errProbeTimeout) {
@@ -210,7 +210,7 @@ func (c *setupCommand) probeControllingTTYKey(key probeKey, timeout time.Duratio
 	readKey := c.readKey
 	if readKey == nil {
 		readKey = func(timeout time.Duration) ([]byte, error) {
-			return readKeySequence(tty, timeout)
+			return readKeySequenceContext(ctx, tty, timeout)
 		}
 	}
 	seq, err := readKey(timeout)
@@ -574,10 +574,14 @@ var errProbeTimeout = errors.New("probe key read timed out")
 // stdin within timeout. It uses a short post-first-byte drain window to coal
 // multi-byte sequences (\x1b[1;4D, \x1b[A, ...) into one read.
 func readKeySequence(stdin io.Reader, timeout time.Duration) ([]byte, error) {
+	return readKeySequenceContext(context.Background(), stdin, timeout)
+}
+
+func readKeySequenceContext(ctx context.Context, stdin io.Reader, timeout time.Duration) ([]byte, error) {
 	if timeout <= 0 {
 		timeout = defaultProbeTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	type chunk struct {

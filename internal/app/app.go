@@ -70,6 +70,7 @@ type App struct {
 	hook         *hookCommand
 	initCmd      *initcmd.Command
 	insertText   *insertFileTextCommand
+	keyBroker    *keyBrokerCommand
 	kill         *killCommand
 	notify       *notifyCommand
 	pin          *pinCommand
@@ -111,6 +112,7 @@ func New() *App {
 		hook:         newHookCommand(),
 		initCmd:      newInitCommand(),
 		insertText:   newInsertFileTextCommand(),
+		keyBroker:    newKeyBrokerCommand(),
 		kill:         newKillCommand(),
 		notify:       newNotifyCommand(newDefaultLivePaneLister()),
 		pin:          newPinCommand(),
@@ -164,6 +166,10 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.initCmd.Run(args[1:], stdout, stderr)
 	case "insert-file-text":
 		return a.insertText.Run(args[1:], stdout, stderr)
+	case "key-broker":
+		// Hidden Darwin helper: captures physical portable key chords while a
+		// projmux tmux client is focused and feeds them through its root table.
+		return a.keyBroker.Run(args[1:], stdout, stderr)
 	case "kill":
 		return a.kill.Run(args[1:], stdout, stderr)
 	case "notify":

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -411,7 +412,7 @@ func TestSetupProbeControllingTTYKeyReadsTTYFile(t *testing.T) {
 			return func() error { return nil }, nil
 		},
 	}
-	res, err := cmd.probeControllingTTYKey(probeKey{Label: "Alt-1", Plain: "\x1b1"}, time.Second)
+	res, err := cmd.probeControllingTTYKeyContext(context.Background(), probeKey{Label: "Alt-1", Plain: "\x1b1"}, time.Second)
 	if err != nil {
 		t.Fatalf("probeControllingTTYKey() error = %v", err)
 	}
