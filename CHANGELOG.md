@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.6](https://github.com/crevissepartners/projmux/compare/v0.7.5...v0.7.6) (2026-07-28)
+
+
+### Features
+
+* **keybindings:** add native Darwin key transport ([#523](https://github.com/crevissepartners/projmux/issues/523)) ([57a07c8](https://github.com/crevissepartners/projmux/commit/57a07c8d6dd29aa031ed478a013006cb1ab9503c))
+
 ## [0.7.5](https://github.com/crevissepartners/projmux/compare/v0.7.4...v0.7.5) (2026-07-27)
 
 
