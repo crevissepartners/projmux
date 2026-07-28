@@ -72,7 +72,7 @@ jobs:
       - unit
       - integration
       - e2e
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
 
     strategy:
       fail-fast: false
@@ -80,12 +80,20 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
+            runner: ubuntu-latest
+            cgo: "0"
           - goos: linux
             goarch: arm64
+            runner: ubuntu-latest
+            cgo: "0"
           - goos: darwin
             goarch: amd64
+            runner: macos-15-intel
+            cgo: "1"
           - goos: darwin
             goarch: arm64
+            runner: macos-15
+            cgo: "1"
 
     steps:
       - name: Checkout
@@ -101,7 +109,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
+          CGO_ENABLED: ${{ matrix.cgo }}
         run: |
           version="${GITHUB_REF_NAME#v}"
           name="projmux_${version}_${GOOS}_${GOARCH}"

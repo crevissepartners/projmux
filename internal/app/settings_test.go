@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -4941,6 +4942,40 @@ func TestSettingsHubKeybindingsCapturePrintableKeyWritesQuotedKeymap(t *testing.
 	}
 	if !strings.Contains(stdout.String(), "capturing custom key") {
 		t.Fatalf("stdout = %q, want custom-key capture copy", stdout.String())
+	}
+}
+
+func TestSettingsKeybindingCapturePrefersNativePhysicalOptionChord(t *testing.T) {
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+		nativeKeyCapture: func(context.Context) (string, bool, error) {
+			return "M-a", true, nil
+		},
+		probeKeybinding: func(key probeKey, timeout time.Duration) (probeResult, error) {
+			time.Sleep(50 * time.Millisecond)
+			return classifyProbeInput(key, nil), nil
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.runKeybindingCapture("ProjectSidebarToggle", &stdout); err != nil {
+		t.Fatalf("runKeybindingCapture() error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"M-a\"]\n") {
+		t.Fatalf("keymap = %q, want native physical M-a alias", keymap)
+	}
+	for _, want := range []string{
+		"OK native physical key M-a",
+		"raw bytes: (native physical event)",
+		"tmux received key: M-a",
+		"delivery status: delivered",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
@@ -32,12 +33,14 @@ type shellCommand struct {
 	writeFile    func(string, []byte, os.FileMode) error
 	readFile     func(string) ([]byte, error)
 	runCommand   func(ctx context.Context, env []string, name string, args ...string) error
+	startCommand func(ctx context.Context, env []string, name string, args ...string) error
 	tmuxRunner   tmuxRunner
 	sessionStore func() (sessionstate.Store, error)
 	update       *updateCommand
 	nativePicker intpicker.Runner
 	getwd        func() (string, error)
 	goos         func() string
+	nativeKeys   func() bool
 	now          func() time.Time
 }
 
@@ -56,11 +59,13 @@ func newShellCommand(update *updateCommand) *shellCommand {
 		writeFile:    os.WriteFile,
 		readFile:     os.ReadFile,
 		runCommand:   runForegroundCommand,
+		startCommand: startBackgroundCommand,
 		tmuxRunner:   shellTmuxExecRunner{},
 		update:       update,
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		getwd:        os.Getwd,
 		goos:         func() string { return runtime.GOOS },
+		nativeKeys:   platformkeys.Available,
 		now:          time.Now,
 	}
 }
@@ -122,6 +127,11 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	runArgs := []string{"-L", socketName, "-f", config, "new-session", "-A", "-s", target.SessionName}
 	if target.CWD != "" {
 		runArgs = append(runArgs, "-c", target.CWD)
+	}
+	if c.shouldStartNativeKeyBroker() {
+		if err := c.start(context.Background(), binaryPath, "key-broker", "--socket", socketName); err != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: start native macOS keybindings: %v\n", err)
+		}
 	}
 	return c.run(context.Background(), command, runArgs...)
 }
@@ -439,6 +449,21 @@ func (c *shellCommand) run(ctx context.Context, name string, args ...string) err
 	return c.runCommand(ctx, withoutEnv(os.Environ(), "TMUX"), name, args...)
 }
 
+func (c *shellCommand) start(ctx context.Context, name string, args ...string) error {
+	if c.startCommand == nil {
+		return errors.New("shell background command runner is not configured")
+	}
+	return c.startCommand(ctx, withoutEnv(os.Environ(), "TMUX"), name, args...)
+}
+
+func (c *shellCommand) shouldStartNativeKeyBroker() bool {
+	return c.goos != nil &&
+		c.goos() == "darwin" &&
+		c.nativeKeys != nil &&
+		c.nativeKeys() &&
+		!c.usePSMuxShell()
+}
+
 func (c *shellCommand) usePSMuxShell() bool {
 	return usePSMuxBackend(c.lookupEnv, c.goos)
 }
@@ -450,6 +475,20 @@ func runForegroundCommand(ctx context.Context, env []string, name string, args .
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func startBackgroundCommand(ctx context.Context, env []string, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+	return nil
 }
 
 func withoutEnv(env []string, name string) []string {

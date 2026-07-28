@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -322,9 +323,65 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 	}
 	key := captureProbeKeyForAction(action)
 	fmt.Fprintf(stdout, "capturing custom key for %s; press the key you want to add\n", keyBindingDisplayName(action))
-	res, err := c.probeLabKeybinding(key, defaultProbeTimeout)
-	if err != nil {
-		return err
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultProbeTimeout)
+	defer cancel()
+	type probeCapture struct {
+		result probeResult
+		err    error
+	}
+	probeResultCh := make(chan probeCapture, 1)
+	go func() {
+		res, err := c.probeLabKeybindingContext(ctx, key, defaultProbeTimeout)
+		probeResultCh <- probeCapture{result: res, err: err}
+	}()
+	type nativeCapture struct {
+		chord    string
+		captured bool
+		err      error
+	}
+	var nativeResultCh <-chan nativeCapture
+	if c.nativeKeyCapture != nil {
+		results := make(chan nativeCapture, 1)
+		nativeResultCh = results
+		go func() {
+			chord, captured, err := c.nativeKeyCapture(ctx)
+			results <- nativeCapture{chord: chord, captured: captured, err: err}
+		}()
+	}
+
+	var res probeResult
+	for {
+		select {
+		case native := <-nativeResultCh:
+			nativeResultCh = nil
+			if native.err != nil {
+				fmt.Fprintf(stdout, "native physical-key capture unavailable: %v; using terminal capture\n", native.err)
+				continue
+			}
+			if !native.captured || strings.TrimSpace(native.chord) == "" {
+				continue
+			}
+			cancel()
+			chord, err := normalizeKeymapTypedChord(native.chord)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "capture custom key: OK native physical key %s\n", chord)
+			fmt.Fprintln(stdout, "capture result:")
+			fmt.Fprintln(stdout, "  logical key: "+keybindingChordDisplay(chord))
+			fmt.Fprintln(stdout, "  raw bytes: (native physical event)")
+			fmt.Fprintln(stdout, "  tmux received key: "+chord)
+			fmt.Fprintln(stdout, "  delivery status: delivered - physical key captured before terminal encoding")
+			return c.addKeymapAliasAndApply(action.ID, chord, stdout)
+		case probe := <-probeResultCh:
+			cancel()
+			if probe.err != nil {
+				return probe.err
+			}
+			res = probe.result
+		}
+		break
 	}
 	fmt.Fprintf(stdout, "capture custom key: %s\n", renderProbeStatus(res))
 	for _, line := range renderKeybindingDeliveryDiagnostic(res) {
@@ -1193,12 +1250,12 @@ func keymapApplyLine(label string, stage keymapApplyStage, includeDetail bool) s
 	return line
 }
 
-func (c *settingsCommand) probeLabKeybinding(key probeKey, timeout time.Duration) (probeResult, error) {
+func (c *settingsCommand) probeLabKeybindingContext(ctx context.Context, key probeKey, timeout time.Duration) (probeResult, error) {
 	if c.probeKeybinding != nil {
 		return c.probeKeybinding(key, timeout)
 	}
 	cmd := &setupCommand{openTTY: openControllingTTY}
-	return cmd.probeControllingTTYKey(key, timeout)
+	return cmd.probeControllingTTYKeyContext(ctx, key, timeout)
 }
 
 func (c *settingsCommand) writeTmuxAppConfig() (string, error) {

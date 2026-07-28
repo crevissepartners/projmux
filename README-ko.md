@@ -70,7 +70,9 @@ projmux shell
 `Alt-1`부터 `Alt-5`까지는 zero-config 보장 기본값이고, `Alt-7`은 추가로
 편집 가능한 built-in 기본값입니다. 전체 key map은
 [Terminal Keybindings](docs/keybindings.md)를 참고하세요. 키가 동작하지 않으면
-tmux 밖에서 `projmux setup`을 실행한 뒤, 지원 터미널에서는
+Darwin 배포본의 `projmux shell`에서는 macOS 접근성 권한을 한 번 승인하면
+물리 키 어댑터가 자동으로 동작합니다. 그 밖의 경로에서는 tmux 밖에서
+`projmux setup`을 실행한 뒤, 지원 터미널에서는
 `projmux init [terminal] --apply`를 사용하세요.
 
 ## 일상 사용
