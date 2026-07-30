@@ -387,6 +387,109 @@ func TestSetupCommandRunInteractivePropagatesReadError(t *testing.T) {
 	}
 }
 
+func TestSetupReadProbeKeyTimeoutReopensTTYWithoutStealingNextKey(t *testing.T) {
+	t.Parallel()
+
+	firstReader, firstWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("first Pipe() error = %v", err)
+	}
+	defer firstWriter.Close()
+	secondReader, secondWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("second Pipe() error = %v", err)
+	}
+	defer secondWriter.Close()
+	if _, err := secondWriter.Write([]byte("x")); err != nil {
+		t.Fatalf("write second key: %v", err)
+	}
+
+	opened := 0
+	cleaned := 0
+	cmd := &setupCommand{
+		openTTY: func() (*os.File, func() error, error) {
+			opened++
+			switch opened {
+			case 1:
+				return firstReader, func() error {
+					cleaned++
+					return firstReader.Close()
+				}, nil
+			case 2:
+				return secondReader, func() error {
+					cleaned++
+					return secondReader.Close()
+				}, nil
+			default:
+				t.Fatalf("openTTY called %d times, want two", opened)
+				return nil, nil, errors.New("unexpected open")
+			}
+		},
+	}
+
+	if _, err := cmd.readProbeKeyContext(context.Background(), 20*time.Millisecond); !errors.Is(err, errProbeTimeout) {
+		t.Fatalf("first read error = %v, want probe timeout", err)
+	}
+	got, err := cmd.readProbeKeyContext(context.Background(), time.Second)
+	if err != nil {
+		t.Fatalf("second read error = %v", err)
+	}
+	if string(got) != "x" {
+		t.Fatalf("second read = %q, want next key x", got)
+	}
+	if opened != 2 || cleaned != 2 {
+		t.Fatalf("TTY lifecycle opened/cleaned = %d/%d, want 2/2", opened, cleaned)
+	}
+}
+
+func TestSetupReadProbeKeyFallsBackToStdinWhenTTYOpenFails(t *testing.T) {
+	t.Parallel()
+
+	var opened bool
+	cmd := &setupCommand{
+		stdin: strings.NewReader("x"),
+		openTTY: func() (*os.File, func() error, error) {
+			opened = true
+			return nil, nil, errors.New("no controlling tty")
+		},
+	}
+	got, err := cmd.readProbeKeyContext(context.Background(), time.Second)
+	if err != nil {
+		t.Fatalf("readProbeKeyContext() error = %v", err)
+	}
+	if !opened {
+		t.Fatal("readProbeKeyContext() did not try the controlling TTY")
+	}
+	if string(got) != "x" {
+		t.Fatalf("readProbeKeyContext() = %q, want stdin key x", got)
+	}
+}
+
+func TestReadKeySequenceTimeoutDoesNotLeaveReaderToStealNextKey(t *testing.T) {
+	t.Parallel()
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+
+	if _, err := readKeySequenceContext(context.Background(), reader, 20*time.Millisecond); !errors.Is(err, errProbeTimeout) {
+		t.Fatalf("first read error = %v, want probe timeout", err)
+	}
+	if _, err := writer.Write([]byte("x")); err != nil {
+		t.Fatalf("write next key: %v", err)
+	}
+	got, err := readKeySequenceContext(context.Background(), reader, time.Second)
+	if err != nil {
+		t.Fatalf("second read error = %v", err)
+	}
+	if string(got) != "x" {
+		t.Fatalf("second read = %q, want next key x", got)
+	}
+}
+
 func TestSetupProbeControllingTTYKeyReadsTTYFile(t *testing.T) {
 	t.Parallel()
 

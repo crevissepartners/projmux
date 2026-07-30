@@ -37,9 +37,6 @@ func newSetupCommand() *setupCommand {
 	c.enterRaw = func() (func() error, error) {
 		return enterTTYRawMode(c.lookupEnv)
 	}
-	c.readKey = func(timeout time.Duration) ([]byte, error) {
-		return readKeySequence(os.Stdin, timeout)
-	}
 	return c
 }
 
@@ -89,6 +86,7 @@ func defaultProbeKeys() []probeKey {
 
 const (
 	defaultProbeTimeout = 5 * time.Second
+	probeReadPollDelay  = 5 * time.Millisecond
 )
 
 // Run executes the setup probe.
@@ -134,7 +132,7 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 	results := make([]probeResult, 0, len(c.defaultKeys))
 	for _, key := range c.defaultKeys {
 		fmt.Fprintf(stdout, "Press %-16s (%s) ... ", key.Label, key.Action)
-		seq, readErr := c.readKey(*timeout)
+		seq, readErr := c.readProbeKeyContext(context.Background(), *timeout)
 		if readErr != nil && !errors.Is(readErr, errProbeTimeout) {
 			fmt.Fprintln(stdout, "aborted")
 			return readErr
@@ -152,6 +150,31 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout)
 	renderProbeSummary(stdout, terminal, results)
 	return nil
+}
+
+func (c *setupCommand) readProbeKeyContext(ctx context.Context, timeout time.Duration) ([]byte, error) {
+	if c.readKey != nil {
+		return c.readKey(timeout)
+	}
+
+	openTTY := c.openTTY
+	if openTTY == nil {
+		openTTY = openControllingTTY
+	}
+	tty, cleanup, err := openTTY()
+	if err == nil {
+		if cleanup != nil {
+			defer cleanup() //nolint:errcheck // best-effort descriptor cleanup
+		}
+		return readKeySequenceContext(ctx, tty, timeout)
+	}
+
+	// Preserve the legacy stdin fallback for environments without /dev/tty.
+	stdin := c.stdin
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+	return readKeySequenceContext(ctx, stdin, timeout)
 }
 
 func (c *setupCommand) printExpectedMap(stdout io.Writer) error {
@@ -570,13 +593,9 @@ func visibleEscape(s string) string {
 
 var errProbeTimeout = errors.New("probe key read timed out")
 
-// readKeySequence reads a single keystroke worth of bytes from the provided
-// stdin within timeout. It uses a short post-first-byte drain window to coal
-// multi-byte sequences (\x1b[1;4D, \x1b[A, ...) into one read.
-func readKeySequence(stdin io.Reader, timeout time.Duration) ([]byte, error) {
-	return readKeySequenceContext(context.Background(), stdin, timeout)
-}
-
+// readKeySequenceContext reads a single keystroke worth of bytes from stdin.
+// It uses a short post-first-byte drain window to coalesce multi-byte escape
+// sequences (\x1b[1;4D, \x1b[A, ...) into one read.
 func readKeySequenceContext(ctx context.Context, stdin io.Reader, timeout time.Duration) ([]byte, error) {
 	if timeout <= 0 {
 		timeout = defaultProbeTimeout
@@ -584,52 +603,67 @@ func readKeySequenceContext(ctx context.Context, stdin io.Reader, timeout time.D
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	type chunk struct {
-		buf []byte
-		err error
+	first, err := readKeyChunkContext(ctx, stdin, 1)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+			return nil, errProbeTimeout
+		}
+		return nil, err
+	}
+	if len(first) == 0 {
+		return nil, err
 	}
 
-	results := make(chan chunk, 1)
-	go func() {
-		// Read one byte first so we have something to time-bound against.
-		first := make([]byte, 1)
-		n, err := stdin.Read(first)
-		if err != nil || n == 0 {
-			results <- chunk{nil, err}
-			return
+	out := append([]byte(nil), first...)
+	// Drain whatever else arrived as part of the same escape sequence using
+	// a short per-byte budget. The read remains synchronous and deadline-aware,
+	// so a timeout cannot leave a goroutine behind to consume the next key.
+	drainCtx, drainCancel := context.WithTimeout(ctx, 30*time.Millisecond)
+	defer drainCancel()
+	extra, err := readKeyChunkContext(drainCtx, stdin, 31)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+			return out, nil
 		}
-		out := append([]byte(nil), first[:n]...)
-		// Drain whatever else arrived as part of the same escape sequence
-		// using a short blocking read with a per-byte budget. We use a
-		// small fixed buffer and stop as soon as the next read does not
-		// produce data within ~30ms.
-		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-		defer drainCancel()
+		if len(extra) == 0 {
+			return out, nil
+		}
+	}
+	return append(out, extra...), nil
+}
 
-		more := make(chan chunk, 1)
-		go func() {
-			buf := make([]byte, 31)
-			n, err := stdin.Read(buf)
-			more <- chunk{buf[:n], err}
-		}()
+type keyReadDeadliner interface {
+	io.Reader
+	SetReadDeadline(time.Time) error
+}
 
+func readKeyChunkContext(ctx context.Context, stdin io.Reader, size int) ([]byte, error) {
+	buf := make([]byte, size)
+	if reader, ok := stdin.(keyReadDeadliner); ok {
+		deadline, hasDeadline := ctx.Deadline()
+		if hasDeadline {
+			if err := reader.SetReadDeadline(deadline); err == nil {
+				defer reader.SetReadDeadline(time.Time{}) //nolint:errcheck // best-effort deadline cleanup
+			}
+		}
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, err := stdin.Read(buf)
+		if n > 0 {
+			return buf[:n], err
+		}
+		if err != nil {
+			return nil, err
+		}
 		select {
-		case extra := <-more:
-			out = append(out, extra.buf...)
-			results <- chunk{out, extra.err}
-		case <-drainCtx.Done():
-			results <- chunk{out, nil}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(probeReadPollDelay):
 		}
-	}()
-
-	select {
-	case r := <-results:
-		if r.err != nil && len(r.buf) == 0 {
-			return nil, r.err
-		}
-		return r.buf, nil
-	case <-ctx.Done():
-		return nil, errProbeTimeout
 	}
 }
 
@@ -649,7 +683,9 @@ func enterTTYRawMode(lookupEnv func(string) string) (func() error, error) {
 		return nil, err
 	}
 	saved = strings.TrimSpace(saved)
-	if _, err := runSttyOn(os.Stdin, "raw", "-echo", "-icanon", "min", "1", "time", "0"); err != nil {
+	// min=0 makes empty reads pollable so readKeySequenceContext can observe
+	// its deadline without leaving a blocking stdin.Read goroutine behind.
+	if _, err := runSttyOn(os.Stdin, "raw", "-echo", "-icanon", "min", "0", "time", "0"); err != nil {
 		return nil, err
 	}
 	restore := func() error {
@@ -674,7 +710,9 @@ func enterTTYRawModeFile(tty *os.File) (func() error, error) {
 		return nil, err
 	}
 	saved = strings.TrimSpace(saved)
-	if _, err := runSttyOn(tty, "raw", "-echo", "-icanon", "min", "1", "time", "0"); err != nil {
+	// Keep the Settings controlling-TTY path deadline-aware for the same
+	// reason as the standalone setup probe above.
+	if _, err := runSttyOn(tty, "raw", "-echo", "-icanon", "min", "0", "time", "0"); err != nil {
 		return nil, err
 	}
 	restore := func() error {

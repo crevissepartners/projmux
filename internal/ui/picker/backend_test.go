@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -625,6 +626,65 @@ func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "^[[") {
 		t.Fatalf("native output leaked escape input: %q", out.String())
+	}
+}
+
+func TestNativeKeyReaderStopsWithoutAccumulatingAcrossReopen(t *testing.T) {
+	t.Parallel()
+
+	reader := &pollingNativeReader{}
+	for reopen := range 5 {
+		readsBeforeStart := reader.reads.Load()
+		stop := make(chan struct{})
+		keyCh := startNativeKeyReader(reader, stop)
+		waitForNativeReadCount(t, reader, readsBeforeStart+1)
+
+		close(stop)
+		select {
+		case _, ok := <-keyCh:
+			if ok {
+				t.Fatal("key reader produced an unexpected key while stopping")
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("key reader %d did not exit after stop", reopen+1)
+		}
+
+		stoppedAt := reader.reads.Load()
+		time.Sleep(3 * nativeReadPollDelay)
+		if got := reader.reads.Load(); got != stoppedAt {
+			t.Fatalf("key reader %d kept polling after stop: reads %d -> %d", reopen+1, stoppedAt, got)
+		}
+	}
+}
+
+func TestNativeInteractiveReturnStopsReaderAcrossReopen(t *testing.T) {
+	t.Parallel()
+
+	tracker := &nativeKeyReaderTracker{}
+	for reopen := range 5 {
+		result, err := runNativeInteractive(&trackedNativePickerInput{tracker: tracker}, io.Discard, Options{
+			UI:    "switch",
+			Items: []Item{{Title: "api", Value: "/repo/api"}},
+			DeferredUpdate: func() (DeferredUpdate, error) {
+				return DeferredUpdate{}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("runNativeInteractive() reopen %d error = %v", reopen+1, err)
+		}
+		if result.Value != "/repo/api" {
+			t.Fatalf("runNativeInteractive() reopen %d result = %#v, want api", reopen+1, result)
+		}
+		waitForNativeReaderActiveCount(t, tracker, 0)
+	}
+	if got := tracker.maxActive.Load(); got > 1 {
+		t.Fatalf("maximum concurrent key readers = %d, want at most one", got)
+	}
+	if got := tracker.started.Load(); got != 5 {
+		t.Fatalf("started key readers = %d, want 5", got)
+	}
+	if got := tracker.stopped.Load(); got != 5 {
+		t.Fatalf("stopped key readers = %d, want 5", got)
 	}
 }
 
@@ -2951,6 +3011,89 @@ type delayedByteReader struct {
 	zerosBeforeByte int
 	index           int
 	zeros           int
+}
+
+type pollingNativeReader struct {
+	reads atomic.Int64
+}
+
+func (r *pollingNativeReader) Read([]byte) (int, error) {
+	r.reads.Add(1)
+	return 0, nil
+}
+
+func waitForNativeReadCount(t *testing.T, reader *pollingNativeReader, want int64) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		if reader.reads.Load() >= want {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("native reader reads = %d, want at least %d", reader.reads.Load(), want)
+		case <-tick.C:
+		}
+	}
+}
+
+type nativeKeyReaderTracker struct {
+	active    atomic.Int64
+	maxActive atomic.Int64
+	started   atomic.Int64
+	stopped   atomic.Int64
+}
+
+func (t *nativeKeyReaderTracker) startedReader() {
+	active := t.active.Add(1)
+	t.started.Add(1)
+	for {
+		maxActive := t.maxActive.Load()
+		if active <= maxActive || t.maxActive.CompareAndSwap(maxActive, active) {
+			return
+		}
+	}
+}
+
+type trackedNativePickerInput struct {
+	tracker   *nativeKeyReaderTracker
+	delivered atomic.Bool
+}
+
+func (r *trackedNativePickerInput) nativeKeyReaderStarted() {
+	r.tracker.startedReader()
+}
+
+func (r *trackedNativePickerInput) nativeKeyReaderStopped() {
+	r.tracker.stopped.Add(1)
+	r.tracker.active.Add(-1)
+}
+
+func (r *trackedNativePickerInput) Read(p []byte) (int, error) {
+	if r.delivered.CompareAndSwap(false, true) {
+		p[0] = '\r'
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func waitForNativeReaderActiveCount(t *testing.T, tracker *nativeKeyReaderTracker, want int64) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		if tracker.active.Load() == want {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("active native key readers = %d, want %d", tracker.active.Load(), want)
+		case <-tick.C:
+		}
+	}
 }
 
 func (r *delayedByteReader) Read(p []byte) (int, error) {
