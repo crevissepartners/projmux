@@ -20,6 +20,11 @@ import (
 // NotifyFileName is the basename of the queue file inside StateDir.
 const NotifyFileName = "notify.json"
 
+// MaxQueueEntries is the hard upper bound applied by Reconcile. Push remains
+// append/replace-only so producer and explicit-ack semantics do not change;
+// the queue is trimmed to its most recent entries only during reconciliation.
+const MaxQueueEntries = 256
+
 // lockFileSuffix is appended to the queue file path to derive the lock path.
 const lockFileSuffix = ".lock"
 
@@ -85,6 +90,23 @@ type PushResult struct {
 	QueueLen   int
 	Replaced   bool // true if the push replaced an entry with the same ID.
 	WasExpired bool // true if the existing entry had already expired.
+}
+
+// TargetExistsFunc reports whether a notification's tmux target is still
+// present. A nil function means target inventory is unavailable, so
+// reconciliation skips TTL-based removal and only enforces the hard cap.
+type TargetExistsFunc func(Notification) bool
+
+// ReconcileResult summarizes automatic queue eviction.
+type ReconcileResult struct {
+	ExpiredGone int
+	Overflow    int
+	QueueLen    int
+}
+
+// Removed returns the total number of entries evicted.
+func (r ReconcileResult) Removed() int {
+	return r.ExpiredGone + r.Overflow
 }
 
 // Push appends or replaces a notification. Validation is performed first so
@@ -189,9 +211,8 @@ func sanitizeMetadata(in map[string]string) map[string]string {
 	return out
 }
 
-// List returns all pending entries in recency-desc order. Expiration metadata
-// is retained for freshness displays only; explicit ack is the only removal
-// path.
+// List returns all pending entries in recency-desc order. It is read-only:
+// expiration metadata never causes List itself to remove an entry.
 func (s *Store) List() ([]Notification, error) {
 	var out []Notification
 	err := s.withLock(func() error {
@@ -252,6 +273,56 @@ func (s *Store) Ack(id string) error {
 		}
 		return s.write(filtered)
 	})
+}
+
+// Reconcile applies the queue's bounded-retention policy atomically. It
+// removes only expired entries whose tmux target no longer exists, then keeps
+// at most MaxQueueEntries of the remaining entries, evicting oldest first.
+// Live expired entries are retained unless they fall into the hard-cap
+// overflow. This is the only automatic removal path; Push and List never
+// evict.
+func (s *Store) Reconcile(targetExists TargetExistsFunc) (ReconcileResult, error) {
+	var result ReconcileResult
+	err := s.withLock(func() error {
+		entries, err := s.read()
+		if err != nil {
+			return err
+		}
+
+		entries, result = reconcileEntries(entries, s.clock(), targetExists, MaxQueueEntries)
+		return s.write(entries)
+	})
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	return result, nil
+}
+
+func reconcileEntries(entries []Notification, now time.Time, targetExists TargetExistsFunc, maxEntries int) ([]Notification, ReconcileResult) {
+	kept := make([]Notification, 0, len(entries))
+	result := ReconcileResult{}
+	for _, entry := range entries {
+		if notificationExpired(entry, now) && targetExists != nil && !targetExists(entry) {
+			result.ExpiredGone++
+			continue
+		}
+		kept = append(kept, entry)
+	}
+
+	if maxEntries >= 0 && len(kept) > maxEntries {
+		result.Overflow = len(kept) - maxEntries
+		kept = sortRecencyDesc(kept)[:maxEntries]
+	}
+	result.QueueLen = len(kept)
+	return kept, result
+}
+
+func notificationExpired(entry Notification, now time.Time) bool {
+	expiresAt := entry.ExpiresAt
+	if expiresAt.IsZero() && !entry.CreatedAt.IsZero() {
+		expiresAt = entry.CreatedAt.Add(DefaultTTL)
+	}
+	return !expiresAt.IsZero() && !expiresAt.After(now)
 }
 
 // replaceOrAppend writes entry into entries, replacing any existing entry

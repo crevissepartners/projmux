@@ -21,10 +21,12 @@ func TestAppRunPruneEphemeralKillsTargetsBeyondKeep(t *testing.T) {
 			{Name: "older", Ephemeral: true, LastAttached: 10},
 		},
 	}
+	reconcileCalls := 0
 	app := &App{
 		prune: &pruneCommand{
-			inventory: client,
-			killer:    client,
+			inventory:       client,
+			killer:          client,
+			reconcileNotify: func() { reconcileCalls++ },
 		},
 	}
 
@@ -34,6 +36,84 @@ func TestAppRunPruneEphemeralKillsTargetsBeyondKeep(t *testing.T) {
 
 	if got, want := client.killed, []string{"older"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("KillSession calls = %#v, want %#v", got, want)
+	}
+	if reconcileCalls != 1 {
+		t.Fatalf("notify reconcile calls = %d, want 1 after all kills", reconcileCalls)
+	}
+}
+
+func TestPruneDoesNotReconcileNotifyWithoutKilledTargets(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingPruneClient{
+		inventory: []lifecycle.SessionInventory{{Name: "only", Ephemeral: true, LastAttached: 10}},
+	}
+	reconcileCalls := 0
+	cmd := &pruneCommand{
+		inventory:       client,
+		killer:          client,
+		reconcileNotify: func() { reconcileCalls++ },
+	}
+	if err := cmd.Run([]string{"ephemeral", "--keep=1"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if reconcileCalls != 0 {
+		t.Fatalf("notify reconcile calls = %d, want 0", reconcileCalls)
+	}
+}
+
+func TestPruneReconcilesNotifyAfterPartialKillFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		failAt             int
+		wantReconcileCalls int
+		wantSuccesses      int
+	}{
+		{
+			name:               "partial success then failure",
+			failAt:             1,
+			wantReconcileCalls: 1,
+			wantSuccesses:      1,
+		},
+		{
+			name:          "first kill fails",
+			failAt:        0,
+			wantSuccesses: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			inventory := pruneInventoryResolverFunc(func(context.Context) ([]lifecycle.SessionInventory, error) {
+				return []lifecycle.SessionInventory{
+					{Name: "newest", Ephemeral: true, LastAttached: 30},
+					{Name: "middle", Ephemeral: true, LastAttached: 20},
+					{Name: "oldest", Ephemeral: true, LastAttached: 10},
+				}, nil
+			})
+			killer := &failingPruneKiller{failAt: tt.failAt}
+			reconcileCalls := 0
+			cmd := &pruneCommand{
+				inventory:       inventory,
+				killer:          killer,
+				reconcileNotify: func() { reconcileCalls++ },
+			}
+
+			err := cmd.Run([]string{"ephemeral", "--keep=0"}, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), "kill ephemeral session") {
+				t.Fatalf("Run() error = %v, want kill failure", err)
+			}
+			if reconcileCalls != tt.wantReconcileCalls {
+				t.Fatalf("notify reconcile calls = %d, want %d", reconcileCalls, tt.wantReconcileCalls)
+			}
+			if len(killer.successes) != tt.wantSuccesses {
+				t.Fatalf("successful kills = %v, want count %d", killer.successes, tt.wantSuccesses)
+			}
+		})
 	}
 }
 
@@ -150,6 +230,22 @@ func TestPruneCommandPropagatesSetupErrors(t *testing.T) {
 type recordingPruneClient struct {
 	inventory []lifecycle.SessionInventory
 	killed    []string
+}
+
+type failingPruneKiller struct {
+	failAt    int
+	calls     int
+	successes []string
+}
+
+func (k *failingPruneKiller) KillSession(_ context.Context, sessionName string) error {
+	call := k.calls
+	k.calls++
+	if call == k.failAt {
+		return errors.New("kill failed")
+	}
+	k.successes = append(k.successes, sessionName)
+	return nil
 }
 
 func (c *recordingPruneClient) ListEphemeralSessions(context.Context) ([]lifecycle.SessionInventory, error) {

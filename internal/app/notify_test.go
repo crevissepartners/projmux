@@ -191,6 +191,10 @@ func (s *stubNotifyStore) AckAll() (int, error) {
 	return s.ackAll, s.ackErr
 }
 
+func (s *stubNotifyStore) Reconcile(notify.TargetExistsFunc) (notify.ReconcileResult, error) {
+	return notify.ReconcileResult{QueueLen: len(s.listEntries)}, nil
+}
+
 func newCmd(store notifyStore) *notifyCommand {
 	return &notifyCommand{
 		store: store,

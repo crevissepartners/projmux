@@ -3,7 +3,9 @@
 `projmux` keeps a persistent JSON queue of pending AI notifications.
 `attention` is live tmux pane state; `notify` is the user's pending
 notification source of truth. The queue is derived from live state and user
-pushes, but an entry remains pending until explicit ack. Each entry can route
+pushes. Live entries remain pending until explicit ack unless they are among
+the oldest rows beyond the 256-entry hard cap; reconcile can also collect an
+expired entry after its tmux target disappears. Each entry can route
 the status-bar notify segment or notify sidebar to the originating tmux pane
 via `projmux focus`, and feeds the HUD pill rendered by
 `projmux status notify`.
@@ -23,7 +25,9 @@ queue.
 
 The queue file is a pretty-printed JSON array of `Notification`
 objects, sorted newest-first on read. `expires_at` is freshness metadata;
-expired entries are not filtered or deleted by `list`.
+expired entries are not filtered or deleted by `list`. Reconcile removes an
+expired row only when the real tmux inventory also shows its pane/session is
+gone; if inventory is unavailable, that target-based removal is skipped.
 
 Open native notify sidebars also create per-process Unix datagram sockets for
 queue-write refresh events. If the state-dir socket path would exceed Unix

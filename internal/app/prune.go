@@ -20,8 +20,9 @@ type pruneSessionKiller interface {
 }
 
 type pruneCommand struct {
-	inventory pruneInventoryResolver
-	killer    pruneSessionKiller
+	inventory       pruneInventoryResolver
+	killer          pruneSessionKiller
+	reconcileNotify func()
 }
 
 func newPruneCommand() *pruneCommand {
@@ -89,10 +90,17 @@ func (c *pruneCommand) runEphemeral(args []string, _ io.Writer, stderr io.Writer
 		return fmt.Errorf("kill ephemeral sessions to prune: killer is not configured")
 	}
 
+	killedAny := false
+	defer func() {
+		if killedAny && c.reconcileNotify != nil {
+			c.reconcileNotify()
+		}
+	}()
 	for _, target := range targets {
 		if err := c.killer.KillSession(context.Background(), target); err != nil {
 			return fmt.Errorf("kill ephemeral session %q: %w", target, err)
 		}
+		killedAny = true
 	}
 
 	return nil

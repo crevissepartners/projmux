@@ -13,11 +13,12 @@ import (
 
 // reconcileResult is the summary returned by the reconcile pass.
 type reconcileResult struct {
-	Pushed int      `json:"pushed"`
-	Acked  int      `json:"acked"`
-	Kept   int      `json:"kept"`
-	Stale  int      `json:"stale"`
-	Errors []string `json:"errors"`
+	Pushed  int      `json:"pushed"`
+	Acked   int      `json:"acked"`
+	Kept    int      `json:"kept"`
+	Stale   int      `json:"stale"`
+	Evicted int      `json:"evicted"`
+	Errors  []string `json:"errors"`
 }
 
 // reconcileShouldHaveQueueEntry reports whether the pane's live state means
@@ -54,12 +55,12 @@ func reconcileEntryText(p livePaneRow) string {
 }
 
 // runReconcile walks every tmux pane on the host, compares the live state
-// against the persistent notify queue, and back-fills entries whose derived
-// AI reply rows are missing or stale. It never removes unacknowledged rows:
-// ack is the user's consume signal. Returns an error only for argument parsing
-// or store failures; tmux call failures are surfaced through the
-// `errors` field of the summary so install scripts get a single
-// non-fatal pass.
+// against the persistent notify queue, back-fills entries whose derived AI
+// reply rows are missing or stale, and applies the bounded eviction policy.
+// Live rows remain explicit-ack-only unless they are hard-cap overflow.
+// Returns an error only for argument parsing or store failures; tmux call
+// failures are surfaced through the `errors` field of the summary so install
+// scripts get a single non-fatal pass.
 func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("notify reconcile", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -87,11 +88,22 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 	panes, listErr := c.listLivePaneRows()
 	if listErr != nil {
 		// Common case: tmux is not running. Treat as soft failure so the
-		// post-install hook does not break.
+		// post-install hook does not break. Inventory-dependent TTL eviction
+		// is skipped, but the hard cap remains safe to enforce.
 		result.Errors = append(result.Errors, listErr.Error())
+		eviction, reconcileErr := store.Reconcile(nil)
+		if reconcileErr != nil {
+			return fmt.Errorf("reconcile notifications: %w", reconcileErr)
+		}
+		result.Evicted = eviction.Removed()
+		if result.Evicted > 0 {
+			c.publishNotifyQueueRefreshBestEffort()
+		}
 		return writeReconcileSummary(stdout, result, *asJSON)
 	}
 
+	paneSet := newNotifyLivePaneSet(panes)
+	sessionSet := newNotifyLiveSessionSet(panes)
 	wantByID := make(map[string]livePaneRow, len(panes))
 	for _, p := range panes {
 		if !reconcileShouldHaveQueueEntry(p) {
@@ -140,9 +152,25 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 		result.Pushed++
 	}
 
-	// Stale pass: for every queue entry whose key starts with `ai:`, report it
-	// if the pane is no longer reply-state with an agent. Do not ack it; users
-	// must explicitly clear rows under the notify SOT contract.
+	eviction, reconcileErr := store.Reconcile(func(entry notify.Notification) bool {
+		return reconcileTargetExists(entry, paneSet, sessionSet)
+	})
+	if reconcileErr != nil {
+		return fmt.Errorf("reconcile notifications: %w", reconcileErr)
+	}
+	result.Evicted = eviction.Removed()
+	if result.Evicted > 0 {
+		c.publishNotifyQueueRefreshBestEffort()
+		existing, listQueueErr = store.List()
+		if listQueueErr != nil {
+			return fmt.Errorf("list reconciled notifications: %w", listQueueErr)
+		}
+	}
+
+	// Stale pass: for every remaining queue entry whose key starts with `ai:`,
+	// report it if the pane is no longer reply-state with an agent. Do not ack
+	// it; users must explicitly clear retained rows under the notify SOT
+	// contract.
 	for _, e := range existing {
 		if !strings.HasPrefix(e.ID, "ai:") {
 			continue
@@ -154,6 +182,39 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 	}
 
 	return writeReconcileSummary(stdout, result, *asJSON)
+}
+
+type notifyLiveSessionSet map[string]struct{}
+
+func newNotifyLiveSessionSet(rows []livePaneRow) notifyLiveSessionSet {
+	if len(rows) == 0 {
+		return nil
+	}
+	set := make(notifyLiveSessionSet, len(rows))
+	for _, row := range rows {
+		session := strings.TrimSpace(row.Session)
+		if session != "" {
+			set[session] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
+// reconcileTargetExists reuses the same real pane inventory and pane-first
+// GONE classification as the notify UI. Session/window-only rows fall back to
+// session membership because they do not carry a concrete pane id.
+func reconcileTargetExists(entry notify.Notification, paneSet notifyLivePaneSet, sessionSet notifyLiveSessionSet) bool {
+	if paneSet == nil || sessionSet == nil {
+		return true
+	}
+	if strings.TrimSpace(entry.Pane) != "" {
+		return classifyNotifyRowState(entry, nil, paneSet) != notifyDisplayGone
+	}
+	_, ok := sessionSet[strings.TrimSpace(entry.Session)]
+	return ok
 }
 
 func attentionNotifyMetadataMatches(got, want map[string]string) bool {
@@ -174,7 +235,7 @@ func writeReconcileSummary(w io.Writer, r reconcileResult, asJSON bool) error {
 	if asJSON {
 		return writeJSON(w, r)
 	}
-	_, err := fmt.Fprintf(w, "reconcile: pushed %d, acked %d, kept %d, stale %d\n", r.Pushed, r.Acked, r.Kept, r.Stale)
+	_, err := fmt.Fprintf(w, "reconcile: pushed %d, acked %d, kept %d, stale %d, evicted %d\n", r.Pushed, r.Acked, r.Kept, r.Stale, r.Evicted)
 	if err != nil {
 		return err
 	}

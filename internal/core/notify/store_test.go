@@ -2,6 +2,7 @@ package notify
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -320,6 +321,156 @@ func TestAckAllClearsQueue(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("len = %d", len(entries))
+	}
+}
+
+func TestReconcileEvictionPolicy(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	entry := func(id, session string, age, ttl time.Duration) Notification {
+		createdAt := now.Add(-age)
+		return Notification{
+			ID:        id,
+			Text:      id,
+			Session:   session,
+			CreatedAt: createdAt,
+			ExpiresAt: createdAt.Add(ttl),
+		}
+	}
+
+	tests := []struct {
+		name         string
+		entries      []Notification
+		liveSessions map[string]bool
+		inventory    bool
+		maxEntries   int
+		wantIDs      []string
+		wantExpired  int
+		wantOverflow int
+	}{
+		{
+			name: "expired dead target removed",
+			entries: []Notification{
+				entry("dead-expired", "dead", 20*time.Minute, DefaultTTL),
+				entry("live-expired", "live", 20*time.Minute, DefaultTTL),
+			},
+			liveSessions: map[string]bool{"live": true},
+			inventory:    true,
+			maxEntries:   10,
+			wantIDs:      []string{"live-expired"},
+			wantExpired:  1,
+		},
+		{
+			name: "expired live and unexpired dead retained",
+			entries: []Notification{
+				entry("live-expired", "live", 20*time.Minute, DefaultTTL),
+				entry("dead-fresh", "dead", time.Minute, DefaultTTL),
+			},
+			liveSessions: map[string]bool{"live": true},
+			inventory:    true,
+			maxEntries:   10,
+			wantIDs:      []string{"live-expired", "dead-fresh"},
+		},
+		{
+			name: "missing inventory skips ttl eviction",
+			entries: []Notification{
+				entry("dead-expired", "dead", 20*time.Minute, DefaultTTL),
+			},
+			maxEntries: 10,
+			wantIDs:    []string{"dead-expired"},
+		},
+		{
+			name: "hard cap removes only oldest excess",
+			entries: []Notification{
+				entry("oldest", "live", 4*time.Minute, time.Hour),
+				entry("newest", "live", time.Minute, time.Hour),
+				entry("middle-new", "live", 2*time.Minute, time.Hour),
+				entry("middle-old", "live", 3*time.Minute, time.Hour),
+			},
+			liveSessions: map[string]bool{"live": true},
+			inventory:    true,
+			maxEntries:   2,
+			wantIDs:      []string{"newest", "middle-new"},
+			wantOverflow: 2,
+		},
+		{
+			name: "ttl eviction runs before hard cap",
+			entries: []Notification{
+				entry("dead-expired", "dead", 20*time.Minute, DefaultTTL),
+				entry("old-live", "live", 4*time.Minute, time.Hour),
+				entry("new-live", "live", time.Minute, time.Hour),
+			},
+			liveSessions: map[string]bool{"live": true},
+			inventory:    true,
+			maxEntries:   2,
+			wantIDs:      []string{"old-live", "new-live"},
+			wantExpired:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var targetExists TargetExistsFunc
+			if tt.inventory {
+				targetExists = func(entry Notification) bool {
+					return tt.liveSessions[entry.Session]
+				}
+			}
+			got, result := reconcileEntries(tt.entries, now, targetExists, tt.maxEntries)
+			gotIDs := make([]string, 0, len(got))
+			for _, item := range got {
+				gotIDs = append(gotIDs, item.ID)
+			}
+			if strings.Join(gotIDs, ",") != strings.Join(tt.wantIDs, ",") {
+				t.Fatalf("ids = %v, want %v", gotIDs, tt.wantIDs)
+			}
+			if result.ExpiredGone != tt.wantExpired || result.Overflow != tt.wantOverflow || result.QueueLen != len(tt.wantIDs) {
+				t.Fatalf("result = %+v, want expired=%d overflow=%d len=%d", result, tt.wantExpired, tt.wantOverflow, len(tt.wantIDs))
+			}
+		})
+	}
+}
+
+func TestStoreReconcilePersistsBoundedQueue(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	entries := make([]Notification, 0, MaxQueueEntries+2)
+	for i := range MaxQueueEntries + 2 {
+		createdAt := now.Add(time.Duration(i) * time.Second)
+		entries = append(entries, Notification{
+			ID:        fmt.Sprintf("entry-%03d", i),
+			Text:      "pending",
+			Session:   "live",
+			CreatedAt: createdAt,
+			ExpiresAt: createdAt.Add(time.Hour),
+		})
+	}
+	if err := store.withLock(func() error { return store.write(entries) }); err != nil {
+		t.Fatalf("seed queue: %v", err)
+	}
+	store.SetClock(func() time.Time { return now })
+
+	result, err := store.Reconcile(func(Notification) bool { return true })
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.ExpiredGone != 0 || result.Overflow != 2 || result.QueueLen != MaxQueueEntries {
+		t.Fatalf("result = %+v", result)
+	}
+	got, err := store.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(got) != MaxQueueEntries {
+		t.Fatalf("queue length = %d, want %d", len(got), MaxQueueEntries)
+	}
+	if got[len(got)-1].ID != "entry-002" {
+		t.Fatalf("oldest retained id = %q, want entry-002", got[len(got)-1].ID)
 	}
 }
 
