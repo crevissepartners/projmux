@@ -214,6 +214,9 @@ The keyboard chord uses `bind-key s switch-client -T projmux-status` so the
 prefix-then-`s`-then-letter shortcut routes through the same dispatcher as
 the mouse click. Empty `#{mouse_status_range}` (clicks on whitespace) is a
 no-op so the binding never flashes a spurious error.
+The hardcoded `prefix s r` sibling is usage-specific: it runs the existing
+throttled collector and then reopens the same display-only usage popup from
+cache.
 
 ## Non-goals
 

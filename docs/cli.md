@@ -301,6 +301,7 @@ projmux status notify [--max-width N]
 ```
 projmux statusbar click <range-id> [--socket <s>] [--mouse-window <id>]
                                    [--client <tty>] [--mouse-x N] [--mouse-y N]
+projmux statusbar usage-refresh
 ```
 
 Click/keyboard dispatcher for the two-line status bar. Implemented range ids:
@@ -313,7 +314,9 @@ popup; `pwd` shows the current pane path in a native-framed display-only
 popup; `kube` and `git` open the project switcher popup;
 `settings` toggles the settings popup for the tmux client; `usage` opens the
 detailed `projmux usage` table popup; `notify` focuses and acks the newest
-actionable queue target.
+actionable queue target. The internal `usage-refresh` shortcut entry point
+runs the same throttled, per-adapter collection policy as `status usage` and
+then reopens the display-only usage popup from cache.
 `MouseDown1Status` errors are
 swallowed and surfaced as `display-message` toasts so a transient
 failure does not raise a tmux error popup. See [statusbar.md](statusbar.md).
