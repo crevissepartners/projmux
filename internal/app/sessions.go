@@ -43,16 +43,17 @@ type sessionsRunner interface {
 }
 
 type sessionsCommand struct {
-	recent     sessionsRecentResolver
-	store      sessionsSelectionStore
-	opener     sessionsOpener
-	killer     sessionsKiller
-	runner     sessionsRunner
-	native     intpicker.Runner
-	executable func() (string, error)
-	lookupEnv  func(string) string
-	homeDir    func() (string, error)
-	stateStore func() (sessionstate.Store, error)
+	recent               sessionsRecentResolver
+	store                sessionsSelectionStore
+	opener               sessionsOpener
+	killer               sessionsKiller
+	runner               sessionsRunner
+	native               intpicker.Runner
+	executable           func() (string, error)
+	lookupEnv            func(string) string
+	homeDir              func() (string, error)
+	stateStore           func() (sessionstate.Store, error)
+	cleanupKilledSession func(string)
 }
 
 func newSessionsCommand() *sessionsCommand {
@@ -442,6 +443,9 @@ func (c *sessionsCommand) killFocusedSession(ctx context.Context, summaries []in
 	}
 	if err := c.killer.KillSession(ctx, sessionName); err != nil {
 		return nil, fmt.Errorf("kill tmux session %q: %w", sessionName, err)
+	}
+	if c.cleanupKilledSession != nil {
+		c.cleanupKilledSession(sessionName)
 	}
 
 	refreshed, err := c.recent.RecentSessionSummaries(ctx)

@@ -30,7 +30,7 @@ projmux <command> [args...]
 | `notify` | Manage the pending AI notify queue (push/list/ack/reconcile). |
 | `pin` | Manage pinned project directories. |
 | `preview` | Manage persisted tmux preview selection. |
-| `prune` | Trim stale tmux lifecycle state. |
+| `prune` | Trim stale tmux lifecycle state and inspect preserved session snapshots. |
 | `quit` | Quit the app-owned projmux tmux runtime. |
 | `sessions` | Pick and open an existing tmux session. |
 | `session-popup` | Read tmux popup preview state. |
@@ -771,7 +771,15 @@ flags with the top-level `switch` UX:
 - `kill <session>` / `kill tagged` — terminate sessions; `tagged`
   consumes the active tagged-selection set.
 - `prune ephemeral` — drop ephemeral sessions older than the configured
-  retention window.
+  retention window. Successful session kills also remove the session's
+  persisted preview cursor; saved Session State snapshots are preserved.
+- `prune session-state [--older-than=720h]` — list snapshots whose tmux
+  session is no longer live or whose save time is older than the threshold.
+  Listing is read-only and never deletes snapshots.
+- `prune session-state delete <session>...` — explicitly delete only the
+  named snapshots. Session State snapshots are never automatically pruned,
+  because closed-session restore depends on them. `projmux doctor` repeats
+  this retention policy and points to the read-only listing command.
 - `tag` — manage the tagged-selection set.
 
 ## current / shell / attach / settings / quit

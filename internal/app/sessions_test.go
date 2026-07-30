@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -244,6 +245,7 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 	runnerCalls := 0
 	opener := &recordingSessionsOpener{}
 	killer := &recordingSessionsKiller{}
+	var cleaned []string
 	var gotOptions []intpickercompat.Options
 	cmd := &sessionsCommand{
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
@@ -275,6 +277,9 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		opener:     opener,
 		killer:     killer,
+		cleanupKilledSession: func(sessionName string) {
+			cleaned = append(cleaned, sessionName)
+		},
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -290,6 +295,9 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 	}
 	if got, want := killer.killSessionName, "repo-b"; got != want {
 		t.Fatalf("kill session = %q, want %q", got, want)
+	}
+	if got, want := cleaned, []string{"repo-b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("cleaned sessions = %q, want %q", got, want)
 	}
 	if got := opener.openSessionName; got != "" {
 		t.Fatalf("open session called unexpectedly: %q", got)

@@ -99,7 +99,10 @@ type doctorReport struct {
 	Dependencies         []doctorResult                       `json:"dependencies"`
 	AINotifyIntegrations []doctorAINotifyIntegration          `json:"ai_notify_integrations"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
+	SessionStatePrune    string                               `json:"session_state_prune"`
 }
+
+const doctorSessionStatePruneGuidance = "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name."
 
 func doctorDeps() []doctorDep {
 	return []doctorDep{
@@ -158,6 +161,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 		Dependencies:         results,
 		AINotifyIntegrations: c.evaluateAINotifyIntegrations(),
 		SessionStateResume:   c.evaluateSessionStateResume(),
+		SessionStatePrune:    doctorSessionStatePruneGuidance,
 	}
 
 	if *jsonOut {
@@ -581,6 +585,10 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 			}
 			buf.WriteString("\n")
 		}
+	}
+	if report.SessionStatePrune != "" {
+		buf.WriteString("\nSession State retention\n")
+		fmt.Fprintf(&buf, "  %s\n", report.SessionStatePrune)
 	}
 	_, err := w.Write(buf.Bytes())
 	return err

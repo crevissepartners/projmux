@@ -402,6 +402,30 @@ func TestDoctorRunJSONOutputIsValid(t *testing.T) {
 	if byName["kubectl"].Required {
 		t.Fatalf("kubectl Required = true, want false")
 	}
+	if report.SessionStatePrune != doctorSessionStatePruneGuidance {
+		t.Fatalf("session-state prune guidance = %q, want %q", report.SessionStatePrune, doctorSessionStatePruneGuidance)
+	}
+}
+
+func TestDoctorRunIncludesManualSessionStatePruneGuidance(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "git": true, "stty": true,
+	})
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{
+		"Session State retention",
+		"projmux prune session-state",
+		"delete only by explicit name",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, stdout.String())
+		}
+	}
 }
 
 func TestDoctorRunIncludesAINotifyDiagnostics(t *testing.T) {

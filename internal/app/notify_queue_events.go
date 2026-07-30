@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -32,7 +34,8 @@ type notifyQueueRefreshEvents interface {
 }
 
 type notifyQueueRefreshTransport struct {
-	dir string
+	dir          string
+	processAlive func(int) bool
 }
 
 func (c *aiCommand) publishNotifyQueueRefreshBestEffort() {
@@ -51,7 +54,10 @@ func (c *aiCommand) publishNotifyQueueRefreshBestEffort() {
 }
 
 func newNotifyQueueRefreshTransport(stateDir string) notifyQueueRefreshTransport {
-	return notifyQueueRefreshTransport{dir: notifyQueueEventDir(stateDir)}
+	return notifyQueueRefreshTransport{
+		dir:          notifyQueueEventDir(stateDir),
+		processAlive: notifyQueueEventProcessAlive,
+	}
 }
 
 func notifyQueueEventDir(stateDir string) string {
@@ -78,9 +84,30 @@ func (t notifyQueueRefreshTransport) Publish() error {
 		return err
 	}
 	for _, path := range paths {
+		if pid, ok := notifyQueueEventSocketPID(path); ok &&
+			t.processAlive != nil && !t.processAlive(pid) {
+			_ = os.Remove(path)
+			continue
+		}
 		_ = publishNotifyQueueRefreshTo(path)
 	}
 	return nil
+}
+
+func notifyQueueEventSocketPID(path string) (int, bool) {
+	name := filepath.Base(path)
+	if !strings.HasPrefix(name, "refresh-") || !strings.HasSuffix(name, ".sock") {
+		return 0, false
+	}
+	pidText, _, ok := strings.Cut(strings.TrimPrefix(name, "refresh-"), "-")
+	if !ok {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(pidText)
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
 }
 
 func publishNotifyQueueRefreshTo(path string) error {

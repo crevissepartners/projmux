@@ -105,32 +105,33 @@ type switchPreviewStore interface {
 }
 
 type switchCommand struct {
-	discover        candidateDiscoverer
-	pinStore        switchPinStoreFactory
-	tagStore        switchTagStoreFactory
-	runner          switchRunner
-	tmuxRunner      tmuxRunner
-	sessions        switchSessionExecutor
-	previewStore    switchPreviewStore
-	previewStoreErr error
-	inventory       previewInventory
-	inventoryErr    error
-	executable      func() (string, error)
-	identity        sessionIdentityResolver
-	identityErr     error
-	validate        func(path string) error
-	homeDir         func() (string, error)
-	workingDir      func() (string, error)
-	lookupEnv       func(string) string
-	gitBranch       func(string) string
-	kubeInfo        func(sessionName string) switchKubeInfo
-	loadProjdir     func(homeDir string) (string, error)
-	saveProjdir     func(homeDir, value string) error
-	loadWorkdirs    func(homeDir string) ([]string, error)
-	tmuxProjdir     func() string
-	nativePicker    intpicker.Runner
-	focusSession    string
-	sidebarResume   switchSidebarResume
+	discover             candidateDiscoverer
+	pinStore             switchPinStoreFactory
+	tagStore             switchTagStoreFactory
+	runner               switchRunner
+	tmuxRunner           tmuxRunner
+	sessions             switchSessionExecutor
+	previewStore         switchPreviewStore
+	previewStoreErr      error
+	inventory            previewInventory
+	inventoryErr         error
+	executable           func() (string, error)
+	identity             sessionIdentityResolver
+	identityErr          error
+	validate             func(path string) error
+	homeDir              func() (string, error)
+	workingDir           func() (string, error)
+	lookupEnv            func(string) string
+	gitBranch            func(string) string
+	kubeInfo             func(sessionName string) switchKubeInfo
+	loadProjdir          func(homeDir string) (string, error)
+	saveProjdir          func(homeDir, value string) error
+	loadWorkdirs         func(homeDir string) ([]string, error)
+	tmuxProjdir          func() string
+	nativePicker         intpicker.Runner
+	focusSession         string
+	sidebarResume        switchSidebarResume
+	cleanupKilledSession func(string)
 }
 
 type switchKubeInfo struct {
@@ -2452,6 +2453,9 @@ func (c *switchCommand) killFocusedSession(ctx context.Context, sessionName, fal
 	}
 	if err := killer.KillSession(ctx, sessionName); err != nil {
 		return fmt.Errorf("kill tmux session %q: %w", sessionName, err)
+	}
+	if c.cleanupKilledSession != nil {
+		c.cleanupKilledSession(sessionName)
 	}
 	if stdout != nil {
 		_, err := fmt.Fprintf(stdout, "killed: %s\n", sessionName)
