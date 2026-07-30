@@ -1770,6 +1770,21 @@ func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *tes
 	}
 }
 
+func TestTmuxPrintConfigBindsHardcodedStatusbarUsageRefresh(t *testing.T) {
+	t.Parallel()
+
+	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := `bind-key -T projmux-status r run-shell "'/tmp/proj mux/bin/projmux' statusbar usage-refresh"`
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("print-config output = %q, want substring %q", stdout.String(), want)
+	}
+}
+
 func TestTmuxRebalancePanesSelectsMultiPaneWindows(t *testing.T) {
 	t.Parallel()
 

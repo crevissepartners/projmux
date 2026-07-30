@@ -742,6 +742,50 @@ func TestUsageStatusMaybeCollectThrottledOnSecondCall(t *testing.T) {
 	}
 }
 
+func TestUsageMaybeCollectManualRefreshThrottlesAllAdapters(t *testing.T) {
+	t.Parallel()
+
+	claude := &stubAdapter{
+		name: "claude",
+		snaps: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 5},
+		},
+	}
+	codex := &stubAdapter{
+		name: "codex",
+		snaps: []usage.Snapshot{
+			{Model: "codex", Window: usage.Window5h, Pct: 10},
+		},
+	}
+	c := New(nil)
+	mgr := newStubManager(t, []*stubAdapter{claude, codex})
+	c.managerFn = func([]string) (*usage.Manager, error) {
+		return mgr, nil
+	}
+
+	ran, err := c.MaybeCollect(context.Background())
+	if err != nil {
+		t.Fatalf("first MaybeCollect: %v", err)
+	}
+	if !ran {
+		t.Fatal("first MaybeCollect ran = false, want true")
+	}
+	if claude.collectCalls != 1 || codex.collectCalls != 1 {
+		t.Fatalf("first collect calls: claude=%d codex=%d, want 1/1", claude.collectCalls, codex.collectCalls)
+	}
+
+	ran, err = c.MaybeCollect(context.Background())
+	if err != nil {
+		t.Fatalf("second MaybeCollect: %v", err)
+	}
+	if ran {
+		t.Fatal("second MaybeCollect ran = true within cooldown, want false")
+	}
+	if claude.collectCalls != 1 || codex.collectCalls != 1 {
+		t.Fatalf("second collect calls: claude=%d codex=%d, want throttle no-op at 1/1", claude.collectCalls, codex.collectCalls)
+	}
+}
+
 func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
 	t.Parallel()
 

@@ -490,6 +490,11 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
 	cmd.now = func() time.Time { return now }
+	refreshCalls := 0
+	cmd.usageRefreshFn = func(context.Context) (bool, error) {
+		refreshCalls++
+		return true, nil
+	}
 	cmd.usageStateFn = func(context.Context) (statusbarUsageState, error) {
 		return statusbarUsageState{
 			LastSync:       now.Add(-45 * time.Second),
@@ -515,6 +520,9 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 
 	if err := cmd.Run([]string{"click", "usage"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
+	}
+	if refreshCalls != 0 {
+		t.Fatalf("usage click refresh calls = %d, want 0", refreshCalls)
 	}
 	if !sawTmuxSubcommand(runner.calls, "display-popup") {
 		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
@@ -618,6 +626,74 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 		if call.name == "/usr/local/bin/projmux" || sawArgsContain(call.args, "popup-toggle") {
 			t.Fatalf("usage click must remain direct display-popup, not popup-toggle; calls = %#v", runner.calls)
 		}
+	}
+}
+
+func TestStatusbarUsageRefreshCollectsThenReopensHUD(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	refreshed := false
+	cmd.usageRefreshFn = func(context.Context) (bool, error) {
+		refreshed = true
+		return true, nil
+	}
+	cmd.usageStateFn = func(context.Context) (statusbarUsageState, error) {
+		if !refreshed {
+			return statusbarUsageState{}, errors.New("usage state loaded before refresh")
+		}
+		return statusbarUsageState{
+			Snapshots: []coreusage.Snapshot{
+				{Model: "codex", Window: coreusage.Window5h, Pct: 73},
+			},
+		}, nil
+	}
+
+	if err := cmd.Run([]string{"usage-refresh"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !refreshed {
+		t.Fatal("usage refresh did not invoke MaybeCollect entry point")
+	}
+	if !sawTmuxSubcommand(runner.calls, "display-popup") {
+		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Codex") ||
+		!sawTmuxPopupCommandContaining(runner.calls, "73%") {
+		t.Fatalf("refreshed popup missing updated usage; calls = %#v", runner.calls)
+	}
+}
+
+func TestStatusbarUsageRefreshRerendersCacheWhenThrottled(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	refreshCalls := 0
+	stateLoads := 0
+	cmd.usageRefreshFn = func(context.Context) (bool, error) {
+		refreshCalls++
+		return false, nil
+	}
+	cmd.usageStateFn = func(context.Context) (statusbarUsageState, error) {
+		stateLoads++
+		return statusbarUsageState{
+			Snapshots: []coreusage.Snapshot{
+				{Model: "claude", Window: coreusage.Window5h, Pct: 41},
+			},
+		}, nil
+	}
+
+	if err := cmd.Run([]string{"usage-refresh"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if refreshCalls != 1 || stateLoads != 1 {
+		t.Fatalf("refresh calls/state loads = %d/%d, want 1/1", refreshCalls, stateLoads)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Claude") ||
+		!sawTmuxPopupCommandContaining(runner.calls, "41%") {
+		t.Fatalf("throttled refresh did not rerender cached popup; calls = %#v", runner.calls)
 	}
 }
 

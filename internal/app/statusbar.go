@@ -5,7 +5,8 @@
 // "#{mouse_status_range}" --client "#{client_tty}" --mouse-window
 // "#{mouse_window}"'` invokes us with the matching range id, client tty, and
 // the window id under the cursor, and the
-// `prefix s {u,n,g,k,p,s}` shortcuts call us with hard-coded ids.
+// `prefix s {u,n,g,k,p,s}` shortcuts call us with hard-coded ids, while
+// `prefix s r` invokes the dedicated throttled usage refresh subcommand.
 //
 // When the click lands outside any user-defined range (e.g. on a window-list
 // entry) we fall back to `select-window -t @<mouse_window>` so we restore
@@ -58,13 +59,14 @@ type statusbarRunner interface {
 // clicks and keyboard shortcuts. The intentionally tiny surface keeps the
 // dispatcher cheap to call from a tmux status interval.
 type statusbarCommand struct {
-	runner        statusbarRunner
-	executable    func() (string, error)
-	notifyStoreFn func() (notifyStore, error)
-	usageStateFn  func(context.Context) (statusbarUsageState, error)
-	lookupEnv     func(string) string
-	homeDir       func() (string, error)
-	now           func() time.Time
+	runner         statusbarRunner
+	executable     func() (string, error)
+	notifyStoreFn  func() (notifyStore, error)
+	usageStateFn   func(context.Context) (statusbarUsageState, error)
+	usageRefreshFn func(context.Context) (bool, error)
+	lookupEnv      func(string) string
+	homeDir        func() (string, error)
+	now            func() time.Time
 }
 
 // newStatusbarCommand builds the production wiring: real tmux + projmux exec
@@ -97,6 +99,12 @@ func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "click":
 		return c.runClick(args[1:], stdout, stderr)
+	case "usage-refresh":
+		if len(args) != 1 {
+			printStatusbarUsage(stderr)
+			return usageError("statusbar usage-refresh does not accept arguments")
+		}
+		return c.handleUsage(true, statusbarClickOptions{}, stdout, stderr)
 	case "help", "--help", "-h":
 		printStatusbarUsage(stdout)
 		return nil
@@ -349,11 +357,13 @@ func (c *statusbarCommand) handleWindowListClick(opts statusbarClickOptions, std
 // state across goroutines.
 func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarClickOptions, io.Writer, io.Writer) error {
 	return map[statusbarRangeID]func(statusbarClickOptions, io.Writer, io.Writer) error{
-		statusbarRangeSession:  c.handleSession,
-		statusbarRangePwd:      c.handlePwd,
-		statusbarRangeKube:     c.handleKube,
-		statusbarRangeGit:      c.handleGit,
-		statusbarRangeUsage:    c.handleUsage,
+		statusbarRangeSession: c.handleSession,
+		statusbarRangePwd:     c.handlePwd,
+		statusbarRangeKube:    c.handleKube,
+		statusbarRangeGit:     c.handleGit,
+		statusbarRangeUsage: func(opts statusbarClickOptions, stdout, stderr io.Writer) error {
+			return c.handleUsage(false, opts, stdout, stderr)
+		},
 		statusbarRangeNotify:   c.handleNotify,
 		statusbarRangeSettings: c.handleSettings,
 	}
@@ -453,8 +463,17 @@ func (c *statusbarCommand) handlePopupToggleWithClient(stderr io.Writer, label, 
 // per-window detail without leaving tmux. It stays a direct display-popup
 // action, not a popup-toggle mode, so the existing status key behaviour does
 // not introduce a new stacking popup surface.
-func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Writer) error {
+func (c *statusbarCommand) handleUsage(refresh bool, _ statusbarClickOptions, _, stderr io.Writer) error {
 	ctx := context.Background()
+	if refresh {
+		if _, err := c.maybeRefreshUsage(ctx); err != nil {
+			// A failed adapter must not prevent the cached HUD from reopening.
+			// MaybeCollect persists successful adapter rows before returning a
+			// joined error, so the subsequent cache load can still show partial
+			// progress.
+			fmt.Fprintf(stderr, "statusbar usage: refresh usage state: %v\n", err)
+		}
+	}
 	state, err := c.loadUsageState(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "statusbar usage: load usage state: %v\n", err)
@@ -479,6 +498,13 @@ func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Wri
 		return nil
 	}
 	return c.runTmux(stderr, "display-message", popup.Toast)
+}
+
+func (c *statusbarCommand) maybeRefreshUsage(ctx context.Context) (bool, error) {
+	if c.usageRefreshFn != nil {
+		return c.usageRefreshFn(ctx)
+	}
+	return usagecmd.New(c.nowTime).MaybeCollect(ctx)
 }
 
 func (c *statusbarCommand) loadUsageState(ctx context.Context) (statusbarUsageState, error) {
@@ -1287,6 +1313,7 @@ func (c *statusbarCommand) displayPopupNoFallback(command string, options intmux
 func printStatusbarUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-window <id>] [--mouse-x N] [--mouse-y N]")
+	fmt.Fprintln(w, "  projmux statusbar usage-refresh")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Range ids: session pwd kube git usage notify settings")
 }

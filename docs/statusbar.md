@@ -181,6 +181,7 @@ placeholder surfaces and no-op until a handler is wired into the dispatcher.
 ```tmux
 bind-key s switch-client -T projmux-status
 bind-key -T projmux-status u run-shell '#{q:projmux} statusbar click usage'
+bind-key -T projmux-status r run-shell '#{q:projmux} statusbar usage-refresh'
 bind-key -T projmux-status n run-shell '#{q:projmux} statusbar click notify'
 bind-key -T projmux-status g run-shell '#{q:projmux} statusbar click git'
 bind-key -T projmux-status k run-shell '#{q:projmux} statusbar click kube'
@@ -190,6 +191,10 @@ bind-key -T projmux-status s run-shell '#{q:projmux} statusbar click session'
 
 The chord routes through the same dispatcher as the mouse click, so
 keyboard and mouse paths are functionally identical for keyed ranges.
+The `r` key is the one exception: it asks the usage manager for a throttled
+refresh and then reopens the same display-only usage popup from cache.
+Per-adapter throttle hints and backoff remain in force, so repeated refreshes
+inside the cooldown rerender cached data without another adapter collection.
 There is intentionally no `prefix s s` settings fallback because that chord
 already opens the session/sidebar range.
 

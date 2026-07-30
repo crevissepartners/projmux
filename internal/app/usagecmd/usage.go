@@ -150,17 +150,33 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 // statusRefreshThrottle is the minimum interval between adapter walks
-// triggered by `projmux status usage`. tmux refreshes the status line every
-// 5s by default; 30s gives the cache enough breathing room while keeping
-// the displayed numbers fresh on a human timescale. Adapters that
-// implement ThrottleHinter (e.g. Claude → 60s) override this floor on a
-// per-adapter basis inside the Manager.
+// triggered by `projmux status usage` or the manual HUD refresh key. tmux
+// refreshes the status line every 5s by default; 30s gives the cache enough
+// breathing room while keeping the displayed numbers fresh on a human
+// timescale. Adapters that implement ThrottleHinter (e.g. Claude → 60s)
+// override this floor on a per-adapter basis inside the Manager.
 const statusRefreshThrottle = 30 * time.Second
 
 // usageDebugEnvVar gates whether MaybeCollect's swallowed adapter error is
 // echoed to stderr. Off by default — the status segment must stay silent on
 // a healthy install.
 const usageDebugEnvVar = "PROJMUX_USAGE_DEBUG"
+
+// MaybeCollect performs the same opportunistic, throttled adapter walk used
+// by the status-line renderer without rendering any output. It is the narrow
+// entry point used by explicit UI refresh gestures that must respect the
+// existing per-adapter throttle hints and backoff state.
+func (c *Command) MaybeCollect(ctx context.Context) (bool, error) {
+	modelScope := c.ambientModelScope()
+	if len(modelScope) == 0 {
+		return false, nil
+	}
+	mgr, err := c.managerForScope(modelScope)
+	if err != nil {
+		return false, err
+	}
+	return mgr.MaybeCollect(ctx, statusRefreshThrottle)
+}
 
 // RunStatus implements the `projmux status usage` subcommand. It triggers
 // an opportunistic, throttled cache refresh (so a fresh install or a stale
