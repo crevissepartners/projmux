@@ -2,14 +2,19 @@ package app
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,10 +33,27 @@ const (
 	updateCacheMaxAge   = 24 * time.Hour
 	updateHTTPTimeout   = 10 * time.Second
 	updateReleaseURL    = "https://api.github.com/repos/crevissepartners/projmux/releases/latest"
+
+	updateMaxCompressedBytes   int64 = 64 << 20
+	updateMaxTarBytes          int64 = 256 << 20
+	updateMaxTotalRegularBytes int64 = 192 << 20
+	updateMaxRegularFileBytes  int64 = 128 << 20
+	updateMaxTarEntries              = 256
+	updateMaxRedirects               = 5
 )
+
+var errUpdateTarTooLarge = errors.New("release archive exceeded extracted byte limit")
 
 type updateHTTPClient interface {
 	Do(*http.Request) (*http.Response, error)
+}
+
+type updateArchiveLimits struct {
+	compressedBytes   int64
+	tarBytes          int64
+	totalRegularBytes int64
+	regularFileBytes  int64
+	entries           int
 }
 
 type updateCommand struct {
@@ -52,6 +74,7 @@ type updateCommand struct {
 	copyFile    func(src, dst string) error
 	buildInfo   func() (*debug.BuildInfo, bool)
 	userHomeDir func() (string, error)
+	limits      updateArchiveLimits
 }
 
 type updateCache struct {
@@ -90,6 +113,7 @@ type githubRelease struct {
 type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+	Digest             string `json:"digest"`
 }
 
 func newUpdateCommand() *updateCommand {
@@ -111,6 +135,7 @@ func newUpdateCommand() *updateCommand {
 		copyFile:    copyRegularFile,
 		buildInfo:   debug.ReadBuildInfo,
 		userHomeDir: os.UserHomeDir,
+		limits:      defaultUpdateArchiveLimits(),
 	}
 }
 
@@ -276,7 +301,7 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 	if _, err := fmt.Fprintf(stdout, ">> downloading %s\n", asset.Name); err != nil {
 		return err
 	}
-	if err := c.downloadAndExtractReleaseAsset(context.Background(), asset.BrowserDownloadURL, extracted); err != nil {
+	if err := c.downloadAndExtractReleaseAsset(context.Background(), asset, extracted); err != nil {
 		return err
 	}
 	if err := c.atomicReplaceRelease(extracted, target); err != nil {
@@ -314,31 +339,156 @@ func (c *updateCommand) createReleaseScratchDir(target string) (string, error) {
 	return tmpDir, nil
 }
 
-func (c *updateCommand) downloadAndExtractReleaseAsset(ctx context.Context, url, dst string) error {
+func (c *updateCommand) downloadAndExtractReleaseAsset(ctx context.Context, asset githubReleaseAsset, dst string) error {
 	if c.client == nil {
 		return errors.New("update apply: HTTP client is not configured")
 	}
-	url = strings.TrimSpace(url)
-	if url == "" {
+	assetURL := strings.TrimSpace(asset.BrowserDownloadURL)
+	if assetURL == "" {
 		return errors.New("update apply: release asset did not include browser_download_url")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	parsedURL, err := url.Parse(assetURL)
+	if err != nil {
+		return fmt.Errorf("update apply: parse release asset URL: %w", err)
+	}
+	if err := validateReleaseAssetURL(parsedURL); err != nil {
+		return fmt.Errorf("update apply: release asset URL: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
 	if err != nil {
 		return fmt.Errorf("update apply: build release asset request: %w", err)
 	}
 	req.Header.Set("Accept", "application/octet-stream")
 	req.Header.Set("User-Agent", "projmux/"+version.String())
 
-	resp, err := c.client.Do(req)
+	resp, err := c.doReleaseAssetRequest(req)
 	if err != nil {
 		return fmt.Errorf("update apply: download release asset: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.Request != nil && resp.Request.URL != nil {
+		if err := validateReleaseAssetURL(resp.Request.URL); err != nil {
+			return fmt.Errorf("update apply: final release asset URL: %w", err)
+		}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("update apply: release asset request returned status %d", resp.StatusCode)
 	}
-	if err := extractProjmuxBinary(resp.Body, dst); err != nil {
+	limits := c.archiveLimits()
+	if resp.ContentLength > limits.compressedBytes {
+		return fmt.Errorf("update apply: release asset compressed size %d exceeds limit %d", resp.ContentLength, limits.compressedBytes)
+	}
+	archive, err := readBoundedBytes(resp.Body, limits.compressedBytes)
+	if err != nil {
+		return fmt.Errorf("update apply: read release asset: %w", err)
+	}
+	if err := verifyReleaseAssetDigest(archive, asset.Digest); err != nil {
+		return fmt.Errorf("update apply: verify release asset: %w", err)
+	}
+	if err := extractProjmuxBinaryWithLimits(archive, dst, limits); err != nil {
 		return fmt.Errorf("update apply: extract release asset: %w", err)
+	}
+	return nil
+}
+
+func (c *updateCommand) doReleaseAssetRequest(req *http.Request) (*http.Response, error) {
+	client, ok := c.client.(*http.Client)
+	if !ok {
+		return c.client.Do(req)
+	}
+	cloned := *client
+	originalCheckRedirect := client.CheckRedirect
+	cloned.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) > updateMaxRedirects {
+			return fmt.Errorf("release asset redirect limit exceeded")
+		}
+		if err := validateReleaseAssetURL(next.URL); err != nil {
+			return fmt.Errorf("release asset redirect URL: %w", err)
+		}
+		if originalCheckRedirect != nil {
+			return originalCheckRedirect(next, via)
+		}
+		return nil
+	}
+	return cloned.Do(req)
+}
+
+func validateReleaseAssetURL(u *url.URL) error {
+	if u == nil {
+		return errors.New("URL is missing")
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("scheme %q is not allowed", u.Scheme)
+	}
+	if u.User != nil {
+		return errors.New("userinfo is not allowed")
+	}
+	if port := u.Port(); port != "" && port != "443" {
+		return fmt.Errorf("port %q is not allowed", port)
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com":
+		return nil
+	default:
+		return fmt.Errorf("host %q is not allowed", u.Hostname())
+	}
+}
+
+func defaultUpdateArchiveLimits() updateArchiveLimits {
+	return updateArchiveLimits{
+		compressedBytes:   updateMaxCompressedBytes,
+		tarBytes:          updateMaxTarBytes,
+		totalRegularBytes: updateMaxTotalRegularBytes,
+		regularFileBytes:  updateMaxRegularFileBytes,
+		entries:           updateMaxTarEntries,
+	}
+}
+
+func (c *updateCommand) archiveLimits() updateArchiveLimits {
+	limits := c.limits
+	defaults := defaultUpdateArchiveLimits()
+	if limits.compressedBytes <= 0 {
+		limits.compressedBytes = defaults.compressedBytes
+	}
+	if limits.tarBytes <= 0 {
+		limits.tarBytes = defaults.tarBytes
+	}
+	if limits.totalRegularBytes <= 0 {
+		limits.totalRegularBytes = defaults.totalRegularBytes
+	}
+	if limits.regularFileBytes <= 0 {
+		limits.regularFileBytes = defaults.regularFileBytes
+	}
+	if limits.entries <= 0 {
+		limits.entries = defaults.entries
+	}
+	return limits
+}
+
+func readBoundedBytes(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("compressed size exceeds limit %d", limit)
+	}
+	return data, nil
+}
+
+func verifyReleaseAssetDigest(archive []byte, digest string) error {
+	digest = strings.TrimSpace(digest)
+	algorithm, encoded, ok := strings.Cut(digest, ":")
+	if !ok || !strings.EqualFold(strings.TrimSpace(algorithm), "sha256") {
+		return errors.New("release asset digest is missing or does not use sha256")
+	}
+	want, err := hex.DecodeString(strings.TrimSpace(encoded))
+	if err != nil || len(want) != sha256.Size {
+		return errors.New("release asset sha256 digest is malformed")
+	}
+	got := sha256.Sum256(archive)
+	if subtle.ConstantTimeCompare(got[:], want) != 1 {
+		return errors.New("release asset sha256 digest mismatch")
 	}
 	return nil
 }
@@ -552,14 +702,28 @@ func releaseArchiveVersion(tag string) string {
 	return version
 }
 
-func extractProjmuxBinary(r io.Reader, dst string) error {
-	gz, err := gzip.NewReader(r)
+func extractProjmuxBinaryWithLimits(archive []byte, dst string, limits updateArchiveLimits) (resultErr error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return fmt.Errorf("open gzip stream: %w", err)
 	}
 	defer gz.Close()
 
-	tr := tar.NewReader(gz)
+	expanded := &updateMaxBytesReader{
+		r:         gz,
+		remaining: limits.tarBytes,
+	}
+	tr := tar.NewReader(expanded)
+	var (
+		entryCount       int
+		totalRegularSize int64
+		found            bool
+	)
+	defer func() {
+		if resultErr != nil {
+			_ = os.Remove(dst)
+		}
+	}()
 	for {
 		header, err := tr.Next()
 		if err != nil {
@@ -568,11 +732,25 @@ func extractProjmuxBinary(r io.Reader, dst string) error {
 			}
 			return fmt.Errorf("read tar entry: %w", err)
 		}
-		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+		entryCount++
+		if entryCount > limits.entries {
+			return fmt.Errorf("release archive contains more than %d entries", limits.entries)
+		}
+		if header.Typeflag != tar.TypeReg {
 			continue
 		}
+		if header.Size < 0 || header.Size > limits.regularFileBytes {
+			return fmt.Errorf("release archive regular file %q size %d exceeds limit %d", header.Name, header.Size, limits.regularFileBytes)
+		}
+		if header.Size > limits.totalRegularBytes-totalRegularSize {
+			return fmt.Errorf("release archive regular file bytes exceed total limit %d", limits.totalRegularBytes)
+		}
+		totalRegularSize += header.Size
 		if filepath.Base(header.Name) != "projmux" {
 			continue
+		}
+		if found {
+			return errors.New("release archive contained multiple projmux binaries")
 		}
 		out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
 		if err != nil {
@@ -585,9 +763,37 @@ func extractProjmuxBinary(r io.Reader, dst string) error {
 		if err := out.Close(); err != nil {
 			return fmt.Errorf("close extracted binary: %w", err)
 		}
-		return nil
+		found = true
 	}
-	return errors.New("release archive did not contain a projmux binary")
+	if _, err := io.Copy(io.Discard, expanded); err != nil {
+		return fmt.Errorf("read trailing archive data: %w", err)
+	}
+	if !found {
+		return errors.New("release archive did not contain a projmux binary")
+	}
+	return nil
+}
+
+type updateMaxBytesReader struct {
+	r         io.Reader
+	remaining int64
+}
+
+func (r *updateMaxBytesReader) Read(p []byte) (int, error) {
+	if r.remaining > 0 {
+		if int64(len(p)) > r.remaining {
+			p = p[:r.remaining]
+		}
+		n, err := r.r.Read(p)
+		r.remaining -= int64(n)
+		return n, err
+	}
+	var probe [1]byte
+	n, err := r.r.Read(probe[:])
+	if n > 0 {
+		return 0, errUpdateTarTooLarge
+	}
+	return 0, err
 }
 
 func (c *updateCommand) loadCache() (updateCache, bool, error) {
