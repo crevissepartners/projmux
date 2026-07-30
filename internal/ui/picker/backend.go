@@ -2,6 +2,7 @@ package picker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -463,6 +464,18 @@ type nativeKeyRead struct {
 	err error
 }
 
+var errNativeKeyReaderStopped = errors.New("native key reader stopped")
+
+type nativeKeyReaderInput struct {
+	io.Reader
+	stop <-chan struct{}
+}
+
+type nativeKeyReaderLifecycle interface {
+	nativeKeyReaderStarted()
+	nativeKeyReaderStopped()
+}
+
 type nativeDeferredRead struct {
 	update DeferredUpdate
 	err    error
@@ -487,10 +500,16 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	deferredStarted := false
 	var keyCh <-chan nativeKeyRead
 	var deferredCh <-chan nativeDeferredRead
+	var stopKeyReader chan struct{}
 	var stopDeferred chan struct{}
 	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
 	fmt.Fprint(out, nativeScreenEnter)
 	defer leaveNativeInteractiveScreen(out)
+	defer func() {
+		if stopKeyReader != nil {
+			close(stopKeyReader)
+		}
+	}()
 	defer func() {
 		if stopDeferred != nil {
 			close(stopDeferred)
@@ -517,7 +536,8 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		}
 		if !deferredStarted && options.DeferredUpdate != nil {
 			deferredStarted = true
-			keyCh = startNativeKeyReader(in)
+			stopKeyReader = make(chan struct{})
+			keyCh = startNativeKeyReader(in, stopKeyReader)
 			stopDeferred = make(chan struct{})
 			deferredCh = startNativeDeferredUpdate(options.DeferredUpdate, options.DeferredUpdateTrigger, stopDeferred)
 		}
@@ -734,12 +754,25 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	}
 }
 
-func startNativeKeyReader(in io.Reader) <-chan nativeKeyRead {
+func startNativeKeyReader(in io.Reader, stop <-chan struct{}) <-chan nativeKeyRead {
 	ch := make(chan nativeKeyRead, 1)
 	go func() {
+		defer close(ch)
+		if lifecycle, ok := in.(nativeKeyReaderLifecycle); ok {
+			lifecycle.nativeKeyReaderStarted()
+			defer lifecycle.nativeKeyReaderStopped()
+		}
+		in := nativeKeyReaderInput{Reader: in, stop: stop}
 		for {
 			key, err := readNativeKey(in)
-			ch <- nativeKeyRead{key: key, err: err}
+			if errors.Is(err, errNativeKeyReaderStopped) {
+				return
+			}
+			select {
+			case ch <- nativeKeyRead{key: key, err: err}:
+			case <-stop:
+				return
+			}
 			if err != nil {
 				return
 			}
@@ -1447,12 +1480,15 @@ func nativePrintableKey(first byte, r io.Reader) (nativeKey, error) {
 func readNativeByte(r io.Reader) (byte, error) {
 	var buf [1]byte
 	for {
+		if nativeKeyReadStopped(r) {
+			return 0, errNativeKeyReaderStopped
+		}
 		n, err := r.Read(buf[:])
 		if n > 0 {
 			return buf[0], nil
 		}
 		if err == io.EOF {
-			if _, ok := r.(*os.File); ok {
+			if nativeReaderIsFile(r) {
 				time.Sleep(nativeReadPollDelay)
 				continue
 			}
@@ -1468,12 +1504,15 @@ func readNativeByte(r io.Reader) (byte, error) {
 func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 	var buf [1]byte
 	for range nativeMaybeReadAttempts {
+		if nativeKeyReadStopped(r) {
+			return 0, false, errNativeKeyReaderStopped
+		}
 		n, err := r.Read(buf[:])
 		if n > 0 {
 			return buf[0], true, nil
 		}
 		if err == io.EOF {
-			if _, ok := r.(*os.File); ok {
+			if nativeReaderIsFile(r) {
 				time.Sleep(nativeReadPollDelay)
 				continue
 			}
@@ -1485,6 +1524,31 @@ func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 		time.Sleep(nativeReadPollDelay)
 	}
 	return 0, false, nil
+}
+
+func nativeKeyReadStopped(r io.Reader) bool {
+	input, ok := r.(nativeKeyReaderInput)
+	if !ok || input.stop == nil {
+		return false
+	}
+	select {
+	case <-input.stop:
+		return true
+	default:
+		return false
+	}
+}
+
+func nativeReaderIsFile(r io.Reader) bool {
+	switch reader := r.(type) {
+	case *os.File:
+		return true
+	case nativeKeyReaderInput:
+		_, ok := reader.Reader.(*os.File)
+		return ok
+	default:
+		return false
+	}
 }
 
 func readNativeLine(r io.Reader) (string, error) {
