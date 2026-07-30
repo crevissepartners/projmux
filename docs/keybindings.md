@@ -73,10 +73,28 @@ delivery path.
 This adapter is terminal-independent, so Ghostty and iTerm2 do not need
 separate projmux mappings for the app socket. It does not rewrite terminal
 configuration and it does not translate Option-produced symbols such as `¡`.
-The first launch requires macOS Accessibility permission because consuming a
-physical chord before the terminal converts it requires a CGEvent event tap.
-The broker waits for the one-time approval and enables the event tap
+The first launch shows a one-time consent hint before macOS asks for
+Accessibility permission. The hint explains that the adapter captures only
+modified chords from the configured keybinding catalog, never plain-text
+typing; physical Option needs the event tap because terminals may convert it
+before tmux can see it; and capture plus tmux injection stay on the local
+machine. The broker then waits for approval and enables the event tap
 automatically; the tmux session does not need to be restarted.
+
+Native macOS delivery remains on by default. To prevent the broker from
+starting—and therefore prevent the Accessibility prompt—turn off **Native
+macOS keybindings** in Settings > Keybindings before the next `projmux shell`
+start, or launch with:
+
+```sh
+PROJMUX_NATIVE_KEYS=0 projmux shell
+```
+
+`PROJMUX_NATIVE_KEYS=false` is equivalent. The environment opt-out takes
+precedence over the saved Settings value. Turning native delivery off leaves
+the ordinary terminal key path in place; Option chords then depend on what the
+terminal sends. Linux, WSL, and Windows never start this Darwin broker and are
+unchanged.
 
 The portable key vocabulary stays shared across operating systems:
 `M-` (Alt/Option), `C-`, `S-`, letters, top-row digits, arrows/navigation,
@@ -96,11 +114,12 @@ Settings > Keybindings lists the full action catalogue. In particular, sidebar
 keymap actions, pane switching, window switching, and rename actions remain
 visible.
 
-The Settings flow is intentionally simple: the root is one action list with a
-key summary and state. The key summary uses the first key plus `+N`, or
-`Not bound` when no key is active. State vocabulary is limited to Default,
-Custom, Available, and Unbound. Each action detail shows the action label,
-state, a flat Keys list with `+ Add key`, Options, and a collapsed
+The Settings flow is intentionally simple: the root has one native macOS
+transport policy toggle followed by the action list with a key summary and
+state. The key summary uses the first key plus `+N`, or `Not bound` when no key
+is active. State vocabulary is limited to Default, Custom, Available, and
+Unbound. Each action detail shows the action label, state, a flat Keys list
+with `+ Add key`, Options, and a collapsed
 Troubleshooting row with Test key delivery and Advanced... entry points. Key
 rows open key detail for Remove key and Test key. Add key opens Press a key by
 default; Enter key name, the safe direct key pool, risky/reserved key copy, and

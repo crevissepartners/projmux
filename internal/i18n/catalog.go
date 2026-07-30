@@ -62,6 +62,7 @@ const (
 	KeyWelcomeShellPromptUpdateSkip  Key = "welcome.shell.prompt.update_skip"
 	KeyUpdateStatusAvailable         Key = "update.status.available"
 	KeyHelpUsageCommand              Key = "help.usage.command"
+	KeyNativeKeysConsentHint         Key = "native_keys.consent_hint"
 )
 
 var foundationKeys = []Key{

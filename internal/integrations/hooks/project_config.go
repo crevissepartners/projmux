@@ -64,7 +64,8 @@ type KubeConfig struct {
 }
 
 type UIConfig struct {
-	Locale string
+	Locale     string
+	NativeKeys *bool
 }
 
 // AIConfig holds the [ai] section. It is intentionally extensible: Phase 1
@@ -313,6 +314,12 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 		switch key {
 		case "locale":
 			cfg.UI.Locale = value
+		case "native_keys":
+			enabled, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("line %d: invalid ui native_keys %q: %w", lineNo, value, err)
+			}
+			cfg.UI.NativeKeys = &enabled
 		default:
 			return fmt.Errorf("line %d: unsupported ui key %q", lineNo, key)
 		}
@@ -426,6 +433,16 @@ func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lin
 }
 
 func parseProjectConfigValue(section, key, value string) (string, error) {
+	if section == "ui" && key == "native_keys" {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", fmt.Errorf("value must be a boolean")
+		}
+		if _, err := strconv.ParseBool(value); err != nil {
+			return "", fmt.Errorf("invalid boolean value: %w", err)
+		}
+		return value, nil
+	}
 	if strings.HasPrefix(section, insertFileTextSectionPrefix) && key == "trim" {
 		// trim is a bare boolean (no quotes), e.g.
 		//   [insert_file_text.latest_screenshot]
@@ -639,8 +656,16 @@ func renderProjectConfig(cfg ProjectConfig) string {
 	if cfg.Theme.HasContent() {
 		sections = append(sections, renderThemeConfigSection(cfg.Theme))
 	}
-	if cfg.UI.Locale != "" {
-		sections = append(sections, fmt.Sprintf("[ui]\nlocale = %s\n", strconv.Quote(strings.TrimSpace(cfg.UI.Locale))))
+	if cfg.UI.Locale != "" || cfg.UI.NativeKeys != nil {
+		var b strings.Builder
+		b.WriteString("[ui]\n")
+		if cfg.UI.Locale != "" {
+			fmt.Fprintf(&b, "locale = %s\n", strconv.Quote(strings.TrimSpace(cfg.UI.Locale)))
+		}
+		if cfg.UI.NativeKeys != nil {
+			fmt.Fprintf(&b, "native_keys = %t\n", *cfg.UI.NativeKeys)
+		}
+		sections = append(sections, b.String())
 	}
 	if cfg.AI.ResumePickerLimit != 0 || cfg.AI.ResumeScanDepth != 0 {
 		var b strings.Builder

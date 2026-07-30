@@ -65,6 +65,16 @@ func (c *settingsCommand) runKeybindingsSectionWithActive(initial string, stdout
 		if action == settingsNoopValue {
 			continue
 		}
+		if action == settingsNativeKeysToggle {
+			enabled, err := c.currentNativeKeysSetting()
+			if err != nil {
+				return err
+			}
+			if err := c.setNativeKeysSetting(!enabled); err != nil {
+				return err
+			}
+			continue
+		}
 		if after, ok := strings.CutPrefix(action, settingsActionPrefixKeymap); ok {
 			id := after
 			if err := c.runKeybindingDetail(id, stdout, stderr); err != nil {
@@ -548,12 +558,39 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 		return nil, err
 	}
 	defaults := defaultKeyBindingCatalog()
-	entries := make([]intpickercompat.Entry, 0, len(actions)+2)
+	entries := make([]intpickercompat.Entry, 0, len(actions)+3)
 	entries = append(entries, c.backEntry())
 	entries = append(entries, intpickercompat.Entry{
 		Label: "  " + settingsColorDim + settingsCatalogTextLocale(c.locale(), "Actions are listed with active keys and state.") + settingsColorReset,
 		Value: settingsNoopValue,
 	})
+	enabled, settingErr := c.currentNativeKeysSetting()
+	switch {
+	case settingErr != nil:
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabelDim("Native macOS keybindings", "global config unreadable - "+settingErr.Error()),
+			Value:     settingsNoopValue,
+			SearchKey: "native macOS keybindings Accessibility Option",
+		})
+	case !nativeKeysEnvEnabled(c.lookupEnv):
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabel(settingsGlyphInactive, settingsColorDim, "Native macOS keybindings", "off - PROJMUX_NATIVE_KEYS override"),
+			Value:     settingsNativeKeysToggle,
+			SearchKey: "native macOS keybindings Accessibility Option PROJMUX_NATIVE_KEYS off",
+		})
+	case enabled:
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabel(settingsGlyphToggle, settingsColorAdd, "Native macOS keybindings", "on - modified chords only, processed locally"),
+			Value:     settingsNativeKeysToggle,
+			SearchKey: "native macOS keybindings Accessibility Option on",
+		})
+	default:
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabel(settingsGlyphInactive, settingsColorDim, "Native macOS keybindings", "off - broker and Accessibility prompt disabled"),
+			Value:     settingsNativeKeysToggle,
+			SearchKey: "native macOS keybindings Accessibility Option off",
+		})
+	}
 	locale := c.locale()
 	for _, action := range actions {
 		defaultAction, _ := keyBindingActionByID(defaults, action.ID)

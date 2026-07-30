@@ -1412,13 +1412,20 @@ func TestShellRejectsInvalidUsage(t *testing.T) {
 
 func TestShellNativeKeyBrokerPlatformBoundary(t *testing.T) {
 	tests := []struct {
-		name      string
-		goos      string
-		available bool
-		psmux     string
-		wantStart bool
+		name          string
+		goos          string
+		available     bool
+		psmux         string
+		nativeKeysEnv string
+		setting       string
+		wantStart     bool
 	}{
 		{name: "darwin native build", goos: "darwin", available: true, wantStart: true},
+		{name: "darwin env zero opt-out", goos: "darwin", available: true, nativeKeysEnv: "0"},
+		{name: "darwin env false opt-out", goos: "darwin", available: true, nativeKeysEnv: "false"},
+		{name: "darwin settings opt-out", goos: "darwin", available: true, setting: "false"},
+		{name: "darwin explicit settings on", goos: "darwin", available: true, setting: "true", wantStart: true},
+		{name: "darwin unreadable settings fail closed", goos: "darwin", available: true, setting: "invalid"},
 		{name: "darwin without cgo adapter", goos: "darwin", available: false},
 		{name: "linux", goos: "linux", available: true},
 		{name: "windows", goos: "windows", available: true},
@@ -1426,18 +1433,72 @@ func TestShellNativeKeyBrokerPlatformBoundary(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tt.setting != "" {
+				writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"),
+					"[ui]\nnative_keys = "+tt.setting+"\n")
+			}
 			cmd := &shellCommand{
 				goos:       func() string { return tt.goos },
 				nativeKeys: func() bool { return tt.available },
+				homeDir:    func() (string, error) { return home, nil },
 				lookupEnv: func(name string) string {
 					if name == muxBackendEnvVar {
 						return tt.psmux
+					}
+					if name == nativeKeysEnvName {
+						return tt.nativeKeysEnv
 					}
 					return ""
 				},
 			}
 			if got := cmd.shouldStartNativeKeyBroker(); got != tt.wantStart {
 				t.Fatalf("shouldStartNativeKeyBroker() = %v, want %v", got, tt.wantStart)
+			}
+		})
+	}
+}
+
+func TestShellNativeKeyOptOutDoesNotStartBroker(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		env     string
+		setting bool
+	}{
+		{name: "environment", env: "0"},
+		{name: "settings", setting: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.setting {
+				writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"),
+					"[ui]\nnative_keys = false\n")
+			}
+			started := 0
+			cmd := &shellCommand{
+				executable: func() (string, error) { return "/tmp/projmux", nil },
+				lookupEnv: func(name string) string {
+					if name == nativeKeysEnvName {
+						return tc.env
+					}
+					return ""
+				},
+				homeDir:    func() (string, error) { return home, nil },
+				writeFile:  os.WriteFile,
+				runCommand: (&recordingShellRunner{}).run,
+				startCommand: func(context.Context, []string, string, ...string) error {
+					started++
+					return nil
+				},
+				goos:       func() string { return "darwin" },
+				nativeKeys: func() bool { return true },
+			}
+
+			if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if started != 0 {
+				t.Fatalf("native key broker starts = %d, want 0", started)
 			}
 		})
 	}

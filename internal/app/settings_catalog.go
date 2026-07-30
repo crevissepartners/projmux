@@ -70,6 +70,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsNotificationsQueue:         {Name: "In-app queue", Axis: settingsAxisGlobal},
 	settingsNotificationsHookOverride:  {Name: "Notification hook override", Axis: settingsAxisGlobal},
 	settingsAppearanceLanguage:         {Name: "Language / Locale", Axis: settingsAxisGlobal},
+	settingsNativeKeysToggle:           {Name: "Native macOS keybindings", Axis: settingsAxisGlobal},
 	settingsLabsProjectHooks:           {Name: "Project Hooks", Axis: settingsAxisGlobal},
 	settingsSessionStateDelete:         {Name: "Delete session snapshot", Axis: settingsAxisGlobal},
 	settingsLabKeybindings:             {Name: "Keybindings", Axis: settingsAxisGlobal},
@@ -201,6 +202,7 @@ const (
 	settingsNotificationsQueue             = "notifications:queue"
 	settingsNotificationsHookOverride      = "notifications:hook-override"
 	settingsAppearanceLanguage             = "appearance:language"
+	settingsNativeKeysToggle               = "native-keys:toggle"
 	settingsLabsProjectHooks               = "labs:project-hooks"
 	settingsLabKeybindings                 = "labs:keybindings"
 	settingsSessionStateDelete             = "sessionstate:delete"

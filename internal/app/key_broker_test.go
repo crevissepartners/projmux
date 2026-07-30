@@ -1,14 +1,99 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 )
+
+func TestKeyBrokerNativeKeysOptOutReturnsBeforeSourceSetup(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		env     string
+		setting bool
+	}{
+		{name: "environment", env: "false"},
+		{name: "settings", setting: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.setting {
+				writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"),
+					"[ui]\nnative_keys = false\n")
+			}
+			source := &keyBrokerSourceRecorder{}
+			cmd := &keyBrokerCommand{
+				source:     source,
+				nativeKeys: func() bool { return true },
+				homeDir:    func() (string, error) { return home, nil },
+				lookupEnv: func(name string) string {
+					if name == nativeKeysEnvName {
+						return tc.env
+					}
+					return ""
+				},
+			}
+
+			if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if source.replaceCalls != 0 || source.enabledCalls != 0 || source.runCalls != 0 {
+				t.Fatalf("source calls = replace:%d enabled:%d run:%d, want direct no-op",
+					source.replaceCalls, source.enabledCalls, source.runCalls)
+			}
+		})
+	}
+}
+
+func TestNativeKeyConsentHintIsShownOnlyOnce(t *testing.T) {
+	home := t.TempDir()
+	stateHome := filepath.Join(home, "state")
+	lookupEnv := func(name string) string {
+		if name == "XDG_STATE_HOME" {
+			return stateHome
+		}
+		return ""
+	}
+	homeDir := func() (string, error) { return home, nil }
+	var stderr bytes.Buffer
+
+	showNativeKeysConsentHint(&stderr, lookupEnv, homeDir, os.ReadFile, os.WriteFile)
+	first := stderr.String()
+	for _, want := range []string{
+		"modified chords only",
+		"never plain-text typing",
+		"physical Option",
+		"stay local",
+		"Settings > Keybindings",
+		"PROJMUX_NATIVE_KEYS=0",
+	} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("first hint = %q, want %q", first, want)
+		}
+	}
+
+	showNativeKeysConsentHint(&stderr, lookupEnv, homeDir, os.ReadFile, os.WriteFile)
+	if got := stderr.String(); got != first {
+		t.Fatalf("second hint output = %q, want unchanged %q", got, first)
+	}
+	path, err := nativeKeysConsentHintPath(lookupEnv, homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("hint state mode = %o, want 600", got)
+	}
+}
 
 func TestKeyBrokerLoadsCustomPortableChordFromSharedKeymap(t *testing.T) {
 	home := t.TempDir()
@@ -92,6 +177,34 @@ type keyBrokerRecordingRunner struct {
 	args   []string
 	output []byte
 	err    error
+}
+
+type keyBrokerSourceRecorder struct {
+	replaceCalls int
+	enabledCalls int
+	runCalls     int
+}
+
+func (s *keyBrokerSourceRecorder) Replace([]platformkeys.Binding) error {
+	s.replaceCalls++
+	return nil
+}
+
+func (s *keyBrokerSourceRecorder) SetEnabled(bool) {
+	s.enabledCalls++
+}
+
+func (s *keyBrokerSourceRecorder) Ready() <-chan struct{} {
+	return nil
+}
+
+func (s *keyBrokerSourceRecorder) Events() <-chan string {
+	return nil
+}
+
+func (s *keyBrokerSourceRecorder) Run(context.Context) error {
+	s.runCalls++
+	return nil
 }
 
 func (r *keyBrokerRecordingRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
