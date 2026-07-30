@@ -13,6 +13,11 @@ import (
 // (LANG=en_US.UTF-8) and clearing the higher rungs keeps the suite
 // deterministic while letting any test opt into another locale via t.Setenv.
 func TestMain(m *testing.M) {
+	// Isolate from the developer machine's real global projmux config
+	// (e.g. locale=ko-KR), which outranks the LANG rung below.
+	if dir, err := os.MkdirTemp("", "projmux-test-xdg"); err == nil {
+		os.Setenv("XDG_CONFIG_HOME", dir)
+	}
 	os.Unsetenv("PROJMUX_LOCALE")
 	os.Unsetenv("LC_ALL")
 	os.Unsetenv("LC_MESSAGES")
