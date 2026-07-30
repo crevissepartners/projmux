@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 // NotifyFileName is the basename of the queue file inside StateDir.
@@ -285,6 +286,7 @@ func sortRecencyDesc(entries []Notification) []Notification {
 
 // read parses the queue file. Missing/empty file decodes as an empty queue.
 func (s *Store) read() ([]Notification, error) {
+	localstate.RepairPrivateFile(s.path)
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -311,7 +313,7 @@ func (s *Store) read() ([]Notification, error) {
 // write replaces the queue file atomically.
 func (s *Store) write(entries []Notification) error {
 	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return fmt.Errorf("create notify state dir: %w", err)
 	}
 
@@ -343,13 +345,11 @@ func (s *Store) write(entries []Notification) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close notify temp file: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return fmt.Errorf("chmod notify temp file: %w", err)
-	}
 	if err := os.Rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("rename notify temp file: %w", err)
 	}
 	cleanup = false
+	localstate.RepairPrivateFile(s.path)
 	return nil
 }
 
@@ -358,7 +358,7 @@ func (s *Store) write(entries []Notification) error {
 // stale lock older than defaultLockStaleAfter is broken to recover from a
 // crashed peer.
 func (s *Store) withLock(fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(s.lockPath), 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lockPath)); err != nil {
 		return fmt.Errorf("create notify lock dir: %w", err)
 	}
 

@@ -589,6 +589,13 @@ run = "echo ready"
 	if file.SHA256 != wantSum {
 		t.Fatalf("stored sha256 = %q, want %q", file.SHA256, wantSum)
 	}
+	info, err := os.Stat(trustPath)
+	if err != nil {
+		t.Fatalf("Stat(trust store) error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("trust store mode = %#o, want 0600", got)
+	}
 }
 
 func TestUntrustProjectConfigClearsIsTrusted(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 const (
@@ -503,6 +504,7 @@ func untrustProjectFile(repoPath, relPath, trustStorePath string) (bool, error) 
 }
 
 func loadTrustedProjects(path string) (trustedProjects, error) {
+	localstate.RepairPrivateFile(path)
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -528,7 +530,7 @@ func loadTrustedProjects(path string) (trustedProjects, error) {
 
 func (s trustedProjects) save(path string) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, trustedProjectsFileName+".tmp-*")
@@ -549,10 +551,11 @@ func (s trustedProjects) save(path string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o600); err != nil {
+	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	localstate.RepairPrivateFile(path)
+	return nil
 }
 
 func (s trustedProjects) trustedFile(repo, rel string) (trustedFile, bool) {

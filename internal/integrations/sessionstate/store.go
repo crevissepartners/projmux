@@ -18,6 +18,7 @@ import (
 	"time"
 
 	coresessionstate "github.com/crevissepartners/projmux/internal/core/sessionstate"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 const (
@@ -25,7 +26,7 @@ const (
 	Version = coresessionstate.Version
 
 	sessionDirName = "sessions"
-	fileMode       = 0o644
+	fileMode       = localstate.PrivateFileMode
 )
 
 var (
@@ -123,6 +124,7 @@ func (s Store) Load(session string) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 
+	localstate.RepairPrivateFile(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -188,7 +190,7 @@ func (s Store) Save(snap Snapshot) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(s.Dir); err != nil {
 		return fmt.Errorf("sessionstate: create snapshot dir %s: %w", s.Dir, err)
 	}
 
@@ -210,10 +212,6 @@ func (s Store) Save(snap Snapshot) error {
 		}
 	}()
 
-	if err := tmp.Chmod(fileMode); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sessionstate: chmod temp snapshot: %w", err)
-	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("sessionstate: write temp snapshot: %w", err)
@@ -225,5 +223,6 @@ func (s Store) Save(snap Snapshot) error {
 		return fmt.Errorf("sessionstate: rename temp snapshot: %w", err)
 	}
 	cleanup = false
+	localstate.RepairPrivateFile(path)
 	return nil
 }

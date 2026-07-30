@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 // WorkdirsFileName is the basename of the persisted managed-roots list. Each
@@ -32,6 +34,7 @@ func LoadWorkdirs(homeDir string) ([]string, error) {
 	if path == "" {
 		return nil, nil
 	}
+	localstate.RepairPrivateFile(path)
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -67,7 +70,7 @@ func LoadWorkdirs(homeDir string) ([]string, error) {
 
 // SaveWorkdirs persists dirs to the workdirs file rooted at homeDir using an
 // atomic rename. A nil or empty list removes the file. The parent directory is
-// created with 0o755 if missing. Each entry is written on its own line; entries
+// created privately if missing. Each entry is written on its own line; entries
 // are trimmed and deduplicated before writing.
 func SaveWorkdirs(homeDir string, dirs []string) error {
 	path := WorkdirsFile(homeDir)
@@ -85,7 +88,7 @@ func SaveWorkdirs(homeDir string, dirs []string) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return fmt.Errorf("create workdirs directory: %w", err)
 	}
 
@@ -112,12 +115,10 @@ func SaveWorkdirs(homeDir string, dirs []string) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close workdirs temp file: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return fmt.Errorf("chmod workdirs temp file: %w", err)
-	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename workdirs temp file: %w", err)
 	}
+	localstate.RepairPrivateFile(path)
 	return nil
 }
 

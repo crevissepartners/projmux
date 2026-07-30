@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-const fileMode = 0o644
-
 // LinesFile stores newline-delimited text in a simple inspectable file.
 type LinesFile struct {
 	path string
@@ -27,6 +25,7 @@ func (f LinesFile) Path() string {
 
 // Read returns all non-empty lines from the file. Missing files read as empty.
 func (f LinesFile) Read() ([]string, error) {
+	RepairPrivateFile(f.path)
 	file, err := os.Open(f.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -56,7 +55,7 @@ func (f LinesFile) Read() ([]string, error) {
 // Write replaces the file contents atomically with the provided lines.
 func (f LinesFile) Write(lines []string) error {
 	dir := filepath.Dir(f.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := EnsurePrivateDir(dir); err != nil {
 		return err
 	}
 
@@ -72,11 +71,6 @@ func (f LinesFile) Write(lines []string) error {
 			_ = os.Remove(tempName)
 		}
 	}()
-
-	if err := temp.Chmod(fileMode); err != nil {
-		_ = temp.Close()
-		return err
-	}
 
 	writer := bufio.NewWriter(temp)
 	for _, line := range lines {
@@ -99,5 +93,6 @@ func (f LinesFile) Write(lines []string) error {
 	}
 
 	cleanup = false
+	RepairPrivateFile(f.path)
 	return nil
 }

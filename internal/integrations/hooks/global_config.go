@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 // GlobalConfigRelativePath is the path inside the projmux config directory at
@@ -53,6 +55,7 @@ func LoadGlobalConfig(path string) (ProjectConfig, error) {
 	if strings.TrimSpace(path) == "" {
 		return ProjectConfig{}, nil
 	}
+	localstate.RepairPrivateFile(path)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -92,8 +95,12 @@ func UpdateGlobalConfig(path string, update func(*ProjectConfig) error) (Project
 		return ProjectConfig{}, err
 	}
 	normalizeProjectConfig(&cfg)
-	if err := writeProjectConfigFile(path, cfg); err != nil {
+	if err := localstate.EnsurePrivateDir(filepath.Dir(path)); err != nil {
 		return ProjectConfig{}, err
 	}
+	if err := writePrivateProjectConfigFile(path, cfg); err != nil {
+		return ProjectConfig{}, err
+	}
+	localstate.RepairPrivateFile(path)
 	return cfg, nil
 }

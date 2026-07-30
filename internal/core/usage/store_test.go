@@ -35,7 +35,7 @@ func TestStoreLoadAllMissingReturnsEmpty(t *testing.T) {
 func TestStoreSaveAllAndLoadRoundtrip(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "usage")
 	s := NewStore(dir)
 	now := mustTime(t, "2026-05-06T12:00:00Z")
 	resetA := mustTime(t, "2026-05-06T17:00:00Z")
@@ -78,6 +78,19 @@ func TestStoreSaveAllAndLoadRoundtrip(t *testing.T) {
 	}
 	if filepath.Base(s.FilePath()) != snapshotFileName {
 		t.Fatalf("FilePath base = %s, want %s", filepath.Base(s.FilePath()), snapshotFileName)
+	}
+	assertUsageMode(t, dir, 0o700)
+	assertUsageMode(t, s.FilePath(), 0o600)
+}
+
+func assertUsageMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%q) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %#o, want %#o", path, got, want)
 	}
 }
 

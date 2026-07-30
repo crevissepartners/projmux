@@ -87,6 +87,19 @@ func TestUpdateGlobalConfigWritesAndReadsBack(t *testing.T) {
 	if cfg.Hooks[EventPostCreate] != "echo global-post" {
 		t.Fatalf("Hooks[post-create] = %q, want %q", cfg.Hooks[EventPostCreate], "echo global-post")
 	}
+	assertGlobalConfigMode(t, filepath.Dir(path), 0o700)
+	assertGlobalConfigMode(t, path, 0o600)
+}
+
+func assertGlobalConfigMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%q) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %#o, want %#o", path, got, want)
+	}
 }
 
 func TestUpdateGlobalConfigStoresUILocale(t *testing.T) {

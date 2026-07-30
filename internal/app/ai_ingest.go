@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 const (
@@ -185,6 +186,7 @@ func (c *aiCommand) runIngestLog(args []string, stdout, stderr io.Writer) error 
 		return nil
 	}
 
+	localstate.RepairPrivateFile(path)
 	readFile := c.readFile
 	if readFile == nil {
 		readFile = os.ReadFile
@@ -385,6 +387,7 @@ func (c *aiCommand) appendAIIngestLog(entry aiIngestLogEntry) {
 	if err := mkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return
 	}
+	localstate.RepairPrivateFile(path)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
@@ -393,6 +396,7 @@ func (c *aiCommand) appendAIIngestLog(entry aiIngestLogEntry) {
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		return
 	}
+	localstate.RepairPrivateFile(path)
 	c.trimAIIngestLogFile(path)
 }
 

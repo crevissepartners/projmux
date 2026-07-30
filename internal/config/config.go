@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 const (
@@ -96,6 +98,7 @@ func LoadProjdir(homeDir string) (string, error) {
 	if path == "" {
 		return "", nil
 	}
+	localstate.RepairPrivateFile(path)
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -120,8 +123,7 @@ func LoadProjdir(homeDir string) (string, error) {
 }
 
 // SaveProjdir persists value to the projdir file rooted at homeDir using an
-// atomic rename. An empty value removes the file. The parent directory is
-// created with 0o755 if missing.
+// atomic rename. An empty value removes the file.
 func SaveProjdir(homeDir, value string) error {
 	path := ProjdirFile(homeDir)
 	if path == "" {
@@ -137,7 +139,7 @@ func SaveProjdir(homeDir, value string) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return fmt.Errorf("create projdir directory: %w", err)
 	}
 
@@ -157,12 +159,10 @@ func SaveProjdir(homeDir, value string) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close projdir temp file: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return fmt.Errorf("chmod projdir temp file: %w", err)
-	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename projdir temp file: %w", err)
 	}
+	localstate.RepairPrivateFile(path)
 	return nil
 }
 

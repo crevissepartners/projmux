@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/usage"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 // Name is the adapter's registered identifier. It matches the aiprovider
@@ -96,6 +97,7 @@ func (a *Adapter) Collect(_ context.Context) ([]usage.Snapshot, error) {
 }
 
 func readContext(path string) (ContextRecord, bool, error) {
+	localstate.RepairPrivateFile(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -116,7 +118,7 @@ func readContext(path string) (ContextRecord, bool, error) {
 // WriteContext atomically persists rec to <baseDir>/ContextFileName,
 // creating baseDir if needed. Used by the antigravity hook ingest path.
 func WriteContext(baseDir string, rec ContextRecord) error {
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(baseDir); err != nil {
 		return err
 	}
 	rec.UpdatedAt = rec.UpdatedAt.UTC()
@@ -143,13 +145,11 @@ func WriteContext(baseDir string, rec ContextRecord) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return err
-	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
 	cleanup = false
+	localstate.RepairPrivateFile(path)
 	return nil
 }
 

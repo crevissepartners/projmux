@@ -14,7 +14,7 @@ import (
 func TestStoreRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	store := NewStore(t.TempDir())
+	store := NewStore(filepath.Join(t.TempDir(), "sessions"))
 	want := sampleSnapshot()
 
 	if err := store.Save(want); err != nil {
@@ -53,6 +53,19 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	if window["active_pane_index"] != float64(want.Windows[0].ActivePaneIndex) {
 		t.Fatalf("active_pane_index = %#v, want %d", window["active_pane_index"], want.Windows[0].ActivePaneIndex)
+	}
+	assertSessionStateMode(t, store.Dir, 0o700)
+	assertSessionStateMode(t, mustPath(t, store, want.Session), 0o600)
+}
+
+func assertSessionStateMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%q) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %#o, want %#o", path, got, want)
 	}
 }
 
