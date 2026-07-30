@@ -400,22 +400,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			TmuxBody:    "current",
 		},
 		{
-			// Opt-in only: the default chord is intentionally empty so an
-			// unconfigured user (Linux/Ghostty included) sees no behavior
-			// change. The binding carries no source argument; the CLI resolves
-			// configured [insert_file_text.*] sources at runtime (0 -> message,
-			// 1 -> direct insert, N -> picker).
-			ID:          "InsertFileText",
-			Description: "Insert a configured text file's contents into the active pane",
-			DisplayName: "Insert File Text",
-			Kind:        keyBindingActionCommand,
-			Tier:        keyBindingTierUserConfigurableDirect,
-			Scope:       keyBindingScopeStandalone,
-			PlainChord:  "",
-			TmuxKind:    tmuxBindingRunProjmux,
-			TmuxBody:    "insert-file-text --pane #{pane_id}",
-		},
-		{
 			ID:             "new-window",
 			Description:    "New tmux window in the current pane directory",
 			Kind:           keyBindingActionCommand,

@@ -69,7 +69,6 @@ type App struct {
 	focus        *focusCommand
 	hook         *hookCommand
 	initCmd      *initcmd.Command
-	insertText   *insertFileTextCommand
 	keyBroker    *keyBrokerCommand
 	kill         *killCommand
 	notify       *notifyCommand
@@ -116,7 +115,6 @@ func New() *App {
 		focus:        newFocusCommand(),
 		hook:         newHookCommand(),
 		initCmd:      newInitCommand(),
-		insertText:   newInsertFileTextCommand(),
 		keyBroker:    newKeyBrokerCommand(),
 		kill:         newKillCommand(),
 		notify:       notifyCmd,
@@ -169,8 +167,6 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.hook.Run(args[1:], stdout, stderr)
 	case "init":
 		return a.initCmd.Run(args[1:], stdout, stderr)
-	case "insert-file-text":
-		return a.insertText.Run(args[1:], stdout, stderr)
 	case "key-broker":
 		// Hidden Darwin helper: captures physical portable key chords while a
 		// projmux tmux client is focused and feeds them through its root table.
@@ -248,7 +244,6 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
 	fmt.Fprintln(w, "  init      Preview/apply supported terminal key delivery mappings")
-	fmt.Fprintln(w, "  insert-file-text  Insert a configured text file's contents into the active pane")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")

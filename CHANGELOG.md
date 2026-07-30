@@ -22,8 +22,6 @@
 
 ### Features
 
-* **insert:** generic InsertFileText pane insert (config + CLI + keybinding) ([6ca1e86](https://github.com/crevissepartners/projmux/commit/6ca1e86822f21d35d32315b5afbbdc6ccf35efe1))
-* **insert:** generic InsertFileText pane insert (Phase 0+1) ([#504](https://github.com/crevissepartners/projmux/issues/504)) ([6ca1e86](https://github.com/crevissepartners/projmux/commit/6ca1e86822f21d35d32315b5afbbdc6ccf35efe1))
 * **keybindings:** move AI split picker to Alt-7 ([#514](https://github.com/crevissepartners/projmux/issues/514)) ([6a28b83](https://github.com/crevissepartners/projmux/commit/6a28b83d8b25384117719710e759dcd8e891ded7))
 
 
