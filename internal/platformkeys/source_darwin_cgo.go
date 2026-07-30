@@ -228,10 +228,15 @@ func Available() bool {
 
 // NewSource creates the process-local macOS physical-key source.
 func NewSource() Source {
+	return newDarwinSource(readNativeKeyEvent)
+}
+
+func newDarwinSource(readEvent keyEventReader) *darwinSource {
 	return &darwinSource{
-		events:  make(chan string, 32),
-		ready:   make(chan struct{}),
-		byEvent: map[keyEvent]string{},
+		events:    make(chan string, 32),
+		ready:     make(chan struct{}),
+		byEvent:   map[keyEvent]string{},
+		readEvent: readEvent,
 	}
 }
 
@@ -240,12 +245,15 @@ type keyEvent struct {
 	modifiers Modifiers
 }
 
+type keyEventReader func() (keyEvent, bool)
+
 type darwinSource struct {
 	mu        sync.RWMutex
 	events    chan string
 	ready     chan struct{}
 	readyOnce sync.Once
 	byEvent   map[keyEvent]string
+	readEvent keyEventReader
 }
 
 func (s *darwinSource) Replace(bindings []Binding) error {
@@ -330,19 +338,12 @@ func (s *darwinSource) Run(ctx context.Context) error {
 
 func (s *darwinSource) readEvents() {
 	for {
-		var event C.pm_key_event
-		if int(C.pm_keytap_read(&event)) != int(C.sizeof_pm_key_event) {
+		event, ok := s.readEvent()
+		if !ok {
 			return
-		}
-		if uint16(event.key_code) == uint16(C.PM_STOP_CODE) {
-			return
-		}
-		key := keyEvent{
-			keyCode:   uint16(event.key_code),
-			modifiers: Modifiers(event.modifiers),
 		}
 		s.mu.RLock()
-		chord := s.byEvent[key]
+		chord := s.byEvent[event]
 		s.mu.RUnlock()
 		if chord == "" {
 			continue
@@ -352,4 +353,18 @@ func (s *darwinSource) readEvents() {
 		default:
 		}
 	}
+}
+
+func readNativeKeyEvent() (keyEvent, bool) {
+	var event C.pm_key_event
+	if int(C.pm_keytap_read(&event)) != int(C.sizeof_pm_key_event) {
+		return keyEvent{}, false
+	}
+	if uint16(event.key_code) == uint16(C.PM_STOP_CODE) {
+		return keyEvent{}, false
+	}
+	return keyEvent{
+		keyCode:   uint16(event.key_code),
+		modifiers: Modifiers(event.modifiers),
+	}, true
 }
