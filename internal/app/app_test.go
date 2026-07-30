@@ -10,6 +10,27 @@ import (
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 )
 
+func TestNewWiresPreviewCleanupAcrossSessionKillFlows(t *testing.T) {
+	t.Parallel()
+
+	app := New()
+	if app.attach.cleanupKilledSession == nil {
+		t.Fatal("attach cleanupKilledSession is nil")
+	}
+	if app.kill.cleanupKilledSession == nil {
+		t.Fatal("kill cleanupKilledSession is nil")
+	}
+	if app.prune.cleanupKilledSession == nil {
+		t.Fatal("prune cleanupKilledSession is nil")
+	}
+	if app.sessions.cleanupKilledSession == nil {
+		t.Fatal("sessions cleanupKilledSession is nil")
+	}
+	if app.switcher.cleanupKilledSession == nil {
+		t.Fatal("switch cleanupKilledSession is nil")
+	}
+}
+
 func TestAppRunCurrentEnsuresAndOpensDerivedSession(t *testing.T) {
 	t.Parallel()
 

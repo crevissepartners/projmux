@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -71,6 +72,28 @@ func TestAppRunKillTaggedLoadsTargetsFromTagStore(t *testing.T) {
 
 	if got, want := exec.inputs.KillTargets, []string{"work-a", "work-b"}; !equalStrings(got, want) {
 		t.Fatalf("kill targets = %q, want %q", got, want)
+	}
+}
+
+func TestCleanupKillSessionExecutorCleansEachSuccessfulKillIncludingBeforeLaterFailure(t *testing.T) {
+	t.Parallel()
+
+	killer := &failingPruneKiller{failAt: 1}
+	var cleaned []string
+	executor := cleanupKillSessionExecutor{
+		delegate: killer,
+		cleanup: func(sessionName string) {
+			cleaned = append(cleaned, sessionName)
+		},
+	}
+	if err := executor.KillSession(context.Background(), "first"); err != nil {
+		t.Fatalf("first KillSession() error = %v", err)
+	}
+	if err := executor.KillSession(context.Background(), "second"); err == nil {
+		t.Fatal("second KillSession() error = nil, want failure")
+	}
+	if got, want := cleaned, []string{"first"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("cleaned sessions = %q, want %q", got, want)
 	}
 }
 

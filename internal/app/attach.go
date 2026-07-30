@@ -29,12 +29,13 @@ type attachSessionKiller interface {
 }
 
 type attachCommand struct {
-	inventory  attachInventoryResolver
-	sessions   attachSessionManager
-	killer     attachSessionKiller
-	homeDir    func() (string, error)
-	workingDir func() (string, error)
-	now        func() time.Time
+	inventory            attachInventoryResolver
+	sessions             attachSessionManager
+	killer               attachSessionKiller
+	homeDir              func() (string, error)
+	workingDir           func() (string, error)
+	now                  func() time.Time
+	cleanupKilledSession func(string)
 }
 
 func newAttachCommand() *attachCommand {
@@ -129,6 +130,9 @@ func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) er
 		}
 		if err := c.killer.KillSession(context.Background(), target); err != nil {
 			return fmt.Errorf("prune auto-attach ephemeral session %q: %w", target, err)
+		}
+		if c.cleanupKilledSession != nil {
+			c.cleanupKilledSession(target)
 		}
 	}
 

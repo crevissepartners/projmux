@@ -2802,6 +2802,7 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		},
 		recentSessions: []string{"tmp-app", "tmp-previous"},
 	}
+	var cleaned []string
 
 	observe := func(o intpickercompat.Options) { gotRunnerOptions = append(gotRunnerOptions, o) }
 	runner, native := scriptedPicker(t, []pickerStep{
@@ -2830,6 +2831,9 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		validate:   func(string) error { return nil },
 		homeDir:    func() (string, error) { return "/home/tester", nil },
 		workingDir: func() (string, error) { return "/tmp", nil },
+		cleanupKilledSession: func(sessionName string) {
+			cleaned = append(cleaned, sessionName)
+		},
 	}
 
 	var stdout bytes.Buffer
@@ -2852,6 +2856,9 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 	}
 	if got, want := executor.killSessionName, "tmp-app"; got != want {
 		t.Fatalf("kill session = %q, want %q", got, want)
+	}
+	if got, want := cleaned, []string{"tmp-app"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("cleaned sessions = %q, want %q", got, want)
 	}
 	if got, want := executor.openSessionName, "tmp-previous"; got != want {
 		t.Fatalf("fallback open session = %q, want %q", got, want)

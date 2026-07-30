@@ -138,6 +138,34 @@ func (s Store) WriteSelection(sessionName, windowIndex, paneIndex string) error 
 	return s.file.Write(lines)
 }
 
+// Delete removes the persisted preview selection for sessionName. Missing
+// selections are treated as a successful no-op.
+func (s Store) Delete(sessionName string) error {
+	sessionName, err := validateSessionName(sessionName)
+	if err != nil {
+		return err
+	}
+
+	rows, err := s.load()
+	if err != nil {
+		return err
+	}
+
+	lines := make([]string, 0, len(rows))
+	found := false
+	for _, row := range rows {
+		if row.SessionName == sessionName {
+			found = true
+			continue
+		}
+		lines = append(lines, row.line())
+	}
+	if !found {
+		return nil
+	}
+	return s.file.Write(lines)
+}
+
 // CyclePaneSelection loads a session's stored selection, applies pane cycling,
 // and persists the resulting cursor when it changes.
 func (s Store) CyclePaneSelection(sessionName string, windows []Window, panes []Pane, direction Direction) (CycleResult, error) {

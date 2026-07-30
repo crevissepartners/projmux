@@ -99,31 +99,41 @@ type App struct {
 func New() *App {
 	ai := newAICommand()
 	switcher := newSwitchCommand()
+	attach := newAttachCommand()
+	kill := newKillCommand()
+	sessions := newSessionsCommand()
 	update := newUpdateCommand()
 	quit := newQuitCommand()
 	notifyCmd := newNotifyCommand(newDefaultLivePaneLister())
 	pruneCmd := newPruneCommand()
+	previewCleaner := newKilledSessionPreviewCleaner()
+	cleanupKilledSession := previewCleaner.cleanup
+	attach.cleanupKilledSession = cleanupKilledSession
+	kill.cleanupKilledSession = cleanupKilledSession
+	sessions.cleanupKilledSession = cleanupKilledSession
+	switcher.cleanupKilledSession = cleanupKilledSession
+	pruneCmd.cleanupKilledSession = cleanupKilledSession
 	pruneCmd.reconcileNotify = func() {
 		_ = notifyCmd.runReconcile(nil, io.Discard, io.Discard)
 	}
 	return &App{
 		ai:           ai,
 		attention:    newAttentionCommand(),
-		attach:       newAttachCommand(),
+		attach:       attach,
 		current:      newCurrentCommand(),
 		doctor:       newDoctorCommand(),
 		focus:        newFocusCommand(),
 		hook:         newHookCommand(),
 		initCmd:      newInitCommand(),
 		keyBroker:    newKeyBrokerCommand(),
-		kill:         newKillCommand(),
+		kill:         kill,
 		notify:       notifyCmd,
 		pin:          newPinCommand(),
 		popupWaitKey: newPopupWaitKeyCommand(),
 		preview:      newPreviewCommand(),
 		prune:        pruneCmd,
 		quit:         quit,
-		sessions:     newSessionsCommand(),
+		sessions:     sessions,
 		sessionState: newSessionStateCommand(),
 		sessionPopup: newSessionPopupCommand(),
 		settings:     newSettingsCommand(ai, switcher, update, quit),
@@ -248,7 +258,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
-	fmt.Fprintln(w, "  prune     Trim stale tmux lifecycle state")
+	fmt.Fprintln(w, "  prune     Trim stale lifecycle state and inspect preserved snapshots")
 	fmt.Fprintln(w, "  quit      Quit the app-owned projmux tmux runtime")
 	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
 	fmt.Fprintln(w, "  session-state  Inspect and manage saved tmux session snapshots")
