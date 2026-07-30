@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -43,12 +44,11 @@ type Store struct {
 	lockPath string
 	clock    Clock
 
-	// rng is used by the lock-acquisition backoff to add jitter. The store is
-	// not safe for concurrent use across goroutines without external
-	// serialization (this matches every other core/* store), so the rng is
-	// only ever touched while we already hold the file lock or are racing to
-	// acquire it; either way the simple seeded source is fine.
-	rng *rand.Rand
+	// rng is used by the lock-acquisition backoff to add jitter. Contenders
+	// access it before acquiring the file lock, so rngMu serializes the
+	// concurrency-unsafe seeded source.
+	rngMu sync.Mutex
+	rng   *rand.Rand
 }
 
 // NewStore builds a Store rooted at the supplied path.
@@ -390,7 +390,7 @@ func (s *Store) acquireLock() error {
 		}
 
 		// Add jitter so multiple contenders do not synchronise.
-		jitter := time.Duration(s.rng.Int63n(int64(defaultLockBaseDelay) + 1))
+		jitter := s.lockJitter()
 		time.Sleep(delay + jitter)
 		if delay < defaultLockMaxDelay {
 			delay *= 2
@@ -400,6 +400,12 @@ func (s *Store) acquireLock() error {
 		}
 	}
 	return fmt.Errorf("acquire notify lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.lockPath)
+}
+
+func (s *Store) lockJitter() time.Duration {
+	s.rngMu.Lock()
+	defer s.rngMu.Unlock()
+	return time.Duration(s.rng.Int63n(int64(defaultLockBaseDelay) + 1))
 }
 
 // tryBreakStaleLock removes the lock file if it is older than

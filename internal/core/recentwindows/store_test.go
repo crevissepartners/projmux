@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -125,6 +127,44 @@ func TestStoreCandidatesPruneGoneWindowsOnDisk(t *testing.T) {
 	}
 	if state.Entries[0].Session != "alive" {
 		t.Fatalf("stored entries = %+v, want alive only", state.Entries)
+	}
+}
+
+func TestStoreConcurrentRecordFileLockContention(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(filepath.Join(t.TempDir(), "recent.json"))
+	const goroutines = 50
+
+	errs := make(chan error, goroutines)
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := range goroutines {
+		go func() {
+			defer wg.Done()
+			suffix := strconv.Itoa(i)
+			_, err := store.Record(
+				snap("/tmp/tmux", "session-"+suffix, "@"+suffix, "window-"+suffix, time.Unix(int64(i), 0)),
+				goroutines,
+			)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Record error = %v", err)
+		}
+	}
+
+	state, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if got := len(state.Entries); got != DefaultLimit {
+		t.Fatalf("entries len = %d, want %d", got, DefaultLimit)
 	}
 }
 

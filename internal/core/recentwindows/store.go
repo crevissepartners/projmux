@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -32,6 +33,7 @@ type Store struct {
 	path     string
 	lockPath string
 	clock    Clock
+	rngMu    sync.Mutex
 	rng      *rand.Rand
 }
 
@@ -280,7 +282,7 @@ func (s *Store) acquireLock() error {
 			continue
 		}
 
-		jitter := time.Duration(s.rng.Int63n(int64(defaultLockBaseDelay) + 1))
+		jitter := s.lockJitter()
 		time.Sleep(delay + jitter)
 		if delay < defaultLockMaxDelay {
 			delay *= 2
@@ -290,6 +292,12 @@ func (s *Store) acquireLock() error {
 		}
 	}
 	return fmt.Errorf("recentwindows: acquire lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.lockPath)
+}
+
+func (s *Store) lockJitter() time.Duration {
+	s.rngMu.Lock()
+	defer s.rngMu.Unlock()
+	return time.Duration(s.rng.Int63n(int64(defaultLockBaseDelay) + 1))
 }
 
 func (s *Store) tryBreakStaleLock() bool {
