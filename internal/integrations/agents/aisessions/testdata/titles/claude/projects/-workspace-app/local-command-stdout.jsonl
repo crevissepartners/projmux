@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"<local-command-stdout>git status output</local-command-stdout>"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555501","gitBranch":"fix/stdout"}
+{"type":"user","message":{"role":"user","content":"Fix stdout resume title"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555501","gitBranch":"fix/stdout"}

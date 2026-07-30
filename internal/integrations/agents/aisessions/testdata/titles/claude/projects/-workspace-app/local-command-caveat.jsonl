@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"<local-command-caveat>Command output may be truncated</local-command-caveat>"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555502","gitBranch":"fix/caveat"}
+{"type":"user","message":{"role":"user","content":"Fix caveat resume title"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555502","gitBranch":"fix/caveat"}

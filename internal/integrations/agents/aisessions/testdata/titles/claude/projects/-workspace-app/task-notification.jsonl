@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"<task-notification>Background task completed</task-notification>"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555503","gitBranch":"fix/task"}
+{"type":"user","message":{"role":"user","content":"Handle completed background task"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555503","gitBranch":"fix/task"}
