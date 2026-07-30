@@ -1,0 +1,343 @@
+{
+  "schema": 1,
+  "tool": "staticcheck",
+  "fingerprint": "rule + repository-relative path + normalized message + normalized source line",
+  "reviewed_suppressions": [
+    {
+      "rule": "multiple",
+      "scope": "47 pre-existing findings from the 2026-07-29 audit",
+      "reason": "reviewed per rule, path, message, source fingerprint, and maximum count"
+    }
+  ],
+  "entries": [
+    {
+      "rule": "S1000",
+      "path": "internal/app/popup_wait_key_test.go",
+      "message": "should use a simple channel send/receive instead of select with a single case",
+      "source": "select {",
+      "max_count": 1
+    },
+    {
+      "rule": "S1002",
+      "path": "internal/theme/resolve.go",
+      "message": "should omit comparison to bool constant, can be simplified to !strings.EqualFold(value, \"inherit\")",
+      "source": "return value != \"\" && strings.EqualFold(value, \"inherit\") == false",
+      "max_count": 1
+    },
+    {
+      "rule": "S1016",
+      "path": "internal/core/recentwindows/model.go",
+      "message": "should convert window (type LiveWindow) to WindowKey instead of using struct literal",
+      "source": "key := normalizeKey(WindowKey{",
+      "max_count": 1
+    },
+    {
+      "rule": "S1030",
+      "path": "internal/app/doctor_test.go",
+      "message": "should use stdout.String() instead of string(stdout.Bytes())",
+      "source": "if !strings.Contains(string(stdout.Bytes()), `\"status\": \"stale\"`) {",
+      "max_count": 1
+    },
+    {
+      "rule": "S1031",
+      "path": "internal/app/ai_integrate.go",
+      "message": "unnecessary nil check around range",
+      "source": "if hooks != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "SA4006",
+      "path": "internal/app/tmux.go",
+      "message": "this value of commandArgs is never used",
+      "source": "commandArgs := []string{}",
+      "max_count": 1
+    },
+    {
+      "rule": "SA4010",
+      "path": "internal/app/sessions.go",
+      "message": "this result of append is never used, except maybe in other appends",
+      "source": "nextSummaries = append(nextSummaries, summary)",
+      "max_count": 1
+    },
+    {
+      "rule": "ST1005",
+      "path": "internal/app/ai_integrate.go",
+      "message": "error strings should not be capitalized",
+      "source": "return nil, errors.New(\"Claude settings hooks field must be a JSON object\")",
+      "max_count": 1
+    },
+    {
+      "rule": "ST1005",
+      "path": "internal/app/ai_integrate.go",
+      "message": "error strings should not be capitalized",
+      "source": "return nil, false, \"\", fmt.Errorf(\"Claude settings %s hook event %s contains a non-object matcher entry\", path, event)",
+      "max_count": 1
+    },
+    {
+      "rule": "ST1005",
+      "path": "internal/app/ai_integrate.go",
+      "message": "error strings should not be capitalized",
+      "source": "return nil, false, \"\", fmt.Errorf(\"Claude settings %s hook event %s must be an array\", path, event)",
+      "max_count": 1
+    },
+    {
+      "rule": "ST1008",
+      "path": "internal/app/hook.go",
+      "message": "error should be returned as the last argument",
+      "source": "func (c *hookCommand) loadProject() (string, hooks.ProjectConfig, error, string) {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/notify.go",
+      "message": "func (*notifyCommand).listNotifyLivePanes is unused",
+      "source": "func (c *notifyCommand) listNotifyLivePanes() ([]notifyLivePane, error) {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/notify.go",
+      "message": "var notifySidebarTopicOpen is unused",
+      "source": "notifySidebarTopicOpen = theme.ANSIChipActiveStart",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/notify_test.go",
+      "message": "func (*recordingNotifyPicker).Run is unused",
+      "source": "func (p *recordingNotifyPicker) Run(options intpickercompat.Options) (intpickercompat.Result, error) {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/notify_test.go",
+      "message": "type recordingNotifyPicker is unused",
+      "source": "type recordingNotifyPicker struct {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/status.go",
+      "message": "var notifySeverityWarn is unused",
+      "source": "notifySeverityWarn = \"#[bg=\" + tmuxAccentAttentionBg + \",fg=\" + notifyStateRoles.StateWarning + \"]\"",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/statusbar_test.go",
+      "message": "func sawTmuxArgsContainInOrder is unused",
+      "source": "func sawTmuxArgsContainInOrder(calls []statusbarFakeCall, want []string) bool {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/theme_render.go",
+      "message": "func renderThemeSource.tmuxAppConfigWithAIBadgeStyle is unused",
+      "source": "func (s renderThemeSource) tmuxAppConfigWithAIBadgeStyle(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/theme_render.go",
+      "message": "func renderThemeSource.tmuxStandaloneConfigWithAIBadgeStyle is unused",
+      "source": "func (s renderThemeSource) tmuxStandaloneConfigWithAIBadgeStyle(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/usagecmd/usage.go",
+      "message": "func runeLen is unused",
+      "source": "func runeLen(s string) int {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/integrations/tmux/client.go",
+      "message": "type lifecycleHookInspector is unused",
+      "source": "type lifecycleHookInspector interface {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeFooterBlockLines is unused",
+      "source": "func nativeFooterBlockLines(footer string, cols int) []string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeHeaderLine is unused",
+      "source": "func nativeHeaderLine(header string, cols int) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeHighlightANSIVisiblePositions is unused",
+      "source": "func nativeHighlightANSIVisiblePositions(value string, positions []int) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeHighlightSimpleItems is unused",
+      "source": "func nativeHighlightSimpleItems(options Options, items []Item, query string) []Item {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeInverseSelectedContent is unused",
+      "source": "func nativeInverseSelectedContent(value string) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeLinesBeforeItem is unused",
+      "source": "func nativeLinesBeforeItem(items []Item, index, selected int) []string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeListLinesWithScrollbar is unused",
+      "source": "func nativeListLinesWithScrollbar(lines []string, total, start, end, width int) []string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeListLinesWithScrollbarRows is unused",
+      "source": "func nativeListLinesWithScrollbarRows(lines []string, total, start, end, width, rows int) []string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativePadRight is unused",
+      "source": "func nativePadRight(value string, width int) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativePadStyledLine is unused",
+      "source": "func nativePadStyledLine(line string, width int) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativePartialNextItemLines is unused",
+      "source": "func nativePartialNextItemLines(items []Item, next, selected int) []string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativePrependPartialPreviousItemLines is unused",
+      "source": "func nativePrependPartialPreviousItemLines(items []Item, lines []string, start, selected, limit int) ([]string, int) {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativePromptLineWithCursorAndTheme is unused",
+      "source": "func nativePromptLineWithCursorAndTheme(pickerTheme projmuxpicker.Theme, prompt, query string, cursor, matches, total, cols int) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativePromptLineWithRenderedQuery is unused",
+      "source": "func nativePromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeQueryWithCursor is unused",
+      "source": "func nativeQueryWithCursor(query string, cursor int) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeRenderableListLines is unused",
+      "source": "func nativeRenderableListLines(lines []string, width int) []string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func nativeSearchSeparatorLine is unused",
+      "source": "func nativeSearchSeparatorLine(cols int) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func renderNativeFrame is unused",
+      "source": "func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/picker/backend.go",
+      "message": "func writeNativeContentWithFooter is unused",
+      "source": "func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/projmuxpicker/surface.go",
+      "message": "func padsInsideFinalStyle is unused",
+      "source": "func padsInsideFinalStyle(line string) bool {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/render/popup.go",
+      "message": "func effectivePaneCount is unused",
+      "source": "func effectivePaneCount(model preview.PopupReadModel) int {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/render/popup.go",
+      "message": "func formatPopupSummary is unused",
+      "source": "func formatPopupSummary(model preview.PopupReadModel) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/render/popup.go",
+      "message": "func formatSelectedSummary is unused",
+      "source": "func formatSelectedSummary(model preview.PopupReadModel) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/render/popup.go",
+      "message": "func formatTargetSummary is unused",
+      "source": "func formatTargetSummary(windowIndex, paneIndex string) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/render/popup.go",
+      "message": "func selectionMarker is unused",
+      "source": "func selectionMarker(selected bool) string {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/ui/render/switch_preview.go",
+      "message": "func sanitizeSwitchPreviewPath is unused",
+      "source": "func sanitizeSwitchPreviewPath(model corepreview.SwitchReadModel) string {",
+      "max_count": 1
+    }
+  ]
+}

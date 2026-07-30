@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed dummy GitHub token used to verify secret redaction"
+condition = "AND"
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = ['''GH_TOKEN = "ghp_abcDEF123"''']
+paths = ['''^internal/app/effective_merge_test\.go$''']
+
+[[allowlists]]
+description = "Exclude repository metadata, sibling wt worktrees, and generated scanner binaries from dir scans"
+paths = ['''(^|/)\.git/''', '''(^|/)\.wt/''', '''(^|/)\.bin/security-tools/''']
