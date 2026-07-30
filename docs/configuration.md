@@ -694,10 +694,13 @@ snapshot`, named snapshot rows, `Empty session`, and `Back`. `Latest snapshot`
 is the snapshot auto-save that changes as auto-save runs; named snapshots are
 fixed snapshots. Rows include saved-at date/time metadata when projmux can
 determine it. `Back` returns to the project list without creating, replaying, or
-opening a session. After the startup mode is selected, project hook/config trust
-is evaluated if needed; approval continues the selected path and deny/cancel
-aborts without session create, snapshot replay, or startup command. The Alt-1
-sidebar opens trust as the shared client-scoped `Trust project hooks` popup
+opening a session. After the startup mode is selected, project automation trust
+is evaluated if needed. A named snapshot containing a startup `command` must
+authorize the SHA-256 of the exact layout bytes used for parse/restore, even
+when project hooks are disabled or `.projmux/config.toml` is absent. Approval
+continues the selected path and deny/cancel aborts without session create,
+snapshot replay, or startup command. The Alt-1 sidebar opens trust as the shared
+client-scoped `Trust project automation` popup
 instead of inline sidebar rows. The selected open continuation runs in a
 detached tmux job that can close the sidebar before trust without depending on
 the self-closing sidebar process to keep running. Deny/cancel refreshes the

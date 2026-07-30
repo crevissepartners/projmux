@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 )
 
 const (
@@ -38,6 +39,7 @@ type ProjectHookPromptRequest struct {
 	RepoPath       string
 	HookPath       string
 	RelativePath   string
+	ArtifactKind   string
 	SHA256         string
 	PreviousSHA256 string
 	Preview        string
@@ -68,6 +70,10 @@ func (r *Runner) authorizeProjectFile(event Event, repo, rel, path, kind string)
 		r.warnf(event, "%s %q could not be hashed: %v", kind, path, err)
 		return false
 	}
+	return r.authorizeProjectDigest(event, repo, rel, path, kind, sum, preview)
+}
+
+func (r *Runner) authorizeProjectDigest(event Event, repo, rel, path, kind, sum, preview string) bool {
 	if r.authorizedProjectFile(repo, rel, sum) {
 		return true
 	}
@@ -95,6 +101,7 @@ func (r *Runner) authorizeProjectFile(event Event, repo, rel, path, kind string)
 		RepoPath:       repo,
 		HookPath:       path,
 		RelativePath:   rel,
+		ArtifactKind:   kind,
 		SHA256:         sum,
 		PreviousSHA256: store.previousHash(repo, rel),
 		Preview:        preview,
@@ -124,6 +131,60 @@ func (r *Runner) authorizeProjectFile(event Event, repo, rel, path, kind string)
 	default:
 		return false
 	}
+}
+
+// AuthorizeProjectLayoutArtifact gates executable commands parsed from one
+// project-local layout. contents must be the exact bytes used to parse the
+// in-memory layout that will be restored; this function never reopens path.
+//
+// Unlike project hook discovery, this gate is intentionally independent of
+// PROJMUX_PROJECT_HOOKS and the Labs project-hooks toggle.
+func (r *Runner) AuthorizeProjectLayoutArtifact(repoPath, relativePath, path string, contents []byte, commands []string) (bool, error) {
+	if r == nil {
+		return false, errors.New("project layout trust authorizer is not configured")
+	}
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return false, errors.New("repo path is required")
+	}
+	repo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return false, err
+	}
+	rel := filepath.ToSlash(filepath.Clean(strings.TrimSpace(relativePath)))
+	if rel == "." || rel == "" || !strings.HasPrefix(rel, ".projmux/layouts/") || filepath.Ext(rel) != ".toml" {
+		return false, fmt.Errorf("invalid project layout artifact path %q", relativePath)
+	}
+	expectedPath := filepath.Join(repo, filepath.FromSlash(rel))
+	absolutePath, err := filepath.Abs(strings.TrimSpace(path))
+	if err != nil {
+		return false, err
+	}
+	if absolutePath != expectedPath {
+		return false, fmt.Errorf("project layout artifact path %q does not match %q", absolutePath, expectedPath)
+	}
+	if len(commands) == 0 {
+		return true, nil
+	}
+	sum := sha256.Sum256(contents)
+	preview := layoutCommandPreview(commands)
+	return r.authorizeProjectDigest(
+		EventPreCreate,
+		repo,
+		rel,
+		absolutePath,
+		"project layout",
+		hex.EncodeToString(sum[:]),
+		preview,
+	), nil
+}
+
+func layoutCommandPreview(commands []string) string {
+	lines := []string{"commands to run:"}
+	for _, command := range commands {
+		lines = append(lines, "  "+terminaltext.EscapeControls(command))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (r *Runner) authorizedProjectFile(repo, rel, sum string) bool {
@@ -584,20 +645,12 @@ func copyHashAndPreview(hasher hash.Hash, preview *bytes.Buffer, src io.Reader) 
 }
 
 func sanitizeHookPreview(raw string) string {
-	raw = strings.Map(func(r rune) rune {
-		switch {
-		case r == '\n' || r == '\t':
-			return r
-		case r < 32 || r == 127:
-			return ' '
-		default:
-			return r
-		}
-	}, raw)
-
 	lines := strings.Split(raw, "\n")
 	if len(lines) > maxHookPreviewLines {
 		lines = append(lines[:maxHookPreviewLines], "...")
+	}
+	for i, line := range lines {
+		lines[i] = terminaltext.EscapeControls(line)
 	}
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }
@@ -635,9 +688,9 @@ func isInteractiveReader(reader io.Reader) bool {
 }
 
 func terminalProjectHookPrompt(reader io.Reader, writer io.Writer, req ProjectHookPromptRequest) ProjectHookDecision {
-	fmt.Fprintln(writer, "projmux: project-local hook requires trust")
-	fmt.Fprintf(writer, "repo: %s\n", req.RepoPath)
-	fmt.Fprintf(writer, "hook: %s\n", req.RelativePath)
+	fmt.Fprintln(writer, "projmux: project-local automation requires trust")
+	fmt.Fprintf(writer, "repo: %s\n", terminaltext.EscapeControls(req.RepoPath))
+	fmt.Fprintf(writer, "artifact: %s\n", terminaltext.EscapeControls(req.RelativePath))
 	if req.PreviousSHA256 != "" {
 		fmt.Fprintf(writer, "trusted sha256: %s\n", req.PreviousSHA256)
 	}
@@ -645,13 +698,13 @@ func terminalProjectHookPrompt(reader io.Reader, writer io.Writer, req ProjectHo
 	if strings.TrimSpace(req.Preview) != "" {
 		fmt.Fprintln(writer, "preview:")
 		for line := range strings.SplitSeq(req.Preview, "\n") {
-			fmt.Fprintf(writer, "  %s\n", line)
+			fmt.Fprintf(writer, "  %s\n", terminaltext.EscapeControls(line))
 		}
 	}
 
 	input := bufio.NewReader(reader)
 	for range 3 {
-		fmt.Fprint(writer, "Allow this hook? [o]nce/[a]lways/[d]eny: ")
+		fmt.Fprint(writer, "Allow this automation? [o]nce/[a]lways/[d]eny: ")
 		line, err := input.ReadString('\n')
 		if err != nil && len(line) == 0 {
 			fmt.Fprintln(writer)

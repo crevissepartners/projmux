@@ -86,13 +86,21 @@ keeps changing as auto-save runs. `Named snapshot` is a fixed, user-named
 snapshot and is not updated by auto-save. Rows include saved-at date/time
 metadata when available. `Back` returns to the project list without creating,
 replaying, or opening a session. After the startup mode is selected, project
-hook/config trust is evaluated if needed; approval continues the selected path
-and deny/cancel aborts before session create, snapshot replay, or startup
-command. The Alt-1 sidebar does not render trust approve/deny rows inline:
+automation trust is evaluated if needed. For a named snapshot with a startup
+`command`, projmux rejects symlink artifacts, reads the selected layout once,
+and authorizes the SHA-256 of the exact bytes used to parse the in-memory
+restore plan. The trust prompt names the layout file and shows terminal-safe
+command previews. Config absence and `PROJMUX_PROJECT_HOOKS=off` do not bypass
+this layout gate; commandless layouts keep their existing prompt-free restore
+behavior. Approval continues the selected path, while deny/cancel/error aborts
+before session or pane creation, snapshot replay, or `send-keys`. Project-owned
+layout names, descriptions, window names, agent topics, and command previews
+escape terminal control characters before rendering. The Alt-1 sidebar does
+not render trust approve/deny rows inline:
 before trust is requested, projmux snapshots the sidebar query/selection
 context and hands the selected open continuation to a detached tmux job. That
 job closes the sidebar popup state for the client and opens the shared `Trust
-project hooks` popup as a client-scoped decision surface, so no code relies on
+project automation` popup as a client-scoped decision surface, so no code relies on
 the self-closing sidebar popup process continuing after `display-popup -C`.
 Deny/cancel or trust-popup errors return to the sidebar near the same
 query/selection with a visible status message; only a missing/invalid context
