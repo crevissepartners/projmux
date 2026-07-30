@@ -16,7 +16,14 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 
 DEADCODE_ALLOWLIST ?= .deadcode-allowlist.txt
 
-.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-install-smoke test-e2e test-e2e-update e2e verify deadcode
+SECURITY_BIN_DIR ?= $(BUILD_DIR)/security-tools
+GOVULNCHECK_VERSION ?= v1.6.0
+GOSEC_VERSION ?= v2.28.0
+STATICCHECK_VERSION ?= v0.7.0
+GITLEAKS_VERSION ?= v8.30.1
+ACTIONLINT_VERSION ?= v1.7.12
+
+.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-install-smoke test-e2e test-e2e-update e2e verify deadcode security security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -109,3 +116,32 @@ test-e2e-update:
 e2e: test-e2e
 
 verify: fmt-check test test-integration test-install-smoke test-e2e
+
+# Go-based security tools are pinned to the versions used to produce the
+# checked-in baselines. shellcheck, python3, and git are host dependencies;
+# scripts/security.sh reports actionable installation guidance when missing.
+security-tools:
+	@mkdir -p $(SECURITY_BIN_DIR)
+	@set -e; \
+	versions="govulncheck=$(GOVULNCHECK_VERSION)\ngosec=$(GOSEC_VERSION)\nstaticcheck=$(STATICCHECK_VERSION)\ngitleaks=$(GITLEAKS_VERSION)\nactionlint=$(ACTIONLINT_VERSION)"; \
+	tools_ok=1; \
+	for tool in govulncheck gosec staticcheck gitleaks actionlint; do \
+		if [ ! -x "$(SECURITY_BIN_DIR)/$$tool" ]; then \
+			tools_ok=0; \
+			rm -f "$(SECURITY_BIN_DIR)/$$tool"; \
+		fi; \
+	done; \
+	if [ "$$tools_ok" != "1" ] || [ "$$(cat $(SECURITY_BIN_DIR)/.versions 2>/dev/null)" != "$$(printf '%b' "$$versions")" ]; then \
+		echo ">> installing pinned security tools into $(SECURITY_BIN_DIR)"; \
+		GOBIN="$(abspath $(SECURITY_BIN_DIR))" $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION); \
+		GOBIN="$(abspath $(SECURITY_BIN_DIR))" $(GO) install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION); \
+		GOBIN="$(abspath $(SECURITY_BIN_DIR))" $(GO) install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION); \
+		GOBIN="$(abspath $(SECURITY_BIN_DIR))" $(GO) install github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION); \
+		GOBIN="$(abspath $(SECURITY_BIN_DIR))" $(GO) install github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION); \
+		printf '%b\n' "$$versions" > $(SECURITY_BIN_DIR)/.versions; \
+	else \
+		echo ">> pinned security tools already installed in $(SECURITY_BIN_DIR)"; \
+	fi
+
+security: security-tools
+	@SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" scripts/security.sh
