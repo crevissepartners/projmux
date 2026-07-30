@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -78,7 +79,7 @@ func TestHookTrustPromptWritesDecision(t *testing.T) {
 		t.Fatalf("decision = %q, want %q", got, want)
 	}
 	for _, want := range []string{
-		"Trust project hooks",
+		"Trust project automation",
 		projmuxpicker.MutedStart,
 		"[a] Allow always",
 		".projmux/config.toml",
@@ -86,6 +87,51 @@ func TestHookTrustPromptWritesDecision(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want substring %q", stdout.String(), want)
 		}
+	}
+}
+
+func TestHookTrustLayoutPromptEscapesArtifactAndCommands(t *testing.T) {
+	t.Parallel()
+
+	req := hooks.ProjectHookPromptRequest{
+		RepoPath:     "/workspace/\x1b]0;owned\a",
+		RelativePath: ".projmux/layouts/team\x1b[31m.toml",
+		ArtifactKind: "project layout",
+		SHA256:       "abc123",
+		Preview:      "commands to run:\n  window 0 pane 0: printf '\\x1b]52;c;secret\\a'\x1b]0;owned\a",
+	}
+	var output bytes.Buffer
+	decision := hookTrustPopupPrompt(strings.NewReader("d\n"), &output, req)
+	if decision != hooks.ProjectHookDeny {
+		t.Fatalf("decision = %q, want deny", decision)
+	}
+	rendered := output.String()
+	if strings.Contains(rendered, "\x1b]0;owned\a") || strings.Contains(rendered, "\x1b[31m") {
+		t.Fatalf("prompt rendered project control sequence: %q", rendered)
+	}
+	for _, want := range []string{
+		"Trust project automation",
+		"Project-local layout commands",
+		`.projmux/layouts/team\x1b[31m.toml`,
+		`\x1b]0;owned\x07`,
+		"commands to run:",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("prompt = %q, want %q", rendered, want)
+		}
+	}
+}
+
+func TestHookTrustLayoutPromptEOFMapsCancelToDeny(t *testing.T) {
+	t.Parallel()
+
+	decision := hookTrustPopupPrompt(strings.NewReader(""), io.Discard, hooks.ProjectHookPromptRequest{
+		RelativePath: ".projmux/layouts/team.toml",
+		ArtifactKind: "project layout",
+		Preview:      "commands to run:\n  window 0 pane 0: make watch",
+	})
+	if decision != hooks.ProjectHookDeny {
+		t.Fatalf("EOF decision = %q, want deny", decision)
 	}
 }
 

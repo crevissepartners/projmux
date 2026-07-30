@@ -9,6 +9,7 @@ import (
 	"time"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -43,6 +44,10 @@ type switchProjectTrustAuthorizer interface {
 	AuthorizeProjectHooks(ctx context.Context, cwd string) (bool, error)
 }
 
+type switchProjectLayoutTrustAuthorizer interface {
+	AuthorizeProjectLayout(ctx context.Context, cwd string, artifact corelayout.Artifact) (bool, error)
+}
+
 type switchSessionSnapshotRestorer interface {
 	RestoreSessionSnapshot(ctx context.Context, snap sessionstate.Snapshot, cwd, source string) error
 }
@@ -73,6 +78,14 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 }
 
 func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate) error {
+	var layoutArtifact *corelayout.Artifact
+	if mode.Kind == projectStartupKindNamed {
+		artifact, err := corelayout.NewStore(target).LoadArtifact(mode.Name)
+		if err != nil {
+			return errProjectTrustGate{err: err}
+		}
+		layoutArtifact = &artifact
+	}
 	trusted, err := c.authorizeProjectOpen(ctx, target)
 	if err != nil {
 		return errProjectTrustGate{err: err}
@@ -80,15 +93,27 @@ func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, tar
 	if !trusted {
 		return errProjectTrustDenied
 	}
-	return c.continueProjectOpen(ctx, target, sessionName, mode)
+	if layoutArtifact != nil && len(layoutArtifact.ExecutableCommands()) > 0 {
+		trusted, err := c.authorizeProjectLayout(ctx, target, *layoutArtifact)
+		if err != nil {
+			return errProjectTrustGate{err: err}
+		}
+		if !trusted {
+			return errProjectTrustDenied
+		}
+	}
+	return c.continueProjectOpen(ctx, target, sessionName, mode, layoutArtifact)
 }
 
-func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate) error {
+func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, layoutArtifact *corelayout.Artifact) error {
 	switch mode.Kind {
 	case projectStartupKindLatest:
 		return c.restoreProjectLatestSnapshot(ctx, sessionName, target)
 	case projectStartupKindNamed:
-		return c.restoreProjectNamedSnapshot(ctx, sessionName, target, mode.Name)
+		if layoutArtifact == nil {
+			return errors.New("named snapshot artifact is not prepared")
+		}
+		return c.restoreProjectNamedSnapshot(ctx, sessionName, target, *layoutArtifact)
 	default:
 		return c.ensureAndOpenProjectSession(ctx, sessionName, target)
 	}
@@ -104,6 +129,14 @@ func (c *switchCommand) authorizeProjectOpen(ctx context.Context, target string)
 		return false, err
 	}
 	return trusted, nil
+}
+
+func (c *switchCommand) authorizeProjectLayout(ctx context.Context, target string, artifact corelayout.Artifact) (bool, error) {
+	authorizer, ok := c.sessions.(switchProjectLayoutTrustAuthorizer)
+	if !ok || authorizer == nil {
+		return false, errors.New("switch project layout trust authorizer is not configured")
+	}
+	return authorizer.AuthorizeProjectLayout(ctx, target, artifact)
 }
 
 func (c *switchCommand) pickProjectStartupMode(sessionName, target string) projectStartupCandidate {
@@ -161,12 +194,12 @@ func emptyProjectStartupCandidate() projectStartupCandidate {
 }
 
 func namedSnapshotDescription(entry corelayout.Entry) string {
-	parts := []string{entry.Name}
+	parts := []string{terminaltext.EscapeControls(entry.Name)}
 	if savedAt := namedSnapshotSavedAt(entry); !savedAt.IsZero() {
 		parts = append(parts, projectStartupSavedAtText(savedAt))
 	}
 	if strings.TrimSpace(entry.Description) != "" {
-		parts = append(parts, strings.TrimSpace(entry.Description))
+		parts = append(parts, terminaltext.EscapeControls(strings.TrimSpace(entry.Description)))
 	}
 	parts = append(parts, sessionStateCount(entry.Windows, "window"), sessionStateCount(entry.Panes, "pane"))
 	return strings.Join(parts, ", ")
@@ -216,7 +249,7 @@ func projectStartupPickerOptions(candidates []projectStartupCandidate) intpicker
 		entries = append(entries, intpickercompat.Entry{
 			Label:     projectStartupPickerLabel(candidate),
 			Value:     projectStartupPickerValue(candidate),
-			SearchKey: strings.TrimSpace(candidate.Label + " " + candidate.Name + " " + candidate.Description),
+			SearchKey: strings.TrimSpace(candidate.Label + " " + terminaltext.EscapeControls(candidate.Name) + " " + candidate.Description),
 		})
 	}
 	return intpickercompat.Options{
@@ -292,16 +325,12 @@ func (c *switchCommand) restoreProjectLatestSnapshot(ctx context.Context, sessio
 	return c.restoreProjectSnapshot(ctx, snap, target, sessionstate.SourceAutosave)
 }
 
-func (c *switchCommand) restoreProjectNamedSnapshot(ctx context.Context, sessionName, target, name string) error {
-	preset, err := corelayout.NewStore(target).Load(name)
+func (c *switchCommand) restoreProjectNamedSnapshot(ctx context.Context, sessionName, target string, artifact corelayout.Artifact) error {
+	snap, err := corelayout.ToSnapshot(artifact.Preset, sessionName, target, c.projectStartupNow())
 	if err != nil {
 		return err
 	}
-	snap, err := corelayout.ToSnapshot(preset, sessionName, target, c.projectStartupNow())
-	if err != nil {
-		return err
-	}
-	source := layoutPresetSource(name, preset)
+	source := layoutPresetSource(artifact.Name, artifact.Preset)
 	if err := c.restoreProjectSnapshot(ctx, snap, target, source); err != nil {
 		return err
 	}

