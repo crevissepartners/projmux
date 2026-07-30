@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	defaultKubeCacheTTL     = 5 * time.Second
-	defaultKubeCommandLimit = 400 * time.Millisecond
+	defaultKubeCacheTTL       = 5 * time.Second
+	defaultKubeCommandLimit   = 400 * time.Millisecond
+	defaultStatusCommandLimit = 500 * time.Millisecond
 )
 
 // statusbar git segment / kube colors source from the semantic role map
@@ -46,6 +47,7 @@ type statusCommand struct {
 	lookupEnv     func(string) string
 	homeDir       func() (string, error)
 	readCommand   func(ctx context.Context, name string, args ...string) ([]byte, error)
+	commandLimit  time.Duration
 	now           func() time.Time
 	usage         *usagecmd.Command
 	notifyStoreFn func() (notifyStore, error)
@@ -264,21 +266,12 @@ func (c *statusCommand) kubeSegment(sessionName string) string {
 }
 
 func (c *statusCommand) kubectlTrimmed(kubeConfig string, args ...string) string {
-	timeoutValue := formatStatusTimeout(c.kubeCommandLimit())
-	if c.readTrimmed("command", "-v", "timeout") != "" {
-		command := []string{"timeout", timeoutValue, "kubectl"}
-		command = append(command, args...)
-		if kubeConfig != "" {
-			command = append([]string{"KUBECONFIG=" + kubeConfig}, command...)
-			return c.readTrimmed("env", command...)
-		}
-		return c.readTrimmed(command[0], command[1:]...)
-	}
+	command := append([]string{"kubectl"}, args...)
 	if kubeConfig != "" {
-		command := append([]string{"KUBECONFIG=" + kubeConfig, "kubectl"}, args...)
-		return c.readTrimmed("env", command...)
+		command = append([]string{"KUBECONFIG=" + kubeConfig}, command...)
+		return c.readTrimmedWithLimit(c.kubeCommandLimit(), "env", command...)
 	}
-	return c.readTrimmed("kubectl", args...)
+	return c.readTrimmedWithLimit(c.kubeCommandLimit(), command[0], command[1:]...)
 }
 
 func (c *statusCommand) kubeSessionPath(sessionName string) string {
@@ -380,10 +373,16 @@ func (c *statusCommand) locale() i18n.Locale {
 }
 
 func (c *statusCommand) read(name string, args ...string) ([]byte, error) {
+	return c.readWithLimit(c.statusCommandLimit(), name, args...)
+}
+
+func (c *statusCommand) readWithLimit(limit time.Duration, name string, args ...string) ([]byte, error) {
 	if c.readCommand == nil {
 		return nil, errors.New("status command reader is not configured")
 	}
-	return c.readCommand(context.Background(), name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	return c.readCommand(ctx, name, args...)
 }
 
 func (c *statusCommand) readTrimmed(name string, args ...string) string {
@@ -394,11 +393,19 @@ func (c *statusCommand) readTrimmed(name string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func formatStatusTimeout(d time.Duration) string {
-	if d%time.Second == 0 {
-		return fmt.Sprintf("%d", int(d/time.Second))
+func (c *statusCommand) readTrimmedWithLimit(limit time.Duration, name string, args ...string) string {
+	out, err := c.readWithLimit(limit, name, args...)
+	if err != nil {
+		return ""
 	}
-	return fmt.Sprintf("%.3f", d.Seconds())
+	return strings.TrimSpace(string(out))
+}
+
+func (c *statusCommand) statusCommandLimit() time.Duration {
+	if c.commandLimit > 0 {
+		return c.commandLimit
+	}
+	return defaultStatusCommandLimit
 }
 
 func readTextFile(path string) string {
