@@ -992,9 +992,25 @@ func isContextWrapperTag(tag string) bool {
 	return true
 }
 
+// noisyTitleCandidatePrefixes are known agent-injected records that should not
+// become resume titles. Keep this explicit: broad tag-shape matching would
+// discard user-authored HTML and custom-element prompts.
+var noisyTitleCandidatePrefixes = []string{
+	"<command-",
+	"<local-command-",
+	"<task-notification",
+	"<system-reminder",
+	"# AGENTS.md",
+}
+
 func isNoisyTitleCandidate(title string) bool {
 	title = strings.TrimSpace(title)
-	return strings.HasPrefix(title, "<command-") || strings.HasPrefix(title, "# AGENTS.md")
+	for _, prefix := range noisyTitleCandidatePrefixes {
+		if strings.HasPrefix(title, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func shortResumeID(id string) string {

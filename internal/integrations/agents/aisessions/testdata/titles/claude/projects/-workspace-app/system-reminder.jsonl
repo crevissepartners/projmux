@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"<system-reminder>Injected operational context</system-reminder>"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555504","gitBranch":"fix/reminder"}
+{"type":"user","message":{"role":"user","content":"Preserve the first real reminder prompt"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555504","gitBranch":"fix/reminder"}

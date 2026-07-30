@@ -253,6 +253,73 @@ func TestDiscoverCodexUnwrapsXMLContextTitles(t *testing.T) {
 	}
 }
 
+func TestDiscoverClaudeSkipsInjectedNoiseTitles(t *testing.T) {
+	t.Parallel()
+
+	root := copyFixture(t, filepath.Join("titles", "claude"))
+	projectsDir := filepath.Join(root, "projects")
+
+	got, err := Discover("/workspace/app", DiscoverOptions{
+		ClaudeProjectsDir: projectsDir,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+
+	wantTitles := map[string]string{
+		"11111111-2222-4333-8444-555555555501": "Fix stdout resume title",
+		"11111111-2222-4333-8444-555555555502": "Fix caveat resume title",
+		"11111111-2222-4333-8444-555555555503": "Handle completed background task",
+		"11111111-2222-4333-8444-555555555504": "Preserve the first real reminder prompt",
+		"11111111-2222-4333-8444-555555555505": "why is a < b wrong in this loop?",
+		"11111111-2222-4333-8444-555555555506": `<div class="x">hello</div> is not rendering, why?`,
+		"11111111-2222-4333-8444-555555555507": "<my-component> needs a loading state",
+	}
+	if len(got) != len(wantTitles) {
+		t.Fatalf("Discover() len = %d, want %d: %#v", len(got), len(wantTitles), got)
+	}
+	for _, session := range got {
+		want, ok := wantTitles[session.ResumeID]
+		if !ok {
+			t.Fatalf("unexpected session %q: %#v", session.ResumeID, session)
+		}
+		if session.Agent != AgentClaude {
+			t.Fatalf("Agent[%s] = %q, want %q", session.ResumeID, session.Agent, AgentClaude)
+		}
+		if session.Title != want {
+			t.Fatalf("Title[%s] = %q, want %q", session.ResumeID, session.Title, want)
+		}
+	}
+}
+
+func TestCleanTitleCandidateKnownNoiseOnly(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"command scaffold", "<command-name>/goal", ""},
+		{"local command stdout", "<local-command-stdout>output</local-command-stdout>", ""},
+		{"local command caveat", "<local-command-caveat>warning</local-command-caveat>", ""},
+		{"task notification", "<task-notification>done</task-notification>", ""},
+		{"system reminder", "<system-reminder>remember this</system-reminder>", ""},
+		{"agents instructions", "# AGENTS.md instructions for /workspace/app", ""},
+		{"inline less-than", "why is a < b wrong?", "why is a < b wrong?"},
+		{"leading html", "<div>hello</div> is broken", "<div>hello</div> is broken"},
+		{"custom element", "<my-component> needs a loading state", "<my-component> needs a loading state"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := cleanTitleCandidate(tt.in); got != tt.want {
+				t.Fatalf("cleanTitleCandidate(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUnwrapContextWrappers(t *testing.T) {
 	t.Parallel()
 
