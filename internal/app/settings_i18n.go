@@ -192,6 +192,8 @@ var uiTextKeys = map[string]i18n.Key{
 	"Available":             "settings.text.available_state",
 	"Unbound":               "settings.text.unbound_state",
 
+	"Native macOS keybindings": "settings.text.native_macos_keybindings",
+
 	"project roots, workdirs, and pins":              "settings.text.project_roots_workdirs_pins",
 	"default split mode":                             "settings.text.default_split_mode",
 	"default split mode, enabled agents":             "settings.text.default_split_mode_enabled_agents",
@@ -201,6 +203,9 @@ var uiTextKeys = map[string]i18n.Key{
 	"global preset, color tokens, and font hints":    "settings.text.global_theme_settings",
 	"edit tmux plain and prefix chords":              "settings.text.edit_tmux_chords",
 	"Actions are listed with active keys and state.": "settings.text.keybindings_actions_list",
+	"on - modified chords only, processed locally":   "settings.text.native_keys_on_desc",
+	"off - broker and Accessibility prompt disabled": "settings.text.native_keys_off_desc",
+	"off - PROJMUX_NATIVE_KEYS override":             "settings.text.native_keys_env_override_desc",
 	"press desired key":                              "settings.text.press_desired_key",
 	"capture desired key":                            "settings.text.capture_desired_key",
 	"enter key name":                                 "settings.text.enter_key_name",

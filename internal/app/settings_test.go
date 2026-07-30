@@ -4385,9 +4385,10 @@ func TestSettingsKeybindingDetailStaysLogicalKeyActionCentered(t *testing.T) {
 func TestSettingsKeybindingsActionListIsPreviewOnly(t *testing.T) {
 	t.Parallel()
 
-	// (a) Action LIST rows expose no mutation: every navigable row is a plain
-	// keymap:<actionID> link with no mutation suffix, and no row label carries a
-	// mutation verb. The list can only navigate into detail.
+	// (a) Action LIST rows expose no mutation: every action row is a plain
+	// keymap:<actionID> link with no mutation suffix, and no action row label
+	// carries a mutation verb. The one native transport policy toggle is a
+	// section-level setting rather than a keybinding action.
 	cmd := &settingsCommand{}
 	listEntries, err := cmd.keybindingEntries()
 	if err != nil {
@@ -4399,6 +4400,9 @@ func TestSettingsKeybindingsActionListIsPreviewOnly(t *testing.T) {
 	for _, entry := range listEntries {
 		value := entry.Value
 		if value == settingsBackValue || value == settingsNoopValue || value == "" {
+			continue
+		}
+		if value == settingsNativeKeysToggle {
 			continue
 		}
 		if !strings.HasPrefix(value, settingsActionPrefixKeymap) {
@@ -5817,6 +5821,51 @@ func TestSettingsHubKeybindingsDoesNotExposeDisableDefault(t *testing.T) {
 	}
 	if op, ok := parseKeymapDetailAction(settingsActionPrefixKeymap+"ProjectSidebarToggle:disable", "ProjectSidebarToggle"); ok || op != "" {
 		t.Fatalf("parse disable = %q, %v; want rejected", op, ok)
+	}
+}
+
+func TestSettingsKeybindingsTogglesNativeMacOSKeybindings(t *testing.T) {
+	home := t.TempDir()
+	var first, refreshed intpickercompat.Options
+	runner, native := scriptedPicker(t, []pickerStep{
+		{
+			observe: func(options intpickercompat.Options) { first = options },
+			reply:   intpickercompat.Result{Key: "enter", Value: settingsNativeKeysToggle},
+		},
+		{
+			observe: func(options intpickercompat.Options) { refreshed = options },
+			reply:   intpickercompat.Result{Key: "enter", Value: settingsBackValue},
+		},
+	})
+	cmd := &settingsCommand{
+		homeDir:      func() (string, error) { return home, nil },
+		lookupEnv:    func(string) string { return "" },
+		runner:       runner,
+		nativePicker: native,
+	}
+
+	if err := cmd.runKeybindingsSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingsSection() error = %v", err)
+	}
+	if !hasEntryLabelContainingAll(first.Entries, "Native macOS keybindings", "on", "processed locally") {
+		t.Fatalf("initial keybinding entries = %#v, want enabled native key toggle", first.Entries)
+	}
+	if !hasEntryLabelContainingAll(refreshed.Entries, "Native macOS keybindings", "off", "Accessibility prompt disabled") {
+		t.Fatalf("refreshed keybinding entries = %#v, want disabled native key toggle", refreshed.Entries)
+	}
+	configToml := readFile(t, filepath.Join(home, ".config", "projmux", "config.toml"))
+	if !strings.Contains(configToml, "[ui]\nnative_keys = false") {
+		t.Fatalf("config.toml = %q, want native_keys opt-out", configToml)
+	}
+
+	shell := &shellCommand{
+		goos:       func() string { return "darwin" },
+		nativeKeys: func() bool { return true },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+	}
+	if shell.shouldStartNativeKeyBroker() {
+		t.Fatal("shouldStartNativeKeyBroker() = true after Settings opt-out")
 	}
 }
 

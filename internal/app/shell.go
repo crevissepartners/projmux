@@ -461,6 +461,7 @@ func (c *shellCommand) shouldStartNativeKeyBroker() bool {
 		c.goos() == "darwin" &&
 		c.nativeKeys != nil &&
 		c.nativeKeys() &&
+		nativeKeysEnabled(c.lookupEnv, c.homeDir) &&
 		!c.usePSMuxShell()
 }
 

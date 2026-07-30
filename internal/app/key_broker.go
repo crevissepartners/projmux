@@ -26,6 +26,8 @@ type keyBrokerCommand struct {
 	homeDir     func() (string, error)
 	lookupEnv   func(string) string
 	readFile    func(string) ([]byte, error)
+	writeFile   func(string, []byte, os.FileMode) error
+	nativeKeys  func() bool
 	pollEvery   time.Duration
 	startupWait time.Duration
 }
@@ -37,6 +39,8 @@ func newKeyBrokerCommand() *keyBrokerCommand {
 		homeDir:     os.UserHomeDir,
 		lookupEnv:   os.Getenv,
 		readFile:    os.ReadFile,
+		writeFile:   os.WriteFile,
+		nativeKeys:  platformkeys.Available,
 		pollEvery:   300 * time.Millisecond,
 		startupWait: 10 * time.Second,
 	}
@@ -55,7 +59,14 @@ func (c *keyBrokerCommand) Run(args []string, _ io.Writer, stderr io.Writer) err
 	if fs.NArg() != 0 {
 		return usageError("key-broker does not accept positional arguments")
 	}
-	if !platformkeys.Available() || c.source == nil {
+	if !nativeKeysEnabled(c.lookupEnv, c.homeDir) {
+		return nil
+	}
+	available := c.nativeKeys
+	if available == nil {
+		available = platformkeys.Available
+	}
+	if !available() || c.source == nil {
 		return nil
 	}
 	socketName := nonEmpty(strings.TrimSpace(*socket), defaultAppSocket)
@@ -76,6 +87,7 @@ func (c *keyBrokerCommand) Run(args []string, _ io.Writer, stderr io.Writer) err
 		return fmt.Errorf("configure native key source: %w", err)
 	}
 	c.source.SetEnabled(false)
+	showNativeKeysConsentHint(stderr, c.lookupEnv, c.homeDir, c.readFile, c.writeFile)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

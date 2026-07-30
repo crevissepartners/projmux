@@ -43,6 +43,7 @@ font_size = 12
 
 [ui]
 locale = "ko-KR"
+native_keys = false
 
 [ai]
 resume_picker_limit = 50
@@ -78,8 +79,43 @@ resume_picker_limit = 50
 	if cfg.UI.Locale != "ko-KR" {
 		t.Fatalf("UI.Locale = %q, want ko-KR", cfg.UI.Locale)
 	}
+	if cfg.UI.NativeKeys == nil || *cfg.UI.NativeKeys {
+		t.Fatalf("UI.NativeKeys = %#v, want explicit false", cfg.UI.NativeKeys)
+	}
 	if cfg.AI.ResumePickerLimit != 50 {
 		t.Fatalf("AI.ResumePickerLimit = %d, want 50", cfg.AI.ResumePickerLimit)
+	}
+}
+
+func TestProjectUINativeKeysRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[ui]\nnative_keys = false\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.UI.NativeKeys == nil || *cfg.UI.NativeKeys {
+		t.Fatalf("UI.NativeKeys = %#v, want explicit false", cfg.UI.NativeKeys)
+	}
+
+	rendered := renderProjectConfig(cfg)
+	if rendered != "[ui]\nnative_keys = false\n" {
+		t.Fatalf("rendered = %q, want bare native_keys boolean", rendered)
+	}
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.UI.NativeKeys == nil || *reparsed.UI.NativeKeys {
+		t.Fatalf("re-parsed UI.NativeKeys = %#v, want explicit false", reparsed.UI.NativeKeys)
+	}
+}
+
+func TestProjectUINativeKeysRejectsNonBoolean(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ParseProjectConfig("[ui]\nnative_keys = \"off\"\n"); err == nil {
+		t.Fatal("expected quoted non-boolean native_keys to error")
 	}
 }
 
