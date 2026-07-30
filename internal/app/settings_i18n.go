@@ -509,14 +509,6 @@ var uiTextKeys = map[string]i18n.Key{
 	"Sessions":                                 "picker.crumb.sessions",
 	"State":                                    "picker.crumb.state",
 	"Session state opens read-only; destructive actions keep the current confirmation policy.": "picker.sessions.state_readonly_note",
-
-	"Insert File Text - Choose a source": "picker.insert_file_text.title",
-	"Insert > ":                          "picker.insert_file_text.prompt",
-	"Choose a text source to insert into the active pane.": "picker.insert_file_text.footer",
-	"insert source not found:":                             "insert_file_text.message.not_found",
-	"insert source unreadable:":                            "insert_file_text.message.unreadable",
-	"insert source empty:":                                 "insert_file_text.message.empty",
-	"no insert-file-text source configured":                "insert_file_text.message.none",
 }
 
 // settingsTextKeys preserves the historical name for the shared registry so
