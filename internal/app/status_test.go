@@ -205,6 +205,38 @@ func TestStatusGitPrintsStateIndicators(t *testing.T) {
 	}
 }
 
+func TestStatusGitCommandTimeoutStopsHangingRunner(t *testing.T) {
+	t.Parallel()
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.commandLimit = 20 * time.Millisecond
+	active := 0
+	cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name != "git" || !reflect.DeepEqual(args, []string{"-C", "/slow", "rev-parse", "--is-inside-work-tree"}) {
+			return nil, os.ErrNotExist
+		}
+		active++
+		defer func() { active-- }()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	start := time.Now()
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"git", "/slow"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Run() elapsed = %v, want bounded execution", elapsed)
+	}
+	if active != 0 {
+		t.Fatalf("active hanging runners = %d, want 0 after timeout", active)
+	}
+	if got := stdout.String(); got != "" {
+		t.Fatalf("stdout = %q, want silent timeout", got)
+	}
+}
+
 func TestStatusGitStatePaletteIsCompactAndNonDominant(t *testing.T) {
 	t.Parallel()
 
@@ -280,15 +312,24 @@ func TestStatusKubeRefreshesContextAndNamespace(t *testing.T) {
 			return ""
 		}
 	}
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+	var kubectlDeadlines []time.Duration
+	cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		switch {
 		case name == "command" && reflect.DeepEqual(args, []string{"-v", "kubectl"}):
 			return []byte("/usr/bin/kubectl\n"), nil
-		case name == "command" && reflect.DeepEqual(args, []string{"-v", "timeout"}):
-			return []byte("/usr/bin/timeout\n"), nil
-		case name == "env" && reflect.DeepEqual(args, []string{"KUBECONFIG=" + kubeConfig, "timeout", "0.400", "kubectl", "config", "current-context"}):
+		case name == "env" && reflect.DeepEqual(args, []string{"KUBECONFIG=" + kubeConfig, "kubectl", "config", "current-context"}):
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("kubectl current-context context has no deadline")
+			}
+			kubectlDeadlines = append(kubectlDeadlines, time.Until(deadline))
 			return []byte("kind-dev\n"), nil
-		case name == "env" && reflect.DeepEqual(args, []string{"KUBECONFIG=" + kubeConfig, "timeout", "0.400", "kubectl", "config", "view", "--minify", "--output", "jsonpath={..namespace}"}):
+		case name == "env" && reflect.DeepEqual(args, []string{"KUBECONFIG=" + kubeConfig, "kubectl", "config", "view", "--minify", "--output", "jsonpath={..namespace}"}):
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("kubectl namespace context has no deadline")
+			}
+			kubectlDeadlines = append(kubectlDeadlines, time.Until(deadline))
 			return []byte("apps\n"), nil
 		default:
 			return nil, os.ErrNotExist
@@ -305,6 +346,14 @@ func TestStatusKubeRefreshesContextAndNamespace(t *testing.T) {
 	}
 	if got := strings.TrimSpace(readTextFile(filepath.Join(cacheHome, "tmux", "kube-segment-dev.txt"))); got != want {
 		t.Fatalf("cache = %q, want %q", got, want)
+	}
+	if len(kubectlDeadlines) != 2 {
+		t.Fatalf("kubectl deadline count = %d, want 2", len(kubectlDeadlines))
+	}
+	for _, remaining := range kubectlDeadlines {
+		if remaining <= 0 || remaining > 400*time.Millisecond {
+			t.Fatalf("kubectl deadline remaining = %v, want within (0, 400ms]", remaining)
+		}
 	}
 }
 

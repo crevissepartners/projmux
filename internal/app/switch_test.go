@@ -2362,6 +2362,103 @@ func TestSwitchCommandSinglePathProjdirRetainsSavedWorkdirs(t *testing.T) {
 	}
 }
 
+func TestDetectGitBranchWithRunnerPreservesNormalAndDetachedPaths(t *testing.T) {
+	t.Parallel()
+
+	t.Run("symbolic ref", func(t *testing.T) {
+		t.Parallel()
+		var calls [][]string
+		got := detectGitBranchWithRunner("/repo", time.Second, func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return []byte("main\n"), nil
+		})
+		if got != "main" {
+			t.Fatalf("detectGitBranchWithRunner() = %q, want main", got)
+		}
+		want := [][]string{{"git", "-C", "/repo", "symbolic-ref", "--quiet", "--short", "HEAD"}}
+		if !reflect.DeepEqual(calls, want) {
+			t.Fatalf("calls = %#v, want %#v", calls, want)
+		}
+	})
+
+	t.Run("detached head", func(t *testing.T) {
+		t.Parallel()
+		var calls [][]string
+		got := detectGitBranchWithRunner("/repo", time.Second, func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			if slices.Contains(args, "symbolic-ref") {
+				return nil, errors.New("detached")
+			}
+			return []byte("abc1234\n"), nil
+		})
+		if got != "abc1234" {
+			t.Fatalf("detectGitBranchWithRunner() = %q, want abc1234", got)
+		}
+		want := [][]string{
+			{"git", "-C", "/repo", "symbolic-ref", "--quiet", "--short", "HEAD"},
+			{"git", "-C", "/repo", "rev-parse", "--short", "HEAD"},
+		}
+		if !reflect.DeepEqual(calls, want) {
+			t.Fatalf("calls = %#v, want %#v", calls, want)
+		}
+	})
+}
+
+func TestSwitchFullRowRenderDoesNotBlockOnSlowGitRepository(t *testing.T) {
+	t.Parallel()
+
+	const branchLimit = 20 * time.Millisecond
+	active := 0
+	var slowDeadlines []time.Time
+	gitBranch := func(path string) string {
+		return detectGitBranchWithRunner(path, branchLimit, func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+			if slices.Contains(args, "/slow") {
+				deadline, ok := ctx.Deadline()
+				if !ok {
+					t.Fatal("slow git context has no deadline")
+				}
+				slowDeadlines = append(slowDeadlines, deadline)
+				active++
+				defer func() { active-- }()
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			return []byte("main\n"), nil
+		})
+	}
+	cmd := &switchCommand{
+		pinStore:  func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		sessions:  &bulkSwitchSessionExecutor{existing: map[string]bool{}},
+		inventory: &stubPreviewInventory{},
+		identity:  switchIdentityResolverFunc(func(path string) (string, error) { return filepath.Base(path), nil }),
+		homeDir:   func() (string, error) { return "/home/tester", nil },
+		lookupEnv: func(string) string { return "" },
+		gitBranch: gitBranch,
+	}
+
+	start := time.Now()
+	_, items, _, err := cmd.renderFullRows(context.Background(), switchUISidebar, []string{"/slow", "/fast"})
+	if err != nil {
+		t.Fatalf("renderFullRows() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("renderFullRows() elapsed = %v, want bounded slow-repo enrichment", elapsed)
+	}
+	if active != 0 {
+		t.Fatalf("active hanging git runners = %d, want 0 after timeout", active)
+	}
+	if len(slowDeadlines) != 2 || !slowDeadlines[0].Equal(slowDeadlines[1]) {
+		t.Fatalf("slow git deadlines = %v, want one shared deadline for branch and detached-head probes", slowDeadlines)
+	}
+	if got := len(items); got != 2 {
+		t.Fatalf("item count = %d, want 2", got)
+	}
+	labels := items[0].EffectiveLabel() + "\n" + items[1].EffectiveLabel()
+	if !strings.Contains(labels, "main") {
+		t.Fatalf("rendered labels = %q, want normal repository branch", labels)
+	}
+}
+
 func TestSwitchCommandPreviewRendersExistingSessionContext(t *testing.T) {
 	t.Parallel()
 

@@ -29,19 +29,20 @@ import (
 )
 
 const (
-	switchUIFlag              = "ui"
-	switchUIPopup             = "popup"
-	switchUISidebar           = "sidebar"
-	switchKillExpectKey       = "ctrl-x"
-	switchPinExpectKey        = "alt-p"
-	switchSettingsSentinel    = "__projmux_settings__"
-	switchContextSessionEnv   = "TMUX_SESSIONIZER_CONTEXT_SESSION"
-	switchInitialQueryEnv     = "PROJMUX_SWITCH_INITIAL_QUERY"
-	switchInitialSelectionEnv = "PROJMUX_SWITCH_INITIAL_SELECTION"
-	switchStatusMessageEnv    = "PROJMUX_SWITCH_STATUS_MESSAGE"
-	managedRootsEnvVar        = "PROJMUX_MANAGED_ROOTS"
-	legacyManagedRootsEnvVar  = "TMUX_SESSIONIZER_ROOTS"
-	projdirEnvVar             = "PROJMUX_PROJDIR"
+	switchUIFlag                 = "ui"
+	switchUIPopup                = "popup"
+	switchUISidebar              = "sidebar"
+	switchKillExpectKey          = "ctrl-x"
+	switchPinExpectKey           = "alt-p"
+	switchSettingsSentinel       = "__projmux_settings__"
+	switchContextSessionEnv      = "TMUX_SESSIONIZER_CONTEXT_SESSION"
+	switchInitialQueryEnv        = "PROJMUX_SWITCH_INITIAL_QUERY"
+	switchInitialSelectionEnv    = "PROJMUX_SWITCH_INITIAL_SELECTION"
+	switchStatusMessageEnv       = "PROJMUX_SWITCH_STATUS_MESSAGE"
+	managedRootsEnvVar           = "PROJMUX_MANAGED_ROOTS"
+	legacyManagedRootsEnvVar     = "TMUX_SESSIONIZER_ROOTS"
+	projdirEnvVar                = "PROJMUX_PROJDIR"
+	defaultSwitchGitCommandLimit = 500 * time.Millisecond
 )
 
 var switchPinHiddenWhitelist = []string{
@@ -3299,13 +3300,31 @@ func detectGitBranch(path string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		return ""
 	}
-	if output, err := exec.Command("git", "-C", path, "symbolic-ref", "--quiet", "--short", "HEAD").CombinedOutput(); err == nil {
+	return detectGitBranchWithRunner(path, defaultSwitchGitCommandLimit, runSwitchGitCommand)
+}
+
+func detectGitBranchWithRunner(path string, limit time.Duration, runner func(context.Context, string, ...string) ([]byte, error)) string {
+	path = cleanOptionalPath(path)
+	if path == "" || runner == nil {
+		return ""
+	}
+	if limit <= 0 {
+		limit = defaultSwitchGitCommandLimit
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+
+	if output, err := runner(ctx, "git", "-C", path, "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil {
 		return strings.TrimSpace(string(output))
 	}
-	if output, err := exec.Command("git", "-C", path, "rev-parse", "--short", "HEAD").CombinedOutput(); err == nil {
+	if output, err := runner(ctx, "git", "-C", path, "rev-parse", "--short", "HEAD"); err == nil {
 		return strings.TrimSpace(string(output))
 	}
 	return ""
+}
+
+func runSwitchGitCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 func defaultSwitchKubeInfo(sessionName string) switchKubeInfo {
