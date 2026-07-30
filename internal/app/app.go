@@ -102,6 +102,11 @@ func New() *App {
 	switcher := newSwitchCommand()
 	update := newUpdateCommand()
 	quit := newQuitCommand()
+	notifyCmd := newNotifyCommand(newDefaultLivePaneLister())
+	pruneCmd := newPruneCommand()
+	pruneCmd.reconcileNotify = func() {
+		_ = notifyCmd.runReconcile(nil, io.Discard, io.Discard)
+	}
 	return &App{
 		ai:           ai,
 		attention:    newAttentionCommand(),
@@ -114,11 +119,11 @@ func New() *App {
 		insertText:   newInsertFileTextCommand(),
 		keyBroker:    newKeyBrokerCommand(),
 		kill:         newKillCommand(),
-		notify:       newNotifyCommand(newDefaultLivePaneLister()),
+		notify:       notifyCmd,
 		pin:          newPinCommand(),
 		popupWaitKey: newPopupWaitKeyCommand(),
 		preview:      newPreviewCommand(),
-		prune:        newPruneCommand(),
+		prune:        pruneCmd,
 		quit:         quit,
 		sessions:     newSessionsCommand(),
 		sessionState: newSessionStateCommand(),

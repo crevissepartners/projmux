@@ -1,5 +1,6 @@
 // Package notify implements a small persistent notification queue used by the
-// projmux status bar. Entries are stored in a JSON file until explicit ack.
+// projmux status bar. Entries are stored until explicit ack or the bounded
+// reconcile policy evicts expired-gone or hard-cap overflow rows.
 //
 // Note: the click handler in the status bar will call
 // `projmux focus --target=... --source=os-notification` — but this package
@@ -38,8 +39,8 @@ const (
 )
 
 // DefaultTTL is the default freshness window applied when the caller does not
-// supply --ttl. Expiration is metadata only; it does not remove entries from
-// the pending queue.
+// supply --ttl. Expiration alone does not remove a pending entry; reconcile
+// requires both expiration and a gone target unless the hard cap is exceeded.
 const DefaultTTL = 600 * time.Second
 
 // MaxTextLength caps the stored Text on push. Longer text is truncated

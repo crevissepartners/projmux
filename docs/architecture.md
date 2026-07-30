@@ -135,8 +135,8 @@ does not own the truth of every live badge.
   source (`ai|k8s|git|external`), TTL freshness metadata (default 600s), and a
   `Target{Socket, Session, Window, Pane}`. Re-pushing an existing id
   refreshes the entry's text and timestamp.
-- **List** — `projmux notify list` returns newest-first until explicit ack.
-  TTL is not a removal condition. `projmux notify list --live` adds a
+- **List** — `projmux notify list` returns newest-first without mutating the
+  queue. TTL alone is not a removal condition. `projmux notify list --live` adds a
   read-only comparison against live pane state, explaining manual reply
   badges without queue entries, live AI replies with/missing queue entries,
   and inactive (`queue-stale`) `ai:` entries.
@@ -147,7 +147,9 @@ does not own the truth of every live badge.
   `tmux list-panes -a` and back-fills entries for panes whose
   attention state is `reply` AND whose AI agent option is set,
   reporting inactive `ai:` entries that no longer match a live reply+agent pane without
-  acking them.
+  acking them. It then removes rows only when they are both TTL-expired and
+  gone from the real pane/session inventory, and enforces a 256-row hard cap
+  by evicting oldest overflow. Live rows otherwise remain explicit-ack-only.
   `make install` and `projmux upgrade` invoke it so the queue
   recovers from any drift introduced by a lost daemon.
 

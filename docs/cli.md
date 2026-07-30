@@ -204,8 +204,9 @@ projmux notify reconcile [--json]
 ```
 
 - `push` — append (or refresh, with `--id`) one entry. `--ttl` defaults to
-  `600` seconds as freshness metadata; it does not remove rows from
-  `notify list`. `--text` is hard-capped to 80 runes (longer text is
+  `600` seconds as freshness metadata; expiration does not remove rows from
+  `notify list` and is considered only by reconcile together with a gone
+  target. Reconcile also retains only the newest 256 rows. `--text` is hard-capped to 80 runes (longer text is
   truncated server-side). After a successful queue write, projmux sends a
   best-effort refresh event to open native notify sidebars and fires
   declarative `[hooks.send-noti]` asynchronously if configured. Event delivery

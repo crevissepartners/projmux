@@ -28,6 +28,7 @@ type notifyStore interface {
 	List() ([]notify.Notification, error)
 	Ack(id string) error
 	AckAll() (int, error)
+	Reconcile(targetExists notify.TargetExistsFunc) (notify.ReconcileResult, error)
 }
 
 type notifyCommand struct {
