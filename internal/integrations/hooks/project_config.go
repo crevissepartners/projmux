@@ -586,6 +586,14 @@ func validateProjectConfig(cfg ProjectConfig) error {
 }
 
 func writeProjectConfigFile(path string, cfg ProjectConfig) error {
+	return writeProjectConfigFileMode(path, cfg, 0o644)
+}
+
+func writePrivateProjectConfigFile(path string, cfg ProjectConfig) error {
+	return writeProjectConfigFileMode(path, cfg, 0o600)
+}
+
+func writeProjectConfigFileMode(path string, cfg ProjectConfig, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -606,8 +614,12 @@ func writeProjectConfigFile(path string, cfg ProjectConfig) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return err
+	// CreateTemp requests 0600, which is already the private global-config
+	// mode. Only the shareable project-local writer needs to broaden it.
+	if mode != 0o600 {
+		if err := os.Chmod(tmpName, mode); err != nil {
+			return err
+		}
 	}
 	return os.Rename(tmpName, path)
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 const stateDirName = "recent-windows"
@@ -166,6 +167,7 @@ func (s *Store) Candidates(current WindowKey, live []LiveWindow, limit int) ([]C
 }
 
 func (s *Store) read() (State, bool, error) {
+	localstate.RepairPrivateFile(s.path)
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -188,7 +190,7 @@ func (s *Store) read() (State, bool, error) {
 
 func (s *Store) write(state State) error {
 	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return fmt.Errorf("recentwindows: create state dir %s: %w", dir, err)
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -215,13 +217,11 @@ func (s *Store) write(state State) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("recentwindows: close temp state: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return fmt.Errorf("recentwindows: chmod temp state: %w", err)
-	}
 	if err := os.Rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("recentwindows: rename temp state: %w", err)
 	}
 	cleanup = false
+	localstate.RepairPrivateFile(s.path)
 	return nil
 }
 
@@ -252,7 +252,7 @@ func (s *Store) backupCorrupt() error {
 }
 
 func (s *Store) withLock(fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(s.lockPath), 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lockPath)); err != nil {
 		return fmt.Errorf("recentwindows: create lock dir: %w", err)
 	}
 	if err := s.acquireLock(); err != nil {

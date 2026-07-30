@@ -635,13 +635,13 @@ func TestAIIngestLogPrintsTailAndPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("aiIngestLogPath() error = %v", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(strings.Join([]string{
 		`{"at":"2026-01-01T00:00:00Z","source":"codex-hook","event":"Stop","result":"notify","pane":"%1"}`,
 		`{"at":"2026-01-01T00:00:01Z","source":"claude-hook","event":"SubagentStop","result":"quiet","reason":"high-volume event","pane":"%2"}`,
-	}, "\n")+"\n"), 0o600); err != nil {
+	}, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -651,6 +651,15 @@ func TestAIIngestLogPrintsTailAndPath(t *testing.T) {
 	}
 	if got := out.String(); !strings.Contains(got, "claude-hook SubagentStop quiet") || strings.Contains(got, "codex-hook Stop notify") {
 		t.Fatalf("tail output = %q", got)
+	}
+	for modePath, want := range map[string]os.FileMode{filepath.Dir(path): 0o700, path: 0o600} {
+		info, err := os.Stat(modePath)
+		if err != nil {
+			t.Fatalf("Stat(%q): %v", modePath, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s mode = %#o, want %#o", modePath, got, want)
+		}
 	}
 
 	out.Reset()

@@ -91,6 +91,19 @@ func TestLoadWorkdirsSkipsCommentsAndBlanks(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("LoadWorkdirs() = %#v, want %#v", got, want)
 	}
+	assertConfigMode(t, dir, 0o700)
+	assertConfigMode(t, filepath.Join(dir, WorkdirsFileName), 0o600)
+}
+
+func assertConfigMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%q) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %#o, want %#o", path, got, want)
+	}
 }
 
 func TestSaveWorkdirsEmptyValueRemovesFile(t *testing.T) {

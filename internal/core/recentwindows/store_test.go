@@ -56,7 +56,8 @@ func TestStoreCorruptFileBacksUpAndStartsEmpty(t *testing.T) {
 func TestStoreRecordRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	store := NewStore(filepath.Join(t.TempDir(), "recent.json"))
+	dir := filepath.Join(t.TempDir(), "recent-windows")
+	store := NewStore(filepath.Join(dir, "recent.json"))
 	if _, err := store.Record(snap("/tmp/tmux", "alpha", "@1", "main", time.Unix(10, 0)), 0); err != nil {
 		t.Fatalf("Record error = %v", err)
 	}
@@ -79,6 +80,15 @@ func TestStoreRecordRoundTrip(t *testing.T) {
 	}
 	if got := state.Entries[0]; got.Socket != "/tmp/tmux" || got.Session != "alpha" || got.WindowID != "@1" {
 		t.Fatalf("entry = %+v, want recorded key", got)
+	}
+	for path, want := range map[string]os.FileMode{dir: 0o700, store.Path(): 0o600} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat(%q): %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s mode = %#o, want %#o", path, got, want)
+		}
 	}
 }
 

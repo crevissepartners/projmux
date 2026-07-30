@@ -606,6 +606,16 @@ func TestSaveProjdirCreatesParentDir(t *testing.T) {
 	if !info.IsDir() {
 		t.Fatalf("expected %q to be a directory", dir)
 	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("directory mode = %#o, want %#o", got, os.FileMode(0o700))
+	}
+	fileInfo, err := os.Stat(ProjdirFile(home))
+	if err != nil {
+		t.Fatalf("Stat(projdir) error = %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("projdir mode = %#o, want %#o", got, os.FileMode(0o600))
+	}
 }
 
 func TestSaveProjdirEmptyValueRemovesFile(t *testing.T) {
@@ -657,6 +667,22 @@ func TestLoadProjdirTrimsAndUsesFirstLine(t *testing.T) {
 	}
 	if got != "/first/line" {
 		t.Fatalf("LoadProjdir() = %q, want %q", got, "/first/line")
+	}
+	for range 2 {
+		if _, err := LoadProjdir(home); err != nil {
+			t.Fatalf("LoadProjdir() idempotent repair error = %v", err)
+		}
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("Stat(dir) error = %v", err)
+	}
+	fileInfo, err := os.Stat(filepath.Join(dir, ProjdirFileName))
+	if err != nil {
+		t.Fatalf("Stat(file) error = %v", err)
+	}
+	if dirInfo.Mode().Perm() != 0o700 || fileInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("repaired modes = dir %#o file %#o, want 0700/0600", dirInfo.Mode().Perm(), fileInfo.Mode().Perm())
 	}
 }
 

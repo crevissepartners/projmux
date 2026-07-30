@@ -2,6 +2,7 @@ package notify
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -61,6 +62,19 @@ func TestPushRoundTrip(t *testing.T) {
 	}
 	if !got.ExpiresAt.After(got.CreatedAt) {
 		t.Fatal("expected ExpiresAt after CreatedAt")
+	}
+	assertNotifyMode(t, filepath.Dir(store.Path()), 0o700)
+	assertNotifyMode(t, store.Path(), 0o600)
+}
+
+func assertNotifyMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%q) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %#o, want %#o", path, got, want)
 	}
 }
 

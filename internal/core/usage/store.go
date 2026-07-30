@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 // snapshotFileName is the on-disk JSON used by the v2 snapshot store. The
@@ -100,6 +102,7 @@ func (s *Store) LoadAll() ([]Snapshot, time.Time, error) {
 // state. A missing file reads as zero-value State (no error).
 func (s *Store) LoadState() (State, error) {
 	path := s.FilePath()
+	localstate.RepairPrivateFile(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -166,7 +169,7 @@ func (s *Store) SaveAll(snaps []Snapshot, lastCollect time.Time) error {
 
 // SaveState persists the full per-adapter state to disk atomically.
 func (s *Store) SaveState(state State) error {
-	if err := os.MkdirAll(s.baseDir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(s.baseDir); err != nil {
 		return fmt.Errorf("usage: create cache dir %s: %w", s.baseDir, err)
 	}
 	// Stable ordering: model asc, window asc within model.
@@ -223,13 +226,11 @@ func (s *Store) SaveState(state State) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("usage: close temp snapshots: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return fmt.Errorf("usage: chmod temp snapshots: %w", err)
-	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("usage: rename temp snapshots: %w", err)
 	}
 	cleanup = false
+	localstate.RepairPrivateFile(path)
 	return nil
 }
 

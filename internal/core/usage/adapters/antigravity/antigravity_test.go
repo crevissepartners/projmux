@@ -57,7 +57,7 @@ func TestCollectEmptyBaseDir(t *testing.T) {
 
 func TestWriteThenCollect(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "usage")
 	updated := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
 	if err := WriteContext(dir, ContextRecord{Pct: 42, UpdatedAt: updated}); err != nil {
 		t.Fatalf("WriteContext: %v", err)
@@ -79,6 +79,18 @@ func TestWriteThenCollect(t *testing.T) {
 	}
 	if !s.ResetsAt.IsZero() {
 		t.Fatalf("ResetsAt = %v, want zero (context window has no reset)", s.ResetsAt)
+	}
+	for path, want := range map[string]os.FileMode{
+		dir:                                 0o700,
+		filepath.Join(dir, ContextFileName): 0o600,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat(%q): %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s mode = %#o, want %#o", path, got, want)
+		}
 	}
 }
 
