@@ -48,7 +48,7 @@ func TestANSI256FgStart(t *testing.T) {
 	if got, want := ANSI256FgStart(TmuxStateWarningFg), "\x1b[38;5;214m"; got != want {
 		t.Fatalf("ANSI256FgStart(warning) = %q, want %q", got, want)
 	}
-	if got, want := ANSI256FgStart(TmuxUsageCriticalBoldFg), "\x1b[38;5;160m"; got != want {
+	if got, want := ANSI256FgStart(TmuxStateCriticalFg+",bold"), "\x1b[38;5;160m"; got != want {
 		t.Fatalf("ANSI256FgStart(critical,bold) = %q, want %q", got, want)
 	}
 }

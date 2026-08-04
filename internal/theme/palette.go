@@ -96,7 +96,6 @@ const (
 	TmuxGoneBg      = "colour238"
 
 	TmuxAccentAttentionBg  = "colour53"
-	TmuxAccentAttentionFg  = "colour225"
 	TmuxAttentionProjectBg = "colour90"
 	TmuxAccentAIBg         = "colour37"
 	TmuxAccentAIFg         = "colour121"
@@ -117,11 +116,7 @@ const (
 	TmuxGitSegmentBg = "colour30"
 	TmuxGitSegmentFg = TmuxPrimaryFg
 
-	TmuxUsageEmptyFg        = TmuxGoneBg
-	TmuxUsageOKFg           = TmuxStateSuccessFg
-	TmuxUsageWarningFg      = TmuxStateWarningFg
-	TmuxUsageCriticalFg     = TmuxStateCriticalFg
-	TmuxUsageCriticalBoldFg = TmuxStateCriticalFg + ",bold"
+	TmuxUsageEmptyFg = TmuxGoneBg
 
 	TmuxPaneBorderFg       = "colour236"
 	TmuxPaneActiveBorderFg = "colour51"
@@ -131,10 +126,8 @@ const (
 	TmuxMessageBg          = "colour208"
 	TmuxMessageFg          = "colour16"
 
-	TmuxDecorationCwdFg        = "colour220"
-	TmuxDecorationGitHubFg     = TmuxStateAheadFg
-	TmuxDecorationGitLabFg     = "colour215"
-	TmuxDecorationGenericGitFg = TmuxStateStagedFg
+	TmuxDecorationCwdFg    = "colour220"
+	TmuxDecorationGitLabFg = "colour215"
 
 	// Kube keeps tmux's named red/blue for output compatibility with the
 	// existing status segment until the segment gets a dedicated redesign.

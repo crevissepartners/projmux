@@ -72,7 +72,6 @@ func applyNativeUITheme(effective theme.EffectiveTheme) {
 	notifySidebarGone = roles.NotifyGone
 	notifySidebarTitle = roles.NotifyTitle
 	notifySidebarAgeOpen = roles.NotifyAge
-	notifySidebarTopicOpen = roles.ChipActive
 	notifySidebarAgentOpenStyle = roles.NotifyAgent
 
 	// AI badge palette (recent_window.go)

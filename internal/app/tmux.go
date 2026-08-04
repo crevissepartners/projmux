@@ -35,7 +35,6 @@ const (
 	tmuxWindowTitleWidth = 10
 
 	tmuxAccentAttentionBg = theme.TmuxAccentAttentionBg
-	tmuxAccentAttentionFg = theme.TmuxAccentAttentionFg
 	tmuxAccentAIBg        = theme.TmuxAccentAIBg
 	tmuxAccentAIFg        = theme.TmuxAccentAIFg
 	tmuxStateProgressFg   = theme.TmuxStateProgressFg
