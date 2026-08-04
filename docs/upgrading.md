@@ -88,7 +88,8 @@ should visibly sink. The active-pane border (`focus`) defaults to cyan
 `colour51`. Both apply only to tmux pane chrome.
 
 Built-in presets are intentionally small: `projmux`, `high-contrast`,
-`blue-hour`, `carbon-violet`, `ember`, `forest`, and `rose`. Terminal-default
+`blue-hour`, `carbon-violet`, `daylight`, `ember`, `forest`, and `rose`
+(`daylight` is the fully-light one). Terminal-default
 backgrounds are configured per token with the `default` sentinel rather than
 through separate terminal preset variants.
 
