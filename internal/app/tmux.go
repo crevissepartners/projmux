@@ -1422,6 +1422,7 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryP
 	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
 	lines = append(lines, tmuxBindLines(binaryPath, standaloneKeyBindings)...)
 	lines = append(lines, tmuxStatusbarKeyBindings(binaryPath)...)
+	lines = append(lines, tmuxPaneContextMenuBindings(binaryPath)...)
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -1600,6 +1601,50 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 		"bind-key -T projmux-status k run-shell " + tmuxConfigQuote(bin+" statusbar click kube"),
 		"bind-key -T projmux-status p run-shell " + tmuxConfigQuote(bin+" statusbar click pwd"),
 		"bind-key -T projmux-status s run-shell " + tmuxConfigQuote(bin+" statusbar click session"),
+	}
+}
+
+// tmuxPaneContextMenuBindings emits the right-click (MouseDown3Pane) pane
+// context menu. tmux ships a stock MouseDown3Pane menu, but overriding a root
+// mouse binding can leave a stale handler on a live server across reloads, so
+// we follow the statusbar pattern: unbind first, then re-install
+// deterministically.
+//
+// The menu reconstructs the useful subset of tmux 3.4's stock pane menu
+// (split, swap, kill, respawn, mark, zoom — with tmux's stock key shortcuts
+// and dim conditions) and adds a projmux `AI Resume Picker` entry at the top
+// that opens the resume picker via `run-shell <bin> ai picker --resume right`.
+//
+// Like the stock binding, the menu only opens when the pane's program is not
+// consuming the mouse (`mouse_any_flag`) and the pane is not in a
+// non-copy/view mode; otherwise the click is forwarded to the application via
+// `send-keys -M` so mouse-aware programs (vim, htop, ...) keep their own
+// right-click behavior. Block syntax (`{ ... }`) keeps the nested `run-shell`
+// quoting flat; blocks require tmux 3.0+ and doctor already enforces 3.4+.
+func tmuxPaneContextMenuBindings(binaryPath string) []string {
+	bin := tmuxShellQuote(binaryPath)
+	// Guard + title + dim conditions mirror tmux 3.4 key-bindings.c: swap
+	// entries are dimmed (`-` prefix) in single-pane windows, Mark/Unmark and
+	// Zoom/Unzoom toggle with pane/window state.
+	menu := "bind-key -n MouseDown3Pane if-shell -F -t = " +
+		tmuxConfigQuote("#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}") + " " +
+		"{ select-pane -t = ; send-keys -M } " +
+		"{ display-menu -T " + tmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})") + " -t = -x M -y M " +
+		tmuxConfigQuote("AI Resume Picker") + " a { run-shell " + tmuxConfigQuote(bin+" ai picker --resume right") + " } " +
+		"'' " +
+		tmuxConfigQuote("Horizontal Split") + " h { split-window -h } " +
+		tmuxConfigQuote("Vertical Split") + " v { split-window -v } " +
+		"'' " +
+		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Up") + " u { swap-pane -U } " +
+		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Down") + " d { swap-pane -D } " +
+		"'' " +
+		tmuxConfigQuote("Kill") + " X { kill-pane } " +
+		tmuxConfigQuote("Respawn") + " R { respawn-pane -k } " +
+		tmuxConfigQuote("#{?pane_marked,Unmark,Mark}") + " m { select-pane -m } " +
+		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}") + " z { resize-pane -Z } }"
+	return []string{
+		"unbind-key -q -n MouseDown3Pane",
+		menu,
 	}
 }
 
