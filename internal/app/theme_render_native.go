@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
@@ -71,13 +72,38 @@ func applyNativeUITheme(effective theme.EffectiveTheme) {
 	notifySidebarGone = roles.NotifyGone
 	notifySidebarTitle = roles.NotifyTitle
 	notifySidebarAgeOpen = roles.NotifyAge
-	notifySidebarTopicOpen = roles.ChipActive
 	notifySidebarAgentOpenStyle = roles.NotifyAgent
 
 	// AI badge palette (recent_window.go)
 	appAIBadgeActionRequired = roles.AIBadgeActionRequired
 	appAIBadgeSuccess = roles.AIBadgeSuccess
 	appAIBadgeProgress = roles.AIBadgeProgress
+
+	// statusbar popup text + usage severity (statusbar.go, bright Phase 2 B3).
+	// The severity escapes adapt the tmux-side state roles so the popup text
+	// matches the tmux HUD severity colors; for the fallback theme
+	// ANSIFgFromTmuxColor(colourN) is byte-identical to the historical
+	// ANSI256FgStart literals.
+	renderRoles := theme.RenderRolesFromEffective(effective)
+	statusbarMutedANSI = roles.TextMuted
+	if v := theme.ANSIFgFromTmuxColor(renderRoles.StateWarning); v != "" {
+		statusbarSevWarnANSI = v
+	}
+	if v := theme.ANSIFgFromTmuxColor(renderRoles.StateCritical); v != "" {
+		statusbarSevCritANSI = v
+	}
+	if v := theme.ANSIFgFromTmuxColor(renderRoles.StateSuccess); v != "" {
+		statusbarSevOKANSI = v
+	}
+
+	// hook-trust popup (hook_trust_popup.go, bright Phase 2 B3)
+	hookTrustHeaderStart = roles.SurfaceActive
+	hookTrustMutedStart = roles.TextMuted
+
+	// tmux-side status segment / notify HUD / usage HUD roles (status.go,
+	// usagecmd — bright Phase 2 B1)
+	applyStatusSegmentTheme(effective)
+	usagecmd.ApplyStatusTheme(effective)
 }
 
 // applyNativeUIThemeFromConfig resolves the effective theme from the global user

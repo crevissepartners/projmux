@@ -49,6 +49,20 @@ func New(now func() time.Time) *Command {
 	}
 }
 
+// statusRoles is the tmux-side semantic role map consumed by the status usage
+// HUD renderers. It defaults to the fallback role map, whose values equal the
+// historical literals (byte-identical); ApplyStatusTheme repoints it at the
+// resolved effective theme at command entry (bright Phase 2, B1). The HUD
+// render is single-threaded per CLI invocation, matching the app package's
+// native-UI role var pattern.
+var statusRoles = theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+
+// ApplyStatusTheme repoints the usage HUD role map at a resolved effective
+// theme. Applying the fallback theme restores byte-identity.
+func ApplyStatusTheme(effective theme.EffectiveTheme) {
+	statusRoles = theme.RenderRolesFromEffective(effective)
+}
+
 // staleAfter is the age at which a snapshot is considered stale and
 // flagged for the user with a single `~` marker. This is the single
 // source of truth for the HUD and the table — a snapshot older than
@@ -779,7 +793,7 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 			continue
 		}
 		var b strings.Builder
-		b.WriteString("#[fg=" + theme.TmuxAccentAIFg + ",bold]")
+		b.WriteString("#[fg=" + statusRoles.AccentAIFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		if withAge {
@@ -834,7 +848,7 @@ func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
 			continue
 		}
 		var b strings.Builder
-		b.WriteString("#[fg=" + theme.TmuxAccentAIFg + ",bold]")
+		b.WriteString("#[fg=" + statusRoles.AccentAIFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		b.WriteByte(' ')
@@ -906,10 +920,9 @@ func renderTextPair(m modelDisplay, label string) string {
 // escapes. Used for both 5h and weekly pairs in the HUD tiers.
 func renderHUDPair(window string, pct float64) string {
 	// State/severity colors come from the semantic role map (single source
-	// shared with notify/statusbar). The status subprocess does not yet thread
-	// an explicit EffectiveTheme, so the fallback role map is used here; full
-	// runtime theme plumbing for the usage HUD is a later phase.
-	roles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	// shared with notify/statusbar), repointed at the resolved effective theme
+	// by ApplyStatusTheme at command entry (bright Phase 2, B1).
+	roles := statusRoles
 	color := intrender.BarColorForPct(pct, roles)
 	bar := intrender.RenderColoredBar(pct, color, intrender.BarEmptyColorForRoles(roles))
 	// `#[default]` after the bar restores label fg before the weekly text. The
@@ -955,9 +968,9 @@ func renderAgeIndicator(m modelDisplay, now time.Time) string {
 	if text == "" {
 		return ""
 	}
-	color := theme.TmuxSecondaryFg
+	color := statusRoles.StatusTextSecondary
 	if age >= ageWarnAfter {
-		color = theme.TmuxMutedFg
+		color = statusRoles.StatusTextMuted
 	}
 	return fmt.Sprintf("#[fg=%s](%s)%s", color, text, statusDefaultReset)
 }

@@ -29,11 +29,12 @@ const (
 
 // statusbar git segment / kube colors source from the semantic role map
 // (single source shared with the decoration renderer) instead of bare tmux
-// literals. The status segment render path carries no explicit EffectiveTheme
-// today, so the fallback role map is used here; the fallback role values equal
-// the historical literals, so the generated strings are byte-identical.
+// literals. The defaults below are the fallback role map, whose values equal
+// the historical literals (byte-identical); applyStatusSegmentTheme repoints
+// them at the resolved effective theme at command entry (bright Phase 2, B1),
+// so the status/notify subprocess paths no longer pin the zero-value theme.
 var (
-	statusSegmentRoles = theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	statusSegmentRoles = theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
 
 	tmuxGitSegmentBg = statusSegmentRoles.GitSegmentBg
 	tmuxGitSegmentFg = statusSegmentRoles.GitSegmentFg
@@ -42,6 +43,36 @@ var (
 	tmuxGitAheadFg   = statusSegmentRoles.GitAhead
 	tmuxGitBehindFg  = statusSegmentRoles.GitBehind
 )
+
+// applyStatusSegmentTheme repoints every tmux-side status segment / notify HUD
+// role escape at a resolved effective theme. Call once at command entry (it is
+// wired into applyNativeUITheme). Applying the fallback theme restores the
+// historical literals for every role these paths consume, so fallback and all
+// current dark presets stay byte-identical.
+func applyStatusSegmentTheme(effective theme.EffectiveTheme) {
+	roles := theme.RenderRolesFromEffective(effective)
+	statusSegmentRoles = roles
+
+	tmuxGitSegmentBg = roles.GitSegmentBg
+	tmuxGitSegmentFg = roles.GitSegmentFg
+	tmuxGitDirtyFg = roles.GitDirty
+	tmuxGitStagedFg = roles.GitStaged
+	tmuxGitAheadFg = roles.GitAhead
+	tmuxGitBehindFg = roles.GitBehind
+
+	notifyStateRoles = roles
+	notifyProjectOpen = "#[bg=" + theme.TmuxAttentionProjectBg + ",fg=" + roles.StatusTextPrimary + ",bold]"
+	notifyBadgeStaleOpen = "#[bg=" + theme.TmuxMutedBg + ",fg=" + roles.StatusTextPrimary + ",bold]"
+	notifyBadgeGoneOpen = "#[bg=" + theme.TmuxGoneBg + ",fg=" + roles.StatusTextPrimary + ",dim]"
+	notifyLineOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + roles.StateProgress + "]"
+	notifyLineCountOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + roles.StateProgress + ",bold]"
+	notifyBadgeInfoOpen = "#[bg=" + roles.StateProgress + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
+	notifyBadgeWarnOpen = "#[bg=" + roles.StateWarning + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
+	notifyBadgeCritOpen = "#[bg=" + roles.StateCritical + ",fg=" + roles.StatusTextPrimary + ",bold]"
+	notifySeverityInfo = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + roles.StateProgress + "]"
+	notifySeverityWarn = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + roles.StateWarning + "]"
+	notifySeverityCrit = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + roles.StateCritical + ",bold]"
+}
 
 type statusCommand struct {
 	lookupEnv     func(string) string
@@ -80,6 +111,10 @@ func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printStatusUsage(stderr)
 		return errors.New("status requires a subcommand")
 	}
+	// Bright Phase 2 (B1): the status segment subprocesses render with the
+	// resolved effective theme instead of the fallback role map. The restore
+	// keeps the process-global role escapes deterministic.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 
 	switch args[0] {
 	case "git":
@@ -506,36 +541,42 @@ func (c *statusCommand) notifyStore() (notifyStore, error) {
 // of that same line instead of separate outline glyphs.
 const (
 	notifyLineDimOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + theme.TmuxStateAheadFg + "]"
-	notifyProjectOpen = "#[bg=" + theme.TmuxAttentionProjectBg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
+	notifyAgentOpen   = "#[bg=" + tmuxAccentAIBg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
+	notifyAgentClaude = notifyAgentOpen
+	notifyAgentCodex  = notifyAgentOpen
+	notifyIcon        = "●"
+	notifyMidDot      = "·"
+	notifyEllipsis    = "…"
+	notifyReset       = "#[default]"
+)
+
+// Badge tokens whose foreground migrated from the bare TmuxPrimaryFg literal
+// to the status.text_primary role (bright Phase 2, B1). Defaults equal the
+// historical literals; applyStatusSegmentTheme rebuilds them.
+var (
+	notifyProjectOpen = "#[bg=" + theme.TmuxAttentionProjectBg + ",fg=" + statusSegmentRoles.StatusTextPrimary + ",bold]"
 	// Inactive/gone badges share a muted palette so target-state hints are
 	// visually distinct from the active NEED/INFO/WARN/CRIT badges without
 	// stealing focus. The colours land in the same neutral grey family the
 	// sidebar uses so users learn one visual language for target state.
-	notifyBadgeStaleOpen = "#[bg=" + theme.TmuxMutedBg + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
-	notifyBadgeGoneOpen  = "#[bg=" + theme.TmuxGoneBg + ",fg=" + theme.TmuxPrimaryFg + ",dim]"
-	notifyAgentOpen      = "#[bg=" + tmuxAccentAIBg + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
-	notifyAgentClaude    = notifyAgentOpen
-	notifyAgentCodex     = notifyAgentOpen
-	notifyIcon           = "●"
-	notifyMidDot         = "·"
-	notifyEllipsis       = "…"
-	notifyReset          = "#[default]"
+	notifyBadgeStaleOpen = "#[bg=" + theme.TmuxMutedBg + ",fg=" + statusSegmentRoles.StatusTextPrimary + ",bold]"
+	notifyBadgeGoneOpen  = "#[bg=" + theme.TmuxGoneBg + ",fg=" + statusSegmentRoles.StatusTextPrimary + ",dim]"
 )
 
 // State/severity-colored notify tokens. These source their state colors from
 // the semantic role map (single source shared with statusbar/usage HUD) instead
-// of the bare tmux literal aliases. The status/notify render path carries no
-// explicit EffectiveTheme today, so the fallback role map is used here; full
-// subprocess theme plumbing is a later phase. The fallback role values equal the
-// historical literals, so the generated strings are byte-identical.
+// of the bare tmux literal aliases. The defaults below use the fallback role
+// map, whose values equal the historical literals (byte-identical);
+// applyStatusSegmentTheme rebuilds them from the resolved effective theme at
+// command entry (bright Phase 2, B1).
 var (
-	notifyStateRoles = theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	notifyStateRoles = statusSegmentRoles
 
 	notifyLineOpen      = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateProgress + "]"
 	notifyLineCountOpen = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateProgress + ",bold]"
 	notifyBadgeInfoOpen = "#[bg=" + notifyStateRoles.StateProgress + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
 	notifyBadgeWarnOpen = "#[bg=" + notifyStateRoles.StateWarning + ",fg=" + theme.TmuxPaneActiveFg + ",bold]"
-	notifyBadgeCritOpen = "#[bg=" + notifyStateRoles.StateCritical + ",fg=" + theme.TmuxPrimaryFg + ",bold]"
+	notifyBadgeCritOpen = "#[bg=" + notifyStateRoles.StateCritical + ",fg=" + notifyStateRoles.StatusTextPrimary + ",bold]"
 	notifySeverityInfo  = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateProgress + "]"
 	notifySeverityWarn  = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateWarning + "]"
 	notifySeverityCrit  = "#[bg=" + tmuxAccentAttentionBg + ",fg=" + notifyStateRoles.StateCritical + ",bold]"

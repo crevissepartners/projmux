@@ -1276,7 +1276,6 @@ var (
 	notifySidebarGone           = theme.ANSINotifyGoneStart
 	notifySidebarTitle          = theme.ANSINotifyTitleStart
 	notifySidebarAgeOpen        = theme.ANSINotifyAgeStart
-	notifySidebarTopicOpen      = theme.ANSIChipActiveStart
 	notifySidebarAgentOpenStyle = theme.ANSINotifyAgentStart
 )
 

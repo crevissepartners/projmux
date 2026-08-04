@@ -151,6 +151,9 @@ func (c *tmuxCommand) runHookTrustPrompt(args []string, stdout, stderr io.Writer
 }
 
 func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Reader, stdout, stderr io.Writer) error {
+	// Bright Phase 2 (B3): the hook-trust popup renders with the resolved
+	// effective theme instead of the fallback literals.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	fs := flag.NewFlagSet("tmux hook-trust-prompt", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	requestPath := fs.String("request", "", "path to project hook trust request JSON")
@@ -178,7 +181,7 @@ func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Read
 }
 
 func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectHookPromptRequest) hooks.ProjectHookDecision {
-	fmt.Fprintln(writer, projmuxpicker.CurrentStart+" Trust project automation "+projmuxpicker.Reset)
+	fmt.Fprintln(writer, hookTrustHeaderStart+" Trust project automation "+projmuxpicker.Reset)
 	scope := hookTrustRequestScope(req)
 	fmt.Fprintln(writer, hookTrustMuted(scope.description))
 	fmt.Fprintln(writer)
@@ -266,8 +269,16 @@ func hookTrustActionLine(action, detail string) string {
 	return fmt.Sprintf("  %-12s %s", action, hookTrustMuted(detail))
 }
 
+// hook-trust popup role escapes (bright Phase 2, B3). Defaults are the
+// historical fallback literals (byte-identical); applyNativeUITheme repoints
+// them at the resolved effective theme at command entry.
+var (
+	hookTrustHeaderStart = projmuxpicker.CurrentStart
+	hookTrustMutedStart  = projmuxpicker.MutedStart
+)
+
 func hookTrustMuted(value string) string {
-	return projmuxpicker.MutedStart + value + projmuxpicker.Reset
+	return hookTrustMutedStart + value + projmuxpicker.Reset
 }
 
 func parseHookTrustDecision(value string) hooks.ProjectHookDecision {

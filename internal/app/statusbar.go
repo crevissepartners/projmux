@@ -96,6 +96,9 @@ func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printStatusbarUsage(stderr)
 		return usageError("statusbar requires a subcommand")
 	}
+	// Bright Phase 2 (B3): statusbar popups (pwd/usage/notify) render with the
+	// resolved effective theme instead of the fallback literals.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	switch args[0] {
 	case "click":
 		return c.runClick(args[1:], stdout, stderr)
@@ -851,7 +854,7 @@ func statusbarUnsupportedUsageLine(provider usagecmd.UnsupportedProvider) string
 }
 
 func statusbarUsageSyncLine(state statusbarUsageState, now time.Time) string {
-	label := projmuxpicker.MutedStart + "sync" + projmuxpicker.Reset + "  "
+	label := statusbarMutedANSI + "sync" + projmuxpicker.Reset + "  "
 	if state.LastSync.IsZero() {
 		return label + dimANSI("never")
 	}
@@ -921,7 +924,7 @@ func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 }
 
 func statusbarUsageHeaderLine() string {
-	return projmuxpicker.MutedStart +
+	return statusbarMutedANSI +
 		fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", "MODEL", "WIN", "USED", "LIMIT", "LEFT", "PCT", "RESET") +
 		projmuxpicker.Reset
 }
@@ -1022,23 +1025,33 @@ func statusbarUsageErrorSummary(err error) string {
 }
 
 func dimANSI(value string) string {
-	return projmuxpicker.MutedStart + value + projmuxpicker.Reset
+	return statusbarMutedANSI + value + projmuxpicker.Reset
 }
+
+// statusbar popup text role escapes (bright Phase 2, B3). Defaults are the
+// historical fallback literals (byte-identical); applyNativeUITheme repoints
+// them at the resolved effective theme at command entry.
+var (
+	statusbarMutedANSI   = projmuxpicker.MutedStart
+	statusbarSevWarnANSI = theme.ANSI256FgStart(theme.TmuxStateWarningFg)
+	statusbarSevCritANSI = theme.ANSI256FgStart(theme.TmuxStateCriticalFg)
+	statusbarSevOKANSI   = theme.ANSI256FgStart(theme.TmuxStateSuccessFg)
+)
 
 // amberANSI/redANSI/tealANSI tint the native usage statusbar text from the
 // semantic state role map (single source shared with the notify/usage tmux
-// severity cluster). ANSI256FgStart adapts the role's tmux colourN to the
-// 256-color SGR; the fallback role values keep this byte-identical.
+// severity cluster), repointed at the resolved effective theme by
+// applyNativeUITheme; the fallback role values keep this byte-identical.
 func amberANSI(value string) string {
-	return theme.ANSI256FgStart(theme.RenderRolesFromEffective(theme.EffectiveTheme{}).StateWarning) + value + projmuxpicker.Reset
+	return statusbarSevWarnANSI + value + projmuxpicker.Reset
 }
 
 func redANSI(value string) string {
-	return theme.ANSI256FgStart(theme.RenderRolesFromEffective(theme.EffectiveTheme{}).StateCritical) + value + projmuxpicker.Reset
+	return statusbarSevCritANSI + value + projmuxpicker.Reset
 }
 
 func tealANSI(value string) string {
-	return theme.ANSI256FgStart(theme.RenderRolesFromEffective(theme.EffectiveTheme{}).StateSuccess) + value + projmuxpicker.Reset
+	return statusbarSevOKANSI + value + projmuxpicker.Reset
 }
 
 func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path string) statusbarPathMetadata {
@@ -1180,7 +1193,7 @@ func statusbarPopupCommand(payload, binaryPath string) string {
 const displayOnlyPopupClosePrompt = "Press any key to close."
 
 func displayOnlyPopupClosePromptLine() string {
-	return projmuxpicker.MutedStart + displayOnlyPopupClosePrompt + projmuxpicker.Reset
+	return statusbarMutedANSI + displayOnlyPopupClosePrompt + projmuxpicker.Reset
 }
 
 func statusbarPopupFooterLines(cols int) []string {
@@ -1204,7 +1217,7 @@ func statusbarFieldLines(label, value string, cols int) []string {
 		wrapped = []string{"-"}
 	}
 	lines := make([]string, 0, len(wrapped))
-	prefix := projmuxpicker.MutedStart + fmt.Sprintf("%-*s", labelWidth, label) + projmuxpicker.Reset + "  "
+	prefix := statusbarMutedANSI + fmt.Sprintf("%-*s", labelWidth, label) + projmuxpicker.Reset + "  "
 	continuation := strings.Repeat(" ", labelWidth+2)
 	for i, line := range wrapped {
 		if i == 0 {
