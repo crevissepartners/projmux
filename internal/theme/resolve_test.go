@@ -247,6 +247,14 @@ func TestRenderRolesFallbackUsesTerminalDefaultPaneAndPopupBackgrounds(t *testin
 		ActionBg:          TmuxActionBg,
 		ActionFg:          TmuxActionFg,
 		DividerFg:         TmuxDividerFg,
+		// bright Phase 2 statusbar text cluster: fallback keeps the historical
+		// bare literals verbatim.
+		StatusTextPrimary:   TmuxPrimaryFg,
+		StatusTextSecondary: TmuxSecondaryFg,
+		StatusTextMuted:     TmuxMutedFg,
+		AccentAIFg:          TmuxAccentAIFg,
+		UsageBarEmpty:       TmuxUsageEmptyFg,
+		PaneBorderMutedFg:   TmuxMutedFg,
 	}
 	if got != want {
 		t.Fatalf("fallback render roles = %#v, want %#v", got, want)

@@ -310,6 +310,22 @@ type RenderRoles struct {
 
 	// statusbar divider (Phase 4). Renderer-only literal; kept simple, not derived.
 	DividerFg string // divider.fg Tier C renderer-only (colour239)
+
+	// statusbar/HUD text cluster (bright preset Phase 2, B1). Bare fg literals
+	// migrated from direct palette consumption into roles. StatusTextPrimary is
+	// carried verbatim because its only consumers pair it with fixed dark badge
+	// backgrounds (colour90/240/238 and the severity badge bgs), so its contrast
+	// does not depend on status_background. The remaining roles render directly
+	// on status_background (or the pane body background) and are Tier B
+	// luma-gated: an explicit LIGHT backing token derives a darkened,
+	// hue-preserving variant; the fallback theme and every dark background keep
+	// the historical literal byte-identical.
+	StatusTextPrimary   string // status.text_primary   Tier C verbatim (colour231) — badge fg on fixed dark badge bgs
+	StatusTextSecondary string // status.text_secondary Tier B luma-gated vs status_background (colour245)
+	StatusTextMuted     string // status.text_muted     Tier B luma-gated vs status_background (colour244)
+	AccentAIFg          string // accent.ai_fg          Tier B luma-gated vs status_background (colour121) — usage HUD model label
+	UsageBarEmpty       string // usage.bar_empty       Tier B luma-gated vs status_background (colour238)
+	PaneBorderMutedFg   string // pane.border_muted_fg  Tier B luma-gated vs background (colour244) — inactive pane border label
 }
 
 // RenderRolesFromEffective derives the semantic role map from an effective
@@ -373,10 +389,15 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		GitAhead:     TmuxStateAheadFg,
 		GitBehind:    TmuxStateBehindFg,
 
-		// statusbar decoration: cwd is its OWN Tier C role (independent of
-		// state.progress). github/generic-git decorations reuse GitAhead/
-		// GitStaged above, so only cwd/gitlab carry their own literal here.
-		DecorationCwd:    TmuxDecorationCwdFg,
+		// statusbar decoration: cwd is its OWN role (independent of
+		// state.progress). It renders directly on status_background, so it is
+		// Tier B luma-gated (bright Phase 2): light status bar -> darkened
+		// variant, dark/fallback -> historical colour220 verbatim. The gitlab
+		// decoration and the git state fgs (GitStaged/Dirty/Ahead/Behind above)
+		// stay verbatim: they render INSIDE the git segment whose background is
+		// the fixed dark GitSegmentBg (colour30), so their contrast does not
+		// depend on status_background.
+		DecorationCwd:    tmuxLumaContrastOrLiteral(effective.StatusBackground, TmuxDecorationCwdFg),
 		DecorationGitLab: TmuxDecorationGitLabFg,
 
 		// kube: tmux named colors carried verbatim (Tier C).
@@ -391,6 +412,16 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 
 		// divider: Tier C renderer-only literal.
 		DividerFg: TmuxDividerFg,
+
+		// statusbar/HUD text cluster (bright Phase 2, B1): primary verbatim
+		// (only used on fixed dark badge bgs); the rest luma-gated against the
+		// token that actually backs their render surface.
+		StatusTextPrimary:   TmuxPrimaryFg,
+		StatusTextSecondary: tmuxLumaContrastOrLiteral(effective.StatusBackground, TmuxSecondaryFg),
+		StatusTextMuted:     tmuxLumaContrastOrLiteral(effective.StatusBackground, TmuxMutedFg),
+		AccentAIFg:          tmuxLumaContrastOrLiteral(effective.StatusBackground, TmuxAccentAIFg),
+		UsageBarEmpty:       tmuxLumaContrastOrLiteral(effective.StatusBackground, TmuxUsageEmptyFg),
+		PaneBorderMutedFg:   tmuxLumaContrastOrLiteral(effective.Background, TmuxMutedFg),
 	}
 }
 
@@ -478,6 +509,85 @@ func tmuxContrastFgOrFallback(bg ColorField, fallback string) string {
 		return "colour16"
 	}
 	return "colour231"
+}
+
+// Luma-gated contrast correction (bright preset Phase 2). Tier C renderer
+// literals were tuned for dark chrome; when an explicit theme paints the
+// backing surface LIGHT, the literal is darkened (hue preserved) so it stays
+// readable. The gate is deliberately conservative: fallback-sourced fields,
+// the terminal-default sentinel, and every dark background return the
+// historical literal verbatim, so the fallback theme and all current built-in
+// (dark) presets stay byte-identical.
+const (
+	// lightBackgroundLumaThreshold mirrors tmuxContrastFgOrFallback's split
+	// point: a background at or above this Rec. 601 luma is treated as light.
+	lightBackgroundLumaThreshold = 140.0
+	// contrastDarkenTargetLuma is the luma ceiling applied when darkening a
+	// literal for a light background.
+	contrastDarkenTargetLuma = 96.0
+)
+
+// rec601Luma returns the Rec. 601 luma of an RGB color in [0, 255].
+func rec601Luma(r, g, b int) float64 {
+	return 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+}
+
+// colorFieldIsLight reports whether an effective background field is an
+// explicit light color. Fallback-sourced fields and the terminal-default
+// sentinel are never light, so every correction gated on this predicate keeps
+// its historical literal for the fallback theme and all dark presets.
+func colorFieldIsLight(field ColorField) bool {
+	if field.Source == SourceFallback || IsThemeDefaultSpec(field.Value) {
+		return false
+	}
+	r, g, b, ok := parseHexRGB(field.Value.Hex)
+	if !ok {
+		return false
+	}
+	return rec601Luma(r, g, b) >= lightBackgroundLumaThreshold
+}
+
+// contrastDarkenRGB scales an RGB color toward black until its luma is at most
+// contrastDarkenTargetLuma, preserving hue. Colors already dark enough pass
+// through unchanged.
+func contrastDarkenRGB(r, g, b int) (int, int, int) {
+	luma := rec601Luma(r, g, b)
+	if luma <= contrastDarkenTargetLuma {
+		return r, g, b
+	}
+	f := contrastDarkenTargetLuma / luma
+	return int(float64(r) * f), int(float64(g) * f), int(float64(b) * f)
+}
+
+// tmuxColourLiteralRGB resolves a tmux colourN literal (optionally carrying a
+// ",style" suffix) to its xterm-256 RGB value.
+func tmuxColourLiteralRGB(literal string) (int, int, int, bool) {
+	base := strings.Split(literal, ",")[0]
+	if !strings.HasPrefix(base, "colour") {
+		return 0, 0, 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(base, "colour"))
+	if err != nil || n < 0 || n > 255 {
+		return 0, 0, 0, false
+	}
+	r, g, b := xterm256RGB(n)
+	return r, g, b, true
+}
+
+// tmuxLumaContrastOrLiteral is the Tier B luma-gated contrast transform for
+// statusbar Tier C literals: on an explicit light background the literal is
+// darkened and emitted as exact hex; otherwise the historical literal is
+// returned verbatim (byte-identity).
+func tmuxLumaContrastOrLiteral(bg ColorField, literal string) string {
+	if !colorFieldIsLight(bg) {
+		return literal
+	}
+	r, g, b, ok := tmuxColourLiteralRGB(literal)
+	if !ok {
+		return literal
+	}
+	dr, dg, db := contrastDarkenRGB(r, g, b)
+	return fmt.Sprintf("#%02x%02x%02x", dr, dg, db)
 }
 
 type preset struct {

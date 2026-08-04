@@ -140,16 +140,22 @@ func ANSIRolesFromEffective(effective EffectiveTheme) ANSIRoles {
 		AIBadgeSuccess:        ansiFGOrLiteral(effective.Success, ANSIAIBadgeSuccessStart),
 		AIBadgeActionRequired: ansiFGOrLiteral(effective.ActionRequired, ANSIAIBadgeActionRequiredStart),
 
-		// trust — brand literals (Tier C).
-		TrustTrusted:   ANSITrustTrustedStart,
-		TrustStale:     ANSITrustStaleStart,
-		TrustUntrusted: ANSITrustUntrustedStart,
+		// trust — brand literals (Tier C base color), luma-gated against the
+		// themed surface (bright Phase 2, B2): an explicit LIGHT surface
+		// darkens the brand hue for contrast; the fallback theme and every
+		// dark surface return the historical literal verbatim.
+		TrustTrusted:   ansiLumaContrastFGOrLiteral(effective.Surface, "", 154, 191, 136, ANSITrustTrustedStart),
+		TrustStale:     ansiLumaContrastFGOrLiteral(effective.Surface, "", 177, 139, 212, ANSITrustStaleStart),
+		TrustUntrusted: ansiLumaContrastFGOrLiteral(effective.Surface, "", 210, 139, 88, ANSITrustUntrustedStart),
 
-		// notify — brand/severity literals (Tier C). badge.project stays the
-		// literal on both adapters so the cross-surface sync test holds.
-		NotifyTitle:   ANSINotifyTitleStart,
-		NotifyDim:     ANSINotifyDimStart,
-		NotifyAge:     ANSINotifyAgeStart,
+		// notify — fg-only literals are luma-gated against the themed surface
+		// (bright Phase 2, B2); base RGB values are the xterm-256 colors baked
+		// into the literals (220=255,215,0 / 245=138,138,138 / 153=175,215,255).
+		// badge.project and the bg+fg severity badges stay verbatim so the
+		// cross-surface sync test holds and self-paired badges keep their look.
+		NotifyTitle:   ansiLumaContrastFGOrLiteral(effective.Surface, "1;", 255, 215, 0, ANSINotifyTitleStart),
+		NotifyDim:     ansiLumaContrastFGOrLiteral(effective.Surface, "", 138, 138, 138, ANSINotifyDimStart),
+		NotifyAge:     ansiLumaContrastFGOrLiteral(effective.Surface, "", 175, 215, 255, ANSINotifyAgeStart),
 		NotifyProject: ANSINotifyProjectStart,
 		NotifyInfo:    ANSINotifyInfoStart,
 		NotifyWarn:    ANSINotifyWarnStart,
@@ -165,9 +171,43 @@ func ANSIRolesFromEffective(effective EffectiveTheme) ANSIRoles {
 		SwitchGitInactive:     ANSISwitchGitInactiveStart,
 		SwitchWindowTabActive: ANSISwitchWindowTabActiveStart,
 		SwitchWindowTab:       ANSISwitchWindowTabStart,
-		SwitchAttentionNeeds:  ANSISwitchAttentionNeedsStart,
-		SwitchAttentionReady:  ANSISwitchAttentionReadyStart,
+		// attention dots are fg-only on the themed surface: luma-gated (bright
+		// Phase 2, B2). Base RGB: colour220=255,215,0 / colour82=95,255,0.
+		SwitchAttentionNeeds: ansiLumaContrastFGOrLiteral(effective.Surface, "", 255, 215, 0, ANSISwitchAttentionNeedsStart),
+		SwitchAttentionReady: ansiLumaContrastFGOrLiteral(effective.Surface, "", 95, 255, 0, ANSISwitchAttentionReadyStart),
 	}
+}
+
+// ansiLumaContrastFGOrLiteral is the ANSI-side luma-gated contrast transform
+// (bright Phase 2) for Tier C fg-only literals rendered on the themed
+// `surface`. On an explicit light surface the literal's base color (r,g,b) is
+// darkened hue-preserving and re-emitted as a truecolor escape carrying the
+// same leading attributes (e.g. "1;" keeps bold); on the fallback theme, the
+// terminal-default sentinel, and every dark surface the historical literal is
+// returned verbatim, so all current built-in presets stay byte-identical.
+func ansiLumaContrastFGOrLiteral(surface ColorField, attrs string, r, g, b int, literal string) string {
+	if !colorFieldIsLight(surface) {
+		return literal
+	}
+	dr, dg, db := contrastDarkenRGB(r, g, b)
+	return "\x1b[" + attrs + "38;2;" + strconv.Itoa(dr) + ";" + strconv.Itoa(dg) + ";" + strconv.Itoa(db) + "m"
+}
+
+// ANSIFgFromTmuxColor adapts a RenderRoles tmux color value (a colourN literal
+// or an explicit #RRGGBB hex, optionally carrying a ",style" suffix that is
+// ignored) to an ANSI foreground SGR escape. colourN maps to 38;5;N —
+// byte-identical to ANSI256FgStart for fallback-sourced roles — and hex maps
+// to truecolor 38;2;r;g;b. Unknown forms return "" so callers can keep their
+// current escape.
+func ANSIFgFromTmuxColor(color string) string {
+	base := strings.Split(color, ",")[0]
+	if r, g, b, ok := parseHexRGB(base); ok {
+		return ansiTruecolorFG(r, g, b)
+	}
+	if strings.HasPrefix(base, "colour") {
+		return ANSI256FgStart(base)
+	}
+	return ""
 }
 
 // fgWhite is the historical white foreground baked into ANSISurfaceActiveStart
