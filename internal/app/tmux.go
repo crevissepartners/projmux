@@ -1613,7 +1613,16 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 // The menu reconstructs the useful subset of tmux 3.4's stock pane menu
 // (split, swap, kill, respawn, mark, zoom — with tmux's stock key shortcuts
 // and dim conditions) and adds a projmux `AI Resume Picker` entry at the top
-// that opens the resume picker via `run-shell <bin> ai picker --resume right`.
+// that opens the resume picker through the same `tmux popup-toggle
+// ai-split-resume-right` entrypoint as the C-r keybinding. Calling `ai picker`
+// directly does not work here: tmux `run-shell` executes without the TMUX env
+// of a pane shell, so `resolveContextDir` cannot resolve a cwd and the picker
+// exits 1 ("cwd is empty"). `popup-toggle` resolves the origin pane and
+// context dir server-side instead. The item first runs `select-pane -t =` so
+// the clicked pane — not whichever pane happened to be active — becomes the
+// popup's origin; tmux keeps the opening click's mouse target alive for item
+// commands, so `-t =` resolves at selection time for both keyboard and mouse
+// selection (verified on tmux 3.4).
 //
 // Like the stock binding, the menu only opens when the pane's program is not
 // consuming the mouse (`mouse_any_flag`) and the pane is not in a
@@ -1622,7 +1631,12 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 // right-click behavior. Block syntax (`{ ... }`) keeps the nested `run-shell`
 // quoting flat; blocks require tmux 3.0+ and doctor already enforces 3.4+.
 func tmuxPaneContextMenuBindings(binaryPath string) []string {
-	bin := tmuxShellQuote(binaryPath)
+	// Reuse the keybinding catalog's renderer so the menu action stays
+	// byte-identical to the C-r binding's proven run-shell line.
+	resumeAction := renderTmuxBindingBody(binaryPath, keyBindingAction{
+		TmuxKind: tmuxBindingPopupToggle,
+		TmuxBody: "ai-split-resume-right",
+	})
 	// Guard + title + dim conditions mirror tmux 3.4 key-bindings.c: swap
 	// entries are dimmed (`-` prefix) in single-pane windows, Mark/Unmark and
 	// Zoom/Unzoom toggle with pane/window state.
@@ -1630,7 +1644,7 @@ func tmuxPaneContextMenuBindings(binaryPath string) []string {
 		tmuxConfigQuote("#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}") + " " +
 		"{ select-pane -t = ; send-keys -M } " +
 		"{ display-menu -T " + tmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})") + " -t = -x M -y M " +
-		tmuxConfigQuote("AI Resume Picker") + " a { run-shell " + tmuxConfigQuote(bin+" ai picker --resume right") + " } " +
+		tmuxConfigQuote("AI Resume Picker") + " a { select-pane -t = ; " + resumeAction + " } " +
 		"'' " +
 		tmuxConfigQuote("Horizontal Split") + " h { split-window -h } " +
 		tmuxConfigQuote("Vertical Split") + " v { split-window -v } " +
