@@ -33,7 +33,6 @@ const (
 	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
 	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
 	tmuxWindowTitleWidth = 10
-	tmuxSecondaryFg      = theme.TmuxSecondaryFg
 
 	tmuxAccentAttentionBg = theme.TmuxAccentAttentionBg
 	tmuxAccentAttentionFg = theme.TmuxAccentAttentionFg
@@ -1231,8 +1230,8 @@ func tmuxStandaloneConfig(binaryPath string, decoration config.StatusbarDecorati
 
 const statusbarSettingsIcon = ""
 
-func statusbarSettingsButton(label string) string {
-	return "#[bold,fg=" + statusSegmentRoles.ActionFg + ",bg=" + statusSegmentRoles.ActionBg + "]#[range=user|settings]" + statusbarSettingsButtonBody(label) + "#[norange]#[default]"
+func statusbarSettingsButton(label string, roles theme.RenderRoles) string {
+	return "#[bold,fg=" + roles.ActionFg + ",bg=" + roles.ActionBg + "]#[range=user|settings]" + statusbarSettingsButtonBody(label) + "#[norange]#[default]"
 }
 
 func statusbarSettingsButtonBody(label string) string {
@@ -1253,8 +1252,8 @@ func statusbarSettingsButtonBody(label string) string {
 // project surface. This replaces the former divergent raw `[#S]` (standalone)
 // and tmux-native de-slug `#{s|^[^-]*-||:session_name}` (app) segments; the
 // tmux regex de-slug is gone (naming v2 Phase 1b).
-func statusbarSessionLeftFormat(bin string) string {
-	return "#[range=user|session]#[bold,fg=" + statusSegmentRoles.IdentityFg + ",bg=" + statusSegmentRoles.IdentityBg + "] #(" + bin + " status project) #[default]#[norange] "
+func statusbarSessionLeftFormat(bin string, roles theme.RenderRoles) string {
+	return "#[range=user|session]#[bold,fg=" + roles.IdentityFg + ",bg=" + roles.IdentityBg + "] #(" + bin + " status project) #[default]#[norange] "
 }
 
 func statusbarAuxLineFormat(bin string, autosave bool) string {
@@ -1288,7 +1287,7 @@ func tmuxVisiblePaneLabelFormat() string {
 }
 
 func tmuxStyledVisiblePaneLabelFormat() string {
-	return tmuxStyledVisiblePaneLabelFormatFor(theme.RenderRolesFromEffective(theme.EffectiveTheme{}).StateProgress)
+	return tmuxStyledVisiblePaneLabelFormatFor(theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{})).StateProgress)
 }
 
 func tmuxStyledVisiblePaneLabelFormatFor(styleFg string) string {
@@ -1313,7 +1312,7 @@ func tmuxShellPaneLabelFormat() string {
 }
 
 func tmuxPaneBorderFormat() string {
-	return tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot, theme.RenderRolesFromEffective(theme.EffectiveTheme{}))
+	return tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot, theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{})))
 }
 
 func tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle config.AIBadgeStyle, roles theme.RenderRoles) string {
@@ -1322,13 +1321,13 @@ func tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle config.AIBadgeStyle, roles 
 	promptPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(roles.AIActionRequired)
 	busyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(roles.AIProgress)
 	replyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(roles.AISuccess)
-	mutedPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(theme.TmuxMutedFg)
+	mutedPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(roles.PaneBorderMutedFg)
 	panePromptFormat := "#{||:#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindApprovalRequired + "},#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindInputRequired + "}}"
 	paneCompleteFormat := "#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindResponseComplete + "}"
 	paneProgressFormat := "#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindInProgress + "}"
 	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
 	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + panePromptFormat + ",#[bold#,fg=" + roles.AIActionRequired + "]" + tmuxAIBadgeMarker(aiBadgeKindApprovalRequired, badgeStyle) + promptPaneLabelFormat + " #[default],#{?" + paneCompleteFormat + ",#[bold#,fg=" + roles.AISuccess + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#{?#{||:" + paneProgressFormat + "," + paneBusyFormat + "},#[bold#,fg=" + roles.AIProgress + "]" + tmuxAIBadgeMarker(aiBadgeKindInProgress, badgeStyle) + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + roles.AISuccess + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#[fg=" + theme.TmuxMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}}}"
+	inactivePaneBorderFormat := "#{?" + panePromptFormat + ",#[bold#,fg=" + roles.AIActionRequired + "]" + tmuxAIBadgeMarker(aiBadgeKindApprovalRequired, badgeStyle) + promptPaneLabelFormat + " #[default],#{?" + paneCompleteFormat + ",#[bold#,fg=" + roles.AISuccess + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#{?#{||:" + paneProgressFormat + "," + paneBusyFormat + "},#[bold#,fg=" + roles.AIProgress + "]" + tmuxAIBadgeMarker(aiBadgeKindInProgress, badgeStyle) + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + roles.AISuccess + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#[fg=" + roles.PaneBorderMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}}}"
 	return "#{?pane_active,#[bold#,fg=" + roles.PaneTopicChipFg + "#,bg=" + roles.PaneTopicChipBg + "] > " + activePaneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
 }
 
@@ -1403,8 +1402,8 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryP
 		"set -g status 2",
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
-		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin)),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
+		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin, roles)),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux", roles)),
 		// Two-line status bar: line 0 is the notify/HUD control row; line 1 is
 		// tmux's native session/window/path row. Setting both rows explicitly is
 		// required because tmux's built-in row otherwise stays at index 0.
@@ -1527,8 +1526,8 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, de
 	// small buffer while still fitting alongside notify.
 	lines = append(lines,
 		"set -g status 2",
-		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin)),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+tmuxSecondaryFg+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
+		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin, roles)),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon, roles)),
 		"set -g status-format[0] "+tmuxConfigQuote(statusbarAuxLineFormat(bin, true)),
 		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[2]",

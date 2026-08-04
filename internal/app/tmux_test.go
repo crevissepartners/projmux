@@ -1394,7 +1394,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 func TestStatusbarSettingsButtonPaintsCompactPaddingInsideRange(t *testing.T) {
 	t.Parallel()
 
-	got := statusbarSettingsButton(statusbarSettingsIcon)
+	got := statusbarSettingsButton(statusbarSettingsIcon, statusSegmentRoles)
 	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]   #[norange]#[default]"
 	if got != want {
 		t.Fatalf("statusbarSettingsButton() = %q, want %q", got, want)
@@ -1404,7 +1404,7 @@ func TestStatusbarSettingsButtonPaintsCompactPaddingInsideRange(t *testing.T) {
 func TestStatusbarSettingsButtonPaintsStandalonePaddingInsideRange(t *testing.T) {
 	t.Parallel()
 
-	got := statusbarSettingsButton(statusbarSettingsIcon + " projmux")
+	got := statusbarSettingsButton(statusbarSettingsIcon+" projmux", statusSegmentRoles)
 	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]  projmux #[norange]#[default]"
 	if got != want {
 		t.Fatalf("statusbarSettingsButton() = %q, want %q", got, want)

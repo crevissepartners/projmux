@@ -108,11 +108,15 @@ func BarColorForPct(pct float64, roles theme.RenderRoles) string {
 	}
 }
 
-// BarEmptyColorForRoles returns the tmux color used for empty bar cells. It is
-// the muted/gone bg literal (TmuxUsageEmptyFg = TmuxGoneBg) carried as the
-// usage-empty role; not yet runtime-derived (Phase 6 candidate).
-func BarEmptyColorForRoles(_ theme.RenderRoles) string {
-	return theme.TmuxUsageEmptyFg
+// BarEmptyColorForRoles returns the tmux color used for empty bar cells,
+// sourced from the usage.bar_empty role (bright Phase 2, B1): the fallback and
+// dark themes keep the historical TmuxUsageEmptyFg literal; a light
+// status_background derives a contrast-corrected variant.
+func BarEmptyColorForRoles(roles theme.RenderRoles) string {
+	if roles.UsageBarEmpty == "" {
+		return theme.TmuxUsageEmptyFg
+	}
+	return roles.UsageBarEmpty
 }
 
 // BarEmptyColor is the tmux color used for empty bar cells across the HUD.

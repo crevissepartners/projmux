@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -47,6 +48,8 @@ type attentionCommand struct {
 	runner               tmuxRunner
 	producer             attentionNotifyProducer
 	sidebarPreviewActive func() bool
+	homeDir              func() (string, error)
+	lookupEnv            func(string) string
 }
 
 func newAttentionCommand() *attentionCommand {
@@ -54,6 +57,8 @@ func newAttentionCommand() *attentionCommand {
 		runner:               inttmux.ExecRunner{},
 		producer:             newAttentionNotifyProducer(),
 		sidebarPreviewActive: isSidebarPreviewActive,
+		homeDir:              os.UserHomeDir,
+		lookupEnv:            os.Getenv,
 	}
 }
 
@@ -242,6 +247,9 @@ func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) error {
+	// Bright Phase 2 (B1): the window badge glyph renders with the resolved
+	// effective theme instead of the zero-value fallback role map.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	windowID, style, err := parseAttentionWindowArgs(args, stderr)
 	if err != nil {
 		return err
@@ -263,7 +271,7 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 			_, err := fmt.Fprint(stdout, " ")
 			return err
 		}
-		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAIBadgeKindFg(badgeKind, theme.RenderRolesFromEffective(theme.EffectiveTheme{}))+"]"+glyph)
+		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAIBadgeKindFg(badgeKind, statusSegmentRoles)+"]"+glyph)
 		return err
 	}
 	_, err = fmt.Fprint(stdout, " ")

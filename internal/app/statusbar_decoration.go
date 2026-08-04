@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const (
@@ -129,12 +130,12 @@ func statusbarDecorationTmuxOptionForTarget(target statusbarDecorationTarget) st
 	}
 }
 
-func statusbarCwdSegmentFormat() string {
-	return "#[range=user|pwd]" + statusbarCwdDecoratorFormat() + "#[fg=" + tmuxSecondaryFg + "]#{=-28/...:pane_current_path}#[norange]"
+func statusbarCwdSegmentFormat(roles theme.RenderRoles) string {
+	return "#[range=user|pwd]" + statusbarCwdDecoratorFormat(roles) + "#[fg=" + roles.StatusTextSecondary + "]#{=-28/...:pane_current_path}#[norange]"
 }
 
-func statusbarCwdDecoratorFormat() string {
-	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=" + statusSegmentRoles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=" + statusSegmentRoles.DecorationCwd + "]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=" + statusSegmentRoles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=" + statusSegmentRoles.DecorationCwd + "]📁 ,}}}"
+func statusbarCwdDecoratorFormat(roles theme.RenderRoles) string {
+	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=" + roles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=" + roles.DecorationCwd + "]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=" + roles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=" + roles.DecorationCwd + "]📁 ,}}}"
 }
 
 type gitRemoteProvider string
