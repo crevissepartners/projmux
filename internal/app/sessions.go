@@ -106,6 +106,9 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printSessionsUsage(stderr)
 		return err
 	}
+	// Bright Phase 2 (B3): the sessions picker rows render with the resolved
+	// effective theme instead of the fallback literals.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 
 	if c.recent == nil {
 		return fmt.Errorf("recent tmux session resolver is not configured")

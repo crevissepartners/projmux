@@ -66,6 +66,9 @@ func newSessionPopupCommand() *sessionPopupCommand {
 
 // Run manages session-popup subcommands.
 func (c *sessionPopupCommand) Run(args []string, stdout, stderr io.Writer) error {
+	// Bright Phase 2 (B3): the session-popup preview renders with the resolved
+	// effective theme instead of the fallback literals.
+	defer applyNativeUIThemeFromConfig(os.UserHomeDir, os.Getenv, "")()
 	fs := flag.NewFlagSet("session-popup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
