@@ -273,7 +273,10 @@ of these is a public token: leave it unset to keep the historical built-in
 color, or set it to repaint the matching chrome.
 
 Supported presets are `projmux`, `high-contrast`, `blue-hour`, `carbon-violet`,
-`ember`, `forest`, and `rose`. A preset fills
+`daylight`, `ember`, `forest`, and `rose`. `daylight` is the fully-light
+preset; the others are dark. Preset colors paint projmux chrome only (status
+bar, popups, pane borders/tint) — pane contents follow the terminal theme, so
+`daylight` pairs best with a light terminal theme. A preset fills
 missing color tokens, and explicit color tokens override preset values. Tokens
 the global theme leaves unset fall through to the built-in fallback preset.
 Terminal-default backgrounds are configured per token with the `default`

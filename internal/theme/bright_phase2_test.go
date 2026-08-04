@@ -72,13 +72,15 @@ func parseTestHexRGB(t *testing.T, hex string) (int, int, int) {
 }
 
 // TestBrightPhase2ANSIRolesDarkByteIdentity pins the B2 cluster: for the
-// fallback theme and EVERY current built-in (dark) preset, the fg-only Tier C
-// literals must be emitted byte-identically.
+// fallback theme and EVERY dark built-in preset, the fg-only Tier C
+// literals must be emitted byte-identically. Fully-light presets (Phase 1,
+// e.g. daylight) intentionally trigger the light-surface derivations and are
+// covered by the light-derivation tests below.
 func TestBrightPhase2ANSIRolesDarkByteIdentity(t *testing.T) {
 	t.Parallel()
 
 	configs := map[string]ThemeConfig{"fallback": {}}
-	for _, name := range PresetNames() {
+	for _, name := range darkPresetNames() {
 		configs["preset:"+name] = ThemeConfig{Preset: name}
 	}
 	for label, cfg := range configs {
@@ -105,14 +107,31 @@ func TestBrightPhase2ANSIRolesDarkByteIdentity(t *testing.T) {
 	}
 }
 
+// darkPresetNames returns the built-in presets whose luma-gated backing
+// surfaces are all dark — the presets whose Tier C literals must stay
+// byte-identical. Fully-light presets are excluded: their light backgrounds
+// are exactly what the Phase 2 derivations exist to correct.
+func darkPresetNames() []string {
+	out := make([]string, 0, len(builtinPresets))
+	for _, name := range PresetNames() {
+		effective := ResolveTheme(ThemeConfig{Preset: name})
+		if colorFieldIsLight(effective.Surface) || colorFieldIsLight(effective.StatusBackground) || colorFieldIsLight(effective.Background) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
 // TestBrightPhase2RenderRolesDarkByteIdentity pins the B1 cluster on the tmux
 // side: fallback and every dark preset keep the historical literals for the
-// luma-gated statusbar roles.
+// luma-gated statusbar roles. Fully-light presets are excluded for the same
+// reason as the ANSI-side test above.
 func TestBrightPhase2RenderRolesDarkByteIdentity(t *testing.T) {
 	t.Parallel()
 
 	configs := map[string]ThemeConfig{"fallback": {}}
-	for _, name := range PresetNames() {
+	for _, name := range darkPresetNames() {
 		configs["preset:"+name] = ThemeConfig{Preset: name}
 	}
 	for label, cfg := range configs {

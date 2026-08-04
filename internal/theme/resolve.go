@@ -637,6 +637,16 @@ var builtinPresets = map[string]preset{
 			TokenPaneActiveBg: "#000000", TokenFocus: "#b48ead",
 		}),
 	},
+	"daylight": {
+		Name: "daylight",
+		Colors: presetColors(map[ColorToken]string{
+			TokenBackground: "#f2efe9", TokenSurface: "#faf7f1", TokenStatusBackground: "#dfdad0", TokenSurfaceActive: "#cfe0f0",
+			TokenChromeForeground: "#3a4550", TokenTextPrimary: "#2c3338", TokenForeground: "#2c3338", TokenMuted: "#6b7680", TokenAccent: "#0f766e",
+			TokenCritical: "#c62828", TokenWarning: "#b45309",
+			TokenProgress: "#1d4ed8", TokenSuccess: "#15803d", TokenActionRequired: "#d97706",
+			TokenPaneActiveBg: "#e8e4dc", TokenFocus: "#2563eb",
+		}),
+	},
 	"ember": {
 		Name: "ember",
 		Colors: presetColors(map[ColorToken]string{

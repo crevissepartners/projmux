@@ -159,6 +159,7 @@ Built-in preset config values are:
 - `high-contrast`
 - `blue-hour`
 - `carbon-violet`
+- `daylight`
 - `ember`
 - `forest`
 - `rose`
@@ -167,9 +168,41 @@ Built-in preset config values are:
   and a deep indigo active pane tint.
 - `carbon-violet` — charcoal/violet dark theme with darker popup/status
   surfaces and a black active pane tint.
+- `daylight` — the fully-light preset: warm paper pane/popup surfaces, an
+  explicit light status bar, dark slate text, a teal accent, a strong blue
+  focus border, and darkened saturated state colors (red/amber/blue/green/
+  orange) tuned to stay distinguishable on light chrome after 256-color
+  quantization. The active pane tint sits one tone darker than the pane body
+  (the inverse of the dark presets).
 - `high-contrast` — black surfaces, white text, a dark blue active surface,
   near-black active pane tint, vivid cyan focus, and bright
   cyan/yellow/red/green state colors.
+
+Preset colors paint projmux chrome only — the tmux status bar, picker/popup
+frames, pane borders, and the pane background tint. Pane contents (shell
+prompt, editor, command output) follow the terminal/shell theme, so a fully
+light experience with `daylight` also requires a light terminal theme.
+
+`daylight` palette values:
+
+| Token | Hex | Nearest tmux |
+| --- | --- | --- |
+| `background` | `#f2efe9` | `colour255` |
+| `surface` | `#faf7f1` | `colour255` |
+| `status_background` | `#dfdad0` | `colour188` |
+| `surface_active` | `#cfe0f0` | `colour189` |
+| `chrome_foreground` | `#3a4550` | `colour238` |
+| `text_primary` | `#2c3338` | `colour236` |
+| `foreground` | `#2c3338` | `colour236` |
+| `muted` | `#6b7680` | `colour243` |
+| `accent` | `#0f766e` | `colour6` |
+| `critical` | `#c62828` | `colour160` |
+| `warning` | `#b45309` | `colour130` |
+| `progress` | `#1d4ed8` | `colour26` |
+| `success` | `#15803d` | `colour29` |
+| `action_required` | `#d97706` | `colour172` |
+| `pane_active_bg` | `#e8e4dc` | `colour254` |
+| `focus` | `#2563eb` | `colour26` |
 
 ## Fallback Inventory
 
