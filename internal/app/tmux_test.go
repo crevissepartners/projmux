@@ -1785,6 +1785,107 @@ func TestTmuxPrintConfigBindsHardcodedStatusbarUsageRefresh(t *testing.T) {
 	}
 }
 
+func TestTmuxPrintConfigBindsPaneContextMenu(t *testing.T) {
+	t.Parallel()
+
+	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		// Stock-style guard: forward the click to mouse-aware applications and
+		// non-copy pane modes instead of opening the menu.
+		"bind-key -n MouseDown3Pane if-shell -F -t = \"#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}\"",
+		"{ select-pane -t = ; send-keys -M }",
+		// Menu chrome mirrors tmux 3.4's stock MouseDown3Pane menu.
+		"display-menu -T \"#[align=centre]#{pane_index} (#{pane_id})\" -t = -x M -y M",
+		// projmux entry: opens the AI resume picker via the CLI entrypoint.
+		`"AI Resume Picker" a { run-shell "'/tmp/proj mux/bin/projmux' ai picker --resume right" }`,
+		// Stock split items (stock names + key shortcuts).
+		"\"Horizontal Split\" h { split-window -h }",
+		"\"Vertical Split\" v { split-window -v }",
+		// A few more stock items with their dim/toggle format conditions.
+		"\"#{?#{>:#{window_panes},1},,-}Swap Up\" u { swap-pane -U }",
+		"\"#{?#{>:#{window_panes},1},,-}Swap Down\" d { swap-pane -D }",
+		"\"Kill\" X { kill-pane }",
+		"\"Respawn\" R { respawn-pane -k }",
+		"\"#{?pane_marked,Unmark,Mark}\" m { select-pane -m }",
+		"\"#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}\" z { resize-pane -Z }",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-config output = %q, want substring %q", output, want)
+		}
+	}
+}
+
+func TestTmuxPrintConfigUnbindsPaneContextMenuBeforeBinding(t *testing.T) {
+	t.Parallel()
+
+	// Same unbind-then-reinstall contract as the statusbar MouseDown1Status
+	// binding: the quiet unbind must precede the bind so re-sourcing the config
+	// on a live server deterministically replaces any stale handler.
+	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/projmux", nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	unbindIdx := strings.Index(output, "unbind-key -q -n MouseDown3Pane")
+	bindIdx := strings.Index(output, "bind-key -n MouseDown3Pane")
+	if unbindIdx == -1 {
+		t.Fatalf("print-config output = %q, want substring %q", output, "unbind-key -q -n MouseDown3Pane")
+	}
+	if bindIdx == -1 {
+		t.Fatalf("print-config output = %q, want substring %q", output, "bind-key -n MouseDown3Pane")
+	}
+	if unbindIdx > bindIdx {
+		t.Fatalf("unbind-key -q -n MouseDown3Pane (index %d) must precede bind-key -n MouseDown3Pane (index %d)", unbindIdx, bindIdx)
+	}
+
+	// The statusbar binding follows the identical pattern; pin both so the
+	// surfaces cannot drift apart silently.
+	statusUnbindIdx := strings.Index(output, "unbind-key -q -n MouseDown1Status")
+	statusBindIdx := strings.Index(output, "bind-key -n MouseDown1Status")
+	if statusUnbindIdx == -1 || statusBindIdx == -1 || statusUnbindIdx > statusBindIdx {
+		t.Fatalf("statusbar unbind/bind ordering broken: unbind index %d, bind index %d", statusUnbindIdx, statusBindIdx)
+	}
+}
+
+func TestTmuxPrintAppConfigBindsPaneContextMenu(t *testing.T) {
+	t.Parallel()
+
+	// The app config embeds the standalone config lines, so `projmux shell`
+	// sessions must carry the same pane context menu.
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil },
+		homeDir:    func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"unbind-key -q -n MouseDown3Pane",
+		"bind-key -n MouseDown3Pane if-shell -F -t = ",
+		"display-menu -T \"#[align=centre]#{pane_index} (#{pane_id})\" -t = -x M -y M",
+		`"AI Resume Picker" a { run-shell "'/tmp/proj mux/bin/projmux' ai picker --resume right" }`,
+		"\"Horizontal Split\" h { split-window -h }",
+		"\"Vertical Split\" v { split-window -v }",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
+		}
+	}
+}
+
 func TestTmuxRebalancePanesSelectsMultiPaneWindows(t *testing.T) {
 	t.Parallel()
 
