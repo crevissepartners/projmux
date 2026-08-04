@@ -1802,8 +1802,11 @@ func TestTmuxPrintConfigBindsPaneContextMenu(t *testing.T) {
 		"{ select-pane -t = ; send-keys -M }",
 		// Menu chrome mirrors tmux 3.4's stock MouseDown3Pane menu.
 		"display-menu -T \"#[align=centre]#{pane_index} (#{pane_id})\" -t = -x M -y M",
-		// projmux entry: opens the AI resume picker via the CLI entrypoint.
-		`"AI Resume Picker" a { run-shell "'/tmp/proj mux/bin/projmux' ai picker --resume right" }`,
+		// projmux entry: selects the clicked pane, then opens the AI resume
+		// picker via the same popup-toggle entrypoint as the C-r keybinding
+		// (`ai picker` directly would fail: run-shell has no TMUX env, so the
+		// picker cannot resolve its context cwd).
+		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
 		// Stock split items (stock names + key shortcuts).
 		"\"Horizontal Split\" h { split-window -h }",
 		"\"Vertical Split\" v { split-window -v }",
@@ -1876,7 +1879,7 @@ func TestTmuxPrintAppConfigBindsPaneContextMenu(t *testing.T) {
 		"unbind-key -q -n MouseDown3Pane",
 		"bind-key -n MouseDown3Pane if-shell -F -t = ",
 		"display-menu -T \"#[align=centre]#{pane_index} (#{pane_id})\" -t = -x M -y M",
-		`"AI Resume Picker" a { run-shell "'/tmp/proj mux/bin/projmux' ai picker --resume right" }`,
+		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
 		"\"Horizontal Split\" h { split-window -h }",
 		"\"Vertical Split\" v { split-window -v }",
 	} {
