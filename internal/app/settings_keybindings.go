@@ -469,15 +469,14 @@ func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdo
 		mode = "Replace Keys"
 	}
 	result, err := c.runPicker(intpickercompat.Options{
-		UI:            "settings-keybinding-type",
-		Entries:       []intpickercompat.Entry{c.backEntry(), {Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), keybindingAliasesSummary(action)), Value: settingsNoopValue}},
-		Title:         mode + " - " + keyBindingDisplayName(action),
-		Prompt:        "Enter key > ",
-		Footer:        projmuxFooter("Enter a key such as C-r, M-a, M-S-Left, or C-Space."),
-		ExpectKeys:    []string{"enter"},
-		Bindings:      c.settingsCloseBindings(),
-		AcceptQuery:   true,
-		DisableSearch: true,
+		UI:          "settings-keybinding-type",
+		Entries:     []intpickercompat.Entry{c.backEntry(), {Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), keybindingAliasesSummary(action)), Value: settingsNoopValue}},
+		Title:       mode + " - " + keyBindingDisplayName(action),
+		Prompt:      "Enter key > ",
+		Footer:      projmuxFooter("Enter a key such as C-r, M-a, M-S-Left, or C-Space."),
+		ExpectKeys:  []string{"enter"},
+		Bindings:    c.settingsCloseBindings(),
+		AcceptQuery: true,
 	})
 	if err != nil {
 		return err
