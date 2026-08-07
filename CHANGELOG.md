@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.8.0](https://github.com/crevissepartners/projmux/compare/v0.7.6...v0.8.0) (2026-08-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* removes the [insert_file_text.<name>] config surface, InsertFileText action, and insert-file-text CLI command.
+
+### Features
+
+* add native macOS keybinding opt-out ([cebe16a](https://github.com/crevissepartners/projmux/commit/cebe16a60dacc831d8e188d287ec793377bb843c))
+* **macos:** add native keybinding opt-out ([#533](https://github.com/crevissepartners/projmux/issues/533)) ([cebe16a](https://github.com/crevissepartners/projmux/commit/cebe16a60dacc831d8e188d287ec793377bb843c))
+* remove InsertFileText generic pane insert ([#541](https://github.com/crevissepartners/projmux/issues/541)) ([81026e3](https://github.com/crevissepartners/projmux/commit/81026e387ce99508e07b07cc8d6b7df1c835bca2))
+* **theme:** add daylight fully-light builtin preset (bright preset Phase 1) ([#546](https://github.com/crevissepartners/projmux/issues/546)) ([3ae916c](https://github.com/crevissepartners/projmux/commit/3ae916cea6028fdcbf9269b08228c44f8773cab7))
+* **theme:** add daylight fully-light builtin preset (roadmap Phase 1) ([3ae916c](https://github.com/crevissepartners/projmux/commit/3ae916cea6028fdcbf9269b08228c44f8773cab7))
+* **tmux:** add right-click pane context menu with AI Resume Picker ([#543](https://github.com/crevissepartners/projmux/issues/543)) ([425d5d0](https://github.com/crevissepartners/projmux/commit/425d5d071ace0b4df3e022172904971e2e0a7cab))
+* **usage:** add throttled HUD refresh key (Phase 0) ([#528](https://github.com/crevissepartners/projmux/issues/528)) ([dcfe133](https://github.com/crevissepartners/projmux/commit/dcfe1336fbc98c1fca7ddba89f391c1caaa9954d))
+
+
+### Bug Fixes
+
+* **aisessions:** filter Claude resume-picker noise tags (Phase 0) ([#527](https://github.com/crevissepartners/projmux/issues/527)) ([b4f866b](https://github.com/crevissepartners/projmux/commit/b4f866b33cff3eb638cedee4123946f6dd36a843))
+* bound status and picker git commands ([7f7347b](https://github.com/crevissepartners/projmux/commit/7f7347bab0d21fea795eeca7180d5b813fa4a207))
+* clean stale state artifacts ([#542](https://github.com/crevissepartners/projmux/issues/542)) ([497eab4](https://github.com/crevissepartners/projmux/commit/497eab448d9e67c32ce95344b8fe38aeadbf0945))
+* **core:** serialize store lock jitter RNG ([#537](https://github.com/crevissepartners/projmux/issues/537)) ([b70555a](https://github.com/crevissepartners/projmux/commit/b70555a12993dc80fe96c08628aaad8e31a4d6a5))
+* filter Claude resume noise tags ([b4f866b](https://github.com/crevissepartners/projmux/commit/b4f866b33cff3eb638cedee4123946f6dd36a843))
+* **notify:** bound queue during reconcile ([#539](https://github.com/crevissepartners/projmux/issues/539)) ([2927ec0](https://github.com/crevissepartners/projmux/commit/2927ec0d09c522736e3d4b0e0f426daf229f1dbc))
+* **picker:** stop interactive input reader leaks ([#536](https://github.com/crevissepartners/projmux/issues/536)) ([edd59e9](https://github.com/crevissepartners/projmux/commit/edd59e9712ea0939a063e7607a72dc003be28aca))
+* **security:** gate project layout commands by content hash ([a4927b8](https://github.com/crevissepartners/projmux/commit/a4927b84af6f1aad232cc7b41bb6dd078a80fca2))
+* **security:** gate project layout commands by content hash (trust boundary) ([#529](https://github.com/crevissepartners/projmux/issues/529)) ([a4927b8](https://github.com/crevissepartners/projmux/commit/a4927b84af6f1aad232cc7b41bb6dd078a80fca2))
+* **security:** harden release updater boundaries ([#532](https://github.com/crevissepartners/projmux/issues/532)) ([18cddbe](https://github.com/crevissepartners/projmux/commit/18cddbef0e1440a4639f10d3c3f8d39479cf05bb))
+* **security:** harden sensitive local state permissions ([#535](https://github.com/crevissepartners/projmux/issues/535)) ([2173c74](https://github.com/crevissepartners/projmux/commit/2173c741ac9d8731f5e424f74e7fca87bf033a0e))
+* **security:** pin Go toolchain to go1.26.5 for stdlib vuln patches ([#525](https://github.com/crevissepartners/projmux/issues/525)) ([715a0e3](https://github.com/crevissepartners/projmux/commit/715a0e31d0784108850a4d86beff5657d73be116))
+* **status:** bound status/picker git commands with timeouts (Phase 0) ([#534](https://github.com/crevissepartners/projmux/issues/534)) ([7f7347b](https://github.com/crevissepartners/projmux/commit/7f7347bab0d21fea795eeca7180d5b813fa4a207))
+* **theme:** light-background contrast corrections for statusbar/notify/trust surfaces (bright preset phase 2) ([#545](https://github.com/crevissepartners/projmux/issues/545)) ([f97de18](https://github.com/crevissepartners/projmux/commit/f97de18ada2aeb643885498bb126c93b9cced886))
+* **tmux:** open pane menu resume picker via popup-toggle entrypoint ([#544](https://github.com/crevissepartners/projmux/issues/544)) ([fa3da53](https://github.com/crevissepartners/projmux/commit/fa3da53be7fe43fa9e5b7d4564a4377855a66d8a))
+
 ## [0.7.6](https://github.com/crevissepartners/projmux/compare/v0.7.5...v0.7.6) (2026-07-28)
 
 
