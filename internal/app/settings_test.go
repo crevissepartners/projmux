@@ -7456,3 +7456,200 @@ func scriptedPicker(t *testing.T, steps []pickerStep) (switchRunner, intpicker.R
 	runner := switchRunnerFunc(fn)
 	return runner, nativePickerFromCompatRunner(runner)
 }
+
+func TestSettingsKeybindingPhysicalCaptureAvailabilityDefaults(t *testing.T) {
+	t.Parallel()
+
+	tmuxEnv := func(name string) string {
+		if name == "TMUX" {
+			return "/tmp/tmux,1,0"
+		}
+		return ""
+	}
+
+	insideTmux := &settingsCommand{lookupEnv: tmuxEnv}
+	if insideTmux.keybindingPhysicalCaptureAvailable() {
+		t.Fatal("capture must be unavailable inside tmux without a native or probe transport")
+	}
+
+	outsideTmux := &settingsCommand{lookupEnv: func(string) string { return "" }}
+	if !outsideTmux.keybindingPhysicalCaptureAvailable() {
+		t.Fatal("controlling-tty capture outside tmux must stay available")
+	}
+
+	probeInjected := &settingsCommand{
+		lookupEnv: tmuxEnv,
+		probeKeybinding: func(probeKey, time.Duration) (probeResult, error) {
+			return probeResult{}, nil
+		},
+	}
+	if !probeInjected.keybindingPhysicalCaptureAvailable() {
+		t.Fatal("an injected probe transport must count as capture-capable")
+	}
+
+	seam := &settingsCommand{
+		lookupEnv:                tmuxEnv,
+		physicalCaptureAvailable: func() bool { return true },
+	}
+	if !seam.keybindingPhysicalCaptureAvailable() {
+		t.Fatal("injected availability seam must override the environment defaults")
+	}
+}
+
+func TestSettingsKeybindingAddEntriesRouteTypedWhenCaptureUnavailable(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{
+		lookupEnv:                func(string) string { return "" },
+		physicalCaptureAvailable: func() bool { return false },
+	}
+	prefix := settingsActionPrefixKeymap + "ProjectSidebarToggle:"
+
+	entries, _, err := cmd.keybindingAddEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingAddEntries() error = %v", err)
+	}
+	if got, want := entries[0].Value, prefix+"type"; got != want {
+		t.Fatalf("first add entry value = %q, want typed default %q", got, want)
+	}
+	if hasEntryValue(entries, prefix+"capture") {
+		t.Fatalf("add entries = %#v, must not expose capture when physical capture is unavailable", entries)
+	}
+	if !hasEntryLabelContaining(entries, "physical capture unavailable on this platform") {
+		t.Fatalf("add entries = %#v, want capture-unavailable notice", entries)
+	}
+	if !hasEntryValue(entries, prefix+"advanced") {
+		t.Fatalf("add entries = %#v, want advanced row", entries)
+	}
+
+	detailEntries, _, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries() error = %v", err)
+	}
+	if !hasEntryLabelContainingAll(detailEntries, "+ Add key", "enter key name") {
+		t.Fatalf("detail entries = %#v, want typed add-key hint", detailEntries)
+	}
+}
+
+func TestSettingsKeybindingAddEntriesKeepCaptureWhenAvailable(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{
+		lookupEnv:                func(string) string { return "" },
+		physicalCaptureAvailable: func() bool { return true },
+	}
+	prefix := settingsActionPrefixKeymap + "ProjectSidebarToggle:"
+
+	entries, _, err := cmd.keybindingAddEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingAddEntries() error = %v", err)
+	}
+	if got, want := entries[0].Value, prefix+"capture"; got != want {
+		t.Fatalf("first add entry value = %q, want capture default %q", got, want)
+	}
+	if hasEntryValue(entries, prefix+"type") {
+		t.Fatalf("add entries = %#v, typed entry must stay in Advanced when capture is available", entries)
+	}
+
+	detailEntries, _, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries() error = %v", err)
+	}
+	if !hasEntryLabelContainingAll(detailEntries, "+ Add key", "press desired key") {
+		t.Fatalf("detail entries = %#v, want capture add-key hint", detailEntries)
+	}
+}
+
+func TestSettingsHubKeybindingsAddRoutesTypedWhenCaptureUnavailable(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var calls int
+	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		calls++
+		switch calls {
+		case 1:
+			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
+		case 2:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:add"}, nil
+		case 4:
+			if got, want := options.UI, "settings-keybinding-add"; got != want {
+				t.Fatalf("add key UI = %q, want %q", got, want)
+			}
+			if got, want := options.Entries[0].Value, settingsActionPrefixKeymap+"ProjectSidebarToggle:type"; got != want {
+				t.Fatalf("first add entry value = %q, want typed default %q", got, want)
+			}
+			if hasEntryValue(options.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:capture") {
+				t.Fatalf("add entries = %#v, must not expose capture", options.Entries)
+			}
+			if !strings.Contains(options.Footer, "Physical key capture is unavailable here") {
+				t.Fatalf("add footer = %q, want capture-unavailable copy", options.Footer)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:type"}, nil
+		case 5:
+			if got, want := options.UI, "settings-keybinding-type"; got != want {
+				t.Fatalf("typed key UI = %q, want %q", got, want)
+			}
+			return intpickercompat.Result{Key: "enter", Query: "C-r"}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 7:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 8:
+			return intpickercompat.Result{}, nil
+		default:
+			t.Fatalf("unexpected settings picker call %d", calls)
+			return intpickercompat.Result{}, nil
+		}
+	})
+	cmd.physicalCaptureAvailable = func() bool { return false }
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"C-r\"]\n") {
+		t.Fatalf("keymap = %q, want typed C-r alias", keymap)
+	}
+}
+
+func TestSettingsKeybindingCaptureFallsBackToTypedWhenUnavailable(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	var typedOptions intpickercompat.Options
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		typedOptions = options
+		return intpickercompat.Result{Key: "enter", Query: "M-x"}, nil
+	})
+	cmd := &settingsCommand{
+		homeDir:                  func() (string, error) { return home, nil },
+		lookupEnv:                func(string) string { return "" },
+		runner:                   runner,
+		nativePicker:             nativePickerFromCompatRunner(runner),
+		physicalCaptureAvailable: func() bool { return false },
+		probeKeybinding: func(probeKey, time.Duration) (probeResult, error) {
+			panic("probeKeybinding must not run when physical capture is unavailable")
+		},
+		nativeKeyCapture: func(context.Context) (string, bool, error) {
+			panic("nativeKeyCapture must not run when physical capture is unavailable")
+		},
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.runKeybindingCapture("ProjectSidebarToggle", &stdout); err != nil {
+		t.Fatalf("runKeybindingCapture() error = %v", err)
+	}
+	if got, want := typedOptions.UI, "settings-keybinding-type"; got != want {
+		t.Fatalf("fallback picker UI = %q, want typed entry %q", got, want)
+	}
+	if !strings.Contains(stdout.String(), "physical key capture is unavailable") {
+		t.Fatalf("stdout = %q, want capture-unavailable notice", stdout.String())
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"M-x\"]\n") {
+		t.Fatalf("keymap = %q, want typed fallback M-x alias", keymap)
+	}
+}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -194,12 +195,16 @@ func (c *settingsCommand) runKeybindingAdd(actionID string, stdout, stderr io.Wr
 		if err != nil {
 			return err
 		}
+		footer := "Press a key to add it to this action."
+		if !c.keybindingPhysicalCaptureAvailable() {
+			footer = "Physical key capture is unavailable here; enter a key name."
+		}
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-keybinding-add",
 			Entries:    entries,
 			Title:      title,
 			Prompt:     "Settings > Keybindings > Action > Add key > ",
-			Footer:     projmuxFooter("Press a key to add it to this action."),
+			Footer:     projmuxFooter(footer),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
 		})
@@ -223,6 +228,8 @@ func (c *settingsCommand) runKeybindingAdd(actionID string, stdout, stderr io.Wr
 		switch op {
 		case "capture":
 			return c.runKeybindingCapture(actionID, stdout)
+		case "type":
+			return c.runKeybindingTyped(actionID, false, stdout)
 		case "advanced":
 			done, err := c.runKeybindingAddAdvanced(actionID, stdout, stderr)
 			if err != nil {
@@ -322,7 +329,34 @@ func (c *settingsCommand) runKeybindingKeyDetail(actionID, chord string, stdout,
 	}
 }
 
+// keybindingPhysicalCaptureAvailable reports whether the "Press a key"
+// physical-capture flow can actually receive input in this context. Native
+// physical capture (macOS) always qualifies. The terminal fallback reads the
+// controlling /dev/tty directly, which only receives input when Settings is
+// not running inside a tmux display-popup (the popup client owns the tty), so
+// inside tmux that path would block until the probe timeout.
+func (c *settingsCommand) keybindingPhysicalCaptureAvailable() bool {
+	if c.physicalCaptureAvailable != nil {
+		return c.physicalCaptureAvailable()
+	}
+	if c.nativeKeyCapture != nil && platformkeys.Available() {
+		return true
+	}
+	if c.probeKeybinding != nil {
+		return true
+	}
+	env := c.lookupEnv
+	if env == nil {
+		env = os.Getenv
+	}
+	return strings.TrimSpace(env("TMUX")) == ""
+}
+
 func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer) error {
+	if !c.keybindingPhysicalCaptureAvailable() {
+		fmt.Fprintln(stdout, "physical key capture is unavailable in this context; enter a key name instead")
+		return c.runKeybindingTyped(actionID, false, stdout)
+	}
 	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
@@ -643,8 +677,12 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 		title := "Keybinding - " + keyBindingDisplayName(action)
 		return entries, title, nil
 	}
+	addKeyHint := "press desired key"
+	if !c.keybindingPhysicalCaptureAvailable() {
+		addKeyHint = "enter key name"
+	}
 	entries = append(entries, intpickercompat.Entry{
-		Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "+ Add key", "press desired key"),
+		Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "+ Add key", addKeyHint),
 		Value: prefix + "add",
 	})
 	entries = append(entries, intpickercompat.Entry{
@@ -681,6 +719,27 @@ func (c *settingsCommand) keybindingAddEntries(actionID string) ([]intpickercomp
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
+	if !c.keybindingPhysicalCaptureAvailable() {
+		entries := []intpickercompat.Entry{
+			{
+				Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name", "type a tmux key name"),
+				Value: prefix + "type",
+			},
+			{
+				Label: c.rowLabelDim("Press a key", "physical capture unavailable on this platform - type a key name"),
+				Value: settingsNoopValue,
+			},
+			{
+				Label: c.rowLabel(settingsGlyphBack, settingsColorBack, "Cancel", "return to action"),
+				Value: settingsBackValue,
+			},
+			{
+				Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Advanced...", "advanced options"),
+				Value: prefix + "advanced",
+			},
+		}
+		return entries, "Add Key - " + keyBindingDisplayName(action), nil
+	}
 	entries := []intpickercompat.Entry{
 		{
 			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Press a key", "capture desired key"),

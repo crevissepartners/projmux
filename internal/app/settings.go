@@ -18,22 +18,23 @@ import (
 )
 
 type settingsCommand struct {
-	ai                  settingsAI
-	switcher            settingsSwitcher
-	update              updateRunner
-	quit                quitRunner
-	newAI               func() aiHookSettingsReader
-	runner              intpickercompat.Runner
-	nativePicker        intpicker.Runner
-	homeDir             func() (string, error)
-	lookupEnv           func(string) string
-	osStat              func(string) (os.FileInfo, error)
-	runCommand          func(name string, args ...string) error
-	runOutput           func(name string, args ...string) ([]byte, error)
-	tmuxRunner          tmuxRunner
-	probeKeybinding     func(probeKey, time.Duration) (probeResult, error)
-	nativeKeyCapture    func(context.Context) (string, bool, error)
-	aiNotifyDiagnostics func() []doctorAINotifyIntegration
+	ai                       settingsAI
+	switcher                 settingsSwitcher
+	update                   updateRunner
+	quit                     quitRunner
+	newAI                    func() aiHookSettingsReader
+	runner                   intpickercompat.Runner
+	nativePicker             intpicker.Runner
+	homeDir                  func() (string, error)
+	lookupEnv                func(string) string
+	osStat                   func(string) (os.FileInfo, error)
+	runCommand               func(name string, args ...string) error
+	runOutput                func(name string, args ...string) ([]byte, error)
+	tmuxRunner               tmuxRunner
+	probeKeybinding          func(probeKey, time.Duration) (probeResult, error)
+	nativeKeyCapture         func(context.Context) (string, bool, error)
+	physicalCaptureAvailable func() bool
+	aiNotifyDiagnostics      func() []doctorAINotifyIntegration
 }
 
 var errSettingsClosed = errors.New("settings closed")
