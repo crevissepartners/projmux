@@ -4830,6 +4830,12 @@ func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T
 			if got, want := options.Prompt, "Enter key > "; got != want {
 				t.Fatalf("typed keybinding prompt = %q, want %q", got, want)
 			}
+			if options.DisableSearch {
+				t.Fatalf("typed keybinding DisableSearch = true, want false so typed input is accepted")
+			}
+			if !options.AcceptQuery {
+				t.Fatalf("typed keybinding AcceptQuery = false, want true")
+			}
 			return intpickercompat.Result{Key: "enter", Query: "M-["}, nil
 		case 7:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
