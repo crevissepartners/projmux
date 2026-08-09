@@ -62,3 +62,88 @@ if grep -Fq "docker e2e" "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"; th
   cat "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json" >&2
   exit 1
 fi
+
+# Exercise the Settings key recorder through a real attached tmux client and
+# display-popup. The pseudo-terminal feeds the popup's existing native-picker
+# reader; no user HOME, keymap, or tmux socket is reused.
+PROJMUX_SMOKE_TMUX_SOCKET="projmux-recorder-e2e"
+export PROJMUX_SMOKE_TMUX_SOCKET
+recorder_socket="$PROJMUX_SMOKE_TMUX_SOCKET"
+recorder_session="recorder-e2e"
+recorder_log="$PROJMUX_SMOKE_WORKDIR/recorder-client.log"
+recorder_input="$PROJMUX_SMOKE_WORKDIR/recorder-client.in"
+mkfifo "$recorder_input"
+tmux -L "$recorder_socket" new-session -d -s "$recorder_session" sleep 300
+exec 9<>"$recorder_input"
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color tmux -L '$recorder_socket' attach-session -t '$recorder_session'" \
+  "$recorder_log" <"$recorder_input" >/dev/null 2>&1 &
+recorder_client_pid=$!
+
+smoke_wait_for() {
+  local description="$1"
+  shift
+  for _ in {1..100}; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for $description" >&2
+  tail -c 12000 "$recorder_log" >&2 || true
+  return 1
+}
+
+recorder_client=""
+smoke_wait_for "attached recorder tmux client" sh -c \
+  "test -n \"\$(tmux -L '$recorder_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+recorder_client="$(tmux -L "$recorder_socket" list-clients -F '#{client_name}' | head -n 1)"
+tmux -L "$recorder_socket" display-popup -c "$recorder_client" -T "Recorder E2E" -w 72 -h 20 -E \
+  "env PROJMUX_PICKER_BACKEND=native '$bin' settings" &
+recorder_popup_pid=$!
+
+smoke_wait_for "Settings root" grep -aFq "Settings >" "$recorder_log"
+printf 'Keybindings\r' >&9
+smoke_wait_for "Keybindings action list" grep -aFq "Settings > Keybindings >" "$recorder_log"
+printf 'Toggle Project Sidebar\r' >&9
+smoke_wait_for "keybinding Action detail" grep -aFq "Settings > Keybindings > Action >" "$recorder_log"
+printf '+ Add key\r' >&9
+smoke_wait_for "Recording state" grep -aFq "Press a key combination" "$recorder_log"
+if [[ -e "$XDG_CONFIG_HOME/projmux/keymap.toml" ]]; then
+  echo "recorder wrote keymap before candidate confirmation" >&2
+  exit 1
+fi
+printf '\022' >&9
+smoke_wait_for "staged C-r preview" grep -aFq "Staged: C-r" "$recorder_log"
+if [[ -e "$XDG_CONFIG_HOME/projmux/keymap.toml" ]]; then
+  echo "recorder wrote keymap while C-r was only staged" >&2
+  exit 1
+fi
+printf '\r' >&9
+smoke_wait_for "confirmed C-r keymap write" grep -Fq '"C-r"' "$XDG_CONFIG_HOME/projmux/keymap.toml"
+
+# Re-enter from the returned Action detail, stage a replacement, and cancel.
+printf '+ Add key\r' >&9
+printf '\033s' >&9
+smoke_wait_for "staged M-s replacement" grep -aFq "Staged: M-s" "$recorder_log"
+if grep -Fq '"M-s"' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
+  echo "recorder persisted M-s before confirmation" >&2
+  exit 1
+fi
+recorder_cancel_log_offset="$(stat -c %s "$recorder_log")"
+printf '\033' >&9
+# Wait until tmux's own Escape disambiguation window has elapsed and the
+# recorder has returned to a newly rendered Action detail. Sending the next
+# byte before this boundary would correctly turn the pair into a modified key.
+smoke_wait_for "Action detail after Esc cancellation" sh -c \
+  "tail -c +$((recorder_cancel_log_offset + 1)) '$recorder_log' | grep -aFq '+ Add key'"
+if grep -Fq '"M-s"' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
+  echo "recorder persisted M-s after Esc cancellation" >&2
+  exit 1
+fi
+printf '\003' >&9
+smoke_wait_for "Settings popup exit" sh -c "! kill -0 '$recorder_popup_pid' 2>/dev/null"
+wait "$recorder_popup_pid"
+tmux -L "$recorder_socket" kill-server
+wait "$recorder_client_pid" || true
+exec 9>&-

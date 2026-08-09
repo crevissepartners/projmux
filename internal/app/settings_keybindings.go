@@ -12,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -121,7 +122,13 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 		}
 		switch op {
 		case "add":
-			if err := c.runKeybindingAdd(actionID, stdout, stderr); err != nil {
+			var err error
+			if c.keybindingPhysicalCaptureAvailable() {
+				err = c.runKeybindingAdd(actionID, stdout, stderr)
+			} else {
+				err = c.runKeybindingRecorder(actionID, stdout)
+			}
+			if err != nil {
 				return err
 			}
 		case "capture":
@@ -130,6 +137,10 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 			}
 		case "type":
 			if err := c.runKeybindingTyped(actionID, false, stdout); err != nil {
+				return err
+			}
+		case "advanced":
+			if _, err := c.runKeybindingAddAdvanced(actionID, stdout, stderr); err != nil {
 				return err
 			}
 		case "unbind":
@@ -156,6 +167,156 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 			return fmt.Errorf("unknown keybinding operation: %s", op)
 		}
 	}
+}
+
+func (c *settingsCommand) runKeybindingRecorder(actionID string, stdout io.Writer) error {
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	recorder := &intpicker.RecorderOptions{
+		Normalize: normalizeKeybindingRecorderKey,
+		Validate: func(chord string) error {
+			return c.validateKeymapAliasForAction(action.ID, chord)
+		},
+	}
+	result, err := c.runPicker(intpickercompat.Options{
+		UI:            "settings-keybinding-recorder",
+		Title:         "Record Key - " + keyBindingDisplayName(action),
+		Header:        "Action: " + keyBindingDisplayName(action),
+		Footer:        projmuxFooter("Enter confirms · Esc cancels · Advanced typed entry is available from Action detail."),
+		DisableSearch: true,
+		Bindings:      c.settingsCloseBindings(),
+		Recorder:      recorder,
+	})
+	if err != nil {
+		return err
+	}
+	if result.Key == "esc" {
+		return nil
+	}
+	if result.Key != "enter" {
+		return errSettingsClosed
+	}
+	chord := strings.TrimSpace(result.Value)
+	if chord == "" {
+		return nil
+	}
+	return c.addKeymapAliasAndApply(action.ID, chord, stdout)
+}
+
+func normalizeKeybindingRecorderKey(key intpicker.RecorderKey) (string, error) {
+	if key.Text != "" {
+		if key.Text == " " {
+			return normalizeKeymapTypedChord("Space")
+		}
+		if len([]rune(key.Text)) != 1 {
+			return "", fmt.Errorf("input is not a single key")
+		}
+		return normalizeKeymapTypedChord(key.Text)
+	}
+	name := strings.TrimSpace(key.Name)
+	if name == "" {
+		return "", fmt.Errorf("input has no stable key name")
+	}
+	parts := strings.Split(name, "-")
+	var modifiers []string
+	for len(parts) > 1 {
+		switch parts[0] {
+		case "ctrl":
+			modifiers = append(modifiers, "C")
+		case "alt":
+			modifiers = append(modifiers, "M")
+		case "shift":
+			modifiers = append(modifiers, "S")
+		default:
+			goto base
+		}
+		parts = parts[1:]
+	}
+base:
+	baseName := strings.Join(parts, "-")
+	switch baseName {
+	case "left":
+		baseName = "Left"
+	case "right":
+		baseName = "Right"
+	case "up":
+		baseName = "Up"
+	case "down":
+		baseName = "Down"
+	case "home":
+		baseName = "Home"
+	case "end":
+		baseName = "End"
+	case "page-up":
+		baseName = "PPage"
+	case "page-down":
+		baseName = "NPage"
+	case "delete":
+		baseName = "DC"
+	case "backspace":
+		baseName = "BSpace"
+	case "tab":
+		baseName = "Tab"
+	case "enter":
+		baseName = "Enter"
+	case "esc":
+		baseName = "Escape"
+	}
+	if baseName == "Enter" || baseName == "Escape" {
+		if len(modifiers) == 0 {
+			return "", fmt.Errorf("plain %s is a recorder control; use Advanced typed entry", baseName)
+		}
+	}
+	chord := baseName
+	if len(modifiers) != 0 {
+		chord = strings.Join(modifiers, "-") + "-" + baseName
+	}
+	return normalizeKeymapTypedChord(chord)
+}
+
+func (c *settingsCommand) validateKeymapAliasForAction(actionID, chord string) error {
+	chord, err := normalizeKeymapTypedChord(chord)
+	if err != nil {
+		return err
+	}
+	current, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+	if !ok {
+		return fmt.Errorf("unknown keybinding action: %s", action.ID)
+	}
+	var keys []string
+	if action.Tier == keyBindingTierTransportDependent {
+		if chord == strings.TrimSpace(defaultAction.PlainChord) {
+			return fmt.Errorf("key %q is this action's transport default; choose a separate custom key", chord)
+		}
+		keys = append(keys, keymapConfiguredAliasChords(current, defaultAction)...)
+	} else {
+		keys = append(keys, keyBindingEffectivePlainChords(action)...)
+	}
+	keys = append(keys, chord)
+	if current.Bindings == nil {
+		current.Bindings = map[string]keymapOverride{}
+	}
+	override := current.Bindings[action.ID]
+	override.Plain = nil
+	override.KeysSet = true
+	override.Keys = uniqueNonEmptyStrings(keys)
+	current.Bindings[action.ID] = override
+	_, err = mergeKeymapOverrides(defaultKeyBindingCatalog(), current)
+	return err
 }
 
 func parseKeymapDetailAction(value, actionID string) (string, bool) {
@@ -678,12 +839,18 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 	}
 	addKeyHint := "press desired key"
 	if !c.keybindingPhysicalCaptureAvailable() {
-		addKeyHint = "enter key name"
+		addKeyHint = "record and confirm a key combination"
 	}
 	entries = append(entries, intpickercompat.Entry{
 		Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "+ Add key", addKeyHint),
 		Value: prefix + "add",
 	})
+	if !c.keybindingPhysicalCaptureAvailable() {
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Advanced...", "type literal or nonstandard tmux key name"),
+			Value: prefix + "advanced",
+		})
+	}
 	entries = append(entries, intpickercompat.Entry{
 		Label: c.rowLabelInfo("Options", keybindingActionsSummary(keymap, action, defaultAction), "choose a row below"),
 		Value: settingsNoopValue,

@@ -95,7 +95,11 @@ type Options struct {
 	// ColorGrid switches runNativeInteractive into the xterm-256 color grid
 	// mode: a navigable swatch grid with a live preview instead of the list
 	// filter/preview machinery. Purely additive; ignored by list pickers.
-	ColorGrid             bool
+	ColorGrid bool
+	// Recorder turns the navigation/search surface into a purpose-built
+	// single-chord recorder while retaining this native picker's input reader
+	// and lifecycle. It is ignored by the color-grid mode.
+	Recorder              *RecorderOptions
 	Theme                 *theme.EffectiveTheme
 	DeferredUpdate        func() (DeferredUpdate, error)
 	DeferredUpdateTrigger <-chan struct{}
@@ -327,6 +331,9 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 	if options.DisableSearch {
 		query = ""
 	}
+	if options.Recorder != nil && options.Recorder.State.Phase == "" {
+		options.Recorder.State = newRecorderState()
+	}
 	deferredApplied := false
 	for {
 		items := nativeFilteredItems(options, query)
@@ -489,6 +496,9 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	if options.DisableSearch {
 		query = ""
 	}
+	if options.Recorder != nil && options.Recorder.State.Phase == "" {
+		options.Recorder.State = newRecorderState()
+	}
 	queryCursor := nativeRuneLen(query)
 	selected := options.InitialIndex
 	focusedValue := ""
@@ -609,6 +619,22 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			}
 			continue
 		}
+		if options.Recorder != nil && (key.Name == "enter" || key.Name == "esc") {
+			kind := recorderEnter
+			if key.Name == "esc" {
+				kind = recorderEscape
+			}
+			state, outcome := reduceRecorderState(options.Recorder.State, recorderEvent{kind: kind}, options.Recorder.Normalize, options.Recorder.Validate)
+			options.Recorder.State = state
+			switch outcome {
+			case recorderConfirm:
+				return Result{Key: "enter", Value: state.Candidate}, nil
+			case recorderCancel:
+				return Result{Key: "esc", Closed: true}, nil
+			default:
+				continue
+			}
+		}
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
 			result, refresh, update, err := runNativePickerAction(action, options, items, selected, query)
@@ -644,6 +670,20 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 					continue
 				}
 				return result, nil
+			}
+		}
+
+		if options.Recorder != nil {
+			event := recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: key.Name, Text: key.Text}}
+			state, outcome := reduceRecorderState(options.Recorder.State, event, options.Recorder.Normalize, options.Recorder.Validate)
+			options.Recorder.State = state
+			switch outcome {
+			case recorderConfirm:
+				return Result{Key: "enter", Value: state.Candidate}, nil
+			case recorderCancel:
+				return Result{Key: "esc", Closed: true}, nil
+			default:
+				continue
 			}
 		}
 
@@ -1161,6 +1201,9 @@ func readNativeKey(r io.Reader) (nativeKey, error) {
 	case 0x1b:
 		return readNativeEscapeKey(r)
 	default:
+		if b >= 0x01 && b <= 0x1a {
+			return nativeKey{Name: "ctrl-" + string(rune('a'+b-1))}, nil
+		}
 		return nativePrintableKey(b, r)
 	}
 }
@@ -1325,16 +1368,13 @@ func nativeKeyFromCSIu(params string) nativeKey {
 	}
 	switch codepoint {
 	case 9:
-		if mod == "2" {
-			return nativeKey{Name: "shift-tab"}
-		}
-		return nativeKey{Name: "tab"}
+		return nativeModifiedNamedKey("tab", mod)
 	case 13:
-		return nativeKey{Name: "enter"}
+		return nativeModifiedNamedKey("enter", mod)
 	case 27:
-		return nativeKey{Name: "esc"}
+		return nativeModifiedNamedKey("esc", mod)
 	case 127, 8:
-		return nativeKey{Name: "backspace"}
+		return nativeModifiedNamedKey("backspace", mod)
 	}
 	if codepoint >= 'a' && codepoint <= 'z' {
 		letter := string(rune(codepoint))
@@ -1379,6 +1419,27 @@ func nativeKeyFromCSIu(params string) nativeKey {
 		}
 	}
 	return nativeKey{Name: "esc"}
+}
+
+func nativeModifiedNamedKey(name, modifier string) nativeKey {
+	switch modifier {
+	case "2":
+		return nativeKey{Name: "shift-" + name}
+	case "3":
+		return nativeKey{Name: "alt-" + name}
+	case "4":
+		return nativeKey{Name: "alt-shift-" + name}
+	case "5":
+		return nativeKey{Name: "ctrl-" + name}
+	case "6":
+		return nativeKey{Name: "ctrl-shift-" + name}
+	case "7":
+		return nativeKey{Name: "ctrl-alt-" + name}
+	case "8":
+		return nativeKey{Name: "ctrl-alt-shift-" + name}
+	default:
+		return nativeKey{Name: name}
+	}
 }
 
 func nativeBaseCSIName(final byte, params string) string {
@@ -1682,6 +1743,10 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(&screen, nativeHeaderLineWithTheme(pickerTheme, header, layout.Cols))
 	}
+	if options.Recorder != nil {
+		renderNativeRecorderContent(w, pickerTheme, screen.String(), options, layout)
+		return
+	}
 	if !options.DisableSearch {
 		prompt := strings.TrimSpace(options.Prompt)
 		if prompt == "" {
@@ -1756,6 +1821,28 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		renderNativeInlinePreview(&main, previewLines, layout)
 	}
 	writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
+}
+
+func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, top string, options Options, layout nativeLayout) {
+	state := options.Recorder.State
+	if state.Phase == "" {
+		state = newRecorderState()
+	}
+	var main strings.Builder
+	switch state.Phase {
+	case RecorderStaged, RecorderConfirmed:
+		fmt.Fprintln(&main, "  Staged: "+state.Candidate)
+		fmt.Fprintln(&main, "  Not saved yet. Press Enter to save and apply, or Esc to discard.")
+	default:
+		fmt.Fprintln(&main, "  Recording")
+		fmt.Fprintln(&main, "  Press a key combination")
+		fmt.Fprintln(&main, "  Not saved yet. Esc cancels without changes.")
+	}
+	if strings.TrimSpace(state.Message) != "" {
+		fmt.Fprintln(&main)
+		fmt.Fprintln(&main, "  "+state.Message)
+	}
+	writeNativeContentWithFooterWithTheme(w, pickerTheme, top, main.String(), options.Footer, layout)
 }
 
 func nativeListLimit(options Options, layout nativeLayout, previewPlacement string, previewHeight int, hasPreview bool) int {

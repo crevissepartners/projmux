@@ -31,6 +31,9 @@ type Options struct {
 	// ColorGrid renders the native picker as an xterm-256 swatch grid with a
 	// live preview instead of a filtered list.
 	ColorGrid bool
+	// Recorder is native-only purpose-built input state carried through the
+	// compatibility option shape used by Settings.
+	Recorder *picker.RecorderOptions
 	// DeferredUpdate, when set, is run by the native picker after the first
 	// render to fill in expensive fields (e.g. a background pass that computes
 	// per-row data) without blocking the initial list. DeferredUpdateTrigger, if

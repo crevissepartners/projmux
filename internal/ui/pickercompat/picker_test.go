@@ -107,6 +107,22 @@ func TestPickerOptionsMapsCompatBindingsToContractActions(t *testing.T) {
 	}
 }
 
+func TestPickerOptionsPreservesRecorderStateSlice(t *testing.T) {
+	t.Parallel()
+
+	recorder := &picker.RecorderOptions{}
+	options := PickerOptions(Options{
+		DisableSearch: true,
+		Recorder:      recorder,
+	})
+	if options.Recorder != recorder {
+		t.Fatalf("PickerOptions recorder = %p, want %p", options.Recorder, recorder)
+	}
+	if roundTrip := OptionsFromPicker(options); roundTrip.Recorder != recorder {
+		t.Fatalf("OptionsFromPicker recorder = %p, want %p", roundTrip.Recorder, recorder)
+	}
+}
+
 func TestResultToPickerMarksEmptyResultClosed(t *testing.T) {
 	t.Parallel()
 
