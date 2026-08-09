@@ -210,6 +210,8 @@ var uiTextKeys = map[string]i18n.Key{
 	"capture desired key":                                             "settings.text.capture_desired_key",
 	"physical capture unavailable on this platform - type a key name": "settings.text.physical_capture_unavailable_desc",
 	"enter key name":                                                  "settings.text.enter_key_name",
+	"record and confirm a key combination":                            "settings.text.record_confirm_key_combination",
+	"type literal or nonstandard tmux key name":                       "settings.text.type_literal_nonstandard_key_name",
 	"type a tmux key name":                                            "settings.text.type_tmux_key_name",
 	"return to action":                                                "settings.text.return_to_action",
 	"advanced options":                                                "settings.text.advanced_options",
@@ -423,6 +425,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"Editable rows write keymap aliases. View-only rows explain transport-dependent keys.": "settings.footer.keymap_editable_rows",
 	"Use a tmux plain chord such as C-r, M-a, M-S-Left, or C-Space.":                       "settings.footer.tmux_plain_chord_examples",
 	"Enter a key such as C-r, M-a, M-S-Left, or C-Space.":                                  "settings.footer.enter_custom_key_examples",
+	"Enter confirms · Esc cancels · Advanced typed entry is available from Action detail.": "settings.footer.keybindings_recorder",
 	"Use the Back row or picker close action to close":                                     "settings.footer.back_row_or_close",
 
 	"Enter: open  |  Back row: parent":                                        "settings.footer.enter_open_back_parent",

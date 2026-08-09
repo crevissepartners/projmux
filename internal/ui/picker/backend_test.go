@@ -2,6 +2,7 @@ package picker
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -626,6 +627,193 @@ func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "^[[") {
 		t.Fatalf("native output leaked escape input: %q", out.String())
+	}
+}
+
+func TestRecorderStateTransitions(t *testing.T) {
+	t.Parallel()
+
+	normalize := func(key RecorderKey) (string, error) {
+		if key.Name == "alt-r" {
+			return "M-r", nil
+		}
+		if key.Name == "alt-s" {
+			return "M-s", nil
+		}
+		return "", errors.New("unsupported chord")
+	}
+	state := newRecorderState()
+	if state.Phase != RecorderRecording || state.Candidate != "" {
+		t.Fatalf("initial state = %#v, want empty recording", state)
+	}
+
+	state, outcome := reduceRecorderState(state, recorderEvent{kind: recorderEnter}, normalize, nil)
+	if outcome != recorderContinue || state.Phase != RecorderRecording {
+		t.Fatalf("empty Enter = (%#v, %v), want recording no-op", state, outcome)
+	}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "alt-r"}}, normalize, nil)
+	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "M-r" {
+		t.Fatalf("first candidate = (%#v, %v), want staged M-r", state, outcome)
+	}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "alt-s"}}, normalize, nil)
+	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "M-s" {
+		t.Fatalf("replacement = (%#v, %v), want staged M-s", state, outcome)
+	}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, normalize, nil)
+	if outcome != recorderConfirm || state.Phase != RecorderConfirmed || state.Candidate != "M-s" {
+		t.Fatalf("confirm = (%#v, %v), want confirmed M-s", state, outcome)
+	}
+
+	state, outcome = reduceRecorderState(newRecorderState(), recorderEvent{kind: recorderEscape}, normalize, nil)
+	if outcome != recorderCancel || state.Candidate != "" {
+		t.Fatalf("recording Esc = (%#v, %v), want unchanged cancel", state, outcome)
+	}
+}
+
+func TestRecorderStateKeepsActionableValidationAndNormalizationErrors(t *testing.T) {
+	t.Parallel()
+
+	state, outcome := reduceRecorderState(newRecorderState(), recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "mouse"}}, func(RecorderKey) (string, error) {
+		return "", errors.New("no stable tmux key name")
+	}, nil)
+	if outcome != recorderContinue || state.Candidate != "" || !strings.Contains(state.Message, "Advanced typed entry") {
+		t.Fatalf("invalid candidate = (%#v, %v), want actionable recording error", state, outcome)
+	}
+
+	state = RecorderState{Phase: RecorderStaged, Candidate: "C-x"}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, nil, func(string) error {
+		return errors.New(`key "C-x" is already bound to Kill Session`)
+	})
+	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "C-x" ||
+		!strings.Contains(state.Message, "Cannot save") || !strings.Contains(state.Message, "Choose another key") {
+		t.Fatalf("conflict Enter = (%#v, %v), want actionable staged error", state, outcome)
+	}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEscape}, nil, nil)
+	if outcome != recorderCancel || state.Candidate != "C-x" {
+		t.Fatalf("staged Esc = (%#v, %v), want discard outcome without mutation", state, outcome)
+	}
+}
+
+func TestNativeRecorderConsumesCandidateThenEnterInOneByteStream(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	var normalizeCalls, validateCalls int
+	result, err := runNativeInteractive(strings.NewReader("\r\x1br\r"), &out, Options{
+		UI:            "settings-keybinding-recorder",
+		DisableSearch: true,
+		Recorder: &RecorderOptions{
+			Normalize: func(key RecorderKey) (string, error) {
+				normalizeCalls++
+				if key.Name != "alt-r" {
+					t.Fatalf("recorder key = %#v, want alt-r", key)
+				}
+				return "M-r", nil
+			},
+			Validate: func(chord string) error {
+				validateCalls++
+				if chord != "M-r" {
+					t.Fatalf("validated chord = %q, want M-r", chord)
+				}
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "M-r" || normalizeCalls != 1 || validateCalls != 1 {
+		t.Fatalf("result = %#v, normalize/validate = %d/%d, want one staged candidate confirmed once", result, normalizeCalls, validateCalls)
+	}
+	rendered := out.String()
+	for _, want := range []string{"Recording", "Press a key combination", "Not saved yet", "Staged: M-r"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native recorder output = %q, want %q", rendered, want)
+		}
+	}
+	for _, absent := range []string{"no matches", "Search", "Back"} {
+		if strings.Contains(rendered, absent) {
+			t.Fatalf("native recorder output = %q, did not want %q", rendered, absent)
+		}
+	}
+}
+
+func TestNativeRecorderCandidateReplaceConflictRecoveryAndEsc(t *testing.T) {
+	t.Parallel()
+
+	normalize := func(key RecorderKey) (string, error) {
+		return "M-" + strings.TrimPrefix(key.Name, "alt-"), nil
+	}
+	var out bytes.Buffer
+	result, err := runNativeInteractive(strings.NewReader("\x1br\r\x1bs\r"), &out, Options{
+		UI:            "settings-keybinding-recorder",
+		DisableSearch: true,
+		Recorder: &RecorderOptions{
+			Normalize: normalize,
+			Validate: func(chord string) error {
+				if chord == "M-r" {
+					return errors.New("already bound; remove the existing key or choose another")
+				}
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive(confirm) error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "M-s" {
+		t.Fatalf("confirm result = %#v, want replacement M-s", result)
+	}
+	if rendered := out.String(); !strings.Contains(rendered, "Cannot save") || !strings.Contains(rendered, "Staged: M-s") {
+		t.Fatalf("native recorder output = %q, want conflict then replacement preview", rendered)
+	}
+
+	result, err = runNativeInteractive(strings.NewReader("\x1br\x1b"), io.Discard, Options{
+		UI:            "settings-keybinding-recorder",
+		DisableSearch: true,
+		Actions:       CloseActions("esc"),
+		Recorder:      &RecorderOptions{Normalize: normalize},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive(cancel) error = %v", err)
+	}
+	if !result.Closed || result.Key != "esc" || result.Value != "" {
+		t.Fatalf("cancel result = %#v, want staged candidate discarded", result)
+	}
+}
+
+func TestNativeRecorderUsesOneReaderWithoutEventLeakage(t *testing.T) {
+	t.Parallel()
+
+	tracker := &nativeKeyReaderTracker{}
+	input := &trackedRecorderInput{tracker: tracker, data: []byte("a\r")}
+	var normalizeCalls, validateCalls atomic.Int64
+	result, err := runNativeInteractive(input, io.Discard, Options{
+		UI:            "settings-keybinding-recorder",
+		DisableSearch: true,
+		DeferredUpdate: func() (DeferredUpdate, error) {
+			return DeferredUpdate{}, nil
+		},
+		Recorder: &RecorderOptions{
+			Normalize: func(key RecorderKey) (string, error) {
+				normalizeCalls.Add(1)
+				return key.Text, nil
+			},
+			Validate: func(string) error {
+				validateCalls.Add(1)
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "a" || normalizeCalls.Load() != 1 || validateCalls.Load() != 1 {
+		t.Fatalf("result = %#v, normalize/validate = %d/%d, want candidate and later Enter handled once", result, normalizeCalls.Load(), validateCalls.Load())
+	}
+	waitForNativeReaderActiveCount(t, tracker, 0)
+	if tracker.maxActive.Load() != 1 || tracker.started.Load() != 1 || tracker.stopped.Load() != 1 {
+		t.Fatalf("reader lifecycle started/stopped/max = %d/%d/%d, want 1/1/1", tracker.started.Load(), tracker.stopped.Load(), tracker.maxActive.Load())
 	}
 }
 
@@ -1912,6 +2100,27 @@ func TestNativeInteractiveSupportsControlExpectKeys(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveDecodesPreviouslyUnboundControlLetters(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		input byte
+		want  string
+	}{
+		{input: 0x02, want: "ctrl-b"},
+		{input: 0x12, want: "ctrl-r"},
+		{input: 0x1a, want: "ctrl-z"},
+	} {
+		key, err := readNativeKey(bytes.NewReader([]byte{tc.input}))
+		if err != nil {
+			t.Fatalf("readNativeKey(%#x) error = %v", tc.input, err)
+		}
+		if key.Name != tc.want || key.Text != "" {
+			t.Fatalf("readNativeKey(%#x) = %#v, want %s", tc.input, key, tc.want)
+		}
+	}
+}
+
 func TestNativeInteractiveSupportsRawCtrlXCustomAction(t *testing.T) {
 	t.Parallel()
 
@@ -1980,7 +2189,10 @@ func TestNativeInteractiveSupportsCSIuAppKeyBindings(t *testing.T) {
 		{name: "ctrl-x generic csi", in: "\x1b[120;5u", want: "ctrl-x"},
 		{name: "ctrl-x control-code csi", in: "\x1b[24;5u", want: "ctrl-x"},
 		{name: "enter generic csi", in: "\x1b[13u", want: "enter"},
+		{name: "ctrl-enter generic csi", in: "\x1b[13;5u", want: "ctrl-enter"},
+		{name: "alt-enter generic csi", in: "\x1b[13;3u", want: "alt-enter"},
 		{name: "esc generic csi", in: "\x1b[27u", want: "esc"},
+		{name: "ctrl-esc generic csi", in: "\x1b[27;5u", want: "ctrl-esc"},
 		{name: "backspace generic csi", in: "\x1b[127u", want: "backspace"},
 		{name: "tab generic csi", in: "\x1b[9u", want: "tab"},
 		{name: "shift-tab generic csi", in: "\x1b[9;2u", want: "shift-tab"},
@@ -3060,6 +3272,33 @@ func (t *nativeKeyReaderTracker) startedReader() {
 type trackedNativePickerInput struct {
 	tracker   *nativeKeyReaderTracker
 	delivered atomic.Bool
+}
+
+type trackedRecorderInput struct {
+	tracker *nativeKeyReaderTracker
+	mu      sync.Mutex
+	data    []byte
+	index   int
+}
+
+func (r *trackedRecorderInput) nativeKeyReaderStarted() {
+	r.tracker.startedReader()
+}
+
+func (r *trackedRecorderInput) nativeKeyReaderStopped() {
+	r.tracker.stopped.Add(1)
+	r.tracker.active.Add(-1)
+}
+
+func (r *trackedRecorderInput) Read(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.index >= len(r.data) {
+		return 0, nil
+	}
+	p[0] = r.data[r.index]
+	r.index++
+	return 1, nil
 }
 
 func (r *trackedNativePickerInput) nativeKeyReaderStarted() {

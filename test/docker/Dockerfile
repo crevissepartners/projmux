@@ -14,6 +14,7 @@ RUN apt-get update \
     ncurses-bin \
     procps \
     tmux \
+    util-linux \
     zsh \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace

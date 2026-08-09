@@ -102,11 +102,12 @@ and function keys. Command/Super is intentionally not part of this portable
 tier. Picker-local unmodified commands continue through the picker input path;
 the native adapter owns action-level no-prefix bindings only.
 
-Settings > Keybindings > Add key races the native modified-key capture against
-the existing controlling-TTY capture. On Darwin this lets Press a key store a
-new physical Option, Control, Control-Option, or Shift-modified chord before
-the terminal turns it into text; ordinary keys still use the portable TTY
-path. Other operating systems keep the existing TTY capture unchanged.
+On Darwin, Settings > Keybindings > Add key keeps racing native modified-key
+capture against the existing controlling-TTY capture. This lets Press a key
+store a new physical Option, Control, Control-Option, or Shift-modified chord
+before the terminal turns it into text; ordinary keys still use the portable
+TTY path. The Darwin transport lifecycle, Accessibility policy, and event
+mapping are unchanged by the Linux/WSL recorder described below.
 
 ## Discoverable Actions
 
@@ -119,18 +120,27 @@ transport policy toggle followed by the action list with a key summary and
 state. The key summary uses the first key plus `+N`, or `Not bound` when no key
 is active. State vocabulary is limited to Default, Custom, Available, and
 Unbound. Each action detail shows the action label, state, a flat Keys list
-with `+ Add key`, Options, and a collapsed
-Troubleshooting row with Test key delivery and Advanced... entry points. Key
-rows open key detail for Remove key and Test key. Add key opens Press a key by
-default; Enter key name, the safe direct key pool, risky/reserved key copy, and
-raw diagnostics live under Advanced. Advanced delivery is still owned by the
-selected Projmux action. The native macOS app-socket adapter reads the same
-safe chords directly; supported Ghostty and Windows Terminal mappings for
+with `+ Add key`, Options, and a collapsed Troubleshooting row. Key rows open
+key detail for Remove key and Test key. In a Linux/WSL tmux popup, `+ Add key`
+enters a purpose-built recorder immediately: Recording waits for one chord,
+Staged previews its normalized tmux key name without writing, Enter saves and
+applies, and Esc discards it. Another chord replaces the staged candidate.
+There is no Back row, search prompt, or result count in recorder mode. Plain
+Enter and plain Escape are recorder controls, not candidates; modified Enter or
+Escape are accepted only when the native picker can decode them to a stable
+modified key name. Conflict and invalid-key feedback remains in the recorder so
+the user can choose another chord before any write.
+
+Advanced typed entry remains available from Action detail for literal
+`Enter`/`Escape`, nonstandard tmux key names, the safe direct key pool,
+risky/reserved key copy, and raw diagnostics. Advanced delivery is still owned
+by the selected Projmux action. The native macOS app-socket adapter reads the
+same safe chords directly; supported Ghostty and Windows Terminal mappings for
 other paths are previewed/applied through `projmux init`, not by storing raw
 sequences in the primary keymap. Options covers unbinding the action and
 reset/use-default flows. Diagnostic/probe/init workflows are not first-class
-Settings tabs; use `projmux setup` and, where the native adapter does not
-apply, `projmux init` from the terminal when key delivery needs remediation.
+Settings tabs; use `projmux setup` and, where the native adapter does not apply,
+`projmux init` from the terminal when key delivery needs remediation.
 
 Optional direct keys can be added for actions such as:
 
@@ -201,8 +211,11 @@ uppercase `A`, distinct from `NotifySidebar:Ack` on lowercase `a`.
 Runtime picker footers render key guides from the merged keymap, using the
 first active key as the representative key.
 
-In Settings > Keybindings, **Add key** appends a key to the selected action's
-`keys = [...]` list. For catalog popup toggle actions, those keys are used both
+In Settings > Keybindings, **Add key** stages one normalized chord and appends
+it to the selected action's `keys = [...]` list only after Enter confirmation.
+The recorder reuses the native picker's single input reader; it does not open a
+second controlling-TTY reader or install a platform input hook. For catalog
+popup toggle actions, confirmed keys are used both
 by generated tmux open bindings and by popup-internal close bindings, so the
 same key can close the corresponding already-open popup. This same-key close
 behavior is only for actions cataloged as popup toggles, such as
