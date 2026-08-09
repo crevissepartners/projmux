@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1](https://github.com/crevissepartners/projmux/compare/v0.8.0...v0.8.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* **keybindings:** add staged key recorder ([#550](https://github.com/crevissepartners/projmux/issues/550)) ([a5d67ca](https://github.com/crevissepartners/projmux/commit/a5d67ca3f9ad2c71475407f6979a03a761e95316))
+* **keybindings:** allow typing in Add-key key-name entry ([#549](https://github.com/crevissepartners/projmux/issues/549)) ([34fb5fb](https://github.com/crevissepartners/projmux/commit/34fb5fbf0ee9d9ee749184bcd671a9f69d34c9d3))
+* **keybindings:** route Add key to typed entry when physical capture unavailable ([#547](https://github.com/crevissepartners/projmux/issues/547)) ([5820a9f](https://github.com/crevissepartners/projmux/commit/5820a9f9803ac182022937e4705101385cf3dda3))
+
 ## [0.8.0](https://github.com/crevissepartners/projmux/compare/v0.7.6...v0.8.0) (2026-08-04)
 
 
