@@ -275,6 +275,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		return c.setDesktopNotifyMode(strings.TrimPrefix(value, settingsActionPrefixDesktopNotifyMode))
 	case strings.HasPrefix(value, settingsActionPrefixHooks):
 		return c.setProjectHooksMode(strings.TrimPrefix(value, settingsActionPrefixHooks))
+	case strings.HasPrefix(value, settingsActionPrefixLiveResources):
+		return c.setLiveResourcesMode(strings.TrimPrefix(value, settingsActionPrefixLiveResources))
 	case strings.HasPrefix(value, settingsActionPrefixPicker):
 		return c.setPickerBackend(strings.TrimPrefix(value, settingsActionPrefixPicker))
 	case strings.HasPrefix(value, settingsActionPrefixProjdir):

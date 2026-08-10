@@ -369,6 +369,7 @@ func TestStatusRejectsInvalidUsage(t *testing.T) {
 		{name: "unknown", args: []string{"bad"}, want: "unknown status subcommand"},
 		{name: "git args", args: []string{"git", "a", "b"}, want: "status git accepts at most 1"},
 		{name: "kube args", args: []string{"kube", "a", "b"}, want: "status kube accepts at most 1"},
+		{name: "resources args", args: []string{"resources", "extra"}, want: "status resources does not accept positional arguments"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

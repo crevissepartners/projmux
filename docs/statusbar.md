@@ -14,7 +14,7 @@ truecolor to tmux 256-color mapping policy and palette inventory.
 ```
 row 0  #[range=user|notify] <notify HUD pill> #[norange]
                                       #[range=user|usage] <usage HUD bar> #[norange]
-row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
+row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
 ```
 
@@ -68,6 +68,18 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>   %H:%M
   without dominating the status row. Window tab indexes stay left of each tab,
   and tab titles are centered in a fixed-width trim so long active pane names
   do not resize the status row.
+- `Settings > Labs > Live system resources` adds the compact `CPU N%  MEM N%`
+  segment between git and the clock on Linux and WSL. It is global, default
+  off, and updates with tmux's existing five-second status interval. CPU is the
+  aggregate delta from `/proc/stat`; memory is
+  `(MemTotal - MemAvailable) / MemTotal` from `/proc/meminfo`. The first CPU
+  sample renders `CPU --%` until a second counter sample exists. WSL values are
+  the Linux guest/VM view, not whole-Windows host utilization. The generated
+  tmux condition prevents the status subprocess from running while the Lab is
+  off. CPU reference samples older than 30 seconds are discarded, so
+  re-enabling after a pause starts at `CPU --%` instead of showing a long-term
+  average. Missing or malformed procfs data degrades to `--` or an empty segment
+  without producing a tmux error popup.
 - The settings chip keeps its label padding inside the `settings` range
   and inside the chip background. The compact app chip renders `` with
   the extra right-side icon padding painted by the same background, while
@@ -246,6 +258,12 @@ tmux. The legacy `~/.config/projmux/statusbar-decoration` and
 Appearance also shows the effective desired theme font. This is a status row,
 not a font editor: tmux status strings and ANSI output cannot force terminal
 font family or size, so unsupported environments report `not applied`.
+
+Settings > Labs controls the experimental live resource segment. Its saved
+value is `~/.config/projmux/live-resources`; changing it inside tmux updates
+`@projmux_live_resources` immediately. CPU sampling state is an internal,
+atomically replaced file under `${XDG_STATE_HOME:-~/.local/state}/projmux/`
+and is not a user-edited setting.
 
 To add a new clickable segment:
 

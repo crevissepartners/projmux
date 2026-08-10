@@ -770,6 +770,24 @@ The per-surface saved values live at:
 The legacy `~/.config/projmux/statusbar-decoration` value is still read as the
 fallback default when a per-surface file is absent.
 
+## Live System Resources Lab
+
+`Settings > Labs > Live system resources` controls the experimental compact
+CPU/memory segment on the lower status row. The saved global value is:
+
+```text
+~/.config/projmux/live-resources
+```
+
+Accepted values are `off` (default) and `on`. The feature is available on
+native Linux and WSL. It reads Linux procfs directly without launching `top`,
+`free`, PowerShell, or another metrics process. In WSL the values describe the
+Linux guest/VM view, not total Windows host utilization. The CPU delta cache is
+internal state at
+`${XDG_STATE_HOME:-~/.local/state}/projmux/live-resources-sample.json`.
+CPU reference samples older than 30 seconds are ignored and replaced on the
+next refresh.
+
 ## Rare Tunables
 
 These are intended for debugging or local policy, not routine setup:

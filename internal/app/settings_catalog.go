@@ -95,6 +95,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixAIHookEvent, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixAIHookSet, settingsEntryMeta{Name: "Hook quiet policy", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHooks, settingsEntryMeta{Name: "Project hook policy", Axis: settingsAxisGlobal}},
+	{settingsActionPrefixLiveResources, settingsEntryMeta{Name: "Live system resources", Axis: settingsAxisGlobal}},
 	{settingsActionPrefixHookAdd, settingsEntryMeta{Name: "Hook maker - add", Axis: settingsAxisBoth}},
 	{settingsActionPrefixHookEdit, settingsEntryMeta{Name: "Hook maker - edit", Axis: settingsAxisBoth}},
 	{settingsActionPrefixHookRemove, settingsEntryMeta{Name: "Hook maker - remove", Axis: settingsAxisBoth}},
@@ -159,6 +160,7 @@ const (
 	settingsActionPrefixAIHookSet          = "ai-hook-set:"
 	settingsActionPrefixDesktopNotifyMode  = "desktop-notify-mode:"
 	settingsActionPrefixHooks              = "project-hooks:"
+	settingsActionPrefixLiveResources      = "live-resources:"
 	settingsActionPrefixKeymap             = "keymap:"
 	settingsActionPrefixLocale             = "locale:"
 	settingsActionPrefixPicker             = "picker-backend:"

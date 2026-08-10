@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/systemstatus"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -35,6 +36,10 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 			}
 		case action == settingsLabsProjectHooks:
 			return c.runLabsProjectHooksSection(stdout, stderr)
+		case strings.HasPrefix(action, settingsActionPrefixLiveResources):
+			if err := c.execute(action, stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, settingsActionPrefixHooks):
 			if err := c.execute(action, stdout, stderr); err != nil {
 				return err
@@ -82,8 +87,28 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	current, source := c.currentPickerBackend()
 	hookMode, hookSource := c.currentProjectHooksMode()
-	entries := make([]intpickercompat.Entry, 0, 4)
+	liveMode, _, liveSupported := c.currentLiveResourcesMode()
+	entries := make([]intpickercompat.Entry, 0, 5)
 	entries = append(entries, settingsBackEntryLocale(locale))
+	liveGlyph := settingsGlyphInactive
+	liveColor := settingsColorDim
+	liveValue := settingsNoopValue
+	liveDescription := "unavailable - Linux/WSL only"
+	if liveSupported {
+		liveDescription = "off - hidden; Linux/WSL guest view"
+		liveValue = settingsActionPrefixLiveResources + string(config.LiveResourcesOn)
+		if liveMode == config.LiveResourcesOn {
+			liveDescription = "on - live CPU and memory; Linux/WSL guest view"
+			liveGlyph = settingsGlyphToggle
+			liveColor = settingsColorAdd
+			liveValue = settingsActionPrefixLiveResources + string(config.LiveResourcesOff)
+		}
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabelLocale(locale, liveGlyph, liveColor, "Live system resources", liveDescription),
+		Value:     liveValue,
+		SearchKey: "Live system resources CPU memory statusbar Linux WSL on off",
+	})
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Hooks", string(hookMode)+" - "+hookSource),
 		Value:     settingsLabsProjectHooks,
@@ -96,6 +121,44 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 		})
 	}
 	return entries
+}
+
+func (c *settingsCommand) currentLiveResourcesMode() (config.LiveResourcesMode, string, bool) {
+	if !systemstatus.Supported() {
+		return config.LiveResourcesOff, "unsupported platform", false
+	}
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return config.LiveResourcesOff, "default", true
+	}
+	mode, err := config.LoadLiveResourcesFile(paths.LiveResourcesFile())
+	if err != nil {
+		return config.LiveResourcesOff, "default", true
+	}
+	if _, err := c.statFile(paths.LiveResourcesFile()); err == nil {
+		return mode, "saved", true
+	}
+	return mode, "default", true
+}
+
+func (c *settingsCommand) setLiveResourcesMode(value string) error {
+	if !systemstatus.Supported() {
+		return fmt.Errorf("live system resources are available only on Linux/WSL")
+	}
+	mode := config.NormalizeLiveResourcesMode(value)
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+	if err := config.SaveLiveResourcesFile(paths.LiveResourcesFile(), mode); err != nil {
+		return err
+	}
+	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
+		if err := c.runCommand("tmux", "set-option", "-g", liveResourcesTmuxOption, string(mode)); err != nil {
+			return fmt.Errorf("set live tmux resource status: %w", err)
+		}
+	}
+	return nil
 }
 
 func (c *settingsCommand) labsProjectHooksEntries() []intpickercompat.Entry {

@@ -68,8 +68,8 @@ func (s renderThemeSource) tmuxStandaloneConfigWithAIBadgeStyle(binaryPath strin
 	return tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, decorations, badgeStyle, catalog, keymapPresent, s.effective)
 }
 
-func (s renderThemeSource) tmuxStandaloneConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, catalog []keyBindingAction, keymapPresent bool) string {
-	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, decorations, badgeStyle, desktopNotifyMode, catalog, keymapPresent, s.effective)
+func (s renderThemeSource) tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keyBindingAction, keymapPresent bool) string {
+	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent, s.effective)
 }
 
 func (s renderThemeSource) tmuxAppConfig(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
@@ -80,6 +80,6 @@ func (s renderThemeSource) tmuxAppConfigWithAIBadgeStyle(binaryPath, defaultShel
 	return tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell, decorations, badgeStyle, catalog, keymapPresent, s.effective)
 }
 
-func (s renderThemeSource) tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, catalog []keyBindingAction, keymapPresent bool) string {
-	return tmuxAppConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, catalog, keymapPresent, s.effective)
+func (s renderThemeSource) tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keyBindingAction, keymapPresent bool) string {
+	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent, s.effective)
 }

@@ -269,7 +269,7 @@ alongside the Claude/Codex quota bars.
 
 ## status
 
-Per-segment status-bar renderers. All four are silent on failure — the
+Per-segment status-bar renderers. All five are silent on failure — the
 tmux status interval polls them and must never produce a stack trace.
 
 ```
@@ -277,6 +277,7 @@ projmux status git    [path]
 projmux status kube   [session]
 projmux status usage  [--max-width N] [--force|-f]
 projmux status notify [--max-width N]
+projmux status resources
 ```
 
 - `git` — `#[bold,fg=colour16,bg=colour45] <branch> <state> #[default]` for
@@ -296,6 +297,10 @@ projmux status notify [--max-width N]
   age, and `+<extras>`. Window/pane ids remain routable metadata but are not
   displayed in the compact HUD. Degrades through width tiers; default
   `--max-width` is `200` runes.
+- `resources` — Linux/WSL aggregate `CPU N%  MEM N%` from `/proc/stat` and
+  `/proc/meminfo`. CPU needs two invocations to establish a delta and renders
+  `--` for the first sample. WSL reports the Linux guest/VM view. Unsupported
+  platforms and unreadable procfs data produce no error output.
 
 ## statusbar
 
