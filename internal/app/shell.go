@@ -53,7 +53,7 @@ type shellUpdateSkipState struct {
 
 func newShellCommand(update *updateCommand) *shellCommand {
 	return &shellCommand{
-		executable:   os.Executable,
+		executable:   resolveExecutablePath,
 		lookupEnv:    os.Getenv,
 		homeDir:      os.UserHomeDir,
 		welcomeInput: os.Stdin,
@@ -406,7 +406,11 @@ func (c *shellCommand) resolveBinary(override string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve shell executable: %w", err)
 	}
-	return binaryPath, nil
+	// Canonicalize here because this path outlives the process: it is written
+	// into a tmux config file and live hooks that keep running long after an
+	// npm update has deleted the retired staging directory a resolved path
+	// may point into.
+	return canonicalNpmBinaryPath(binaryPath), nil
 }
 
 func (c *shellCommand) writeAppConfig(path, binaryPath string) error {

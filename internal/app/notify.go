@@ -46,7 +46,7 @@ func newNotifyCommand() *notifyCommand {
 		runner:     reconcileDefaultRunner(),
 		hooks:      newSendNotiHookDispatcher(),
 		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		executable: os.Executable,
+		executable: resolveExecutablePath,
 		lookupEnv:  os.Getenv,
 		homeDir:    os.UserHomeDir,
 	}

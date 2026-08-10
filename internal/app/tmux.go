@@ -60,7 +60,7 @@ func newTmuxCommand() *tmuxCommand {
 	runner := inttmux.ExecRunner{}
 	return &tmuxCommand{
 		popup:         inttmux.NewClient(inttmux.ExecRunner{}),
-		executable:    os.Executable,
+		executable:    resolveExecutablePath,
 		runner:        runner,
 		lookupEnv:     os.Getenv,
 		homeDir:       os.UserHomeDir,
@@ -1039,7 +1039,11 @@ func (c *tmuxCommand) resolveConfigBinary(override string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve tmux executable: %w", err)
 	}
-	return binaryPath, nil
+	// Canonicalize here because this path outlives the process: it is written
+	// into a tmux config file and live hooks that keep running long after an
+	// npm update has deleted the retired staging directory a resolved path
+	// may point into.
+	return canonicalNpmBinaryPath(binaryPath), nil
 }
 
 func (c *tmuxCommand) ensureConfigIncludes(config, sourceLine string) error {
@@ -1168,11 +1172,11 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDeco
 	}
 	lines = append(lines, tmuxUserKeyLines(standaloneKeyBindings)...)
 	lines = append(lines,
-		"set-hook -g pane-focus-out "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane}")),
-		"set-hook -g pane-focus-in "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane}")),
-		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id}")),
-		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
-		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes")),
+		"set-hook -g pane-focus-out "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane} >/dev/null 2>&1 || true")),
+		"set-hook -g pane-focus-in "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane} >/dev/null 2>&1 || true")),
+		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id} >/dev/null 2>&1 || true")),
+		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes >/dev/null 2>&1 || true")),
+		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes >/dev/null 2>&1 || true")),
 		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tmuxWindowInactiveFg+",bg="+tmuxWindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowInactiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
 		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tmuxWindowActiveFg+",bg="+tmuxWindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowActiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
 		"set -g status 2",

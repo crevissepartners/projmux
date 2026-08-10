@@ -973,13 +973,13 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set-option -p @projmux_ai_topic_manual 1",
 		"unbind-key -q R",
 		"set-hook -g pane-focus-out",
-		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane}",
+		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane} >/dev/null 2>&1 || true",
 		"set-hook -g pane-focus-in",
-		"'/tmp/proj mux/bin/projmux' attention clear #{hook_pane}",
+		"'/tmp/proj mux/bin/projmux' attention clear #{hook_pane} >/dev/null 2>&1 || true",
 		"set-hook -g after-select-pane",
-		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id}",
+		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id} >/dev/null 2>&1 || true",
 		"set-hook -g pane-exited",
-		"sleep 0.05; '/tmp/proj mux/bin/projmux' tmux rebalance-panes",
+		"sleep 0.05; '/tmp/proj mux/bin/projmux' tmux rebalance-panes >/dev/null 2>&1 || true",
 		"set-hook -g after-kill-pane",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
 		"#[bold,fg=colour230,bg=colour31]#[range=user|settings]  projmux #[norange]#[default]",
@@ -1023,6 +1023,26 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)
 		}
+	}
+}
+
+func TestTmuxPrintConfigCanonicalizesNpmStagingBinaryPath(t *testing.T) {
+	t.Parallel()
+
+	stagingPath := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/.projmux-lvpOxyM9/node_modules/@projmux/linux-x64/bin/projmux"
+	cmd := &tmuxCommand{executable: func() (string, error) { return stagingPath, nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	want := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/projmux/node_modules/@projmux/linux-x64/bin/projmux"
+	if !strings.Contains(output, want) {
+		t.Fatalf("print-config output = %q, want substring %q", output, want)
+	}
+	if strings.Contains(output, ".projmux-lvpOxyM9") {
+		t.Fatalf("print-config output = %q, did not expect npm retire/staging segment %q", output, ".projmux-lvpOxyM9")
 	}
 }
 

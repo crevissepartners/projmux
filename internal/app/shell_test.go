@@ -124,6 +124,50 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 	}
 }
 
+func TestShellAppConfigCanonicalizesNpmStagingBinaryPath(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/default-tmux")
+
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	stagingPath := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/.projmux-lvpOxyM9/node_modules/@projmux/linux-x64/bin/projmux"
+	cmd := &shellCommand{
+		executable: func() (string, error) { return stagingPath, nil },
+		lookupEnv: func(name string) string {
+			if name == "HOME" {
+				return home
+			}
+			if name == "XDG_CONFIG_HOME" {
+				return ""
+			}
+			if name == "SHELL" {
+				return "/bin/bash"
+			}
+			return os.Getenv(name)
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := string(content)
+	want := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/projmux/node_modules/@projmux/linux-x64/bin/projmux"
+	if !strings.Contains(config, want) {
+		t.Fatalf("config = %q, want substring %q", config, want)
+	}
+	if strings.Contains(config, ".projmux-lvpOxyM9") {
+		t.Fatalf("config = %q, did not expect npm retire/staging segment %q", config, ".projmux-lvpOxyM9")
+	}
+}
+
 func TestShellAppConfigFallsBackToPortableShell(t *testing.T) {
 	t.Parallel()
 

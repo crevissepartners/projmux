@@ -67,7 +67,7 @@ type aiCommand struct {
 func newAICommand() *aiCommand {
 	return &aiCommand{
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		executable:   os.Executable,
+		executable:   resolveExecutablePath,
 		lookupEnv:    os.Getenv,
 		homeDir:      os.UserHomeDir,
 		stdin:        os.Stdin,

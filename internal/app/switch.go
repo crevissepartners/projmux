@@ -151,7 +151,7 @@ func newSwitchCommand() *switchCommand {
 		tmuxRunner:   inttmux.ExecRunner{},
 		sessions:     client,
 		inventory:    tmuxPreviewInventory{client: client},
-		executable:   os.Executable,
+		executable:   resolveExecutablePath,
 		identity:     identity,
 		identityErr:  err,
 		validate:     validateDirectory,
