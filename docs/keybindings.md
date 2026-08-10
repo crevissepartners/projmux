@@ -79,7 +79,9 @@ modified chords from the configured keybinding catalog, never plain-text
 typing; physical Option needs the event tap because terminals may convert it
 before tmux can see it; and capture plus tmux injection stay on the local
 machine. The broker then waits for approval and enables the event tap
-automatically; the tmux session does not need to be restarted.
+automatically. While it is waiting, it replaces only its background broker
+process so macOS permission changes are observed with fresh process state; the
+tmux session does not need to be restarted.
 
 Native macOS delivery remains on by default. To prevent the broker from
 starting—and therefore prevent the Accessibility prompt—turn off **Native

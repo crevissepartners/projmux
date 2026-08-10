@@ -183,6 +183,7 @@ type keyBrokerSourceRecorder struct {
 	replaceCalls int
 	enabledCalls int
 	runCalls     int
+	runErr       error
 }
 
 func (s *keyBrokerSourceRecorder) Replace([]platformkeys.Binding) error {
@@ -204,7 +205,7 @@ func (s *keyBrokerSourceRecorder) Events() <-chan string {
 
 func (s *keyBrokerSourceRecorder) Run(context.Context) error {
 	s.runCalls++
-	return nil
+	return s.runErr
 }
 
 func (r *keyBrokerRecordingRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
