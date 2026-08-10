@@ -1809,6 +1809,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	cmd.nativePicker = nativePickerFromCompatRunner(fakeRunner)
 	cmd.sessions = fakeExecutor
 	cmd.executable = func() (string, error) { return "/tmp/projmux", nil }
+	cmd.rawExecutable = func() (string, error) { return "/tmp/projmux", nil }
 	cmd.tmuxRunner = &recordingTmuxRunner{}
 
 	var stdout bytes.Buffer
@@ -1885,6 +1886,7 @@ func TestNewSwitchCommandDoesNotInferRepoRootFromHomeSourceRepos(t *testing.T) {
 	cmd.nativePicker = nativePickerFromCompatRunner(fakeRunner)
 	cmd.sessions = &capturingSwitchSessionExecutor{}
 	cmd.executable = func() (string, error) { return "/tmp/projmux", nil }
+	cmd.rawExecutable = func() (string, error) { return "/tmp/projmux", nil }
 
 	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)

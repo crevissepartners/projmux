@@ -59,6 +59,7 @@ type tmuxRunner interface {
 type tmuxCommand struct {
 	popup         tmuxPopupClient
 	executable    func() (string, error)
+	rawExecutable func() (string, error)
 	runner        tmuxRunner
 	lookupEnv     func(string) string
 	homeDir       func() (string, error)
@@ -76,6 +77,7 @@ func newTmuxCommand() *tmuxCommand {
 	return &tmuxCommand{
 		popup:         inttmux.NewClient(inttmux.ExecRunner{}),
 		executable:    resolveExecutablePath,
+		rawExecutable: rawExecutablePath,
 		runner:        runner,
 		lookupEnv:     os.Getenv,
 		homeDir:       os.UserHomeDir,
@@ -339,11 +341,11 @@ func (c *tmuxCommand) runPopupPreview(args []string, stderr io.Writer) error {
 	if c.popup == nil {
 		return errors.New("configure tmux popup client: tmux popup client is not configured")
 	}
-	if c.executable == nil {
+	if c.ephemeralBinary() == nil {
 		return errors.New("configure tmux popup executable: tmux popup executable resolver is not configured")
 	}
 
-	binaryPath, err := c.executable()
+	binaryPath, err := c.ephemeralBinary()()
 	if err != nil {
 		return fmt.Errorf("resolve tmux popup executable: %w", err)
 	}
@@ -389,11 +391,11 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	if c.runner == nil {
 		return errors.New("configure tmux runner: tmux runner is not configured")
 	}
-	if c.executable == nil {
+	if c.ephemeralBinary() == nil {
 		return errors.New("configure tmux popup executable: tmux popup executable resolver is not configured")
 	}
 
-	binaryPath, err := c.executable()
+	binaryPath, err := c.ephemeralBinary()()
 	if err != nil {
 		return fmt.Errorf("resolve tmux popup executable: %w", err)
 	}
@@ -502,7 +504,7 @@ func (c *tmuxCommand) runPopupSwitch(args []string, stderr io.Writer) error {
 	if c.popup == nil {
 		return errors.New("configure tmux popup client: tmux popup client is not configured")
 	}
-	if c.executable == nil {
+	if c.ephemeralBinary() == nil {
 		return errors.New("configure tmux popup executable: tmux popup executable resolver is not configured")
 	}
 
@@ -511,7 +513,7 @@ func (c *tmuxCommand) runPopupSwitch(args []string, stderr io.Writer) error {
 		return fmt.Errorf("resolve tmux popup switch cwd: %w", err)
 	}
 
-	binaryPath, err := c.executable()
+	binaryPath, err := c.ephemeralBinary()()
 	if err != nil {
 		return fmt.Errorf("resolve tmux popup executable: %w", err)
 	}
@@ -544,11 +546,11 @@ func (c *tmuxCommand) runPopupSessions(args []string, stderr io.Writer) error {
 	if c.popup == nil {
 		return errors.New("configure tmux popup client: tmux popup client is not configured")
 	}
-	if c.executable == nil {
+	if c.ephemeralBinary() == nil {
 		return errors.New("configure tmux popup executable: tmux popup executable resolver is not configured")
 	}
 
-	binaryPath, err := c.executable()
+	binaryPath, err := c.ephemeralBinary()()
 	if err != nil {
 		return fmt.Errorf("resolve tmux popup executable: %w", err)
 	}
@@ -1148,6 +1150,18 @@ func (c *tmuxCommand) parseConfigBinary(args []string, name string, stderr io.Wr
 		return "", fmt.Errorf("%s does not accept positional arguments", name)
 	}
 	return c.resolveConfigBinary(*binaryOverride)
+}
+
+// ephemeralBinary returns the resolver for immediate, in-process popup re-exec.
+// It prefers rawExecutable (un-canonicalized: the running path is guaranteed to
+// exist, unlike a not-yet-materialized npm canonical target) and falls back to
+// executable only when rawExecutable is not wired, e.g. in tests. Returns nil
+// only when neither is configured.
+func (c *tmuxCommand) ephemeralBinary() func() (string, error) {
+	if c.rawExecutable != nil {
+		return c.rawExecutable
+	}
+	return c.executable
 }
 
 func (c *tmuxCommand) resolveConfigBinary(override string) (string, error) {

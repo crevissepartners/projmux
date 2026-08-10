@@ -29,7 +29,7 @@ func defaultLifecycleHookRunner() *hooks.Runner {
 
 	prompt := hooks.ProjectHookPrompt(nil)
 	if strings.TrimSpace(os.Getenv("TMUX")) != "" && strings.TrimSpace(os.Getenv(hookTrustInlineEnv)) == "" {
-		prompt = tmuxProjectHookPrompt(os.Getenv, resolveExecutablePath, inttmux.ExecRunner{})
+		prompt = tmuxProjectHookPrompt(os.Getenv, rawExecutablePath, inttmux.ExecRunner{})
 	}
 	return &hooks.Runner{
 		GlobalConfigPath:     globalConfigPath,

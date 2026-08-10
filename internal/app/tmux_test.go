@@ -3207,3 +3207,45 @@ func TestAppRunTmuxPopupToggleCloseSkipsSidebarRestoreForLegacyMarker(t *testing
 		}
 	}
 }
+
+func TestTmuxPopupPreviewUsesRawUncanonicalizedExecutable(t *testing.T) {
+	t.Parallel()
+
+	stagingPath := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/.projmux-lvpOxyM9/node_modules/@projmux/linux-x64/bin/projmux"
+	canonicalPath := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/projmux/node_modules/@projmux/linux-x64/bin/projmux"
+	popup := &stubTmuxPopupClient{}
+	app := &App{
+		tmux: &tmuxCommand{
+			popup:         popup,
+			executable:    func() (string, error) { return canonicalPath, nil },
+			rawExecutable: func() (string, error) { return stagingPath, nil },
+			runner: &recordingTmuxRunner{formats: map[string]string{
+				"#{client_tty}":    "/dev/pts/7",
+				"#{pane_id}":       "%9",
+				"#S":               "dev",
+				"#{client_width}":  "140",
+				"#{client_height}": "36",
+			}},
+		},
+	}
+	if err := app.Run([]string{"tmux", "popup-preview", "dev"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	// Immediate in-process re-exec must use the running (raw) path, which is
+	// guaranteed to exist; canonicalizing could point at a not-yet-materialized
+	// npm tree during an update window and fail with "... returned 127".
+	if !strings.Contains(popup.command, stagingPath) {
+		t.Fatalf("popup preview command = %q, want raw staging path %q", popup.command, stagingPath)
+	}
+	if strings.Contains(popup.command, canonicalPath) {
+		t.Fatalf("popup preview command = %q, must not canonicalize for immediate re-exec", popup.command)
+	}
+}
+
+func TestNewTmuxCommandWiresRawExecutable(t *testing.T) {
+	t.Parallel()
+
+	if newTmuxCommand().rawExecutable == nil {
+		t.Fatal("newTmuxCommand().rawExecutable = nil; popup re-exec would fall back to canonicalized path")
+	}
+}

@@ -29,6 +29,18 @@ func resolveExecutablePath() (string, error) {
 	return canonicalNpmBinaryPath(exe), nil
 }
 
+// rawExecutablePath returns the running binary path WITHOUT npm
+// canonicalization. Use it for immediate, in-process re-exec (popup handlers,
+// sidebar continuations, hook-trust popups) that spawn the binary right now:
+// the currently-running path is guaranteed to exist, whereas the canonical npm
+// target may not have materialized yet during an update window, which would
+// make the immediate spawn fail with `... returned 127`. Paths that outlive the
+// process (generated tmux config, live hooks, WSL registry) must keep using
+// resolveExecutablePath so they survive npm deleting the retired staging dir.
+func rawExecutablePath() (string, error) {
+	return os.Executable()
+}
+
 // canonicalNpmBinaryPath rewrites npm retire/staging segments back to the
 // package directory they were renamed from. Only segments directly under
 // `node_modules/` (or under a `node_modules/@scope/` directory) are eligible,
