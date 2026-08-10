@@ -5,6 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out="$root/dist/npm"
 pack=0
 version=""
+release_dir=""
 platform_packages=(
   "@projmux/linux-x64"
   "@projmux/linux-arm64"
@@ -22,13 +23,17 @@ while [[ $# -gt 0 ]]; do
       version="$2"
       shift 2
       ;;
+    --release-dir)
+      release_dir="$2"
+      shift 2
+      ;;
     --pack)
       pack=1
       shift
       ;;
     -h|--help)
       cat <<'USAGE'
-Usage: scripts/package-npm.sh [--version X.Y.Z] [--out DIR] [--pack]
+Usage: scripts/package-npm.sh [--version X.Y.Z] [--out DIR] [--release-dir DIR] [--pack]
 
 Builds Go binaries for npm platform packages and stages:
   - projmux
@@ -38,6 +43,8 @@ Builds Go binaries for npm platform packages and stages:
   - @projmux/darwin-arm64
 
 Use --pack to run npm pack in each staged package directory.
+Use --release-dir to stage the platform binaries from release tarballs named
+projmux_VERSION_GOOS_GOARCH.tar.gz instead of rebuilding them.
 USAGE
       exit 0
       ;;
@@ -149,10 +156,34 @@ stage_platform() {
   mkdir -p "$dir/bin"
   cp "$root/npm/platform/${goos}-${npm_arch}/package.json" "$dir/package.json"
   cp "$root/README.md" "$root/LICENSE" "$dir/"
-  GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
-    go build -trimpath \
-      -ldflags "-s -w -X github.com/crevissepartners/projmux/internal/version.current=${version}" \
-      -o "$dir/bin/projmux" "$root/cmd/projmux"
+
+  if [[ -n "$release_dir" ]]; then
+    local archive_name="projmux_${version}_${goos}_${goarch}"
+    local archive="$release_dir/${archive_name}.tar.gz"
+    if [[ ! -f "$archive" ]]; then
+      echo "missing release archive for $pkg: $archive" >&2
+      return 1
+    fi
+    tar -xOzf "$archive" "${archive_name}/projmux" > "$dir/bin/projmux"
+  else
+    local cgo=0
+    if [[ "$goos" == "darwin" ]]; then
+      if [[ "$(go env GOOS)" != "darwin" ]]; then
+        echo "staging $pkg requires macOS or --release-dir with native release archives" >&2
+        return 1
+      fi
+      cgo=1
+    fi
+    GOOS="$goos" GOARCH="$goarch" CGO_ENABLED="$cgo" \
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/crevissepartners/projmux/internal/version.current=${version}" \
+        -o "$dir/bin/projmux" "$root/cmd/projmux"
+  fi
+
+  if [[ "$goos" == "darwin" ]] && ! grep -aFq 'ApplicationServices.framework' "$dir/bin/projmux"; then
+    echo "$pkg binary does not contain the native macOS key adapter" >&2
+    return 1
+  fi
   chmod 0755 "$dir/bin/projmux"
   patch_version "$dir/package.json"
 }
