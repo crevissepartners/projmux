@@ -20,29 +20,35 @@ const (
 	keyBrokerClientFormat = "#{client_name}\t#{client_flags}"
 )
 
+var errKeyBrokerPermissionRestart = errors.New("restart native key broker to refresh macOS Accessibility permission")
+
 type keyBrokerCommand struct {
-	source      platformkeys.Source
-	runner      tmuxRunner
-	homeDir     func() (string, error)
-	lookupEnv   func(string) string
-	readFile    func(string) ([]byte, error)
-	writeFile   func(string, []byte, os.FileMode) error
-	nativeKeys  func() bool
-	pollEvery   time.Duration
-	startupWait time.Duration
+	source         platformkeys.Source
+	runner         tmuxRunner
+	homeDir        func() (string, error)
+	lookupEnv      func(string) string
+	readFile       func(string) ([]byte, error)
+	writeFile      func(string, []byte, os.FileMode) error
+	nativeKeys     func() bool
+	pollEvery      time.Duration
+	startupWait    time.Duration
+	permissionWait time.Duration
+	restartProcess func() error
 }
 
 func newKeyBrokerCommand() *keyBrokerCommand {
 	return &keyBrokerCommand{
-		source:      platformkeys.NewSource(),
-		runner:      shellTmuxExecRunner{},
-		homeDir:     os.UserHomeDir,
-		lookupEnv:   os.Getenv,
-		readFile:    os.ReadFile,
-		writeFile:   os.WriteFile,
-		nativeKeys:  platformkeys.Available,
-		pollEvery:   300 * time.Millisecond,
-		startupWait: 10 * time.Second,
+		source:         platformkeys.NewSource(),
+		runner:         shellTmuxExecRunner{},
+		homeDir:        os.UserHomeDir,
+		lookupEnv:      os.Getenv,
+		readFile:       os.ReadFile,
+		writeFile:      os.WriteFile,
+		nativeKeys:     platformkeys.Available,
+		pollEvery:      300 * time.Millisecond,
+		startupWait:    10 * time.Second,
+		permissionWait: time.Second,
+		restartProcess: restartKeyBrokerProcess,
 	}
 }
 
@@ -77,7 +83,12 @@ func (c *keyBrokerCommand) Run(args []string, _ io.Writer, stderr io.Writer) err
 	if !acquired {
 		return nil
 	}
-	defer release()
+	leaseReleased := false
+	defer func() {
+		if !leaseReleased {
+			release()
+		}
+	}()
 
 	bindings, err := c.loadBindings()
 	if err != nil {
@@ -93,25 +104,23 @@ func (c *keyBrokerCommand) Run(args []string, _ io.Writer, stderr io.Writer) err
 	defer stop()
 	sourceErr := make(chan error, 1)
 	go func() {
-		permissionNotice := false
-		for {
-			err := c.source.Run(ctx)
-			if !errors.Is(err, platformkeys.ErrPermissionRequired) {
-				sourceErr <- err
-				return
-			}
-			if !permissionNotice {
-				fmt.Fprintln(stderr, "projmux native keybindings are waiting for macOS Accessibility approval")
-				permissionNotice = true
-			}
-			timer := time.NewTimer(time.Second)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				sourceErr <- nil
-				return
-			case <-timer.C:
-			}
+		err := c.source.Run(ctx)
+		if !errors.Is(err, platformkeys.ErrPermissionRequired) {
+			sourceErr <- err
+			return
+		}
+		fmt.Fprintln(stderr, "projmux native keybindings are waiting for macOS Accessibility approval")
+		permissionWait := c.permissionWait
+		if permissionWait <= 0 {
+			permissionWait = time.Second
+		}
+		timer := time.NewTimer(permissionWait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			sourceErr <- nil
+		case <-timer.C:
+			sourceErr <- errKeyBrokerPermissionRestart
 		}
 	}()
 
@@ -128,6 +137,19 @@ func (c *keyBrokerCommand) Run(args []string, _ io.Writer, stderr io.Writer) err
 	started := time.Now()
 	focusedClient := ""
 	sawServer := false
+	permissionRestartPending := false
+	restartBroker := func() error {
+		release()
+		leaseReleased = true
+		restart := c.restartProcess
+		if restart == nil {
+			restart = restartKeyBrokerProcess
+		}
+		if err := restart(); err != nil {
+			return fmt.Errorf("restart native key broker after Accessibility prompt: %w", err)
+		}
+		return errors.New("restart native key broker returned without replacing the process")
+	}
 
 	for {
 		select {
@@ -136,6 +158,13 @@ func (c *keyBrokerCommand) Run(args []string, _ io.Writer, stderr io.Writer) err
 			return nil
 		case err := <-sourceErr:
 			c.source.SetEnabled(false)
+			if errors.Is(err, errKeyBrokerPermissionRestart) {
+				if sawServer {
+					return restartBroker()
+				}
+				permissionRestartPending = true
+				continue
+			}
 			return err
 		case chord := <-c.source.Events():
 			if focusedClient == "" || strings.TrimSpace(chord) == "" {
@@ -171,6 +200,10 @@ func (c *keyBrokerCommand) Run(args []string, _ io.Writer, stderr io.Writer) err
 				continue
 			}
 			sawServer = true
+			if permissionRestartPending {
+				c.source.SetEnabled(false)
+				return restartBroker()
+			}
 			focusedClient = client
 			c.source.SetEnabled(focusedClient != "")
 		}
