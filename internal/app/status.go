@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/systemstatus"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
@@ -130,6 +131,8 @@ func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.usage.RunStatus(args[1:], stdout, stderr)
 	case "notify":
 		return c.runNotify(args[1:], stdout, stderr)
+	case "resources":
+		return c.runResources(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printStatusUsage(stdout)
 		return nil
@@ -458,6 +461,24 @@ func printStatusUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux status kube [session]")
 	fmt.Fprintln(w, "  projmux status usage [--max-width N]")
 	fmt.Fprintln(w, "  projmux status notify [--max-width N]")
+	fmt.Fprintln(w, "  projmux status resources")
+}
+
+func (c *statusCommand) runResources(args []string, stdout, stderr io.Writer) error {
+	if len(args) != 0 {
+		printStatusUsage(stderr)
+		return errors.New("status resources does not accept positional arguments")
+	}
+	if !systemstatus.Supported() {
+		return nil
+	}
+	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return nil
+	}
+	metrics := (systemstatus.Sampler{CachePath: paths.LiveResourcesSampleFile()}).Sample()
+	_, err = fmt.Fprint(stdout, formatLiveResourcesStatus(metrics))
+	return err
 }
 
 // defaultStatusNotifyMaxWidth bounds the rendered notification segment so it

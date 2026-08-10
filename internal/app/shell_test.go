@@ -242,11 +242,12 @@ func TestShellWriteAppConfigUnsetThemeMatchesFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMergedKeyBindingCatalog() error = %v", err)
 	}
-	want := fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(
+	want := fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(
 		"/tmp/projmux", cmd.defaultShell(),
 		loadStatusbarDecorationSet(cmd.homeDir, cmd.lookupEnv),
 		loadAIBadgeStyle(cmd.homeDir, cmd.lookupEnv),
 		loadDesktopNotifyModeForTmuxConfig(cmd.homeDir, cmd.lookupEnv),
+		loadLiveResourcesMode(cmd.homeDir, cmd.lookupEnv),
 		catalog, present,
 	)
 	if got != want {

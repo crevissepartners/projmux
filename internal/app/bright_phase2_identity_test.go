@@ -41,42 +41,41 @@ func appLightThemeConfig() theme.ThemeConfig {
 }
 
 // brightPhase2ConfigGoldens are SHA-256 digests of the generated tmux configs
-// originally captured at main fa3da53 (pre-Phase 2) and refreshed after the
-// intentional attention/rebalance hook error-suppression change, for a fixed
-// binary path, shell, and symbol decorations. The Phase 2 theme threading must not change a single
-// byte for the fallback theme or any current dark preset.
+// for a fixed binary path, shell, symbol decorations, and default-off optional
+// features. Theme rendering must not drift between presets; intentional shared
+// config contract additions update every digest together.
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
-		"standalone": "0a0c735303f20592b0ac056744d023355ca5afdc8afe3a730c517f15aeadc919",
-		"app":        "6c590d4660d2028ec30d2ad753b6d825859858fa52cb2c34fc2928b45730f5ba",
+		"standalone": "b35278748392810db4348082771550bb323624463d3eb36397d883590d7483cb",
+		"app":        "e2e249c10e3b7faaeddb3d539637747624aba80a1db142b21054aade9ecac40a",
 	},
 	"projmux": {
-		"standalone": "1a34de07c3ea7ff0c1ea634184ba6ab9fe4d8ed0048445c149b388d55a464793",
-		"app":        "858d2b62b9805d578aadd0b39c0111a49e0fc7cd3fcdc43664f1be1a2dd36203",
+		"standalone": "f7077359b11cea5ac8c67c613b7ad8424b482d84a7229ba9236c0718baf9b031",
+		"app":        "f55c2d71093904f4355038cd3b28c0fdf8b4f2f5900d5b591c9b5d4d049d295e",
 	},
 	"blue-hour": {
-		"standalone": "7270b67478b5d79872c78ebbe89837d5f183c21f97212ef406e80c8381133e57",
-		"app":        "a5188c37babdf478d50c0b8302feb6a29024cfe38e5eb12d610adba88b829a63",
+		"standalone": "bfd5f093394723c89162b0c7ef61a67759bff7aa43a125c82a3608e456c5b4c2",
+		"app":        "c726b9524496c2de150332b47a220a205ae2840f2f68e91343cd5b0fea7662d4",
 	},
 	"carbon-violet": {
-		"standalone": "8d6c400182f1d9c8762cb7b6b6c8eb68126257de710f56da9a053573d6c8b7ef",
-		"app":        "28d6a080e55bcc3cbb9fc4b1eeb9abd0a5825f5ab41c4e0ddc7d52bee5808ade",
+		"standalone": "d00ccae1494b19d25463604f1c5124b5c23d5d4208f1fae2755abe232887025c",
+		"app":        "0ea164fd47b9fbc704457b4e6e441f82327a9c569226f1efc422b8b9f6adc2bf",
 	},
 	"ember": {
-		"standalone": "23716b0a1759f44b6b83cf0e94492636fc68a2e2f38a40b2e6d052a0f8d65b44",
-		"app":        "b89005485814304236321efca94762c68b828e4a4fc85fe705f58fb769a63f18",
+		"standalone": "b3b17db9979524ef856ac2c15a99f5baadd713c3cb47047855f83bf170b9c1f4",
+		"app":        "16d8be84426fc2ae1d3dbf28cebe8c9ee508b567bfb32a8cef557d171a2d78e5",
 	},
 	"forest": {
-		"standalone": "9496222dde755717142bca0fbabd5ba67b7f7b081ea6a84d04b7ab74c0984697",
-		"app":        "cea7677e567d30db264b31a20ca88eb57d33b78f66c24dad99737f8dc4e8564a",
+		"standalone": "5aad0ac003be0facdf24a379093bb0a07a2e99e2c65e89dac9cd9a4c49048ba0",
+		"app":        "849613a63a136410608c7d76cb5cbd13c2eb6c5b2ed99f4bd4edfb3e3062b92b",
 	},
 	"rose": {
-		"standalone": "320df93fc8913adcea8ebee1827e9630450cba7316fb42eb649c5fc8359f7d01",
-		"app":        "f676278fa7f6afbac734fea265d4a0de5bb78d586fec4fa22498ce6101780a97",
+		"standalone": "44edfde3c4c7d1cedfafab529e05462f7449be9dfaed41f8969f9346aaf8ff5f",
+		"app":        "7e8a79ff13adfe2bcc5b17682069c23d4e9273ab0301e3d16c3365decd6bbab6",
 	},
 	"high-contrast": {
-		"standalone": "8676a11f91bc22ab6179897a6c1fefc6c664415253edc24bd15224f6752a9679",
-		"app":        "95fb3f627c10453ec7d9b7d2c90475237e5dfc07cea56d913dd5b35357c72b88",
+		"standalone": "a22e287e4cec4fd6b4995f0363d9f9f98fdebff1fc41c5d4489eb49e2f8baa01",
+		"app":        "fcda8250e4ecaa53a2e0a2fd1e158119dae89ab1d09c4afd05e3b7615fd91f06",
 	},
 }
 
@@ -104,7 +103,7 @@ func TestBrightPhase2GeneratedConfigByteIdentity(t *testing.T) {
 		for kind, body := range outputs {
 			sum := sha256.Sum256([]byte(body))
 			if got := hex.EncodeToString(sum[:]); got != goldens[kind] {
-				t.Fatalf("theme %s %s config drifted from the pre-Phase2 golden: sha256 %s, want %s", label, kind, got, goldens[kind])
+				t.Fatalf("theme %s %s config drifted from the golden: sha256 %s, want %s", label, kind, got, goldens[kind])
 			}
 		}
 	}

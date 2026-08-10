@@ -1262,6 +1262,7 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":" + string(config.StatusbarDecorationSymbol), settingsAxisGlobal},
 		{settingsActionPrefixKeymap + "settings", settingsAxisGlobal},
 		{settingsActionPrefixHooks + string(config.ProjectHooksOn), settingsAxisGlobal},
+		{settingsActionPrefixLiveResources + string(config.LiveResourcesOn), settingsAxisGlobal},
 		{settingsActionPrefixProjectConfig + "startup:set", settingsAxisProject},
 	}
 

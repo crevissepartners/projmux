@@ -18,6 +18,25 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"status": "ok"'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "status notify --max-width 80"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "tmux popup-toggle"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "notify-sidebar"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "set -g @projmux_live_resources off"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "status resources"
+
+mkdir -p "$XDG_CONFIG_HOME/projmux"
+printf 'on\n' >"$XDG_CONFIG_HOME/projmux/live-resources"
+"$bin" tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux-resources.conf"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux-resources.conf" "set -g @projmux_live_resources on"
+
+resources_first="$("$bin" status resources)"
+if [[ ! "$resources_first" =~ CPU\ --%.*MEM\ [0-9]+% ]]; then
+  echo "expected first resource sample to show unavailable CPU and numeric memory, got: $resources_first" >&2
+  exit 1
+fi
+sleep 0.1
+resources_second="$("$bin" status resources)"
+if [[ ! "$resources_second" =~ CPU\ [0-9]+%.*MEM\ [0-9]+% ]]; then
+  echo "expected second resource sample to show numeric CPU and memory, got: $resources_second" >&2
+  exit 1
+fi
 
 "$bin" tmux install \
   --bin "$bin" \
@@ -37,6 +56,11 @@ smoke_assert_output_contains "$apply_out" "reloaded tmux server -L $PROJMUX_SMOK
 app_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_app)"
 if [[ "$app_flag" != "1" ]]; then
   echo "expected tmux apply to set @projmux_app=1, got: $app_flag" >&2
+  exit 1
+fi
+resources_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_live_resources)"
+if [[ "$resources_flag" != "on" ]]; then
+  echo "expected tmux apply to set @projmux_live_resources=on, got: $resources_flag" >&2
   exit 1
 fi
 

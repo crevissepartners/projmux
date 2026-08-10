@@ -154,7 +154,7 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 			Value: settingsSectionKeybindings,
 		},
 		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Labs", "experimental picker engine"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Labs", "experimental features"),
 			Value: settingsSectionLabs,
 		},
 		{

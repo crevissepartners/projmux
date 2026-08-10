@@ -193,6 +193,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"Unbound":               "settings.text.unbound_state",
 
 	"Native macOS keybindings": "settings.text.native_macos_keybindings",
+	"Live system resources":    "settings.text.live_system_resources",
 
 	"project roots, workdirs, and pins":                               "settings.text.project_roots_workdirs_pins",
 	"default split mode":                                              "settings.text.default_split_mode",
@@ -225,7 +226,10 @@ var uiTextKeys = map[string]i18n.Key{
 	"diagnostic":                                                      "settings.text.diagnostic",
 	"view only":                                                       "settings.text.view_only",
 	"Test key delivery, Advanced...":                                  "settings.text.test_key_delivery_advanced",
-	"experimental picker engine":                                      "settings.text.experimental_picker_engine",
+	"experimental features":                                           "settings.text.experimental_features",
+	"unavailable - Linux/WSL only":                                    "settings.text.live_resources_unavailable_desc",
+	"off - hidden; Linux/WSL guest view":                              "settings.text.live_resources_off_desc",
+	"on - live CPU and memory; Linux/WSL guest view":                  "settings.text.live_resources_on_desc",
 	"version, updates, key setup":                                     "settings.text.version_updates_key_setup",
 	"disabled - no project context":                                   "settings.text.disabled_no_project_context",
 	"declare env, kube, startup":                                      "settings.text.declare_env_kube_startup",
